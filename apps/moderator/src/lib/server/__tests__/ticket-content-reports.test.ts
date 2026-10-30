@@ -1,13 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../db', () => ({ dbRead: {}, dbWrite: {} }));
+const getReportsReceived = vi.fn();
+const getReportsOnUser = vi.fn();
+vi.mock('../user-reports.service', () => ({
+  getReportsReceived: (...a: unknown[]) => getReportsReceived(...a),
+  getReportsOnUser: (...a: unknown[]) => getReportsOnUser(...a),
+}));
 
 const { contentIssueSectionFor } = await import('../tickets/content-reports');
+const { toVisibleRemovals } = await import('../tickets/history');
 
-const reportsOn = vi.fn();
+const reportsReceived = vi.fn();
 const removals = vi.fn();
 const reads = {
-  reportsOn: (...a: unknown[]) => reportsOn(...a),
+  reportsReceived: (...a: unknown[]) => reportsReceived(...a),
   removals: (...a: unknown[]) => removals(...a),
 } as never;
 const all = () => true;
@@ -31,12 +38,12 @@ const removal = (imageId: number, over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  reportsOn.mockReset().mockResolvedValue([report(1)]);
+  reportsReceived.mockReset().mockResolvedValue([report(1)]);
   removals.mockReset().mockResolvedValue({ rows: [removal(5)], next: null });
 });
 
 describe('contentIssueSectionFor', () => {
-  it('lists open reports on the user and their image removals', async () => {
+  it("lists open reports on the user' content and their image removals", async () => {
     const res = await contentIssueSectionFor({ userId: 7, canRead: all }, reads);
     expect(res).toMatchObject({
       status: 'ok',
@@ -47,22 +54,22 @@ describe('contentIssueSectionFor', () => {
   });
 
   it('reads each section only under its own page grant', async () => {
-    const reportsOnly = await contentIssueSectionFor(
+    const reportsReceivedly = await contentIssueSectionFor(
       { userId: 7, canRead: (p) => p === '/reports/user' },
       reads
     );
-    expect(reportsOnly).toHaveProperty('reports');
-    expect(reportsOnly).not.toHaveProperty('removals');
+    expect(reportsReceivedly).toHaveProperty('reports');
+    expect(reportsReceivedly).not.toHaveProperty('removals');
     expect(removals).not.toHaveBeenCalled();
 
-    reportsOn.mockClear();
+    reportsReceived.mockClear();
     const removalsOnly = await contentIssueSectionFor(
       { userId: 7, canRead: (p) => p === '/retool/user-lookup' },
       reads
     );
     expect(removalsOnly).toHaveProperty('removals');
     expect(removalsOnly).not.toHaveProperty('reports');
-    expect(reportsOn).not.toHaveBeenCalled();
+    expect(reportsReceived).not.toHaveBeenCalled();
   });
 
   it('turns a ClickHouse failure into an unavailable removals section, leaving reports', async () => {
@@ -77,9 +84,9 @@ describe('contentIssueSectionFor', () => {
   });
 
   it('asks for one row over the cap and says when the list was cut', async () => {
-    reportsOn.mockResolvedValue(Array.from({ length: 11 }, (_, i) => report(i + 1)));
+    reportsReceived.mockResolvedValue(Array.from({ length: 11 }, (_, i) => report(i + 1)));
     const res = await contentIssueSectionFor({ userId: 7, canRead: all }, reads);
-    expect(reportsOn).toHaveBeenCalledWith(7, 11);
+    expect(reportsReceived).toHaveBeenCalledWith(7, 11);
     expect(res).toMatchObject({ reports: { truncated: true } });
     if (res.reports?.status === 'ok') expect(res.reports.rows).toHaveLength(10);
   });
@@ -96,5 +103,37 @@ describe('contentIssueSectionFor', () => {
     const res = await contentIssueSectionFor({ userId: 7, canRead: all }, reads);
     if (res.removals?.status !== 'ok') throw new Error('expected ok');
     expect(res.removals.rows.map((r) => r.imageId)).toEqual([3]);
+  });
+});
+
+describe('removal shaping', () => {
+  it("is the history card's helper: the content card shows exactly what it keeps", async () => {
+    const rows = [
+      removal(1, { tosReason: 'CSAM' }),
+      removal(2),
+      removal(3, { violationType: 'Csam' }),
+    ];
+    removals.mockResolvedValue({ rows, next: null });
+    const res = await contentIssueSectionFor({ userId: 7, canRead: all }, reads);
+    if (res.removals?.status !== 'ok') throw new Error('expected ok');
+    expect(res.removals.rows).toEqual(toVisibleRemovals(rows as never));
+    expect(res.removals.rows.map((r) => r.imageId)).toEqual([2]);
+  });
+});
+
+describe('the live reports read', () => {
+  it("reads reports filed against the user's content, open and human, one row over the cap", async () => {
+    getReportsReceived.mockResolvedValue([report(4)]);
+    const res = await contentIssueSectionFor({
+      userId: 7,
+      canRead: (p) => p === '/reports/user',
+    });
+    expect(getReportsReceived).toHaveBeenCalledWith(7, {
+      limit: 11,
+      statuses: ['Pending', 'Processing'],
+      reasons: expect.not.arrayContaining(['Automated']),
+    });
+    expect(getReportsOnUser).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ reports: { status: 'ok', rows: [{ id: 4 }] } });
   });
 });

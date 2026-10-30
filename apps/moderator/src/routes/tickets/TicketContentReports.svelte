@@ -56,7 +56,7 @@
         {#if r.reporter}<span class="text-dark-2"> by {r.reporter}</span>{/if}
       {/snippet}
       {#if content.reports}
-        {@render block('Open reports on the user', content.reports, userReportUrl(content.userId), 'Report queue', 'No open reports.', report)}
+        {@render block('Open reports on the user\'s content', content.reports, userReportUrl(content.userId), 'User report queue', 'No open reports on their content.', report)}
       {/if}
 
       {#snippet removal(r: HistoryRemoval)}

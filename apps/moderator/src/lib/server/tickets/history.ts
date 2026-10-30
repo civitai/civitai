@@ -75,7 +75,25 @@ const liveReads: HistoryReads = {
 };
 
 /** No evidence of a CSAM removal is shown in a ticket, however the removal was labelled. */
-export const isCsamReason = (...reasons: (string | null)[]) => reasons.some((r) => r && /csam/i.test(r));
+export const isCsamReason = (...reasons: (string | null)[]) =>
+  reasons.some((r) => r && /csam/i.test(r));
+
+type RemovalRow = Awaited<ReturnType<typeof getImageRemovals>>['rows'][number];
+
+/** The removals a ticket may show: CSAM-labelled ones dropped, the rest narrowed to the card's shape. */
+export const toVisibleRemovals = (rows: RemovalRow[]): HistoryRemoval[] =>
+  rows
+    .filter((r) => !isCsamReason(r.tosReason, r.violationType))
+    .map(
+      (r): HistoryRemoval => ({
+        key: r.key,
+        type: r.type,
+        at: r.at,
+        imageId: r.imageId,
+        actor: r.actorUsername,
+        reason: r.violationType ?? r.tosReason,
+      })
+    );
 
 const iso = (d: Date | string | null) => (d ? new Date(d).toISOString() : null);
 
@@ -149,18 +167,7 @@ export async function historySectionFor(
     section('removals', async () => {
       const { rows, next } = await reads.removals(userId, HISTORY_ROWS);
       return {
-        rows: rows
-          .filter((r) => !isCsamReason(r.tosReason, r.violationType))
-          .map(
-            (r): HistoryRemoval => ({
-              key: r.key,
-              type: r.type,
-              at: r.at,
-              imageId: r.imageId,
-              actor: r.actorUsername,
-              reason: r.violationType ?? r.tosReason,
-            })
-          ),
+        rows: toVisibleRemovals(rows),
         truncated: next !== null,
       };
     }),

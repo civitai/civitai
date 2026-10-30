@@ -68,16 +68,16 @@ is its own page grant. Acting on a ticket is a separate permission:
 - A support ticket that links to a Civitai user shows one card for its Feature. Each section reads under its
   source page's grant and is hidden without it:
 
-  - **Content Related Issue** (read-only): open reports on the user (`/reports`) and image removals
-    (`/retool/user-lookup`, CSAM reasons dropped).
+  - **Content Related Issue** (read-only): open reports filed against the user's content, human reasons
+    only (`/reports`), and image removals (`/retool/user-lookup`, CSAM reasons dropped).
   - **Image Generator**: the user's `generation` restrictions (`/audit/generator-restrictions`), where a pending
     one is upheld or overturned through the shared restriction ruling. Also blocked prompts (`/retool/user-lookup`).
     No generated media is shown.
   - **Account Login** and **Email Change**: the Account card, read-only (`/retool/user-lookup`), with the
-    account's email and when it was verified. No ban, mute or ruling actions: those stay moderation-only.
+    account's email (only for a viewer holding `decisions.support.pii`) and when it was verified. No ban, mute or ruling actions: those stay moderation-only.
   - **LoRA Trainer**: recent training runs with their publish block (`/audit/training-models`), where Block /
     Allow publishing posts the intended state and is refused if the model is someone else's or already in that
-    state. Buzz charges are not shown.
+    state. Runs of deleted models are not listed. Buzz charges are not shown.
   - **Billing or Membership** (read-only): the user's current subscription (`/retool/user-lookup`): plan, provider,
     status, cancel-at-period-end, period end and price. No membership codes, payment method or provider ids.
   - **Cosmetic Shop** (read-only): the user's newest 10 shop purchases (`/retool/user-lookup`): item, Buzz paid, date

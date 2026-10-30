@@ -97,7 +97,7 @@ const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOStrin
  * The account section of a ticket payload. `undefined` leaves the key out: the viewer may not open
  * User Lookup (the page whose data this is), or the ticket is not an account ticket. A failed read is
  * `unavailable` and never fails the ticket. `readOnly` is the support card: its own visibility rule, no
- * appeal and no rulable restriction, and the only place the address and its verified date are copied out.
+ * appeal and no rulable restriction, and the only place the address (behind the PII grant) and its verified date are copied out.
  */
 export async function accountSectionFor(
   ticket: {
@@ -109,11 +109,13 @@ export async function accountSectionFor(
     /** The viewer may open `/appeals/account`, so a pending Account appeal is read and ruled here. */
     canAppeal?: boolean;
     readOnly?: boolean;
+    /** The viewer holds `decisions.support.pii`; without it the read-only card carries no address. */
+    canSeeEmail?: boolean;
   },
   reads: AccountReads = liveReads
 ): Promise<TicketAccount | undefined> {
   if (!ticket.canView) return undefined;
-  const { readOnly = false } = ticket;
+  const { readOnly = false, canSeeEmail = false } = ticket;
   const panel = readOnly ? supportAccountPanelFor(ticket) : accountPanelFor(ticket);
   if (panel === 'hidden') return undefined;
   if (panel === 'unlinked' || ticket.civitaiUserId === null) return { status: 'unlinked' };
@@ -147,7 +149,10 @@ export async function accountSectionFor(
       })),
       ...(appeal === undefined ? {} : { pendingAppeal: appeal }),
       ...(readOnly
-        ? { email: identity.email ?? null, emailVerified: iso(identity.emailVerified) }
+        ? {
+            ...(canSeeEmail ? { email: identity.email ?? null } : {}),
+            emailVerified: iso(identity.emailVerified),
+          }
         : {}),
     };
   } catch (e) {

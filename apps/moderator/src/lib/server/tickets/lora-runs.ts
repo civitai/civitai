@@ -31,11 +31,14 @@ export type TicketLora =
 
 export type LoraReads = {
   runs: (userId: number, limit: number) => ReturnType<typeof getTrainingRuns>;
-  /** The models of a run list: which are blocked from publishing, and the owner's username. */
+  /**
+   * The models of a run list: the owner's username, which of the ids are the owner's live models, and
+   * which of those are blocked from publishing. A deleted or foreign model is in neither set.
+   */
   models: (
     userId: number,
     modelIds: number[]
-  ) => Promise<{ username: string | null; blocked: Set<number> }>;
+  ) => Promise<{ username: string | null; live: Set<number>; blocked: Set<number> }>;
 };
 
 // Imported when read, so loading the ticket detail module opens no database or ClickHouse connection.
@@ -47,20 +50,24 @@ const liveReads: LoraReads = {
       import('../db'),
       import('@civitai/db/kysely'),
     ]);
-    const rows = await dbRead
-      .selectFrom('Model as m')
-      .innerJoin('User as u', 'u.id', 'm.userId')
-      .select([
-        'm.id',
-        'u.username',
-        sql<boolean>`COALESCE(m.meta->'cannotPublish' = 'true'::jsonb, false)`.as('cannotPublish'),
-      ])
-      .where('m.id', 'in', modelIds)
-      .where('m.userId', '=', userId)
-      .where('m.deletedAt', 'is', null)
-      .execute();
+    const [rows, owner] = await Promise.all([
+      dbRead
+        .selectFrom('Model as m')
+        .select([
+          'm.id',
+          sql<boolean>`COALESCE(m.meta->'cannotPublish' = 'true'::jsonb, false)`.as(
+            'cannotPublish'
+          ),
+        ])
+        .where('m.id', 'in', modelIds)
+        .where('m.userId', '=', userId)
+        .where('m.deletedAt', 'is', null)
+        .execute(),
+      dbRead.selectFrom('User').select('username').where('id', '=', userId).executeTakeFirst(),
+    ]);
     return {
-      username: rows[0]?.username ?? null,
+      username: owner?.username ?? null,
+      live: new Set(rows.map((r) => r.id)),
       blocked: new Set(rows.filter((r) => r.cannotPublish).map((r) => r.id)),
     };
   },
@@ -68,7 +75,8 @@ const liveReads: LoraReads = {
 
 /**
  * The linked user's recent training runs and whether each model is blocked from publishing. The caller
- * has checked the training models page grant (`PANELS.lora.readGrants`). A failing read is `unavailable`.
+ * has checked the training models page grant (`PANELS.lora.readGrants`). Runs of deleted models are left
+ * out. A failing read is `unavailable`.
  */
 export async function loraSectionFor(
   ticket: { userId: number },
@@ -76,10 +84,12 @@ export async function loraSectionFor(
 ): Promise<Extract<TicketLora, { status: 'ok' | 'unavailable' }>> {
   const { userId } = ticket;
   try {
-    const { runs, truncated } = await reads.runs(userId, LORA_ROWS);
-    const { username, blocked } = runs.length
-      ? await reads.models(userId, [...new Set(runs.map((r) => r.modelId))])
-      : { username: null, blocked: new Set<number>() };
+    const { runs: all, truncated } = await reads.runs(userId, LORA_ROWS);
+    const { username, live, blocked } = all.length
+      ? await reads.models(userId, [...new Set(all.map((r) => r.modelId))])
+      : { username: null, live: new Set<number>(), blocked: new Set<number>() };
+    // A run of a deleted model has no publish state to show, and its toggle would 404.
+    const runs = all.filter((r) => live.has(r.modelId));
     return {
       status: 'ok',
       userId,

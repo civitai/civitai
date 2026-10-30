@@ -40,7 +40,9 @@ beforeEach(() => {
     truncated: false,
     charges: { count: 3, buzz: 99999, first: null, last: null, unmatched: [], truncated: false },
   });
-  models.mockReset().mockResolvedValue({ username: 'alice', blocked: new Set<number>() });
+  models
+    .mockReset()
+    .mockResolvedValue({ username: 'alice', live: new Set([10]), blocked: new Set<number>() });
 });
 
 describe('loraSectionFor', () => {
@@ -80,13 +82,44 @@ describe('loraSectionFor', () => {
       truncated: false,
       charges: null,
     });
-    models.mockResolvedValue({ username: 'alice', blocked: new Set([10]) });
+    models.mockResolvedValue({
+      username: 'alice',
+      live: new Set([10, 30]),
+      blocked: new Set([10]),
+    });
     const res = await loraSectionFor({ userId: 7 }, reads);
     expect(res.status === 'ok' && res.runs.map((r) => r.cannotPublish)).toEqual([
       true,
       true,
       false,
     ]);
+  });
+
+  it("leaves out runs of a model that is deleted or not the owner's, keeping the username", async () => {
+    runs.mockResolvedValue({
+      runs: [run(1), run(2), run(3)],
+      truncated: false,
+      charges: null,
+    });
+    models.mockResolvedValue({
+      username: 'alice',
+      live: new Set([30]),
+      blocked: new Set<number>(),
+    });
+    const res = await loraSectionFor({ userId: 7 }, reads);
+    expect(res).toMatchObject({ username: 'alice' });
+    expect(res.status === 'ok' && res.runs.map((r) => r.modelId)).toEqual([30]);
+
+    models.mockResolvedValue({
+      username: 'alice',
+      live: new Set<number>(),
+      blocked: new Set<number>(),
+    });
+    expect(await loraSectionFor({ userId: 7 }, reads)).toMatchObject({
+      status: 'ok',
+      username: 'alice',
+      runs: [],
+    });
   });
 
   it('passes the cut on', async () => {

@@ -1,7 +1,8 @@
-import type { getReportsOnUser } from '../user-reports.service';
+import type { getReportsReceived } from '../user-reports.service';
 import type { getImageRemovals } from '../user-account.service';
+import { DEFAULT_REPORT_REASONS } from '$lib/reports';
 import { CONTENT_ROWS, IMAGE_REMOVALS_PATH, USER_REPORTS_PATH } from '$lib/tickets/content-panel';
-import { isCsamReason, type HistoryRemoval, type HistorySection } from './history';
+import { toVisibleRemovals, type HistoryRemoval, type HistorySection } from './history';
 
 export type ContentReport = {
   id: number;
@@ -24,7 +25,8 @@ export type TicketContentIssue =
     };
 
 export type ContentIssueReads = {
-  reportsOn: (userId: number, limit: number) => ReturnType<typeof getReportsOnUser>;
+  /** Reports filed against content the user owns. */
+  reportsReceived: (userId: number, limit: number) => ReturnType<typeof getReportsReceived>;
   removals: (
     userId: number,
     limit: number
@@ -33,9 +35,14 @@ export type ContentIssueReads = {
 
 // Imported when read, so loading the ticket detail module opens no database or ClickHouse connection.
 const liveReads: ContentIssueReads = {
-  // Open reports only (the service default): the question on a ticket is what is outstanding.
-  reportsOn: async (userId, limit) =>
-    (await import('../user-reports.service')).getReportsOnUser(userId, { limit }),
+  // Open reports on the user's content, human reasons only: what is outstanding, not the Automated flood
+  // that the report queues also hide by default.
+  reportsReceived: async (userId, limit) =>
+    (await import('../user-reports.service')).getReportsReceived(userId, {
+      limit,
+      statuses: ['Pending', 'Processing'],
+      reasons: DEFAULT_REPORT_REASONS,
+    }),
   removals: async (userId, limit) =>
     (await import('../user-account.service')).getImageRemovals(userId, undefined, limit),
 };
@@ -54,7 +61,7 @@ async function section<T>(
 }
 
 /**
- * The linked user's open reports and image removals, each bounded and read only under its own source
+ * Open reports on the linked user's content and their image removals, each bounded and read only under its own source
  * page's grant. Read-only: the report queue and User Lookup hold the whole record.
  */
 export async function contentIssueSectionFor(
@@ -65,7 +72,7 @@ export async function contentIssueSectionFor(
   const [reports, removals] = await Promise.all([
     canRead(USER_REPORTS_PATH)
       ? section('reports', async () => {
-          const rows = await reads.reportsOn(userId, CONTENT_ROWS + 1);
+          const rows = await reads.reportsReceived(userId, CONTENT_ROWS + 1);
           return {
             truncated: rows.length > CONTENT_ROWS,
             rows: rows.slice(0, CONTENT_ROWS).map(
@@ -85,18 +92,7 @@ export async function contentIssueSectionFor(
           const { rows, next } = await reads.removals(userId, CONTENT_ROWS);
           return {
             truncated: next !== null,
-            rows: rows
-              .filter((r) => !isCsamReason(r.tosReason, r.violationType))
-              .map(
-                (r): HistoryRemoval => ({
-                  key: r.key,
-                  type: r.type,
-                  at: r.at,
-                  imageId: r.imageId,
-                  actor: r.actorUsername,
-                  reason: r.violationType ?? r.tosReason,
-                })
-              ),
+            rows: toVisibleRemovals(rows),
           };
         })
       : undefined,

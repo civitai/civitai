@@ -38,7 +38,8 @@ type Loaders = {
   ) => Promise<PanelSections[K] | undefined>;
 };
 
-export const liveLoaders: Loaders = {
+/** The live loaders; `canSeeEmail` is the viewer's PII grant, which gates the support Account card's address. */
+export const loadersFor = ({ canSeeEmail }: { canSeeEmail: boolean }): Loaders => ({
   account: ({ view, cfFeature, routerTopic, civitaiUserId }, canRead) =>
     accountSectionFor({
       view,
@@ -65,12 +66,15 @@ export const liveLoaders: Loaders = {
       civitaiUserId,
       canView: true,
       readOnly: true,
+      canSeeEmail,
     }),
   membership: ({ civitaiUserId }) => membershipSectionFor({ userId: civitaiUserId }),
   shop: ({ civitaiUserId }) => shopSectionFor({ userId: civitaiUserId }),
   payouts: ({ civitaiUserId }) => payoutsSectionFor({ userId: civitaiUserId }),
   bounties: ({ civitaiUserId }) => bountiesSectionFor({ userId: civitaiUserId }),
-};
+});
+
+export const liveLoaders: Loaders = loadersFor({ canSeeEmail: false });
 
 /**
  * One panel's section: absent when it does not apply or the viewer holds none of its grants, `unlinked`

@@ -137,6 +137,7 @@ describe('accountSectionFor, read-only (support)', () => {
     view: 'support' as const,
     cfFeature: 'Account Login',
     readOnly: true,
+    canSeeEmail: true,
   };
 
   it('is omitted without readOnly: the moderation rule still hides every support ticket', async () => {
@@ -172,6 +173,19 @@ describe('accountSectionFor, read-only (support)', () => {
     });
     expect(res).not.toHaveProperty('pendingAppeal');
     expect(pendingAppeal).not.toHaveBeenCalled();
+  });
+
+  it('leaves the address out without the PII grant, keeping the verified date', async () => {
+    identity.mockResolvedValue({
+      id: 7,
+      username: 'ann',
+      email: 'ann@example.test',
+      emailVerified: new Date('2026-09-01T00:00:00Z'),
+    });
+    const res = await accountSectionFor({ ...support, canSeeEmail: false }, reads);
+    expect(res).toMatchObject({ status: 'ok', emailVerified: '2026-09-01T00:00:00.000Z' });
+    expect(res).not.toHaveProperty('email');
+    expect(JSON.stringify(res)).not.toContain('example.test');
   });
 
   it('reads an unverified address as null, and the moderation card never carries the address', async () => {

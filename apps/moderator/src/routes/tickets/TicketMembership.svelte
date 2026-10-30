@@ -3,6 +3,7 @@
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import { subscriptionBadge } from '$lib/tickets/labels';
   import type { TicketMembership } from '$lib/server/tickets/membership';
 
   let { membership }: { membership: TicketMembership } = $props();
@@ -34,7 +35,7 @@
             <Badge variant="outline">Referral grant</Badge>
           {/if}
           {#if s.interval}<Badge variant="outline">{s.interval}ly</Badge>{/if}
-          <Badge variant={s.status === 'active' ? 'secondary' : 'destructive'}>{s.status}</Badge>
+          <Badge variant={subscriptionBadge(s.status)}>{s.status}</Badge>
           {#if s.provider}<span class="text-dark-2">via {s.provider}</span>{/if}
         </div>
         <div class="text-dark-2">

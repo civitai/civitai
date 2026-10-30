@@ -60,6 +60,8 @@
       {#if account.email !== undefined}
         <dt class="text-dark-2">Email</dt>
         <dd class="m-0 min-w-0 break-all text-white">{account.email ?? '—'}</dd>
+      {/if}
+      {#if account.emailVerified !== undefined}
         <dt class="text-dark-2">Verified</dt>
         <dd class="m-0 min-w-0 break-words text-white">
           {#if account.emailVerified}
