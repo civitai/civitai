@@ -98,6 +98,14 @@ import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import {
+  classifyUnlinkedContentUrls,
+  contentLinkHoldCounter,
+  type ContentLinkHold,
+  nextContentLinkHold,
+  readContentLinkHold,
+  withContentLinkHold,
+} from '~/server/services/article-content-link-hold';
+import {
   ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE,
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
@@ -2053,6 +2061,27 @@ export async function linkArticleContentImages({
 }): Promise<{ orphanedImageIds: number[] }> {
   const contentImages = getContentMedia(content);
 
+  // A url whose key's issuer is unknown or someone else gets no row; the article is held instead.
+  let hold: ContentLinkHold | null = null;
+  let previousHold: ContentLinkHold | null = null;
+  if (!cleanupOnly) {
+    const article = await dbWrite.article.findUnique({
+      where: { id: articleId },
+      select: { metadata: true },
+    });
+    previousHold = readContentLinkHold(article?.metadata);
+    const unlinked = await contentUrlsWithoutRows(content);
+    if (unlinked.length) {
+      const classified = await classifyUnlinkedContentUrls({
+        urls: unlinked,
+        ownerId,
+        editorId: userId,
+      });
+      hold = nextContentLinkHold(previousHold, { ...classified, editorId: userId });
+    }
+  }
+  const held = new Set([...(hold?.deferred ?? []), ...(hold?.refused ?? [])]);
+
   const { orphanedImageIds, imagesToIngest } = await dbWrite.$transaction(async (tx) => {
     const imageUrls = contentImages.map((img) => img.url);
 
@@ -2070,7 +2099,9 @@ export async function linkArticleContentImages({
       const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
 
       // Batch create: Missing images (upsert with unique constraint handles races)
-      const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
+      const missingMedia = contentImages.filter(
+        (media) => !existingUrlMap.has(media.url) && !held.has(media.url)
+      );
       const newlyCreatedImages: { id: number; url: string }[] = [];
 
       if (missingMedia.length > 0) {
@@ -2175,6 +2206,20 @@ export async function linkArticleContentImages({
 
     return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
   });
+
+  if (!cleanupOnly && JSON.stringify(previousHold) !== JSON.stringify(hold)) {
+    await dbWrite.$executeRaw`
+      UPDATE "Article"
+      SET metadata = (COALESCE(metadata, '{}'::jsonb) - 'contentLinkHold') || ${JSON.stringify(
+        withContentLinkHold({}, hold)
+      )}::jsonb
+      WHERE id = ${articleId}
+    `;
+    if (hold?.deferred.length) contentLinkHoldCounter.inc({ outcome: 'deferred' });
+    if (hold?.refused.length) contentLinkHoldCounter.inc({ outcome: 'refused' });
+    if (!hold) contentLinkHoldCounter.inc({ outcome: 'settled' });
+    await recomputeArticleIngestion(articleId);
+  }
 
   // After the commit: the hold read must not be able to roll back the edit's image linking.
   const deletable =
@@ -2511,8 +2556,10 @@ export async function recomputeArticleIngestionInTx(
       content: true,
       coverId: true,
       moderatorNsfwLevel: true,
+      metadata: true,
     },
   });
+  const hold = readContentLinkHold(current.metadata);
 
   const coverIngestion = current.coverId
     ? (
@@ -2535,10 +2582,12 @@ export async function recomputeArticleIngestionInTx(
     (s) => s === ImageIngestionStatus.Error || s === ImageIngestionStatus.NotFound
   ).length;
 
-  const imageBlocked = blockedImages > 0;
+  // A held content url counts as an image: refused as blocked, deferred as not yet scanned.
+  const imageBlocked = blockedImages > 0 || !!hold?.refused.length;
   const imageError = errorImages > 0;
   const imageDone =
-    totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
+    !hold?.deferred.length &&
+    (totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages);
 
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
