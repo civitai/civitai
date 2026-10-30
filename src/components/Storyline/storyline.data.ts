@@ -1,7 +1,8 @@
 import type { StorylineSubmitOutcome } from '~/components/Storyline/continue/StorylineContinueForm';
 import type { StorylineSpaceSettings } from '~/components/Storyline/manage/StorylineSettingsForm';
 import type { StorylineQueueRow } from '~/components/Storyline/queue/StorylineQueueList';
-import { useMemo } from 'react';
+import { useDebouncedValue } from '@mantine/hooks';
+import { useMemo, useState } from 'react';
 import type { StorylineClosedReason } from '~/components/Storyline/storyline-ui';
 import {
   STORYLINE_CONTINUE_POST_LIMIT,
@@ -266,7 +267,19 @@ export function useStorylineChapterLevels(storylineId: number, { enabled }: { en
   return query.data ?? null;
 }
 
-/** The viewer's newest posts that are not chapters yet, for a chapter picker. */
+/** Search and paging for a chapter picker's posts. */
+export type StorylinePostPaging = {
+  search: string;
+  onSearchChange: (search: string) => void;
+  hasMore: boolean;
+  loadMore: () => void;
+  loadingMore: boolean;
+};
+
+/**
+ * The viewer's posts that are not chapters yet, newest first, for a chapter picker: a page at a time,
+ * narrowed by a title search.
+ */
 export function useOwnStorylinePosts({
   enabled,
   excludePostId,
@@ -282,6 +295,8 @@ export function useOwnStorylinePosts({
 }) {
   const viewer = useCurrentUser();
   const currentUser = author ?? viewer;
+  const [search, setSearch] = useState('');
+  const [query] = useDebouncedValue(search.trim(), 300);
   // Every level: a post above the storyline's ceiling has to be listed to be refused out loud.
   // Newest, all time: the default sort lists only posts that already have reactions, which leaves
   // out the post just made to continue the story.
@@ -289,6 +304,9 @@ export function useOwnStorylinePosts({
     data: postPages,
     isLoading: postsLoading,
     isError: postsError,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
   } = trpc.post.getInfinite.useInfiniteQuery(
     {
       username: currentUser?.username,
@@ -296,19 +314,20 @@ export function useOwnStorylinePosts({
       limit: STORYLINE_CONTINUE_POST_LIMIT,
       sort: PostSort.Newest,
       period: MetricTimeframe.AllTime,
+      query: query || undefined,
     },
     { enabled: enabled && !!currentUser?.username, getNextPageParam: (page) => page.nextCursor }
   );
-  const firstPage = postPages?.pages[0];
+  const loaded = useMemo(() => postPages?.pages.flatMap((page) => page.items), [postPages]);
   const ownPosts = useMemo(
     () =>
       currentUser
-        ? storylineContinuePostOptions(firstPage?.items ?? [], {
+        ? storylineContinuePostOptions(loaded ?? [], {
             viewerId: currentUser.id,
             parentPostId: excludePostId ?? 0,
           }).filter((post) => !publishedOnly || isPublished(post))
         : [],
-    [currentUser, firstPage, excludePostId, publishedOnly]
+    [currentUser, loaded, excludePostId, publishedOnly]
   );
   // Which of them are already chapters; the author is told whatever the post's level.
   const ownPostIds = useMemo(() => ownPosts.map((post) => post.id), [ownPosts]);
@@ -326,7 +345,13 @@ export function useOwnStorylinePosts({
     alreadyChapters,
     postsLoading: postsLoading || (ownPostIds.length > 0 && ownChaptersLoading),
     // A failed refetch keeps the posts already shown.
-    postsError: postsError && !firstPage,
-    morePosts: !!firstPage?.nextCursor,
+    postsError: postsError && !loaded,
+    paging: {
+      search,
+      onSearchChange: setSearch,
+      hasMore: !!hasNextPage,
+      loadMore: () => void fetchNextPage(),
+      loadingMore: isFetchingNextPage,
+    } satisfies StorylinePostPaging,
   };
 }

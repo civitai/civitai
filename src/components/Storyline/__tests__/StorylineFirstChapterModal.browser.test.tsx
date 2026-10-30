@@ -18,6 +18,10 @@ const DAY = 86_400_000;
 
 const mocks = vi.hoisted(() => ({
   items: [] as Record<string, unknown>[],
+  olderItems: null as Record<string, unknown>[] | null,
+  hasNextPage: false,
+  fetchNextPage: vi.fn(),
+  queries: [] as (string | undefined)[],
   ownerMaxNsfwLevel: 0,
   chapters: {} as Record<number, unknown>,
   mutate: vi.fn(),
@@ -48,11 +52,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           }),
         },
         'post.getInfinite': {
-          useInfiniteQuery: () => ({
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-            isLoading: false,
-            isError: false,
-          }),
+          useInfiniteQuery: (input: { query?: string }) => {
+            mocks.queries.push(input.query);
+            const pages = [{ items: mocks.items, nextCursor: undefined }];
+            if (mocks.olderItems) pages.push({ items: mocks.olderItems, nextCursor: undefined });
+            return {
+              data: { pages },
+              isLoading: false,
+              isError: false,
+              hasNextPage: mocks.hasNextPage,
+              fetchNextPage: mocks.fetchNextPage,
+              isFetchingNextPage: false,
+            };
+          },
         },
         'storyline.getForPosts': {
           useQuery: () => ({ data: mocks.chapters, isLoading: false }),
@@ -98,6 +110,10 @@ const submit = () => page.getByRole('button', { name: 'Make it chapter 1' });
 
 beforeEach(() => {
   mocks.items = [];
+  mocks.olderItems = null;
+  mocks.hasNextPage = false;
+  mocks.fetchNextPage.mockReset();
+  mocks.queries = [];
   mocks.ownerMaxNsfwLevel = NsfwLevel.PG13;
   mocks.chapters = {};
   mocks.error = null;
@@ -169,6 +185,39 @@ describe('StorylineFirstChapterModal', () => {
     expect(page.getByText(/Blocked/).elements()).toHaveLength(0);
     expect(page.getByText(/raises the maximum/).elements()).toHaveLength(0);
     await expect.element(submit()).toBeDisabled();
+  });
+
+  // Only the newest 50 were offered, so an older post could never be picked.
+  test('shows older posts a page at a time, and lists them once loaded', async () => {
+    mocks.items = [postItem(10)];
+    mocks.hasNextPage = true;
+    const { rerender } = await renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await page.getByRole('button', { name: 'Show older posts' }).click();
+    expect(mocks.fetchNextPage).toHaveBeenCalledTimes(1);
+
+    mocks.olderItems = [postItem(9)];
+    mocks.hasNextPage = false;
+    rerender(<StorylineFirstChapterModal storylineId={3} />);
+    await expect.element(tile(9)).toBeVisible();
+    expect(page.getByRole('button', { name: 'Show older posts' }).elements()).toHaveLength(0);
+  });
+
+  test('searches your posts by title', async () => {
+    mocks.items = [postItem(10)];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await page.getByRole('textbox', { name: 'Search your posts by title' }).fill('  Cat ');
+    await expect.poll(() => mocks.queries.at(-1)).toBe('Cat');
+  });
+
+  test('says when no title matches the search', async () => {
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await page.getByRole('textbox', { name: 'Search your posts by title' }).fill('Zebra');
+    await expect
+      .element(page.getByText('None of your posts has a title starting with “Zebra”.'))
+      .toBeVisible();
   });
 
   test('an unrated post cannot be picked yet', async () => {
