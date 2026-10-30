@@ -3561,6 +3561,7 @@ export const upsertModel = async (
   if (!id || templateId) {
     if (!isModerator && data.availability === Availability.Private)
       throw throwBadRequestError('Private models are created from the private model flow.');
+    assertAllowedContentFlags({ nsfw: false, minor: false, poi: false, sfwOnly: false }, data);
 
     const result = await dbWrite.$transaction(
       async (tx) => {
@@ -6370,6 +6371,7 @@ export const privateModelFromTraining = async ({
           storedLockedProperties: locked.lockedProperties,
           isModerator: user.isModerator,
         });
+        assertAllowedContentFlags(locked, { ...data, sfwOnly: true });
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
