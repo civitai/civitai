@@ -928,7 +928,12 @@ export function AppAssistantWorkspace({
       })
   );
   useEffect(() => {
-    if (active && runningWithTools) toolsWaiters.current.get(active.app)?.(true);
+    if (!active) return;
+    for (const [app, settle] of [...toolsWaiters.current]) {
+      // Another app opened, or this one runs with its tools handed to the chat.
+      if (app !== active.app) settle(false);
+      else if (runningWithTools) settle(true);
+    }
   }, [active, runningWithTools, toolsAsked]);
   useEffect(() => () => toolsWaiters.current.forEach((settle) => settle(false)), []);
   // Set up: one fixed message, as the user's, once (the card goes as it is pressed).
@@ -1061,6 +1066,9 @@ export function AppAssistantWorkspace({
     [sandboxClient, startApp]
   );
   const onRemoved = (name: string) => {
+    // A new app deleted while its reply waits for its tools: they will not come.
+    const app = live.current.apps?.find((s) => s.name === name)?.app;
+    if (app) toolsWaiters.current.get(app)?.(false);
     appTools.forget(name);
     if (name === activeName) setActiveName(null);
   };
