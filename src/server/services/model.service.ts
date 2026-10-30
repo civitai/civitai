@@ -3157,7 +3157,9 @@ export async function setModelPoi({
   // The ruling is written on its own connection, so it cannot go inside the locked write below.
   const flagged = await dbWrite.model.findUnique({ where: { id }, select: { poi: true } });
   if (!flagged) throw throwNotFoundError(`No model with id ${id}`);
-  // A guarded lift may not happen, so its ruling waits for the write.
+  // A guarded lift (the queue's revert) may be refused under the lock, so its ruling waits for the
+  // write. Deliberate: the gap only lets a text scan re-flag, which a moderator then sees; stamping
+  // ahead would leave a false ruling on a refused revert.
   const stampedAhead = !poi && flagged.poi && !fromAppeal && !onlyIf;
   if (stampedAhead) await stampLift();
 

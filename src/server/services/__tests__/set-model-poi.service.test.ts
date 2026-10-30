@@ -319,12 +319,22 @@ describe('setModelPoi — onlyIf', () => {
     expect(written()).toMatchObject({ poi: true, sfwOnly: true });
   });
 
-  // Stamping ahead would record a moderator's lift that the lock then refuses.
-  it('a refused lift records no ruling', async () => {
+  // Decided: a guarded lift records its ruling after the write, not before. Before it would leave a
+  // false "moderator lifted" ruling on a revert the lock refused. Don't move it back ahead.
+  it('a refused revert records no ruling', async () => {
     mockBefore({ poi: true });
     await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, onlyIf: () => false });
     expect(mockStampRuling).not.toHaveBeenCalled();
     expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+
+  it('a guarded lift that lands records its ruling after the write', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, onlyIf: () => true });
+    expect(mockStampRuling).toHaveBeenCalledTimes(1);
+    expect(mockStampRuling.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
   });
 });
 
