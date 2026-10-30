@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
 import {
   contentKeptError,
   deleteUnlessHeld,
@@ -1618,7 +1619,8 @@ export const deleteVersionById = async ({
     const reviews = Prisma.sql`SELECT r.id FROM "ResourceReview" r WHERE r."modelVersionId" = ${id}`;
     const outcome = await deleteUnlessHeld(
       tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: reviews }, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: reviews }, true)},
+        ${keepHeldReviewsCte(reviews, true)}
         DELETE FROM "ModelVersion" mv
         USING "Model" m
         WHERE mv.id = ${id}
@@ -3943,6 +3945,10 @@ export const mergeVersions = async ({
       // A held owner's merge is refused, and the throw rolls back the whole merge.
       const outcome = await deleteUnlessHeld(
         tx.$executeRaw`
+          WITH ${keepHeldReviewsCte(
+            reviewsOnVersionsSql(Prisma.sql`SELECT unnest(${sourceVersionIds}::int[])`),
+            true
+          )}
           DELETE FROM "ModelVersion" mv
           USING "Model" m
           WHERE mv.id = ANY(${sourceVersionIds}::int[])

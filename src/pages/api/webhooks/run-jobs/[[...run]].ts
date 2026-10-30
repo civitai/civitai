@@ -64,6 +64,7 @@ import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
+import { purgeReleasedHeldCopiesJob } from '~/server/jobs/purge-released-held-copies';
 import {
   advanceReferralSubs,
   expireReferralTokens,
@@ -203,6 +204,7 @@ export const jobs: Job[] = [
   cleanImageResources,
   deleteOldTrainingData,
   purgeReplacedFilesJob,
+  purgeReleasedHeldCopiesJob,
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,

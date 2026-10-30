@@ -1,4 +1,5 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
 import {
   coverageColumn,
@@ -2465,7 +2466,8 @@ export const permaDeleteModelById = async ({
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`
-        WITH ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT ${id}::int`), true)}
+        WITH ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT ${id}::int`), true)},
+        ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT ${id}::int`), true)}
         DELETE FROM "Model" m
         WHERE m.id = ${id}
           AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
