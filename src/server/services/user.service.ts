@@ -938,6 +938,25 @@ export const toggleFollowUser = async ({
     select: { type: true },
   });
 
+  // The block lives on the reverse pair, so the row read above never shows it.
+  // Only the branches that can establish a follow are gated; unfollowing stays allowed.
+  if (!engagement || engagement.type === 'Hide') {
+    const blocked = await amIBlockedByUser({ userId, targetUserId, confirmOnPrimary: true });
+    if (blocked) throw throwBadRequestError('You cannot follow a user that has blocked you');
+  }
+  // A block committing between that check and our write clears the reverse Follow
+  // before ours exists, so check again once it does: each side writes, then reads.
+  const lostToBlock = async () => {
+    const block = await dbWrite.userEngagement.findFirst({
+      where: { userId: targetUserId, targetUserId: userId, type: UserEngagementType.Block },
+      select: { userId: true },
+    });
+    if (!block) return false;
+    await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Follow });
+    await setUserFollowCached({ userId, targetUserId, following: false });
+    return true;
+  };
+
   // Every write below is scoped by `type`. The row read a moment ago may already
   // be a different type — a block applied from another tab, say — and an
   // unqualified `delete`/`update` on the PK would take that block with it while
@@ -957,8 +976,9 @@ export const toggleFollowUser = async ({
       // second concurrent toggle that won this same `updateMany`. Asserting `false`
       // there writes a WRONG entry that stands for the rest of the day-long TTL,
       // where the refetch merely costs.
-      if (count) await setUserFollowCached({ userId, targetUserId, following: true });
-      else await userFollowsCache.refresh(userId);
+      const followed = count > 0 && !(await lostToBlock());
+      if (followed) await setUserFollowCached({ userId, targetUserId, following: true });
+      else if (!count) await userFollowsCache.refresh(userId);
       // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
       // Without this the target stays hidden from the feed of the user who just
       // followed them, until the hash TTL expires.
@@ -966,7 +986,7 @@ export const toggleFollowUser = async ({
       // Zero rows means the Hide is gone — replaced by a Block, most likely — so
       // no follow was established and saying otherwise would be a lie the caller
       // acts on (reward, notification, tracking event).
-      return count > 0;
+      return followed;
     }
 
     return false;
@@ -999,6 +1019,7 @@ export const toggleFollowUser = async ({
     return followed;
   }
 
+  if (await lostToBlock()) return false;
   await setUserFollowCached({ userId, targetUserId, following: true });
 
   {
