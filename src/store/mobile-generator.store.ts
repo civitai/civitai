@@ -16,8 +16,7 @@ let restored = false;
 
 /**
  * Once per page load, puts back the view the mobile generator was left in. Runs before anything
- * can ask for a view (Create, Remix), so it never overrides one; with nothing saved (a first
- * visit) the form stays open.
+ * can ask for a view (Create, Remix), so it never overrides one.
  */
 export function restoreMobileGeneratorView() {
   if (restored) return;
@@ -26,8 +25,12 @@ export function restoreMobileGeneratorView() {
   try {
     saved = localStorage.getItem(VIEW_KEY);
   } catch {}
-  if (saved && views.includes(saved as GenerationPanelView))
-    useGenerationPanelStore.setState({ view: saved as GenerationPanelView });
+  useGenerationPanelStore.setState({
+    view:
+      saved && views.includes(saved as GenerationPanelView)
+        ? (saved as GenerationPanelView)
+        : 'queue',
+  });
 }
 
 /** Records the mobile generator's view, once the saved one has been put back. */

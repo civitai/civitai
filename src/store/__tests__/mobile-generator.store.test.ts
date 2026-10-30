@@ -12,10 +12,10 @@ const load = async () => {
 describe('mobile generator view', () => {
   beforeEach(() => localStorage.clear());
 
-  it('opens on the form when nothing is saved (a first visit)', async () => {
+  it('starts with the form closed when nothing is saved (a first visit)', async () => {
     const { restoreMobileGeneratorView, view } = await load();
     restoreMobileGeneratorView();
-    expect(view()).toBe('generate');
+    expect(view()).toBe('queue');
   });
 
   it('opens as it was left on the last page load, and only once', async () => {

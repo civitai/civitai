@@ -148,28 +148,32 @@ export function ResourceSelectModalContent() {
                 <div className="flex flex-col gap-2.5 p-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <CatalogTabs tabs={allowedTabs} value={tab} onChange={setTab} />
-                    {tab !== 'featured' && <ResourceSelectSort />}
-                    <ResourceSelectFiltersDropdown />
-                    <GenerationSettingsPopover>
-                      <LegacyActionIcon>
-                        <IconSettings />
-                      </LegacyActionIcon>
-                    </GenerationSettingsPopover>
-                    <TextInput
-                      value={search}
-                      onChange={(e) => setSearch(e.currentTarget.value)}
-                      leftSection={<IconSearch size={16} />}
-                      placeholder="Search models or paste a link"
-                      size="xs"
-                      className="w-full min-w-0 flex-1 sm:w-auto sm:min-w-40"
-                      // Autofocus opens the on-screen keyboard over half the catalog
-                      // before anything has been browsed.
-                      autoFocus={!isMobile}
-                      // React's autoFocus alone loses the race: Mantine's focus trap
-                      // runs a tick after mount and focuses the first focusable node —
-                      // the close button — unless something claims data-autofocus.
-                      data-autofocus={!isMobile ? true : undefined}
-                    />
+                    {/* A row of its own on a phone, so the search gets the width. */}
+                    <div className="flex min-w-0 grow basis-full items-center gap-2 sm:basis-80">
+                      <TextInput
+                        value={search}
+                        onChange={(e) => setSearch(e.currentTarget.value)}
+                        leftSection={<IconSearch size={16} />}
+                        placeholder="Search models or paste a link"
+                        // 16px text on a phone, or iOS zooms the page when it takes focus.
+                        size={isMobile ? 'md' : 'xs'}
+                        className="min-w-0 flex-1"
+                        // Autofocus opens the on-screen keyboard over half the catalog
+                        // before anything has been browsed.
+                        autoFocus={!isMobile}
+                        // React's autoFocus alone loses the race: Mantine's focus trap
+                        // runs a tick after mount and focuses the first focusable node —
+                        // the close button — unless something claims data-autofocus.
+                        data-autofocus={!isMobile ? true : undefined}
+                      />
+                      {tab !== 'featured' && <ResourceSelectSort />}
+                      <ResourceSelectFiltersDropdown />
+                      <GenerationSettingsPopover>
+                        <LegacyActionIcon>
+                          <IconSettings />
+                        </LegacyActionIcon>
+                      </GenerationSettingsPopover>
+                    </div>
                   </div>
 
                   <CategoryTagFilters />

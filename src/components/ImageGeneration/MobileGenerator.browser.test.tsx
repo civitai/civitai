@@ -62,12 +62,16 @@ function renderGenerator() {
   );
 }
 
+const COACH_KEY = 'mobile-generator-sheet-hint';
+
 describe('MobileGenerator', () => {
   beforeEach(async () => {
     // A sheet left open by the last test goes back over its entry once unmounted; let it land.
     await historyLayersSettled();
     resetHistoryLayers();
     localStorage.clear();
+    // The first-run swipe coach covers the screen; its own tests clear this.
+    localStorage.setItem(COACH_KEY, JSON.stringify('done'));
     useGenerationPanelStore.setState({ view: 'generate' });
     useMobileGeneratorStore.setState({ submittedAt: 0 });
     queueLimit = 4;
@@ -175,16 +179,53 @@ describe('MobileGenerator', () => {
     expect(view()).toBe('queue');
   });
 
-  test('the open-the-form hint shows once the sheet is closed, until it is opened from the bar', async () => {
+  test('the first closed sheet is held behind the swipe coach until a swipe up opens the form', async () => {
+    localStorage.removeItem(COACH_KEY);
     useGenerationPanelStore.setState({ view: 'queue' });
     renderGenerator();
-    const hint = page.getByText('Pull up or tap to open the form');
-    await expect.element(hint).toBeInTheDocument();
+    const text = page.getByText('Swipe up to open the form');
+    await expect.element(text).toBeVisible();
+    const coach = text.element().parentElement as HTMLElement;
+
+    // It covers the results, so a tap there lands on the coach, and a tap opens nothing.
+    const results = page.getByTestId('results').element().getBoundingClientRect();
+    const hit = document.elementFromPoint(results.x + 20, results.y + 20);
+    expect(coach.contains(hit)).toBe(true);
+    const pointer = (type: string, clientY: number) =>
+      coach.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 9, clientY }));
+    pointer('pointerdown', 300);
+    pointer('pointerup', 300);
+    expect(view()).toBe('queue');
+
+    pointer('pointerdown', 300);
+    pointer('pointermove', 260);
+    pointer('pointerup', 240);
+    expect(view()).toBe('generate');
+
+    await page.getByRole('button', { name: 'Close the form' }).click();
+    await expect.element(page.getByRole('button', { name: 'Open the form' })).toBeInTheDocument();
+    await expect.element(text).not.toBeInTheDocument();
+  });
+
+  test('a form first opened another way (Remix) leaves no coach behind when it closes', async () => {
+    localStorage.removeItem(COACH_KEY);
+    renderGenerator();
+    await page.getByRole('button', { name: 'Close the form' }).click();
+    await expect.element(page.getByRole('button', { name: 'Open the form' })).toBeInTheDocument();
+    await expect.element(page.getByText('Swipe up to open the form')).not.toBeInTheDocument();
+  });
+
+  test('tapping the bar also completes the swipe coach', async () => {
+    localStorage.removeItem(COACH_KEY);
+    useGenerationPanelStore.setState({ view: 'queue' });
+    renderGenerator();
+    const text = page.getByText('Swipe up to open the form');
+    await expect.element(text).toBeVisible();
 
     await page.getByRole('button', { name: 'Open the form' }).click();
     await page.getByRole('button', { name: 'Close the form' }).click();
     await expect.element(page.getByRole('button', { name: 'Open the form' })).toBeInTheDocument();
-    await expect.element(hint).not.toBeInTheDocument();
+    await expect.element(text).not.toBeInTheDocument();
   });
 
   test('the closed sheet keeps the form mounted but out of reach', async () => {

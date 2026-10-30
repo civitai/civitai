@@ -136,9 +136,12 @@ export const showsPricingFilter = (selectSource: ResourceSelectSource): boolean 
  * one that satisfied the base-model clause, nor the first. Compatibility outranks price: a free
  * version this ecosystem cannot use is not a resource the viewer can generate with.
  *
- * With no pricing filter this returns 0 — the short-circuit lives HERE rather than at the call site so
- * a test can reach it. Re-selecting on compatibility alone would change which version an untouched
- * picker opens on, which is the one thing this must never do.
+ * With no pricing filter this returns the `preferred` version, else 0 — the short-circuit lives HERE
+ * rather than at the call site so a test can reach it. Re-selecting on compatibility alone would
+ * change which version an untouched picker opens on, which is the one thing this must never do.
+ *
+ * `preferred` is the version the caller knows is meant (the featured one); it wins whenever it is
+ * compatible and the pricing filter allows it.
  */
 export function pickInitialVersionIndex<T>(
   versions: T[],
@@ -146,15 +149,19 @@ export function pickInitialVersionIndex<T>(
     filter,
     satisfiesFilter,
     isCompatible,
+    preferred,
   }: {
     filter: ModelPricingFilter;
     satisfiesFilter: (version: T) => boolean;
     isCompatible: (version: T) => boolean;
+    preferred?: (version: T) => boolean;
   }
 ): number {
-  if (!hasPricingFilter(filter)) return 0;
-  const preferred = versions.findIndex((v) => isCompatible(v) && satisfiesFilter(v));
-  if (preferred >= 0) return preferred;
+  const meant = preferred ? versions.findIndex((v) => preferred(v) && isCompatible(v)) : -1;
+  if (!hasPricingFilter(filter)) return Math.max(meant, 0);
+  if (meant >= 0 && satisfiesFilter(versions[meant])) return meant;
+  const both = versions.findIndex((v) => isCompatible(v) && satisfiesFilter(v));
+  if (both >= 0) return both;
   const compatible = versions.findIndex(isCompatible);
   return compatible >= 0 ? compatible : 0;
 }

@@ -83,11 +83,14 @@ export function ResourceSelectCard({
   selectSource,
   coverageNext,
   compact,
+  featuredVersionId,
 }: {
   data: TransformedModel;
   height?: number;
   /** Row layout instead of the image card, for narrow viewports. */
   compact?: boolean;
+  /** On the Featured tab, the version that was featured: the card opens on it. */
+  featuredVersionId?: number;
   selectSource?: ResourceSelectSource;
   coverageNext?: boolean;
 }) {
@@ -123,8 +126,9 @@ export function ResourceSelectCard({
         isCompatible: (v) =>
           role !== 'resource' ||
           getResourceCompatibility(v.baseModel, data.type, { resources }) !== null,
+        preferred: featuredVersionId ? (v) => v.id === featuredVersionId : undefined,
       }),
-    [versions, filters, role, data.type, resources]
+    [versions, filters, role, data.type, resources, featuredVersionId]
   );
   const filterKey = pricingFilterKey(filters);
   const [override, setOverride] = useState<{ key: string; index: number } | null>(null);

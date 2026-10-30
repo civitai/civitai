@@ -76,6 +76,40 @@ describe('pickInitialVersionIndex', () => {
   it('an empty version list yields 0, not -1', () => {
     expect(pick([], { hidePaid: true }, ALL)).toBe(0);
   });
+
+  describe('with a preferred version (the featured one)', () => {
+    const pickPreferred = (versions: V[], filter: ModelPricingFilter, name: string) =>
+      pickInitialVersionIndex(versions, {
+        filter,
+        satisfiesFilter: (x) => versionSatisfiesPricingFilter(x.pricing, filter),
+        isCompatible: () => true,
+        preferred: (x) => x.name === name,
+      });
+    const versions = [v('latest', 'SDXL', free), v('featured', 'Illustrious', free)];
+
+    it('opens on it rather than the latest version', () => {
+      expect(pickPreferred(versions, {}, 'featured')).toBe(1);
+    });
+
+    it('yields to a pricing filter it does not satisfy', () => {
+      const priced = [v('latest', 'SDXL', free), v('featured', 'Illustrious', paid)];
+      expect(pickPreferred(priced, { hidePaid: true }, 'featured')).toBe(0);
+    });
+
+    it('is passed over when this ecosystem cannot use it', () => {
+      const index = pickInitialVersionIndex(versions, {
+        filter: {},
+        satisfiesFilter: () => true,
+        isCompatible: (x) => x.baseModel === 'SDXL',
+        preferred: (x) => x.name === 'featured',
+      });
+      expect(index).toBe(0);
+    });
+
+    it('falls back as usual when it is not among the versions', () => {
+      expect(pickPreferred(versions, {}, 'gone')).toBe(0);
+    });
+  });
 });
 
 describe('resolveSelectedIndex', () => {

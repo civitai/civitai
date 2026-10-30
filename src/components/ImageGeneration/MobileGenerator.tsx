@@ -3,6 +3,8 @@ import { useLocalStorage } from '@mantine/hooks';
 import {
   IconChevronDown,
   IconChevronUp,
+  IconChevronsUp,
+  IconHandFinger,
   IconLayoutGrid,
   IconLayoutList,
 } from '@tabler/icons-react';
@@ -45,7 +47,8 @@ const isTextEntry = (el: EventTarget | null) => el instanceof Element && el.matc
 
 const OPEN_DRAG = 24;
 const CLOSE_DRAG = 60;
-const HINT_KEY = 'mobile-generator-sheet-hint';
+// Named for the hint the coach replaced; renaming it would show the coach again to everyone.
+const COACH_KEY = 'mobile-generator-sheet-hint';
 const TITLE_ROW = 'flex min-h-12 items-center gap-2 px-3';
 
 type Props = { form: ReactNode; onClose: () => void; closeLabel: string };
@@ -164,20 +167,18 @@ function FormSheet({
   // While a field takes typing, the footer steps aside so the keyboard leaves the field room.
   const [typing, setTyping] = useState(false);
 
-  // First run: pending → shown when the sheet first closes (the chevron nudges, a hint shows); done
-  // once it is opened from the bar.
-  const [hint, setHint] = useLocalStorage<'pending' | 'shown' | 'done'>({
-    key: HINT_KEY,
+  // The swipe coach: shown while the sheet is closed, until the form has been open once by any
+  // route (Remix opens it too, and a coach after that first submit would cover the results).
+  const [coach, setCoach] = useLocalStorage<'pending' | 'shown' | 'done'>({
+    key: COACH_KEY,
     defaultValue: 'pending',
     getInitialValueInEffect: false,
   });
   useEffect(() => {
-    if (!expanded && hint === 'pending') setHint('shown');
-  }, [expanded, hint, setHint]);
-  const openFromBar = () => {
-    if (hint !== 'done') setHint('done');
-    onOpen();
-  };
+    if (expanded) {
+      if (coach !== 'done') setCoach('done');
+    } else if (coach === 'pending') setCoach('shown');
+  }, [expanded, coach, setCoach]);
 
   const setDragOffset = (dy: number) =>
     sheetRef.current?.style.setProperty('--sheet-drag', `${dy}px`);
@@ -215,7 +216,7 @@ function FormSheet({
     setDragOffset(0);
     // A tap opens through the bar's own click.
     if (expanded && current.dy > CLOSE_DRAG) onClose();
-    else if (!expanded && current.dy < -OPEN_DRAG) openFromBar();
+    else if (!expanded && current.dy < -OPEN_DRAG) onOpen();
   };
   const onPointerCancel = () => {
     drag.current = undefined;
@@ -232,10 +233,23 @@ function FormSheet({
       data-typing={typing || undefined}
       aria-label="Generation form"
     >
-      {!expanded && hint === 'shown' && (
-        <p className={classes.hint} role="status">
-          Pull up or tap to open the form
-        </p>
+      {!expanded && coach === 'shown' && (
+        // A tap on the bar also opens the form, for anyone who can't swipe.
+        <div
+          className={classes.coach}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerCancel}
+        >
+          <div className={classes.coachCue} aria-hidden>
+            <IconChevronsUp size={28} className={classes.coachArrow} />
+            <IconHandFinger size={44} className={classes.coachFinger} />
+          </div>
+          <p className={classes.coachText} role="status">
+            Swipe up to open the form
+          </p>
+        </div>
       )}
       <div
         className={classes.head}
@@ -266,13 +280,13 @@ function FormSheet({
             data-sheet-bar
             className={clsx(TITLE_ROW, 'w-full text-left')}
             aria-label="Open the form"
-            onClick={openFromBar}
+            onClick={onOpen}
           >
             <SheetTitle />
             <span
               className={clsx(
                 'flex size-[34px] shrink-0 items-center justify-center',
-                hint === 'shown' && classes.nudge
+                coach === 'shown' && classes.nudge
               )}
             >
               <IconChevronUp size={20} />

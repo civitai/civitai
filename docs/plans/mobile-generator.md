@@ -224,9 +224,10 @@ finds nothing outside test files, and the only layout decision is `useGeneratorL
 - **Make the pull-up obvious.** Pulling the form up from the bottom is a new interaction, so the
   closed bar has to invite it:
   - the whole closed bar is a tap target;
-  - on first visit the sheet opens already expanded, whatever is in the queue;
-  - the first time the sheet is closed, the up chevron nudges once and a one-line hint ("Pull up or
-    tap to open the form") shows above the bar; dismissed for good after the first open.
+  - on first visit the sheet starts closed, and a swipe coach holds the screen: a scrim over
+    everything above the bar, a looping finger swiping up, and "Swipe up to open the form". Only
+    opening the form ends it, by a swipe up anywhere on it or a tap on the bar (for anyone who
+    can't swipe); it never shows again.
 - **No tour on phones.** The generator tour does not start in the mobile container, and its Help
   entry is not shown there. Desktop keeps it.
 - **On a phone the panel is always full screen and always the phone layout**, whatever the sidebar
@@ -268,7 +269,7 @@ Built (`src/components/ImageGeneration/MobileGenerator.tsx`):
   (picker, sort and filter sheets) while the mobile generator is showing, and to every
   `dialogStore` dialog likewise. Next sees those pops through `RoutedDialogProvider`'s `beforePopState`,
   which returns false for them.
-- The open sheet fills the screen below the status bar (the first-run hint teaches the pull-up, so
+- The open sheet fills the screen below the status bar (the first-run swipe coach teaches the pull-up, so
   it no longer leaves a strip of header showing); the chevron, a drag down and Back close it. The
   generator pays its own top safe-area inset, being fixed.
 - `useMobileGeneratorStore.submittedAt` is what closes the sheet on Generate.
@@ -277,8 +278,8 @@ Built (`src/components/ImageGeneration/MobileGenerator.tsx`):
   start, and moderator tools
   and Maximize are not shown. Pull-to-refresh is off in the form, so a downward drag there scrolls
   instead of reloading the page.
-- The sheet opens on the first visit in a page load, whatever is in the queue (the panel's default
-  `view` is `generate`), and on every entry that brings input, such as Remix. A plain reopen, such as
+- The sheet starts closed on a first visit (nothing saved), under the swipe coach, and opens on
+  every entry that brings input, such as Remix. A plain reopen, such as
   Create, keeps the sheet as it was left.
 - Not yet checked: generating while signed in, the lightbox and image editors over the sheet, the
   Prompt Enhance panel inside the sheet (it renders in the form, so it should sit there unchanged),
@@ -337,9 +338,16 @@ Built:
   `ResourceSelectModal` consumer:
   - slides its toolbar away while the results scroll down (on every layout the toolbar is a sticky
     header inside the results, so its return never moves them); it stays while it has focus;
+  - groups the toolbar as tabs, then search, sort, filters and the gear, the search and those three
+    on a row of their own below the tabs; sort and filters are icon-only (the sort's label names the
+    current sort), and the search text is 16px so iOS doesn't zoom;
   - lists results as one column of fixed-height rows (`ResourceSelectCard` `compact`): thumbnail,
     name over two lines, like, ⋮ (`ModelCardMenu`: hide, block, report), type, base model, paid and
     private marks, version and Select.
+- The picker's Featured tab opens each card on the version that was featured (this ecosystem's when a
+  model is featured in several; `getFeaturedModels` returns `modelVersionId`), and keeps the
+  ecosystem's base-model filter for every type but checkpoints (`buildFilter` and
+  `ResourceHitList`); featured checkpoints span every ecosystem.
 - On a coarse pointer a picker card's image no longer links to the model page; the name does. The
   picker's cards no longer show the auction bid button. `useHideOnScroll` (`src/hooks/`) is the one hide-on-scroll rule: the
   generator header, the picker toolbar, the site's `SubNav` and the comics reader header all use
@@ -375,7 +383,7 @@ Built:
   separate transactions icon shows only for a run with no cost; the cost and workflow badges wrap
   together.
 - The mobile generator reopens as it was left (form open or closed, Batches or Grid), restored once
-  per page load from local storage; a first visit opens the form.
+  per page load from local storage; a first visit starts closed, under the swipe coach.
 - The VAE and upscaler pickers stay the resource search, which opens full screen on a phone and
   closes on Back.
 - Known gap: "balance after" in the cost sheet leaves out a download-boost fee accepted at submit;

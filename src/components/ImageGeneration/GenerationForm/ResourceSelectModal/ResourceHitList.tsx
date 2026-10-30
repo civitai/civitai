@@ -133,9 +133,10 @@ export function ResourceHitList({ query }: { query: string }) {
     (model: TransformedModel) => {
       // Mirror the server query's base-model relaxation so we don't strip every
       // version client-side (e.g. linking a Flux VAE into a Boogu checkpoint).
-      // The featured tab is a cross-ecosystem podium (the server returns winners
-      // from any baseModel), so don't re-apply the ecosystem's base-model filter.
-      const skipBaseModel = skipBaseModelForOwnTabs(tab, selectSource) || tab === 'featured';
+      // Featured checkpoints span every ecosystem, as the server returns them.
+      const skipBaseModel =
+        skipBaseModelForOwnTabs(tab, selectSource) ||
+        (tab === 'featured' && model.type === 'Checkpoint');
       const modelBaseModels = resources
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);
@@ -182,6 +183,21 @@ export function ResourceHitList({ query }: { query: string }) {
     () => new Set(resources.flatMap((r) => r.baseModels)),
     [resources]
   );
+  // A model can be featured in several ecosystems: the first entry in this ecosystem, else the
+  // first. The list comes best first (position, or newest version in the collection fallback).
+  const featuredVersionIds = useMemo(() => {
+    const ids = new Map<number, number>();
+    if (tab !== 'featured') return ids;
+    const inEcosystem = new Set<number>();
+    for (const fm of featured ?? []) {
+      if (!fm.modelVersionId || inEcosystem.has(fm.modelId)) continue;
+      const matches = resourceBaseModels.has(fm.baseModel);
+      if (matches || !ids.has(fm.modelId)) ids.set(fm.modelId, fm.modelVersionId);
+      if (matches) inEcosystem.add(fm.modelId);
+    }
+    return ids;
+  }, [tab, featured, resourceBaseModels]);
+
   const topItems = useMemo(() => {
     if (tab !== 'featured' || !featured?.length) return [];
 
@@ -286,9 +302,10 @@ export function ResourceHitList({ query }: { query: string }) {
         selectSource={selectSource}
         coverageNext={coverageNext}
         compact={compact}
+        featuredVersionId={featuredVersionIds.get(data.id)}
       />
     ),
-    [selectSource, coverageNext, compact]
+    [selectSource, coverageNext, compact, featuredVersionIds]
   );
 
   if (loading && !filtered.length)
@@ -373,16 +390,28 @@ export function ResourceHitList({ query }: { query: string }) {
           )}
         >
           <div className={cardClasses.winnerFirst}>
-            <ResourceSelectCard data={topItems[0]} selectSource={selectSource} />
+            <ResourceSelectCard
+              data={topItems[0]}
+              selectSource={selectSource}
+              featuredVersionId={featuredVersionIds.get(topItems[0].id)}
+            />
           </div>
           {topItems.length > 1 && (
             <div className={cardClasses.winnerSecond}>
-              <ResourceSelectCard data={topItems[1]} selectSource={selectSource} />
+              <ResourceSelectCard
+                data={topItems[1]}
+                selectSource={selectSource}
+                featuredVersionId={featuredVersionIds.get(topItems[1].id)}
+              />
             </div>
           )}
           {topItems.length > 2 && (
             <div className={cardClasses.winnerThird}>
-              <ResourceSelectCard data={topItems[2]} selectSource={selectSource} />
+              <ResourceSelectCard
+                data={topItems[2]}
+                selectSource={selectSource}
+                featuredVersionId={featuredVersionIds.get(topItems[2].id)}
+              />
             </div>
           )}
         </div>

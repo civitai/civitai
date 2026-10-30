@@ -129,18 +129,74 @@
   flex-direction: column;
 }
 
-.hint {
+.coach {
   position: absolute;
+  inset-inline: 0;
   bottom: 100%;
-  left: 50%;
-  translate: -50% -8px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  white-space: nowrap;
-  font-size: 13px;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-bottom: 24px;
   color: var(--mantine-color-white);
-  background: var(--mantine-color-blue-filled);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.3);
+  background: rgb(0 0 0 / 0.7);
+  touch-action: none;
+}
+
+.coachCue {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 120px;
+}
+
+.coachArrow {
+  animation: coach-arrow 1.6s ease-in-out infinite;
+}
+
+.coachFinger {
+  animation: coach-swipe 1.6s ease-in-out infinite;
+}
+
+.coachText {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+@keyframes coach-swipe {
+  0% {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+  15% {
+    transform: translateY(40px);
+    opacity: 1;
+  }
+  70% {
+    transform: translateY(-8px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+}
+
+@keyframes coach-arrow {
+  0%,
+  30% {
+    opacity: 0.3;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.3;
+  }
 }
 
 .nudge {
@@ -163,7 +219,9 @@
     transition: none;
   }
 
-  .nudge {
+  .nudge,
+  .coachArrow,
+  .coachFinger {
     animation: none;
   }
 }
