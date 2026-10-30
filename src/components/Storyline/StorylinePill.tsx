@@ -1,5 +1,5 @@
 import { Badge, Tooltip, UnstyledButton } from '@mantine/core';
-import { IconChevronDown, IconRoute } from '@tabler/icons-react';
+import { IconArrowRight, IconChevronDown, IconRoute } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { forwardRef } from 'react';
 import type { ComponentPropsWithoutRef, MouseEventHandler, ReactElement } from 'react';
@@ -82,7 +82,7 @@ export const StorylineModeChip = forwardRef<
       ref={ref}
       onClick={onToggleMap}
       className={clsx(
-        'inline-flex h-9 max-w-[min(360px,calc(100vw-120px))] items-center gap-1.5 rounded-full bg-[var(--mantine-color-violet-6)] pl-3 pr-2.5 text-[13px] font-bold text-white shadow-[0_4px_14px_rgba(121,80,242,.45)]',
+        'inline-flex h-9 min-w-0 max-w-[min(360px,calc(100vw-120px))] items-center gap-1.5 rounded-full bg-[var(--mantine-color-violet-6)] pl-3 pr-2.5 text-[13px] font-bold text-white shadow-[0_4px_14px_rgba(121,80,242,.45)]',
         className
       )}
       aria-label={`Storyline ${title}, chapter ${depth + 1}. ${mapOpen ? 'Close' : 'Open'} the map`}
@@ -103,25 +103,32 @@ export function StorylineEntryChip({
   title,
   depth,
   onEnter,
+  compact,
 }: {
   title: string;
   depth: number;
   onEnter: () => void;
+  /** A phone header shares its row with five icons; the label would leave the title no room. */
+  compact?: boolean;
 }) {
   return (
     <TitleTooltip title={title}>
       <UnstyledButton
         onClick={onEnter}
-        className="inline-flex h-9 max-w-[min(360px,calc(100vw-120px))] items-center gap-1.5 rounded-full border border-solid border-white/25 bg-[rgba(20,21,23,.62)] pl-2.5 pr-1.5 text-[13px] font-semibold text-white backdrop-blur-md"
+        className="inline-flex h-9 min-w-0 max-w-[min(360px,calc(100vw-120px))] items-center gap-1.5 rounded-full border border-solid border-white/25 bg-[rgba(20,21,23,.62)] pl-2.5 pr-1.5 text-[13px] font-semibold text-white backdrop-blur-md"
         style={{ pointerEvents: 'auto' }}
         aria-label={`Read the storyline ${title} from chapter ${depth + 1}`}
         data-testid="storyline-enter"
       >
         <IconRoute size={15} className="shrink-0 text-[var(--mantine-color-violet-3)]" />
         <ChipLabel title={title} depth={depth} />
-        <span className="ml-1 shrink-0 rounded-full bg-[var(--mantine-color-violet-6)] px-[9px] py-1 text-xs">
-          Read the story
-        </span>
+        {compact ? (
+          <IconArrowRight size={14} className="shrink-0" />
+        ) : (
+          <span className="ml-1 shrink-0 rounded-full bg-[var(--mantine-color-violet-6)] px-[9px] py-1 text-xs">
+            Read the story
+          </span>
+        )}
       </UnstyledButton>
     </TitleTooltip>
   );

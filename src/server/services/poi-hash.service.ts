@@ -19,6 +19,7 @@ import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { asJsonbObjectSql, withoutSystemNsfwLockSql } from '~/server/utils/jsonb-object';
 import { TEXT_SCAN_FLAGS_KEY } from '~/server/services/text-scan/flag-snapshot';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 
 const SYSTEM_USER_ID = constants.system.user.id;
 
@@ -441,6 +442,8 @@ export async function revertPoiHashAutoFlag({
     `;
   await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);
+  // The restore moves sfwOnly and the gallery level after setModelPoi's own cache bust.
+  await bustModelGallerySettings([modelId]);
   return { reverted: 1 };
 }
 

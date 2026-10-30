@@ -1,4 +1,4 @@
-import type { AssistantTool, ToolResult } from './tool';
+import { letStepCallsReachGate, type AssistantTool, type ToolResult } from './tool';
 
 /**
  * Offers the user a Submit for review button. The tool submits nothing: the page sends the app to the
@@ -39,7 +39,7 @@ export function createSubmitTool({
   nextId,
 }: {
   /** Why the app may not be offered for review now; null when it may. */
-  refusal: () => string | null;
+  refusal: () => string | null | Promise<string | null>;
   nextId: () => string;
 }): AssistantTool {
   return {
@@ -48,9 +48,8 @@ export function createSubmitTool({
     activity: 'Getting your app ready to submit…',
     inputSchema: { properties: {} },
     async execute() {
-      // Let the rest of this step's calls reach the gate first, as report_ready does.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      const refused = refusal();
+      await letStepCallsReachGate();
+      const refused = await refusal();
       if (refused) throw new Error(refused);
       const offer: SubmitOffer = {
         awaitsUser: true,

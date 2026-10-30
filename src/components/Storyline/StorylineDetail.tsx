@@ -37,7 +37,8 @@ export function StorylineToolbarChip({
   // A viewport check at sm leaves a band of widths with neither chip.
   const narrowStage = useIsMobile({ breakpoint: 'md' });
   if (narrowStage !== (placement === 'mobile')) return null;
-  if (!storyline.active) return <StorylineEntryPill postId={postId} />;
+  if (!storyline.active)
+    return <StorylineEntryPill postId={postId} compact={placement === 'mobile'} />;
   const { chapterId, depth } = chapterPosition(storyline, imageId);
   const end = storyline.path.chapters[storyline.path.chapters.length - 1];
   return (
@@ -104,7 +105,7 @@ export function StorylineStageOverlay({
   );
 }
 
-function StorylineEntryPill({ postId }: { postId: number | null }) {
+function StorylineEntryPill({ postId, compact }: { postId: number | null; compact: boolean }) {
   const enabled = useStorylinesEnabled();
   const storyline = useStorylineMode();
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -120,6 +121,7 @@ function StorylineEntryPill({ postId }: { postId: number | null }) {
       title={entry.title}
       depth={entry.depth}
       onEnter={() => storyline.enter(entry.chapterId)}
+      compact={compact}
     />
   );
 }

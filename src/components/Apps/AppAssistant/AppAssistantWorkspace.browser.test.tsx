@@ -9,6 +9,8 @@ import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type * as NotificationsMod from '~/utils/notifications';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
+import { fakeSandboxFiles } from '~/components/Apps/AppAssistant/__tests__/fakeSandboxFiles';
+import type * as SandboxAppBuiltMod from '~/components/Apps/AppAssistant/sandboxAppBuilt';
 import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
 import type * as RemoteRunnerMod from '~/components/Apps/AppAssistant/remoteRunner';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -195,6 +197,25 @@ const m = vi.hoisted(() => ({
     m.failed = false;
   },
   send: vi.fn(async (text: string) => m.chatSend(text)),
+  /** Each fresh reply `askAgain` asked for, by the message it answers (no new message is delivered). */
+  reasked: [] as string[],
+  /**
+   * As components-chat's `askAgain()`: the latest message asked again, as an edit (`before-send`, which
+   * the page may queue), its reply replaced by a fresh one and no second copy of the message added.
+   * Nothing while a reply runs, while the chat holds, or with no message.
+   */
+  askAgain: vi.fn(async () => {
+    const text = m.delivered.at(-1);
+    if (text === undefined || !m.canSend()) return false;
+    let queued = false;
+    m.chat?.onBeforeSend?.(text, () => {
+      queued = true;
+      return { text, release: () => undefined, cancel: () => undefined };
+    });
+    if (!queued) m.reasked.push(text);
+    m.failed = false;
+    return true;
+  }),
   /** The latest reply lost its connection and can be asked for again (it has a resume point). */
   failed: false,
   /** The chat already asked for the failed reply again by itself: at most once, as 0.14.0 does. */
@@ -287,6 +308,7 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
           canSend: { get: () => m.canSend() },
           giveBack: { value: m.giveBack },
           retryReply: { value: m.retryReply },
+          askAgain: { value: m.askAgain },
           updateComplete: { get: () => m.update ?? Promise.resolve(true) },
         });
         props.chatRef.current = m.element;
@@ -320,6 +342,15 @@ const r = vi.hoisted(() => ({
   /** `fetchPreviewFrame`: unanswered unless a test says otherwise, so no pane appears by itself. */
   probe: vi.fn<(blockId: string) => Promise<unknown>>(),
   restart: vi.fn<(app: string, options: unknown) => Promise<unknown>>(),
+  /** `fetchSandboxAppBuilt`: whether the app's sandbox has its project's manifest (built). */
+  built:
+    vi.fn<
+      (
+        app: string,
+        mcpUrl: string,
+        getToken: (opts?: { refresh?: boolean }) => Promise<string>
+      ) => Promise<boolean | null>
+    >(),
   pane: undefined as undefined | { onRestart: () => void; pending: boolean; error: string | null },
 }));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
@@ -338,6 +369,13 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
 vi.mock('~/components/Apps/AppAssistant/previewFrame', () => ({
   fetchPreviewFrame: (blockId: string) => r.probe(blockId),
 }));
+vi.mock('~/components/Apps/AppAssistant/sandboxAppBuilt', () => ({
+  fetchSandboxAppBuilt: (
+    mcpUrl: string,
+    getToken: (opts?: { refresh?: boolean }) => Promise<string>,
+    app: string
+  ) => r.built(app, mcpUrl, getToken),
+}));
 vi.mock('~/components/Apps/AppAssistant/remoteRunner', async (importOriginal) => ({
   ...(await importOriginal<typeof RemoteRunnerMod>()),
   restartRunnerPreview: (app: string, options: unknown) => r.restart(app, options),
@@ -345,6 +383,8 @@ vi.mock('~/components/Apps/AppAssistant/remoteRunner', async (importOriginal) =>
 beforeEach(() => {
   r.probe.mockReset().mockImplementation(() => new Promise(() => undefined));
   r.restart.mockReset();
+  // Built unless a test says otherwise: an app opened on a visit has had a preview.
+  r.built.mockReset().mockResolvedValue(true);
   r.pane = undefined;
 });
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
@@ -586,6 +626,8 @@ beforeEach(() => {
   m.remove.mockReset();
   m.newChat.mockReset();
   m.send.mockClear();
+  m.askAgain.mockClear();
+  m.reasked = [];
   m.box = '';
   m.listing = false;
   m.opening = false;
@@ -674,9 +716,9 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
   test('creates an app named from the request, opens it and holds the chat until it runs', async () => {
     m.list = [];
     const screen = await mount();
-    const result = await m.chat!.tools.create_app.execute({ name: 'Tip Calculator' }, ctx);
-    expect(m.open).toHaveBeenCalledWith('tip-calculator');
-    expect(result).toMatchObject({ app: 'tip-calculator', state: 'starting' });
+    // It answers once the app runs and its tools are the chat's (`reopenTools`), below.
+    const made = Promise.resolve(m.chat!.tools.create_app.execute({ name: 'Tip Calculator' }, ctx));
+    await vi.waitFor(() => expect(m.open).toHaveBeenCalledWith('tip-calculator'));
     await expect.element(page.getByText('tip-calculator', { exact: true })).toBeVisible();
     await expect.element(page.getByText('Starting…')).toBeVisible();
     expect(m.chat!.holdReason).toBe('Your app is starting…');
@@ -689,6 +731,11 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     expect(m.chat!.mcpServers).toEqual([
       expect.objectContaining({ id: 'sandbox', label: 'your app' }),
     ]);
+    expect(await made).toMatchObject({
+      app: 'tip-calculator',
+      state: 'starting',
+      reopenTools: true,
+    });
   });
 
   test('after a limit, create_app is refused for the rest of the reply without asking the service again', async () => {
@@ -717,8 +764,9 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
   test('an app create_app made and the page then deleted is not reused by name', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { app: 'game', state: 'suspended' })];
     await mount();
-    await m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
-    expect(m.open).toHaveBeenLastCalledWith('game-2');
+    // Not awaited: it answers only once the app runs (`toolsReady`).
+    void m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
+    await vi.waitFor(() => expect(m.open).toHaveBeenLastCalledWith('game-2'));
     const made = m.list.find((s) => s.app === 'game-2')!;
     await switcher().click();
     await page.getByRole('button', { name: 'Actions for game-2' }).click();
@@ -730,8 +778,8 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     m.list = [...m.list, made];
     await openFromSwitcher('game-2');
     m.open.mockClear();
-    await m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
-    expect(m.open).toHaveBeenCalledWith('game-3');
+    void m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
+    await vi.waitFor(() => expect(m.open).toHaveBeenCalledWith('game-3'));
   });
 
   test('a refused set_checklist still counts against the per-reply tool-call limit', async () => {
@@ -745,8 +793,8 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
   test('numbers a name the user already has', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { app: 'tip-calculator', state: 'suspended' })];
     await mount();
-    await m.chat!.tools.create_app.execute({ name: 'tip calculator' }, ctx);
-    expect(m.open).toHaveBeenCalledWith('tip-calculator-2');
+    void m.chat!.tools.create_app.execute({ name: 'tip calculator' }, ctx);
+    await vi.waitFor(() => expect(m.open).toHaveBeenCalledWith('tip-calculator-2'));
   });
 
   test('at the app limit, tells the assistant to have the user delete one, and shows why', async () => {
@@ -772,8 +820,10 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toEqual({
       refuse: expect.stringMatching(/^There is no app yet to plan features for\./),
     });
-    await m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx);
-    expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toEqual({ allow: true });
+    void m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx);
+    await vi.waitFor(() =>
+      expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toEqual({ allow: true })
+    );
   });
 });
 
@@ -1775,131 +1825,35 @@ describe('AppAssistantWorkspace on a visit', () => {
   });
 });
 
-describe('AppAssistantWorkspace Build it', () => {
-  /** A checklist card for a new app that runs, so the chat no longer holds. */
-  async function checklistCard() {
+describe('AppAssistantWorkspace builds a new app right away', () => {
+  test('create_app carries the reply on with the new app’s tools once it runs and the chat has them', async () => {
     m.list = [];
     const screen = await mount();
     m.chat!.beforeToolCall!('create_app', {}, conv);
-    await m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx);
+    const made = Promise.resolve(m.chat!.tools.create_app.execute({ name: 'Quiz' }, ctx));
+    let done = false;
+    void made.then(() => (done = true));
+    await settle();
+    // Still starting: its tools are not the chat's yet, so create_app has not answered.
+    expect(done).toBe(false);
+    expect(m.chat!.mcpServers).toEqual([]);
     m.list = [{ ...m.list[0], state: 'running' }];
     screen.rerender(<Workspace />);
-    await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
+    const result = (await made) as { app: string; reopenTools?: true };
+    expect(result).toMatchObject({ app: m.list[0].app, reopenTools: true });
+    expect(m.chat!.mcpServers.map((server) => server.url)).toEqual([m.list[0].mcpUrl]);
+    // The plan the reply then shows does not stop it, and offers nothing to press.
     const input = { items: [{ label: 'Ask questions' }] };
     expect(m.chat!.beforeToolCall!('set_checklist', input, conv)).toEqual({ allow: true });
     const output = await m.chat!.tools.set_checklist.execute(input, ctx);
+    expect(output).not.toHaveProperty('awaitsUser');
     const card = m.chat!.tools.set_checklist.render!({
       name: 'set_checklist',
       input,
       state: 'done',
       output,
     }) as HTMLElement;
-    document.body.append(card);
-    return card;
-  }
-  const buildIt = () => page.getByRole('button', { name: 'Build it' });
-
-  test('the checklist card offers Build it, which sends the confirmation as the user', async () => {
-    const card = await checklistCard();
-    await buildIt().click();
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
-    await expect.element(buildIt()).not.toBeInTheDocument();
-    card.remove();
-  });
-
-  test('🟢 Build it pressed while the reply is still ending puts it in the box for the user to send', async () => {
-    const card = await checklistCard();
-    m.running = true;
-    await buildIt().click();
-    await expect.element(buildIt()).not.toBeInTheDocument();
-    expect(m.box).toBe('Looks good — build it.');
-    expect(m.delivered).toEqual([]);
-    card.remove();
-  });
-
-  test('🟢 Build it pressed while the reply is still ending keeps what the user typed, and offers itself back', async () => {
-    const card = await checklistCard();
-    type('Also add a timer');
-    m.running = true;
-    await buildIt().click();
-    await expect.element(buildIt()).not.toBeInTheDocument();
-    expect(m.box).toBe('Also add a timer');
-    // Offered back by the chat (0.15.0's giveBack), not by a notice of the page's own.
-    await vi.waitFor(() => expect(m.notices).toEqual(['Looks good — build it.']));
-    expect(m.delivered).toEqual([]);
-    card.remove();
-  });
-
-  test('🟢 Build it pressed while the chat holds goes into the empty box once, and is not offered back as well', async () => {
-    const card = await checklistCard();
-    m.listing = true;
-    await buildIt().click();
-    await expect.element(buildIt()).not.toBeInTheDocument();
-    expect(m.box).toBe('Looks good — build it.');
-    await settle(100);
-    expect(m.notices).toEqual([]);
-    card.remove();
-  });
-
-  test('🟡 Build it pressed while the user dictates goes straight out when the chat does not hold', async () => {
-    const card = await checklistCard();
-    m.dictating = true;
-    await buildIt().click();
-    await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
-    expect(m.box).toBe('');
-    await settle(100);
-    expect(m.giveBack).not.toHaveBeenCalled();
-    card.remove();
-  });
-
-  test('🟡 Build it pressed while the user dictates and the chat holds is offered back, not joined to what they say', async () => {
-    const card = await checklistCard();
-    m.dictating = true;
-    m.listing = true;
-    await buildIt().click();
-    await expect.element(buildIt()).not.toBeInTheDocument();
-    endDictation('and a timer');
-    expect(m.box).toBe('and a timer');
-    await vi.waitFor(() => expect(m.notices).toEqual(['Looks good — build it.']));
-    expect(m.delivered).toEqual([]);
-    card.remove();
-  });
-
-  test('a message the user sends instead takes Build it away', async () => {
-    const card = await checklistCard();
-    await userSends('Also add a timer');
-    expect(m.delivered).toEqual(['Also add a timer']);
-    expect(card.querySelector('button')).toBeNull();
-    card.remove();
-  });
-
-  test('opening another chat takes Build it away', async () => {
-    const card = await checklistCard();
-    m.chat!.onChatChange!('chat-2');
-    expect(card.querySelector('button')).toBeNull();
-    card.remove();
-  });
-
-  test('🟡 opening another app takes Build it away: the checklist was for the first', async () => {
-    m.list = [sandbox('sbx-aaaaaaaaaaaa')];
-    const screen = await mount();
-    await openFirst();
-    const input = { items: [{ label: 'Ask questions' }] };
-    m.chat!.beforeToolCall!('set_checklist', input, conv);
-    const output = await m.chat!.tools.set_checklist.execute(input, ctx);
-    const card = m.chat!.tools.set_checklist.render!({
-      name: 'set_checklist',
-      input,
-      state: 'done',
-      output,
-    }) as HTMLElement;
-    document.body.append(card);
-    expect(card.querySelector('button')).not.toBeNull();
-    m.list = [...m.list, sandbox('sbx-bbbbbbbbbbbb')];
-    screen.rerender(<Workspace />);
-    await openFromSwitcher('app-bbbb');
-    await vi.waitFor(() => expect(card.querySelector('button')).toBeNull());
-    card.remove();
+    expect(card.querySelectorAll('button')).toHaveLength(0);
   });
 });
 
@@ -2337,6 +2291,65 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
     );
     expect(m.previewSession).toBeNull();
     expect(r.restart).not.toHaveBeenCalled();
+  });
+
+  test('a brand-new app with nothing built shows no preview pane: the chat takes the full width', async () => {
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    r.built.mockResolvedValue(false);
+    await reload();
+    await vi.waitFor(() => expect(r.built.mock.calls.map(([app]) => app)).toEqual(['app-aaaa']));
+    await settle();
+    expect(pane().query()).toBeNull();
+    expect(r.restart).not.toHaveBeenCalled();
+    // Once the assistant shows its first preview, the pane comes up.
+    m.chat!.onToolResult!({
+      name: 'start_preview',
+      input: {},
+      output: { shown: true, blockId: 'app-aaaa', host: HOST },
+      isError: false,
+    });
+    await expect.element(pane()).toBeInTheDocument();
+    expect(m.previewSession).toMatchObject({ blockId: 'app-aaaa' });
+  });
+
+  test('an app that was previewed before and has stopped shows the pane with Restart preview', async () => {
+    // Built (its sandbox has the manifest the preview was opened from), no preview live on this visit.
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    r.built.mockResolvedValue(true);
+    await reload();
+    await expect.element(pane()).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null })
+    );
+    expect(m.previewSession).toBeNull();
+  });
+
+  test('an app whose project lives outside its key’s directory gets the pane with Restart preview after a reload', async () => {
+    // The real check against a sandbox whose only project is `quiz-v2/`, not `app-aaaa/`: the
+    // runner's Restart preview finds it there (the only top-level manifest), so it is offered.
+    const { fetchSandboxAppBuilt } = await vi.importActual<typeof SandboxAppBuiltMod>(
+      '~/components/Apps/AppAssistant/sandboxAppBuilt'
+    );
+    const sandbox = fakeSandboxFiles(['quiz-v2/block.manifest.json', 'quiz-v2/src/main.ts']);
+    r.built.mockImplementation((app, mcpUrl, getToken) =>
+      fetchSandboxAppBuilt(mcpUrl, getToken, app, sandbox.fetch)
+    );
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    await reload();
+    await expect.element(pane()).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null })
+    );
+    expect(sandbox.fetch).toHaveBeenCalled();
+  });
+
+  test('no clear answer from the sandbox still offers Restart preview, as before', async () => {
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    r.built.mockResolvedValue(null);
+    await reload();
+    await vi.waitFor(() =>
+      expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null })
+    );
   });
 
   test('Restart preview asks the runner once, however often it is clicked, and shows its preview', async () => {
@@ -2906,7 +2919,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
 
 describe('AppAssistantWorkspace free-a-slot card', () => {
   const KEEP =
-    'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.';
+    'You already have as many apps as you can keep. Choose one to delete in the card under the chat; your request then continues automatically.';
   const RUNNING =
     'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.';
   const card = () => page.getByRole('region', { name: 'Free up a slot' });
@@ -2960,7 +2973,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect
       .element(
         card().getByText(
-          'You have as many apps as you can keep. Delete one and your message is sent again.',
+          'You have as many apps as you can keep. Delete one and your request continues automatically.',
           { exact: true }
         )
       )
@@ -3015,6 +3028,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await vi.waitFor(() => expect(m.remove).toHaveBeenCalledTimes(1));
     await settle(100);
     expect(m.send).not.toHaveBeenCalled();
+    expect(m.askAgain).not.toHaveBeenCalled();
     await expect.element(card()).not.toBeInTheDocument();
   });
 
@@ -3073,18 +3087,30 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card()).toBeVisible();
   });
 
-  test('confirmed, deletes the app picked, then sends the message that hit the limit again, once', async () => {
+  test('confirmed, deletes the app picked, then the request carries on: one copy of the message and a fresh reply', async () => {
     await atLimit();
     await card().getByRole('radio', { name: 'app-cccc' }).click();
     await confirmDelete('app-cccc');
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
     expect(m.remove.mock.calls).toEqual([['sbx-cccccccccccc']]);
-    expect(m.send).toHaveBeenCalledWith('Make a quiz night app');
-    expect(m.remove.mock.invocationCallOrder[0]).toBeLessThan(m.send.mock.invocationCallOrder[0]);
+    expect(m.remove.mock.invocationCallOrder[0]).toBeLessThan(
+      m.askAgain.mock.invocationCallOrder[0]
+    );
     await expect.element(card()).not.toBeInTheDocument();
     await settle(100);
-    expect(m.send).toHaveBeenCalledTimes(1);
-    expect(m.delivered).toEqual(['Make a quiz night app', 'Make a quiz night app']);
+    // The transcript holds the user's message once; the refused reply is replaced, not answered twice.
+    expect(m.delivered).toEqual(['Make a quiz night app']);
+    expect(m.reasked).toEqual(['Make a quiz night app']);
+    expect(m.send).not.toHaveBeenCalled();
+  });
+
+  test('confirmed while the chat cannot ask again, gives the message back to send by hand', async () => {
+    await atLimit();
+    m.running = true;
+    await confirmDelete('app-bbbb');
+    await vi.waitFor(() => expect(m.giveBack).toHaveBeenCalledWith('Make a quiz night app'));
+    expect(m.reasked).toEqual([]);
+    expect(m.delivered).toEqual(['Make a quiz night app']);
   });
 
   test('a delete that fails says why, keeps the card and sends nothing', async () => {
@@ -3154,8 +3180,9 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     });
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
     await confirmDelete('app-bbbb');
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    expect(m.send).toHaveBeenCalledWith('Make a quiz night app');
+    // The request carries on in place: asked again, never sent as a second message.
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
+    expect(m.send).not.toHaveBeenCalled();
   });
 
   test('on the server runner, appears from the limit in a released runner’s words (v0.0.9)', async () => {
@@ -3183,8 +3210,9 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     });
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
     await confirmDelete('app-bbbb');
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    expect(m.send).toHaveBeenCalledWith('A tiny click counter app.');
+    // The request carries on in place: asked again, never sent as a second message.
+    await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']));
+    expect(m.send).not.toHaveBeenCalled();
   });
 });
 

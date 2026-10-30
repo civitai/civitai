@@ -153,6 +153,17 @@ describe('StartStorylineModal', () => {
       expect(page.getByRole('button', { name: 'Start storyline' }).elements()).toHaveLength(0);
     });
 
+    // Blocked is a moderation verdict: refused as unusable, not as "not rated yet".
+    test('a post with a Blocked image cannot start one, and Blocked is not named', async () => {
+      renderWithProviders(
+        <StartStorylineModal post={{ ...post, nsfwLevel: NsfwLevel.R | NsfwLevel.Blocked }} />
+      );
+
+      await expect.element(page.getByText(/can't be used in a storyline/)).toBeVisible();
+      expect(page.getByText(/Blocked|rated yet/).elements()).toHaveLength(0);
+      expect(page.getByRole('button', { name: 'Start storyline' }).elements()).toHaveLength(0);
+    });
+
     test('the opener passes the post through', () => {
       const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
       openStartStorylineModal(post);
