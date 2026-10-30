@@ -3131,6 +3131,7 @@ export async function setModelPoi({
   isModerator,
   activity,
   fromAppeal,
+  onlyIf,
 }: SetModelPoiInput & {
   userId: number;
   tracker?: Tracker;
@@ -3138,6 +3139,8 @@ export async function setModelPoi({
   activity?: ModelPoiActivity;
   /** The appeal resolver stamps its own grant and closes the appeal itself afterwards. */
   fromAppeal?: boolean;
+  /** Checked on the locked row: when false nothing is written and this returns null. */
+  onlyIf?: (row: NonNullable<LockedModelRow>) => boolean;
 }) {
   const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
   const stampLift = async () => {
@@ -3154,11 +3157,13 @@ export async function setModelPoi({
   // The ruling is written on its own connection, so it cannot go inside the locked write below.
   const flagged = await dbWrite.model.findUnique({ where: { id }, select: { poi: true } });
   if (!flagged) throw throwNotFoundError(`No model with id ${id}`);
-  const stampedAhead = !poi && flagged.poi && !fromAppeal;
+  // A guarded lift may not happen, so its ruling waits for the write.
+  const stampedAhead = !poi && flagged.poi && !fromAppeal && !onlyIf;
   if (stampedAhead) await stampLift();
 
-  const { before, data, result } = await dbWrite.$transaction(async (tx) => {
+  const written = await dbWrite.$transaction(async (tx) => {
     const before = await lockFlagRow(tx, id);
+    if (onlyIf && !onlyIf(before)) return null;
 
     const prevLockedProperties = before.lockedProperties ?? [];
     // A lift keeps whatever a minor flag still locks: the two share nsfw/sfwOnly.
@@ -3189,6 +3194,8 @@ export async function setModelPoi({
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
     return { before, data, result };
   }, lockedWriteOptions);
+  if (!written) return null;
+  const { before, data, result } = written;
   const lifting = !poi && before.poi;
   // The flag landed after the read above: the lift still records the ruling, just after the write.
   // The lift has committed, so a failed stamp must not cost it the follow-up below.

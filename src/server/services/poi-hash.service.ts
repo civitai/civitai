@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
+import type { Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { queryWithTimeout } from '~/server/db/db-helpers';
@@ -344,13 +345,51 @@ export async function sweepPoiHashMatches({
   return report;
 }
 
+/** The moderator queue's Auto-flagged rule: the flag as applied, with no moderator set since. An
+ *  appeal also rules one a moderator confirmed. Needs `m`. */
+const asQueuedSql = (fromAppeal?: boolean) =>
+  !fromAppeal
+    ? Prisma.sql`
+      AND m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
+      AND NOT EXISTS (
+        SELECT 1 FROM "ModActivity" ma
+        WHERE ma."entityType" = 'model' AND ma."entityId" = m.id AND ma.activity = 'setPoi'
+          AND ma."createdAt" > (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz
+      )`
+    : Prisma.empty;
+
+/** Flags a model still waiting on its match, re-checked under the row lock: another moderator may have
+ *  flagged or dismissed it since the queue was read. */
+export async function flagPoiHashMatch({
+  modelId,
+  userId,
+  tracker,
+}: {
+  modelId: number;
+  userId: number;
+  tracker?: Tracker;
+}) {
+  const result = await setModelPoi({
+    id: modelId,
+    poi: true,
+    userId,
+    tracker,
+    isModerator: true,
+    onlyIf: (row) =>
+      !row.poi && row.status !== 'Deleted' && Object.hasOwn(row.meta ?? {}, POI_HASH_MATCH_KEY),
+  });
+  return { flagged: result ? 1 : 0 };
+}
+
 /** A moderator signs off the hash flag: its weights now seed, and the snapshot keeps its origin. */
 export async function confirmPoiHashAutoFlag({
   modelId,
   userId,
+  fromAppeal,
 }: {
   modelId: number;
   userId: number;
+  fromAppeal?: boolean;
 }) {
   const confirmed = await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -361,10 +400,12 @@ export async function confirmPoiHashAutoFlag({
         'source', 'manual',
         'confirmedFrom', 'auto',
         'confirmedAt', now(),
-        'confirmedBy', ${userId}
+        'confirmedBy', ${userId}::int
       )
     )
-    WHERE m.id = ${modelId} AND m.poi AND m.meta ? ${POI_FLAG_SNAPSHOT_KEY}
+    WHERE m.id = ${modelId} AND m.poi AND m.meta ? ${POI_FLAG_SNAPSHOT_KEY}${asQueuedSql(
+    fromAppeal
+  )}
   `;
   if (!confirmed) return { confirmed: 0 };
   await trackModActivity(userId, { entityType: 'model', entityId: modelId, activity: 'setPoi' });
@@ -401,17 +442,25 @@ export async function revertPoiHashAutoFlag({
              SELECT jsonb_array_elements_text(m.meta->${POI_FLAG_SNAPSHOT_KEY}->'prevLockedProperties')
            ) AS "prevLockedProperties"
     FROM "Model" m
-    WHERE m.id = ${modelId} AND m.poi AND m.meta ? ${POI_FLAG_SNAPSHOT_KEY}
+    WHERE m.id = ${modelId} AND m.poi AND m.meta ? ${POI_FLAG_SNAPSHOT_KEY}${asQueuedSql(
+    fromAppeal
+  )}
   `;
   if (!snapshot) return { reverted: 0 };
 
-  await setModelPoi({
+  // Re-checked under the lock: a confirm or another revert may have landed since the read above.
+  const lifted = await setModelPoi({
     id: modelId,
     poi: false,
     userId,
     activity: 'revertPoiAutoHash',
     fromAppeal,
+    onlyIf: (row) =>
+      row.poi &&
+      !!row.meta?.poiFlagSnapshot &&
+      (!!fromAppeal || row.meta.poiFlagSnapshot.source === 'auto'),
   });
+  if (!lifted) return { reverted: 0 };
 
   const lockedProperties = uniq([
     ...(snapshot.prevLockedProperties ?? []),
@@ -456,7 +505,7 @@ export async function dismissPoiHashMatch({
     UPDATE "Model" m
     SET meta = (${asJsonbObjectSql('m.meta')} - ${POI_HASH_MATCH_KEY}::text)
       || jsonb_build_object(${POI_HASH_CLEARED_KEY}::text, jsonb_build_object('at', now()))
-    WHERE m.id = ${modelId} AND m.meta ? ${POI_HASH_MATCH_KEY}
+    WHERE m.id = ${modelId} AND m.meta ? ${POI_HASH_MATCH_KEY} AND NOT m.poi
   `;
   if (!dismissed) return { dismissed: 0 };
   await trackModActivity(userId, {

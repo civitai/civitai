@@ -295,6 +295,39 @@ describe('setModelPoi — the real-person hash match', () => {
   });
 });
 
+// The queue's flag and revert decide on the row they lock, not on what an earlier read saw: another
+// moderator may have ruled the model in between.
+describe('setModelPoi — onlyIf', () => {
+  it('decides on the locked row, not the read before it', async () => {
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...baseModelRow, poi: false })
+      .mockResolvedValueOnce({ ...baseModelRow, poi: true });
+    const onlyIf = vi.fn((row: { poi: boolean }) => !row.poi);
+
+    expect(await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID, onlyIf })).toBeNull();
+    expect(onlyIf).toHaveBeenCalledWith(expect.objectContaining({ poi: true }));
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockTrackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('writes as usual when the locked row passes', async () => {
+    mockBefore({});
+    expect(
+      await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID, onlyIf: () => true })
+    ).toMatchObject({ poi: true });
+    expect(written()).toMatchObject({ poi: true, sfwOnly: true });
+  });
+
+  // Stamping ahead would record a moderator's lift that the lock then refuses.
+  it('a refused lift records no ruling', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, onlyIf: () => false });
+    expect(mockStampRuling).not.toHaveBeenCalled();
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+});
+
 it('refuses an unknown model', async () => {
   mockDbWrite.model.findUnique.mockResolvedValue(null);
   await expect(setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID })).rejects.toThrow();
