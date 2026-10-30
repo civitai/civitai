@@ -76,6 +76,7 @@ beforeAll(async () => {
     '20261024160000_storyline_minor_by_scan',
     '20261106120000_storyline_rejoin',
     '20261122120000_storyline_pending_chapter',
+    '20261215120000_storyline_collaborator_accepted',
   ])
     await db.pg.exec(migration(name));
   // Re-runnable, as its header says.
