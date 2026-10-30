@@ -162,6 +162,13 @@ const storylineReadSelect = {
  * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
  * caller inside a transaction reads through it.
  */
+/** An invited collaborator has no say until they accept. */
+const acceptedCollaboratorWhere = {
+  acceptedAt: { not: null },
+} satisfies Prisma.StorylineCollaboratorWhereInput;
+const acceptedCollaboratorSql = (alias: string) =>
+  Prisma.sql`${Prisma.raw(alias)}."acceptedAt" IS NOT NULL`;
+
 const isBlockedPair = (db: Db, a: number, b: number) =>
   a !== b && isPlacementBlocked({ ownerId: a, placerId: b }, db);
 
@@ -1391,7 +1398,7 @@ async function assertStorylinePicks(
       },
     }),
     db.storylineCollaborator.findMany({
-      where: { storylineId, acceptedAt: { not: null } },
+      where: { storylineId, ...acceptedCollaboratorWhere },
       select: { userId: true },
     }),
   ]);
@@ -3041,7 +3048,7 @@ export async function getStorylineChildren({
 
   const [collaborators, readers] = await Promise.all([
     dbRead.storylineCollaborator.findMany({
-      where: { storylineId: storyline.id, acceptedAt: { not: null } },
+      where: { storylineId: storyline.id, ...acceptedCollaboratorWhere },
       select: { userId: true },
     }),
     readersByChapterId ?? getStorylineReaderCounts(chapterId),
@@ -3558,7 +3565,9 @@ export async function getStorylinesInfinite({
     // Open to this reader: collaborators-only storylines are open only to their collaborators.
     where.push(Prisma.sql`(st."whoCanContinue" = 'Anyone' OR st."userId" = ${viewerId} OR EXISTS (
       SELECT 1 FROM "StorylineCollaborator" sc
-      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId} AND sc."acceptedAt" IS NOT NULL
+      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+      'sc'
+    )}
     ))`);
   }
   // Newest pages by id (stable while storylines are added); most-chapters by offset, capped,
@@ -3600,7 +3609,9 @@ export async function getStorylinesInfinite({
       st."maxNsfwLevel", st."minorByScan", st."whoCanContinue",
       EXISTS (
         SELECT 1 FROM "StorylineCollaborator" vc
-        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId} AND vc."acceptedAt" IS NOT NULL
+        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+    'vc'
+  )}
       ) AS "isCollaborator",
       rc."postId" AS "rootPostId", rp."nsfwLevel" AS "rootNsfwLevel",
       rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation",

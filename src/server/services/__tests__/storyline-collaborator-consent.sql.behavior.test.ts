@@ -11,10 +11,10 @@ import type * as UserPreferencesService from '~/server/services/user-preferences
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * A storyline started before its first post, run as written against an in-process Postgres built
- * from the shipped storyline migrations: the pending-chapter table's constraints, and the feed
- * query leaving out a storyline with no chapter 1 for everyone but its owner and moderators. All
- * of it lives in SQL, which a mocked client cannot see.
+ * Collaborator consent, run as written against an in-process Postgres built from the shipped
+ * storyline migrations: the migration accepting existing collaborators, and the open feed of a
+ * collaborators-only storyline and the continue offer on every listing, both only for an accepted
+ * collaborator. All of it lives in SQL, which a mocked client cannot see.
  */
 
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
