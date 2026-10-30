@@ -263,6 +263,19 @@ describe('deleteArticleById', () => {
     }
   );
 
+  it('removes the comment topic before the article, in the same transaction', async () => {
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    const topicDelete = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('DELETE FROM "CommentTopic"')
+    );
+    expect(topicDelete).toBeGreaterThanOrEqual(0);
+    expect(dbMock.dbWrite.$executeRaw.mock.calls[topicDelete].slice(1)).toEqual([ARTICLE_ID]);
+    expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[topicDelete]).toBeLessThan(
+      dbMock.dbWrite.article.delete.mock.invocationCallOrder[0]
+    );
+  });
+
   const deleteWithCover = async (cover: Row) => {
     deleteArticleWithCover(cover);
     await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });

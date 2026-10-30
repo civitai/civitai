@@ -12,6 +12,7 @@ export const TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES: TextScanEntityType[] = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'ResourceReview',
 ];
 

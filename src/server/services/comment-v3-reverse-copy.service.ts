@@ -77,7 +77,10 @@ export type ReverseRootThreadsResult = {
   relocked: number;
 };
 
-/** Also re-syncs the topic lock onto root threads that already exist. */
+/**
+ * Also re-syncs the topic lock onto root threads that already exist. A v1-shaped model comment goes
+ * to `Comment`, which needs no thread, so only v2-shaped ones make one.
+ */
 export async function reverseRootThreads(
   db: SqlRunner,
   r: IdRange,
@@ -86,7 +89,7 @@ export async function reverseRootThreads(
   let created = 0;
   let relocked = 0;
   const needs = `(EXISTS (SELECT 1 FROM "CommentV3" v WHERE v."entityType" = ct."entityType" AND v."entityId" = ct."entityId" AND v."parentId" IS NULL
-                        AND (${PENDING_V2} OR ${PENDING_V1}))
+                        AND ${PENDING_V2})
       OR ct.locked
       OR EXISTS (SELECT 1 FROM "CommentTopicMute" m WHERE m."entityType" = ct."entityType" AND m."entityId" = ct."entityId"))`;
   for (const [type, col] of Object.entries(THREAD_COLUMN)) {
@@ -174,7 +177,7 @@ export async function reverseComments(
     `SELECT count(*)::int AS pending FROM "CommentV3" v WHERE v.id BETWEEN $1 AND $2 AND (${PENDING_V2} OR ${PENDING_V1})`,
     p
   );
-  const { threads } = await one<{ threads: number }>(
+  let { threads } = await one<{ threads: number }>(
     db,
     `WITH parents AS (
        SELECT DISTINCT COALESCE(v."replyToId", v."parentId") AS pid FROM "CommentV3" v
@@ -207,6 +210,40 @@ export async function reverseComments(
     p
   );
   copied += replies;
+  // A reply whose parent is a tombstone with no old row (deleted after the flip, or never in the
+  // old table) goes on a reply thread with no parent comment, as a reply stays after its parent's
+  // old row is deleted. Its own replies then attach to it on a later pass.
+  for (const [type, col] of Object.entries(THREAD_COLUMN)) {
+    if (type === 'model' || !s.entityTypes.includes(type)) continue;
+    const orphans = await db.query<{ id: number; root: number }>(
+      `SELECT v.id, t.id AS root FROM "CommentV3" v
+         JOIN "CommentV3" pv ON pv.id = COALESCE(v."replyToId", v."parentId")
+         JOIN "Thread" t ON t."${col}" = v."entityId"
+        WHERE v.id BETWEEN $1 AND $2 AND v."entityType" = $6 AND v."parentId" IS NOT NULL
+          AND ${PENDING_V2}
+          AND pv."deletedAt" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "CommentV2" c WHERE c.id = pv.id)`,
+      [...p, type]
+    );
+    for (const { id, root } of orphans.rows) {
+      const thread = await one<{ id: number }>(
+        db,
+        `INSERT INTO "Thread" ("parentThreadId", "rootThreadId") VALUES ($1, $1) RETURNING id`,
+        [root]
+      );
+      threads += 1;
+      const { n } = await one<{ n: number }>(
+        db,
+        `WITH ins AS (
+           INSERT INTO "CommentV2" ${columns}
+           SELECT ${values} FROM "CommentV3" v JOIN "Thread" t ON t.id = $2 WHERE v.id = $1
+           ON CONFLICT (id) DO NOTHING
+           RETURNING 1
+         ) SELECT count(*)::int AS n FROM ins`,
+        [id, thread.id]
+      );
+      copied += n;
+    }
+  }
   for (const [type, col] of Object.entries(THREAD_COLUMN)) {
     if (type === 'model' || !s.entityTypes.includes(type)) continue;
     const { n } = await one<{ n: number }>(

@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
@@ -86,9 +87,25 @@ const SCHEMA = `
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
 `;
 
+// Comments on a surface that writes CommentV3 directly, which have no CommentV2 row. Kept out of
+// SCHEMA, which also seeds the bounded worker, whose PGlite has no ltree.
+const V3_SCHEMA = `
+    CREATE EXTENSION ltree;
+    CREATE TABLE "CommentV3" (
+      id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL,
+      "parentId" int REFERENCES "CommentV3"(id), "replyToId" int, path ltree NOT NULL, "rootId" int GENERATED ALWAYS AS (ltree2text(subpath(path, 0, 1))::int) STORED,
+      "userId" int NOT NULL, content text NOT NULL, "tosViolation" boolean NOT NULL DEFAULT false,
+      "deletedAt" timestamptz, "updatedAt" timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "CommentV3Report" (
+      "reportId" int PRIMARY KEY, "commentId" int NOT NULL REFERENCES "CommentV3"(id) ON DELETE CASCADE
+    );
+`;
+
 beforeAll(async () => {
-  holder.db = new PGlite();
+  holder.db = new PGlite({ extensions: { ltree } });
   await holder.db.exec(SCHEMA);
+  await holder.db.exec(V3_SCHEMA);
 });
 
 beforeEach(async () => {
@@ -102,7 +119,7 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", "Comment", "CommentV2", "Thread", "Model";
+    TRUNCATE "CsamReport", "Image", "Comment", "CommentV2", "Thread", "Model", "CommentV3", "CommentV3Report";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "Comment" (id, "userId", "modelId", content) VALUES ${rows()};
     INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES ${rows()};
@@ -135,7 +152,13 @@ beforeEach(async () => {
     await holder.db.query('BEGIN');
     inTransaction = true;
     try {
-      const result = await fn({ $queryRaw: queryRaw });
+      const result = await fn({
+        $queryRaw: queryRaw,
+        $queryRawUnsafe: async (sql: string, ...params: unknown[]) =>
+          (
+            await holder.db.query(sql, params)
+          ).rows,
+      });
       inTransaction = false;
       await holder.db.query('COMMIT');
       return result;
@@ -177,7 +200,7 @@ async function createMarker(withView = true) {
 }
 
 /** Each remaining comment id in `table`, with whether it is flagged off the page. */
-async function state(table: 'Comment' | 'CommentV2') {
+async function state(table: 'Comment' | 'CommentV2' | 'CommentV3') {
   const { rows } = await holder.db.query<{ id: number; tosViolation: boolean }>(
     `SELECT id, "tosViolation" FROM "${table}" ORDER BY id`
   );
@@ -550,6 +573,64 @@ describe('a CommentV2 with replies', () => {
       commentV2Deleted: 1,
       retainedHidden: 0,
     });
+  });
+});
+
+describe('a comment that exists only in CommentV3', () => {
+  // Article comments: 81 and 82 by the clean author, 83 a held author's reply under 82, 84 the held
+  // author's own. They arrive in the CommentV2 list, which is what the moderator app sends.
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content) VALUES
+        (81, 'article', 1, NULL, '81', ${CLEAN}, 'zzfixture'),
+        (82, 'article', 1, NULL, '82', ${CLEAN}, 'zzfixture'),
+        (83, 'article', 1, 82, '82.83', ${HELD}, 'zzfixture'),
+        (84, 'article', 1, NULL, '84', ${HELD}, 'zzfixture');
+    `);
+  });
+
+  it('is deleted there, and kept, removed as a ToS violation, with a held author at or below it', async () => {
+    await expect(
+      bulkDeleteComments({ commentIds: [], commentV2Ids: [81, 82, 84] })
+    ).resolves.toEqual({ commentDeleted: 0, commentV2Deleted: 1, retainedHidden: 2 });
+    expect(await state('CommentV3')).toEqual({ 82: 'hidden', 83: 'public', 84: 'hidden' });
+  });
+
+  it('counts a held comment as kept when it was already removed as a ToS violation', async () => {
+    await holder.db.exec(`UPDATE "CommentV3" SET "tosViolation" = true WHERE id = 84`);
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [84] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 0,
+      retainedHidden: 1,
+    });
+    expect(retainedLogs()).toEqual([HELD]);
+  });
+
+  it('is kept while a held author answers it from beside it, past the depth cap', async () => {
+    // 86 and 87 are clamped replies: attached to 90 beside 85, answering 85 and then 86.
+    await holder.db.exec(`
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", "replyToId", path, "userId", content) VALUES
+        (90, 'article', 1, NULL, NULL, '90', ${CLEAN}, 'zzfixture'),
+        (85, 'article', 1, 90, NULL, '90.85', ${CLEAN}, 'zzfixture'),
+        (86, 'article', 1, 90, 85, '90.86', ${CLEAN}, 'zzfixture'),
+        (87, 'article', 1, 90, 86, '90.87', ${HELD}, 'zzfixture');
+    `);
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [85] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 0,
+      retainedHidden: 1,
+    });
+    expect(await state('CommentV3')).toMatchObject({ 85: 'hidden', 86: 'public', 87: 'public' });
+  });
+
+  it('becomes a placeholder for its replies when nothing below it is held', async () => {
+    await holder.db.exec(`UPDATE "CommentV3" SET "userId" = ${CLEAN} WHERE id = 83`);
+    await bulkDeleteComments({ commentIds: [], commentV2Ids: [82] });
+    const { rows } = await holder.db.query<{ content: string; deletedAt: Date | null }>(
+      `SELECT content, "deletedAt" FROM "CommentV3" WHERE id = 82`
+    );
+    expect(rows[0]).toMatchObject({ content: '' });
+    expect(rows[0].deletedAt).not.toBeNull();
   });
 });
 

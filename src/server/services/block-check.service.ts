@@ -7,6 +7,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
+import { isV3WriteSurface } from '~/server/services/commentv3/write.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -204,6 +205,33 @@ async function rootOwnerOfThread(threadId: number): Promise<RootOwner> {
 }
 
 /**
+ * A live comment on a surface that writes CommentV3, resolved from its CommentV3 row: its author, the
+ * authors of the comments it answers and its section. Asked when the CommentV2 row is missing (the
+ * comment was written after the flip) or its chain no longer resolves (a CommentV3 delete removed a
+ * parent's CommentV2 row); otherwise the chain resolves the same owners.
+ */
+async function v3Comment(commentId: number) {
+  const [row] = await guardDb.$queryRaw<
+    {
+      userId: number;
+      hidden: boolean;
+      entityType: CommentConnectorInput['entityType'];
+      entityId: number;
+      parentUserId: number | null;
+      replyToUserId: number | null;
+    }[]
+  >`
+    SELECT c."userId", c.hidden, c."entityType"::text AS "entityType", c."entityId",
+           p."userId" AS "parentUserId", r."userId" AS "replyToUserId"
+    FROM "CommentV3" c
+    LEFT JOIN "CommentV3" p ON p.id = c."parentId"
+    LEFT JOIN "CommentV3" r ON r.id = c."replyToId"
+    WHERE c.id = ${commentId} AND c."deletedAt" IS NULL
+  `;
+  return row && isV3WriteSurface(row.entityType) ? row : undefined;
+}
+
+/**
  * The owner of the content a stored comment ultimately belongs to — never the author of the
  * comment a reply answers, who is not the content owner and must not moderate replies to them.
  * An unresolved chain has no owner, which leaves the comment to moderators.
@@ -213,10 +241,13 @@ export async function getContentOwnerIdForComment(commentId: number) {
     where: { id: commentId },
     select: { hidden: true, threadId: true },
   });
-  if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
-
-  const root = await rootOwnerOfThread(comment.threadId);
-  return { hidden: comment.hidden ?? false, ownerId: root.resolved ? root.ownerId : undefined };
+  const root = comment ? await rootOwnerOfThread(comment.threadId) : undefined;
+  if (!comment || !root?.resolved) {
+    const v3 = await v3Comment(commentId);
+    if (v3) return { hidden: v3.hidden, ownerId: (await getBlockCheckOwnerIds(v3))[0] };
+    if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
+  }
+  return { hidden: comment.hidden ?? false, ownerId: root?.resolved ? root.ownerId : undefined };
 }
 
 /**
@@ -233,9 +264,13 @@ async function ownersForCommentV2(
     where: { id: commentId },
     select: { userId: true, threadId: true },
   });
-  if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
+  const root = comment ? await rootOwnerOfThread(comment.threadId) : undefined;
+  if (!comment || !root?.resolved) {
+    const v3 = await v3Comment(commentId);
+    if (v3) return [...new Set([v3.userId, ...(await getBlockCheckOwnerIds(v3))])];
+    if (!comment || !root) throw throwNotFoundError(`No comment with id ${commentId}`);
+  }
   const ids = new Set<number>([comment.userId]);
-  const root = await rootOwnerOfThread(comment.threadId);
   if (!root.resolved && onUnresolved === 'refuse')
     throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
   if (root.resolved && root.ownerId) ids.add(root.ownerId);
@@ -264,10 +299,18 @@ export async function getBlockCheckOwnerIdsForComment(commentId: number): Promis
     where: { id: commentId },
     select: { threadId: true, thread: { select: { commentId: true } } },
   });
-  if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
-
-  const root = await rootOwnerOfThread(comment.threadId);
-  if (!root.resolved) throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
+  const root = comment ? await rootOwnerOfThread(comment.threadId) : undefined;
+  if (!comment || !root?.resolved) {
+    const v3 = await v3Comment(commentId);
+    if (v3) {
+      const owners = await getBlockCheckOwnerIds(v3);
+      // A reply past the depth cap answers `replyToId`, not its parent.
+      const answered = [v3.parentUserId, v3.replyToUserId].filter((x): x is number => !!x);
+      return [...new Set([...answered, ...owners])];
+    }
+    if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
+    throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
+  }
 
   const ids = new Set<number>();
   const parentCommentId = comment.thread?.commentId;

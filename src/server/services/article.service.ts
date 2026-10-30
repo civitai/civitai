@@ -1692,6 +1692,9 @@ export const deleteArticleById = async ({
     const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
 
     const deleted = await dbWrite.$transaction(async (tx) => {
+      // The comments' CommentV3 rows go before the article's cascade reaches their CommentV2 rows:
+      // every write on these comments locks CommentV3 first, so the cascade must too.
+      await tx.$executeRaw`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`;
       const article = await tx.article.delete({
         where: { id },
         select: { coverId: true },

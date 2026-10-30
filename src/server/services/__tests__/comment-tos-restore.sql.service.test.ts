@@ -33,6 +33,9 @@ dbMock.dbWrite.$queryRaw.mockImplementation(async (first: unknown, ...rest: unkn
   record(first, rest)
 );
 
+// The report reopen, not the lookup of which ids are CommentV3-only that runs before it.
+const reopen = () => statements.find((sql) => sql.includes('UPDATE "Report"')) ?? '';
+
 const { bulkClearCommentV2TosViolation } = await import('~/server/services/commentsv2.service');
 const { bulkClearCommentTosViolation } = await import('~/server/services/comment.service');
 
@@ -46,7 +49,7 @@ describe('clearing a comment ToS flag', () => {
   it('reopens ONLY the reports the flag actioned', async () => {
     await bulkClearCommentV2TosViolation({ ids: [7] });
 
-    const sql = statements[0] ?? '';
+    const sql = reopen();
     // `= Actioned`, never `<> Pending`: the second form also reopens a moderator's dismissal.
     expect(sql).toMatch(/r\.status = \$\d+::"ReportStatus"/);
     expect(sql).not.toMatch(/r\.status <> /);
@@ -57,7 +60,9 @@ describe('clearing a comment ToS flag', () => {
     const { ReportStatus } = await import('~/shared/utils/prisma/enums');
     await bulkClearCommentV2TosViolation({ ids: [7] });
 
-    const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    const call = dbMock.dbWrite.$queryRaw.mock.calls.find((c) =>
+      String((c[0] as unknown as string[]).join('')).includes('UPDATE "Report"')
+    );
     expect(call?.slice(1)).toContain(ReportStatus.Pending);
     expect(call?.slice(1)).toContain(ReportStatus.Actioned);
   });
@@ -65,7 +70,7 @@ describe('clearing a comment ToS flag', () => {
   it('scopes to TOSViolation reports on that comment', async () => {
     await bulkClearCommentV2TosViolation({ ids: [7] });
 
-    const sql = statements[0] ?? '';
+    const sql = reopen();
     expect(sql).toContain('"CommentV2Report"');
     expect(sql).toContain('c."commentV2Id"');
     expect(sql).toContain('r.reason =');

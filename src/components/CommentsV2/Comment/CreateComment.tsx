@@ -133,7 +133,7 @@ export function useSectionMute({
       if (!target) return;
       queryUtils.commentv2.getSectionMuted.setData(target, {
         muted: result.muted,
-        hasThread: result.threadId !== null,
+        hasThread: result.hasThread,
       });
       showSuccessNotification({
         // States the action, not the outcome — the same correction the per-comment toast needed. A

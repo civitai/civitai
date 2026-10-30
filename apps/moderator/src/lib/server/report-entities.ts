@@ -1,4 +1,4 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { reportEntityLabels, type ReportEntity } from '$lib/reports';
 
 /**
@@ -21,8 +21,21 @@ export type ReportEntityMeta = {
    *  that: `reportedUser` (the reported thing IS an account) and `chat`, whose subject is inferred by
    *  `chatReportSubject` and added back at both `OWNED_REPORT_ENTITIES` call sites. */
   ownerColumn: 'userId' | 'ownerId' | 'createdById' | 'sellerId' | null;
+  /** Which of `reportTable`'s rows this type lists, as a predicate over a row's `reportId`. Absent
+   *  means all of them. Read it through `reportLinkFilter` wherever `reportTable` is queried. */
+  linkFilter?: (reportId: RawBuilder<unknown>) => RawBuilder<boolean>;
   label: string;
 };
+
+/**
+ * DB triggers mirror every `CommentReport` and `CommentV2Report` row into `CommentV3Report`, and those
+ * reports stay listed under their old type. A report is listed once, so `commentV3` lists only the
+ * reports with no old link: those on a comment written to `CommentV3` directly.
+ */
+const withoutOldCommentLink = (reportId: RawBuilder<unknown>) => sql<boolean>`(
+  NOT EXISTS (SELECT 1 FROM "CommentReport" old_c WHERE old_c."reportId" = ${reportId})
+  AND NOT EXISTS (SELECT 1 FROM "CommentV2Report" old_c2 WHERE old_c2."reportId" = ${reportId})
+)`;
 
 // Declaration order is display order wherever reports are grouped by type.
 const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
@@ -46,6 +59,13 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     fk: 'commentV2Id',
     table: 'CommentV2',
     ownerColumn: 'userId',
+  },
+  commentV3: {
+    reportTable: 'CommentV3Report',
+    fk: 'commentId',
+    table: 'CommentV3',
+    ownerColumn: 'userId',
+    linkFilter: withoutOldCommentLink,
   },
   bounty: { reportTable: 'BountyReport', fk: 'bountyId', table: 'Bounty', ownerColumn: 'userId' },
   bountyEntry: {
@@ -136,6 +156,10 @@ export const REPORT_ENTITIES: ReportEntityMeta[] = (Object.keys(TABLES) as Repor
 const BY_TYPE = new Map(REPORT_ENTITIES.map((e) => [e.type, e]));
 
 export const reportEntity = (type: ReportEntity): ReportEntityMeta => BY_TYPE.get(type)!;
+
+/** `meta.linkFilter` over a `reportId` column such as `'er.reportId'`; `true` for a type without one. */
+export const reportLinkFilter = (meta: ReportEntityMeta, reportIdColumn: string) =>
+  meta.linkFilter?.(sql.ref(reportIdColumn)) ?? sql<boolean>`true`;
 
 /**
  * Which account a chat report is ABOUT, as a predicate over a joined `Chat` and its `Report`.

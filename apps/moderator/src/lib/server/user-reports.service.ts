@@ -2,7 +2,12 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 // Shared with user-lookup.service.ts's counts — two copies meant adding an entity type to the counts
 // and not the rows, so the section states a count it cannot show rows for.
-import { OWNED_REPORT_ENTITIES, REPORT_ENTITIES, chatReportSubject } from './report-entities';
+import {
+  OWNED_REPORT_ENTITIES,
+  REPORT_ENTITIES,
+  chatReportSubject,
+  reportLinkFilter,
+} from './report-entities';
 import type { ReportEntity } from '$lib/reports';
 
 // Everything behind `/api/user-reports` — the ROWS behind the Reports section, where the page load
@@ -101,12 +106,14 @@ export async function getReportsReceived(
   { limit = 200, statuses, reasons }: ReportQueryOptions = {}
 ): Promise<UserReportRow[]> {
   const perType = await Promise.all(
-    OWNED_REPORT_ENTITIES.map(async ({ type, label, table, reportTable, fk, ownerColumn }) => {
+    OWNED_REPORT_ENTITIES.map(async (meta) => {
+      const { type, label, table, reportTable, fk, ownerColumn } = meta;
       const rows = await reportBase({ statuses, reasons })
         .innerJoin(`${reportTable} as rr` as 'ImageReport as rr', 'rr.reportId', 'r.id')
         .innerJoin(`${table} as e` as 'Image as e', 'e.id', `rr.${fk}` as 'rr.imageId')
         .select([...REPORT_COLUMNS, sql<number>`rr.${sql.ref(fk)}`.as('entityId')])
         .where(`e.${ownerColumn}` as 'e.userId', '=', userId)
+        .where(reportLinkFilter(meta, 'rr.reportId'))
         .orderBy('r.createdAt', 'desc')
         .limit(limit)
         .execute();
@@ -143,11 +150,13 @@ export async function getReportsSubmitted(
   const perType = await Promise.all(
     // Every type, an ACCOUNT included — that is the commonest kind a user files, and omitting it made
     // the section's own total count rows it then refused to show.
-    REPORT_ENTITIES.map(async ({ type, label, reportTable, fk }) => {
+    REPORT_ENTITIES.map(async (meta) => {
+      const { type, label, reportTable, fk } = meta;
       const rows = await reportBase({ statuses, reasons })
         .innerJoin(`${reportTable} as rr` as 'ImageReport as rr', 'rr.reportId', 'r.id')
         .select([...REPORT_COLUMNS, sql<number>`rr.${sql.ref(fk)}`.as('entityId')])
         .where('r.userId', '=', userId)
+        .where(reportLinkFilter(meta, 'rr.reportId'))
         .orderBy('r.createdAt', 'desc')
         .limit(limit)
         .execute();

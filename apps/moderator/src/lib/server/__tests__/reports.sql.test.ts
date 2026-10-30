@@ -48,6 +48,7 @@ const EXPECTED: [string, string, string][] = [
   ['article', 'ArticleReport', 'articleId'],
   ['comment', 'CommentReport', 'commentId'],
   ['commentV2', 'CommentV2Report', 'commentV2Id'],
+  ['commentV3', 'CommentV3Report', 'commentId'],
   ['bounty', 'BountyReport', 'bountyId'],
   ['bountyEntry', 'BountyEntryReport', 'bountyEntryId'],
   ['collection', 'CollectionReport', 'collectionId'],

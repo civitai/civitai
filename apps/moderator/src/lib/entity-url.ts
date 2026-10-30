@@ -55,6 +55,10 @@ export const modelCommentUrl = (civitaiUrl: string, modelId: number, commentId: 
 export const commentV2Url = (civitaiUrl: string, commentId: number) =>
   `${civitaiUrl}/comments/v2/${commentId}`;
 
+/** `CommentV3`: the same server-side resolution, through the permalink that reads any comment. */
+export const commentV3Url = (civitaiUrl: string, commentId: number) =>
+  `${civitaiUrl}/comments/${commentId}`;
+
 /** A user's profile, optionally a section of it (`models`, `images`, `posts`, …). Encoded — usernames
  *  allow characters that change the path when left raw, which the previous `$lib/articles` copy did. */
 export function userUrl(civitaiUrl: string, username: string, section?: string | null): string {

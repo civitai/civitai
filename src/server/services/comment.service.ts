@@ -16,6 +16,11 @@ import {
   afterCommentsV2Deleted,
   deleteCommentsV2UnlessHeld,
 } from '~/server/services/commentsv2.service';
+import {
+  afterCommentsV3Deleted,
+  deleteCommentsV3UnlessHeld,
+  v3WriteCommentIds,
+} from '~/server/services/commentv3/moderation.service';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 
 import { ReviewFilter } from '~/server/common/enums';
@@ -565,15 +570,25 @@ export async function bulkDeleteComments({
   commentV2Ids: number[];
 }) {
   const markerView = await holdMarkerViewExists();
-  const { v1, v2 } = await dbWrite.$transaction(async (tx) => ({
-    v1: await deleteLegacyCommentsUnlessHeld(tx, commentIds, markerView),
-    v2: await deleteCommentsV2UnlessHeld(tx, commentV2Ids, markerView),
-  }));
+  const { v1, v2, v3 } = await dbWrite.$transaction(async (tx) => {
+    // A comment on a surface that writes CommentV3 is deleted there; it may have no CommentV2 row.
+    const v3Ids = await v3WriteCommentIds(commentV2Ids, tx);
+    return {
+      v1: await deleteLegacyCommentsUnlessHeld(tx, commentIds, markerView),
+      v2: await deleteCommentsV2UnlessHeld(
+        tx,
+        commentV2Ids.filter((id) => !v3Ids.includes(id)),
+        markerView
+      ),
+      v3: await deleteCommentsV3UnlessHeld(tx, v3Ids, markerView),
+    };
+  });
   // The deletes have committed, so a failing follow-up is logged and never reported as a failed
   // delete: the moderator app records only what the endpoint reports as done.
   const followUps = await Promise.allSettled([
     afterLegacyCommentsDeleted(v1),
     afterCommentsV2Deleted(v2),
+    afterCommentsV3Deleted(v3),
   ]);
   for (const f of followUps)
     if (f.status === 'rejected')
@@ -585,8 +600,8 @@ export async function bulkDeleteComments({
       }).catch(() => undefined);
   return {
     commentDeleted: v1.deleted.length,
-    commentV2Deleted: v2.deleted.length,
-    retainedHidden: v1.retained.length + v2.retained.length,
+    commentV2Deleted: v2.deleted.length + v3.deleted.length,
+    retainedHidden: v1.retained.length + v2.retained.length + v3.retained.length,
   };
 }
 

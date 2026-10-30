@@ -49,6 +49,7 @@ CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "reason" TEXT NOT NULL DEFAULT 
 CREATE TABLE "Comment" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER, "parentId" INTEGER);
 CREATE TABLE "Thread" ("id" INTEGER PRIMARY KEY, "rootThreadId" INTEGER, "commentId" INTEGER, "imageId" INTEGER, "postId" INTEGER, "articleId" INTEGER, "reviewId" INTEGER, "bountyEntryId" INTEGER, "bountyId" INTEGER, "challengeId" INTEGER, "modelId" INTEGER, "comicProjectId" INTEGER, "model3dId" INTEGER);
 CREATE TABLE "CommentV2" ("id" INTEGER PRIMARY KEY, "threadId" INTEGER);
+CREATE TABLE "CommentV3" ("id" INTEGER PRIMARY KEY);
 CREATE TABLE "BountyEntry" ("id" INTEGER PRIMARY KEY, "bountyId" INTEGER);
 CREATE TABLE "Model3DReview" ("id" INTEGER PRIMARY KEY, "model3dId" INTEGER);
 CREATE TABLE "Announcement" ("id" INTEGER PRIMARY KEY, "userId" INTEGER);

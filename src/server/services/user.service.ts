@@ -4,6 +4,13 @@ import {
 } from '~/server/auth/moderation-account';
 import { Prisma } from '@prisma/client';
 import {
+  afterCommentsV3Deleted,
+  deleteCommentsV3UnlessHeld,
+  setUserCommentsV3Tos,
+} from '~/server/services/commentv3/moderation.service';
+import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
+
+import {
   accountHoldSql,
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
@@ -1514,6 +1521,8 @@ async function refundEachDeletedModel(
   return failures;
 }
 
+const REMOVE_V3_COMMENTS_BATCH = 500;
+
 /**
  * Moderator hard-wipe of a user's content. IRREVERSIBLE — unlike `deleteUser`
  * above, which soft-deletes and has a live inverse in `restoreUser`.
@@ -1560,6 +1569,8 @@ export const removeAllContent = async ({
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
+  // A reaction on a comment written to CommentV3 directly has no CommentV2Reaction row to mirror.
+  await dbWrite.$executeRaw`DELETE FROM "CommentV3Reaction" WHERE "userId" = ${id}`;
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
   const unsettled = await dbWrite.bounty.findMany({
     // `isPayoutPending` as a query; keep the two in step.
@@ -1609,7 +1620,25 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`DELETE FROM "Answer" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "Question" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "ResourceReview" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // Batched so no transaction outlives its timeout; the moderator bulk delete's rules
+    // (placeholders, kept for a held reply).
+    const v3Ids = (
+      await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "CommentV3"
+        WHERE "userId" = ${id} AND "deletedAt" IS NULL
+          AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))} AND ${unlessHeld}`
+    ).map((r) => r.id);
+    for (let i = 0; i < v3Ids.length; i += REMOVE_V3_COMMENTS_BATCH) {
+      const batch = v3Ids.slice(i, i + REMOVE_V3_COMMENTS_BATCH);
+      await afterCommentsV3Deleted(
+        await dbWrite.$transaction((tx) => deleteCommentsV3UnlessHeld(tx, batch, markerView))
+      );
+    }
+    // Not the rows the CommentV3 pass handled: one it kept for a held reply would be blanked by the
+    // mirror's delete.
+    await dbWrite.$executeRaw`
+      DELETE FROM "CommentV2" c2
+      WHERE c2."userId" = ${id} AND ${unlessHeld} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
     await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "Post" WHERE "userId" = ${id} AND ${unlessHeld}`;
@@ -2657,10 +2686,12 @@ export const toggleBan = async ({
             where: { userId: id, tosViolation: false },
             data: { tosViolation: true },
           }),
-          dbWrite.commentV2.updateMany({
-            where: { userId: id, tosViolation: false },
-            data: { tosViolation: true },
-          }),
+          // Not a comment on a CommentV3-write surface: `setUserCommentsV3Tos` flags those, locking
+          // CommentV3 first as every write there does, so the two cannot deadlock.
+          dbWrite.$executeRaw`
+            UPDATE "CommentV2" c2 SET "tosViolation" = true, "updatedAt" = now()
+            WHERE c2."userId" = ${id} AND NOT c2."tosViolation"
+              AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`,
         ]);
       } catch (error) {
         logToAxiom({
@@ -2670,6 +2701,15 @@ export const toggleBan = async ({
           error,
         });
       }
+      // Its own try, so a failure above still leaves these flagged.
+      await setUserCommentsV3Tos(id).catch((error: Error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-remove-comments',
+          message: error.message,
+          error,
+        })
+      );
     }
 
     // The LAST thing the ban branch does. `bannedAt` is written before any of the fan-out above, so a

@@ -137,10 +137,18 @@ async function getTrackerEvent(
       }
       break;
     case 'comment':
-      const commentV2 = await dbRead.commentV2.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
+      // A comment on a surface that writes CommentV3 may have no CommentV2 row. The event type stays
+      // `CommentV2_*` either way: the id is the same in both tables.
+      const commentV2 =
+        (await dbRead.commentV2.findFirst({
+          where: { id: input.entityId },
+          select: { userId: true },
+        })) ??
+        (
+          await dbRead.$queryRaw<{ userId: number }[]>`
+            SELECT "userId" FROM "CommentV3" WHERE id = ${input.entityId}
+          `
+        )[0];
       if (commentV2) {
         return {
           type: `CommentV2_${action}`,

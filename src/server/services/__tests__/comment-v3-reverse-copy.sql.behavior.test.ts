@@ -476,4 +476,36 @@ describe('comment v3 reverse copy', () => {
     }
     expect(await reverseRootThreads(db.pg, ALL, SCOPE)).toEqual({ created: 1, relocked: 0 });
   });
+
+  it('a v1-shaped model comment goes back without a root thread', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model', 3);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt") VALUES (64, 'model', 3, 5, 'v3 model root', '2025-02-01');
+    `);
+    expect(await reverseRootThreads(db.pg, ALL, SCOPE)).toEqual({ created: 0, relocked: 0 });
+    await reverseComments(db.pg, ALL, SCOPE);
+    expect(await count('FROM "Comment" WHERE id = 64 AND "modelId" = 3')).toBe(1);
+    expect(await count('FROM "Thread" WHERE "modelId" = 3')).toBe(0);
+  });
+
+  // A tombstone with no old row (deleted after the flip) leaves its reply nothing to attach to;
+  // without the fix the reply stays pending forever.
+  it('a reply under a tombstone with no old row goes back on a reply thread with no parent', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('image', 15);
+      INSERT INTO "Thread"("imageId") VALUES (15);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "deletedAt", "createdAt") VALUES (90, 'image', 15, 5, '', now(), '2025-02-01');
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt") VALUES (91, 'image', 15, 90, 6, 'under a tombstone', '2025-02-02');
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt") VALUES (92, 'image', 15, 91, 7, 'under that', '2025-02-03');
+    `);
+    for (let pass = 0; pass < 3; pass++) await reverseComments(db.pg, ALL, SCOPE);
+    expect(await reverseDryCount(db.pg, 'reverseComments', ALL, SCOPE)).toBe(0);
+    const orphan = await one<{ commentId: number | null; root: number }>(
+      `SELECT t."commentId", t."rootThreadId" AS root FROM "CommentV2" c JOIN "Thread" t ON t.id = c."threadId" WHERE c.id = 91`
+    );
+    const root = await thread(`"imageId" = 15`);
+    expect(orphan).toEqual({ commentId: null, root: root.id });
+    expect(await old(92)).toMatchObject({ content: 'under that' });
+    expect(await count('FROM "CommentV2" WHERE id = 90')).toBe(0);
+  });
 });

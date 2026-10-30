@@ -14,27 +14,42 @@ Comments on this plan: `@dev:` inline; mine are `@ai:`.
     `CommentV3` complete, so a revert is instant and loses nothing.
   - **Stage B, writes.** New article comments exist only in `CommentV3`; rolling back needs the
     reverse copy, proven on the dev database on 2026-10-26.
-- **Text-scan, not Clavata.** `Comment` and `CommentV2` are in the Clavata cutover set on
-  production, so `CommentV3` needs a text-scan profile and the `queueScamScan` call, and no
-  `trg_moderation_commentv3` trigger or `EntityType` enum migration.
+- **Moderated exactly as `CommentV2` is** (2026-10-30, Briant; replaces "text-scan, not Clavata").
+  `CommentV3` has the text-scan profile and the `queueScamScan` call, and also the Clavata path:
+  `trg_moderation_commentv3` (migration `20261211120000_comment_v3_moderation_trigger`) queues
+  each direct insert or content edit, `entity-moderation.ts` consumes it, and it is a Clavata
+  cutover target, owned by text scan on `CommentV2`'s rollout until it has its own. The trigger
+  skips rows the mirror copies, which the old table's trigger already queued, so a comment is
+  scanned once. A backfill rerun calls the mirror's row functions outside a trigger, so while the
+  trigger is enabled its copies are queued too; the job drops one it cannot report. Until the old-row sync goes, an edit to a pre-flip article comment also updates
+  its `CommentV2` row and is queued under both types.
 - **Tombstones render as placeholders** (2026-10-27). A deleted comment that still has live
   replies shows "This comment was deleted" with no author, content, reactions or menu, and its
   replies stay under it. It shows while a comment below it is visible to the viewer through
   comments the viewer may see; deleting a ToS removal or an excluded author's comment never opens
   what it hid. The delete mutation keeps a comment with replies on the page so the refetch brings
   it back as the placeholder.
-
-## Open decisions (needed before the stage they block)
-
-2. **Stage B: a tombstone's author** (D6 left this open). Keep `userId` (as the mirror does
-   today), null it, or point it at a sentinel user; plus a privacy check that a tombstone that
-   keeps `userId` satisfies erasure. @ai: recommend keeping `userId` and blanking content, as
-   the mirror already stores, with the display hiding the author.
-3. **Stage B: report double counting.** The mirror copies every old comment report into
-   `CommentV3Report`, so adding a `commentV3` report entity next to the old two lists each
-   mirrored report twice. @ai: recommend the `commentV3` entity matching only reports with no
-   old link (`NOT EXISTS` on `CommentReport` and `CommentV2Report`), and dropping that filter in
-   Phase 6 with the old entities.
+- **A tombstone keeps its author** (2026-10-29). Deleting a comment that has replies keeps
+  `userId` and blanks the content, as the mirror stores today; the display hides the author.
+  Erasure needs nothing more: deleting an account keeps the `User` row and removes its personal
+  details, so the id points at nothing personal.
+- **Reports are listed once** (2026-10-29). The mirror copies every old comment report into
+  `CommentV3Report`, so the `commentV3` report entity matches only reports with no old link (no
+  `CommentReport` or `CommentV2Report` row for the same report). The filter goes in Phase 6 with
+  the old entities.
+- **Article writes, then every read, then the other surfaces' writes** (2026-10-30, Briant).
+  Stage B ships as built. Next, one read flip moves every other surface's section and every
+  remaining reader of the old tables to `CommentV3`. Once nothing reads the old tables, the
+  old-row sync is removed and each other surface's writes flip without it. A comment written after
+  the article flip has no `CommentV2` row; the sync keeps the row of an older one in step, so that
+  a reader still on the old tables does not serve it after it is deleted or removed, and an
+  old-table update does not make the mirror copy it back. Stage B already gives the block checks,
+  reaction tracking, `goodContentReward` and the comment owner lookup a `CommentV3` fallback.
+- **One write path for every surface** (2026-10-30, Briant; built with their write flips, not in
+  stage B). Comic chapters and model comments write through the `commentv3` mutations like every other surface: `comics.createChapterComment`
+  and the v1 model-comment writes are removed, not ported. The model's lock toggles
+  (`Model.locked`, `Model.meta.commentsLocked`) also set `CommentTopic.locked`, so the one lock
+  check covers models.
 
 ## Why article first
 
@@ -146,7 +161,7 @@ back to the whole section instead of an empty one.
   (the scroll-triggered lazy mount and `forceEagerComments` are gone).
 - A `?highlight` alone is shown in the list when the first page holds it and focused otherwise; a
   reply past its parent's first page of replies is focused itself.
-- Writes still go through `commentv2` (via `useCommentMutations`) until stage B.
+- Writes went through `commentv2` (via `useCommentMutations`) until stage B.
 - Measured on the heaviest articles through the production replica: one request per page, 19 to
   37 KB, about a quarter of a second warm.
 - @ai: open knob. With `v3PageBudget` 40 and `v3RepliesPerRoot` 10, oldest-first opens 3 to 5
@@ -160,19 +175,19 @@ Each later read flip is: add the surface to `constants.comments.v3ReadSurfaces`,
 narrow column, and move its tests. What else each one needs, from a review of every
 `CommentsV2` mount (2026-10-27):
 
-| Surface                | Mount                                                                      | Also needed                                                                                                                |
-| ---------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Post                   | `title`, `anchorId="comments"`                                             | budget override                                                                                                            |
-| Image (page and modal) | `title={null} hideSort borderless`                                         | budget override; `deepLinks={false}` when stacked over another section                                                     |
-| Resource review        | `title={null} hideSort`                                                    | budget override; the "N comments" heading reads a v2 count                                                                 |
-| Bounty                 | `title={null} hideSort emptyState={null}`                                  | owner hide/pin is new there: decide `ownerModerates`                                                                       |
-| Bounty entry           | `title={null} hideSort borderless`                                         | budget override; `ownerModerates`                                                                                          |
-| Challenge              | `title="Discussion" hideWhenLocked`, judge badge with `ownerBadge={false}` | `ownerId` is the creator                                                                                                   |
-| Crucible, storyline    | `title="Discussion" hideWhenLocked`                                        | none                                                                                                                       |
-| 3D model               | `hideWhenLocked`                                                           | `getThreadEntityOwnerId` has no `model3d` case (owner exemption)                                                           |
-| App listing            | Divider and "Discussion" title, `hideWhenLocked`                           | no `appListing` owner case; its browser test mocks the v2 provider                                                         |
-| Comic chapter          | needs design                                                               | writes go through `comics.createChapterComment`; permalinks and thread links land on the project page; plain-text composer |
-| Model discussion       | needs design                                                               | still the v1 masonry and dialog; `model` rows mix v1 and v2 ids                                                            |
+| Surface                | Mount                                                                      | Also needed                                                                                                                           |
+| ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Post                   | `title`, `anchorId="comments"`                                             | budget override                                                                                                                       |
+| Image (page and modal) | `title={null} hideSort borderless`                                         | budget override; `deepLinks={false}` when stacked over another section                                                                |
+| Resource review        | `title={null} hideSort`                                                    | budget override; the "N comments" heading reads a v2 count                                                                            |
+| Bounty                 | `title={null} hideSort emptyState={null}`                                  | owner hide/pin is new there: decide `ownerModerates`                                                                                  |
+| Bounty entry           | `title={null} hideSort borderless`                                         | budget override; `ownerModerates`                                                                                                     |
+| Challenge              | `title="Discussion" hideWhenLocked`, judge badge with `ownerBadge={false}` | `ownerId` is the creator                                                                                                              |
+| Crucible, storyline    | `title="Discussion" hideWhenLocked`                                        | none                                                                                                                                  |
+| 3D model               | `hideWhenLocked`                                                           | `getThreadEntityOwnerId` has no `model3d` case (owner exemption)                                                                      |
+| App listing            | Divider and "Discussion" title, `hideWhenLocked`                           | no `appListing` owner case; its browser test mocks the v2 provider                                                                    |
+| Comic chapter          | needs design                                                               | writes move to the `commentv3` mutations at its write flip; permalinks and thread links land on the project page; plain-text composer |
+| Model discussion       | needs design                                                               | still the v1 masonry and dialog; `model` rows mix v1 and v2 ids                                                                       |
 
 Questions and answers have no `CommentEntityType`; their components are not flipped.
 
@@ -183,44 +198,95 @@ it matches v2 today, but `getThread` opens comments by id.
 
 ## Stage B: writes
 
-A v3 write service (`commentsv3.service.ts`, Kysely through `kyselyV3Write` so `updatedAt` is
-stamped), used for article comments and, in later flips, every surface. Each path branches on
-`resolveSurface`.
+One v3 write path for article comments now and every surface later; each path branches on the
+comment's surface. What it covers, beyond the SQL itself:
 
 - **Create and edit.** Blocklist, block checks from the stored row (not client input), the article
-  access gate, stickers, `queueScamScan` with a `CommentV3` entity type, event points, the
-  depth clamp (the insert trigger already derives `path`, `rootId` and `depth`), and the lock
-  check on every insert (`CommentTopic.locked` or a locked ancestor), which closes the v2 gap
-  where a deep reply under a locked thread was accepted. That is an intended behaviour change.
-- **Delete.** D6: tombstone with replies or a clamped answerer, hard delete when childless, after
-  the mirror's two-step row lock; collapse tombstones on both edges; hold retention. Covers single
-  delete, moderator bulk delete, ban and remove-all-content, and user erasure.
-- **Moderation.** Hide (owner and moderator), pin, lock, ToS set and restore with the full chain
+  access gate, stickers, `queueScamScan` with a `CommentV3` entity type, event points, the depth
+  clamp (the insert trigger derives `path`, `rootId` and `depth`), and the lock check on every
+  insert (`CommentTopic.locked` or a locked ancestor). That closes the v2 gap where a deep reply
+  under a locked thread was accepted, an intended behaviour change.
+- **Delete.** D6: tombstone with replies or a clamped answerer, hard delete when childless;
+  collapse tombstones on both edges; hold retention. Covers single delete, moderator bulk delete,
+  ban and remove-all-content, and user erasure. A tombstone's `CommentV3Report` links are deleted
+  with it.
+- **Moderation.** Hide (owner and moderator), pin, ToS set and restore with the full chain
   (reports actioned, reporters rewarded, author notified) against `CommentV3Report`, block-hide,
-  scam cleanup and restore, CSAM hold removal.
-- **Reactions.** Toggle, block check, ClickHouse tracking, rewards (`goodContentReward` reads the
-  v2 table today, so a v3-only comment would silently earn nothing), notifications.
+  scam cleanup and restore, CSAM hold removal. Lock and mutes stay on the `commentv2` procedures.
+- **Reactions.** Toggle, block check, ClickHouse tracking, rewards (`goodContentReward` read only
+  the v2 table, so a v3-only comment would have earned nothing), notifications.
 - **Reports.** `ReportEntity.CommentV3` in both enums, `report-entities.ts` and the relabel
-  snapshot's join list (with decision 3), `report.service.ts` maps and the
-  `findReportToFoldInto` case, the context URL from the row's `entityType`, and the report menu
-  sending `CommentV3` on article comments.
-- **Mutes.** Comment and section mutes write `CommentMute` / `CommentTopicMute`, keeping the shared
-  `commentv2.mute` rate limit.
-- **Text-scan.** A `CommentV3` profile, entity type, retention entry, scam adapter entry and CSAM
-  hold case; verdict and retention lookups alias old ids (v2 by id, v1 by `legacyV1Id`).
-- **Counts.** An event-engine `CommentV3` handler (table config, Kafka topic, `REPLICA IDENTITY
-FULL`) that counts article comments, replies included, takes one off on the tombstone and not
-  again when it collapses, and dedupes against `comment-v2.ts` by comment id. `articleStatCache`
-  purged after a count recompute.
+  snapshot's join list (reports listed once, Decisions taken), `report.service.ts` maps and the
+  `findReportToFoldInto` case, the context URL, and the report menu sending `CommentV3` on
+  article comments.
+- **Counts.** An event-engine `CommentV3` handler (table config, Kafka topic,
+  `REPLICA IDENTITY FULL`); see "as built".
 - **Moderator app.** Bulk delete, remove-as-ToS and restore accept v3 ids; the hold triage gains a
   `CommentV3` type.
-- **Rollback.** Fix `reverseRootThreads` creating empty model threads (it counts v1-shaped pending
-  comments, which need no thread), then rerun the reverse-copy proof on the dev database with
-  real stage B writes before the deploy.
+- **Rollback.** The reverse copy, rehearsed on the dev database with real stage B writes before
+  the deploy.
+
+### Stage B as built (2026-10-29, not yet deployed)
+
+- `constants.comments.v3WriteSurfaces` (`['article']`) is the switch; `isV3WriteSurface` reads it.
+  The SQL is in `services/commentv3/write.service.ts` over a `SqlRunner`, so callers share a
+  Prisma transaction with their sticker spend or old-table arm; moderator actions are in
+  `services/commentv3/moderation.service.ts`. Delete runs D6 itself, set-based and waiting on
+  row locks rather than skipping them as the mirror's `commentv3_mirror_delete` does.
+  Tombstoning deletes the comment's `CommentV3Report` links, as a hard delete's cascade does, so
+  its reports leave the queue; the `Report` row stays.
+- The `commentv3` router gains create, update, delete, hide, pin and ToS removal; the suite's
+  adapter calls them on a write surface. Lock, comment mute and section mute keep their
+  `commentv2` procedures, whose services branch on the surface. The other `commentv2` writes
+  (upsert, delete, hide, pin) refuse a write-surface comment, so a stale page cannot skip the new
+  lock and parent checks.
+- A comment that started in CommentV2 keeps its CommentV2 row, and every CommentV3 write keeps it
+  in step: edits and flags are copied to it and a delete removes it. Left stale, the old reads
+  would serve deleted or removed content, and an update to the row would make the mirror trigger
+  copy a deleted comment back. Paths that act on old rows by user (ban, account wipe, block-hide,
+  scam cleanup) leave write-surface comments out of their old-table statement and set them through
+  the CommentV3 write path, so every writer locks CommentV3 before CommentV2 and none can deadlock
+  another; moderator bulk delete and ToS route write-surface ids the same way.
+  Migration `20261210120000_comment_v3_mirror_changed_columns` makes the mirror copy only the
+  columns an old-table update changed.
+- Block checks and reaction tracking read CommentV3 only when there is no CommentV2 row; the old
+  chain resolves the same owners when there is one.
+- Counts: `comment-v3.ts` counts every comment on a write surface, whichever table it was written
+  to, and `comment-v2.ts` skips those surfaces, so either service can deploy first; a test holds
+  the event engine's surface list to `v3WriteSurfaces`. `articleStatCache` needs nothing new: the
+  article metrics job already counts from CommentV3 and purges it.
+- Text-scan: `CommentV3` follows the `CommentV2` rollout until it is given its own. Verdicts are
+  not aliased across the two types: an article comment edited after the flip is scanned afresh
+  under `CommentV3`, and its earlier `CommentV2` verdict and hold stay where they are.
+- Moderator app: the `commentV3` queue is labelled "Comment (new)" until Phase 6 removes the old
+  types; its lists key rows by label, so labels must differ.
+
+Before the deploy, in this order:
+
+1. ~~Apply `20261210120000_comment_v3_mirror_changed_columns` and the ClickHouse
+   `2026-10-29-comment-v3-report-entity.sql`, then restart the tracker~~: applied in prod
+   2026-10-30.
+2. CDC for `CommentV3`: ~~`REPLICA IDENTITY FULL`~~ (applied in prod 2026-10-30,
+   `apps/event-engine/scripts/sql/replica-identity.sql`). Still pending: the Kafka topic and read
+   access on `CommentV3` for the CDC role (ask an infra owner); then release the event engine.
+3. Grant moderators the new `commentV3` report queue in the moderator app.
+4. ~~Apply `20261211120000_comment_v3_moderation_trigger`~~: applied in prod 2026-10-30, with
+   `trg_moderation_commentv3` in the same enabled state as `trg_moderation_commentv2`. Still
+   pending, after the deploy: cut `CommentV3` over wherever `CommentV2` is cut over, with
+   `POST /api/admin/temp/text-scan-clavata-cutover` (`{action:'disable', entityType:'CommentV3'}`).
+5. ~~The reverse-copy rerun on the dev database~~: done 2026-10-29, every reverse step's dry count
+   at zero. A reply under a tombstone with no old row now goes on a reply thread with no parent
+   comment; `reverseRootThreads` no longer creates threads for v1-shaped model comments.
 
 ## Order
 
 1. Stage A on this branch: PR, deploy, verify on production (responses, timings, notification
    links). Reverting it is a plain revert.
-2. Stage B on this branch after stage A has run cleanly: PR, the reverse-copy rerun, deploy.
-3. Then the checklist's article surface items are ticked and bounty follows the same pattern.
+2. Stage B on this branch after stage A has run cleanly: PR, the pre-deploy steps in "Stage B as
+   built", deploy.
+3. The read flip for every other surface (`Flipping another surface`) and the remaining
+   cross-surface readers, in one PR; image and post queries timed on the production replica
+   first. A surface goes back to the old reads by leaving `v3ReadSurfaces`.
+4. Remove the old-row sync (`syncOldRows` and its callers), since nothing reads the old tables.
+5. Each other surface's write flip, one at a time and with no sync, comic chapters and model
+   comments last.

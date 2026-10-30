@@ -57,6 +57,7 @@ import {
   hattedImpressionEntities,
   onCommentCreated,
   onCommentsRemoved,
+  onTopicCommentsRemoved,
   onModelReviewsChanged,
   onPlacementApproved,
   onPlacementsTakenDown,
@@ -254,6 +255,27 @@ describe('comments', () => {
     await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
     expect(removeEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({ sourceId: `CommentV2:Image:7:${ACTOR}` }),
+    ]);
+  });
+
+  // A CommentV3 comment names its section, so no thread is read; the source id is the one the award
+  // was made under, so a comment written before its surface flipped is still settled.
+  it('settles a CommentV3 comment by its section, once the actor has none left there', async () => {
+    hatted.add('Article:8');
+    kysely.state.answers = [{ n: '1' }, { n: '0' }];
+    await onTopicCommentsRemoved([{ userId: ACTOR, entityType: 'article', entityId: 8 }]);
+    expect(removeEventPoints).not.toHaveBeenCalled();
+    kysely.state.calls.length = 0;
+
+    await onTopicCommentsRemoved([
+      { userId: ACTOR, entityType: 'article', entityId: 8 },
+      { userId: ACTOR, entityType: 'article', entityId: 8 },
+    ]);
+
+    expect(db.thread.findMany).not.toHaveBeenCalled();
+    expect(kysely.state.calls).toHaveLength(1);
+    expect(removeEventPoints).toHaveBeenCalledWith([
+      expect.objectContaining({ sourceId: `CommentV2:Article:8:${ACTOR}` }),
     ]);
   });
 });

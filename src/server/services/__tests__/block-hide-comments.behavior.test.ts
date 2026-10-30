@@ -33,7 +33,9 @@ import {
   BLOCK_HIDE_MAX_COMMENTS,
   hideBlockedUserCommentsOnOwnContent,
   THREAD_CONTENT_OWNERS,
+  v3SectionOwnerSql,
 } from '~/server/services/block-hide-comments.service';
+import { constants } from '~/server/common/constants';
 
 const BLOCKER = 1;
 const BLOCKED = 2;
@@ -52,15 +54,21 @@ beforeAll(async () => {
       id int PRIMARY KEY, "commentId" int, "rootThreadId" int, "comicChapterPosition" int,
       ${THREAD_CONTENT_OWNERS.map(({ column }) => `"${column}" int`).join(', ')}
     );
-    CREATE TABLE "CommentV2" (id int PRIMARY KEY, "userId" int, "threadId" int, hidden boolean);
+    CREATE TABLE "CommentV2" (
+      id int PRIMARY KEY, "userId" int, "threadId" int, hidden boolean, "updatedAt" timestamptz
+    );
+    CREATE TABLE "CommentV3" (
+      id int PRIMARY KEY, "userId" int, "entityType" text, "entityId" int,
+      hidden boolean NOT NULL DEFAULT false, "deletedAt" timestamptz, "updatedAt" timestamptz
+    );
   `);
 });
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "Thread", "CommentV2", "Image", "Article", "Challenge", app_listings;
+    TRUNCATE "Thread", "CommentV2", "CommentV3", "Image", "Article", "Challenge", app_listings;
     INSERT INTO "Image" (id, "userId") VALUES (10, ${BLOCKER}), (20, ${OTHER_OWNER});
-    INSERT INTO "Article" (id, "userId") VALUES (30, ${BLOCKER});
+    INSERT INTO "Article" (id, "userId") VALUES (30, ${BLOCKER}), (31, ${OTHER_OWNER});
     INSERT INTO "Challenge" (id, "createdById") VALUES (40, ${BLOCKER});
     INSERT INTO app_listings (serial_id, user_id) VALUES (50, ${BLOCKER});
 
@@ -97,7 +105,25 @@ beforeEach(async () => {
     -- Two owner columns on one thread: the image comes first, so it is OTHER_OWNER's.
     INSERT INTO "Thread" (id, "imageId", "articleId") VALUES (900, 20, 30);
     INSERT INTO "CommentV2" VALUES (9001, ${BLOCKED}, 900, false);
+
+    -- Comments only in CommentV3, on a surface that writes there directly: the blocker's article
+    -- (a live one, a deleted one and a bystander's), someone else's article, and an image comment,
+    -- which is not such a surface.
+    INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId", "deletedAt") VALUES
+      (2001, ${BLOCKED}, 'article', 30, NULL),
+      (2002, ${BLOCKED}, 'article', 30, now()),
+      (2003, ${BYSTANDER}, 'article', 30, NULL),
+      (2004, ${BLOCKED}, 'article', 31, NULL),
+      (2005, ${BLOCKED}, 'image', 10, NULL),
+      -- 5001's own row: a pre-flip comment, hidden here first with its CommentV2 row in step.
+      (5001, ${BLOCKED}, 'article', 30, NULL);
   `);
+
+  // The CommentV3 writes are `setCommentFlags`, whose SQL runs as written.
+  dbMock.dbWrite.$queryRawUnsafe.mockReset();
+  dbMock.dbWrite.$queryRawUnsafe.mockImplementation(
+    (async (sql: string, ...params: unknown[]) => (await holder.db.query(sql, params)).rows) as any
+  );
 
   // Translates exactly the call the service makes and refuses anything else, so a change to the
   // WHERE or the data cannot be absorbed by the fake.
@@ -115,10 +141,10 @@ beforeEach(async () => {
   }) as any);
 });
 
-const hiddenIds = async () =>
+const hiddenIds = async (table = 'CommentV2') =>
   (
     await holder.db.query<{ id: number }>(
-      `SELECT id FROM "CommentV2" WHERE hidden IS TRUE ORDER BY id`
+      `SELECT id FROM "${table}" WHERE hidden IS TRUE ORDER BY id`
     )
   ).rows.map((r) => r.id);
 
@@ -129,10 +155,14 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       blockedUserId: BLOCKED,
     });
 
-    expect(result).toEqual({ status: 'hidden', count: 5, capped: false });
+    expect(result).toEqual({ status: 'hidden', count: 6, capped: false });
     // 1004 was already hidden. Everything on OTHER_OWNER's image (3001, 3003 despite its forged
-    // root, and 9001), the bystander's comment 1002 and the orphaned 8001 stay visible.
+    // root, and 9001), the bystander's comment 1002 and the orphaned 8001 stay visible. 5001's
+    // CommentV2 row is hidden in step with its CommentV3 row.
     expect(await hiddenIds()).toEqual([1001, 1003, 1004, 5001, 6001, 7001]);
+    // On the article, only the blocked user's live comments on the blocker's; 5001 counted once, as
+    // a CommentV3 comment.
+    expect(await hiddenIds('CommentV3')).toEqual([2001, 5001]);
   });
 
   it("leaves other people's content alone when they are not the blocker", async () => {
@@ -214,6 +244,12 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
 });
 
 describe('THREAD_CONTENT_OWNERS', () => {
+  // A surface added to v3WriteSurfaces with no owner row here would hide nothing on a block.
+  it('resolves the section owner of every surface that writes CommentV3', () => {
+    for (const type of constants.comments.v3WriteSurfaces)
+      expect(v3SectionOwnerSql('c')).toContain(`WHEN c."entityType" = '${type}' THEN`);
+  });
+
   it('names every owner-bearing column threadContentSelect lists', () => {
     const ownerColumns = Object.keys(threadContentSelect).filter(
       (key) => key !== 'comicChapterPosition'
