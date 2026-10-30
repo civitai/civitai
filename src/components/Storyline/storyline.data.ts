@@ -210,6 +210,18 @@ export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }
   };
 }
 
+export function useSetStorylineMainPath(): {
+  isPending: boolean;
+  mutate: (input: { chapterId: number; parentChapterId: number }) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.setCanon.useMutation({
+    onSuccess: () => void utils.storyline.invalidate(),
+    onError: showError("Couldn't change the main path"),
+  });
+  return { isPending: mutation.isPending, mutate: mutation.mutate };
+}
+
 export function useStorylineQueue({ enabled }: { enabled: boolean }): {
   unavailable: boolean;
   rows: StorylineQueueRow[];
