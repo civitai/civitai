@@ -59,6 +59,7 @@ import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
 import { CrucibleDiscussion } from '~/components/Crucible/CrucibleDiscussion';
 import { CrucibleEventTagsPanel } from '~/components/Crucible/CrucibleEventTagsPanel';
+import { CrucibleTakeDownPanel } from '~/components/Crucible/CrucibleTakeDownPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import {
@@ -247,6 +248,21 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   if (isLoading) return <PageLoader />;
   if (!crucible) return <NotFound />;
+  if (crucible.takenDownAt && !currentUser?.isModerator)
+    return (
+      <Container size="sm" py="xl">
+        <Alert color="red" title="Removed by moderators">
+          <Text size="sm">
+            {crucible.name} was removed by moderators and is no longer visible to anyone else.
+          </Text>
+          {crucible.takedownReason && (
+            <Text size="sm" mt="sm">
+              Reason: {crucible.takedownReason}
+            </Text>
+          )}
+        </Alert>
+      </Container>
+    );
 
   const judgesCount = judgesData?.count ?? 0;
 
@@ -323,11 +339,12 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const isModerator = currentUser?.isModerator ?? false;
   const isOffDomain = !!features.isGreen && !isCrucibleSfw(crucible) && !isCreator && !isModerator;
-  const { canEdit, canCancel, canRemoveEntries } = getCrucibleManageActions({
+  const { canEdit, canCancel, canRemoveEntries, canTakeDown } = getCrucibleManageActions({
     status: crucible.status,
     endAt: crucible.endAt,
     isCreator,
     isModerator,
+    takenDownAt: crucible.takenDownAt,
   });
 
   const handleRemoveEntry = (entry: CrucibleEntryData) => {
@@ -695,6 +712,16 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               />
 
               {isModerator && <CrucibleEventTagsPanel crucibleId={crucible.id} />}
+
+              {isModerator && (
+                <CrucibleTakeDownPanel
+                  crucibleId={crucible.id}
+                  canTakeDown={canTakeDown}
+                  hasRefunds={crucible.status !== CrucibleStatus.Completed}
+                  takenDownAt={crucible.takenDownAt}
+                  takedownReason={crucible.takedownReason}
+                />
+              )}
 
               {(canEdit || canCancel) && (
                 <Paper className="rounded-lg p-6" bg="dark.6">

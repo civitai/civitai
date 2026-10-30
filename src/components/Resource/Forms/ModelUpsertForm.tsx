@@ -137,6 +137,20 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
 // 'tags' is deliberately absent: the field is named `tagsOnModels`, so the watch effect below
 // could never auto-apply it, the input has no locked state, and nothing enforces it server-side.
 const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category'];
+// In the form's own shapes: `poi` is held as a radio string.
+const restrictiveValues: Record<string, unknown> = {
+  nsfw: true,
+  poi: 'true',
+  minor: true,
+  sfwOnly: true,
+};
+// What the server's flag actions lock (MINOR_LOCKED_PROPERTIES, POI_LOCKED_PROPERTIES,
+// SFW_ONLY_LOCKED_PROPERTIES): with one of these flags on, nsfw=false is the restrictive value.
+const flagLockSets: Record<string, string[]> = {
+  minor: ['minor', 'nsfw', 'sfwOnly'],
+  poi: ['poi', 'nsfw', 'sfwOnly'],
+  sfwOnly: ['nsfw', 'sfwOnly'],
+};
 
 const availabilityDetails = {
   [Availability.Public]: {
@@ -351,16 +365,77 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     if (!allowDerivatives) form.setValue('allowDifferentLicense', false);
   }, [allowDerivatives]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Set while one control's onChange writes another field, so the lock watcher can tell that write
+  // from the moderator using the field itself. RHF's watch `type` cannot: once any field has had a
+  // change event, `type: 'change'` stays in its form state and rides on every later setValue.
+  const settingDerivedValue = useRef(false);
+  const setDerivedValue: typeof form.setValue = (...args) => {
+    settingDerivedValue.current = true;
+    try {
+      form.setValue(...args);
+    } finally {
+      settingDerivedValue.current = false;
+    }
+  };
+
   useEffect(() => {
+    // Locks this form took on its own; released again once nothing calls for them.
+    const autoLocked = new Set<string>();
+    const touched = new Set<string>();
+    // Never auto-locked again until the moderator adds them back.
+    const removedByModerator = new Set<string>();
+    let lastLocks = (defaultValues.lockedProperties ?? []).filter(isDefined);
+    let writingLocks = false;
     const subscription = form.watch((value, { name }) => {
-      if (
-        currentUser?.isModerator &&
-        name &&
-        lockableProperties.includes(name) &&
-        !value.lockedProperties?.includes(name)
-      ) {
-        const locked = (value.lockedProperties ?? []).filter(isDefined);
-        form.setValue('lockedProperties', [...locked, name]);
+      if (!currentUser?.isModerator || !name) return;
+      const stored = (value.lockedProperties ?? []).filter(isDefined);
+      if (name === 'lockedProperties') {
+        if (!writingLocks) {
+          for (const field of lastLocks)
+            if (!stored.includes(field)) {
+              removedByModerator.add(field);
+              autoLocked.delete(field);
+            }
+          for (const field of stored) removedByModerator.delete(field);
+        }
+        lastLocks = stored;
+        return;
+      }
+      if (!lockableProperties.includes(name)) return;
+
+      const valueOf = (field: string) => value[field as keyof typeof value];
+      // Restrictive, and either moved there in this edit or set there by the moderator's own hand.
+      const isOn = (field: string) =>
+        valueOf(field) === restrictiveValues[field] &&
+        (touched.has(field) ||
+          valueOf(field) !== defaultValues[field as keyof typeof defaultValues]);
+      const flagsOn = Object.keys(flagLockSets).filter(isOn);
+      const calledFor = (field: string) =>
+        !removedByModerator.has(field) &&
+        (isOn(field) || flagsOn.some((flag) => flagLockSets[flag].includes(field)));
+
+      const locked = new Set(stored);
+      if (!settingDerivedValue.current) {
+        touched.add(name);
+        autoLocked.delete(name);
+        removedByModerator.delete(name);
+        locked.add(name);
+      }
+      for (const field of lockableProperties) {
+        if (calledFor(field) && !locked.has(field)) {
+          autoLocked.add(field);
+          locked.add(field);
+        } else if (!calledFor(field) && autoLocked.delete(field)) {
+          locked.delete(field);
+        }
+      }
+      if (locked.size !== stored.length || stored.some((field) => !locked.has(field))) {
+        writingLocks = true;
+        try {
+          form.setValue('lockedProperties', [...locked]);
+        } finally {
+          writingLocks = false;
+        }
       }
     });
     return () => {
@@ -663,8 +738,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                     'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
                   )}
                   onChange={(value) => {
-                    form.setValue('nsfw', value === 'true' ? false : undefined);
-                    form.setValue('sfwOnly', minor ? true : value === 'true');
+                    setDerivedValue('nsfw', value === 'true' ? false : undefined);
+                    setDerivedValue('sfwOnly', minor ? true : value === 'true');
                   }}
                 >
                   <Group mt="xs">
@@ -688,8 +763,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   description={isLockedDescription('nsfw')}
                   onChange={(event) => {
                     if (event.target.checked) {
-                      form.setValue('poi', 'false');
-                      form.setValue('sfwOnly', false);
+                      setDerivedValue('poi', 'false');
+                      setDerivedValue('sfwOnly', false);
                     }
                   }}
                   className="mt-2"
@@ -701,8 +776,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   description={isLockedDescription('minor')}
                   onChange={(event) => {
                     if (event.target.checked) {
-                      form.setValue('nsfw', false);
-                      form.setValue('sfwOnly', true);
+                      setDerivedValue('nsfw', false);
+                      setDerivedValue('sfwOnly', true);
                     }
                   }}
                 />
@@ -776,7 +851,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   const value = selected as Availability;
                   const isPrivate = value === Availability.Private;
                   // Set sfwOnly if private
-                  form.setValue('sfwOnly', isPrivate);
+                  setDerivedValue('sfwOnly', isPrivate);
 
                   if (isPrivate) {
                     // Open automatic configurator modal:
@@ -820,7 +895,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                         // the chip back on what the model actually is.
                         onCancel: () => {
                           form.setValue('availability', model?.availability ?? Availability.Public);
-                          form.setValue('sfwOnly', model?.sfwOnly ?? false);
+                          setDerivedValue('sfwOnly', model?.sfwOnly ?? false);
                         },
                       },
                     });

@@ -136,6 +136,7 @@ export function shopLabelSubject(state: ShopListingState) {
     subjectId: String(state.listingId),
     contentHash: sha256(stableStringify(content)),
     ownerId,
+    // A reader fetches the stored original by this ref, never the public url: a takedown stops that.
     bytesRef: artworkKey ? `cf-image:${artworkKey}` : null,
   };
 }

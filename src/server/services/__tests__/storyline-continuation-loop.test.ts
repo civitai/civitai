@@ -516,7 +516,9 @@ describe('the storyline continuation loop', () => {
     it('refuses at approval an R continuation sent before the title was flagged', async () => {
       const { id } = await submit(STRANGER, R_POST);
       holdAsMinor(true);
-      await expect(approve(id)).rejects.toThrow(/above the storyline's maximum rating/);
+      await expect(approve(id)).rejects.toThrow(
+        'This storyline allows up to PG-13; this post is R'
+      );
       expect(chapterFor(id)).toBeUndefined();
       expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
     });

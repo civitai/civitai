@@ -812,7 +812,7 @@ describe('insertStorylineChapter refusals', () => {
     it('refuses a post taken down for a violation', async () => {
       await refuses(
         async () => insert(await post({ tosViolation: true })),
-        badRequest('This post cannot be added to a storyline')
+        badRequest("This post or one of its images can't be used in a storyline")
       );
     });
 
@@ -843,7 +843,9 @@ describe('insertStorylineChapter refusals', () => {
     it("refuses a post rated above the storyline's ceiling", async () => {
       await refuses(
         async () => insert(await post({ nsfwLevel: NsfwLevel.R })),
-        badRequest("This post is rated above the storyline's maximum rating")
+        badRequest(
+          "This post is rated above this storyline's maximum. This storyline allows up to PG; this post is R"
+        )
       );
     });
   });

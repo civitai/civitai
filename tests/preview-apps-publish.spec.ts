@@ -20,7 +20,7 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  * signed-in session (or a full-access personal key) with the `appBlocksAuthor`
  * capability (static fallback mod-only), and `features.appBlocks` (the Flipt mod
  * segment) gates it, so a user with neither would be 403/503 on every call. The
- * route counts submits per user (10 a minute).
+ * route rate-limits submits per user (`SUBMIT_RATE_LIMIT`).
  *
  * SAFE + SELF-CLEANING (the dev DB + Forgejo are shared across concurrent
  * previews):
@@ -156,10 +156,7 @@ async function findPendingBySlug(
   return null;
 }
 
-async function withdrawPendingForSlug(
-  request: APIRequestContext,
-  slug: string
-): Promise<void> {
+async function withdrawPendingForSlug(request: APIRequestContext, slug: string): Promise<void> {
   const r = await trpcQuery<{ pending: { id: string } | null }>(
     request,
     'blocks.getMyPendingForSlug',

@@ -51,6 +51,41 @@ beforeEach(() => {
   for (const key of Object.keys(mocks.mutationOptions)) delete mocks.mutationOptions[key];
 });
 
+describe('useMutateCreatorShop takedown notice', () => {
+  const result = (over: Record<string, unknown> = {}) => ({
+    refunded: 1,
+    purchases: 1,
+    clawedBack: 0,
+    clawedBackPct: 0,
+    revokedFrom: 1,
+    boxesPulled: 0,
+    boxOpeningsRefunded: 0,
+    failures: [] as { stage: string }[],
+    artworkLeftServing: 0,
+    ...over,
+  });
+  const takedownNotice = async (over: Record<string, unknown>) => {
+    await (
+      mocks.mutationOptions.takedownItem as unknown as { onSuccess: (r: unknown) => Promise<void> }
+    ).onSuccess(result(over));
+    return (mocks.showSuccessNotification.mock.calls[0][0] as { message: string }).message;
+  };
+
+  it('tells a failed artwork step apart from refund failures', async () => {
+    useMutateCreatorShop();
+    const message = await takedownNotice({ failures: [{ stage: 'cdn' }, { stage: 'refund' }] });
+    expect(message).toContain('1 refund or box step failed');
+    expect(message).toContain('Recording its artwork for removal failed');
+  });
+
+  it('says when artwork was left for a manual check', async () => {
+    useMutateCreatorShop();
+    expect(await takedownNotice({ artworkLeftServing: 2 })).toContain('needs a manual check');
+    vi.clearAllMocks();
+    expect(await takedownNotice({})).not.toMatch(/artwork|manual check/);
+  });
+});
+
 // The server refuses a submission whose quoted fee no longer matches and tells the
 // creator to reopen the form. Reopening only produces a new quote if the rejection
 // invalidated the cached one.
