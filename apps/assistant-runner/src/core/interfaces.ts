@@ -102,6 +102,12 @@ export interface ToolContext {
    * replies, and those of this reply's saved steps when it carries on.
    */
   history?: { earlier: ModelMessage[]; current: ModelMessage[] };
+  /**
+   * Set when a reply's tools are built again mid-reply (a tool's result said `reopenTools`):
+   * `history.current` is then where the reply is now. Unset when a reply starts, Retry and Continue
+   * included.
+   */
+  rebuild?: boolean;
   /** civitai's grant says the viewer may start read-only subagents. */
   subagents?: boolean;
   /** The reply's own model (subagents ask it too), and the most one step may write. */

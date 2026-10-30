@@ -18,6 +18,13 @@ const mocks = vi.hoisted(() => ({
   postsOf: undefined as string | undefined,
 }));
 
+const { forPosts } = vi.hoisted(() => ({
+  forPosts: (input: { postIds: number[] }) => ({
+    data: input.postIds.includes(502) ? { 502: { storylineId: 2, depth: 1 } } : {},
+    isLoading: false,
+  }),
+}));
+
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   const { useState } = await import('react');
@@ -40,12 +47,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     trpc: makeTrpcProxy(
       {
         // The parent chapter's membership, then which of the owner's posts are chapters already.
-        'storyline.getForPosts': {
-          useQuery: (input: { postIds: number[] }) => ({
-            data: input.postIds.includes(502) ? { 502: { storylineId: 2, depth: 1 } } : {},
-            isLoading: false,
-          }),
-        },
         'storyline.getById': {
           useQuery: () => ({
             data: {
@@ -61,6 +62,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             isLoading: false,
           }),
         },
+        'storyline.getForPosts': { useQuery: forPosts },
         'post.getInfinite': {
           useInfiniteQuery: (input: { username?: string }) => {
             mocks.postsOf = input.username;
@@ -96,7 +98,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'storyline.insertChapter': mutation(mocks.insert),
         'storyline.addChapter': mutation(mocks.addOwn),
       },
-      { useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }) }
+      {
+        useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }),
+        useQueries: (build: (t: unknown) => unknown[]) =>
+          build({ storyline: { getForPosts: forPosts } }),
+      }
     ),
   };
 });

@@ -1,4 +1,5 @@
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { recordGallerySourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import type { RemixEngine, RemixKind, RemixTier } from '~/shared/constants/remix.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -112,6 +113,34 @@ export function getRemixKinds(image: RemixSourceImage): RemixKind[] {
   return image.type === 'image' ? ['edit', 'video'] : [];
 }
 
+/** One thing the Remix button can do for this viewer: a remix kind, or prompt reuse. */
+export type RemixOptionKey = RemixKind | 'reuse';
+
+/**
+ * The options the Remix menu actually offers this viewer, in menu order. This is
+ * the menu's own list — it renders from it — so the count it is judged by cannot
+ * drift from what is on screen. An engine refusal removes the kinds, a refused
+ * reuse removes that; nothing here names a media type, so a new kind added to
+ * `getRemixKinds` changes the count by itself.
+ */
+export function getRemixOptions(image: RemixSourceImage): RemixOptionKey[] {
+  const options: RemixOptionKey[] = getEngineRefusal(image) ? [] : [...getRemixKinds(image)];
+  if (canReusePrompt(image) && !isReuseRefused(image)) options.push('reuse');
+  return options;
+}
+
+/**
+ * The option a click on the Remix button should run without opening a menu, if
+ * there is exactly one. Undefined with several (pick one) or none. An image that
+ * carries a refusal keeps its menu even with one option left, because the menu is
+ * where the viewer is told why the others are missing.
+ */
+export function getSoleRemixOption(image: RemixSourceImage): RemixOptionKey | undefined {
+  if (getEngineRefusal(image)) return undefined;
+  const options = getRemixOptions(image);
+  return options.length === 1 ? options[0] : undefined;
+}
+
 /**
  * Which tier an image routes to. Anything above the safe browsing levels goes
  * to a self-hosted engine, because the external providers refuse it — an
@@ -195,6 +224,9 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
   // `setData` for the same reason the panel opens before the awaits: the form
   // can start resolving the moment the data lands.
   if (provenance) remixProvenanceStore.setToken(sourceUrl, provenance);
+  // The form can switch to an engine that gates on the source's rating, and an on-site url has
+  // no other way to be rated there.
+  recordGallerySourceRating(sourceUrl, image.nsfwLevel);
 
   generationGraphStore.setData({
     params: {

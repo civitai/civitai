@@ -7,7 +7,7 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
-  import { csamReportUrl } from '$lib/entity-url';
+  import { csamReportUrl, csamSupplementalReportUrl } from '$lib/entity-url';
   import { holdLegLabels } from '$lib/csam-hold-legs';
   import { dateTime, num, LINK_CLASS } from '$lib/format';
   import type { CsamQueueUser } from '$lib/server/image-review.service';
@@ -109,6 +109,19 @@
             rel="noreferrer"
             class={LINK_CLASS}>Report page</a
           >
+          {#if user.latestSentImageReportId && user.pending > 0}
+            <span class="text-dark-4">·</span>
+            <a
+              href={csamSupplementalReportUrl(
+                data.civitaiUrl,
+                user.userId,
+                user.latestSentImageReportId
+              )}
+              target="_blank"
+              rel="noreferrer"
+              class={LINK_CLASS}>Supplemental report</a
+            >
+          {/if}
         </TableCell>
         <TableCell class="whitespace-nowrap text-sm">
           <div class="flex items-center gap-2">

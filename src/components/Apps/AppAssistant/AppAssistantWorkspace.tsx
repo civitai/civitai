@@ -50,7 +50,6 @@ import {
   isKeepLimitResult,
 } from '~/components/Apps/AppAssistant/appTools';
 import {
-  BUILD_IT_MESSAGE,
   SANDBOX_SERVER_ID,
   SET_CHECKLIST,
   createAssistantGate,
@@ -62,7 +61,6 @@ import {
   AssistantTokenError,
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
-import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import {
   chatTokenOrchestration,
   createBrowserCoverArtDeps,
@@ -178,25 +176,6 @@ export const APP_START_TIMEOUT_MS = 5 * 60_000;
 /** How long the page waits for its app list when the chat asks for a failed reply by itself. */
 export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
 
-/**
- * Sends `text` as the user's. A copy the chat keeps back in a box that was empty (while it holds, or
- * on a refused grant) is hidden while the user dictates, and their words would be joined to it: such a
- * copy is taken back out, so the caller can give the message back instead. components-chat 0.30.0
- * no longer keeps such a copy while the user dictates, so there it takes nothing out; kept for a
- * chat that does.
- */
-export async function sendNotJoined(
-  chat: Pick<CivitaiChat, 'send' | 'compose'>,
-  text: string,
-  box: () => string,
-  dictating: () => boolean,
-  went: () => boolean
-): Promise<void> {
-  const empty = !box();
-  await chat.send(text);
-  if (empty && !went() && dictating() && box() === text) await chat.compose('');
-}
-
 type RetryChat = Pick<
   CivitaiChat,
   'canSend' | 'retryReply' | 'updateComplete' | 'addEventListener' | 'removeEventListener'
@@ -305,8 +284,6 @@ export function AppAssistantWorkspace({
   // stops running or its tools go, or the user leaves the page. (Another chat: the chat itself gives
   // it back.) Calling back one that already went does nothing.
   const released = useRef<QueuedMessage | null>(null);
-  const boxText = useCallback(() => messageBoxText(chatRef.current), []);
-  const dictating = useCallback(() => isDictating(chatRef.current), []);
   const [chatId, setChatId] = useState<string | null>(null);
   const chatIdRef = useRef(chatId);
   const previewShown = useRef(false);
@@ -400,6 +377,8 @@ export function AppAssistantWorkspace({
       createAppTools({
         apps: () => live.current.apps,
         current: () => live.current.active,
+        // A new app's tools reach this reply once it runs and the chat has them (`reopenTools`).
+        toolsReady: (app) => toolsReadyRef.current(app),
         open: async (app) => {
           const opened = await openRef.current(app);
           // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
@@ -417,9 +396,7 @@ export function AppAssistantWorkspace({
           // Features are planned for an app, so not before one exists.
           name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
-        onBuild: () => void buildRef.current(),
         currentApp: () => live.current.active?.name ?? null,
-        appKeyOf: (name) => live.current.apps?.find((s) => s.name === name)?.app ?? null,
         // Submit for review: the user's press sends the app's export to the review queue as them.
         submit: {
           prepare: (name) => prepareSubmitRef.current(name),
@@ -430,7 +407,7 @@ export function AppAssistantWorkspace({
       }),
     [appTools]
   );
-  // What was verified belongs to the sandbox it was verified in, and so does a checklist's Build it.
+  // What was verified belongs to the sandbox it was verified in, and so does a Submit for review offer.
   useEffect(() => {
     gate.reset();
     gate.appChanged(activeName);
@@ -858,22 +835,9 @@ export function AppAssistantWorkspace({
   resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
   heldRef.current = held;
-  // Build it: a send the chat could not take now (a reply still ending, or a hold) comes back to the
-  // user to send instead, so it is never pressed twice. The chat puts it in an empty box, or offers it
-  // back beside what the user has there.
-  const buildWent = useRef(false);
   const prepareSubmitRef = useRef<(name: string) => Promise<PreparedSubmit>>(() =>
     Promise.reject(new AppExportError(EXPORT_FAILED, 'failed'))
   );
-  const buildRef = useRef(async () => {
-    buildWent.current = false;
-    const chat = chatRef.current;
-    if (!chat) return;
-    await sendNotJoined(chat, BUILD_IT_MESSAGE, boxText, dictating, () => buildWent.current);
-    if (buildWent.current) return;
-    chat.giveBack(BUILD_IT_MESSAGE);
-    gate.answered();
-  });
   // The held message comes back to the user (the chat puts it back in the box, or offers it back).
   const giveBackHeld = useCallback(() => {
     const message = heldRef.current;
@@ -884,7 +848,6 @@ export function AppAssistantWorkspace({
   const onBeforeSend = useCallback(
     (text: string, queue: BeforeSendDetail['queue']) => {
       gate.answered();
-      if (text === BUILD_IT_MESSAGE) buildWent.current = true;
       const app = live.current.active;
       if (app?.state !== 'suspended') return;
       // The chat shows the message at once, waiting, and holds while the app resumes (so no other
@@ -945,6 +908,34 @@ export function AppAssistantWorkspace({
   // Paused (or its tools gone) after the release but before the chat sent it: it would go without the
   // app's tools, and nothing would wake the app. It comes back to the user instead.
   const runningWithTools = active?.state === 'running' && mcpServers.length > 0;
+  // create_app's `toolsReady`: a new app's tools reach the reply that made it once the app runs and
+  // its tools are handed to the chat (the chat reads them as it builds the reply's tools again), or
+  // not at all after APP_START_TIMEOUT_MS. One wait per app; the latest call wins.
+  const toolsWaiters = useRef(new Map<string, (ready: boolean) => void>());
+  const [toolsAsked, setToolsAsked] = useState(0);
+  const toolsReadyRef = useRef(
+    (app: string) =>
+      new Promise<boolean>((resolve) => {
+        toolsWaiters.current.get(app)?.(false);
+        const timer = setTimeout(() => settle(false), APP_START_TIMEOUT_MS);
+        const settle = (ready: boolean) => {
+          clearTimeout(timer);
+          if (toolsWaiters.current.get(app) === settle) toolsWaiters.current.delete(app);
+          resolve(ready);
+        };
+        toolsWaiters.current.set(app, settle);
+        setToolsAsked((n) => n + 1);
+      })
+  );
+  useEffect(() => {
+    if (!active) return;
+    for (const [app, settle] of [...toolsWaiters.current]) {
+      // Another app opened, or this one runs with its tools handed to the chat.
+      if (app !== active.app) settle(false);
+      else if (runningWithTools) settle(true);
+    }
+  }, [active, runningWithTools, toolsAsked]);
+  useEffect(() => () => toolsWaiters.current.forEach((settle) => settle(false)), []);
   // Set up: one fixed message, as the user's, once (the card goes as it is pressed).
   const forkSetUp = () => {
     const chat = chatRef.current;
@@ -1075,6 +1066,9 @@ export function AppAssistantWorkspace({
     [sandboxClient, startApp]
   );
   const onRemoved = (name: string) => {
+    // A new app deleted while its reply waits for its tools: they will not come.
+    const app = live.current.apps?.find((s) => s.name === name)?.app;
+    if (app) toolsWaiters.current.get(app)?.(false);
     appTools.forget(name);
     if (name === activeName) setActiveName(null);
   };

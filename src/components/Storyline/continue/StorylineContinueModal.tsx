@@ -75,7 +75,7 @@ export default function StorylineContinueModal({
   const actingAsOwner = ownerAdd && !isOwner;
   const joining = managing && !!parentChapterId && mode === 'join';
 
-  const { posts, alreadyChapters, postsLoading, postsError, morePosts } = useOwnStorylinePosts({
+  const { posts, alreadyChapters, postsLoading, postsError, paging } = useOwnStorylinePosts({
     enabled: enabled && !!storyline,
     excludePostId: parentPostId,
     author: actingAsOwner && storyline ? storyline.user : undefined,
@@ -158,7 +158,7 @@ export default function StorylineContinueModal({
               postsLoading={postsLoading}
               alreadyChapters={alreadyChapters}
               postsError={postsError}
-              morePosts={morePosts}
+              paging={paging}
               postId={postId}
               onPostChange={setPostId}
               submitting={ownerAdd ? ownerPending : submit.isPending}

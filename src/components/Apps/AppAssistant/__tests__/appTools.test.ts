@@ -59,15 +59,105 @@ describe('create_app', () => {
     const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
     const result = await run(tool([sandbox('quiz-game', 'suspended')], open), 'Quiz Game');
     expect(open).toHaveBeenCalledWith('quiz-game-2');
+    // No toolsReady: the new app's tools come with the next reply, and the reply ends here.
     expect(result).toEqual({
       app: 'quiz-game-2',
       state: 'starting',
+      awaitsUser: true,
       note: expect.stringMatching(
-        /^The app quiz-game-2 is starting.*tap Build it.*then call set_checklist/
+        /^The app quiz-game-2 was made\..*arrive with your next reply, and this reply ends here/
       ),
     });
+    expect(result).not.toHaveProperty('reopenTools');
+    expect((result as { note: string }).note).not.toMatch(/Build it/);
     // A result with no `error` is not shown to the user, so only this one may name tools.
     expect(result).not.toHaveProperty('error');
+  });
+
+  it('carries the reply on with the new app’s tools once they are ready (reopenTools)', async () => {
+    const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
+    const toolsReady = vi.fn(async () => true);
+    const tools = createAppTools({ apps: () => [], current: () => null, open, toolsReady });
+    const result = await run(tools.tools.create_app, 'Tip calculator');
+    expect(toolsReady).toHaveBeenCalledWith('tip-calculator');
+    expect(result).toEqual({
+      app: 'tip-calculator',
+      state: 'starting',
+      reopenTools: true,
+      note: expect.stringMatching(
+        /^The app tip-calculator was made\..*tools are ready for this reply: call set_checklist.*then build it straight away/
+      ),
+    });
+  });
+
+  it('tools not ready in time (or the wait failing) end the reply here, carrying nothing on', async () => {
+    const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
+    for (const toolsReady of [async () => false, async () => Promise.reject(new Error('x'))]) {
+      const tools = createAppTools({ apps: () => [], current: () => null, open, toolsReady });
+      const result = await run(tools.tools.create_app, 'Tip calculator');
+      expect(result).not.toHaveProperty('reopenTools');
+      // A structural stop (components-chat ends the reply on it), not words the model may ignore.
+      expect(result).toMatchObject({ awaitsUser: true });
+    }
+  });
+
+  it('a create of another name in the same step makes its own app, even while the first is still being made', async () => {
+    let finish!: () => void;
+    const open = vi.fn(
+      (app: string) =>
+        new Promise((resolve) => {
+          const done = () => resolve({ sandbox: sandbox(app), created: true });
+          if (app === 'tip-calculator') finish = done;
+          else done();
+        })
+    );
+    const t = tool([], open);
+    const first = run(t, 'Tip calculator');
+    const second = run(t, 'Todo app');
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    finish();
+    const [made, other] = await Promise.all([first, second]);
+    expect(made).toMatchObject({ app: 'tip-calculator' });
+    expect(other).toMatchObject({ app: 'todo-app' });
+    expect(open.mock.calls).toEqual([['tip-calculator'], ['todo-app']]);
+  });
+
+  it('a create of the same name once the first app exists makes its own, rather than joining the wait for its tools', async () => {
+    const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
+    const toolsReady = vi.fn(() => new Promise<boolean>(() => undefined));
+    const tools = createAppTools({ apps: () => [], current: () => null, open, toolsReady });
+    void run(tools.tools.create_app, 'Tip calculator');
+    await vi.waitFor(() => expect(toolsReady).toHaveBeenCalledTimes(1));
+    void run(tools.tools.create_app, 'Tip calculator');
+    // Its own create: the service is asked again (and that app's tools are waited for in turn).
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(toolsReady).toHaveBeenCalledTimes(2));
+  });
+
+  it('a create of another name never joins one still waiting for its app’s tools (a Stop, another chat)', async () => {
+    const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
+    // The first app's tools never come (the reply that asked was stopped, or the user moved on).
+    const toolsReady = vi.fn((app: string) =>
+      app === 'tip-calculator' ? new Promise<boolean>(() => undefined) : Promise.resolve(true)
+    );
+    const tools = createAppTools({ apps: () => [], current: () => null, open, toolsReady });
+    void run(tools.tools.create_app, 'Tip calculator');
+    await vi.waitFor(() => expect(toolsReady).toHaveBeenCalledWith('tip-calculator'));
+    const second = await run(tools.tools.create_app, 'Todo app');
+    expect(open.mock.calls).toEqual([['tip-calculator'], ['todo-app']]);
+    expect(second).toMatchObject({ app: 'todo-app', reopenTools: true });
+  });
+
+  it('an app the service already had is not carried on into: the user is asked first', async () => {
+    const open = vi.fn(async (app: string) => ({
+      sandbox: sandbox(app, 'running'),
+      created: false,
+    }));
+    const toolsReady = vi.fn(async () => true);
+    const tools = createAppTools({ apps: () => [], current: () => null, open, toolsReady });
+    const result = await run(tools.tools.create_app, 'Tip calculator');
+    expect(result).not.toHaveProperty('reopenTools');
+    expect(toolsReady).not.toHaveBeenCalled();
   });
 
   it('tells the assistant to ask first when the service had the app already', async () => {
@@ -268,6 +358,8 @@ describe('create_app', () => {
     expect(result).toEqual({
       app: 'tip-calculator',
       state: 'starting',
+      // A new, empty app: with no toolsReady its tools come with the next reply, so the reply ends.
+      awaitsUser: true,
       note: expect.stringMatching(/had been deleted .* a new, empty app/),
     });
   });

@@ -10,7 +10,6 @@ const getCommentCount = vi.fn(async () => 0);
 const upsertComment = vi.fn(async () => ({ id: 1 }));
 const getComment = vi.fn(async () => ({ id: 5, threadId: 70, user: { id: 9 } }));
 const getCommentThreadBounty = vi.fn(async () => null);
-const getCommentThreadCrucibleId = vi.fn<() => Promise<number | null>>(async () => null);
 const getCommentCrucibleId = vi.fn<() => Promise<number | null>>(async () => null);
 
 vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
@@ -21,7 +20,6 @@ vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   upsertComment: (...args: unknown[]) => upsertComment(...(args as [])),
   getComment: (...args: unknown[]) => getComment(...(args as [])),
   getCommentThreadBounty: (...args: unknown[]) => getCommentThreadBounty(...(args as [])),
-  getCommentThreadCrucibleId: (...args: unknown[]) => getCommentThreadCrucibleId(...(args as [])),
   getCommentCrucibleId: (...args: unknown[]) => getCommentCrucibleId(...(args as [])),
   isViewerContentOwner: vi.fn(async () => false),
   toggleHideComment: vi.fn(async () => ({ id: 55 })),
@@ -62,7 +60,7 @@ const input = { entityType: 'crucible', entityId: 17 } as never;
 const ctxFor = (
   user: { id: number; isModerator?: boolean } | undefined,
   features: { isGreen?: boolean } = {}
-) => ({ user, features } as never);
+) => ({ user, features, track: { comment: vi.fn(async () => undefined) } } as never);
 
 const crucibleRow = (over: Record<string, unknown> = {}) => ({
   userId: CREATOR,
@@ -158,17 +156,13 @@ describe.each(HANDLERS)('crucible reply visibility: %s', (_name, handler, servic
     expect(service.mock.calls.length).toBe(0);
   });
 
-  // A reply upsert also looks up its parent, which these mocks don't serve; the read paths show
-  // the gate lets a visible crucible through.
-  const reads = _name !== 'upsert';
-
-  it.runIf(reads)('serves the replies of a crucible the viewer can open', async () => {
+  it('serves the replies of a crucible the viewer can open', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow());
     await call(ctxFor({ id: 9 }));
     expect(service.mock.calls.length).toBe(1);
   });
 
-  it.runIf(reads)('serves a moderator the replies of a taken-down crucible', async () => {
+  it('serves a moderator the replies of a taken-down crucible', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow({ takenDownAt: new Date() }));
     await call(ctxFor({ id: 1, isModerator: true }));
     expect(service.mock.calls.length).toBe(1);
@@ -199,6 +193,15 @@ describe.each([
     await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  it.each([
+    ['deleted', null],
+    ['hidden for ToS', { tosViolation: true }],
+  ])('not once the comment is %s', async (_label, row) => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow());
+    dbMock.dbWrite.commentV2.findUnique.mockResolvedValue(row);
+    await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('not when its creator blocked the one acting', async () => {
     blockedBy.ids = [CREATOR];
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow());
@@ -223,17 +226,16 @@ describe('getCommentHandler on a crucible comment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     blockedBy.ids = [];
-    getCommentThreadCrucibleId.mockResolvedValue(17);
-    getCommentCrucibleId.mockResolvedValue(null);
+    getCommentCrucibleId.mockResolvedValue(17);
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow());
   });
 
   const read = (ctx: unknown) =>
     getCommentHandler({ ctx: ctx as never, input: { id: 5 } as never });
 
-  it('resolves the crucible from the comment thread', async () => {
+  it('resolves the crucible from the comment', async () => {
     await read(ctxFor({ id: 9 }));
-    expect(getCommentThreadCrucibleId).toHaveBeenCalledWith(70);
+    expect(getCommentCrucibleId).toHaveBeenCalledWith(5);
   });
 
   it.each([
@@ -251,19 +253,16 @@ describe('getCommentHandler on a crucible comment', () => {
   it('lets a moderator read it, without resolving the crucible', async () => {
     blockedBy.ids = [CREATOR];
     await expect(read(ctxFor({ id: 1, isModerator: true }))).resolves.toBeTruthy();
-    expect(getCommentThreadCrucibleId).not.toHaveBeenCalled();
+    expect(getCommentCrucibleId).not.toHaveBeenCalled();
   });
 
-  it('finds the crucible of a reply whose thread has no root, through its chain', async () => {
-    getCommentThreadCrucibleId.mockResolvedValue(null);
-    getCommentCrucibleId.mockResolvedValue(17);
+  it('refuses a comment on a taken-down crucible', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow({ takenDownAt: new Date() }));
     await expect(read(ctxFor({ id: 9 }))).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(getCommentCrucibleId).toHaveBeenCalledWith(5);
   });
 
   it('does not gate a comment outside any crucible', async () => {
-    getCommentThreadCrucibleId.mockResolvedValue(null);
+    getCommentCrucibleId.mockResolvedValue(null);
     blockedBy.ids = [CREATOR];
     await expect(read(ctxFor({ id: 9 }))).resolves.toBeTruthy();
   });

@@ -62,15 +62,25 @@ vi.mock('~/server/email/templates', () => {
 });
 
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
+import { bountyAutomaticallyAwardedEmail } from '~/server/email/templates';
+import { NEXT_PAYOUT_RECORDED_AT_SQL } from '~/server/services/bounty-payout-lock';
+
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mockDbWrite = dbMock.dbWrite;
 loggingMock.logToAxiom.mockImplementation(() => ({ catch: vi.fn() }));
 dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (sql: string) => {
   executedStatements.push(sql);
   return 1;
 });
-const lockedBounty = { complete: false, refunded: false };
+const lockedBounty: {
+  complete: boolean;
+  refunded: boolean;
+  payoutRecordedAt?: Date | null;
+  payoutSettledAt?: Date | null;
+} = { complete: false, refunded: false };
 
 const BOUNTY_ID = 4321;
 const WINNER_ENTRY_ID = 99;
@@ -107,6 +117,12 @@ describe('prepare-bounties auto-award', () => {
 
     lockedBounty.complete = false;
     lockedBounty.refunded = false;
+    lockedBounty.payoutRecordedAt = null;
+    lockedBounty.payoutSettledAt = null;
+    dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (sql: string) => {
+      executedStatements.push(sql);
+      return 1;
+    });
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
       const sql = strings.join('');
       if (sql.includes('FOR UPDATE')) return [{ ...lockedBounty }];
@@ -129,7 +145,7 @@ describe('prepare-bounties auto-award', () => {
     expect(benefactorUpdate).toContain(`"awardedToId" = ${WINNER_ENTRY_ID}`);
     // notifications/bounty.notifications.ts filters on `bb."awardedAt" > lastSent`, so an
     // award that leaves awardedAt NULL is never announced to the winning entrant.
-    expect(benefactorUpdate).toMatch(/"awardedAt"\s*=\s*NOW\(\)/i);
+    expect(benefactorUpdate).toContain(`"awardedAt" = (SELECT ${NEXT_PAYOUT_RECORDED_AT_SQL}`);
   });
 
   it('records the award on the bounty and settles its payout', async () => {
@@ -137,12 +153,45 @@ describe('prepare-bounties auto-award', () => {
 
     expect(
       executedStatements.some((sql) =>
-        /"complete" = true, "payoutRecordedAt" = NOW\(\), "payoutWinnerUserId" = 7\s+WHERE b.id = 4321/.test(
-          sql
-        )
+        new RegExp(
+          `"complete" = true, "payoutRecordedAt" = ${escapeRegExp(
+            NEXT_PAYOUT_RECORDED_AT_SQL
+          )}, "payoutWinnerUserId" = 7\\s+WHERE b.id = 4321`
+        ).test(sql)
       )
     ).toBe(true);
     expect(mockSettle).toHaveBeenCalledExactlyOnceWith(BOUNTY_ID, { firstAttempt: true });
+  });
+
+  it('re-awards only supporters who never awarded, not one whose awarded entry was deleted', async () => {
+    await runPrepareBounties();
+    const benefactorUpdate = executedStatements.find((sql) =>
+      sql.includes('UPDATE "BountyBenefactor"')
+    );
+    expect(benefactorUpdate).toMatch(
+      /WHERE bf\."bountyId" = 4321 AND bf\."awardedToId" IS NULL AND bf\."awardedAt" IS NULL;/
+    );
+  });
+
+  it('completes a bounty every supporter has awarded, without an award or its email', async () => {
+    const answer = mockDbWrite.$queryRaw.getMockImplementation()!;
+    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...rest) =>
+      strings.join('').includes('bf."awardedAt" IS NULL LIMIT 1') ? [] : answer(strings, ...rest)
+    );
+    await runPrepareBounties();
+    expect(executedStatements).toEqual([
+      `UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${BOUNTY_ID};`,
+    ]);
+    expect(mockSettle).not.toHaveBeenCalled();
+    expect(bountyAutomaticallyAwardedEmail.send).not.toHaveBeenCalled();
+    expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: BOUNTY_ID, action: 'Update' }]);
+  });
+
+  it('leaves a bounty whose award is still being paid to a later run', async () => {
+    lockedBounty.payoutRecordedAt = new Date();
+    await runPrepareBounties();
+    expect(executedStatements).toEqual([]);
+    expect(mockSettle).not.toHaveBeenCalled();
   });
 
   it('never picks an entry whose author is gone as the winner', async () => {
@@ -178,6 +227,7 @@ describe('prepare-bounties auto-award', () => {
       const sql = strings.join('');
       if (sql.includes('FOR UPDATE')) return [{ ...lockedBounty }];
       if (sql.includes('SELECT currency FROM "BountyBenefactor"')) return [{ currency: 'BUZZ' }];
+      if (sql.includes('bf."awardedAt" IS NULL LIMIT 1')) return [{ one: 1 }];
       return [];
     });
     await runPrepareBounties();

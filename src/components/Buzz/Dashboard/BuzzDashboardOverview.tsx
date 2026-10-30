@@ -9,6 +9,7 @@ import {
   SegmentedControl,
   Skeleton,
   Stack,
+  Switch,
   Text,
 } from '@mantine/core';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
@@ -38,6 +39,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { abbreviateValue } from '~/components/Buzz/chart-defaults';
+import { getReportSeries, getStackPartner } from '~/components/Buzz/Dashboard/report-series';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -99,11 +101,21 @@ export const BuzzDashboardOverview = ({
     }));
   }, [currentAccountType]);
 
+  const [stackOther, setStackOther] = React.useState(false);
+  const stackPartner = getStackPartner(currentAccountType);
+  const partnerLabel = stackPartner ? getAccountTypeLabel(stackPartner) : '';
+  const partnerConfig = useBuzzCurrencyConfig(stackPartner);
+  const stacking = stackOther && !!stackPartner;
+
   const { report, isLoading } = useTransactionsReport(reportFilters, {
     enabled: true,
   });
+  const { report: partnerReport, isLoading: isLoadingPartner } = useTransactionsReport(
+    { window: reportFilters.window, accountType: stackPartner ?? currentAccountType },
+    { enabled: stacking }
+  );
 
-  const isLoadingReport = isLoading;
+  const isLoadingReport = isLoading || isLoadingPartner;
   const viewingHourly = reportFilters.window === 'hour';
 
   const options = React.useMemo(() => {
@@ -123,7 +135,7 @@ export const BuzzDashboardOverview = ({
       },
       scales: {
         x: {
-          stacked: false,
+          stacked: stacking,
           grid: { display: false },
           ticks: {
             color: buzzConfig.color,
@@ -132,7 +144,7 @@ export const BuzzDashboardOverview = ({
           },
         },
         y: {
-          stacked: false,
+          stacked: stacking,
           beginAtZero: true,
           ticks: {
             color: buzzConfig.color,
@@ -145,7 +157,7 @@ export const BuzzDashboardOverview = ({
         bar: { borderRadius: 4 },
       },
     };
-  }, [buzzConfig.color, mobile]);
+  }, [buzzConfig.color, mobile, stacking]);
 
   const labels = useMemo(() => {
     return report.map((d) => formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD'), true);
@@ -162,35 +174,64 @@ export const BuzzDashboardOverview = ({
     const buzzColor = buzzConfig.color;
     const buzzColorRgb = hexToRgbOpenEnded(buzzColor);
 
-    return [
+    const labelFormat = viewingHourly ? 'HH:mm' : 'MMM-DD';
+    // Stack ids keep Gained and Spent as separate columns when stacking is on.
+    const stack = (id: string) => (stacking ? { stack: id } : {});
+
+    const current = [
       {
         label: `${accountTypeLabel} Gained`,
-        data: report.reduce((acc, d) => {
-          return {
-            ...acc,
-            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === currentAccountType)?.gained ?? 0,
-          };
-        }, {}),
+        data: getReportSeries(report, currentAccountType, 'gained', labelFormat),
         borderColor: buzzColor,
         backgroundColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for gains - more prominent
         borderWidth: 2,
+        ...stack('gained'),
       },
       {
         label: `${accountTypeLabel} Spent`,
-        data: report.reduce((acc, d) => {
-          return {
-            ...acc,
-            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === currentAccountType)?.spent ?? 0,
-          };
-        }, {}),
+        data: getReportSeries(report, currentAccountType, 'spent', labelFormat),
         borderColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for border
         backgroundColor: `rgba(${buzzColorRgb}, 0.2)`, // 20% opacity for background - less prominent
         borderWidth: 1,
+        ...stack('spent'),
       },
     ];
-  }, [report, viewingHourly, currentAccountType, currentAccountTypeLabel, buzzConfig]);
+    if (!stacking || !stackPartner) return current;
+
+    const partnerColor = partnerConfig.color;
+    const partnerRgb = partnerConfig.colorRgb;
+    return [
+      ...current,
+      {
+        label: `${partnerLabel} Gained`,
+        data: getReportSeries(partnerReport, stackPartner, 'gained', labelFormat, labels),
+        borderColor: partnerColor,
+        backgroundColor: `rgba(${partnerRgb}, 0.5)`,
+        borderWidth: 2,
+        stack: 'gained',
+      },
+      {
+        label: `${partnerLabel} Spent`,
+        data: getReportSeries(partnerReport, stackPartner, 'spent', labelFormat, labels),
+        borderColor: `rgba(${partnerRgb}, 0.5)`,
+        backgroundColor: `rgba(${partnerRgb}, 0.2)`,
+        borderWidth: 1,
+        stack: 'spent',
+      },
+    ];
+  }, [
+    report,
+    partnerReport,
+    labels,
+    viewingHourly,
+    currentAccountType,
+    currentAccountTypeLabel,
+    buzzConfig,
+    stacking,
+    stackPartner,
+    partnerLabel,
+    partnerConfig,
+  ]);
 
   return (
     <div
@@ -289,6 +330,16 @@ export const BuzzDashboardOverview = ({
                   mt="xs"
                   mb={-8}
                 />
+                {stackPartner && (
+                  <Switch
+                    mt="md"
+                    size="xs"
+                    checked={stackOther}
+                    onChange={(e) => setStackOther(e.currentTarget.checked)}
+                    label={`Stack ${partnerLabel} Buzz`}
+                    aria-label={`Stack ${partnerLabel} Buzz on this graph`}
+                  />
+                )}
               </Stack>
               {isLoadingReport ? (
                 <Skeleton height={413} mt="sm" radius="sm" />

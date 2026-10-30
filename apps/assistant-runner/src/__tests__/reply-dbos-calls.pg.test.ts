@@ -17,7 +17,7 @@ import { GOLDEN } from './golden/reply-dbos-calls';
  * messages sent to it. Read back from DBOS's own tables, which is what recovery replays against, so
  * a refactor that leaves this record as it was cannot strand a run of the version before it.
  *
- * Runs against a real Postgres (CI's `App unit tests` job); without
+ * Runs against a real Postgres (CI's `App suites` workflow); without
  * ASSISTANT_RUNNER_TEST_DATABASE_URL it skips.
  */
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;

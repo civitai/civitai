@@ -545,14 +545,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       {images.length > 0 && (
         <Button
           onClick={() => {
-            const [image] = images;
-            if (images.length > 1) {
-              if (collectionId) router.replace(`/posts/${post.id}`);
-              else router.push(`/posts/${post.id}`);
-            } else if (images.length === 1 && image && 'id' in image.data) {
-              if (collectionId) router.replace(`/images/${image.data.id}`);
-              else router.push(`/images/${image.data.id}`);
-            }
+            if (collectionId) router.replace(`/posts/${post.id}`);
+            else router.push(`/posts/${post.id}`);
           }}
           variant="outline"
           color="blue"

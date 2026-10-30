@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import type * as BlockCheckService from '~/server/services/block-check.service';
 import type * as CommentsV2Service from '~/server/services/commentsv2.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
@@ -25,12 +26,18 @@ vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   upsertComment: (...args: unknown[]) => upsertComment(...(args as [])),
   getComment: (...args: unknown[]) => getComment(...(args as [])),
   getCommentThreadBounty: vi.fn(async () => null),
-  getCommentThreadCrucibleId: vi.fn(async () => null),
   getCommentThreadStorylineId: (...args: unknown[]) => getCommentThreadStorylineId(...(args as [])),
   getCommentStorylineId: (...args: unknown[]) => getCommentStorylineId(...(args as [])),
   isViewerContentOwner: vi.fn(async () => false),
   toggleSectionMute: (...args: unknown[]) => sectionMute(...(args as [])),
   getSectionMuted: (...args: unknown[]) => sectionMute(...(args as [])),
+  toggleHideComment: vi.fn(async () => ({ id: 55 })),
+  togglePinComment: vi.fn(async () => ({ id: 55 })),
+}));
+
+vi.mock('~/server/services/block-check.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockCheckService>()),
+  getContentOwnerIdForComment: vi.fn(async () => ({ ownerId: 4, hidden: false })),
 }));
 
 const blockedPair = { ids: [] as number[] };
@@ -70,6 +77,8 @@ const {
   getCommentHandler,
   toggleSectionMuteHandler,
   getSectionMutedHandler,
+  toggleHideCommentHandler,
+  togglePinnedCommentHandler,
 } = await import('../commentv2.controller');
 
 const OWNER = 4;
@@ -226,6 +235,50 @@ describe('writing in a taken-down storyline', () => {
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(getCommentStorylineId).toHaveBeenCalledWith(77);
     expect(upsertComment).not.toHaveBeenCalled();
+  });
+});
+
+describe.each([
+  ['hide', () => toggleHideCommentHandler],
+  ['pin', () => togglePinnedCommentHandler],
+] as const)('the owner can %s a comment on their storyline', (_name, handlerOf) => {
+  const call = () => handlerOf()({ ctx: as(OWNER), input: { id: 55 } as never });
+
+  beforeEach(() => {
+    reset();
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    getCommentStorylineId.mockResolvedValue(STORYLINE);
+  });
+
+  it('while it is up (control)', async () => {
+    await expect(call()).resolves.toMatchObject({ id: 55 });
+  });
+
+  it('not once it is taken down', async () => {
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow({ tosViolation: true }));
+    await expect(call()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  it('not behind a storylines flag they lack', async () => {
+    flags.storylines = false;
+    await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it.each(HIDDEN_FROM_READERS)(
+    'answers as missing to a member when the storyline is %s',
+    async (_l, arrange) => {
+      arrange();
+      await expect(
+        handlerOf()({ ctx: as(STRANGER), input: { id: 55 } as never })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    }
+  );
+
+  it('a moderator still can on a taken-down storyline', async () => {
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow({ tosViolation: true }));
+    await expect(
+      handlerOf()({ ctx: as(MODERATOR, true), input: { id: 55 } as never })
+    ).resolves.toMatchObject({ id: 55 });
   });
 });
 
