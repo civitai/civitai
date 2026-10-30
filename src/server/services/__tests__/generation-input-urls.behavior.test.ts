@@ -16,7 +16,9 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
-const { assertGenerationInputUrlsUsable } = await import('~/server/services/generation-input-urls');
+const { assertGenerationInputUrlsUsable, assertStoredImageUrlsUnblocked } = await import(
+  '~/server/services/generation-input-urls'
+);
 const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
   '~/server/services/image-url-ownership'
 );
@@ -221,5 +223,30 @@ describe('assertGenerationInputUrlsUsable', () => {
     expect(await outcome([undefined, KEY])).toBe('accepted');
     expect(await outcome([KEY, blocked])).toBe('refused');
     expect(await outcome([KEY, 'https://example.com/a.png'])).toBe('refused');
+  });
+});
+
+describe('assertStoredImageUrlsUnblocked', () => {
+  const stored = (urls: string[]) =>
+    assertStoredImageUrlsUnblocked(urls).then(
+      () => 'accepted',
+      (e: unknown) =>
+        e instanceof TRPCError && e.code === 'BAD_REQUEST' ? 'refused' : Promise.reject(e)
+    );
+
+  it('refuses a stored url whose image is blocked, whoever owns it, and passes it otherwise', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    expect(await stored([KEY])).toBe('accepted');
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'moderated'`);
+    expect(await stored([KEY])).toBe('refused');
+    expect(await stored([`https://cdn.example/x/${KEY.toUpperCase()}/original=true`])).toBe(
+      'refused'
+    );
+  });
+
+  it('matches an image stored under the full url', async () => {
+    const url = `https://cdn.example/x/${KEY}/original=true`;
+    await givenImage({ url, blockedFor: 'moderated' });
+    expect(await stored([url])).toBe('refused');
   });
 });

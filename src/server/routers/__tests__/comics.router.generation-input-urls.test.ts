@@ -6,6 +6,7 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
 
 const mocks = vi.hoisted(() => ({
   assertUsable: vi.fn(),
+  assertStoredUnblocked: vi.fn(),
   getOrchestratorToken: vi.fn(async () => 'token'),
 }));
 
@@ -18,6 +19,7 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 }));
 vi.mock('~/server/services/generation-input-urls', () => ({
   assertGenerationInputUrlsUsable: mocks.assertUsable,
+  assertStoredImageUrlsUnblocked: mocks.assertStoredUnblocked,
 }));
 
 import { comicsRouter } from '../comics.router';
@@ -167,5 +169,65 @@ describe('comics generation inputs', () => {
     ).rejects.toBe(refused);
     expect(checkedUrls()).toEqual([[SOURCE, undefined]]);
     expectNothingStarted();
+  });
+});
+
+describe('comics generation inputs the server loads', () => {
+  beforeEach(() => {
+    mocks.assertUsable.mockResolvedValue(undefined);
+    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue({ imageUrl: REF });
+  });
+
+  it.each([
+    [
+      'createPanel',
+      () =>
+        caller().createPanel({
+          projectId: 11,
+          chapterPosition: 0,
+          prompt: 'p',
+          referencePanelId: 3,
+        }),
+    ],
+    [
+      'enhancePanel',
+      () =>
+        caller().enhancePanel({
+          projectId: 11,
+          chapterPosition: 0,
+          sourceImageUrl: SOURCE,
+          sourceImageWidth: 512,
+          sourceImageHeight: 512,
+          prompt: 'p',
+          referencePanelId: 3,
+        }),
+    ],
+  ])('%s checks its reference panel image before it starts', async (_, run) => {
+    mocks.assertStoredUnblocked.mockRejectedValueOnce(refused);
+    await expect(run()).rejects.toBe(refused);
+    expect(mocks.assertStoredUnblocked).toHaveBeenCalledExactlyOnceWith([REF]);
+    expectNothingStarted();
+  });
+
+  const iterateWithReference = () =>
+    caller().iterateGenerate({ projectId: 11, chapterPosition: 0, prompt: 'p', referenceIds: [5] });
+  const givenReferenceImage = (blockedFor: string | null) => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([{ id: 5, name: 'A' }]);
+    dbMock.dbRead.comicReference.findUnique.mockResolvedValue({
+      name: 'A',
+      images: [{ image: { id: 1, url: REF, width: 512, height: 512, blockedFor } }],
+    });
+  };
+
+  it('refuses a reference whose image is blocked, before it starts', async () => {
+    givenReferenceImage('moderated');
+    await expect(iterateWithReference()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expectNothingStarted();
+  });
+
+  it('goes on to generate with an unblocked reference image', async () => {
+    givenReferenceImage(null);
+    await iterateWithReference().catch(() => undefined);
+    expect(mocks.getOrchestratorToken).toHaveBeenCalled();
   });
 });

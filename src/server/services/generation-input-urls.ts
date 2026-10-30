@@ -6,6 +6,20 @@ import {
   MAX_KEYS,
 } from '~/server/services/image-url-ownership';
 
+/** Stored urls a generation reads (a reference panel's image): refused if any image on them is blocked. */
+export async function assertStoredImageUrlsUnblocked(urls: string[]) {
+  const keys = [...new Set(urls.flatMap(keysIn))];
+  if (!keys.length) return;
+  const blocked = await dbWrite.$queryRaw<unknown[]>`
+    SELECT 1 FROM "Image" WHERE url = ANY(${[
+      ...keys,
+      ...urls,
+    ]}::text[]) AND "blockedFor" IS NOT NULL
+    LIMIT 1
+  `;
+  if (blocked.length) throw imageUrlUnavailableError();
+}
+
 type InputImageRow = { url: string; userId: number; visible: boolean; blocked: boolean };
 
 /**
