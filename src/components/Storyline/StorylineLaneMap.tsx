@@ -70,8 +70,26 @@ type LaneNode = {
 
 /** Rows are fixed-height so branch lanes line up with the canon rows. */
 const SIZES = {
-  compact: { canon: 84, branch: 52, laneWidth: 64, row: 121, band: 30, visibleLanes: 2 },
-  wide: { canon: 112, branch: 72, laneWidth: 124, row: 156, band: 30, visibleLanes: 2 },
+  compact: {
+    canon: 84,
+    branch: 52,
+    laneWidth: 64,
+    row: 121,
+    band: 30,
+    minLanes: 2,
+    maxLanes: 2,
+    minPath: 0,
+  },
+  wide: {
+    canon: 112,
+    branch: 72,
+    laneWidth: 124,
+    row: 156,
+    band: 30,
+    minLanes: 2,
+    maxLanes: 99,
+    minPath: 280,
+  },
 };
 const RATIO = 5 / 4;
 
@@ -216,7 +234,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
           </Text>
         )}
       <div className="flex">
-        <div className="relative min-w-0 flex-1" style={{ height }}>
+        <div className="relative min-w-0 flex-1" style={{ height, minWidth: size.minPath }}>
           {canonRows.length > 1 && (
             <span
               aria-hidden
@@ -276,9 +294,14 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
         </div>
 
         {branchLanes > 0 && (
+          // On a wider screen, as many lanes as fit beside the main path rather than two.
           <div
-            className="shrink-0 overflow-x-auto"
-            style={{ width: Math.min(branchLanes, size.visibleLanes) * size.laneWidth }}
+            className="overflow-x-auto"
+            data-testid="storyline-lanes-scroller"
+            style={{
+              flex: `0 1 ${Math.min(branchLanes, size.maxLanes) * size.laneWidth}px`,
+              minWidth: Math.min(branchLanes, size.minLanes) * size.laneWidth,
+            }}
           >
             <div className="relative" style={{ width: branchLanes * size.laneWidth, height }}>
               {rows.map((row, i) =>
