@@ -75,7 +75,7 @@ export function StorylinePostPicker({
         <Text size="sm" c="red">
           Couldn&apos;t load your posts.
         </Text>
-      ) : !posts.length && paging?.search.trim() ? (
+      ) : !posts.length && paging?.search.trim() && !alreadyChapters && !paging.hasMore ? (
         <Text size="sm" c="dimmed">
           None of your posts has a title starting with “{paging.search.trim()}”.
         </Text>

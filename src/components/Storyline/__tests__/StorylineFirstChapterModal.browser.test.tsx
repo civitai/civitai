@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   hasNextPage: false,
   fetchNextPage: vi.fn(),
   queries: [] as (string | undefined)[],
+  chapterLookups: [] as number[][],
   ownerMaxNsfwLevel: 0,
   chapters: {} as Record<number, unknown>,
   mutate: vi.fn(),
@@ -66,9 +67,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             };
           },
         },
-        'storyline.getForPosts': {
-          useQuery: () => ({ data: mocks.chapters, isLoading: false }),
-        },
         'storyline.setFirstChapter': {
           useMutation: (options: typeof mocks.options) => {
             mocks.options = options;
@@ -76,7 +74,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           },
         },
       },
-      { useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }) }
+      {
+        useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }),
+        useQueries: (build: (t: unknown) => unknown[]) =>
+          build({
+            storyline: {
+              getForPosts: (input: { postIds: number[] }) => {
+                mocks.chapterLookups.push(input.postIds);
+                return { data: mocks.chapters, isLoading: false };
+              },
+            },
+          }),
+      }
     ),
   };
 });
@@ -114,6 +123,7 @@ beforeEach(() => {
   mocks.hasNextPage = false;
   mocks.fetchNextPage.mockReset();
   mocks.queries = [];
+  mocks.chapterLookups = [];
   mocks.ownerMaxNsfwLevel = NsfwLevel.PG13;
   mocks.chapters = {};
   mocks.error = null;
@@ -201,6 +211,16 @@ describe('StorylineFirstChapterModal', () => {
     rerender(<StorylineFirstChapterModal storylineId={3} />);
     await expect.element(tile(9)).toBeVisible();
     expect(page.getByRole('button', { name: 'Show older posts' }).elements()).toHaveLength(0);
+  });
+
+  // The lookup takes at most 100 ids; past that it refused, and chapters came back as pickable.
+  test('asks which posts are chapters at most 100 at a time', async () => {
+    mocks.items = Array.from({ length: 150 }, (_, i) => postItem(1000 + i));
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await expect.element(tile(1149)).toBeVisible();
+    expect(mocks.chapterLookups.at(-1)?.length).toBe(50);
+    expect(Math.max(...mocks.chapterLookups.map((ids) => ids.length))).toBe(100);
   });
 
   test('searches your posts by title', async () => {

@@ -2,6 +2,7 @@ import type { StorylineSubmitOutcome } from '~/components/Storyline/continue/Sto
 import type { StorylineSpaceSettings } from '~/components/Storyline/manage/StorylineSettingsForm';
 import type { StorylineQueueRow } from '~/components/Storyline/queue/StorylineQueueList';
 import { useDebouncedValue } from '@mantine/hooks';
+import { chunk } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import type { StorylineClosedReason } from '~/components/Storyline/storyline-ui';
 import {
@@ -12,6 +13,7 @@ import {
 import { isPublished } from '~/components/Storyline/storyline.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostSort } from '~/server/common/enums';
+import { STORYLINE_FOR_POSTS_MAX } from '~/server/schema/storyline.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
@@ -329,23 +331,37 @@ export function useOwnStorylinePosts({
         : [],
     [currentUser, loaded, excludePostId, publishedOnly]
   );
-  // Which of them are already chapters; the author is told whatever the post's level.
-  const ownPostIds = useMemo(() => ownPosts.map((post) => post.id), [ownPosts]);
-  const { data: ownChapters, isLoading: ownChaptersLoading } = trpc.storyline.getForPosts.useQuery(
-    { postIds: ownPostIds, browsingLevel: allBrowsingLevelsFlag },
-    // Keep the last answer while a refetch adds a post, so the grid does not blink to skeletons.
-    { enabled: enabled && ownPostIds.length > 0, placeholderData: (previous) => previous }
+  // Which of them are already chapters; the author is told whatever the post's level. In chunks of
+  // `getStorylinesForPostsSchema`'s cap, since older pages keep adding ids.
+  const idChunks = useMemo(
+    () =>
+      chunk(
+        ownPosts.map((post) => post.id),
+        STORYLINE_FOR_POSTS_MAX
+      ),
+    [ownPosts]
+  );
+  const chapterQueries = trpc.useQueries((t) =>
+    idChunks.map((postIds) =>
+      t.storyline.getForPosts(
+        { postIds, browsingLevel: allBrowsingLevelsFlag },
+        // Keep the last answer while a refetch adds a post, so the grid does not blink to skeletons.
+        { enabled, placeholderData: (previous) => previous }
+      )
+    )
   );
   const { posts, alreadyChapters } = storylineWithoutChapters(
     ownPosts,
-    new Set(Object.keys(ownChapters ?? {}).map(Number))
+    new Set(chapterQueries.flatMap((query) => Object.keys(query.data ?? {}).map(Number)))
   );
   return {
     posts,
     alreadyChapters,
-    postsLoading: postsLoading || (ownPostIds.length > 0 && ownChaptersLoading),
-    // A failed refetch keeps the posts already shown.
-    postsError: postsError && !loaded,
+    postsLoading: postsLoading || chapterQueries.some((query) => query.isLoading),
+    // A failed refetch keeps what is already shown. Without the chapter answer, a post that is
+    // already a chapter would be offered.
+    postsError:
+      (postsError && !loaded) || chapterQueries.some((query) => query.isError && !query.data),
     paging: {
       search,
       onSearchChange: setSearch,
