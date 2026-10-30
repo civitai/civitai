@@ -204,6 +204,8 @@ describe('Flux 3 Video with a source image rated above PG-13', () => {
     await renderFooter(flux3Store('img2vid'));
 
     await vi.waitFor(() => expect(ratingLookups.length).toBeGreaterThan(0));
+    // The lookup is recorded when it starts; give its answer time to reach the hook.
+    await new Promise((resolve) => setTimeout(resolve, 200));
     expect(showsMessage()).toBe(true);
     expect(generateButton().disabled).toBe(true);
   });

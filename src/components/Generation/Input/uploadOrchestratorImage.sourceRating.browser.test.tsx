@@ -23,14 +23,15 @@ import { recordSourceRating } from '~/components/form-graph/generation/useFlux3M
 // eslint-disable-next-line import/first
 import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
 
-async function sourceUrl() {
+async function sourceBlob() {
   const canvas = document.createElement('canvas');
   canvas.width = 600;
   canvas.height = 600;
   canvas.getContext('2d')!.fillRect(0, 0, 600, 600);
-  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/png'));
-  return URL.createObjectURL(blob);
+  return new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/png'));
 }
+
+const sourceUrl = async () => URL.createObjectURL(await sourceBlob());
 
 beforeEach(() => {
   useSourceMetadataStore.getState().clearAll();
@@ -45,6 +46,16 @@ describe('uploadOrchestratorImage — a known source rating follows the re-uploa
     const result = await uploadOrchestratorImage(src, 'test-rating');
 
     expect(result.url).toBe(UPLOADED);
+    expect(sourceMetadataStore.getMetadata(UPLOADED)?.nsfwLevel).toBe('x');
+  });
+
+  test('a cropped copy of a mature source is still mature under its uploaded url', async () => {
+    const src = await sourceUrl();
+    recordSourceRating(src, 'x');
+    const cropped = new File([await sourceBlob()], 'crop.png', { type: 'image/png' });
+
+    await uploadOrchestratorImage(cropped, 'test-crop', src);
+
     expect(sourceMetadataStore.getMetadata(UPLOADED)?.nsfwLevel).toBe('x');
   });
 });
