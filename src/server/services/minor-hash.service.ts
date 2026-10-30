@@ -885,7 +885,7 @@ export async function resolveMinorFlagAppeal({
   // Call-site import: poi-hash.service imports this module.
   const loadPoiHash = () => import('~/server/services/poi-hash.service');
   if (upheld.includes('poi') && poiHash)
-    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId });
+    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId, fromAppeal: true });
   const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
   if (upheldVerdicts.length)
     await stampModelTextScanAppeal({

@@ -295,6 +295,49 @@ describe('setModelPoi — the real-person hash match', () => {
   });
 });
 
+// The queue's flag and revert decide on the row they lock, not on what an earlier read saw: another
+// moderator may have ruled the model in between.
+describe('setModelPoi — onlyIf', () => {
+  it('decides on the locked row, not the read before it', async () => {
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...baseModelRow, poi: false })
+      .mockResolvedValueOnce({ ...baseModelRow, poi: true });
+    const onlyIf = vi.fn((row: { poi: boolean }) => !row.poi);
+
+    expect(await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID, onlyIf })).toBeNull();
+    expect(onlyIf).toHaveBeenCalledWith(expect.objectContaining({ poi: true }));
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockTrackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('writes as usual when the locked row passes', async () => {
+    mockBefore({});
+    expect(
+      await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID, onlyIf: () => true })
+    ).toMatchObject({ poi: true });
+    expect(written()).toMatchObject({ poi: true, sfwOnly: true });
+  });
+
+  // Decided: a guarded lift records its ruling after the write, not before. Before it would leave a
+  // false "moderator lifted" ruling on a revert the lock refused. Don't move it back ahead.
+  it('a refused revert records no ruling', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, onlyIf: () => false });
+    expect(mockStampRuling).not.toHaveBeenCalled();
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+
+  it('a guarded lift that lands records its ruling after the write', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, onlyIf: () => true });
+    expect(mockStampRuling).toHaveBeenCalledTimes(1);
+    expect(mockStampRuling.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+  });
+});
+
 it('refuses an unknown model', async () => {
   mockDbWrite.model.findUnique.mockResolvedValue(null);
   await expect(setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID })).rejects.toThrow();

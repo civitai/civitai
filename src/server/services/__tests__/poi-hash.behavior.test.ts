@@ -18,9 +18,25 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
 const { setModelPoi } = vi.hoisted(() => ({
-  setModelPoi: vi.fn(async ({ id }: { id: number }) => {
-    await holder.db.query(`UPDATE "Model" SET poi = true WHERE id = $1`, [id]);
-  }),
+  setModelPoi: vi.fn(
+    async ({
+      id,
+      poi = true,
+      onlyIf,
+    }: {
+      id: number;
+      poi?: boolean;
+      onlyIf?: (row: Record<string, unknown>) => boolean;
+    }) => {
+      const { rows } = await holder.db.query<Record<string, unknown>>(
+        `SELECT * FROM "Model" WHERE id = $1`,
+        [id]
+      );
+      if (onlyIf && !onlyIf(rows[0])) return null;
+      await holder.db.query(`UPDATE "Model" SET poi = $2 WHERE id = $1`, [id, poi]);
+      return { id };
+    }
+  ),
 }));
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
@@ -60,8 +76,10 @@ vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
 
 const {
   checkPoiHashOnScan,
+  confirmPoiHashAutoFlag,
   dismissPoiHashMatch,
   findPoiHashSeeds,
+  flagPoiHashMatch,
   revertPoiHashAutoFlag,
   sweepPoiHashMatches,
 } = await import('~/server/services/poi-hash.service');
@@ -443,5 +461,196 @@ describe('revertPoiHashAutoFlag — the system nsfw lock marker', () => {
     await revertPoiHashAutoFlag({ modelId: REVERTED, userId: 99 });
 
     expect(await meta(REVERTED)).not.toHaveProperty('systemNsfwLock');
+  });
+});
+
+describe('the moderator queue rules only a flag still as the hash match applied it', () => {
+  const MODEL = 70;
+  const flagged = (snapshot: Record<string, unknown>) =>
+    addModel(
+      MODEL,
+      7,
+      `poi = true, "lockedProperties" = ${LOCKED}, meta = '${JSON.stringify({
+        poiFlagSnapshot: {
+          at: '2026-10-01T00:00:00Z',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          ...snapshot,
+        },
+      })}'`
+    );
+  const lifts = () => setModelPoi.mock.calls.filter(([input]) => input.poi === false).length;
+  const confirmedSnapshot = { source: 'manual', confirmedFrom: 'auto' };
+
+  it('confirms and reverts an unconfirmed hash flag', async () => {
+    await flagged({ source: 'auto' });
+    expect(await confirmPoiHashAutoFlag({ modelId: MODEL, userId: 99 })).toEqual({
+      confirmed: 1,
+    });
+    expect(await meta(MODEL)).toMatchObject({
+      poiFlagSnapshot: { source: 'manual', confirmedFrom: 'auto' },
+    });
+
+    await pg.exec(`DELETE FROM "Model" WHERE id = ${MODEL}`);
+    await flagged({ source: 'auto' });
+    expect(await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 })).toEqual({
+      reverted: 1,
+    });
+    expect(lifts()).toBe(1);
+  });
+
+  it('refuses a flag a moderator already confirmed', async () => {
+    await flagged(confirmedSnapshot);
+    expect(await confirmPoiHashAutoFlag({ modelId: MODEL, userId: 99 })).toEqual({
+      confirmed: 0,
+    });
+    expect(await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 })).toEqual({
+      reverted: 0,
+    });
+    expect(lifts()).toBe(0);
+    expect(await meta(MODEL)).toMatchObject({ poiFlagSnapshot: confirmedSnapshot });
+  });
+
+  // set-poi by hand on an auto-flagged model keeps the auto snapshot; the queue drops the row, so a
+  // stale page's Revert must not lift the moderator's flag.
+  it('refuses a flag a moderator set by hand since', async () => {
+    await flagged({ source: 'auto' });
+    await pg.query(
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+       VALUES (5, 'setPoi', 'model', $1, '2026-10-02T00:00:00Z')`,
+      [MODEL]
+    );
+    expect(await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 })).toEqual({
+      reverted: 0,
+    });
+    expect(await confirmPoiHashAutoFlag({ modelId: MODEL, userId: 99 })).toEqual({
+      confirmed: 0,
+    });
+  });
+
+  // Both moderators would be told they succeeded, and the confirmed model would get its pre-flag
+  // nsfw rating back.
+  it('a confirm landing between the read and the lock stops the revert', async () => {
+    await flagged({ source: 'auto' });
+    const lift = setModelPoi.getMockImplementation()!;
+    setModelPoi.mockImplementationOnce(async (input) => {
+      await confirmPoiHashAutoFlag({ modelId: MODEL, userId: 5 });
+      return lift(input);
+    });
+
+    expect(await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 })).toEqual({ reverted: 0 });
+    const [row] = (
+      await pg.query<{ poi: boolean; nsfw: boolean }>(
+        `SELECT poi, nsfw FROM "Model" WHERE id = $1`,
+        [MODEL]
+      )
+    ).rows;
+    expect(row).toEqual({ poi: true, nsfw: false });
+  });
+
+  // A revert that lands first lifts the flag and drops the snapshot, in two writes.
+  it.each([
+    ['lifted the flag', `poi = false`, false],
+    ['dropped the snapshot, under an appeal', `meta = '{}'`, true],
+  ])('a revert that already %s stops this one', async (_, sql, fromAppeal) => {
+    await flagged({ source: 'auto' });
+    const lift = setModelPoi.getMockImplementation()!;
+    setModelPoi.mockImplementationOnce(async (input) => {
+      await pg.exec(`UPDATE "Model" SET ${sql} WHERE id = ${MODEL}`);
+      return lift(input);
+    });
+    expect(await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99, fromAppeal })).toEqual({
+      reverted: 0,
+    });
+  });
+
+  // Without the guard the restore would hand a re-flagged model its pre-flag nsfw rating and drop
+  // its real-person locks.
+  it('a model flagged again after the lift keeps its restrictions', async () => {
+    await flagged({ source: 'auto' });
+    const lift = setModelPoi.getMockImplementation()!;
+    setModelPoi.mockImplementationOnce(async (input) => {
+      const lifted = await lift(input);
+      await pg.query(`UPDATE "Model" SET poi = true WHERE id = $1`, [MODEL]);
+      return lifted;
+    });
+    await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 });
+    const [row] = (
+      await pg.query<{ nsfw: boolean; lockedProperties: string[] }>(
+        `SELECT nsfw, "lockedProperties" FROM "Model" WHERE id = $1`,
+        [MODEL]
+      )
+    ).rows;
+    expect(row).toEqual({ nsfw: false, lockedProperties: ['poi', 'nsfw', 'sfwOnly'] });
+  });
+
+  const afterLift = (sql: string) => {
+    const lift = setModelPoi.getMockImplementation()!;
+    setModelPoi.mockImplementationOnce(async (input) => {
+      const lifted = await lift(input);
+      await pg.exec(`UPDATE "Model" SET ${sql} WHERE id = ${MODEL}`);
+      return lifted;
+    });
+  };
+  const restrictions = async () =>
+    (
+      await pg.query<{ nsfw: boolean; sfwOnly: boolean; lockedProperties: string[] }>(
+        `SELECT nsfw, "sfwOnly", "lockedProperties" FROM "Model" WHERE id = $1`,
+        [MODEL]
+      )
+    ).rows[0];
+
+  // The restore branch was picked from a read taken before the lock: the pre-flag nsfw rating and
+  // locks would land on a model a minor flag had just restricted.
+  it('a model flagged minor after the lift keeps what minor needs', async () => {
+    await flagged({ source: 'auto' });
+    afterLift(`minor = true, nsfw = false, "sfwOnly" = true, "lockedProperties" = ${LOCKED}`);
+    await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 });
+    const row = await restrictions();
+    expect(row).toMatchObject({ nsfw: false, sfwOnly: true });
+    expect(row.lockedProperties).toEqual(expect.arrayContaining(['minor', 'nsfw', 'sfwOnly']));
+  });
+
+  it('a minor model flagged again after the lift keeps its real-person lock', async () => {
+    await flagged({ source: 'auto' });
+    await pg.exec(`UPDATE "Model" SET minor = true WHERE id = ${MODEL}`);
+    afterLift(`poi = true`);
+    await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 });
+    expect((await restrictions()).lockedProperties).toContain('poi');
+  });
+
+  // An appeal against a confirmed hash flag must still roll it back: resolveMinorFlagAppeal passes
+  // fromAppeal. Without it the queue's rule would leave a granted appeal's flag in place.
+  it('an appeal still reverts a confirmed hash flag', async () => {
+    await flagged(confirmedSnapshot);
+    expect(await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99, fromAppeal: true })).toEqual({
+      reverted: 1,
+    });
+    expect(lifts()).toBe(1);
+  });
+});
+
+describe('flagPoiHashMatch — only a model still waiting on its match', () => {
+  const MODEL = 80;
+  const lead = `meta = '{"poiHashMatch":{"at":"2026-10-01T00:00:00Z","hash":"ABC"}}'`;
+
+  it('flags it', async () => {
+    await addModel(MODEL, 8, lead);
+    expect(await flagPoiHashMatch({ modelId: MODEL, userId: 99 })).toEqual({ flagged: 1 });
+  });
+
+  it.each([
+    ['the lead was dismissed', ''],
+    ['the model is already flagged', `${lead}, poi = true`],
+    ['the model was deleted', `${lead}, status = 'Deleted'`],
+  ])('flags nothing when %s', async (_, sql) => {
+    await addModel(MODEL, 8, sql);
+    expect(await flagPoiHashMatch({ modelId: MODEL, userId: 99 })).toEqual({ flagged: 0 });
+  });
+
+  // A dismiss queued behind a flag's lock would otherwise report a lead the flag already settled.
+  it('a dismiss on a flagged model dismisses nothing', async () => {
+    await addModel(MODEL, 8, `${lead}, poi = true`);
+    expect(await dismissPoiHashMatch({ modelId: MODEL, userId: 99 })).toEqual({ dismissed: 0 });
   });
 });

@@ -573,7 +573,7 @@ async function flagFileMatch(
   earlier: readonly { flag: PlannedFlagRef; result: RuleResult }[]
 ): Promise<RuleResult> {
   const state = await getModelFlagState(modelId);
-  // set-poi applies the flag whatever the queue says, so the lead must still be there.
+  // flag-match re-checks this under the row lock; refusing here keeps the message specific.
   if (label === 'poi' && !state.poi && !state.poiMatchQueued)
     return {
       ok: false,

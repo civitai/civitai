@@ -50,7 +50,7 @@ const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
     },
   },
   'src/server/services/auto-nsfw.ts': { lockWrites: 2, decision: { kind: 'sets' } },
-  'src/server/services/poi-hash.service.ts': { lockWrites: 4, decision: { kind: 'clears' } },
+  'src/server/services/poi-hash.service.ts': { lockWrites: 2, decision: { kind: 'clears' } },
   'src/server/services/minor-hash.service.ts': { lockWrites: 1, decision: { kind: 'clears' } },
   'apps/moderator/src/lib/server/rating-reviews.service.ts': {
     lockWrites: 6,

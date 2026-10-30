@@ -1976,7 +1976,11 @@ describe('resolveMinorFlagAppeal', () => {
 
       await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
 
-      expect(mockConfirmPoiHashAutoFlag).toHaveBeenCalledWith({ modelId: 42, userId: 7 });
+      expect(mockConfirmPoiHashAutoFlag).toHaveBeenCalledWith({
+        modelId: 42,
+        userId: 7,
+        fromAppeal: true,
+      });
       expect(mockRevertPoiHashAutoFlag).not.toHaveBeenCalled();
       expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
         expect.objectContaining({ status: AppealStatus.Rejected })
