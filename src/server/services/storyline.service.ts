@@ -3460,7 +3460,7 @@ async function getChosenStorylineImages(
 /** Deepest offset the most-chapters order pages to. */
 const STORYLINE_FEED_MAX_OFFSET = 1000;
 
-export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open';
+export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open' | 'mine';
 export type StorylineFeedSort = 'newest' | 'mostChapters';
 
 /**
@@ -3503,6 +3503,7 @@ export async function getStorylinesInfinite({
   if (excluded.length) where.push(Prisma.sql`st."userId" <> ALL(${excluded}::int[])`);
   if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
   if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
+  if (filter === 'mine') where.push(Prisma.sql`st."userId" = ${viewerId}`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
     where.push(Prisma.sql`st.status <> 'Complete'`);
