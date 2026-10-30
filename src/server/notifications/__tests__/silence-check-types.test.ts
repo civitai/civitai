@@ -35,4 +35,34 @@ describe('silenceCheckTypeAges', () => {
     await ages(silenceCheckTypes);
     expect(query).toHaveBeenCalledTimes(2);
   });
+
+  it('runs one query for concurrent requests on a cold cache', async () => {
+    let release: (rows: { type: string; firstSeen: Date }[]) => void = () => undefined;
+    const query = vi.fn(
+      () => new Promise<{ type: string; firstSeen: Date }[]>((r) => (release = r))
+    );
+    const ages = createSilenceCheckTypeAges({ query });
+
+    const pending = [ages(['a']), ages(['a']), ages(['a'])];
+    release([{ type: 'a', firstSeen: new Date('2026-01-01T00:00:00Z') }]);
+    const answers = await Promise.all(pending);
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(answers[0]).toEqual(answers[2]);
+  });
+
+  it('serves the last good value when a refresh fails, and fails when there is none', async () => {
+    const rows = [{ type: 'a', firstSeen: new Date('2026-01-01T00:00:00Z') }];
+    const query = vi.fn().mockResolvedValueOnce(rows).mockRejectedValue(new Error('db down'));
+    let now = new Date('2026-12-01T00:00:00Z');
+    const ages = createSilenceCheckTypeAges({ query, now: () => now });
+
+    const first = await ages(['a']);
+    now = new Date('2026-12-01T02:00:00Z');
+
+    expect(await ages(['a'])).toEqual(first);
+
+    const cold = createSilenceCheckTypeAges({ query: vi.fn().mockRejectedValue(new Error('x')) });
+    await expect(cold(['a'])).rejects.toThrow('x');
+  });
 });
