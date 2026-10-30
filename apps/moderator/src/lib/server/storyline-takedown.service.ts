@@ -32,7 +32,7 @@ export type PostStorylineChapter = {
   tosViolation: boolean;
   minorByScan: boolean;
   /** Its owner or author removed it from the storyline while a report was open. */
-  heldRemoval: { by: string; at: Date } | null;
+  heldRemoval: { by: string; at: Date; reportIds: number[] } | null;
 };
 
 /**
@@ -68,6 +68,7 @@ export async function getPostStorylineChapter(
         'h.depth',
         'h.removedByRole',
         'h.createdAt',
+        'h.reportIds',
       ])
       .where('h.postId', '=', postId)
       .orderBy('h.id', 'desc')
@@ -93,7 +94,7 @@ export async function getPostStorylineChapter(
     removed: true,
     tosViolation: current.tosViolation ?? false,
     minorByScan: current.minorByScan ?? false,
-    heldRemoval: { by: current.removedByRole, at: current.createdAt },
+    heldRemoval: { by: current.removedByRole, at: current.createdAt, reportIds: current.reportIds },
   };
 }
 

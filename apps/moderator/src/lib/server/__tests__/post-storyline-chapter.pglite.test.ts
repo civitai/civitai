@@ -111,7 +111,7 @@ describe('the storyline around a reported post', () => {
       removed: true,
       tosViolation: false,
       minorByScan: true,
-      heldRemoval: { by: 'author', at: expect.any(Date) },
+      heldRemoval: { by: 'author', at: expect.any(Date), reportIds: [70] },
     });
   });
 

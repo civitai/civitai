@@ -247,6 +247,7 @@ describe('removeStorylineChapter', () => {
       { id: 11, postId: 502, removed: true },
     ]);
     expect((await placement900()).removedBy).toBe('moderator');
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(trackModActivity).toHaveBeenCalledWith(
       MODERATOR,
       { entityType: 'storyline', entityId: 1, activity: 'removeChapter' },
@@ -439,8 +440,8 @@ describe('removeStorylineChapter', () => {
         }) =>
           (
             await rows(
-              `INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth)
-             VALUES (12, $1, $2, $3, $4) RETURNING id`,
+              `INSERT INTO "StorylineChapter" ("storylineId", "postId", "userId", depth)
+             VALUES ($1, $2, $3, $4) RETURNING id`,
               [data.storylineId, data.postId, data.userId, data.depth]
             )
           )[0]) as never
@@ -479,8 +480,23 @@ describe('removeStorylineChapter', () => {
       await openPostReport();
       await remove(OWNER);
       expect(await holds()).toHaveLength(1);
-      expect(await addBack()).toEqual({ chapterId: 12 });
-      expect(await chapterIds()).toEqual([10, 12]);
+      const { chapterId } = await addBack();
+      expect(
+        await rows(`SELECT id, "postId", depth FROM "StorylineChapter" ORDER BY depth`)
+      ).toEqual([
+        { id: 10, postId: 501, depth: 0 },
+        { id: chapterId, postId: 502, depth: 1 },
+      ]);
+    });
+
+    it('records nothing for a report on another post or storyline', async () => {
+      await db.pg.exec(`
+        INSERT INTO "Report" (id, status) VALUES (74, 'Pending'), (75, 'Pending');
+        INSERT INTO "PostReport" ("postId", "reportId") VALUES (501, 74);
+        INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (75, 2);
+      `);
+      await remove(CONTRIBUTOR);
+      expect(await holds()).toEqual([]);
     });
 
     it("leaves a moderator's removal unrecorded, a tombstone as always", async () => {
@@ -490,8 +506,7 @@ describe('removeStorylineChapter', () => {
     });
   });
 
-  // Settlement is checked before any report is read, so the refusal is the same either way.
-  it('gives the same unsettled-payment refusal whether or not a report is open', async () => {
+  it('gives the same unsettled-payment refusal whether or not a report is open, and records nothing', async () => {
     await db.pg.exec(
       `UPDATE "PlacementTransaction" SET "transactionId" = NULL WHERE kind = 'toOwner'`
     );
@@ -501,6 +516,7 @@ describe('removeStorylineChapter', () => {
       INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 73);
     `);
     await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.paidContinuation);
+    expect(await rows(`SELECT id FROM "StorylineChapterRemovalHold"`)).toEqual([]);
   });
 
   it('refuses chapter 1', async () => {

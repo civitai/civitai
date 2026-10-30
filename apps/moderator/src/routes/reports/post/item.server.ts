@@ -19,6 +19,14 @@ export async function loadPostItem(postId: number, tab: PostTab, locals: App.Loc
     loadItemReports(ReportEntity.Post, postId),
     getPostStorylineChapter(postId),
   ]);
+  // A removal during an earlier, settled report is not this report's context.
+  const heldRemoval = storylineChapter?.heldRemoval;
+  if (
+    storylineChapter &&
+    heldRemoval &&
+    !heldRemoval.reportIds.some((id) => reports.some((r) => r.id === id))
+  )
+    storylineChapter.heldRemoval = null;
   const ownerId = lookup?.post.userId ?? null;
   // The heavy read, on its own tab only: a moderator settling a report from the images never opens it.
   const [accountHistory, ownerRecentImages] = await Promise.all([

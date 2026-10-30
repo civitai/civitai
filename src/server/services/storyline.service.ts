@@ -1082,13 +1082,18 @@ export async function removeStorylineChapter({
   isModerator?: boolean;
 }) {
   const result = await dbWrite.$transaction(async (tx) => {
-    const [found] = await tx.$queryRaw<{ storylineId: number; ownerId: number }[]>`
-      SELECT c."storylineId", s."userId" AS "ownerId"
+    const [found] = await tx.$queryRaw<
+      { storylineId: number; ownerId: number; authorId: number }[]
+    >`
+      SELECT c."storylineId", s."userId" AS "ownerId", c."userId" AS "authorId"
       FROM "StorylineChapter" c JOIN "Storyline" s ON s.id = c."storylineId"
       WHERE c.id = ${chapterId}
     `;
     if (!found) throw throwNotFoundError('Chapter not found');
     const { storylineId, ownerId } = found;
+    // Before any lock, so a stranger cannot hold up the storyline; checked again under the locks.
+    if (userId !== ownerId && userId !== found.authorId && !isModerator)
+      throw throwAuthorizationError();
     // Exclusive against adds, submits, links and moves (`moveStorylineChapter`'s lock). A submit
     // blocked here still lands on a moderator's tombstone, as on a takedown's, and is refunded by
     // the orphaned-continuation job.
