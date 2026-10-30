@@ -353,7 +353,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   return (
     <AddedImageContext.Provider
       value={{
-        image,
+        image: { ...image, nsfwLevel },
         isBlocked,
         isPending,
         isScanned,

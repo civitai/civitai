@@ -56,12 +56,18 @@ export function SignalsRegistrar() {
       imageId,
       ingestion,
       blockedFor,
+      nsfwLevel,
     }: {
       imageId: number;
       ingestion: ImageIngestionStatus;
       blockedFor?: string;
+      nsfwLevel?: number;
     }) => {
-      imageStore.setImage(imageId, { ingestion, blockedFor });
+      imageStore.setImage(imageId, {
+        ingestion,
+        blockedFor,
+        ...(nsfwLevel !== undefined && { nsfwLevel }),
+      });
     }
   );
 

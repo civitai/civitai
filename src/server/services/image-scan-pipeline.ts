@@ -140,19 +140,21 @@ export async function sendIngestionSignal({
   userId,
   ingestion,
   blockedFor,
+  nsfwLevel,
   log = LEGACY_SCAN_LOG,
 }: {
   imageId: number;
   userId: number | null;
   ingestion: ImageIngestionStatus;
   blockedFor?: string | null;
+  nsfwLevel?: number;
   log?: ScanLog;
 }) {
   if (!userId) return;
   await signalClient
     .send({
       target: SignalMessages.ImageIngestionStatus,
-      data: { imageId, ingestion, blockedFor },
+      data: { imageId, ingestion, blockedFor, nsfwLevel },
       userId,
     })
     .catch((error) =>
@@ -499,6 +501,8 @@ async function processTags({
 // --------------------------------------------------
 export type ScanOutcome = {
   ingestion: ImageIngestionStatus;
+  /** The level the row was written with; absent when the short-circuit left the row's level alone. */
+  nsfwLevel?: number;
   blockedFor: string | null;
   reviewKey: string | null;
   /** Present only when the image was audited (i.e. not the `blocked` short-circuit). */
@@ -682,6 +686,7 @@ export async function resolveScanOutcome({
 
   return {
     ingestion: toUpdate.ingestion as ImageIngestionStatus,
+    nsfwLevel: toUpdate.nsfwLevel as number,
     blockedFor: (toUpdate.blockedFor as string) ?? null,
     reviewKey,
     audit,
