@@ -46,6 +46,13 @@ import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.
 const MATURE = 'x';
 const SAFE = 'pg';
 
+// The output images fetched; the upload request log is written through fetch too.
+const downloaded = () =>
+  vi
+    .mocked(fetch)
+    .mock.calls.map(([url]) => String(url))
+    .filter((url) => url.startsWith('https://orchestrator.test/'));
+
 const output = (over: Record<string, unknown> = {}) => ({
   id: 'b1',
   url: 'https://orchestrator.test/b1.jpeg',
@@ -193,8 +200,7 @@ describe('pollIterationWorkflow availability', () => {
 
     expect(result.status).toBe('succeeded');
     expect(result.images).toHaveLength(1);
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith('https://orchestrator.test/safe.jpeg');
+    expect(downloaded()).toEqual(['https://orchestrator.test/safe.jpeg']);
   });
 
   it('returns the shown results rather than handing off when only some are restricted', async () => {
@@ -209,7 +215,6 @@ describe('pollIterationWorkflow availability', () => {
     const result = await poll({ domain: 'green' });
 
     expect(result.status).toBe('succeeded');
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith('https://orchestrator.test/safe.jpeg');
+    expect(downloaded()).toEqual(['https://orchestrator.test/safe.jpeg']);
   });
 });

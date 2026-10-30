@@ -3,6 +3,7 @@ import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 
 /** How long before an image row was created its upload key may have been minted. */
 const UPLOAD_LOOKBACK_HOURS = 24;
@@ -22,6 +23,29 @@ export function trackImageUpload(req: NextApiRequest, res: NextApiResponse, key:
       error: (e as Error).message,
     })
   );
+}
+
+/**
+ * Records an upload key the server minted itself for `userId`, in both issue stores, so the
+ * ownership check can read it while either one is down. `tracker` is the request's, for its IP.
+ * Never throws.
+ */
+export async function recordMintedUploadKey(
+  key: string,
+  userId: number,
+  tracker: Tracker = new Tracker()
+) {
+  await recordUploadKeyOwner(key, userId);
+  Promise.resolve()
+    .then(() => tracker.imageUploadRequest(key, userId))
+    .catch((e) =>
+      logToAxiom({
+        type: 'error',
+        name: 'image-upload-action',
+        message: 'Failed to track minted upload key',
+        error: (e as Error).message,
+      })
+    );
 }
 
 /** Shown with a report's IP events: post-creation and upload-request IPs share the Upload event. */
