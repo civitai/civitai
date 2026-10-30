@@ -24,6 +24,7 @@ const writers = vi.hoisted(() => ({
   addOwnerChapter: vi.fn(async () => ({ id: 1 })),
   insertStorylineChapter: vi.fn(async () => ({ chapterId: 1 })),
   moveStorylineChapter: vi.fn(async () => ({ chapterIds: [1] })),
+  removeStorylineChapter: vi.fn(async () => ({ storylineId: 10, chapterId: 4 })),
   setCanonChapter: vi.fn(async () => ({ id: 1 })),
   linkStorylineChapter: vi.fn(async () => ({ id: 1 })),
   addStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
@@ -75,6 +76,7 @@ const WRITE_CALLS = [
     input: { storylineId: 10, chapterId: 4, afterChapterId: 6 },
   },
   { name: 'setCanon', writer: writers.setCanonChapter, input: { chapterId: 3 } },
+  { name: 'removeChapter', writer: writers.removeStorylineChapter, input: { chapterId: 4 } },
   {
     name: 'linkChapter',
     writer: writers.linkStorylineChapter,
