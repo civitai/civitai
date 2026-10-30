@@ -2148,8 +2148,11 @@ describe('AppAssistantWorkspace tool gate', () => {
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
       'create_app',
       'generate_app_cover',
+      'get_review_feedback',
+      'get_user_feedback',
       'report_ready',
       'set_checklist',
+      'set_feedback_status',
       'start_preview',
       'stop_preview',
       'submit_for_review',
@@ -2458,10 +2461,14 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
 
   test('does not hand the chat the page-only generate_app_cover tool', async () => {
     await mountRunner();
+    // The runner's host tools (its `RUNNER_PAGE_TOOLS`), the feedback tools' cards included.
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
       'create_app',
+      'get_review_feedback',
+      'get_user_feedback',
       'report_ready',
       'set_checklist',
+      'set_feedback_status',
       'start_preview',
       'stop_preview',
       'submit_for_review',

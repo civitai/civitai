@@ -71,7 +71,7 @@ function setup(setStatus: SetFeedbackStatus = vi.fn<SetFeedbackStatus>(async () 
       input: {},
       output,
       state: 'done',
-    } as ChatToolCall);
+    } as ChatToolCall) as HTMLElement | undefined;
   return { gate, call, render, setStatus };
 }
 

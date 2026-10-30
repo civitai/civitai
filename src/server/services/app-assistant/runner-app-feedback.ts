@@ -11,6 +11,7 @@ import {
 } from '@civitai/app-assistant';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { getRunnerDevTunnelUser } from '~/server/services/app-assistant/app-assistant.service';
+import type { VerifiedRunGrant } from '~/server/services/app-assistant/assistant-runner-tokens';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
 import { listMyAppListings } from '~/server/services/blocks/app-access.service';
 import { listAppFeedbackForListing } from '~/server/services/blocks/app-feedback.service';
@@ -50,23 +51,49 @@ export const APP_FEEDBACK_NOT_FOUND = 'No listing of yours for this app';
  */
 export function runnerAppFeedbackRoute(kind: 'review' | 'user') {
   return async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    const request =
-      kind === 'review'
-        ? await readRunnerRequest(req, res, reviewBody, 'Expected { grant, app }')
-        : await readRunnerRequest(
-            req,
-            res,
-            userBody,
-            'Expected { grant, app, status?, limit?, cursor? }'
-          );
-    if (!request) return;
-    const { grant: verified, body } = request;
+    // Each kind parses its own body into the read it makes, as the grant's user.
+    let parsed: {
+      verified: VerifiedRunGrant;
+      app: string;
+      read: (source: AppFeedbackSource) => Promise<unknown>;
+    } | null = null;
+    if (kind === 'review') {
+      const request = await readRunnerRequest(req, res, reviewBody, 'Expected { grant, app }');
+      if (request)
+        parsed = {
+          verified: request.grant,
+          app: request.body.app,
+          read: (source) => source.review(request.body.app),
+        };
+    } else {
+      const request = await readRunnerRequest(
+        req,
+        res,
+        userBody,
+        'Expected { grant, app, status?, limit?, cursor? }'
+      );
+      if (request) {
+        const { app, status, limit, cursor } = request.body;
+        parsed = {
+          verified: request.grant,
+          app,
+          read: (source) =>
+            source.userFeedback(app, {
+              status,
+              limit,
+              ...(cursor !== undefined ? { cursor } : {}),
+            }),
+        };
+      }
+    }
+    if (!parsed) return;
+    const { verified, app: appKey, read } = parsed;
     const log = (type: string, extra: Record<string, unknown> = {}) =>
       logToAxiom({
         type: `app-assistant.runner-app-feedback.${kind}-${type}`,
         message: `App Assistant runner app feedback ${kind} ${type} for user ${verified.userId}`,
         userId: verified.userId,
-        app: body.app,
+        app: appKey,
         grantId: verified.grantId,
         ...extra,
       }).catch(() => undefined);
@@ -85,14 +112,7 @@ export function runnerAppFeedbackRoute(kind: 'review' | 'user') {
       const source = appFeedbackSourceFor(verified.userId);
       let answer: unknown;
       try {
-        answer =
-          'status' in body
-            ? await source.userFeedback(body.app, {
-                status: body.status,
-                limit: body.limit,
-                ...(body.cursor !== undefined ? { cursor: body.cursor } : {}),
-              })
-            : await source.review(body.app);
+        answer = await read(source);
       } catch (err) {
         // A role lost between the list and the read: the same answer as no listing at all.
         if (err instanceof TRPCError && (err.code === 'FORBIDDEN' || err.code === 'NOT_FOUND'))

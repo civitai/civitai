@@ -134,8 +134,9 @@ function tools(app: string | null = OWN_APP, over: Partial<AuthorReads> = {}) {
   return {
     calls,
     setApp: (next: string | null) => (open = next),
-    run: (name: string, input: Record<string, unknown> = {}) =>
-      Promise.resolve(t[name]!.execute(input)) as Promise<Record<string, unknown>>,
+    // Async, so a tool that throws as it is called rejects, as the chat reads it.
+    run: async (name: string, input: Record<string, unknown> = {}) =>
+      t[name]!.execute(input) as Record<string, unknown>,
   };
 }
 
