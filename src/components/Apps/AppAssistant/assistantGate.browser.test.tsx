@@ -110,6 +110,48 @@ describe('Build it under the checklist', () => {
     expect(buildButton(card())).toBeNull();
   });
 
+  test('on the server runner, stays when the page then opens the app the checklist was made for', async () => {
+    // The runner reports create_app, then set_checklist (tagged with the new app's key), before the
+    // page has refetched its apps and switched to the new app: the page's open app is still the old one.
+    let open = 'sbx-old';
+    const keys: Record<string, string> = {
+      'sbx-old': 'old-app',
+      'sbx-new': 'new-app',
+      'sbx-other': 'other-app',
+    };
+    const gate = createAssistantGate({
+      onBuild: vi.fn(),
+      currentApp: () => open,
+      appKeyOf: (sandbox) => (sandbox ? keys[sandbox] ?? null : null),
+    });
+    const output = {
+      shown: true,
+      awaitsUser: true,
+      checklist: 'run1-1',
+      note: 'shown',
+      app: 'new-app',
+    };
+    gate.onToolResult({ name: 'set_checklist', input: { items }, output, isError: false });
+    const card = () =>
+      gate.tools.set_checklist.render!({
+        name: 'set_checklist',
+        input: { items },
+        state: 'done',
+        output,
+      }) as HTMLElement;
+    const shown = card();
+    expect(buildButton(shown)).not.toBeNull();
+    // The page follows create_app to the new app: Build it stays.
+    open = 'sbx-new';
+    gate.appChanged('sbx-new');
+    expect(buildButton(shown)).not.toBeNull();
+    expect(buildButton(card())).not.toBeNull();
+    // NEGATIVE CONTROL: the user then opens a different app: Build it goes.
+    open = 'sbx-other';
+    gate.appChanged('sbx-other');
+    expect(buildButton(shown)).toBeNull();
+  });
+
   test('goes once the next reply starts, or the user answers some other way', async () => {
     const first = await shownChecklist();
     first.gate.beforeToolCall('sandbox__read_file', {}, { ...conv, reply: 2 });
