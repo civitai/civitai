@@ -22,6 +22,37 @@ export async function getReportedStorylines(ids: number[]): Promise<ReportedStor
   return dbRead.selectFrom('Storyline').select(columns).where('id', 'in', ids).execute();
 }
 
+export type PostStorylineChapter = {
+  storylineId: number;
+  title: string;
+  /** As readers number it along the first-parent route: chapter 1 is depth 0. */
+  number: number;
+  removed: boolean;
+  tosViolation: boolean;
+  minorByScan: boolean;
+};
+
+/** The storyline chapter a post is, if any. A post is a chapter of at most one storyline. */
+export async function getPostStorylineChapter(
+  postId: number
+): Promise<PostStorylineChapter | null> {
+  const row = await dbRead
+    .selectFrom('StorylineChapter as c')
+    .innerJoin('Storyline as s', 's.id', 'c.storylineId')
+    .select(['s.id', 's.title', 's.tosViolation', 's.minorByScan', 'c.depth', 'c.removedAt'])
+    .where('c.postId', '=', postId)
+    .executeTakeFirst();
+  if (!row) return null;
+  return {
+    storylineId: row.id,
+    title: row.title,
+    number: row.depth + 1,
+    removed: row.removedAt !== null,
+    tosViolation: row.tosViolation,
+    minorByScan: row.minorByScan,
+  };
+}
+
 /** The storyline a report is about, read from the primary: the moderator is acting on it. */
 export async function getReportStorylineId(reportId: number): Promise<number | null> {
   const row = await dbWrite

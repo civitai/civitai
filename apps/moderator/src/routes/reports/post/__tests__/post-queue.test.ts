@@ -33,6 +33,8 @@ vi.mock('$lib/server/image-lookup.service', () => ({
 }));
 const loadAccountHistory = vi.fn(async () => ({ strikes: [] }));
 vi.mock('$lib/server/account-history', () => ({ loadAccountHistory }));
+const getPostStorylineChapter = vi.fn(async () => null as unknown);
+vi.mock('$lib/server/storyline-takedown.service', () => ({ getPostStorylineChapter }));
 const getResolvedPostReportIds = vi.fn(async () => [] as number[]);
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
 vi.mock('$lib/server/report-actions', () => ({ reportModerationActions: () => ({}) }));
