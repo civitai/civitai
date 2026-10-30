@@ -79,6 +79,10 @@ describe('afterPostsUnpublish', () => {
       { postId: 301, userId: 10 },
     ]);
 
+    expect(findImages).toHaveBeenCalledWith({
+      where: { postId: { in: [300, 301] } },
+      select: { id: true },
+    });
     expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({
       ids: [7, 8, 9],
       action: SearchIndexUpdateQueueAction.Delete,
