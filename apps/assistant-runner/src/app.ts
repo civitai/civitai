@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { isAppAssistantModel } from '@civitai/app-assistant';
 import { z } from 'zod';
 
 import type { PreviewRestarts, RestartErrorCode } from './app-assistant/preview-restart';
@@ -10,6 +11,12 @@ import type { TokenVerifier } from './tokens';
 export { lastEventId, loggerOptions } from './core/app';
 
 export interface AppOptions extends Omit<RunAppOptions, 'grants' | 'routes' | 'patchRefusal'> {
+  /**
+   * Whether a start (or a patch) may name this model: App Assistant's models
+   * (`isAppAssistantModel`) unless set, so a deployment can never take a model id the page does not
+   * offer. Tests running scripted models pass their own.
+   */
+  acceptsModel?(model: string): boolean;
   /** Checks the run grant a start (or a patch) carries. Without one every start is refused. */
   grants?: Pick<TokenVerifier, 'grant'>;
   /** The page's Restart preview (`POST apps/:app/preview`). Without it that answers 503. */
@@ -28,11 +35,15 @@ const RESTART_STATUS: Record<RestartErrorCode, number> = {
 
 const previewBody = z.object({ v: z.literal(1) });
 
-/** The run API (`core/app.ts`) as civitai serves it: civitai's grants, mint refusals and Restart preview. */
+/**
+ * The run API (`core/app.ts`) as civitai serves it: civitai's grants, mint refusals, App Assistant's
+ * models and Restart preview.
+ */
 export function buildApp(options: AppOptions): FastifyInstance {
   const { previews, ...run } = options;
   return buildRunApp({
     ...run,
+    acceptsModel: run.acceptsModel ?? isAppAssistantModel,
     patchRefusal: mintRefusal,
     routes: (api, helpers) => previewRoute(api, helpers, previews),
   });

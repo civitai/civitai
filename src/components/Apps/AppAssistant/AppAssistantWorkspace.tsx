@@ -26,6 +26,7 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
+import { fetchSandboxAppBuilt } from '~/components/Apps/AppAssistant/sandboxAppBuilt';
 import {
   AppExportError,
   EXPORT_FAILED,
@@ -361,6 +362,10 @@ export function AppAssistantWorkspace({
   // the page looks for a live one itself (`probedApp`) and, finding none, offers the runner's Restart
   // preview in the pane (`noLivePreview`); `restart` is that restart's progress for the open app.
   const [noLivePreview, setNoLivePreview] = useState(false);
+  // Whether the open app has had a preview to restart: one was shown, or its project is built (the
+  // sandbox has its `block.manifest.json`, `fetchSandboxAppBuilt`). A brand-new app has neither, so
+  // its pane shows the placeholder rather than "isn't running" with Restart preview.
+  const [previewable, setPreviewable] = useState(false);
   const [restart, setRestart] = useState<{ pending: boolean; error: string | null }>(IDLE_RESTART);
   // The app (its key) whose restart is in flight: one at a time per app, so another app's is not held up.
   const restarting = useRef<string | null>(null);
@@ -377,7 +382,10 @@ export function AppAssistantWorkspace({
   const showPreview = useCallback((next: PreviewSession | null) => {
     live.current.session = next;
     setSession(next);
-    if (next) setNoLivePreview(false);
+    if (next) {
+      setNoLivePreview(false);
+      setPreviewable(true);
+    }
     // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
     if (next && !previewShown.current) {
       previewShown.current = true;
@@ -552,6 +560,17 @@ export function AppAssistantWorkspace({
     [mcpUrl, tokens]
   );
   usePreviewKeepAlive(previewPane, keepAwake);
+  // The open app's sandbox says whether the app is built (server runner): read by the look for a preview.
+  const appBuiltRef = useRef<((app: string) => Promise<boolean | null>) | null>(null);
+  appBuiltRef.current =
+    mcpUrl && remoteRunner
+      ? (app) =>
+          fetchSandboxAppBuilt(
+            mcpUrl,
+            (opts) => tokens.getToken({ ...opts, purpose: 'sandbox' }),
+            app
+          )
+      : null;
   // The pane asks the open app's sandbox whether the preview's tunnel is still up (server runner).
   const tunnelStatus = useMemo(
     () =>
@@ -746,6 +765,7 @@ export function AppAssistantWorkspace({
   // The Restart preview offer and its progress belong to the open app; a paused app has no preview.
   useEffect(() => {
     setNoLivePreview(false);
+    setPreviewable(false);
     setRestart(IDLE_RESTART);
   }, [activeName]);
   useEffect(() => {
@@ -778,6 +798,11 @@ export function AppAssistantWorkspace({
           sessionId: null,
           view: ++runnerViews.current,
         });
+      // None live: Restart preview only for an app built far enough to have had one. No clear
+      // answer (`null`) offers it, as before this check.
+      const built = await (appBuiltRef.current?.(app) ?? Promise.resolve(null)).catch(() => null);
+      if (live.current.active?.name !== name || live.current.session) return;
+      if (built !== false) setPreviewable(true);
       setNoLivePreview(true);
     })();
   }, [runningApp, showPreview]);
@@ -807,13 +832,14 @@ export function AppAssistantWorkspace({
   }, [runnerCredentials, showPreview]);
   const previewRestart = useMemo(
     () =>
-      remoteRunner && canPreview
+      remoteRunner && canPreview && previewable
         ? { onRestart: () => void restartPreview(), pending: restart.pending, error: restart.error }
         : undefined,
-    [remoteRunner, canPreview, restartPreview, restart]
+    [remoteRunner, canPreview, previewable, restartPreview, restart]
   );
-  // Beside the chat on a wide screen; a phone's Chat/Preview switch still waits for a preview.
-  const paneShown = !!session || (!!previewRestart && noLivePreview);
+  // Beside the chat on a wide screen; a phone's Chat/Preview switch still waits for a preview. With
+  // no live preview it offers Restart preview, or, for an app never built, says where the app appears.
+  const paneShown = !!session || (!!remoteRunner && canPreview && noLivePreview);
   // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
   // Not on a visit for a fork: the fork opens its own app, and this effect, running in the same
   // commit with the pre-fork `activeName`, would otherwise open the recent app over it.
@@ -1066,7 +1092,11 @@ export function AppAssistantWorkspace({
     });
     return submitBundleFromExport(blob, target.app);
   };
-  /** The free-a-slot card's delete, once confirmed: then the message that hit the limit goes again. */
+  /**
+   * The free-a-slot card's delete, once confirmed: then the request that hit the limit carries on by
+   * itself. The chat asks its latest message again (`askAgain`), replacing the refusal with a fresh
+   * reply, so the message is never shown twice.
+   */
   const freeSlot = (target: Sandbox) =>
     confirmDeleteApp(target.app, async () => {
       setSlot((shown) => shown && { ...shown, deleting: true, error: null });
@@ -1082,9 +1112,8 @@ export function AppAssistantWorkspace({
       const chat = chatRef.current;
       setSlot(null);
       if (!message || !chat) return;
-      // Sent as the user's, once; a chat that cannot send now gives it back to them instead.
-      if (chat.canSend) await chat.send(message);
-      else chat.giveBack(message);
+      // A chat that cannot ask it again now gives it back to the user to send instead.
+      if (!(chat.canSend && (await chat.askAgain()))) chat.giveBack(message);
     });
   // A failed start is told on its app's notice, until another app is opened.
   useEffect(() => setStartError(null), [activeName]);
