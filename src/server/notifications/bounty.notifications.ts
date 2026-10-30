@@ -60,6 +60,8 @@ export const bountyNotifications = createNotificationProcessor({
           now() BETWEEN b."expiresAt" - interval '24 hours' AND b."expiresAt"
           -- And last send was before 24 hour window
           AND '${lastSent}' < b."expiresAt" - interval '24 hours'
+          -- Kept after a delete: gone to everyone but moderators
+          AND (b.meta ->> 'removedWithOwner') IS DISTINCT FROM 'true'
       ), target_users AS (
         SELECT DISTINCT id, "userId"
         FROM (
