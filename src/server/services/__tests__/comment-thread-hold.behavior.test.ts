@@ -509,7 +509,6 @@ describe('the production delete paths keep held threads', () => {
           userId: OWNER,
           expiresAt: new Date(),
         } as never);
-        // The delete re-reads the row under its lock; no payout is recorded on it.
         vi.mocked(dbMock.dbWrite.bounty.findUnique).mockResolvedValue({
           id: 60,
           userId: OWNER,
@@ -710,7 +709,6 @@ describe("a held author's rows under a deleted parent", () => {
     vi.spyOn(SearchIndexUpdate, 'queueUpdate').mockResolvedValue(undefined as never);
   });
 
-  // Detached from its owner, so their lists and its page show it gone, as after any delete.
   it.each([
     ['named on a report', HELD],
     ['held by the marker', MARKED],
@@ -786,6 +784,10 @@ describe("a held author's rows under a deleted parent", () => {
       await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = ${entrant}`);
       expect(await deleteSettledKeptBounties()).toBe(heldOwners.length ? 0 : 1);
       expect((await rows(`SELECT id FROM "Bounty"`)).length).toBe(heldOwners.length ? 1 : 0);
+
+      await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = ANY(ARRAY[${heldOwners}]::int[])`);
+      await deleteSettledKeptBounties();
+      expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
     }
   );
 

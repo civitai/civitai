@@ -138,7 +138,7 @@ function transactionClient(held: (() => void)[]) {
     $executeRaw: async () => 0,
     $queryRaw: async (strings: TemplateStringsArray) => {
       const sql = strings.join('?');
-      // The bounty delete, one statement; no entry here has a held author, so the row goes.
+      // deleteBountyById deletes or keeps the bounty in one statement.
       if (sql.includes('DELETE FROM "Bounty"')) {
         await tick();
         const gone = !!bounty;

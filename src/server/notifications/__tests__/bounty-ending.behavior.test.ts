@@ -2,8 +2,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 
-/** Runs the real `bounty-ending` query against an in-process Postgres. */
-
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const OWNER = 1;

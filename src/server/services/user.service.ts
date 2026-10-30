@@ -1774,13 +1774,11 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach({ bountyEntryId: doomedEntries })}
       DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
-    // A held author's entry keeps its bounty, hidden below, until `bounty-payout-retry` deletes it.
     const heldEntry = heldEntryOnBountySql(Prisma.raw('b.id'), markerView);
     const doomedBounties = Prisma.sql`SELECT b.id FROM "Bounty" b
       WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}
         AND NOT ${heldEntry}`;
-    // One statement, so a bounty the delete spares for a held entry is the one the update hides. Keep
-    // the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
+    // Keep the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
     await dbWrite.$executeRaw`
       WITH ${detach(bountyThreadParents(doomedBounties))},
       gone AS (DELETE FROM "Bounty" WHERE id IN (${doomedBounties}) RETURNING id),

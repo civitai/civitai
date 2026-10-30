@@ -1898,7 +1898,7 @@ model ComicProjectReport {
 }
 
 /// A copy of a held author's ResourceReview, written in the same statement as a delete that would
-/// cascade it. Append-only; read by evidence tooling only. Purged once the author's hold ends.
+/// cascade it. Purged once the author's hold ends.
 model HeldResourceReview {
   /// The original ResourceReview id.
   id             Int       @id
@@ -1922,7 +1922,7 @@ model HeldResourceReview {
 }
 
 /// A copy of a held author's Answer, written in the same statement as a Question delete that would
-/// cascade it. Append-only; read by evidence tooling only. Purged once the author's hold ends.
+/// cascade it. Purged once the author's hold ends.
 model HeldAnswer {
   /// The original Answer id.
   id          Int      @id

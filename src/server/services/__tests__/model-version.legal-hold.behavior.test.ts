@@ -482,7 +482,6 @@ describe("a held author's comment on a review the version takes with it", () => 
 });
 
 describe("a held author's review the version takes with it", () => {
-  // The merge's re-point onto the target, run on the stand-in.
   beforeEach(() => {
     vi.mocked(dbMock.dbWrite.resourceReview.updateMany).mockImplementation((async (args: {
       where: { modelVersionId: { in: number[] } };
