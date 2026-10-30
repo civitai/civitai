@@ -223,6 +223,22 @@ describe('assertGenerationInputUrlsUsable', () => {
     expect(await outcome()).toBe('accepted');
   });
 
+  it('passes on a failure that is not a refusal', async () => {
+    const failure = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'down' });
+    const query = dbMock.dbWrite.$queryRaw;
+    const real = query.getMockImplementation()!;
+    // The image lookup runs; the issue check's own lookup fails.
+    query.mockImplementationOnce(real).mockRejectedValueOnce(failure);
+    try {
+      await expect(
+        assertGenerationInputUrlsUsable({ urls: [KEY], userId: CALLER, now: AFTER })
+      ).rejects.toBe(failure);
+    } finally {
+      query.mockReset();
+      query.mockImplementation(real);
+    }
+  });
+
   it('checks every url, and refuses a url with no upload key', async () => {
     await givenImage();
     const blocked = 'cd34ab12-ef56-4a7b-8c9d-0e1f2a3b4c5d';

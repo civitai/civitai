@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   assertUsable: vi.fn(),
   assertStoredUnblocked: vi.fn(),
   getOrchestratorToken: vi.fn(async () => 'token'),
+  submit: vi.fn(),
 }));
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -16,6 +17,14 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mocks.getOrchestratorToken,
+}));
+vi.mock('~/server/services/orchestrator/queue-limits', () => ({
+  assertCanGenerate: async () => undefined,
+  getUserQueueStatus: async () => ({}),
+}));
+vi.mock('~/server/services/orchestrator/preset-image-gen.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  submitPresetImageGen: mocks.submit,
 }));
 vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -175,7 +184,7 @@ describe('comics generation inputs', () => {
 describe('comics generation inputs the server loads', () => {
   beforeEach(() => {
     mocks.assertUsable.mockResolvedValue(undefined);
-    dbMock.dbRead.comicPanel.findUnique.mockResolvedValue({ imageUrl: REF });
+    dbMock.dbRead.comicPanel.findFirst.mockResolvedValue({ imageUrl: REF });
   });
 
   it.each([
@@ -206,28 +215,28 @@ describe('comics generation inputs the server loads', () => {
     mocks.assertStoredUnblocked.mockRejectedValueOnce(refused);
     await expect(run()).rejects.toBe(refused);
     expect(mocks.assertStoredUnblocked).toHaveBeenCalledExactlyOnceWith([REF]);
+    // Only a panel in the caller's project is looked up.
+    expect(dbMock.dbRead.comicPanel.findFirst).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ where: { id: 3, chapter: { projectId: 11 } } })
+    );
     expectNothingStarted();
   });
 
-  const iterateWithReference = () =>
-    caller().iterateGenerate({ projectId: 11, chapterPosition: 0, prompt: 'p', referenceIds: [5] });
-  const givenReferenceImage = (blockedFor: string | null) => {
+  it("sends a reference's unblocked images and leaves out a blocked one", async () => {
     dbMock.dbRead.comicReference.findMany.mockResolvedValue([{ id: 5, name: 'A' }]);
     dbMock.dbRead.comicReference.findUnique.mockResolvedValue({
       name: 'A',
-      images: [{ image: { id: 1, url: REF, width: 512, height: 512, blockedFor } }],
+      images: [
+        { image: { id: 1, url: REF, width: 512, height: 512, blockedFor: 'moderated' } },
+        { image: { id: 2, url: SOURCE, width: 512, height: 512, blockedFor: null } },
+      ],
     });
-  };
-
-  it('refuses a reference whose image is blocked, before it starts', async () => {
-    givenReferenceImage('moderated');
-    await expect(iterateWithReference()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expectNothingStarted();
-  });
-
-  it('goes on to generate with an unblocked reference image', async () => {
-    givenReferenceImage(null);
-    await iterateWithReference().catch(() => undefined);
-    expect(mocks.getOrchestratorToken).toHaveBeenCalled();
+    mocks.submit.mockRejectedValue(new Error('stop'));
+    await caller()
+      .iterateGenerate({ projectId: 11, chapterPosition: 0, prompt: 'p', referenceIds: [5] })
+      .catch(() => undefined);
+    expect(mocks.submit).toHaveBeenCalledOnce();
+    const sent = (mocks.submit.mock.calls[0][0] as { images: { url: string }[] }).images;
+    expect(sent.map((i) => i.url)).toEqual([expect.stringContaining(SOURCE)]);
   });
 });
