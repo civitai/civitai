@@ -112,6 +112,34 @@ export function getRemixKinds(image: RemixSourceImage): RemixKind[] {
   return image.type === 'image' ? ['edit', 'video'] : [];
 }
 
+/** One thing the Remix button can do for this viewer: a remix kind, or prompt reuse. */
+export type RemixOptionKey = RemixKind | 'reuse';
+
+/**
+ * The options the Remix menu actually offers this viewer, in menu order. This is
+ * the menu's own list — it renders from it — so the count it is judged by cannot
+ * drift from what is on screen. An engine refusal removes the kinds, a refused
+ * reuse removes that; nothing here names a media type, so a new kind added to
+ * `getRemixKinds` changes the count by itself.
+ */
+export function getRemixOptions(image: RemixSourceImage): RemixOptionKey[] {
+  const options: RemixOptionKey[] = getEngineRefusal(image) ? [] : [...getRemixKinds(image)];
+  if (canReusePrompt(image) && !isReuseRefused(image)) options.push('reuse');
+  return options;
+}
+
+/**
+ * The option a click on the Remix button should run without opening a menu, if
+ * there is exactly one. Undefined with several (pick one) or none. An image that
+ * carries a refusal keeps its menu even with one option left, because the menu is
+ * where the viewer is told why the others are missing.
+ */
+export function getSoleRemixOption(image: RemixSourceImage): RemixOptionKey | undefined {
+  if (getEngineRefusal(image)) return undefined;
+  const options = getRemixOptions(image);
+  return options.length === 1 ? options[0] : undefined;
+}
+
 /**
  * Which tier an image routes to. Anything above the safe browsing levels goes
  * to a self-hosted engine, because the external providers refuse it — an
