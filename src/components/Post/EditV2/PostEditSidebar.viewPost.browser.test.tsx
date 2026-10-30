@@ -9,7 +9,7 @@ import type { PostDetailEditable } from '~/server/services/post.service';
 
 /**
  * The sidebar's View Post button always lands on the post page, whatever the image count. A
- * one-image post used to go to the image page, and an image with no id yet did nothing at all.
+ * one-image post used to go to the image page, and an image still uploading did nothing at all.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -83,10 +83,10 @@ const saved = (id: number) => ({
   type: 'added',
   data: { id, nsfwLevel: 1, resourceHelper: [], tools: [], tags: [], meta: {}, needsReview: null },
 });
-// Uploaded but not yet saved: the image has no id on it.
-const unsaved = () => ({
-  type: 'added',
-  data: { nsfwLevel: 1, resourceHelper: [], tools: [], tags: [], meta: {}, needsReview: null },
+// Still uploading: no database id yet, and the sidebar counts it like any other image.
+const uploading = () => ({
+  type: 'resolving',
+  data: { url: 'blob:upload', name: 'cat.png', uuid: 'up-1' },
 });
 
 const viewPost = () => page.getByRole('button', { name: 'View Post', exact: true });
@@ -115,8 +115,8 @@ describe('View Post in the edit sidebar', () => {
     expect(useRouter().push).toHaveBeenCalledExactlyOnceWith('/posts/41');
   });
 
-  test('a one-image post whose image has no id yet still navigates', async () => {
-    mocks.images = [unsaved()];
+  test('a one-image post whose image is still uploading still navigates', async () => {
+    mocks.images = [uploading()];
     renderWithProviders(<PostEditSidebar post={post} />);
 
     await viewPost().click();
