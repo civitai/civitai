@@ -81,8 +81,21 @@ async function silencedAmong(
 }
 
 
-/** A player with this many uncleansed smites has a career reset pending and cannot vote (`insertVote`). */
-const canPlay = sql<boolean>`(select count(*) from "NewOrderSmite" sm where sm."targetPlayerId" = pl."userId" and sm."cleansedAt" is null) < ${SMITES.max}`;
+/**
+ * Players with this many uncleansed smites have a career reset pending and cannot vote (`insertVote`).
+ * Read once per run in one grouped query: a subquery per player scans the smite table, which has no
+ * index on the target player.
+ */
+async function resetPending(db: Kysely<DB>): Promise<Set<number>> {
+  const rows = await db
+    .selectFrom('NewOrderSmite')
+    .select('targetPlayerId')
+    .where('cleansedAt', 'is', null)
+    .groupBy('targetPlayerId')
+    .having((eb) => eb.fn.countAll(), '>=', SMITES.max)
+    .execute();
+  return new Set(rows.map((r) => r.targetPlayerId));
+}
 
 /**
  * Players who joined the game (they have a `NewOrderPlayer` row), have not turned `kind` off (a settings
@@ -137,7 +150,6 @@ async function withStreakAtRisk(
   day: Day,
 ): Promise<number[]> {
   const rows = await recipients(db, 'streak', day)
-    .where(canPlay)
     .innerJoin('KnightsPlayer as k', 'k.playerId', 'pl.userId')
     .leftJoin('KnightsPlayerDay as d', (join) =>
       join.onRef('d.playerId', '=', 'k.playerId').onRef('d.day', '=', 'k.lastWatchDay')
@@ -192,8 +204,7 @@ async function withImagesWaiting(
     // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
     if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
     const rows = await recipients(db, 'new-images', day)
-      .where(canPlay)
-      .select('pl.userId')
+        .select('pl.userId')
       .where('pl.rankType', '=', rank)
       .where((eb) =>
         eb.exists(
@@ -230,15 +241,18 @@ export async function planNotifications(
     withStreakAtRisk(db, day),
     withImagesWaiting(db, day),
   ]);
+  const blocked = await resetPending(db);
   const silenced = await silencedAmong(
     db,
     [...new Set([...allVerdicts, ...allAtRisk, ...allWaiting])],
     silenceTypes
   );
   const live = (ids: number[]) => ids.filter((id) => !silenced.has(id));
+  // A pending reset keeps a player from voting, so they are not nudged to play; verdicts still go out.
+  const canPlay = (ids: number[]) => live(ids).filter((id) => !blocked.has(id));
   const verdicts = live(allVerdicts);
-  const atRisk = live(allAtRisk);
-  const waiting = live(allWaiting);
+  const atRisk = canPlay(allAtRisk);
+  const waiting = canPlay(allWaiting);
 
   const plan: Record<NotifyKind, number[]> = { verdicts, streak: [], 'new-images': [] };
   const chosen = new Set(verdicts);
