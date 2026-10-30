@@ -7,6 +7,7 @@
  * engine-free and imported from `~/components/Generation/footer-parts`.
  */
 
+import { trackRecentEcosystem } from '~/store/recent-ecosystems.store';
 import {
   ActionIcon,
   Alert,
@@ -994,6 +995,7 @@ export function FormFooter({
 
     const snapshot = store.getSnapshot().state as SelectedResources & {
       workflow?: string;
+      ecosystem?: string;
       images?: Array<{ url: string }>;
       video?: { url: string };
       snippets?: { seed?: number };
@@ -1090,6 +1092,7 @@ export function FormFooter({
         store.set({ snippets: rest });
       }
 
+      if (snapshot.ecosystem) trackRecentEcosystem(snapshot.ecosystem);
       onSubmitSuccess?.();
       if (useMobileGeneratorStore.getState().showing)
         useMobileGeneratorStore.setState({ submittedAt: Date.now() });

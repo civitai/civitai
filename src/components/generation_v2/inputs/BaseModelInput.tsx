@@ -8,6 +8,7 @@
 
 import { Badge, Group, Stack, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure, useLocalStorage } from '@mantine/hooks';
+import { trackRecentEcosystem, useRecentEcosystemsStore } from '~/store/recent-ecosystems.store';
 import { IconCheck, IconChevronDown, IconArrowRight, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -84,7 +85,6 @@ type FamilyGroup = {
 // Constants
 // =============================================================================
 
-const RECENT_ECOSYSTEMS_KEY = 'generation-recent-ecosystems';
 const TAB_PREFERENCE_KEY = 'generation-basemodel-tab';
 
 type TabValue = 'compatible' | 'recent' | 'all';
@@ -539,10 +539,7 @@ function useBaseModelPickerState({
     () => (ecosystemStates?.length ? new Map(ecosystemStates.map((e) => [e.key, e])) : undefined),
     [ecosystemStates]
   );
-  const [recentEcosystems, setRecentEcosystems] = useLocalStorage<string[]>({
-    key: RECENT_ECOSYSTEMS_KEY,
-    defaultValue: [],
-  });
+  const recentEcosystems = useRecentEcosystemsStore((state) => state.recent);
   const [storedTab, setStoredTab] = useLocalStorage<TabValue>({
     key: TAB_PREFERENCE_KEY,
     defaultValue: 'compatible',
@@ -554,17 +551,6 @@ function useBaseModelPickerState({
   );
   const setLastUsedEcosystem = useEcosystemGroupPreferencesStore(
     (state) => state.setLastUsedEcosystem
-  );
-
-  // Track selection in recent ecosystems (keeps all unique selections, most recent first)
-  const trackRecentSelection = useCallback(
-    (ecosystem: string) => {
-      setRecentEcosystems((prev) => {
-        const filtered = prev.filter((e) => e !== ecosystem);
-        return [ecosystem, ...filtered];
-      });
-    },
-    [setRecentEcosystems]
   );
 
   // Filter out excluded ecosystems (e.g. gated by feature flag).
@@ -675,7 +661,7 @@ function useBaseModelPickerState({
           (!isCompatible || isCompatible(lastUsed))
         ) {
           onChange?.(lastUsed);
-          trackRecentSelection(key);
+          trackRecentEcosystem(key);
           onSelected?.();
           return;
         }
@@ -696,7 +682,7 @@ function useBaseModelPickerState({
       onChange?.(key);
     }
 
-    trackRecentSelection(key);
+    trackRecentEcosystem(key);
     onSelected?.();
   };
 

@@ -21,6 +21,8 @@ vi.mock('@mantine/hooks', async (importOriginal) => ({
 }));
 
 import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
+import { trackRecentEcosystem, useRecentEcosystemsStore } from '~/store/recent-ecosystems.store';
+import { getEcosystemDisplayItems } from '~/shared/constants/basemodel.constants';
 import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
 import { useMediaQuery } from '@mantine/hooks';
 
@@ -121,5 +123,19 @@ describe('BaseModelInput (public component — selector-store + media-query)', (
     await vi.waitFor(() =>
       expect(state.setLastUsedEcosystem).toHaveBeenCalledWith('WanVideo', 'WanVideo-25-T2V')
     );
+  });
+
+  test("an ecosystem tracked elsewhere (a submission) shows on the picker's Recent tab", async () => {
+    useRecentEcosystemsStore.setState({ recent: [] });
+    const tracked = getEcosystemDisplayItems().find(
+      (i) => i.type === 'ecosystem' && i.key !== 'SD1'
+    )!;
+    renderWithProviders(<BaseModelInput value="SD1" onChange={vi.fn()} />);
+
+    trackRecentEcosystem(tracked.key);
+    await page.getByRole('button', { name: /Stable Diffusion 1.x/ }).click();
+    await page.getByRole('button', { name: 'Recent', exact: true }).click();
+
+    await expect.element(page.getByText(tracked.name, { exact: true }).first()).toBeVisible();
   });
 });
