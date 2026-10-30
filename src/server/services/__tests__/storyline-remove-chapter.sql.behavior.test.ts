@@ -245,7 +245,7 @@ describe('removeStorylineChapter', () => {
   });
 
   it('keeps a chapter someone paid to add from its owner', async () => {
-    await expect(remove(OWNER)).rejects.toThrow(REFUSED.paidByContributor);
+    await expect(remove(OWNER)).rejects.toThrow(REFUSED.moderatorOnly);
     expect(await chapterIds()).toEqual([10, 11]);
     expect((await placement900()).status).toBe('approved');
   });
@@ -298,9 +298,9 @@ describe('removeStorylineChapter', () => {
       INSERT INTO "Report" (id, status) VALUES (70, 'Pending'), (71, 'Actioned');
       INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 70);
     `);
-    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.underReport);
+    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.moderatorOnly);
     await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
-    await expect(remove(OWNER)).rejects.toThrow(REFUSED.underReport);
+    await expect(remove(OWNER)).rejects.toThrow(REFUSED.moderatorOnly);
     expect(await chapterIds()).toEqual([10, 11]);
 
     // An answered report does not hold it; nor does a report about the storyline once answered.
@@ -317,7 +317,7 @@ describe('removeStorylineChapter', () => {
       INSERT INTO "Report" (id, status) VALUES (72, 'Processing');
       INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (72, 1);
     `);
-    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.underReport);
+    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.moderatorOnly);
     await remove(MODERATOR, true);
     expect(trackModActivity).toHaveBeenCalled();
   });
@@ -330,7 +330,7 @@ describe('removeStorylineChapter', () => {
 
   it('keeps a taken-down storyline from all but a moderator', async () => {
     await db.pg.exec(`UPDATE "Storyline" SET "tosViolation" = true WHERE id = 1`);
-    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.takenDown);
+    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.moderatorOnly);
     await remove(MODERATOR, true);
     expect(
       await rows(`SELECT "removedAt" IS NOT NULL AS removed FROM "StorylineChapter" WHERE id = 11`)

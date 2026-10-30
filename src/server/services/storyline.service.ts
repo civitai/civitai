@@ -1058,10 +1058,13 @@ export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
   hasChildren: 'Other chapters continue from this one, so it cannot be removed',
   waiting: 'This chapter has a continuation waiting for review; answer it first',
   paidContinuation: "This chapter's payment hasn't settled yet. Try again once it has",
-  paidByContributor: 'Someone paid to add this chapter, so only they or a moderator can remove it',
-  takenDown: 'This storyline was taken down',
+  /**
+   * A taken-down storyline, a report open on the chapter or the storyline, and (for its owner) a
+   * chapter someone paid to add, in one text, so a caller cannot tell them apart by retrying.
+   */
+  moderatorOnly:
+    "You can't remove this chapter yourself. A moderator can remove it for you; contact support",
   removed: 'This chapter was already removed',
-  underReport: 'This chapter is under report, so only a moderator can remove it',
 } as const;
 
 /**
@@ -1133,7 +1136,7 @@ export async function removeStorylineChapter({
         : null;
     if (!role) throw throwAuthorizationError();
     if (storyline.tosViolation && role !== 'moderator')
-      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.takenDown);
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
     if (chapter.depth === 0)
       throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.firstChapter);
     // Deleting a tombstone would free its post to be submitted again.
@@ -1171,7 +1174,7 @@ export async function removeStorylineChapter({
           )
         ) AS reported
       `;
-      if (reported) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.underReport);
+      if (reported) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
     }
 
     if (chapter.placementId != null) {
@@ -1179,7 +1182,7 @@ export async function removeStorylineChapter({
         throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
       // The contributor paid the owner to add it; the owner cannot take it back out for free.
       if (placement?.paid && role === 'owner')
-        throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidByContributor);
+        throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
       if (placement?.status === 'approved')
         await tx.$executeRaw`
           UPDATE "Placement"
