@@ -139,6 +139,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     bootstrapSeeds.catch(() => {
       bootstrapFailed = true;
     });
+    // Not awaited on the early-exit paths below (a 500 before the flush); never let it go unhandled.
+    pageData.result.catch(() => undefined);
 
     const mainImage = await pageData.mainImage;
     if (bootstrapFailed) await bootstrapSeeds; // throws: still a 500, nothing flushed yet
@@ -205,6 +207,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       type: 'error',
       name: 'page-data failed',
       route: '/images/[imageId]',
+      // After the flush the client sees a 200 with no body; this is the only place that says so.
+      afterFlush: res.headersSent,
       message: e instanceof Error ? e.message : String(e),
     }).catch(() => undefined);
     if (!res.headersSent) send(500, { error: 'Page data unavailable' });

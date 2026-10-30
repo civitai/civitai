@@ -647,7 +647,11 @@ describe('page-data flushes its headers before the body', () => {
     expect(res.events).toEqual(['flush', 'end']);
     expect(res.wire).toBeUndefined();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: 'bootstrap seeds failed late' })
+      expect.objectContaining({
+        type: 'error',
+        message: 'bootstrap seeds failed late',
+        afterFlush: true,
+      })
     );
 
     // Control, fetched before `window` is stubbed (server code reads `window` to tell where it
