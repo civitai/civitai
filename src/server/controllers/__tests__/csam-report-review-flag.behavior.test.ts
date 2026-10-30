@@ -25,7 +25,10 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
-const { createCsamReport, softDeleteUser } = vi.hoisted(() => ({
+const { createCsamReport, createSupplementalCsamReport, softDeleteUser } = vi.hoisted(() => ({
+  createSupplementalCsamReport: vi.fn(async ({ userId }: { userId: number }) => {
+    await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [userId]);
+  }),
   createCsamReport: vi.fn(async ({ userId }: { userId: number }) => {
     await holder.db.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [
       userId === -1 ? null : userId,
@@ -38,6 +41,10 @@ const { createCsamReport, softDeleteUser } = vi.hoisted(() => ({
 vi.mock('~/server/services/csam.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CsamService>()),
   createCsamReport,
+}));
+vi.mock('~/server/services/csam-supplemental.service', () => ({
+  createSupplementalCsamReport,
+  getCsamSupplementalPreview: vi.fn(),
 }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
@@ -94,6 +101,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   createCsamReport.mockClear();
   softDeleteUser.mockClear();
+  createSupplementalCsamReport.mockClear();
   await pg.exec(`
     TRUNCATE "Image", "CsamReport";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
@@ -206,6 +214,24 @@ describe('fileCsamReport', () => {
     await report(OWNER, [OTHER_FLAG]);
 
     expect(await flag(OTHER_FLAG)).toBe('appeal');
+  });
+
+  it('files a supplemental report without removing the account again, and hands its image to the hold', async () => {
+    // The earlier report removed the account.
+    await pg.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE "userId" = $1`, [OWNER]);
+
+    await fileCsamReport({
+      userId: OWNER,
+      imageIds: [OWNED],
+      type: 'Image',
+      reportedById: 2,
+      supplementalOf: 1,
+    });
+
+    expect(createSupplementalCsamReport).toHaveBeenCalledTimes(1);
+    expect(createCsamReport).not.toHaveBeenCalled();
+    expect(softDeleteUser).not.toHaveBeenCalled();
+    expect(await flag(OWNED)).toBeNull();
   });
 
   it('fails loudly with the flag still on when removing the account fails', async () => {

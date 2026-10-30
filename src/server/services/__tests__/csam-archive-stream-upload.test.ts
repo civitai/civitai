@@ -827,6 +827,42 @@ describe('csam archive streaming upload', () => {
 // catch the two call sites having their `success`/`error` arguments swapped, which no
 // module-level test can see.
 // ===============================================================================================
+describe('a supplemental report archive', () => {
+  it('keeps each unreviewed image it did not send, with its hash, and records one with no row', async () => {
+    seedDb(4);
+    await archiveCsamDataForReport({
+      ...report,
+      images: [{ id: 1 }],
+      details: {
+        supplemental: {
+          priorCsamReportId: 1,
+          priorReportNumbers: [77],
+          unreviewedImageIds: [2, 3, 99],
+        },
+      },
+    } as never);
+
+    const { images } = await zipManifest(storedObjects.get('images.zip')!.body);
+    const byId = new Map(images.map((entry: { imageId: number }) => [entry.imageId, entry]));
+    for (const imageId of [2, 3])
+      expect(byId.get(imageId)).toMatchObject({
+        preservedNotSent: true,
+        source: 'original',
+        sha256: createHash('sha256')
+          .update(entryBytes(imageId - 1))
+          .digest('hex'),
+      });
+    expect(byId.get(99)).toEqual({
+      imageId: 99,
+      source: 'missing',
+      reason: 'no image row',
+      preservedNotSent: true,
+    });
+    expect(byId.get(1)).not.toHaveProperty('preservedNotSent');
+    expect(byId.get(4)).not.toHaveProperty('preservedNotSent');
+  });
+});
+
 describe('the service→counter seam', () => {
   it('🔴 records the STREAM path on a successful flag-ON archive', async () => {
     mockIsFlipt = async (flag: unknown) => flag === FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD;

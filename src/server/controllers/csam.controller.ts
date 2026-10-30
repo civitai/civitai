@@ -8,6 +8,7 @@ import type {
   CreateExternalCsamReportSchema,
 } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
+import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
@@ -28,10 +29,11 @@ export async function createCsamReportHandler({
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
 export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
-  const { userId, imageIds = [], details, type, reportedById } = input;
+  const { userId, imageIds = [], details, type, reportedById, supplementalOf } = input;
   let denyFailed = false;
   let denyBookkeepingFailed = false;
-  await createCsamReport(input);
+  if (supplementalOf) await createSupplementalCsamReport({ ...input, supplementalOf });
+  else await createCsamReport(input);
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
@@ -102,7 +104,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
   }
 
-  if (userId !== -1) {
+  // A supplemental report follows one that already removed the account.
+  if (userId !== -1 && !supplementalOf) {
     await softDeleteUser({ id: userId, userId: reportedById });
   }
 

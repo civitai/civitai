@@ -219,6 +219,8 @@ export async function createCsamReport({
           WHERE id = ${unsent.id} AND "reportSentAt" IS NULL
           FOR UPDATE`;
         if (!locked) return fileSeparately();
+        // A supplemental report's text and file set are fixed when it is filed.
+        if (isRecord(locked.details) && 'supplemental' in locked.details) return fileSeparately();
         if (locked.sendClaimId && !(locked.sendClaimedAt && locked.sendClaimedAt < cutoff))
           return fileSeparately(unsent.id);
 

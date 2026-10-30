@@ -33,6 +33,7 @@ import {
   csamReportDetails,
 } from '~/server/schema/csam.schema';
 import { getModelUrl } from '~/utils/string-helpers';
+import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -44,12 +45,15 @@ export function CsamDetailsForm({
   userId,
   type,
   defaultValues,
+  supplementalOf,
 }: {
   onPrevious?: () => void;
   onSuccess?: () => void;
   userId: number;
   type: CsamReportType;
   defaultValues?: CsamReportFormInput;
+  /** The sent report this one supplements. */
+  supplementalOf?: number;
 }) {
   const form = useForm({
     schema,
@@ -65,6 +69,10 @@ export function CsamDetailsForm({
   });
 
   const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
+  const supplemental = trpc.csam.getSupplementalPreview.useQuery(
+    { userId, imageIds, supplementalOf: supplementalOf ?? 0 },
+    { enabled: !!supplementalOf, retry: false }
+  );
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
     openConfirmModal({
@@ -82,6 +90,7 @@ export function CsamDetailsForm({
           imageIds: type === 'Image' ? useCsamImageSelectStore.getState().getSelected(userId) : [],
           userId,
           details: data,
+          supplementalOf,
         });
       },
     });
@@ -96,6 +105,13 @@ export function CsamDetailsForm({
         <Card>
           <Form id="csamForm" form={form} onSubmit={handleSubmit}>
             <Stack gap="xl">
+              {supplementalOf && (
+                <SupplementalPreview
+                  data={supplemental.data}
+                  isLoading={supplemental.isLoading}
+                  error={supplemental.error}
+                />
+              )}
               <InputRadioGroup name="minorDepiction" label="Minor depiction">
                 <Radio value="real" label="Real" />
                 <Radio value="non-real" label="Non-real" />
@@ -139,7 +155,11 @@ export function CsamDetailsForm({
                     Previous
                   </Button>
                 )}
-                <Button type="submit" loading={isLoading}>
+                <Button
+                  type="submit"
+                  loading={isLoading}
+                  disabled={!!supplementalOf && !supplemental.data}
+                >
                   Submit
                 </Button>
               </Group>
@@ -226,3 +246,39 @@ function ModelVersionSelectList({
 }
 
 const InputModelVersionSelect = withController(ModelVersionSelectList);
+
+function SupplementalPreview({
+  data,
+  isLoading,
+  error,
+}: {
+  data?: RouterOutput['csam']['getSupplementalPreview'];
+  isLoading: boolean;
+  error?: { message: string } | null;
+}) {
+  if (isLoading)
+    return (
+      <Center>
+        <Loader size="sm" />
+      </Center>
+    );
+  if (!data)
+    return (
+      <Alert color="red" title="This supplemental report cannot be filed">
+        <Text size="sm">{error?.message}</Text>
+      </Alert>
+    );
+  const { priorReportNumbers, text } = data;
+  return (
+    <Alert color="blue" title="Supplemental report">
+      <Stack gap="xs">
+        <Text size="sm">
+          Refers to CyberTip {priorReportNumbers.map((n) => `#${n}`).join(', ')}. NCMEC receives:
+        </Text>
+        <Text size="sm" fs="italic">
+          {text}
+        </Text>
+      </Stack>
+    </Alert>
+  );
+}
