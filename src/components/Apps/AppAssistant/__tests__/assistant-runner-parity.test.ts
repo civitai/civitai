@@ -20,9 +20,9 @@ describe('App Assistant reply budgets, page and server runner', () => {
 });
 
 describe('App Assistant models, page and server runner', () => {
-  // The runner refuses a start naming a model it does not offer (`isAppAssistantModel`, its default
-  // `acceptsModel`): every model the page's button offers, the default first, must be one it takes,
-  // and the button must offer nothing else.
+  // The runner refuses a start naming a model it does not offer (`isAppAssistantModel`, which its
+  // `server.ts` passes as `acceptsModel`): every model the page's button offers, the default first,
+  // must be one it takes, and the button must offer nothing else.
   it('the page offers only models the runner takes, its default included', () => {
     const offered = [
       APP_ASSISTANT_CHAT_CONFIG.model,

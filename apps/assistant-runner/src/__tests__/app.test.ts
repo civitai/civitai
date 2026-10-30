@@ -3,7 +3,11 @@ import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import type { RunEvent, StartRunRequest } from '@civitai/components-chat/runner-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import { APP_ASSISTANT_DEFAULT_MODEL, APP_ASSISTANT_MODELS } from '@civitai/app-assistant';
+import {
+  APP_ASSISTANT_DEFAULT_MODEL,
+  APP_ASSISTANT_MODELS,
+  isAppAssistantModel,
+} from '@civitai/app-assistant';
 
 import { buildApp, lastEventId, loggerOptions } from '../app';
 import type { JournalEntry, RunService, StartOutcome } from '../core/service';
@@ -93,8 +97,12 @@ afterEach(async () => {
   app = undefined;
 });
 
-async function serve(options: Parameters<typeof buildApp>[0]): Promise<string> {
-  app = buildApp(options);
+async function serve(
+  options: Omit<Parameters<typeof buildApp>[0], 'acceptsModel'> &
+    Partial<Pick<Parameters<typeof buildApp>[0], 'acceptsModel'>>
+): Promise<string> {
+  // App Assistant's models, as the deployment (`server.ts`) passes them.
+  app = buildApp({ acceptsModel: isAppAssistantModel, ...options });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
   return `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;

@@ -146,6 +146,13 @@ describe('AppAssistantChat', () => {
     expect(m.configureChat).toHaveBeenCalledWith({
       name: 'App Assistant',
       model: 'openai/gpt-6-luna',
+      models: [
+        { id: 'openai/gpt-6-luna', label: 'GPT-6 Luna', note: 'Lowest cost' },
+        { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', note: 'About the same cost' },
+        { id: 'z-ai/glm-5.3', label: 'GLM 5.3', note: 'About 3× the cost' },
+        { id: 'stepfun/step-5-preview', label: 'Step 5 Preview', note: 'About 5× the cost' },
+      ],
+      modelsOnly: true,
       maxSteps: 1000,
       contextBudgetTokens: 64000,
     });
