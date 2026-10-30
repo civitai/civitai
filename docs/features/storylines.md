@@ -57,7 +57,9 @@ section).
   checked like a title: one the check refuses is not shown, and one rated above the storyline's
   maximum or the reader's browsing level is hidden for that reader.
 - **Reporting.** The menu on a storyline's page reports the storyline itself, such as its title, to
-  moderators. A chapter is reported as its post or image.
+  moderators. "Report chapter", in a chapter's menu on that page and in the image menu while
+  reading, reports the chapter's post: taking a chapter down acts on its post. Moderators see which
+  storyline and chapter a reported post is, with the storyline's flags, in the post report queue.
 
 ## For creators
 
