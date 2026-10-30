@@ -635,13 +635,29 @@ describe('around the insert', () => {
       where: { chapterId: number; parentChapterId: number };
     }) =>
       (
-        await rows<{ parentChapterId: number; storylineId: number; removedAt: Date | null }>(
-          `SELECT e."parentChapterId", e."storylineId", c."removedAt" FROM "StorylineChapterEdge" e
+        await rows<{
+          parentChapterId: number;
+          storylineId: number;
+          removedAt: Date | null;
+          postId: number | null;
+          tosViolation: boolean;
+        }>(
+          `SELECT e."parentChapterId", e."storylineId", c."removedAt", c."postId", p."tosViolation"
+           FROM "StorylineChapterEdge" e
            JOIN "StorylineChapter" c ON c.id = e."chapterId"
+           LEFT JOIN "Post" p ON p.id = c."postId"
            WHERE e."chapterId" = $1 AND e."parentChapterId" = $2`,
           [where.chapterId, where.parentChapterId]
         )
-      ).map(({ removedAt, ...edge }) => ({ ...edge, chapter: { removedAt } }))) as never);
+      ).map(({ parentChapterId, storylineId, removedAt, postId, tosViolation }) => ({
+        parentChapterId,
+        storylineId,
+        // This schema keeps no ban or account deletion on its users.
+        chapter: {
+          removedAt,
+          post: postId ? { tosViolation, user: { bannedAt: null, deletedAt: null } } : null,
+        },
+      }))) as never);
     w.storylineChapterEdge.updateMany.mockImplementation((async ({
       where,
       data,
@@ -670,6 +686,8 @@ describe('around the insert', () => {
       }
     }) as never);
     const insertedPost = await post();
+    // A chapter with no post is refused before the race this is about.
+    await db.pg.exec(`UPDATE "StorylineChapter" SET "postId" = ${await post()} WHERE id = ${C}`);
     // Held at its owner check, after it has read the edge and before its transaction.
     let release!: () => void;
     const released = new Promise<void>((resolve) => (release = resolve));

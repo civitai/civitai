@@ -808,7 +808,14 @@ describe('authorization', () => {
   describe('setCanonChapter', () => {
     beforeEach(() => {
       w.storylineChapterEdge.findMany.mockResolvedValue([
-        { parentChapterId: 20, storylineId: 10, chapter: { removedAt: null } },
+        {
+          parentChapterId: 20,
+          storylineId: 10,
+          chapter: {
+            removedAt: null,
+            post: { tosViolation: false, user: { bannedAt: null, deletedAt: null } },
+          },
+        },
       ] as never);
       w.storylineChapterEdge.updateMany.mockResolvedValue({ count: 1 } as never);
     });
@@ -855,6 +862,7 @@ describe('authorization', () => {
           post: { tosViolation: false, user: { ...author, bannedAt: new Date() } },
         },
       ],
+      ['left without its post', { removedAt: null, post: null }],
       [
         'by a deleted account',
         {

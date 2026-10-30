@@ -1577,9 +1577,9 @@ export async function setCanonChapter({
     userId,
     isModerator,
   });
-  // As the reading path tombstones it for everyone but moderators, who could otherwise pick it.
+  // Every chapter the reading path tombstones as removed or deleted, moderators' view included.
   const { removedAt, post } = edge.chapter;
-  if (removedAt || post?.tosViolation || post?.user.bannedAt || post?.user.deletedAt)
+  if (removedAt || !post || post.tosViolation || post.user.bannedAt || post.user.deletedAt)
     throw throwBadRequestError('A removed chapter cannot be the main route');
 
   await dbWrite.$transaction(async (tx) => {
