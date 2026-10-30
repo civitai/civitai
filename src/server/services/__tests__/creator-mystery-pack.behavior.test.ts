@@ -3,6 +3,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
@@ -109,6 +110,12 @@ const submitInput = (overrides: Partial<Parameters<typeof packs.submitMysteryPac
   ...overrides,
 });
 
+// Shop artwork is a bare upload key; this one's issue record names the creator.
+const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
+beforeEach(() => {
+  redisMock.sysRedis.mGet.mockResolvedValue([String(CREATOR)] as never);
+});
+
 const submit = (overrides: Partial<Parameters<typeof packs.submitMysteryPack>[0]> = {}) =>
   packs.submitMysteryPack(submitInput(overrides));
 
@@ -161,6 +168,7 @@ beforeAll(async () => {
     CREATE TYPE "CosmeticShopItemStatus" AS ENUM ('Draft', 'PendingReview', 'Published', 'Rejected', 'RequestedChanges', 'Archived');
     CREATE TABLE "User" (id int PRIMARY KEY, muted boolean NOT NULL DEFAULT false, "bannedAt" timestamp, "deletedAt" timestamp);
     CREATE TABLE "Image" (id serial PRIMARY KEY, "userId" int NOT NULL, url text NOT NULL);
+    CREATE TABLE "ShopArtworkKeyOwner" (key text PRIMARY KEY, "userId" int NOT NULL, "recordedAt" timestamp NOT NULL DEFAULT now());
     CREATE TABLE "Cosmetic" (
       id int PRIMARY KEY, name text NOT NULL, type "CosmeticType" NOT NULL, data jsonb, "createdById" int
     );
@@ -322,14 +330,14 @@ describe('submitting a mystery pack', () => {
   });
 
   it('records the rights affirmation with a cover, and refuses a cover without one', async () => {
-    await expect(submit({ imageUrl: 'cover.png' })).rejects.toThrow(
+    await expect(submit({ imageUrl: ART_KEY })).rejects.toThrow(
       'You must confirm you have the rights to sell this artwork'
     );
     expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
 
-    const { boxId } = await submit({ imageUrl: 'cover.png', rightsAffirmed: true });
+    const { boxId } = await submit({ imageUrl: ART_KEY, rightsAffirmed: true });
     expect(await q(`SELECT "imageUrl" FROM "ItemDefinition" WHERE id = $1`, [boxId])).toEqual([
-      { imageUrl: 'cover.png' },
+      { imageUrl: ART_KEY },
     ]);
     expect((await listingOf(boxId)).meta.rightsAffirmation).toMatchObject({ userId: CREATOR });
   });
@@ -1022,6 +1030,16 @@ describe('submitMysteryPack box image key', () => {
     expect(await boxes()).toEqual([]);
   });
 
+  it('refuses a key issued to another user before charging', async () => {
+    redisMock.sysRedis.mGet.mockResolvedValueOnce([String(OTHER)] as never);
+
+    await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(
+      COVER_IMAGE_UNAVAILABLE_MESSAGE
+    );
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(await boxes()).toEqual([]);
+  });
+
   it("refuses the creator's own image key too", async () => {
     await q(`INSERT INTO "Image" ("userId", url) VALUES ($1, $2)`, [CREATOR, KEY]);
 
@@ -1032,6 +1050,7 @@ describe('submitMysteryPack box image key', () => {
   });
 
   it('accepts a fresh key once, and refuses it for a second box', async () => {
+    redisMock.sysRedis.mGet.mockResolvedValueOnce([String(CREATOR)] as never);
     await submit({ imageUrl: KEY, rightsAffirmed: true });
 
     await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(

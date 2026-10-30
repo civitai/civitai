@@ -21,22 +21,6 @@ const EXT: GenerationCtx = {
   gateRules: [],
 };
 
-/**
- * Fields that churned before this guard existed, as `<ecosystem or workflow> <field>`. A
- * workflow-scoped entry covers every ecosystem the workflow runs under. Remove an entry when
- * its field is fixed; the stale-entry test fails until you do.
- */
-const KNOWN_CHURN = new Set([
-  'img2img:preprocess kindParams',
-  'vid2vid:preprocess kindParams',
-  'vid2vid:upscale scaleFactor',
-  'vid2vid:interpolate interpolationFactor',
-  'img2img:upscale upscaleSelection',
-  'Veo3 duration',
-  'Vidu enablePromptEnhancer',
-  'MossImage turboLora',
-]);
-
 // The store flags a key after a few consecutive rebuilt passes; run comfortably past it.
 const PASSES = 5;
 
@@ -49,7 +33,7 @@ function storeFor(ecosystem: string, workflow: string, version?: unknown) {
 }
 
 function walk() {
-  const found: { ecosystem: string; workflow: string; field: string; at: string }[] = [];
+  const found: { field: string; at: string }[] = [];
   for (const eco of ecosystems) {
     for (const { graphKey: workflow } of getWorkflowsForEcosystem(eco.id)) {
       const base = storeFor(eco.key, workflow);
@@ -64,20 +48,12 @@ function walk() {
         ]);
       }
       for (const [store, at] of stores) {
-        for (const field of store.getCodecChurn())
-          found.push({ ecosystem: eco.key, workflow, field, at });
+        for (const field of store.getCodecChurn()) found.push({ field, at });
       }
     }
   }
   return found;
 }
-
-const ledgerKey = (c: { ecosystem: string; workflow: string; field: string }) =>
-  KNOWN_CHURN.has(`${c.workflow} ${c.field}`)
-    ? `${c.workflow} ${c.field}`
-    : KNOWN_CHURN.has(`${c.ecosystem} ${c.field}`)
-    ? `${c.ecosystem} ${c.field}`
-    : undefined;
 
 describe('no generation field rebuilds its schemas on every pass', () => {
   const churn = walk();
@@ -87,13 +63,7 @@ describe('no generation field rebuilds its schemas on every pass', () => {
     expect(pairs.length).toBeGreaterThan(100);
   });
 
-  it('no new churning field', () => {
-    const unledgered = churn.filter((c) => !ledgerKey(c)).map((c) => `${c.at}: ${c.field}`);
-    expect([...new Set(unledgered)]).toEqual([]);
-  });
-
-  it('no stale KNOWN_CHURN entry', () => {
-    const live = new Set(churn.map(ledgerKey).filter(Boolean));
-    expect([...KNOWN_CHURN].filter((entry) => !live.has(entry))).toEqual([]);
+  it('no field churns', () => {
+    expect([...new Set(churn.map((c) => `${c.at}: ${c.field}`))]).toEqual([]);
   });
 });
