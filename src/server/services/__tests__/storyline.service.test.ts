@@ -227,7 +227,7 @@ describe('writeChapterEdgeForPlacement', () => {
     });
     expect(w.storylineChapterEdge.create).toHaveBeenCalledTimes(1);
     expect(w.storylineChapterEdge.create.mock.calls[0][0]).toEqual({
-      data: { storylineId: 10, chapterId: 30, parentChapterId: 20, canon: false },
+      data: { storylineId: 10, chapterId: 30, parentChapterId: 20, canon: true },
     });
   });
 
@@ -247,27 +247,36 @@ describe('writeChapterEdgeForPlacement', () => {
     expect(w.storylineChapter.create).not.toHaveBeenCalled();
   });
 
-  it("marks the owner's continuation canon only when the parent has no canon child", async () => {
-    let canonTaken = false;
-    w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
-    w.storylineChapterEdge.findFirst.mockImplementation((({
-      where,
-    }: {
-      where: { parentChapterId: number; canon: boolean };
-    }) =>
-      Promise.resolve(
-        where.parentChapterId === 20 && where.canon && canonTaken ? { chapterId: 21 } : null
-      )) as never);
+  // Not only the owner's: an approved continuation takes the empty slot too.
+  it.each([
+    ['the owner', OWNER],
+    ['a contributor', STRANGER],
+  ])(
+    "marks %s's continuation canon only when the parent has no canon child",
+    async (_who, placerId) => {
+      let canonTaken = false;
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: placerId }) as never);
+      w.storylineChapterEdge.findFirst.mockImplementation((({
+        where,
+      }: {
+        where: { parentChapterId: number; canon: boolean };
+      }) =>
+        Promise.resolve(
+          where.parentChapterId === 20 && where.canon && canonTaken ? { chapterId: 21 } : null
+        )) as never);
 
-    await writeChapterEdgeForPlacement({ ...args, placerId: OWNER }, tx);
-    expect(w.storylineChapterEdge.create.mock.calls[0][0]).toMatchObject({ data: { canon: true } });
+      await writeChapterEdgeForPlacement({ ...args, placerId }, tx);
+      expect(w.storylineChapterEdge.create.mock.calls[0][0]).toMatchObject({
+        data: { canon: true },
+      });
 
-    canonTaken = true;
-    await writeChapterEdgeForPlacement({ ...args, placerId: OWNER }, tx);
-    expect(w.storylineChapterEdge.create.mock.calls[1][0]).toMatchObject({
-      data: { canon: false },
-    });
-  });
+      canonTaken = true;
+      await writeChapterEdgeForPlacement({ ...args, placerId }, tx);
+      expect(w.storylineChapterEdge.create.mock.calls[1][0]).toMatchObject({
+        data: { canon: false },
+      });
+    }
+  );
 
   it.each([
     [
