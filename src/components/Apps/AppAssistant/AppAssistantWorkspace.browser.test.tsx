@@ -3235,8 +3235,9 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     });
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
     await confirmDelete('app-bbbb');
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    expect(m.send).toHaveBeenCalledWith('Make a quiz night app');
+    // The request carries on in place: asked again, never sent as a second message.
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
+    expect(m.send).not.toHaveBeenCalled();
   });
 
   test('on the server runner, appears from the limit in a released runner’s words (v0.0.9)', async () => {
@@ -3264,8 +3265,9 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     });
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
     await confirmDelete('app-bbbb');
-    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
-    expect(m.send).toHaveBeenCalledWith('A tiny click counter app.');
+    // The request carries on in place: asked again, never sent as a second message.
+    await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']));
+    expect(m.send).not.toHaveBeenCalled();
   });
 });
 
