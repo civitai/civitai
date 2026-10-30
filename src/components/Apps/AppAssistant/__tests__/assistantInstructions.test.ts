@@ -158,14 +158,19 @@ describe('buildAssistantSystemPrompt', () => {
         '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
         '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
-        "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.",
+        "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'. The price is a bare number of Buzz: write the word Buzz once beside it (`${price} Buzz`), never also inside a helper that formats it, or the app shows \"104 Buzz Buzz\".",
         "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.",
+        BUZZ_TRANSACTIONS_RULE_TEXT,
         '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
         SUBMIT_RULE_TEXT,
       ].join('\n')
     );
   });
 });
+
+// The whole sentence: a run told a user Civitai's app API has no transaction history.
+const BUZZ_TRANSACTIONS_RULE_TEXT =
+  "- The viewer's own Buzz transactions (a spending history, a daily spending chart) are available: import { getTransport } from '@civitai/sdk' and call getTransport().request('GET_BUZZ_TRANSACTIONS', { params: { accountType, type, start, end, cursor, limit } }), which resolves to { transactions, cursor } (each transaction has date, a Date or an ISO string, so read it with new Date(date); type; amount, always positive, spent or received as its fromAccountId and toAccountId say; and description. limit is 1-200, 50 by default; pass the returned cursor to get the next page). It needs the buzz:read:self scope in block.manifest.json. Each call reads one Buzz pool: accountType is 'yellow' unless you pass another ('blue', 'green'), so request every pool the app shows and combine them. BREAKING.md's \"No v1 route\" for GET_BUZZ_TRANSACTIONS means only that app.site has no route for it; this host request works.";
 
 // The whole sentence: on the tester launch the assistant, with no way to submit, told a user who has
 // neither to sign in with the Civitai CLI or upload the zip at /apps/submit.
@@ -186,7 +191,7 @@ describe('pricing an estimate', () => {
   // priced estimate comes back 'pending' with cost.total, so it showed "couldn't get a price"
   // for every estimate. The whole line, on both runners and with or without subagents.
   const ESTIMATE_RULE =
-    "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.";
+    "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'. The price is a bare number of Buzz: write the word Buzz once beside it (`${price} Buzz`), never also inside a helper that formats it, or the app shows \"104 Buzz Buzz\".";
 
   it.each([
     ['browser', false],
@@ -198,6 +203,18 @@ describe('pricing an estimate', () => {
     (runner, subagents) => {
       const lines = assistantSystemPrompt(runner, subagents)('BUILT-IN RULES').split('\n');
       expect(lines.filter((line) => line.includes('estimate'))).toEqual([ESTIMATE_RULE]);
+    }
+  );
+});
+
+describe('the viewer’s Buzz transactions', () => {
+  it.each(['browser', 'remote'] as const)(
+    'the %s system prompt says they are readable, one pool per request',
+    (runner) => {
+      const lines = assistantSystemPrompt(runner, false)('BUILT-IN RULES').split('\n');
+      expect(lines.filter((line) => line.includes('GET_BUZZ_TRANSACTIONS'))).toEqual([
+        BUZZ_TRANSACTIONS_RULE_TEXT,
+      ]);
     }
   );
 });

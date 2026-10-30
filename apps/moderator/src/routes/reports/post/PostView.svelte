@@ -14,6 +14,7 @@
   import { LINK_CLASS, dateTime, num, relativeTime } from '$lib/format';
   import {
     bulkImageManagerUrl,
+    entityUrl,
     imageLookupUrl,
     modelVersionLookupUrl,
     postReportUrl,
@@ -114,6 +115,26 @@
           <a href="{data.civitaiUrl}/posts/{item.postId}" target="_blank" rel="noreferrer" class={LINK_CLASS}>
             on the site
           </a>
+        </p>
+      {/if}
+      {#if item.storylineChapter}
+        {@const chapter = item.storylineChapter}
+        <!-- A chapter judged alone, without the story it is part of, can pass where the story would not. -->
+        <p class="m-0 flex flex-wrap items-center gap-2 text-sm" data-testid="post-storyline-chapter">
+          <span>
+            Chapter {chapter.number} of
+            <a
+              href={entityUrl(data.civitaiUrl, 'storyline', chapter.storylineId)}
+              target="_blank"
+              rel="noreferrer"
+              class={LINK_CLASS}
+            >
+              {chapter.title}
+            </a>
+          </span>
+          {#if chapter.minorByScan}<Badge variant="destructive">storyline minor-flagged</Badge>{/if}
+          {#if chapter.tosViolation}<Badge variant="destructive">storyline taken down</Badge>{/if}
+          {#if chapter.removed}<Badge variant="secondary">removed from storyline</Badge>{/if}
         </p>
       {/if}
     </header>
