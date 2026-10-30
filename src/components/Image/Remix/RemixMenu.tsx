@@ -179,6 +179,18 @@ export function RemixMenu({
       .then(() => onOpen());
   };
 
+  // No Menu at all, not a disabled one: Menu.Target still toggles its own open
+  // state, which would fire `onOpen` (a second tour advance) and leave the
+  // button announcing a popup it never opens.
+  if (soleOption && isValidElement<{ onClick?: (e: React.MouseEvent) => void }>(children)) {
+    return cloneElement(children, {
+      onClick: (e) => {
+        children.props.onClick?.(e);
+        runOption(soleOption);
+      },
+    });
+  }
+
   return (
     <Menu
       withinPortal
@@ -186,18 +198,8 @@ export function RemixMenu({
       zIndex={zIndex ?? remixMenuZIndex}
       onOpen={handleOpen}
       onClose={clearBlocked}
-      disabled={!!soleOption}
     >
-      <Menu.Target>
-        {soleOption && isValidElement<{ onClick?: (e: React.MouseEvent) => void }>(children)
-          ? cloneElement(children, {
-              onClick: (e) => {
-                children.props.onClick?.(e);
-                runOption(soleOption);
-              },
-            })
-          : children}
-      </Menu.Target>
+      <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown
         data-tour={tourTarget}
         className="w-[290px] p-1.5"
