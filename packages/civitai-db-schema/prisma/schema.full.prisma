@@ -7388,6 +7388,14 @@ model ImageCdnModeratorDelete {
   @@index([url])
 }
 
+/// The user an upload key's issue record named, kept when the key is saved as shop artwork so the
+/// proof outlives the record. Written only by `assertShopArtworkKeysIssued`.
+model ShopArtworkKeyOwner {
+  key        String   @id
+  userId     Int
+  recordedAt DateTime @default(now())
+}
+
 /// A short lease on one url while a cdn-access-sync run calls the image server about it.
 model ImageCdnAccessClaim {
   url          String   @id
