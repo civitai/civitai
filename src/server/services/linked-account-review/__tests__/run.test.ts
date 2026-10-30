@@ -134,6 +134,22 @@ describe('runLinkedAccountReview', () => {
     expect(reports[0].findings.map((f) => f.userId).sort()).toEqual([A, B, C, D, E, F]);
   });
 
+  it('counts sticker flow when deciding whether a group is fully excluded', async () => {
+    const base = reader({ excluded: [E] });
+    const read: LinkedAccountReader = {
+      ...base,
+      flows: async () => {
+        const flows = await reader().flows(CONFIG, NOW);
+        return {
+          stickers: [edge(E, F, CONFIG.stickerFloor, CONFIG.stickerFloor)],
+          buzz: flows.buzz.filter((e) => e.from !== E),
+        };
+      },
+    };
+    const { reports } = await run({ read });
+    expect(reports[0].findings.map((f) => f.userId)).toEqual(expect.arrayContaining([E, F]));
+  });
+
   it('treats a repeated control id as one account', async () => {
     const { result } = await run({ config: { controlUserIds: [A, A, B, C, D] } });
     expect(result).toMatchObject({ control: 'grouped' });
@@ -204,6 +220,7 @@ describe('runLinkedAccountReview', () => {
     expect(() => failUnlessRan(unconfigured.result)).toThrow('not-configured');
     const dry = await run({ config: { mode: 'dry-run', controlUserIds: [] } });
     expect(failUnlessRan(dry.result)).toMatchObject({ status: 'dry-run' });
+    expect(() => failUnlessRan({ status: 'no-reader' })).toThrow('no-reader');
   });
 
   it('still reports the control state on a dry run', async () => {
