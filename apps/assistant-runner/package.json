@@ -24,6 +24,7 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
+    "@civitai/shared": "workspace:*",
     "@types/node": "^20.19.9",
     "@types/pg": "^8.11.10",
     "tsup": "^8.5.0",

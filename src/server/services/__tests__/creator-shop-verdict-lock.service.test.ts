@@ -45,6 +45,7 @@ import {
 } from '../creator-shop.service';
 import { updateCreatorShopPack } from '../creator-shop-pack.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 import { takenImageKeyFake } from './image-url-ownership.fake';
 
@@ -335,6 +336,31 @@ describe('a bundle pack edited while it is being reviewed', () => {
       /changed while you were editing/
     );
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['refuses', 'a key issued to neither them nor the pack owner', '55'],
+    ['accepts', "the pack owner's key", '11'],
+  ])("%s a moderator's cover swap to %s", async (verdict, _, issuedTo) => {
+    const loaded = pack('PendingReview', { history: [submitted] });
+    rows(loaded, loaded);
+    const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
+    redisMock.sysRedis.mGet.mockResolvedValueOnce([issuedTo] as never);
+    const swap = updateCreatorShopPack({
+      id: 42,
+      userId: 99,
+      isModerator: true,
+      imageUrl: '0a0b0c0d-0000-4000-8000-0000000000aa',
+    });
+    try {
+      if (verdict === 'refuses')
+        await expect(swap).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+      else await swap;
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+    }
+    expect(update).toHaveBeenCalledTimes(verdict === 'refuses' ? 0 : 1);
   });
 
   it("refuses a cover key already in use, checked as the pack owner's and excluding the pack", async () => {

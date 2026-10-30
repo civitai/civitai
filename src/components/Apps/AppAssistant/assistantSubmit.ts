@@ -1,5 +1,11 @@
 import type { ChatToolCall, ChatToolResult } from '@civitai/components-chat/civitai-chat';
 import { submitOfferOf } from '@civitai/app-assistant';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
+import {
+  unjustifiedSensitiveScopes,
+  type SensitiveScopeManifestInput,
+} from '~/shared/constants/block-scope.constants';
+import { getBase64 } from '~/utils/file-utils';
 
 /**
  * Submit for review from App Assistant: the user's press on the card a `submit_for_review` call shows
@@ -77,9 +83,9 @@ export async function submitBundleFromExport(exported: Blob, app: string): Promi
       `Your app has no ${MANIFEST_FILE}, so it cannot be submitted. Ask App Assistant to add it.`,
       0
     );
-  let manifest: Partial<SubmitManifest>;
+  let manifest: Partial<SubmitManifest> & SensitiveScopeManifestInput;
   try {
-    manifest = JSON.parse(manifestText) as Partial<SubmitManifest>;
+    manifest = JSON.parse(manifestText) as Partial<SubmitManifest> & SensitiveScopeManifestInput;
   } catch {
     throw new SubmitError(
       `Your app's ${MANIFEST_FILE} is not valid JSON. Ask App Assistant to fix it.`,
@@ -98,23 +104,25 @@ export async function submitBundleFromExport(exported: Blob, app: string): Promi
       `Your app's ${MANIFEST_FILE} names its blockId "${blockId}", not "${app}". Ask App Assistant to fix it.`,
       0
     );
+  const unjustified = unjustifiedSensitiveScopes(manifest);
+  if (unjustified.length) throw new SubmitError(unjustifiedScopesMessage(unjustified), 0);
   const bundle = await out.generateAsync({ type: 'blob', compression: 'DEFLATE' });
   return { bundle, manifest: { blockId, name, version } };
 }
 
+/** Why the card offers no button for a manifest the submit would refuse for its sensitive scopes. */
+export const unjustifiedScopesMessage = (scopes: readonly string[]) =>
+  `Your app asks for ${scopes.join(', ')} without saying why it needs ${
+    scopes.length === 1 ? 'it' : 'them'
+  }. Ask App Assistant to add a reason for ${
+    scopes.length === 1 ? 'it' : 'each'
+  } to ${MANIFEST_FILE}, then submit again.`;
+
 /** `blob` as base64, without the `data:` prefix. */
 async function base64Of(blob: Blob): Promise<string> {
-  const url = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
+  const url = await getBase64(blob);
   return url.slice(url.indexOf(',') + 1);
 }
-
-/** Both submit routes' refusal of a user without the authoring capability, word for word. */
-const NOT_AN_AUTHOR = 'Apps are restricted to the Civitai team';
 
 /** The user's own submission for this app still waits for review (`submitVersion`'s refusal). */
 const OWN_PENDING = /^you already have a pending submission for slug /;
@@ -135,8 +143,8 @@ function refusalMessage(status: number, message: string | null): string {
   // The service's messages are written for the CLI too; the card never shows a command to run.
   if (message && /\bcivitai app\b/.test(message)) return REFUSED_PLAINLY;
   if (status === 401) return 'You are signed out. Sign in again, then press Submit for review.';
-  if (status === 403 && (message === null || message === NOT_AN_AUTHOR))
-    return `Not submitted: ${NOT_AN_AUTHOR}. Your account cannot submit apps for review.`;
+  if (status === 403 && (message === null || message === APPS_RESTRICTED_MESSAGE))
+    return `Not submitted: ${APPS_RESTRICTED_MESSAGE}. Your account cannot submit apps for review.`;
   // Refused for how the request came (another site, a token without full access), not who sent it.
   if (status === 403) return `Submitting was refused: ${message}`;
   if (status === 413) return 'Not submitted: this app is too large to submit.';

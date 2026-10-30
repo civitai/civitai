@@ -886,6 +886,9 @@ importers:
         specifier: ^4.0.17
         version: 4.4.3
     devDependencies:
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../../packages/civitai-shared
       '@types/node':
         specifier: ^20.19.9
         version: 20.19.9

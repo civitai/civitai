@@ -6,6 +6,10 @@ import { isEqual } from 'lodash-es';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import {
+  recordShopTakedownArtwork,
+  type ShopTakedownArtwork,
+} from '~/server/services/cdn-access.service';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
   excludeDeletedShopListing,
@@ -150,7 +154,10 @@ import type {
 } from '~/server/schema/creator-shop.schema';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
-import { assertClientImageUrlsUsable } from '~/server/services/image-url-ownership';
+import {
+  assertClientImageUrlsUsable,
+  assertShopArtworkKeysIssued,
+} from '~/server/services/image-url-ownership';
 
 // Shop surfaces hide stickers until the flag is on. Rendering is never gated —
 // an owned sticker in a comment or DM shows for everyone regardless.
@@ -584,6 +591,7 @@ export const submitCreatorShopItem = async ({
   if (!allPassed)
     throw throwBadRequestError('Artwork does not meet the requirements for this cosmetic type');
   await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
+  await assertShopArtworkKeysIssued({ urls: [imageUrl], userId });
 
   // Reject duplicate artwork before charging the fee.
   if (await findDuplicateArtwork(imageHash))
@@ -876,6 +884,11 @@ export const updateCreatorShopItem = async ({
       urls: [imageUrl],
       userId: existing.cosmetic.createdById ?? userId,
       shopRow: { cosmeticId: existing.cosmeticId },
+    });
+    await assertShopArtworkKeysIssued({
+      urls: [imageUrl],
+      userId,
+      alsoIssuedTo: isModerator ? existing.cosmetic.createdById ?? undefined : undefined,
     });
     if (await findDuplicateArtwork(imageHash, id))
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
@@ -2396,8 +2409,11 @@ export const reviewCreatorShopItem = async ({
 };
 
 type TakedownFailure = {
-  /** `box`: a box still holds the cosmetic, or an opening that drew it was left unrefunded. */
-  stage: 'refund' | 'clawback' | 'box';
+  /**
+   * `box`: a box still holds the cosmetic, or an opening that drew it was left unrefunded. `cdn`:
+   * recording its artwork for the image CDN failed; a retry records it.
+   */
+  stage: 'refund' | 'clawback' | 'box' | 'cdn';
   /** 0 for a box that could not be pulled, or a payout whose key names no recipient. */
   userId: number;
   amount?: number;
@@ -2503,6 +2519,7 @@ export const takedownCosmeticShopItem = async ({
 
   let retried = false;
   let note = reason;
+  let artwork: ShopTakedownArtwork | undefined;
   // Stop sales first so nothing can be bought while the refunds run.
   const archive = async () => {
     // Under the row lock, not from the read above: the refund this waited on, or an edit, appends
@@ -2537,6 +2554,13 @@ export const takedownCosmeticShopItem = async ({
         select: creatorShopItemSelect,
       });
     });
+    // The image CDN stops serving the artwork; the stored original stays, as the label's evidence.
+    // A retry records it again.
+    try {
+      artwork = await recordShopTakedownArtwork(id);
+    } catch (error) {
+      failures.push({ stage: 'cdn', userId: 0, error: errorMessage(error) });
+    }
     // Official-shop placements are curated rows, not a status filter — drop them
     // or the item keeps rendering in its section.
     await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
@@ -3088,6 +3112,7 @@ export const takedownCosmeticShopItem = async ({
     boxRefundedValue,
     failures,
     leftToWithdrawnRefund,
+    artwork,
   });
 
   await recordShopTakedownLabel(id, {
@@ -3116,6 +3141,8 @@ export const takedownCosmeticShopItem = async ({
     boxOpeningsRefunded: boxRefundedUserIds.length,
     boxRefundedValue,
     failures,
+    /** Artwork keys this takedown did not record for the image CDN, left for a moderator. */
+    artworkLeftServing: artwork ? artwork.unproven + artwork.otherOwner + artwork.inUse : 0,
   };
 };
 

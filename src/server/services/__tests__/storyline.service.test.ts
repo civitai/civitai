@@ -325,7 +325,7 @@ describe('writeChapterEdgeForPlacement', () => {
     [
       'a taken-down post',
       () => w.post.findUnique.mockResolvedValue(publishedPost({ tosViolation: true }) as never),
-      /cannot be added/,
+      /can't be used in a storyline/,
     ],
     [
       'a post already in a storyline',

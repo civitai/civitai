@@ -87,7 +87,8 @@ function sourceFiles(): string[] {
     }
     for (const entry of entries) {
       const full = path.join(dir, entry);
-      const rel = path.relative(repoRoot, full);
+      // LEDGER keys and SKIP use forward slashes; Windows paths come back with backslashes.
+      const rel = path.relative(repoRoot, full).split(path.sep).join('/');
       if (SKIP.test(rel)) continue;
       if (statSync(full).isDirectory()) walk(full);
       else if (/\.(ts|tsx|mjs|js)$/.test(entry)) out.push(rel);
