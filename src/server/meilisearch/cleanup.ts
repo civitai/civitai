@@ -316,7 +316,7 @@ export type CleanupIndexStats = {
  * costs a document being re-examined tomorrow); the delete path re-asks the
  * PRIMARY, because there a wrong answer destroys a document.
  */
-async function fetchValidIds(
+export async function fetchValidIds(
   cfg: IndexConfig,
   ids: number[],
   client: typeof dbRead | typeof dbWrite

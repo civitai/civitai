@@ -133,6 +133,7 @@ import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
+import { modelsSearchIndexReconcileJob } from '~/server/jobs/models-search-index-reconcile';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
@@ -208,6 +209,7 @@ export const jobs: Job[] = [
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,
+  modelsSearchIndexReconcileJob,
   searchIndexQueueDrainJob,
   processRewards,
   rewardsDailyReset,
