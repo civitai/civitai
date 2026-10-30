@@ -30,7 +30,7 @@ export function StorylineInviteAlert({
     >
       <Text size="sm" mb="sm">
         Accept and you are listed as an endorsed collaborator: your continuations are added without
-        review and shown ahead of others. Until then nobody sees the invitation but the two of you.
+        review and shown ahead of others. Until then you are not listed on the storyline.
       </Text>
       <Group gap="xs">
         <Button
