@@ -49,6 +49,7 @@ import type {
   CancelCrucibleSchema,
   TakeDownCrucibleSchema,
   RemoveCrucibleEntrySchema,
+  OwnerRemoveCrucibleEntrySchema,
   WithdrawCrucibleEntrySchema,
   SetCrucibleEventTagsSchema,
 } from '../schema/crucible.schema';
@@ -139,6 +140,9 @@ import {
   type CrucibleDisplayPrize,
   type CruciblePrizeWinner,
   type PrizePosition,
+  CRUCIBLE_OWNER_REMOVAL_CAP,
+  getCrucibleOwnerRemovalReasonText,
+  getCrucibleOwnerRemovalsLeft,
 } from '~/utils/crucible-helpers';
 import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -1223,6 +1227,8 @@ export type CrucibleDetail = CrucibleDetailRow & {
   viewerEntriesSoFar: number;
   /** Empty until completed. No user ids: a winner's entry may be hidden from this viewer. */
   prizeWinners: CrucibleDisplayPrize[];
+  /** Owner removals left in this crucible; null for everyone but its owner and moderators. */
+  ownerRemovalsLeft: number | null;
 };
 
 type PrizeCrucible = { id: number; prizePositions: PrizePosition[]; totalPrizePool: number };
@@ -1290,6 +1296,19 @@ export const getCrucibleDetail = async ({
     ]
   );
 
+  // dbWrite: the owner refetches right after a removal, and the replica may not have it yet.
+  const ownerRemovalsLeft =
+    isModerator || (userId && userId === crucible.userId)
+      ? getCrucibleOwnerRemovalsLeft(
+          (
+            await dbWrite.crucible.findUnique({
+              where: { id },
+              select: { ownerRemovalCount: true },
+            })
+          )?.ownerRemovalCount ?? 0
+        )
+      : null;
+
   const paidEntryCount = paidEntryCounts.get(id) ?? 0;
   const prizeWinners =
     crucible.status === CrucibleStatus.Completed
@@ -1319,6 +1338,7 @@ export const getCrucibleDetail = async ({
     viewerEntryCount: viewerEntries.length,
     viewerEntriesSoFar,
     prizeWinners,
+    ownerRemovalsLeft,
   };
 };
 
@@ -4418,10 +4438,42 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
   }
 }
 
-export const removeCrucibleEntry = async ({
+type EntryRemover =
+  | { role: 'moderator'; userId: number }
+  | { role: 'owner'; userId: number; reasonText: string };
+
+const OWNER_CAP_REACHED = `You've already removed ${CRUCIBLE_OWNER_REMOVAL_CAP} entries from this crucible, the most an owner can. Ask a moderator to remove any others.`;
+
+export const removeCrucibleEntry = ({
   entryId,
   moderatorId,
-}: RemoveCrucibleEntrySchema & { moderatorId: number }) => {
+}: RemoveCrucibleEntrySchema & { moderatorId: number }) =>
+  removeEntry(entryId, { role: 'moderator', userId: moderatorId });
+
+/**
+ * The crucible's owner removes an entry, at most CRUCIBLE_OWNER_REMOVAL_CAP times per crucible.
+ * Everything else, the refund included, is a moderator's removal.
+ */
+export const removeCrucibleEntryAsOwner = async ({
+  entryId,
+  ownerId,
+  reason,
+  note,
+}: OwnerRemoveCrucibleEntrySchema & { ownerId: number }) => {
+  const cleanNote = note ? removeTags(note).trim() : '';
+  if (reason === 'other' && !cleanNote)
+    throw throwBadRequestError('A reason is required to remove an entry');
+  return removeEntry(entryId, {
+    role: 'owner',
+    userId: ownerId,
+    reasonText: getCrucibleOwnerRemovalReasonText({ reason, note: cleanNote }),
+  });
+};
+
+async function removeEntry(entryId: number, remover: EntryRemover) {
+  const isOwnerRemoval = remover.role === 'owner';
+  const actor = isOwnerRemoval ? { ownerId: remover.userId } : { moderatorId: remover.userId };
+  const moderatorId = remover.userId;
   const entry = await dbWrite.crucibleEntry.findUnique({
     where: { id: entryId },
     select: {
@@ -4437,16 +4489,61 @@ export const removeCrucibleEntry = async ({
           name: true,
           ingestion: true,
           textNsfw: true,
+          userId: true,
+          ownerRemovalCount: true,
         },
       },
     },
   });
   if (!entry) throw throwNotFoundError('Entry not found');
-  if (entry.userId === moderatorId) throw throwBadRequestError("You can't remove your own entry");
   const { crucible, crucibleId } = entry;
+  if (isOwnerRemoval && crucible.userId !== remover.userId)
+    throw throwAuthorizationError('You can only remove entries from your own crucible');
+  if (entry.userId === moderatorId) throw throwBadRequestError("You can't remove your own entry");
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
     throw throwBadRequestError(NOT_RUNNING);
   const fee = entry.buzzTransactionId ? crucible.entryFee : 0;
+
+  // An owner's slot is taken before any money moves: a refund can't be taken back, so concurrent
+  // removals past the cap must be turned away here, not after they have paid out.
+  if (isOwnerRemoval) {
+    const reserved = await dbWrite.$executeRaw`
+      UPDATE "Crucible"
+      SET "ownerRemovalCount" = "ownerRemovalCount" + 1
+      WHERE id = ${crucibleId}
+        AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+        AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+        AND "ownerRemovalCount" < ${CRUCIBLE_OWNER_REMOVAL_CAP}
+    `;
+    if (!reserved) {
+      const [row] = await dbWrite.$queryRaw<{ capped: boolean }[]>`
+        SELECT "ownerRemovalCount" >= ${CRUCIBLE_OWNER_REMOVAL_CAP} AS capped
+        FROM "Crucible" WHERE id = ${crucibleId}
+      `;
+      throw throwBadRequestError(row?.capped ? OWNER_CAP_REACHED : NOT_RUNNING);
+    }
+  }
+  const releaseSlot = async () => {
+    if (!isOwnerRemoval) return;
+    try {
+      await dbWrite.$executeRaw`
+        UPDATE "Crucible"
+        SET "ownerRemovalCount" = GREATEST("ownerRemovalCount" - 1, 0)
+        WHERE id = ${crucibleId}
+      `;
+    } catch (releaseError) {
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-entry-removal-slot-release-failed',
+        message: `Entry ${entryId} was kept but the owner removal it reserved on crucible ${crucibleId} wasn't given back: ${
+          releaseError instanceof Error ? releaseError.message : String(releaseError)
+        }`,
+        crucibleId,
+        entryId,
+        ...actor,
+      });
+    }
+  };
 
   if (entry.buzzTransactionId) {
     try {
@@ -4461,6 +4558,7 @@ export const removeCrucibleEntry = async ({
         reason: 'entry-removed',
       });
     } catch (error) {
+      await releaseSlot();
       logToAxiom({
         type: 'error',
         name: 'crucible-entry-removal-refund-failed',
@@ -4469,7 +4567,7 @@ export const removeCrucibleEntry = async ({
         } could not be refunded: ${error instanceof Error ? error.message : String(error)}`,
         crucibleId,
         entryId,
-        moderatorId,
+        ...actor,
         buzzTransactionId: entry.buzzTransactionId,
       });
       throw throwBadRequestError(
@@ -4496,6 +4594,7 @@ export const removeCrucibleEntry = async ({
       await tx.crucibleEntry.delete({ where: { id: entryId } });
     });
   } catch (error) {
+    await releaseSlot();
     // Ended between the check above and here: the fee is back with the entrant, but the entry
     // still counts toward the pool finalize pays out.
     if (ended && fee)
@@ -4505,7 +4604,7 @@ export const removeCrucibleEntry = async ({
         message: `Entry ${entryId}'s fee was refunded but the crucible ended before it was removed, so the pool still counts it.`,
         crucibleId,
         entryId,
-        moderatorId,
+        ...actor,
         buzzTransactionId: entry.buzzTransactionId,
       });
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
@@ -4521,7 +4620,7 @@ export const removeCrucibleEntry = async ({
     crucibleId,
     entryId,
     entrantId: entry.userId,
-    moderatorId,
+    ...actor,
     refundedAmount: fee,
   });
   sendCrucibleNotification({
@@ -4533,11 +4632,12 @@ export const removeCrucibleEntry = async ({
       crucibleId,
       crucibleName: getCruciblePublishableName(crucible),
       refundedAmount: fee,
+      ...(isOwnerRemoval && { removedBy: 'owner' as const, reason: remover.reasonText }),
     },
   });
 
   return { entryId, crucibleId, refundedAmount: fee };
-};
+}
 
 /**
  * The entrant takes back their own entry. Unlike a moderator's removal there is no refund: the row

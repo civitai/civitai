@@ -1027,9 +1027,10 @@ export class Tracker {
 
   // Exactly these four columns, in their own table with a 12-month TTL (not `actions`, which has
   // none): migrations/2026-10-28-image-upload-requests.sql.
-  public imageUploadRequest(key: string) {
+  /** `userId` names who the key was issued to when the request has no session, as in a job. */
+  public imageUploadRequest(key: string, userId?: number) {
     return this.send('imageUploadRequests', ({ actor }) => ({
-      userId: actor.userId,
+      userId: userId ?? actor.userId,
       ip: actor.ip,
       key,
       time: new Date(),

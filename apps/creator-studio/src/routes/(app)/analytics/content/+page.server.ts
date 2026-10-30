@@ -1,5 +1,6 @@
 import type { PageServerLoad } from './$types';
 import { getTopMedia, getTopArticles, getComics, getModel3ds } from '$lib/server/analytics';
+import { recentInRange } from '$lib/content-sort';
 import { readAnalyticsPeriod } from '$lib/server/analytics-period';
 
 export const load: PageServerLoad = async ({ locals, cookies, url }) => {
@@ -20,7 +21,14 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
     images: media ? media.filter((m) => m.type === 'image') : null,
     videos: media ? media.filter((m) => m.type === 'video') : null,
     articles,
-    comics,
+    // Recent lists what was created in the selected period, so the list and its stats describe the same month.
+    comics:
+      pool === 'recent' && comics
+        ? {
+            ...comics,
+            comics: recentInRange(comics.comics, range.from, range.to, (c) => c.projectId),
+          }
+        : comics,
     model3ds,
   };
 };

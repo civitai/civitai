@@ -36,7 +36,9 @@ const h = vi.hoisted(() => ({
   roll: vi.fn(async () => undefined),
   bearer: vi.fn(async () => null as unknown),
   settings: vi.fn(async () => ({ features: {}, chat: undefined })),
-  tosMeta: vi.fn(async (_args: unknown) => undefined),
+  // Every seed answers with a value, not `undefined`: the body is JSON on the wire, which drops an
+  // undefined member, and the keys test below checks the endpoint sends every seed.
+  tosMeta: vi.fn(async (_args: unknown) => ({} as unknown)),
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: h.bearer }));
@@ -76,11 +78,11 @@ vi.mock('~/server/services/content.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AnnouncementService>()),
-  getCurrentAnnouncements: vi.fn(async () => undefined),
+  getCurrentAnnouncements: vi.fn(async () => []),
 }));
 vi.mock('~/server/services/nav-banner.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NavBannerService>()),
-  getNavBanners: vi.fn(async () => undefined),
+  getNavBanners: vi.fn(async () => []),
 }));
 vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SiteAlertService>()),
@@ -92,7 +94,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
-  getBrowsingSettingAddons: vi.fn(async () => undefined),
+  getBrowsingSettingAddons: vi.fn(async () => []),
   getLiveNow: vi.fn(async () => false),
 }));
 

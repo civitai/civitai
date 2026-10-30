@@ -29,6 +29,7 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import {
@@ -217,6 +218,17 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     const region = getRegion(req);
     let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
     if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
+    // A minor or SFW-only model's images are served only at its gallery's held level.
+    if (data.modelId || data.modelVersionId || data.postId) {
+      // Loaded on demand: the model service's import graph is large and only this branch needs it.
+      const { getHeldGalleryLevel } = await import('~/server/services/model.service');
+      const heldLevel = await getHeldGalleryLevel(data);
+      if (heldLevel !== undefined) {
+        _browsingLevel = Flags.intersection(_browsingLevel, heldLevel);
+        // The search reads 0 as its default level, not as none, so an empty intersection is an empty page.
+        if (!_browsingLevel) return res.status(200).json({ items: [], metadata: {} });
+      }
+    }
 
     // Search + response shaping is shared with /api/v1/blocks/images via
     // runImageSearch. The PUBLIC endpoint passes its existing region/nsfw-derived

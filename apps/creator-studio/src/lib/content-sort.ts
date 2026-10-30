@@ -12,3 +12,17 @@ export function recentFirst<T extends { createdAt: string | null }>(
     return byTime || id(b) - id(a) || 0;
   });
 }
+
+// Items created on or between two inclusive 'YYYY-MM-DD' UTC days, newest first, at most `cap`.
+export function recentInRange<T extends { createdAt: string | null }>(
+  rows: readonly T[],
+  from: string,
+  to: string,
+  id: (row: T) => number,
+  cap = 100
+): T[] {
+  const inRange = rows.filter(
+    (r) => r.createdAt && r.createdAt.slice(0, 10) >= from && r.createdAt.slice(0, 10) <= to
+  );
+  return recentFirst(inRange, id).slice(0, cap);
+}

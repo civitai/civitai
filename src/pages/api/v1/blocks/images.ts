@@ -24,6 +24,7 @@ import {
 } from '~/server/utils/request-bulkhead';
 import { constants, IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
@@ -177,7 +178,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // (The schema doesn't even expose nsfw/browsingLevel, so there is nothing to
   // read from the request; this is the single maturity authority.)
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  let { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
 
   const { limit, page, cursor, type, withMeta, flatMeta, withTags, ...data } = reqParams.data;
 
@@ -209,6 +210,21 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   try {
+    // A minor or SFW-only model's images are served only at its gallery's held level.
+    if (data.modelId || data.modelVersionId || data.postId) {
+      // Loaded on demand: the model service's import graph is large and only this branch needs it.
+      const { getHeldGalleryLevel } = await import('~/server/services/model.service');
+      const heldLevel = await getHeldGalleryLevel(data);
+      if (heldLevel !== undefined) {
+        browsingLevel = Flags.intersection(browsingLevel, heldLevel);
+        // The search reads 0 as its default level, not as none, so an empty intersection is an empty page.
+        if (!browsingLevel) {
+          res.status(200).json({ items: [], metadata: {} });
+          return;
+        }
+      }
+    }
+
     const { items, nextCursor } = await runImageSearch(
       { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
       {

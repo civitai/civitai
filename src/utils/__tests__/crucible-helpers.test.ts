@@ -441,11 +441,11 @@ describe('getCrucibleManageActions', () => {
     });
   });
 
-  it('lets the creator edit a running crucible but cancel only before it starts', () => {
+  it('lets the creator edit and remove entries from a running crucible but cancel only before it starts', () => {
     expect(actions(CrucibleStatus.Active, future, { isCreator: true })).toEqual({
       canEdit: true,
       canCancel: false,
-      canRemoveEntries: false,
+      canRemoveEntries: true,
       canTakeDown: false,
     });
     expect(actions(CrucibleStatus.Pending, future, { isCreator: true })).toEqual({
