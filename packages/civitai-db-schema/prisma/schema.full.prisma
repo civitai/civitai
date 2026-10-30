@@ -7416,6 +7416,18 @@ model ShopArtworkKeyOwner {
   recordedAt DateTime @default(now())
 }
 
+/// A Creator Shop takedown's artwork key, kept after the listing is deleted so the url stays taken
+/// down. Written only by `recordShopTakedownArtwork`.
+model ImageCdnShopTakedown {
+  id          Int      @unique @default(autoincrement())
+  url         String
+  shopItemId  Int
+  userId      Int?
+  takenDownAt DateTime @default(now())
+
+  @@id([url, shopItemId])
+}
+
 /// A short lease on one url while a cdn-access-sync run calls the image server about it.
 model ImageCdnAccessClaim {
   url          String   @id

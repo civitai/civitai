@@ -3492,6 +3492,13 @@ export type ImageCdnModeratorDelete = {
   csamReview: Generated<boolean>;
   deletedAt: Generated<Timestamp>;
 };
+export type ImageCdnShopTakedown = {
+  id: Generated<number>;
+  url: string;
+  shopItemId: number;
+  userId: number | null;
+  takenDownAt: Generated<Timestamp>;
+};
 export type ImageConnection = {
   imageId: number;
   entityId: number;
@@ -6507,6 +6514,7 @@ export type DB = {
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
+  ImageCdnShopTakedown: ImageCdnShopTakedown;
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;

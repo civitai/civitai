@@ -36,11 +36,14 @@ beforeAll(async () => {
       "id" integer PRIMARY KEY, "cosmeticId" integer, "meta" jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "ItemDefinition" ("id" integer PRIMARY KEY, "imageUrl" text);
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" integer, PRIMARY KEY (url, "shopItemId"));
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "Cosmetic", "CosmeticShopItem", "ItemDefinition"`);
+  await holder.db.exec(
+    `TRUNCATE "Image", "Cosmetic", "CosmeticShopItem", "ItemDefinition", "ImageCdnShopTakedown"`
+  );
   await holder.db.exec(`
     INSERT INTO "Image" ("userId", url, ingestion) VALUES
       (${CALLER}, '${OWN_KEY}', 'Scanned'),
@@ -270,6 +273,21 @@ describe('assertClientImageUrlsUsable and shop artwork', () => {
     await holder.db.query(`INSERT INTO "ItemDefinition" (id, "imageUrl") VALUES (1, $1)`, [stored]);
 
     expect(await refused([SHOP_KEY])).toBeInstanceOf(TRPCError);
+    expect(await shopArtworkUrls([SHOP_KEY, OWN_KEY])).toEqual(new Set([SHOP_KEY]));
+  });
+
+  it("refuses an image on a taken-down listing's art after the listing is gone", async () => {
+    await holder.db.query(`INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId") VALUES ($1, 1)`, [
+      SHOP_KEY,
+    ]);
+    expect(await refused([SHOP_KEY])).toBeInstanceOf(TRPCError);
+    expect(await refused([OWN_KEY])).toBeNull();
+  });
+
+  it("counts a taken-down listing's art after the listing is gone", async () => {
+    await holder.db.query(`INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId") VALUES ($1, 1)`, [
+      SHOP_KEY,
+    ]);
     expect(await shopArtworkUrls([SHOP_KEY, OWN_KEY])).toEqual(new Set([SHOP_KEY]));
   });
 
