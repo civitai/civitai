@@ -103,20 +103,24 @@ export async function assertCommentEntityVisible(
 }
 
 /**
- * For a member's action on one comment: a comment they cannot see answers as gone, and the crucible
- * above it gates it as it gates the thread's reads.
+ * For a member's action on one comment: a comment they cannot see answers as gone, and the storyline
+ * or crucible above it gates it as it gates a reply there.
  */
-export async function assertCommentActionable(
-  commentId: number,
-  ctx: Pick<Context, 'user' | 'features'>
-) {
+export async function assertCommentActionable(commentId: number, ctx: CommentReadContext) {
   const { user } = ctx;
   if (user?.isModerator) return;
-  const [gone, crucibleId] = await Promise.all([
+  const [gone, storylineId, crucibleId] = await Promise.all([
     isCommentGoneForMembers(commentId),
+    getCommentStorylineId(commentId),
     getCommentCrucibleId(commentId),
   ]);
   if (gone) throw throwNotFoundError(`No comment with id ${commentId}`);
+  if (storylineId) {
+    const storyline = await assertStorylineThreadVisible(storylineId, ctx);
+    if (storyline.tosViolation)
+      throw throwAuthorizationError('This storyline has been taken down.');
+    return;
+  }
   if (!crucibleId) return;
   await assertCrucibleVisible(crucibleId, {
     viewerId: user?.id,
