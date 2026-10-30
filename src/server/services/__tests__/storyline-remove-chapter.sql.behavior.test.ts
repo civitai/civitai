@@ -22,9 +22,11 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * database's own. PGlite has one session, so nothing here interleaves two transactions.
  */
 
-const { removeStorylineChapter, STORYLINE_CHAPTER_REMOVE_REFUSALS: REFUSED } = await import(
-  '~/server/services/storyline.service'
-);
+const {
+  addOwnerChapter,
+  removeStorylineChapter,
+  STORYLINE_CHAPTER_REMOVE_REFUSALS: REFUSED,
+} = await import('~/server/services/storyline.service');
 
 const migration = (name: string) =>
   readFileSync(
@@ -225,7 +227,6 @@ describe('removeStorylineChapter', () => {
     expect(trackModActivity).not.toHaveBeenCalled();
   });
 
-  // A tombstone, as a placement takedown leaves: the row keeps holding its post.
   // The parent's fork shares change once a way on from it is gone.
   it("refreshes the parent's reader split", async () => {
     bustFetchThroughCache.mockClear();
@@ -321,7 +322,7 @@ describe('removeStorylineChapter', () => {
   describe('during an open report', () => {
     const holds = () =>
       rows(
-        `SELECT "storylineId", "chapterId", "postId", "chapterUserId", depth, "placementId",
+        `SELECT "storylineId", "storylineTitle", "chapterId", "postId", "chapterUserId", depth, "placementId",
           "parentChapterIds", "removedById", "removedByRole", "reportIds" FROM "StorylineChapterRemovalHold"`
       );
     const openPostReport = () =>
@@ -330,13 +331,14 @@ describe('removeStorylineChapter', () => {
         INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 70);
       `);
 
-    it("an author's removal is held for moderator review: removed as usual, and recorded", async () => {
+    it("an author's removal is removed as usual, and recorded for moderators", async () => {
       await openPostReport();
       expect(await remove(CONTRIBUTOR)).toEqual({ storylineId: 1, chapterId: CHAPTER_2 });
       expect(await chapterIds()).toEqual([10]);
       expect(await holds()).toEqual([
         {
           storylineId: 1,
+          storylineTitle: 'A story with no story',
           chapterId: CHAPTER_2,
           postId: 502,
           chapterUserId: CONTRIBUTOR,
@@ -384,22 +386,100 @@ describe('removeStorylineChapter', () => {
           rows(`SELECT id, status, "removedBy", "takenDownById" FROM "Placement" ORDER BY id`),
           rows(`SELECT * FROM "Post" ORDER BY id`),
         ]);
-      const unreported = { response: await remove(CONTRIBUTOR), state: await state() };
+      const run = async () => {
+        bustFetchThroughCache.mockClear();
+        const response = await remove(CONTRIBUTOR);
+        const busts = bustFetchThroughCache.mock.calls.map((c) => String(c[0]));
+        return { response, state: await state(), busts };
+      };
+      const reports = () => rows(`SELECT * FROM "Report" ORDER BY id`);
+      const unreported = await run();
       await resetFixture();
       await openPostReport();
-      const reported = { response: await remove(CONTRIBUTOR), state: await state() };
+      const reportsBefore = await reports();
+      const reported = await run();
       expect(reported).toEqual(unreported);
+      expect(unreported.busts).toHaveLength(1);
+      expect(await reports()).toEqual(reportsBefore);
       expect(await holds()).toHaveLength(1);
     });
 
     it('leaves the post free to be added again, as after any removal', async () => {
-      await openPostReport();
-      await remove(CONTRIBUTOR);
+      // `addOwnerChapter`'s Prisma reads and writes, on the same tables.
+      w.post.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) => {
+        const [row] = await rows<Record<string, unknown> & { chapterId: number | null }>(
+          `SELECT p."userId", p."nsfwLevel", p."publishedAt", p."tosViolation", c.id AS "chapterId"
+           FROM "Post" p LEFT JOIN "StorylineChapter" c ON c."postId" = p.id WHERE p.id = $1`,
+          [where.id]
+        );
+        if (!row) return null;
+        const { chapterId, ...rest } = row;
+        return { ...rest, storylineChapter: chapterId ? { id: chapterId } : null };
+      }) as never);
+      w.storylineChapter.findUnique.mockImplementation((async ({
+        where,
+      }: {
+        where: { id: number };
+      }) => {
+        const [row] = await rows<Record<string, unknown>>(
+          `SELECT c.id, c."storylineId", c.depth, c."removedAt", st."userId", st."maxNsfwLevel",
+             st."minorByScan", st."tosViolation"
+           FROM "StorylineChapter" c JOIN "Storyline" st ON st.id = c."storylineId" WHERE c.id = $1`,
+          [where.id]
+        );
+        if (!row) return null;
+        const { userId, maxNsfwLevel, minorByScan, tosViolation, ...chapter } = row;
+        return { ...chapter, storyline: { userId, maxNsfwLevel, minorByScan, tosViolation } };
+      }) as never);
+      w.storylineChapter.create.mockImplementation(
+        (async ({
+          data,
+        }: {
+          data: { storylineId: number; postId: number; userId: number; depth: number };
+        }) =>
+          (
+            await rows(
+              `INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth)
+             VALUES (12, $1, $2, $3, $4) RETURNING id`,
+              [data.storylineId, data.postId, data.userId, data.depth]
+            )
+          )[0]) as never
+      );
+      w.storylineChapterEdge.create.mockImplementation(
+        (async ({
+          data,
+        }: {
+          data: { storylineId: number; chapterId: number; parentChapterId: number; canon: boolean };
+        }) =>
+          (
+            await rows(
+              `INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
+             VALUES ($1, $2, $3, $4) RETURNING *`,
+              [data.storylineId, data.chapterId, data.parentChapterId, data.canon]
+            )
+          )[0]) as never
+      );
+      w.storylineChapterEdge.findFirst.mockImplementation(
+        (async ({ where }: { where: { parentChapterId: number } }) =>
+          (
+            await rows(
+              `SELECT "chapterId" FROM "StorylineChapterEdge" WHERE "parentChapterId" = $1 AND canon`,
+              [where.parentChapterId]
+            )
+          )[0] ?? null) as never
+      );
+      // The owner's own chapter, so the owner can add its post back.
       await db.pg.exec(`
-        INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth, "postId")
-          VALUES (12, 1, ${CONTRIBUTOR}, 1, 502);
-        INSERT INTO "StorylineChapterEdge" ("chapterId", "storylineId", "parentChapterId") VALUES (12, 1, 10);
+        UPDATE "Post" SET "userId" = ${OWNER} WHERE id = 502;
+        UPDATE "StorylineChapter" SET "userId" = ${OWNER}, "placementId" = NULL WHERE id = 11;
       `);
+      const addBack = () => addOwnerChapter({ parentChapterId: 10, postId: 502, userId: OWNER });
+      await expect(addBack()).rejects.toThrow('This post is already in a storyline');
+
+      await openPostReport();
+      await remove(OWNER);
+      expect(await holds()).toHaveLength(1);
+      expect(await addBack()).toEqual({ chapterId: 12 });
       expect(await chapterIds()).toEqual([10, 12]);
     });
 
@@ -410,7 +490,7 @@ describe('removeStorylineChapter', () => {
     });
   });
 
-  // The settlement refusal must not depend on a report, or retrying would reveal one opening.
+  // Settlement is checked before any report is read, so the refusal is the same either way.
   it('gives the same unsettled-payment refusal whether or not a report is open', async () => {
     await db.pg.exec(
       `UPDATE "PlacementTransaction" SET "transactionId" = NULL WHERE kind = 'toOwner'`

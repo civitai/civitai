@@ -14,7 +14,7 @@ import {
  */
 
 const getReports = vi.fn(async (_params: unknown) => ({
-  items: [] as { entityId: number | null }[],
+  items: [] as { id: number; entityId: number | null }[],
   totalItems: 0,
   page: 1,
   limit: 20,
@@ -32,8 +32,10 @@ vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportId
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement: vi.fn() }));
 vi.mock('$lib/server/game-frame', () => ({ delistGame: vi.fn(), delistReason: vi.fn() }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+const getStorylineReportHolds = vi.fn(async (_reportIds: number[]) => [] as unknown[]);
 vi.mock('$lib/server/storyline-takedown.service', () => ({
   getReportedStorylines: vi.fn(async () => []),
+  getStorylineReportHolds,
   getReportStorylineId: vi.fn(),
   setStorylineTakedown: vi.fn(),
 }));
@@ -124,6 +126,27 @@ describe('report queue load', () => {
     await run('image', '?status=Pending&page=-4&reportedBy=%20alice%20');
 
     expect(asked()).toMatchObject({ page: 1, reportedBy: 'alice', type: 'image' });
+  });
+});
+
+describe('the storyline queue', () => {
+  it('shows the chapters removed while each of its reports was open', async () => {
+    const holds = [{ postId: 602, reportIds: [80] }];
+    getReports.mockResolvedValueOnce({
+      items: [
+        { id: 80, entityId: 2 },
+        { id: 81, entityId: 3 },
+      ],
+      totalItems: 2,
+      page: 1,
+      limit: 20,
+    });
+    getStorylineReportHolds.mockResolvedValueOnce(holds);
+
+    const data = (await run('storyline')) as { storylineHolds: unknown };
+
+    expect(getStorylineReportHolds).toHaveBeenCalledWith([80, 81]);
+    expect(data.storylineHolds).toBe(holds);
   });
 });
 

@@ -90,8 +90,8 @@ section).
   a chapter someone paid to add; its author can, and their Buzz is not returned. A taken-down
   storyline's chapters are left to moderators. A moderator's removal leaves a removed placeholder,
   as a takedown does, so the post cannot be submitted again; a removed chapter cannot be removed.
-  A creator's or author's removal during an open report is held for moderator review: it is removed
-  as usual, and moderators see it in the report's context.
+  A creator's or author's removal during an open report is removed as usual and recorded for
+  moderators, who see it on the post's report and on the storyline's report.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is

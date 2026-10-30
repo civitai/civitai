@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 
@@ -45,15 +46,23 @@ export async function getPostStorylineChapter(
     dbRead
       .selectFrom('StorylineChapter as c')
       .innerJoin('Storyline as s', 's.id', 'c.storylineId')
-      .select(['s.id', 's.title', 's.tosViolation', 's.minorByScan', 'c.depth', 'c.removedAt'])
+      .select([
+        's.id',
+        's.title',
+        's.tosViolation',
+        's.minorByScan',
+        'c.depth',
+        'c.removedAt',
+        'c.createdAt',
+      ])
       .where('c.postId', '=', postId)
       .executeTakeFirst(),
     dbRead
       .selectFrom('StorylineChapterRemovalHold as h')
-      .innerJoin('Storyline as s', 's.id', 'h.storylineId')
+      .leftJoin('Storyline as s', 's.id', 'h.storylineId')
       .select([
-        's.id',
-        's.title',
+        'h.storylineId as id',
+        'h.storylineTitle as title',
         's.tosViolation',
         's.minorByScan',
         'h.depth',
@@ -64,18 +73,50 @@ export async function getPostStorylineChapter(
       .orderBy('h.id', 'desc')
       .executeTakeFirst(),
   ]);
-  const heldRemoval = hold ? { by: hold.removedByRole, at: hold.createdAt } : null;
-  const source = row ?? hold;
-  if (!source) return null;
+  // The post was added again after the hold: the hold is about a chapter that is gone.
+  const current = hold && (!row || hold.createdAt > row.createdAt) ? hold : null;
+  if (row && !current)
+    return {
+      storylineId: row.id,
+      title: row.title,
+      number: row.depth + 1,
+      removed: row.removedAt !== null,
+      tosViolation: row.tosViolation,
+      minorByScan: row.minorByScan,
+      heldRemoval: null,
+    };
+  if (!current) return null;
   return {
-    storylineId: source.id,
-    title: source.title,
-    number: source.depth + 1,
-    removed: row ? row.removedAt !== null : true,
-    tosViolation: source.tosViolation,
-    minorByScan: source.minorByScan,
-    heldRemoval,
+    storylineId: current.id,
+    title: current.title,
+    number: current.depth + 1,
+    removed: true,
+    tosViolation: current.tosViolation ?? false,
+    minorByScan: current.minorByScan ?? false,
+    heldRemoval: { by: current.removedByRole, at: current.createdAt },
   };
+}
+
+export type StorylineReportHold = {
+  postId: number | null;
+  storylineTitle: string;
+  /** As readers number it: chapter 1 is depth 0. */
+  number: number;
+  removedByRole: string;
+  createdAt: Date;
+  reportIds: number[];
+};
+
+/** Chapters their owner or author removed while one of these storyline reports was open. */
+export async function getStorylineReportHolds(reportIds: number[]): Promise<StorylineReportHold[]> {
+  if (!reportIds.length) return [];
+  const rows = await dbRead
+    .selectFrom('StorylineChapterRemovalHold')
+    .select(['postId', 'storylineTitle', 'depth', 'removedByRole', 'createdAt', 'reportIds'])
+    .where('reportIds', '&&', sql<number[]>`${sql.val(reportIds)}::int[]`)
+    .orderBy('id')
+    .execute();
+  return rows.map(({ depth, ...h }) => ({ ...h, number: depth + 1 }));
 }
 
 /** The storyline a report is about, read from the primary: the moderator is acting on it. */

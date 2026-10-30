@@ -10505,6 +10505,8 @@ model StorylineChapterEdge {
 model StorylineChapterRemovalHold {
   id               Int      @id @default(autoincrement())
   storylineId      Int
+  /// The storyline's title at removal: the hold outlives the storyline.
+  storylineTitle   String
   /// The removed chapter's id, its post and its author, as they were.
   chapterId        Int
   postId           Int?

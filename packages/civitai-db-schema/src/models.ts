@@ -6684,6 +6684,7 @@ export interface StorylineChapterEdge {
 export interface StorylineChapterRemovalHold {
   id: number;
   storylineId: number;
+  storylineTitle: string;
   chapterId: number;
   postId: number | null;
   chapterUserId: number;

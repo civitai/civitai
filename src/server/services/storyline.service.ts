@@ -1092,8 +1092,8 @@ export async function removeStorylineChapter({
     // Exclusive against adds, submits, links and moves (`moveStorylineChapter`'s lock). A submit
     // blocked here still lands on a moderator's tombstone, as on a takedown's, and is refunded by
     // the orphaned-continuation job.
-    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
-      SELECT "tosViolation" FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean; title: string }[]>`
+      SELECT "tosViolation", title FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Chapter not found');
     // The placement before the chapter, the order a placement takedown (`takeDownApproved`) locks
@@ -1159,7 +1159,7 @@ export async function removeStorylineChapter({
     if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
     if (placement?.inFlight)
       throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
-    // An owner's or author's removal during an open report is held for moderator review.
+    // An owner's or author's removal during an open report is recorded for moderators.
     const openReportIds =
       role === 'moderator'
         ? []
@@ -1196,12 +1196,12 @@ export async function removeStorylineChapter({
     else await tx.$executeRaw`DELETE FROM "StorylineChapter" WHERE id = ${chapterId}`;
     if (openReportIds.length)
       await tx.$executeRaw`
-        INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "chapterId", "postId",
-          "chapterUserId", depth, "placementId", "parentChapterIds", "chapterCreatedAt",
+        INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "storylineTitle", "chapterId",
+          "postId", "chapterUserId", depth, "placementId", "parentChapterIds", "chapterCreatedAt",
           "removedById", "removedByRole", "reportIds")
-        VALUES (${storylineId}, ${chapterId}, ${chapter.postId}, ${chapter.userId}, ${
-        chapter.depth
-      },
+        VALUES (${storylineId}, ${storyline.title}, ${chapterId}, ${chapter.postId}, ${
+        chapter.userId
+      }, ${chapter.depth},
           ${chapter.placementId}, ${parents.map((p) => p.parentChapterId)}::int[],
           ${chapter.createdAt}, ${userId}, ${role}, ${openReportIds}::int[])
       `;
@@ -2040,8 +2040,8 @@ export async function moveStorylineChapter({
   const result = await dbWrite.$transaction(async (tx) => {
     // Exclusive against links, inserts and other moves, and against adds (`lockStorylineForAdd`):
     // nothing else changes which chapter follows which until the commit.
-    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
-      SELECT "tosViolation" FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean; title: string }[]>`
+      SELECT "tosViolation", title FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
     if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');

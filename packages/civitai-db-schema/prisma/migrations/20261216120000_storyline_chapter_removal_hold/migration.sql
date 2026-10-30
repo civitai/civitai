@@ -1,8 +1,9 @@
--- Owner or author removal of a storyline chapter during an open report is held for moderator
--- review: the removal proceeds as usual and this row records it for the report's context.
+-- Owner or author removal of a storyline chapter during an open report: the removal proceeds as
+-- usual and this row records it for moderators.
 CREATE TABLE IF NOT EXISTS "StorylineChapterRemovalHold" (
   "id" SERIAL PRIMARY KEY,
   "storylineId" INTEGER NOT NULL,
+  "storylineTitle" TEXT NOT NULL,
   "chapterId" INTEGER NOT NULL,
   "postId" INTEGER,
   "chapterUserId" INTEGER NOT NULL,

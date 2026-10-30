@@ -5527,6 +5527,10 @@ export type StorylineChapterRemovalHold = {
   id: Generated<number>;
   storylineId: number;
   /**
+   * The storyline's title at removal: the hold outlives the storyline.
+   */
+  storylineTitle: string;
+  /**
    * The removed chapter's id, its post and its author, as they were.
    */
   chapterId: number;
