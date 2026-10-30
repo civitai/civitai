@@ -5,10 +5,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { linkArticleContentImages } from '~/server/services/article.service';
 import {
   contentLinkHoldCounter,
-  readContentLinkHold,
+  getContentLinkHold,
 } from '~/server/services/article-content-link-hold';
 import { createReport } from '~/server/services/report.service';
-import { ReportReason } from '~/shared/utils/prisma/enums';
+import { ArticleStatus, ReportReason } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /** A deferral older than this goes to moderators rather than waiting on in silence. */
@@ -17,69 +17,72 @@ export const CONTENT_LINK_DEFERRAL_REPORT_COMMENT =
   'automated: image could not be verified after 24h';
 const BATCH = 200;
 
-type HeldArticle = { id: number; userId: number; content: string | null; coverId: number | null };
-
-/** Re-links each held article, which settles each url whose key's issuer can now be read. */
+/**
+ * Re-links each held article, least recently checked first, which settles each url whose key's
+ * issuer can now be read.
+ */
 export async function settleContentLinkHolds(now = new Date()) {
-  const articles = await dbWrite.$queryRaw<HeldArticle[]>`
-    SELECT id, "userId", content, "coverId" FROM "Article"
-    WHERE metadata ? 'contentLinkHold'
-    ORDER BY id
-    LIMIT ${BATCH}
-  `;
-  for (const article of articles) {
+  const holds = await dbWrite.articleContentLinkHold.findMany({
+    orderBy: { checkedAt: 'asc' },
+    take: BATCH,
+    select: { articleId: true },
+  });
+  for (const { articleId } of holds) {
     try {
-      await settleArticle(article, now);
+      await dbWrite.articleContentLinkHold.updateMany({
+        where: { articleId },
+        data: { checkedAt: now },
+      });
+      await settleArticle(articleId, now);
     } catch (error) {
       logToAxiom({
         type: 'error',
         name: 'article-content-link-hold',
         message: 'Failed to settle a held article',
-        articleId: article.id,
+        articleId,
         error: (error as Error).message,
       }).catch(() => undefined);
     }
   }
-  return { checked: articles.length };
+  return { checked: holds.length };
 }
 
-async function heldOf(articleId: number) {
-  const row = await dbWrite.article.findUnique({
+async function settleArticle(articleId: number, now: Date) {
+  const before = await getContentLinkHold(dbWrite, articleId);
+  // Read here, not with the batch: a save since then replaced the content the hold was taken on.
+  const article = await dbWrite.article.findUnique({
     where: { id: articleId },
-    select: { metadata: true },
+    select: { userId: true, content: true, coverId: true, status: true },
   });
-  return readContentLinkHold(row?.metadata);
-}
-
-async function settleArticle(article: HeldArticle, now: Date) {
-  const before = await heldOf(article.id);
-  if (!before) return;
+  if (!before || !article) return;
   await linkArticleContentImages({
-    articleId: article.id,
+    articleId,
     content: article.content ?? '',
-    userId: before.editorId ?? article.userId,
+    userId: before.editorId,
     ownerId: article.userId,
     coverId: article.coverId,
+    now,
   });
 
-  const hold = await heldOf(article.id);
+  const hold = await getContentLinkHold(dbWrite, articleId);
   if (!hold?.deferred.length || hold.reportedAt || !hold.deferredSince) return;
-  if (now.getTime() - new Date(hold.deferredSince).getTime() < CONTENT_LINK_DEFERRAL_BACKSTOP_MS)
-    return;
+  if (now.getTime() - hold.deferredSince.getTime() < CONTENT_LINK_DEFERRAL_BACKSTOP_MS) return;
+  // Nobody else sees an unpublished article, so there is nothing for a moderator to act on yet.
+  if (article.status !== ArticleStatus.Published) return;
 
   await createReport({
     userId: constants.system.user.id,
     isModerator: true,
-    id: article.id,
+    id: articleId,
     type: ReportEntity.Article,
     reason: ReportReason.AdminAttention,
     details: { reason: 'Other', comment: CONTENT_LINK_DEFERRAL_REPORT_COMMENT },
+    foldIntoPendingOnly: true,
   });
-  await dbWrite.$executeRaw`
-    UPDATE "Article"
-    SET metadata = jsonb_set(metadata, '{contentLinkHold,reportedAt}', to_jsonb(${now.toISOString()}::text))
-    WHERE id = ${article.id} AND metadata ? 'contentLinkHold'
-  `;
+  await dbWrite.articleContentLinkHold.updateMany({
+    where: { articleId },
+    data: { reportedAt: now },
+  });
   contentLinkHoldCounter.inc({ outcome: 'reported' });
 }
 

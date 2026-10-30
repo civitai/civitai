@@ -121,6 +121,22 @@ async function unpublishArticle(
   await bustArticleCounts(userId);
 }
 
+type RestoredIngestion = 'Scanned' | 'Blocked' | 'Error' | 'Pending';
+
+/**
+ * `derived` as the main app's ingestion recompute adjusts it for content urls it holds without an
+ * image row: refused counts as blocked, deferred as unscanned, and neither is covered by a
+ * moderator's rating.
+ */
+export function withContentLinkHold(
+  derived: RestoredIngestion,
+  hold: { deferred: string[]; refused: string[] } | undefined
+): RestoredIngestion {
+  if (hold?.refused.length) return 'Blocked';
+  if (hold?.deferred.length && derived === 'Scanned') return 'Pending';
+  return derived;
+}
+
 async function restoreArticle(id: number): Promise<void> {
   const userId = await dbWrite.transaction().execute(async (trx): Promise<number> => {
     const article = await trx
@@ -237,7 +253,12 @@ async function restoreArticle(id: number): Promise<void> {
     // A moderator override must keep the article Scanned even if an image is still non-terminal, else a
     // restored mod-pinned article is wrongly hidden.
     const hasModeratorOverride = article.moderatorNsfwLevel != null;
-    const next = hasModeratorOverride
+    const hold = await trx
+      .selectFrom('ArticleContentLinkHold')
+      .select(['deferred', 'refused'])
+      .where('articleId', '=', id)
+      .executeTakeFirst();
+    const derived: RestoredIngestion = hasModeratorOverride
       ? 'Scanned'
       : imageBlocked || textBlocked
       ? 'Blocked'
@@ -246,6 +267,7 @@ async function restoreArticle(id: number): Promise<void> {
       : imageDone && textDone
       ? 'Scanned'
       : 'Pending';
+    const next = withContentLinkHold(derived, hold);
 
     await trx
       .updateTable('Article')

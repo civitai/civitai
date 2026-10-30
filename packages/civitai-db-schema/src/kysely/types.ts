@@ -816,6 +816,24 @@ export type Article = {
   isOfficial: Generated<boolean>;
   status: Generated<ArticleStatus>;
 };
+export type ArticleContentLinkHold = {
+  articleId: number;
+  deferred: Generated<string[]>;
+  refused: Generated<string[]>;
+  /**
+   * Who saved the content; their own keys count as the owner's.
+   */
+  editorId: number;
+  /**
+   * When a url was first deferred, kept while any stays deferred.
+   */
+  deferredSince: Timestamp | null;
+  /**
+   * Set once a deferral outlives the backstop and a moderator report is filed.
+   */
+  reportedAt: Timestamp | null;
+  checkedAt: Generated<Timestamp>;
+};
 export type ArticleEngagement = {
   userId: number;
   articleId: number;
@@ -6319,6 +6337,7 @@ export type DB = {
   AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
   AppPageAccess: AppPageAccess;
   Article: Article;
+  ArticleContentLinkHold: ArticleContentLinkHold;
   ArticleEngagement: ArticleEngagement;
   ArticleMetric: ArticleMetric;
   ArticleRank: ArticleRank;
