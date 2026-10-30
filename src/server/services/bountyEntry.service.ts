@@ -27,7 +27,11 @@ import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
-import { isPayoutPending, lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import {
+  isPayoutPending,
+  lockBountyForPayout,
+  nextPayoutRecordedAt,
+} from '~/server/services/bounty-payout-lock';
 import { settleBountyPayout, refundUnpayableBountyAward } from '~/server/services/bounty.service';
 import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
@@ -275,7 +279,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       await tx.bounty.update({
         where: { id: entry.bountyId },
         data: {
-          payoutRecordedAt: new Date(),
+          payoutRecordedAt: nextPayoutRecordedAt(bounty),
           payoutWinnerUserId: entry.userId,
           ...(unawardedBountyBenefactors ? {} : { complete: true }),
         },

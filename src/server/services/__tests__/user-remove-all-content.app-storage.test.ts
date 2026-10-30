@@ -454,7 +454,10 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
 describe('removeAllContent — bounties with a payout in flight', () => {
   it('settles them first, and keeps any whose payout still failed', async () => {
-    dbMock.dbWrite.bounty.findMany.mockResolvedValueOnce([{ id: 3 }, { id: 4 }, { id: 5 }]);
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (...args: unknown[]) =>
+      flatten(args).text.includes('AS pending')
+        ? [3, 4, 5].map((id) => ({ id, pending: true, open: false }))
+        : [{ held: false }]) as never);
     settleBountyPayout
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false)
@@ -464,12 +467,7 @@ describe('removeAllContent — bounties with a payout in flight', () => {
 
     await removeAllContent({ id: TARGET, actorUserId: MOD });
 
-    expect(dbMock.dbWrite.bounty.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: TARGET, payoutRecordedAt: { not: null }, payoutSettledAt: null },
-      })
-    );
-    expect(settleBountyPayout.mock.calls).toEqual([[3], [4], [5]]);
+    expect(settleBountyPayout.mock.calls.map(([id]) => id)).toEqual([3, 4, 5]);
     const statements = dbMock.dbWrite.$executeRaw.mock.calls.map(flatten);
     const bountyDelete = statements.findIndex((sql) => sql.text.includes('DELETE FROM "Bounty"'));
     expect(bountyDelete).toBeGreaterThanOrEqual(0);

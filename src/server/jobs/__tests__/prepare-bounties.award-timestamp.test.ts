@@ -137,7 +137,7 @@ describe('prepare-bounties auto-award', () => {
 
     expect(
       executedStatements.some((sql) =>
-        /"complete" = true, "payoutRecordedAt" = NOW\(\), "payoutWinnerUserId" = 7\s+WHERE b.id = 4321/.test(
+        /"complete" = true, "payoutRecordedAt" = GREATEST\(NOW\(\), b\."payoutSettledAt" \+ interval '1 millisecond'\), "payoutWinnerUserId" = 7\s+WHERE b.id = 4321/.test(
           sql
         )
       )

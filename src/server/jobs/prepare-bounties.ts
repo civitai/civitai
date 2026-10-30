@@ -19,7 +19,10 @@ import {
   retryUnsettledBountyPayouts,
   settleBountyPayout,
 } from '~/server/services/bounty.service';
-import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import {
+  lockBountyForPayout,
+  NEXT_PAYOUT_RECORDED_AT_SQL,
+} from '~/server/services/bounty-payout-lock';
 import {
   checkPendingBountyEntryFiles,
   getBountyEntryFileStates,
@@ -244,7 +247,7 @@ async function settleExpiredBounty({
 
     if (isTextScanPoiHidden(locked)) {
       await tx.$executeRawUnsafe(`
-          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${id};
+          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL} WHERE b.id = ${id};
         `);
       return { kind: 'refund' as const, currency, poiHidden: true };
     }
@@ -278,7 +281,7 @@ async function settleExpiredBounty({
 
     if (!winnerEntry) {
       await tx.$executeRawUnsafe(`
-          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${id};
+          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL} WHERE b.id = ${id};
         `);
       return { kind: 'refund' as const, currency, poiHidden: false };
     }
@@ -288,7 +291,7 @@ async function settleExpiredBounty({
         UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = NOW() WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
       `);
     await tx.$executeRawUnsafe(`
-        UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = NOW(), "payoutWinnerUserId" = ${winnerEntry.userId} WHERE b.id = ${id};
+        UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL}, "payoutWinnerUserId" = ${winnerEntry.userId} WHERE b.id = ${id};
       `);
     return { kind: 'award' as const, currency, winnerEntry };
   });

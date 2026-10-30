@@ -77,6 +77,7 @@ const {
   retryUnsettledBountyPayouts,
   settleBountyPayout,
 } = await import('~/server/services/bounty.service');
+const { isPayoutPending } = await import('~/server/services/bounty-payout-lock');
 
 type Benefactor = {
   userId: number;
@@ -104,6 +105,8 @@ let bounty: BountyRow | null;
 let benefactors: Benefactor[];
 let entryFiles: { metadata: Record<string, unknown> }[];
 const entry = { id: 10, bountyId: 4, userId: 8 };
+// Who owns each entry a supporter may award; entry 11 is a second entrant's.
+const entryOwners: Record<number, number> = { 10: 8, 11: 9 };
 
 function mutex() {
   let tail = Promise.resolve();
@@ -132,9 +135,15 @@ function transactionClient(held: (() => void)[]) {
       return bounty ? [{ meta: null, ...bounty }] : [];
     },
     bountyEntry: {
-      findUniqueOrThrow: async () => {
+      findUniqueOrThrow: async ({ where }: { where?: { id?: number } } = {}) => {
         await tick();
-        return { ...entry, bounty: { complete: bounty?.complete ?? false } };
+        const id = where?.id ?? entry.id;
+        return {
+          ...entry,
+          id,
+          userId: entryOwners[id],
+          bounty: { complete: bounty?.complete ?? false },
+        };
       },
       delete: async () => {
         await tick();
@@ -257,11 +266,16 @@ beforeEach(() => {
     }
   });
   dbMock.dbWrite.bountyBenefactor.findMany.mockImplementation(
-    async ({ where }: { where: { awardedToId?: null; awardedAt?: { not: null } } }) =>
+    async ({ where }: { where: { awardedToId?: null; awardedAt?: { not: null } | null } }) =>
       benefactors
         .filter((b) => !('awardedToId' in where) || b.awardedToId === null)
-        .filter((b) => !('awardedAt' in where) || b.awardedAt != null)
-        .map((b) => ({ ...b }))
+        .filter(
+          (b) => !('awardedAt' in where) || (where.awardedAt === null) === (b.awardedAt == null)
+        )
+        .map((b) => ({
+          ...b,
+          awartedTo: b.awardedToId === null ? null : { userId: entryOwners[b.awardedToId] },
+        }))
   );
   dbMock.dbWrite.bounty.findUnique.mockImplementation(async () => (bounty ? { ...bounty } : null));
   // Applies the write only where its `where` matches the row, as Postgres would.
@@ -411,7 +425,7 @@ describe('deleteBountyById', () => {
 });
 
 describe('awardBountyEntry', () => {
-  it('records the award, then pays under a bounty-scoped key and marks it settled', async () => {
+  it('records the award, then pays under a supporter-scoped key and marks it settled', async () => {
     await awardBountyEntry({ id: 10, userId: 5 });
     expect(events).toEqual(['claim', 'commit', 'award']);
     expect(find(5)?.awardedToId).toBe(10);
@@ -420,16 +434,11 @@ describe('awardBountyEntry', () => {
         toAccountId: entry.userId,
         toAccountType: 'yellow',
         amount: 100,
-        externalTransactionId: 'bounty-award-b4-yellow',
+        externalTransactionId: 'bounty-award-b4-u5-yellow',
       }),
     ]);
     expect(bounty?.payoutSettledAt).toBeInstanceOf(Date);
     expect(bounty?.payoutWinnerUserId).toBe(entry.userId);
-    // Stamped only where still unsettled, so a concurrent settle cannot re-stamp it.
-    expect(dbMock.dbWrite.bounty.updateMany).toHaveBeenCalledWith({
-      where: { id: 4, payoutSettledAt: null },
-      data: { payoutSettledAt: expect.any(Date) },
-    });
   });
 
   // Bankable netting reads who funded an award from the award row, which outlives the bounty.
@@ -448,36 +457,37 @@ describe('awardBountyEntry', () => {
     ]);
   });
 
-  it('names every supporter of a bounty several users funded, each with what they put in', async () => {
+  it('pays each supporter of a bounty several users funded as its own row', async () => {
     Object.assign(benefactors[1], { awardedToId: 10, awardedAt: new Date() });
     buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
       { accountType: 'yellow', amount: prefix === 'bounty-4-5-1' ? 100 : 50 },
     ]);
     await awardBountyEntry({ id: 10, userId: 5 });
-    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
-      expect.objectContaining({
-        amount: 150,
-        details: {
-          entityId: 4,
-          entityType: 'Bounty',
-          supporterIds: [5, 6],
-          supporterAmounts: [100, 50],
-          supporterChargedAt: [0, 0],
-        },
-      }),
-    ]);
+    const rows = buzz.createBuzzTransactionMany.mock.calls.flatMap(([txs]) => txs);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          amount: 100,
+          externalTransactionId: 'bounty-award-b4-u5-yellow',
+          details: expect.objectContaining({ supporterIds: [5], supporterAmounts: [100] }),
+        }),
+        expect.objectContaining({
+          amount: 50,
+          externalTransactionId: 'bounty-award-b4-u6-yellow',
+          details: expect.objectContaining({ supporterIds: [6], supporterAmounts: [50] }),
+        }),
+      ])
+    );
+    expect(rows).toHaveLength(2);
   });
 
   // Each award row is one colour, and only some colours are bankable: a supporter is named on a
   // row for what they put in that colour, never for their whole contribution.
-  it('names on each colour of the award only what each supporter paid in that colour', async () => {
-    Object.assign(benefactors[1], { awardedToId: 10, awardedAt: new Date() });
+  it('names on each colour of the award only what the supporter paid in that colour', async () => {
     benefactors[0].buzzTransactionId = ['bounty-4-5-1', 'legacy-tx'];
-    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) =>
-      prefix === 'bounty-4-5-1'
-        ? [{ accountType: 'green', amount: 60 }]
-        : [{ accountType: 'yellow', amount: 50 }]
-    );
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { accountType: 'green', amount: 60 },
+    ]);
     await awardBountyEntry({ id: 10, userId: 5 });
     const [[transactions]] = buzz.createBuzzTransactionMany.mock.calls as [
       [{ toAccountType: string; amount: number; details: unknown }[]]
@@ -496,13 +506,13 @@ describe('awardBountyEntry', () => {
         },
       ],
       yellow: [
-        90,
+        40,
         {
           entityId: 4,
           entityType: 'Bounty',
-          supporterIds: [5, 6],
-          supporterAmounts: [40, 50],
-          supporterChargedAt: [0, 0],
+          supporterIds: [5],
+          supporterAmounts: [40],
+          supporterChargedAt: [0],
         },
       ],
     });
@@ -641,13 +651,13 @@ describe('settleBountyPayout', () => {
     expect(await settleBountyPayout(4)).toBe(true);
     expect(buzz.getMultiAccountTransactionsByPrefix).not.toHaveBeenCalled();
     expect(buzz.createBuzzTransactionMany).toHaveBeenCalledWith([
-      expect.objectContaining({ amount: 100, externalTransactionId: 'bounty-award-b4-yellow' }),
+      expect.objectContaining({ amount: 100, externalTransactionId: 'bounty-award-b4-u5-yellow' }),
     ]);
   });
 
   it('treats a refund the Buzz service already made (409) as done', async () => {
     Object.assign(bounty!, { refunded: true });
-    benefactors[0].awardedToId = null;
+    Object.assign(benefactors[0], { awardedToId: null, awardedAt: null });
     buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
       { transactionId: 'leg-1', accountType: 'yellow', amount: 100 },
@@ -660,7 +670,7 @@ describe('settleBountyPayout', () => {
 
   it('refunds the legs a 409 left unrefunded before settling', async () => {
     Object.assign(bounty!, { refunded: true });
-    benefactors[0].awardedToId = null;
+    Object.assign(benefactors[0], { awardedToId: null, awardedAt: null });
     buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
       { transactionId: 'leg-1', accountType: 'yellow', amount: 60 },
@@ -817,24 +827,17 @@ describe('deleteBountyEntry', () => {
 });
 
 describe('retryUnsettledBountyPayouts', () => {
-  it('retries payouts recorded more than ten minutes ago and not yet settled', async () => {
-    const now = new Date('2026-10-06T12:00:00Z');
+  // Which bounties are due is a query; bounty-payout-lock.behavior.test.ts runs it on real rows.
+  it('settles each bounty the query returns', async () => {
     Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date() });
     Object.assign(bounty!, {
       complete: true,
       payoutRecordedAt: new Date(0),
       payoutWinnerUserId: entry.userId,
     });
-    dbMock.dbWrite.bounty.findMany.mockResolvedValueOnce([{ id: 4 }]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 4 }]);
 
-    expect(await retryUnsettledBountyPayouts({ now })).toEqual({ settled: 1 });
-
-    const { where } = dbMock.dbWrite.bounty.findMany.mock.calls[0][0];
-    expect(where).toEqual({
-      id: { gt: 0 },
-      payoutRecordedAt: { not: null, lte: new Date('2026-10-06T11:50:00Z') },
-      payoutSettledAt: null,
-    });
+    expect(await retryUnsettledBountyPayouts({ now: new Date() })).toEqual({ settled: 1 });
     expect(bounty?.payoutSettledAt).toBeInstanceOf(Date);
   });
 });
@@ -846,8 +849,17 @@ describe('refundBountyBenefactorFunds', () => {
       await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ', onlyUnawarded: true })
     ).toEqual({ refunded: [6], failed: [] });
     expect(dbMock.dbWrite.bountyBenefactor.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { bountyId: 4, currency: 'BUZZ', awardedToId: null } })
+      expect.objectContaining({
+        where: { bountyId: 4, currency: 'BUZZ', awardedToId: null, awardedAt: null },
+      })
     );
+  });
+
+  it('does not refund a supporter whose award stands after its entry was deleted', async () => {
+    Object.assign(benefactors[0], { awardedToId: null, awardedAt: new Date() });
+    expect(
+      await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ', onlyUnawarded: true })
+    ).toEqual({ refunded: [6], failed: [] });
   });
 
   it('logs a failed refund with the bounty and carries on', async () => {
@@ -874,12 +886,12 @@ describe('refundBountyBenefactorFunds', () => {
 
 describe('retryUnsettledBountyPayouts paging', () => {
   it('walks past a full batch by id', async () => {
-    dbMock.dbWrite.bounty.findMany
+    dbMock.dbWrite.$queryRaw
       .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => ({ id: i + 1 })))
       .mockResolvedValueOnce([{ id: 500 }]);
     await retryUnsettledBountyPayouts({ now: new Date() });
-    expect(dbMock.dbWrite.bounty.findMany).toHaveBeenCalledTimes(2);
-    expect(dbMock.dbWrite.bounty.findMany.mock.calls[1][0].where.id).toEqual({ gt: 100 });
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(dbMock.dbWrite.$queryRaw.mock.calls[1]).toContain(100);
   });
 });
 
@@ -945,5 +957,172 @@ describe('a moderator going past an award no retry can pay', () => {
     await expect(deleteBountyById({ id: 4, isModerator: false })).rejects.toThrow('not deleted');
     expect(bounty).not.toBeNull();
     expect(moved('refund')).toBe(0);
+  });
+});
+
+describe('several awards on one bounty', () => {
+  // A ledger that, like the Buzz service, makes a key once and answers a repeat as a conflict.
+  let ledger: Map<string, { toAccountId: number; amount: number; type: string }>;
+  const ledgerRows = () => [...ledger].map(([key, t]) => [key, t.toAccountId, t.amount]);
+
+  beforeEach(() => {
+    ledger = new Map();
+    buzz.createBuzzTransactionMany.mockImplementation(
+      async (
+        transactions: {
+          externalTransactionId: string;
+          toAccountId: number;
+          amount: number;
+          type: string;
+        }[]
+      ) => {
+        const made = transactions.filter((t) => !ledger.has(t.externalTransactionId));
+        made.forEach((t) => ledger.set(t.externalTransactionId, t));
+        return {
+          transactions: made.map((t) => t.externalTransactionId),
+          conflicts: transactions
+            .filter((t) => !made.includes(t))
+            .map((t) => t.externalTransactionId),
+        };
+      }
+    );
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+      { accountType: 'yellow', amount: prefix === 'bounty-4-5-1' ? 100 : 50 },
+    ]);
+  });
+
+  it('pays a second award once, under its own key, to the owner of the entry it awarded', async () => {
+    await awardBountyEntry({ id: 10, userId: 5 });
+    await awardBountyEntry({ id: 11, userId: 6 });
+    expect(ledgerRows()).toEqual([
+      ['bounty-award-b4-u5-yellow', 8, 100],
+      ['bounty-award-b4-u6-yellow', 9, 50],
+    ]);
+    expect(isPayoutPending(bounty!)).toBe(false);
+  });
+
+  it('pays a single award once, and a repeat settle moves nothing (control)', async () => {
+    benefactors.splice(1);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(await settleBountyPayout(4)).toBe(true);
+    expect(await settleBountyPayout(4, { firstAttempt: true })).toBe(true);
+    expect(ledgerRows()).toEqual([['bounty-award-b4-u5-yellow', 8, 100]]);
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles an award recorded after an earlier settlement', async () => {
+    Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date(1000) });
+    Object.assign(benefactors[1], { awardedToId: 11, awardedAt: new Date(3000) });
+    Object.assign(bounty!, {
+      complete: true,
+      payoutRecordedAt: new Date(3000),
+      payoutSettledAt: new Date(2000),
+      payoutWinnerUserId: 9,
+    });
+    expect(await settleBountyPayout(4)).toBe(true);
+    expect(ledgerRows()).toEqual([
+      ['bounty-award-b4-u5-yellow', 8, 100],
+      ['bounty-award-b4-u6-yellow', 9, 50],
+    ]);
+    expect(isPayoutPending(bounty!)).toBe(false);
+  });
+
+  it('records an award after the last settlement even when this clock is behind it', async () => {
+    benefactors.splice(1);
+    bounty!.payoutSettledAt = new Date(Date.now() + 60_000);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(ledgerRows()).toEqual([['bounty-award-b4-u5-yellow', 8, 100]]);
+  });
+
+  it('stamps settled no earlier than a record made by a clock ahead of this one', async () => {
+    benefactors.splice(1);
+    Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date() });
+    Object.assign(bounty!, {
+      complete: true,
+      payoutRecordedAt: new Date(Date.now() + 60_000),
+      payoutWinnerUserId: 8,
+    });
+    expect(await settleBountyPayout(4)).toBe(true);
+    expect(isPayoutPending(bounty!)).toBe(false);
+  });
+
+  it('never stamps settled over an award recorded while it paid', async () => {
+    benefactors.splice(1);
+    Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date(1000) });
+    Object.assign(bounty!, {
+      complete: true,
+      payoutRecordedAt: new Date(1000),
+      payoutWinnerUserId: 8,
+    });
+    buzz.createBuzzTransactionMany.mockImplementationOnce(async () => {
+      bounty!.payoutRecordedAt = new Date(5000);
+      return { transactions: ['t'], conflicts: [] };
+    });
+    expect(await settleBountyPayout(4)).toBe(true);
+    expect(isPayoutPending(bounty!)).toBe(true);
+  });
+
+  describe('an earlier award whose entry was deleted', () => {
+    beforeEach(() => {
+      Object.assign(benefactors[0], { awardedToId: null, awardedAt: new Date(1000) });
+      Object.assign(benefactors[1], { awardedToId: 11, awardedAt: new Date(3000) });
+      Object.assign(bounty!, {
+        complete: true,
+        payoutRecordedAt: new Date(3000),
+        payoutWinnerUserId: 9,
+      });
+    });
+
+    it('refunds that supporter in kind, pays the latest, and records the refund', async () => {
+      expect(await settleBountyPayout(4)).toBe(true);
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+      expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+      expect(dbMock.dbWrite.modActivity.create).toHaveBeenCalledExactlyOnceWith({
+        data: {
+          userId: 5,
+          entityType: 'bounty',
+          entityId: 4,
+          activity: 'refundDeletedBountyAward',
+        },
+      });
+    });
+
+    it('refunds a legacy supporter under a fixed key, once across a re-run', async () => {
+      benefactors[0].buzzTransactionId = [];
+      expect(await settleBountyPayout(4)).toBe(true);
+      bounty!.payoutSettledAt = null;
+      dbMock.dbWrite.modActivity.findFirst.mockResolvedValue({ id: 1 });
+      expect(await settleBountyPayout(4)).toBe(true);
+      expect(ledgerRows()).toEqual([
+        ['bounty-award-refund-b4-u5', 5, 100],
+        ['bounty-award-b4-u6-yellow', 9, 50],
+      ]);
+      expect(dbMock.dbWrite.modActivity.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the payout unsettled when that refund fails', async () => {
+      buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
+      expect(await settleBountyPayout(4)).toBe(false);
+      expect(isPayoutPending(bounty!)).toBe(true);
+      expect(dbMock.dbWrite.modActivity.create).not.toHaveBeenCalled();
+    });
+
+    it('pays every supporter of the latest award to the winner when several share it', async () => {
+      Object.assign(benefactors[0], { awardedToId: null, awardedAt: new Date(3000) });
+      benefactors[1].awardedToId = null;
+      expect(await settleBountyPayout(4)).toBe(true);
+      expect(ledgerRows()).toEqual([
+        ['bounty-award-b4-u5-yellow', 9, 100],
+        ['bounty-award-b4-u6-yellow', 9, 50],
+      ]);
+      expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    });
+
+    it('still pays the latest award to the captured winner when its entry was deleted', async () => {
+      benefactors[1].awardedToId = null;
+      expect(await settleBountyPayout(4)).toBe(true);
+      expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    });
   });
 });

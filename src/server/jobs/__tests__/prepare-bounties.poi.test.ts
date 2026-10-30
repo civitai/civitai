@@ -120,7 +120,7 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
     ).toBe(false);
     expect(
       executedStatements.some((sql) =>
-        /"complete" = true, "refunded" = true, "payoutRecordedAt" = NOW\(\) WHERE b.id = 7/.test(
+        /"complete" = true, "refunded" = true, "payoutRecordedAt" = GREATEST\(NOW\(\), b\."payoutSettledAt" \+ interval '1 millisecond'\) WHERE b.id = 7/.test(
           sql
         )
       ),

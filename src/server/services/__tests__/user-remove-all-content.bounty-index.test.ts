@@ -11,8 +11,9 @@ const { bountiesIndex, collectionsIndex, bountyService } = vi.hoisted(() => ({
   bountiesIndex: { queueUpdate: vi.fn(async () => undefined) },
   collectionsIndex: { queueUpdate: vi.fn(async () => undefined) },
   bountyService: {
-    settleBountyPayout: vi.fn(async (_id: number) => false),
+    settleBountyPayout: vi.fn(async (_id: number, _opts?: unknown) => false),
     refundUnpayableBountyAward: vi.fn(async (_id: number) => false),
+    claimBountyRefundForDelete: vi.fn(async (_id: number) => ({ owed: true, firstAttempt: true })),
   },
 }));
 
@@ -88,8 +89,9 @@ const queued = (index: { queueUpdate: ReturnType<typeof vi.fn> }) =>
   );
 const del = (...ids: number[]) => ids.map((id) => `${SearchIndexUpdateQueueAction.Delete}:${id}`);
 
-/** The account's bounties on the primary, and which of them have an unsettled payout. */
+/** The account's bounties on the primary: which have an unsettled payout, and which are open. */
 let unsettled: number[] = [];
+let open: number[] = [];
 const BOUNTIES = [701, 702];
 
 /** The kept-bounty list the account's bounty delete was given. */
@@ -113,33 +115,37 @@ const flatten = ([strings, ...values]: unknown[]) =>
 beforeEach(() => {
   vi.clearAllMocks();
   unsettled = [];
+  open = [];
   // The wipe's re-check after its evidence deletes: still unheld.
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (...args: unknown[]) => {
     const sql = flatten(args);
+    // The bounties that owe a payout; only the account's own.
+    if (sql.text.includes('AS pending')) {
+      expect(sql.values[sql.values.length - 1]).toBe(USER);
+      return BOUNTIES.filter((id) => unsettled.includes(id) || open.includes(id)).map((id) => ({
+        id,
+        pending: unsettled.includes(id),
+        open: open.includes(id),
+      }));
+    }
     if (!sql.text.includes(`'removedWithOwner' = 'true'`)) return [{ held: false }];
     return (sql.values[0] as number[]).map((id) => ({ id }));
   }) as never);
   bountyService.settleBountyPayout.mockImplementation(async () => false);
   bountyService.refundUnpayableBountyAward.mockImplementation(async () => false);
+  bountyService.claimBountyRefundForDelete.mockImplementation(async () => ({
+    owed: true,
+    firstAttempt: true,
+  }));
   // Ids distinct per table and per database, so an index fed from the wrong one is visible.
   dbMock.dbRead.bounty.findMany.mockResolvedValue([{ id: 799 }]);
   dbMock.dbWrite.collection.findMany.mockResolvedValue([{ id: 991 }]);
-  // Answers only the account's own rows, and the unsettled list only for the exact unsettled filter,
-  // so a query that drops either condition gets nothing back and the assertions below go red.
+  // Answers only the account's own rows, so a query that drops that condition gets nothing back.
   dbMock.dbWrite.bounty.findMany.mockImplementation((async (args: {
-    where: {
-      userId?: number;
-      payoutRecordedAt?: { not?: unknown };
-      payoutSettledAt?: unknown;
-      id?: { notIn: number[] };
-    };
+    where: { userId?: number; id?: { notIn: number[] } };
   }) => {
     const { where } = args;
     if (where.userId !== USER) return [];
-    if ('payoutRecordedAt' in where) {
-      const exact = where.payoutRecordedAt?.not === null && where.payoutSettledAt === null;
-      return exact ? unsettled.map((id) => ({ id })) : [];
-    }
     const kept = where.id?.notIn ?? [];
     return BOUNTIES.filter((id) => !kept.includes(id)).map((id) => ({ id }));
   }) as never);
@@ -177,6 +183,64 @@ describe('removeAllContent and the bounty index', () => {
   it('deletes a bounty once its award is refunded, and keeps the rest', async () => {
     unsettled = [701, 702];
     bountyService.refundUnpayableBountyAward.mockImplementation(async (id: number) => id === 702);
+
+    await removeAllContent({ id: USER });
+
+    expect(keptByBountyDelete()).toEqual([701]);
+    expect(queued(bountiesIndex)).toEqual(del(702, 701));
+  });
+
+  it('refunds an open bounty before deleting it, and keeps one whose refund fails', async () => {
+    open = [701, 702];
+    bountyService.settleBountyPayout.mockImplementation(async (id: number) => id === 701);
+
+    await removeAllContent({ id: USER });
+
+    expect(bountyService.claimBountyRefundForDelete.mock.calls.map(([id]) => id)).toEqual([
+      701, 702,
+    ]);
+    expect(bountyService.settleBountyPayout).toHaveBeenCalledWith(
+      701,
+      expect.objectContaining({ firstAttempt: true })
+    );
+    expect(keptByBountyDelete()).toEqual([702]);
+  });
+
+  it('pays a pending award before claiming the rest as a refund', async () => {
+    unsettled = [701];
+    open = [701];
+    const order: string[] = [];
+    bountyService.settleBountyPayout.mockImplementation(async (id: number) => {
+      order.push(`settle:${id}`);
+      return true;
+    });
+    bountyService.claimBountyRefundForDelete.mockImplementation(async (id: number) => {
+      order.push(`claim:${id}`);
+      return { owed: true, firstAttempt: true };
+    });
+
+    await removeAllContent({ id: USER });
+
+    expect(order).toEqual(['settle:701', 'claim:701', 'settle:701']);
+    expect(keptByBountyDelete()).toEqual([]);
+  });
+
+  it('does not claim a bounty whose pending award could not be paid', async () => {
+    unsettled = [701];
+    open = [701];
+
+    await removeAllContent({ id: USER });
+
+    expect(bountyService.claimBountyRefundForDelete).not.toHaveBeenCalled();
+    expect(keptByBountyDelete()).toEqual([701]);
+  });
+
+  it('keeps a bounty whose refund throws, and finishes the wipe', async () => {
+    open = [701, 702];
+    bountyService.settleBountyPayout.mockImplementation(async (id: number) => {
+      if (id === 701) throw new Error('buzz down');
+      return true;
+    });
 
     await removeAllContent({ id: USER });
 
