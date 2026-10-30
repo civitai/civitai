@@ -6,6 +6,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createMessage, upsertChat } from '~/server/services/chat.service';
+import { reportConcernsUser } from '~/server/services/report-subject';
 import { resolveChatIdentity } from '~/server/utils/chat-group';
 import {
   throwBadRequestError,
@@ -213,7 +214,20 @@ async function sendLocked({
       }).catch(() => undefined)
     );
   await audit('chatMessage', sent.id);
-  if (context?.reportId) await audit('report', context.reportId);
+  if (context?.reportId) {
+    const reportId = context.reportId;
+    if (await reportConcernsUser(reportId, userId).catch(() => false))
+      await audit('report', reportId);
+    else
+      await logToAxiom({
+        type: 'warning',
+        name: 'message-as-civitai-report-link-dropped',
+        actorId,
+        userId,
+        reportId,
+        chatMessageId: sent.id,
+      }).catch(() => undefined);
+  }
   // Delivered already; a failed tray notice must not free the idempotency key for a second send.
   await nudge({ userId, chatId, messageId: sent.id }).catch(() => undefined);
 
