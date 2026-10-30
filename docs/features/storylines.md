@@ -77,7 +77,10 @@ section).
 - **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
-  review and are listed ahead of other contributors' at the end of a chapter.
+  review and are listed ahead of other contributors' at the end of a chapter. Endorsing someone
+  invites them: they get a notification, and the storyline's page asks them to accept or decline.
+  Until they accept they are not shown on the storyline and have no collaborator rights; the creator
+  sees them as invited and can cancel the invitation. A collaborator can leave at any time.
 - **Moderators.** A moderator can manage any storyline as its creator does: title, status, who may
   continue, content level, covers, removing collaborators, and inserting, reordering, joining and
   choosing the main route of chapters. Setting the price, endorsing collaborators and answering

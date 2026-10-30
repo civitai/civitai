@@ -52,6 +52,7 @@ import {
   recordStorylineCreateClick,
   removePendingChapter,
   removeStorylineCollaborator,
+  acceptStorylineInvite,
   setCanonChapter,
   setFirstChapter,
   setStorylineTakedown,
@@ -316,6 +317,13 @@ export const storylineRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       })
+    ),
+
+  // Declining is `leave`, which a muted invitee can still reach.
+  acceptInvite: storylineWriteProcedure
+    .input(leaveStorylineSchema)
+    .mutation(({ input, ctx }) =>
+      acceptStorylineInvite({ storylineId: input.storylineId, userId: ctx.user.id })
     ),
 
   leave: storylineMemberProcedure.input(leaveStorylineSchema).mutation(({ input, ctx }) =>

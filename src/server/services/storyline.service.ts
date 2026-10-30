@@ -162,6 +162,13 @@ const storylineReadSelect = {
   },
 } satisfies Prisma.StorylineSelect;
 
+/** An invited collaborator has no say until they accept. */
+const acceptedCollaboratorWhere = {
+  acceptedAt: { not: null },
+} satisfies Prisma.StorylineCollaboratorWhereInput;
+const acceptedCollaboratorSql = (alias: string) =>
+  Prisma.sql`${Prisma.raw(alias)}."acceptedAt" IS NOT NULL`;
+
 /**
  * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
  * caller inside a transaction reads through it.
@@ -564,14 +571,14 @@ export async function assertCanContinueStoryline(
     isBlockedPair(db, parent.userId, placerId),
     db.storylineCollaborator.findUnique({
       where: { storylineId_userId: { storylineId: parent.storylineId, userId: placerId } },
-      select: { userId: true },
+      select: { acceptedAt: true },
     }),
   ]);
   if (ownerBlocked || authorBlocked)
     throw throwBadRequestError('Continuations are not available on this chapter');
 
   const isOwner = placerId === ownerId;
-  const isCollaborator = !isOwner && !!collaborator;
+  const isCollaborator = !isOwner && !!collaborator?.acceptedAt;
   if (parent.storyline.whoCanContinue === 'Collaborators' && !isOwner && !isCollaborator)
     throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
 
@@ -1395,7 +1402,10 @@ async function assertStorylinePicks(
         },
       },
     }),
-    db.storylineCollaborator.findMany({ where: { storylineId }, select: { userId: true } }),
+    db.storylineCollaborator.findMany({
+      where: { storylineId, ...acceptedCollaboratorWhere },
+      select: { userId: true },
+    }),
   ]);
   const allowedAuthors = new Set([ownerId, ...collaborators.map((c) => c.userId)]);
   const byId = new Map(images.map((image) => [image.id, image]));
@@ -2167,7 +2177,8 @@ export async function getStorylineLinkTargets({
 
 /**
  * The owner only, never a moderator: an endorsed collaborator's priced continuations are approved
- * without review, so endorsing is approving them in advance.
+ * without review, so endorsing is approving them in advance. It invites them: nothing changes for
+ * them, and nobody sees them on the storyline, until they accept (`acceptStorylineInvite`).
  */
 export async function addStorylineCollaborator({
   storylineId,
@@ -2198,9 +2209,40 @@ export async function addStorylineCollaborator({
 
   await dbWrite.storylineCollaborator.upsert({
     where: { storylineId_userId: { storylineId, userId: targetUserId } },
-    create: { storylineId, userId: targetUserId },
+    create: { storylineId, userId: targetUserId, acceptedAt: null },
     update: {},
   });
+}
+
+const INVITE_CLOSED = 'That invitation is no longer open';
+
+/**
+ * The invitee accepts. Declining is `leave` (`removeStorylineCollaborator`), which a muted account
+ * can still reach. A block between the two since the invitation, or a takedown, closes it.
+ */
+export async function acceptStorylineInvite({
+  storylineId,
+  userId,
+}: {
+  storylineId: number;
+  userId: number;
+}) {
+  const storyline = await dbWrite.storyline.findUnique({
+    where: { id: storylineId },
+    select: { userId: true, tosViolation: true },
+  });
+  if (!storyline || storyline.tosViolation) throw throwNotFoundError(INVITE_CLOSED);
+  if (await isBlockedPair(dbWrite, storyline.userId, userId)) {
+    await dbWrite.storylineCollaborator.deleteMany({
+      where: { storylineId, userId, acceptedAt: null },
+    });
+    throw throwNotFoundError(INVITE_CLOSED);
+  }
+  const { count } = await dbWrite.storylineCollaborator.updateMany({
+    where: { storylineId, userId, acceptedAt: null },
+    data: { acceptedAt: new Date() },
+  });
+  if (!count) throw throwNotFoundError(INVITE_CLOSED);
 }
 
 export async function removeStorylineCollaborator({
@@ -2252,7 +2294,7 @@ export async function getStoryline({
       tosViolationByModerator: true,
       user: { select: castUserSelect },
       collaborators: {
-        select: { user: { select: castUserSelect } },
+        select: { acceptedAt: true, user: { select: castUserSelect } },
         orderBy: { createdAt: 'asc' },
       },
     },
@@ -2268,11 +2310,15 @@ export async function getStoryline({
   const root = storyline.chapters[0];
   const shownUser = (u: { id: number; bannedAt: Date | null; deletedAt: Date | null }) =>
     !u.bannedAt && !u.deletedAt && !blockedUserIds.has(u.id);
-  const collaborators = storyline.collaborators
+  const accepted = storyline.collaborators.filter((c) => c.acceptedAt);
+  const collaborators = accepted
     .map((c) => c.user)
     .filter(shownUser)
     .map(toCastUser);
-  const collaboratorIds = new Set(storyline.collaborators.map((c) => c.user.id));
+  const collaboratorIds = new Set(accepted.map((c) => c.user.id));
+  const invitedIds = new Set(
+    storyline.collaborators.filter((c) => !c.acceptedAt).map((c) => c.user.id)
+  );
   const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
 
   // A contributor is credited only through a chapter this reader would be shown: published,
@@ -2394,6 +2440,15 @@ export async function getStoryline({
       ? ('collaborator' as const)
       : null,
     collaborators,
+    // Invitations not yet accepted: the owner's to see, and the invitee's to answer.
+    pendingCollaborators: isOwnerView
+      ? storyline.collaborators
+          .filter((c) => !c.acceptedAt)
+          .map((c) => c.user)
+          .filter(shownUser)
+          .map(toCastUser)
+      : [],
+    viewerInvited: !!viewer && invitedIds.has(viewer.id),
     contributors: [
       { user: ownerUser, role: 'creator' as const, chapterCount: chaptersBy(ownerUser.id) },
       ...collaborators.map((u) => ({
@@ -3043,7 +3098,7 @@ export async function getStorylineChildren({
 
   const [collaborators, readers] = await Promise.all([
     dbRead.storylineCollaborator.findMany({
-      where: { storylineId: storyline.id },
+      where: { storylineId: storyline.id, ...acceptedCollaboratorWhere },
       select: { userId: true },
     }),
     readersByChapterId ?? getStorylineReaderCounts(chapterId),
@@ -3561,7 +3616,9 @@ export async function getStorylinesInfinite({
     // Open to this reader: collaborators-only storylines are open only to their collaborators.
     where.push(Prisma.sql`(st."whoCanContinue" = 'Anyone' OR st."userId" = ${viewerId} OR EXISTS (
       SELECT 1 FROM "StorylineCollaborator" sc
-      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId}
+      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+      'sc'
+    )}
     ))`);
   }
   // Newest pages by id (stable while storylines are added); most-chapters by offset, capped,
@@ -3603,7 +3660,9 @@ export async function getStorylinesInfinite({
       st."maxNsfwLevel", st."minorByScan", st."whoCanContinue",
       EXISTS (
         SELECT 1 FROM "StorylineCollaborator" vc
-        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId}
+        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+    'vc'
+  )}
       ) AS "isCollaborator",
       rc."postId" AS "rootPostId", rp."nsfwLevel" AS "rootNsfwLevel",
       rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation",
