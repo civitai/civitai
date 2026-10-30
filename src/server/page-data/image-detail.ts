@@ -26,12 +26,10 @@ function imageDetailId(params: ParsedUrlQuery | undefined) {
 /*
  * The two reads the page's main image is decided from, made exactly as the page makes them —
  * through the page's own procedures, with their access rules (`image.get`: visibility, blocks,
- * media visibility), into the same SSG cache. ONE implementation each, two callers: the page data
- * (`resolveImageDetailPageData`), and the main-image lookup (`resolveImageDetailMainImageUrl`), so
- * the URL that lookup names is built from the row the page renders and cannot drift from it.
+ * media visibility), into the same SSG cache.
  *
  * `fetch(...).catch` leaves the cache exactly as `prefetch` would (prefetch is fetch with the
- * error swallowed); it is a `fetch` only to read the answer back.
+ * error swallowed); it is a `fetch` only to read the answer back. Neither ever rejects.
  */
 
 /** The image row the page shows as its main media, or `null` when the viewer gets none. */
@@ -58,39 +56,66 @@ async function readImageDetailForcedBrowsingLevel({
   return contestDetails?.collectionItems?.[0]?.collection?.metadata?.forcedBrowsingLevel ?? null;
 }
 
+/** What the page's main image is decided from: its row and the contest rating, for the viewer. */
+export type ImageDetailMainImage = {
+  image: Awaited<ReturnType<typeof readImageDetailImage>>;
+  forcedBrowsingLevel: number | null;
+};
+
+/**
+ * Starts the server data for `/images/[imageId]` and hands back, separately, the two reads the
+ * main image is decided from (`mainImage`) and the whole of it (`result`), so a caller can act on
+ * the main image before the rest has finished. `notFound` — decided from the id alone, before any
+ * read — where the page is a 404; once it is not, the page is a 200 whatever the reads answer
+ * (an image the viewer cannot get is a page without one, not a 404).
+ *
+ * All four prefetches start here, synchronously and in this order: it is the order of the queries
+ * in `trpcState`, so the page data's `trpcState` is the page's whichever of them is awaited first.
+ */
+export function startImageDetailPageData({ ctx, ssg, session }: ImageDetailResolverArgs):
+  | { notFound: true }
+  | {
+      mainImage: Promise<ImageDetailMainImage>;
+      result: Promise<{ props: Record<string, never>; gating?: { contentNsfwLevel: number } }>;
+    } {
+  const id = imageDetailId(ctx.params);
+  if (id === null) return { notFound: true };
+
+  const image = readImageDetailImage({ id, ssg });
+  const generationData = ssg?.image.getGenerationData.prefetch({ id });
+  const forcedBrowsingLevel = readImageDetailForcedBrowsingLevel({ id, ssg, session });
+  const hidden = ssg?.hiddenPreferences.getHidden.prefetch();
+
+  const mainImage = Promise.all([image, forcedBrowsingLevel]).then(
+    ([image, forcedBrowsingLevel]) => ({ image, forcedBrowsingLevel })
+  );
+  const result = Promise.all([image, generationData, forcedBrowsingLevel, hidden]).then(
+    ([image]) => ({
+      props: {},
+      // ImageDetail2 gates on `forcedBrowsingLevel || nsfwLevel`; the forced level comes from
+      // contest-collection details, which aren't prefetched for logged-out users, so for the
+      // traffic that matters the client lands on the same level we do.
+      gating: image ? { contentNsfwLevel: image.nsfwLevel } : undefined,
+    })
+  );
+  return { mainImage, result };
+}
+
 /**
  * The server data for `/images/[imageId]`: what it prefetches into `trpcState`, and the content
- * rating that decides `adsGated`. ONE implementation, two callers — the page's
- * `getServerSideProps` and `GET /api/page-data/images/[imageId]`, which a static shell of the page
- * reads instead — so the two cannot prefetch different queries for the same viewer.
+ * rating that decides `adsGated`. ONE implementation (`startImageDetailPageData`), two callers —
+ * the page's `getServerSideProps` (this) and `GET /api/page-data/images/[imageId]`, which a static
+ * shell of the page reads instead — so the two cannot prefetch different queries for the same
+ * viewer.
  *
  * Every prefetch is viewer-dependent (`image.get` checks owner/moderator, blocks and media
  * visibility; `getGenerationData` reads the viewer), so the result is never shareable between
  * viewers.
  */
-export async function resolveImageDetailPageData({ ctx, ssg, session }: ImageDetailResolverArgs) {
-  const id = imageDetailId(ctx.params);
-  if (id === null) return { notFound: true as const };
-
-  // In this order: it is the order of the queries in `trpcState`.
-  const [image] = await Promise.all([
-    readImageDetailImage({ id, ssg }),
-    ssg?.image.getGenerationData.prefetch({ id }),
-    readImageDetailForcedBrowsingLevel({ id, ssg, session }),
-    ssg?.hiddenPreferences.getHidden.prefetch(),
-  ]);
-
-  // ImageDetail2 gates on `forcedBrowsingLevel || nsfwLevel`; the forced level comes from
-  // contest-collection details, which aren't prefetched for logged-out users, so for the
-  // traffic that matters the client lands on the same level we do.
-  return {
-    props: {},
-    gating: image
-      ? {
-          contentNsfwLevel: image.nsfwLevel,
-        }
-      : undefined,
-  };
+export async function resolveImageDetailPageData(args: ImageDetailResolverArgs) {
+  const started = startImageDetailPageData(args);
+  if ('notFound' in started) return { notFound: true as const };
+  return started.result;
 }
 
 /**
@@ -107,40 +132,27 @@ function mainImageFromImageGet(query: ParsedUrlQuery) {
 
 /**
  * The exact URL the page's main `<img>` requests on its first render for THIS viewer, for the
- * shell to preload; `url: undefined` when it requests none (video, gated, blur-dependent, hidden,
- * not visible to the viewer, a feed or storyline query). `notFound` where the page is a 404.
- *
- * Reads nothing when the query alone rules a preload out. Otherwise reads only the main image's
- * row and the contest rating, by `readImageDetailImage` and `readImageDetailForcedBrowsingLevel` —
- * the page data's own reads — and decides by `imageDetailPreloadUrl`, the page's own visibility
- * rules.
+ * shell to preload; `undefined` when it requests none (video, gated, blur-dependent, hidden, not
+ * visible to the viewer, a feed or storyline query). Decided by `imageDetailPreloadUrl`, the
+ * page's own visibility rules, from the page's own reads (`startImageDetailPageData`'s
+ * `mainImage`).
  */
-export async function resolveImageDetailMainImageUrl({
+export function imageDetailMainImageUrlFor({
   query,
-  ssg,
-  session,
+  mainImage,
+  viewer,
   canViewNsfw,
 }: {
   query: ParsedUrlQuery;
-  ssg: () => Promise<Ssg>;
-  session: Session | null;
+  mainImage: ImageDetailMainImage;
+  viewer: Parameters<typeof imageDetailPreloadUrl>[0]['viewer'];
   canViewNsfw: boolean;
-}): Promise<{ notFound: true } | { url: string | undefined }> {
-  const id = imageDetailId(query);
-  if (id === null) return { notFound: true };
-  if (!mainImageFromImageGet(query)) return { url: undefined };
-
-  const helpers = await ssg();
-  const [image, forcedBrowsingLevel] = await Promise.all([
-    readImageDetailImage({ id, ssg: helpers }),
-    readImageDetailForcedBrowsingLevel({ id, ssg: helpers, session }),
-  ]);
-  return {
-    url: imageDetailPreloadUrl({
-      image,
-      viewer: session?.user,
-      forcedBrowsingLevel,
-      canViewNsfw,
-    }),
-  };
+}) {
+  if (!mainImageFromImageGet(query)) return undefined;
+  return imageDetailPreloadUrl({
+    image: mainImage.image,
+    viewer,
+    forcedBrowsingLevel: mainImage.forcedBrowsingLevel,
+    canViewNsfw,
+  });
 }

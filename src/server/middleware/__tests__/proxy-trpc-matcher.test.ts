@@ -88,7 +88,6 @@ describe.each([
   it.each([
     ['/api/v1/images', '/api/v1/:path*'],
     ['/api/page-data/images/123', '/api/page-data/:path*'],
-    ['/api/page-data/images/123/main-image', '/api/page-data/:path*'],
     ['/api/testing/x', '/api/testing/:path*'],
     [
       '/models/123/slug',

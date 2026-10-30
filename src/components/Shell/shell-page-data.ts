@@ -8,7 +8,6 @@ import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants'
 import {
   SHELL_BYPASS_PARAM,
   SHELL_BYPASS_VALUE,
-  SHELL_MAIN_IMAGE_SUFFIX,
   shellPageDataUrl,
 } from '~/shared/constants/shell.constants';
 import type { Session } from '~/types/session';
@@ -34,11 +33,16 @@ export type ShellPageData = {
 };
 
 /**
- * The RESPONSE HEADER of the main-image request (`GET /api/page-data/images/[imageId]/main-image`)
- * holding the URL of the page's main `<img>` for this viewer (`imageDetailPreloadUrl`),
- * `encodeURIComponent`-encoded; absent when the page will request none. The endpoint writes it
- * under this name and the inline head script reads it under this name. A header on a `204`, so the
- * script has nothing to parse.
+ * The page-data RESPONSE HEADER holding the URL of the page's main `<img>` for this viewer
+ * (`imageDetailPreloadUrl`), `encodeURIComponent`-encoded; absent when the page will request none.
+ * The endpoint writes it under this name and the inline head script reads it under this name.
+ *
+ * A header rather than a body member so the head script has it as soon as the response's headers
+ * arrive: a body member is only readable once the whole body (the page's `trpcState` included)
+ * has downloaded and been parsed, and the app renders its `<img>` at about that moment anyway.
+ * The endpoint flushes its headers as soon as the main image is decided, before the rest of the
+ * body is computed, so the header arrives well ahead of the body. A failure after that flush ends
+ * the 200 with no body, which `readShellResponse` does not adopt.
  */
 export const SHELL_MAIN_IMAGE_HEADER = 'X-Civ-Main-Image';
 
@@ -95,12 +99,6 @@ const PAGE_DATA_INIT: RequestInit = {
   headers: { accept: 'application/json' },
 };
 
-/** The main-image request: the viewer's cookies, and ahead of other fetches (it gates the LCP). */
-const MAIN_IMAGE_INIT: RequestInit = { credentials: 'same-origin', priority: 'high' };
-
-/** The only status a main-image answer that carries a URL has. */
-export const SHELL_MAIN_IMAGE_STATUS = 204;
-
 /**
  * The inline `<head>` script of a shell page (`_document`): starts the page-data request before the
  * app's bundles have loaded, into `window.__civShell`, for `adoptShellPageData` to take over. The
@@ -108,30 +106,24 @@ export const SHELL_MAIN_IMAGE_STATUS = 204;
  * `catch` only keeps a network failure from being reported as unhandled before the app attaches;
  * the app still reads the rejection.
  *
- * In the same tick it starts the main-image request (`shellMainImageUrl`: the page-data path plus
- * `SHELL_MAIN_IMAGE_SUFFIX`), which does a fraction of the page data's work. When that answers
- * `SHELL_MAIN_IMAGE_STATUS` carrying `SHELL_MAIN_IMAGE_HEADER`, it adds ONE
+ * When a 200 arrives carrying `SHELL_MAIN_IMAGE_HEADER`, it also adds ONE
  * `<link rel="preload" as="image" fetchpriority="high">` for that URL to `<head>`, so the main
- * image downloads from then on rather than from when the page renders its `<img>`, after the page
- * data, the bundles, the hydration and the adoption. Anything else — another status, a network
- * error, no header, an empty one or one that does not decode — adds nothing. The page-data request
- * is untouched by it: the app alone reads that response. Only the URL the private endpoint names
- * is used; the shell HTML carries none.
+ * image downloads from then on rather than from when the page renders its `<img>`, after the
+ * bundles, the hydration and the adoption. It reads the header only, the moment the response's
+ * headers are in: never the body, which the app reads, and which is not complete until well after.
+ * Anything else — another status, a network error, no header, an empty one or one that does not
+ * decode — adds nothing. Only the URL the private page data names is used; the shell HTML carries
+ * none.
  */
 export function shellPageDataPrefetchScript(): string {
   const prefix = JSON.stringify(shellPageDataUrl('', ''));
-  const suffix = JSON.stringify(SHELL_MAIN_IMAGE_SUFFIX);
   const header = JSON.stringify(SHELL_MAIN_IMAGE_HEADER);
   return (
     `try{var p=fetch(${prefix}+location.pathname+location.search,${JSON.stringify(
       PAGE_DATA_INIT
     )});` +
     `p.catch(function(){});window.__civShell=p;` +
-    `fetch(${prefix}+location.pathname+${suffix}+location.search,${JSON.stringify(
-      MAIN_IMAGE_INIT
-    )})` +
-    `.then(function(r){if(r.status!==${SHELL_MAIN_IMAGE_STATUS})return;` +
-    `var h=r.headers.get(${header});if(!h)return;` +
+    `p.then(function(r){if(r.status!==200)return;var h=r.headers.get(${header});if(!h)return;` +
     `var u=decodeURIComponent(h);if(!u)return;` +
     `var l=document.createElement("link");l.setAttribute("rel","preload");` +
     `l.setAttribute("as","image");l.setAttribute("fetchpriority","high");` +

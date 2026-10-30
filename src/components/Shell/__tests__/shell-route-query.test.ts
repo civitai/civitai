@@ -142,16 +142,10 @@ describe('the page-data request of a shell page targets the page’s own URL', (
     new Function(shellPageDataPrefetchScript())();
     expect(window.__civShell).toBeInstanceOf(Promise);
     await adoptShellPageData();
-    // The page data once (adoption made no request of its own), and the main-image lookup the
-    // script starts beside it (`shell-image-preload.test.ts`).
     expect(calls).toEqual([
       [
         '/api/page-data/images/123?postId=5',
         { credentials: 'same-origin', headers: { accept: 'application/json' } },
-      ],
-      [
-        '/api/page-data/images/123/main-image?postId=5',
-        { credentials: 'same-origin', priority: 'high' },
       ],
     ]);
   });

@@ -39,14 +39,3 @@ export const SHELL_EDGE_HEADERS = [
 export function shellPageDataUrl(pathname: string, search: string) {
   return `${SHELL_PAGE_DATA_PREFIX}${pathname}${search}`;
 }
-
-/**
- * The page-data sub-path naming the URL of the page's main image for the viewer, which a shell
- * page's inline head script requests in parallel with the page data, to preload that image.
- */
-export const SHELL_MAIN_IMAGE_SUFFIX = '/main-image';
-
-/** The main-image URL for a page URL: the page data's path plus `SHELL_MAIN_IMAGE_SUFFIX`. */
-export function shellMainImageUrl(pathname: string, search: string) {
-  return `${SHELL_PAGE_DATA_PREFIX}${pathname}${SHELL_MAIN_IMAGE_SUFFIX}${search}`;
-}
