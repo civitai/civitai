@@ -729,6 +729,15 @@ describe('system nsfw lock marker on a moderator save', () => {
 });
 
 describe('upsertModel — content flags the row ends up with', () => {
+  // What the API passes on after parsing: a left-out minor/sfwOnly arrives as false.
+  const moderatorRequest = {
+    id: MODEL_ID,
+    userId: MODERATOR_ID,
+    isModerator: true,
+    minor: false,
+    sfwOnly: false,
+  };
+
   it.each([
     ['minor', 'Mature content depicting minors is not permitted.'],
     ['poi', 'Mature content depicting actual people is not permitted.'],
@@ -789,9 +798,7 @@ describe('upsertModel — content flags the row ends up with', () => {
       mockStored({ [flag]: true, lockedProperties: [flag] });
 
       await upsert({
-        id: MODEL_ID,
-        userId: MODERATOR_ID,
-        isModerator: true,
+        ...moderatorRequest,
         nsfw: true,
         [flag]: false,
       });
@@ -803,13 +810,7 @@ describe('upsertModel — content flags the row ends up with', () => {
   it('lets a moderator mark minor in the same save that clears nsfw', async () => {
     mockStored({ nsfw: true });
 
-    await upsert({
-      id: MODEL_ID,
-      userId: MODERATOR_ID,
-      isModerator: true,
-      nsfw: false,
-      minor: true,
-    });
+    await upsert({ ...moderatorRequest, nsfw: false, minor: true });
 
     expect(updateData()).toEqual(expect.objectContaining({ nsfw: false, minor: true }));
   });
@@ -817,9 +818,9 @@ describe('upsertModel — content flags the row ends up with', () => {
   it('refuses a moderator marking minor on an nsfw model', async () => {
     mockStored({ nsfw: true });
 
-    await expect(
-      upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, minor: true })
-    ).rejects.toThrow('Mature content depicting minors is not permitted.');
+    await expect(upsert({ ...moderatorRequest, nsfw: true, minor: true })).rejects.toThrow(
+      'Mature content depicting minors is not permitted.'
+    );
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
@@ -833,12 +834,21 @@ describe('upsertModel — content flags the row ends up with', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
-  it('refuses a create the profanity check turns nsfw on a poi model', async () => {
+  it('creates a poi model SFW, without the profanity nsfw, when the text is profane', async () => {
     mockEvaluateContent.mockReturnValue(profaneEvaluation);
 
-    await expect(upsert({ userId: OWNER_ID, poi: true })).rejects.toThrow(
-      'Mature content depicting actual people is not permitted.'
+    await upsert({ userId: OWNER_ID, poi: true, minor: false, sfwOnly: false });
+
+    expect(createData()).toEqual(
+      expect.objectContaining({ poi: true, sfwOnly: true, nsfw: false })
     );
+    expect(createData()).not.toHaveProperty('lockedProperties');
+  });
+
+  it('refuses a moderator create holding nsfw with poi', async () => {
+    await expect(
+      upsert({ userId: MODERATOR_ID, isModerator: true, poi: true, nsfw: true })
+    ).rejects.toThrow('Mature content depicting actual people is not permitted.');
     expect(mockDbWrite.model.create).not.toHaveBeenCalled();
   });
 
@@ -865,13 +875,102 @@ describe('upsertModel — content flags the row ends up with', () => {
     expect(mockDbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
   });
 
+  const minorRow = { minor: true, sfwOnly: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] };
+
   it('refuses a moderator marking nsfw on a minor model', async () => {
-    mockStored({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    mockStored(minorRow);
 
     await expect(
-      upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, nsfw: true })
+      upsert({ ...moderatorRequest, nsfw: true, minor: true, sfwOnly: true })
     ).rejects.toThrow('Mature content depicting minors is not permitted.');
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  // The schema fills a left-out minor/sfwOnly with false, so this request also clears them.
+  it('clears minor when a moderator marks nsfw with minor left out', async () => {
+    mockStored(minorRow);
+
+    await upsert({ ...moderatorRequest, nsfw: true });
+
+    expect(updateData()).toEqual(
+      expect.objectContaining({ nsfw: true, minor: false, sfwOnly: false })
+    );
+  });
+
+  it('makes an owner save that marks minor SFW, over a locked nsfw, and locks minor', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'] });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false, nsfw: false });
+
+    expect(updateData()).toEqual(
+      expect.objectContaining({
+        minor: true,
+        nsfw: false,
+        sfwOnly: true,
+        lockedProperties: ['nsfw', 'minor'],
+      })
+    );
+  });
+
+  it('adds no lock when an owner marks poi under an nsfw lock already holding nsfw off', async () => {
+    mockStored({ lockedProperties: ['nsfw'] });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: true, minor: false, sfwOnly: false });
+
+    expect(updateData()).toEqual(expect.objectContaining({ poi: true, sfwOnly: true }));
+    expect(updateData()).not.toHaveProperty('lockedProperties');
+  });
+
+  it('keeps minor and nsfw where an owner who marked minor over a locked nsfw left them', async () => {
+    mockStored({ minor: true, sfwOnly: true, lockedProperties: ['nsfw', 'minor'] });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: false, nsfw: true, sfwOnly: false });
+
+    expect(updateData()).not.toHaveProperty('minor');
+    expect(updateData()).not.toHaveProperty('nsfw');
+  });
+
+  it('makes an owner save that marks poi SFW without adding a lock when nsfw is unlocked', async () => {
+    mockStored({ nsfw: true });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: true, minor: false, sfwOnly: false });
+
+    expect(updateData()).toEqual(
+      expect.objectContaining({ poi: true, nsfw: false, sfwOnly: true })
+    );
+    expect(updateData()).not.toHaveProperty('lockedProperties');
+  });
+
+  it('drops the profanity nsfw when minor was cleared after the first read and the save marks it', async () => {
+    lockLandsMidSave({ minor: true, sfwOnly: true }, { minor: false });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: true });
+
+    expect(updateData()).toEqual(expect.objectContaining({ minor: true, nsfw: false }));
+    expect(updateData()).not.toHaveProperty('lockedProperties');
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('still refuses profane text on a poi row whose save sends poi unchanged', async () => {
+    mockStored({ poi: true });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await expect(
+      upsert({ id: MODEL_ID, userId: OWNER_ID, poi: true, minor: false, sfwOnly: false })
+    ).rejects.toThrow('Mature content depicting actual people is not permitted.');
+  });
+
+  it('leaves nsfw off an owner save that marks minor with profane text', async () => {
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false });
+
+    expect(updateData()).toEqual(
+      expect.objectContaining({ minor: true, nsfw: false, sfwOnly: true })
+    );
+    expect(updateData()).not.toHaveProperty('lockedProperties');
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
   });
 
   it('holds the gallery at SFW for a minor row the save does not send minor for', async () => {

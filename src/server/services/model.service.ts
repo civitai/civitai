@@ -3326,10 +3326,9 @@ type ContentFlags = { nsfw: boolean; minor: boolean; poi: boolean; sfwOnly: bool
  * that changes none of them is let through, so a row already in a refused combination stays
  * editable.
  */
-function assertAllowedContentFlags(
-  stored: ContentFlags,
-  data: { nsfw?: boolean; minor?: boolean; poi?: boolean; sfwOnly?: boolean }
-): ContentFlags {
+type ContentFlagWrite = { nsfw?: boolean; minor?: boolean; poi?: boolean; sfwOnly?: boolean };
+
+function assertAllowedContentFlags(stored: ContentFlags, data: ContentFlagWrite): ContentFlags {
   const merged: ContentFlags = {
     nsfw: data.nsfw ?? stored.nsfw,
     minor: data.minor ?? stored.minor,
@@ -3346,6 +3345,31 @@ function assertAllowedContentFlags(
   if (merged.sfwOnly)
     throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
   return merged;
+}
+
+const NO_CONTENT_FLAGS: ContentFlags = { nsfw: false, minor: false, poi: false, sfwOnly: false };
+
+/** The minor and POI flags a save turns on. */
+function raisedRestrictions(stored: ContentFlags, data: { minor?: boolean; poi?: boolean }) {
+  return (['minor', 'poi'] as const).filter((flag) => data[flag] === true && !stored[flag]);
+}
+
+/**
+ * An owner's save that turns minor or POI on takes what those flags carry, as `setModelMinor` and
+ * `setModelPoi` write it, even over a stored nsfw lock. Clearing a locked nsfw this way also locks
+ * the raised flag, so undoing either takes a moderator.
+ */
+function applyRaisedRestrictions(
+  stored: ContentFlags & { lockedProperties?: string[] },
+  data: ContentFlagWrite & { lockedProperties?: string[] }
+) {
+  const raised = raisedRestrictions(stored, data);
+  if (!raised.length) return;
+  data.nsfw = false;
+  data.sfwOnly = true;
+  const storedLocks = stored.lockedProperties ?? [];
+  if (stored.nsfw && storedLocks.includes('nsfw'))
+    data.lockedProperties = uniq([...storedLocks, ...raised]);
 }
 
 /**
@@ -3522,7 +3546,9 @@ export const upsertModel = async (
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    if (evaluation.shouldMarkNSFW && !data.nsfw) {
+    // A save that turns minor or POI on is made SFW below, so the filter leaves its nsfw alone.
+    const raising = raisedRestrictions(beforeUpdate ?? NO_CONTENT_FLAGS, data).length > 0;
+    if (evaluation.shouldMarkNSFW && !data.nsfw && !raising) {
       meta = {
         ...(meta ?? {}),
         profanityMatches: evaluation.matchedWords,
@@ -3561,7 +3587,8 @@ export const upsertModel = async (
   if (!id || templateId) {
     if (!isModerator && data.availability === Availability.Private)
       throw throwBadRequestError('Private models are created from the private model flow.');
-    assertAllowedContentFlags({ nsfw: false, minor: false, poi: false, sfwOnly: false }, data);
+    if (!isModerator) applyRaisedRestrictions(NO_CONTENT_FLAGS, data);
+    assertAllowedContentFlags(NO_CONTENT_FLAGS, data);
 
     const result = await dbWrite.$transaction(
       async (tx) => {
@@ -3720,13 +3747,17 @@ export const upsertModel = async (
           prevGallerySettings;
         if (!isModerator && locked) {
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
-          if (profanityAutoNsfw && locked.lockedProperties.includes('nsfw')) {
+          if (
+            profanityAutoNsfw &&
+            (locked.lockedProperties.includes('nsfw') || raisedRestrictions(locked, data).length)
+          ) {
             profanityAutoNsfw = false;
             meta = withoutSystemNsfwLock(meta ?? {});
           } else if (profanityAutoNsfw) {
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
+          applyRaisedRestrictions(locked, data);
         }
         if (
           !isModerator &&
