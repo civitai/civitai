@@ -206,7 +206,11 @@ import {
   getProfilePicturesForUsers,
   patchUserSettings,
 } from '~/server/services/user.service';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  createCachedObject,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   anyMetricHidden,
@@ -2890,9 +2894,21 @@ export async function setModelMinor({
 
     const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
 
-    // Unset deliberately leaves sfwOnly/nsfw/gallerySettings untouched — the model may
-    // have been legitimately SFW-only before it was flagged, and guessing wrong would
-    // silently re-open NSFW generation nobody asked to re-open.
+    // A rollback restores its own snapshot after this write, and settles the override then.
+    const lift =
+      !minor && before.minor && activity !== 'rollbackMinorAutoHash'
+        ? await liftRestore(
+            tx,
+            id,
+            { ...before, minor: false, lockedProperties },
+            { minorLift: true }
+          )
+        : undefined;
+    if (!minor && before.minor) await markMinorSnapshotSuperseded(tx, id);
+
+    // Unset leaves sfwOnly/nsfw/gallerySettings untouched unless a recorded ruling comes back —
+    // the model may have been legitimately SFW-only before it was flagged, and guessing wrong
+    // would silently re-open NSFW generation nobody asked to re-open.
     const data = minor
       ? {
           minor: true,
@@ -2904,6 +2920,7 @@ export async function setModelMinor({
       : {
           minor: false,
           lockedProperties,
+          ...(lift && restoredFlagData(lift, prevGallerySettings)),
         };
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
@@ -2957,6 +2974,7 @@ export async function setModelMinor({
     before: reapplySideEffects ? await priorStateForReapply(id, minor, before) : before,
     after: result,
   });
+  if (!minor && 'nsfw' in data && data.nsfw !== before.nsfw) await refreshRestoredRating(id);
   if (!minor && result.poi) await reassertModelPoiRestrictions(id);
   // The ruling went in ahead of the write above; this only closes the owner's now-moot appeal.
   if (!minor && recordTextScanRuling && before.minor) {
@@ -3001,6 +3019,9 @@ export async function setModelSfwOnly({
       : prevLockedProperties.filter((prop) => !SFW_ONLY_LOCKED_PROPERTIES.includes(prop));
 
     const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+    // A moderator's own ruling on the rating replaces what a lift would restore.
+    if (before.meta?.ownerFlagOverride) await writeOwnerFlagOverride(tx, id, null);
+    await markMinorSnapshotSuperseded(tx, id);
 
     // Unset deliberately leaves nsfw/gallerySettings untouched — the model may have been
     // legitimately SFW before it was flagged, and guessing wrong would silently re-open
@@ -3119,8 +3140,8 @@ async function capturePoiFlagSnapshot(tx: Prisma.TransactionClient, modelId: num
  *
  * Lifting mirrors `setModelMinor`'s unset: the ruling is stamped BEFORE the write, so a text scan
  * landing mid-lift sees it and does not re-flag (a flag set after the read that decides this gets its
- * ruling right after the write); sfwOnly/nsfw are left as they are; and the owner's
- * now-moot appeal is closed.
+ * ruling right after the write); sfwOnly/nsfw are left as they are unless the lift brings back a
+ * recorded ruling (`replacedNsfwRuling`); and the owner's now-moot appeal is closed.
  *
  * Any lift also stamps `poiHashCleared`, so the hash match does not re-flag files that predate it.
  */
@@ -3132,6 +3153,7 @@ export async function setModelPoi({
   isModerator,
   activity,
   fromAppeal,
+  onlyIf,
 }: SetModelPoiInput & {
   userId: number;
   tracker?: Tracker;
@@ -3139,6 +3161,8 @@ export async function setModelPoi({
   activity?: ModelPoiActivity;
   /** The appeal resolver stamps its own grant and closes the appeal itself afterwards. */
   fromAppeal?: boolean;
+  /** Checked on the locked row: when false nothing is written and this returns null. */
+  onlyIf?: (row: NonNullable<LockedModelRow>) => boolean;
 }) {
   const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
   const stampLift = async () => {
@@ -3155,11 +3179,15 @@ export async function setModelPoi({
   // The ruling is written on its own connection, so it cannot go inside the locked write below.
   const flagged = await dbWrite.model.findUnique({ where: { id }, select: { poi: true } });
   if (!flagged) throw throwNotFoundError(`No model with id ${id}`);
-  const stampedAhead = !poi && flagged.poi && !fromAppeal;
+  // A guarded lift (the queue's revert) may be refused under the lock, so its ruling waits for the
+  // write. Deliberate: the gap only lets a text scan re-flag, which a moderator then sees; stamping
+  // ahead would leave a false ruling on a refused revert.
+  const stampedAhead = !poi && flagged.poi && !fromAppeal && !onlyIf;
   if (stampedAhead) await stampLift();
 
-  const { before, data, result } = await dbWrite.$transaction(async (tx) => {
+  const written = await dbWrite.$transaction(async (tx) => {
     const before = await lockFlagRow(tx, id);
+    if (onlyIf && !onlyIf(before)) return null;
 
     const prevLockedProperties = before.lockedProperties ?? [];
     // A lift keeps whatever a minor flag still locks: the two share nsfw/sfwOnly.
@@ -3171,6 +3199,16 @@ export async function setModelPoi({
         ]);
 
     const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+    // A hash revert restores its own snapshot after this write, and settles the override then.
+    const lift =
+      !poi && before.poi && activity !== 'revertPoiAutoHash'
+        ? await liftRestore(
+            tx,
+            id,
+            { ...before, poi: false, lockedProperties },
+            { minorLift: false }
+          )
+        : undefined;
     const data = poi
       ? {
           poi: true,
@@ -3182,6 +3220,7 @@ export async function setModelPoi({
       : {
           poi: false,
           lockedProperties,
+          ...(lift && restoredFlagData(lift, prevGallerySettings)),
         };
 
     // Before the write, or the snapshot records the flagged state.
@@ -3190,6 +3229,8 @@ export async function setModelPoi({
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
     return { before, data, result };
   }, lockedWriteOptions);
+  if (!written) return null;
+  const { before, data, result } = written;
   const lifting = !poi && before.poi;
   // The flag landed after the read above: the lift still records the ruling, just after the write.
   // The lift has committed, so a failed stamp must not cost it the follow-up below.
@@ -3243,6 +3284,7 @@ export async function setModelPoi({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
+  if (!poi && 'nsfw' in data && data.nsfw !== before.nsfw) await refreshRestoredRating(id);
   if (lifting && !fromAppeal) {
     const { settleFlagAppealsAfterModeratorLift } = await loadAppealTextHash();
     await settleFlagAppealsAfterModeratorLift({
@@ -3370,7 +3412,7 @@ function holdsRestriction(stored: ContentFlags, data: ContentFlagWrite) {
  * replaced for the row's meta.
  */
 function applyRaisedRestrictions(
-  stored: ContentFlags & { lockedProperties?: string[] },
+  stored: ContentFlags & { lockedProperties?: string[]; gallerySettings?: Prisma.JsonValue },
   data: ContentFlagWrite & { lockedProperties?: string[] }
 ): ModelMeta['ownerFlagOverride'] | undefined {
   const raised = raisedRestrictions(stored, data);
@@ -3391,7 +3433,256 @@ function applyRaisedRestrictions(
     prevNsfw: stored.nsfw,
     prevSfwOnly: stored.sfwOnly,
     prevLockedProperties: storedLocks,
+    // The save's own sfwOnly clamps the gallery level, so the record keeps the one it replaced.
+    prevGalleryLevel: (stored.gallerySettings as ModelGallerySettingsSchema | null)?.level ?? null,
   };
+}
+
+/**
+ * An override already on the row also lists a flag the owner declares later, which finds the
+ * rating already cleared: an automated revert must know that flag was the owner's as well.
+ */
+function withRaisedFlags(
+  stored: ContentFlags & { meta: ModelMeta | null },
+  data: { minor?: boolean; poi?: boolean }
+): ModelMeta['ownerFlagOverride'] | undefined {
+  const override = stored.meta?.ownerFlagOverride;
+  const raised = raisedRestrictions(stored, data);
+  if (!override || !raised.length) return;
+  return { ...override, flags: uniq([...override.flags, ...raised]) };
+}
+
+const OWNER_FLAG_OVERRIDE_KEY = 'ownerFlagOverride';
+
+type LiftedFlagRow = ContentFlags & { lockedProperties: string[]; availability: Availability };
+export type RestoredNsfwRuling = {
+  nsfw: boolean;
+  sfwOnly: boolean;
+  lockedProperties: string[];
+  /** Absent: the gallery level stays as it is. */
+  galleryLevel?: number | null;
+};
+
+/**
+ * The nsfw ruling a minor/POI flag replaced, to put back once a lift leaves the model with neither
+ * flag. Only a ruling recorded with its nsfw lock comes back, and only while the row still holds what
+ * the flag wrote: a moderator who changed the rating since made the later decision. A private model
+ * stays SFW-only, and a record that was never a valid pair (nsfw and SFW-only) does not come back.
+ *
+ * An owner's override predates any flag snapshot of the same flag (a flagged model is never nsfw, so
+ * no override can be recorded on top of one), so it wins; a snapshot passed here must belong to the
+ * flag being lifted.
+ */
+export function replacedNsfwRuling(
+  row: LiftedFlagRow,
+  {
+    ownerFlagOverride,
+    minorFlagSnapshot,
+  }: {
+    ownerFlagOverride?: ModelMeta['ownerFlagOverride'];
+    minorFlagSnapshot?: MinorFlagSnapshot;
+  }
+): RestoredNsfwRuling | undefined {
+  if (row.minor || row.poi || row.nsfw || !row.sfwOnly) return;
+  if (row.availability === Availability.Private) return;
+  const fromSnapshot = minorFlagSnapshot?.prevLockedProperties?.includes('nsfw');
+  const record = ownerFlagOverride ?? (fromSnapshot ? minorFlagSnapshot : undefined);
+  if (!record) return;
+  // The locks the flags behind the record add; the rest of the row's locks are not the record's.
+  const flags: ('minor' | 'poi')[] = ownerFlagOverride?.flags ?? ['minor'];
+  const touched = uniq([
+    'nsfw',
+    'sfwOnly',
+    ...flags.flatMap((flag) =>
+      flag === 'minor' ? MINOR_LOCKED_PROPERTIES : POI_LOCKED_PROPERTIES
+    ),
+  ]);
+  const nsfw = record.prevNsfw ?? row.nsfw;
+  const sfwOnly = record.prevSfwOnly ?? row.sfwOnly;
+  if (nsfw && sfwOnly) return;
+  const prevLocks = record.prevLockedProperties ?? [];
+  return {
+    nsfw,
+    sfwOnly,
+    lockedProperties: uniq([
+      ...row.lockedProperties.filter((prop) => !touched.includes(prop)),
+      ...prevLocks.filter((prop) => touched.includes(prop)),
+    ]),
+    // An override written before it recorded the level leaves the gallery as it is.
+    ...('prevGalleryLevel' in record && { galleryLevel: record.prevGalleryLevel ?? null }),
+  };
+}
+
+/**
+ * What a lift leaves of an owner's override: nothing once neither flag is left (restored or not, it
+ * has been ruled on), else the flags still set. `undefined` is no change.
+ */
+export function settleOwnerFlagOverride(
+  row: ContentFlags,
+  override: ModelMeta['ownerFlagOverride'] | undefined
+): ModelMeta['ownerFlagOverride'] | null | undefined {
+  if (!override) return;
+  if (!row.minor && !row.poi) return null;
+  const flags = override.flags.filter((flag) => row[flag]);
+  return flags.length === override.flags.length ? undefined : { ...override, flags };
+}
+
+async function writeOwnerFlagOverride(
+  tx: Prisma.TransactionClient,
+  id: number,
+  next: ModelMeta['ownerFlagOverride'] | null | undefined
+) {
+  if (next === undefined) return;
+  await tx.$executeRaw`
+    UPDATE "Model" m
+    SET meta = ${
+      next === null
+        ? Prisma.sql`${asJsonbObjectSql('m.meta')} - ${OWNER_FLAG_OVERRIDE_KEY}::text`
+        : Prisma.sql`${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+            ${OWNER_FLAG_OVERRIDE_KEY}::text, ${JSON.stringify(next)}::jsonb
+          )`
+    }
+    WHERE m.id = ${id}
+  `;
+}
+
+// A moderator's own ruling on the rating, which a later lift must not undo.
+const RATING_RULING_ACTIVITIES = [
+  'setSfwOnly',
+  'unsetSfwOnly',
+  'lockProperty:nsfw',
+  'unlockProperty:nsfw',
+];
+// A snapshot also ends with the flag it was taken for.
+const SNAPSHOT_SUPERSEDING_ACTIVITIES = [
+  'unsetMinor',
+  'rollbackMinorAutoHash',
+  ...RATING_RULING_ACTIVITIES,
+];
+
+async function loggedSince(
+  tx: Prisma.TransactionClient,
+  id: number,
+  at: string,
+  activities: string[]
+) {
+  const [found] = await tx.$queryRaw<{ found: number }[]>`
+    SELECT 1 AS found FROM "ModActivity"
+    WHERE "entityType" = 'model' AND "entityId" = ${id}
+      AND activity = ANY(${activities}::text[])
+      AND "createdAt" > ${at}::timestamptz
+    LIMIT 1
+  `;
+  return !!found;
+}
+
+// A snapshot outlives the lift that ended its flag, and a flag raised by a save takes none of its
+// own. `supersededAt` is stamped in the writes that end it; the activity log covers snapshots from
+// before the stamp, and an audit row lost after commit.
+async function currentMinorFlagSnapshot(
+  tx: Prisma.TransactionClient,
+  id: number,
+  meta: ModelMeta | null
+) {
+  const snapshot = meta?.minorFlagSnapshot;
+  if (!snapshot?.at || snapshot.supersededAt) return;
+  if (await loggedSince(tx, id, snapshot.at, SNAPSHOT_SUPERSEDING_ACTIVITIES)) return;
+  return snapshot;
+}
+
+/** Marks the minor flag snapshot as no longer describing the rating a lift should restore. */
+async function markMinorSnapshotSuperseded(tx: Prisma.TransactionClient, id: number) {
+  await tx.$executeRaw`
+    UPDATE "Model" m
+    SET meta = jsonb_set(
+      m.meta, ARRAY[${MINOR_FLAG_SNAPSHOT_KEY}::text, 'supersededAt'], to_jsonb(now())
+    )
+    WHERE m.id = ${id} AND jsonb_typeof(m.meta->${MINOR_FLAG_SNAPSHOT_KEY}) = 'object'
+  `;
+}
+
+/**
+ * A lift, on the row it locked as the lift leaves it: the ruling to restore, with the override
+ * settled. Only a minor lift reads the minor flag snapshot.
+ */
+async function liftRestore(
+  tx: Prisma.TransactionClient,
+  id: number,
+  row: LiftedFlagRow & { meta: ModelMeta | null },
+  { minorLift }: { minorLift: boolean }
+) {
+  const ownerFlagOverride = row.meta?.ownerFlagOverride;
+  // Overrides from before a moderator's rating ruling dropped them are checked against the log.
+  const overrideStands =
+    ownerFlagOverride &&
+    !(await loggedSince(tx, id, ownerFlagOverride.at, RATING_RULING_ACTIVITIES));
+  const restored = replacedNsfwRuling(row, {
+    ownerFlagOverride: overrideStands ? ownerFlagOverride : undefined,
+    minorFlagSnapshot: minorLift ? await currentMinorFlagSnapshot(tx, id, row.meta) : undefined,
+  });
+  await writeOwnerFlagOverride(tx, id, settleOwnerFlagOverride(row, ownerFlagOverride));
+  return restored;
+}
+
+/** A restored rating moves nsfw, which the model's nsfw level and public response are built from. */
+async function refreshRestoredRating(id: number) {
+  await updateModelNsfwLevels([id]);
+  await bustPublicModelResponseCache(id);
+}
+
+function restoredFlagData(
+  restored: RestoredNsfwRuling,
+  gallerySettings: ModelGallerySettingsSchema | null
+) {
+  const { level: _level, ...gallery } = gallerySettings ?? {};
+  return {
+    nsfw: restored.nsfw,
+    sfwOnly: restored.sfwOnly,
+    lockedProperties: restored.lockedProperties,
+    ...(restored.galleryLevel !== undefined && {
+      gallerySettings:
+        restored.galleryLevel === null ? gallery : { ...gallery, level: restored.galleryLevel },
+    }),
+  };
+}
+
+/**
+ * For a revert that put back its own flag snapshot: an owner's override is the older record, so the
+ * ruling it replaced comes back on top, under the same conditions as a moderator's lift. Not when
+ * the owner declared the flag being reverted: the revert undoes the automated flag, never the
+ * owner's own declaration, so the override is settled without restoring. Returns what it wrote,
+ * for the caller's fan-out.
+ */
+export async function restoreOwnerFlagOverride(
+  modelId: number,
+  { revertedFlag }: { revertedFlag: 'minor' | 'poi' }
+) {
+  const written = await dbWrite.$transaction(async (tx) => {
+    const row = await lockFlagRow(tx, modelId);
+    const override = row.meta?.ownerFlagOverride;
+    if (!override) return;
+    // Dropped even so: left behind, the next lift or revert of the other flag would restore it.
+    if (override.flags.includes(revertedFlag)) {
+      await writeOwnerFlagOverride(tx, modelId, null);
+      return;
+    }
+    const lockedProperties = row.lockedProperties ?? [];
+    const restored = await liftRestore(
+      tx,
+      modelId,
+      { ...row, lockedProperties },
+      { minorLift: false }
+    );
+    if (!restored) return;
+    const data = restoredFlagData(
+      restored,
+      row.gallerySettings as ModelGallerySettingsSchema | null
+    );
+    await tx.model.update({ where: { id: modelId }, data });
+    return data;
+  }, lockedWriteOptions);
+  if (written) await refreshRestoredRating(modelId);
+  return written;
 }
 
 /**
@@ -3789,7 +4080,8 @@ export const upsertModel = async (
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
-          const ownerFlagOverride = applyRaisedRestrictions(locked, data);
+          const ownerFlagOverride =
+            applyRaisedRestrictions(locked, data) ?? withRaisedFlags(locked, data);
           if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
         }
         if (
@@ -3801,6 +4093,11 @@ export const upsertModel = async (
           throw throwBadRequestError('A model’s availability changes only through its own flows.');
         const flags = locked ? assertAllowedContentFlags(locked, data) : undefined;
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
+        // A save that leaves neither flag has ruled on the override, so a later flag cannot revive it.
+        if (flags && !flags.minor && !flags.poi) {
+          const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;
+          mergedMeta = rest;
+        }
         if ((locked?.availability ?? beforeUpdate.availability) === Availability.Private) {
           // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
           // moderator's decision is what publish restores.
@@ -3819,8 +4116,19 @@ export const upsertModel = async (
           select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
         });
         typeBeforeUpdate = replaced?.type;
-        if (isModerator && rulesOnNsfw(locked, data))
+        if (isModerator && rulesOnNsfw(locked, data)) {
           mergedMeta = withoutSystemNsfwLock(mergedMeta);
+          const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;
+          mergedMeta = rest;
+        }
+        if (locked?.minor && flags && !flags.minor && mergedMeta.minorFlagSnapshot)
+          mergedMeta = {
+            ...mergedMeta,
+            minorFlagSnapshot: {
+              ...mergedMeta.minorFlagSnapshot,
+              supersededAt: new Date().toISOString(),
+            },
+          };
         // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
         // transaction replaces. Only for a save that sends permissions at all.
         const storedPermissions = writesPermissions(data)
@@ -5520,6 +5828,136 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   return settings;
 };
 
+function createVersionModelCache() {
+  return createCachedObject<{ id: number; modelId: number }>({
+    key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:version-model`,
+    idKey: 'id',
+    ttl: CacheTTL.week,
+    // A version id not yet created, or not yet on the replica, would otherwise be cached as
+    // modelless and leave the version uncapped once it exists.
+    cacheNotFound: false,
+    // A bust takes effect at once rather than after a stale window: it follows a version moving model.
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const versions = await dbRead.modelVersion.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, modelId: true },
+      });
+      return Object.fromEntries(versions.map((version) => [version.id, version]));
+    },
+  });
+}
+let versionModelCacheInstance: ReturnType<typeof createVersionModelCache> | undefined;
+const versionModelCache = () => (versionModelCacheInstance ??= createVersionModelCache());
+
+function createPostVersionCache() {
+  return createCachedObject<{ id: number; modelVersionId: number | null }>({
+    key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:post-version`,
+    idKey: 'id',
+    // Short: merging versions re-points their posts.
+    ttl: CacheTTL.hour,
+    // As for versions: a post not yet on the replica must not be remembered as missing.
+    cacheNotFound: false,
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const posts = await dbRead.post.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, modelVersionId: true },
+      });
+      return Object.fromEntries(posts.map((post) => [post.id, post]));
+    },
+  });
+}
+let postVersionCacheInstance: ReturnType<typeof createPostVersionCache> | undefined;
+const postVersionCache = () => (postVersionCacheInstance ??= createPostVersionCache());
+/**
+ * Busts again after a delay: a lookup on a lagging replica between the write and the first bust
+ * would otherwise cache the old mapping for the whole TTL.
+ */
+async function bustTwice(bust: () => Promise<void>) {
+  await bust();
+  setTimeout(() => bust().catch(() => null), 5_000).unref?.();
+}
+
+/** For posts re-pointed to another version. */
+export async function bustPostVersionCache(postIds: number[]) {
+  if (postIds.length) await bustTwice(() => postVersionCache().bust(postIds));
+}
+
+/**
+ * The level a request's images may be served at when it selects them by a minor or SFW-only
+ * model: the intersection of each such model's held gallery level, or undefined when none is held.
+ * The model comes from the version and the review as well as `modelId`, because those pick the
+ * images ahead of `modelId`.
+ */
+export async function getHeldGalleryLevel({
+  modelId,
+  modelIds: namedModelIds = [],
+  modelVersionId,
+  modelVersionIds = [],
+  reviewId,
+  postId,
+  postIds = [],
+}: {
+  modelId?: number | null;
+  modelIds?: number[];
+  modelVersionId?: number | null;
+  modelVersionIds?: number[];
+  reviewId?: number | null;
+  postId?: number | null;
+  postIds?: number[] | null;
+}) {
+  // The version, review or post a single selector names must resolve, or nothing is served: one not
+  // yet on the replica can still be found by the image query. Lists (a hub's versions, a page of
+  // posts) are not held to that, so one deleted entry does not empty them; what is gone serves no
+  // images anyway.
+  const requiredVersionIds = new Set<number>();
+  if (modelVersionId) requiredVersionIds.add(modelVersionId);
+  if (reviewId) {
+    const review = await dbRead.resourceReview.findUnique({
+      where: { id: reviewId },
+      select: { modelVersionId: true },
+    });
+    if (!review) return 0;
+    requiredVersionIds.add(review.modelVersionId);
+  }
+  const listedVersionIds = new Set(modelVersionIds);
+  if (postId || postIds?.length) {
+    const ids = new Set(postIds);
+    if (postId) ids.add(postId);
+    const posts = await postVersionCache().fetch([...ids]);
+    if (postId && !posts[postId]) return 0;
+    // A post's version is not required: the replica gets the version before its posts, so a version
+    // missing behind a post it has is one deleted since, which leaves the post on no model.
+    for (const id of ids) {
+      const versionId = posts[id]?.modelVersionId;
+      if (versionId) listedVersionIds.add(versionId);
+    }
+  }
+  const versionIds = new Set([...listedVersionIds, ...requiredVersionIds]);
+
+  const modelIds = new Set(namedModelIds);
+  if (modelId) modelIds.add(modelId);
+  if (versionIds.size) {
+    const versions = await versionModelCache().fetch([...versionIds]);
+    for (const id of requiredVersionIds) if (!versions[id]) return 0;
+    for (const version of Object.values(versions)) modelIds.add(version.modelId);
+  }
+
+  // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
+  const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
+  await limitConcurrency(
+    [...modelIds].map((id) => async () => {
+      galleries.push(await getGallerySettingsByModelId({ id }));
+    }),
+    5
+  );
+  let held: number | undefined;
+  for (const gallery of galleries)
+    if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
+  return held;
+}
+
 /**
  * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
  * SFW. A setting that allows no SFW level, or none at all, serves SFW: the gallery reads 0 as no cap.
@@ -6066,6 +6504,8 @@ export async function migrateResourceToCollection({
       filteredVersions.map((v) => v.id),
       modelIds
     ),
+    // The versions now belong to new models.
+    bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
   ]);
 
   modelMetrics

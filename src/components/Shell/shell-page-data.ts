@@ -77,13 +77,19 @@ function isShellPageData(body: unknown): body is ShellPageData {
 }
 
 async function readShellResponse(pending: Promise<Response>): Promise<ShellPageDataResult> {
+  let res: Response;
   try {
-    const res = await pending;
-    if (res.status !== 200) return { ok: false, status: res.status };
+    res = await pending;
+  } catch {
+    return { ok: false, status: 0 };
+  }
+  if (res.status !== 200) return { ok: false, status: res.status };
+  try {
     const body: unknown = await res.json();
     return isShellPageData(body) ? { ok: true, data: body } : { ok: false, status: 500 };
   } catch {
-    return { ok: false, status: 0 };
+    // A 200 whose body is not JSON (e.g. ended empty after a late server failure): unusable.
+    return { ok: false, status: 500 };
   }
 }
 

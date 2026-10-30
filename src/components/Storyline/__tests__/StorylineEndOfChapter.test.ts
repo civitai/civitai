@@ -41,6 +41,9 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     trackCreateClick: mocks.trackCreateClick,
   }),
 }));
+vi.mock('~/components/Storyline/storyline.data', () => ({
+  useSetStorylineMainPath: () => ({ isPending: false, mutate: vi.fn() }),
+}));
 vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: mocks.trigger } }));
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,

@@ -5,7 +5,11 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
-import { MINOR_FLAG_SNAPSHOT_KEY, setModelMinor } from '~/server/services/model.service';
+import {
+  MINOR_FLAG_SNAPSHOT_KEY,
+  restoreOwnerFlagOverride,
+  setModelMinor,
+} from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { resolveEntityAppeal } from '~/server/services/report.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -885,7 +889,7 @@ export async function resolveMinorFlagAppeal({
   // Call-site import: poi-hash.service imports this module.
   const loadPoiHash = () => import('~/server/services/poi-hash.service');
   if (upheld.includes('poi') && poiHash)
-    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId });
+    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId, fromAppeal: true });
   const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
   if (upheldVerdicts.length)
     await stampModelTextScanAppeal({
@@ -1125,6 +1129,7 @@ export async function rollbackMinorHashAutoFlags({
                  )
         WHERE id = ${row.modelId}
       `;
+      await restoreOwnerFlagOverride(row.modelId, { revertedFlag: 'minor' });
       // The restore above moves sfwOnly and the gallery level after setModelMinor's own bust.
       await bustModelGallerySettings([row.modelId]);
       // Before the image re-mark: the reassert's side effects rewrite every image's minor flag.

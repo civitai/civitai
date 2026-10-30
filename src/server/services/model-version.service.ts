@@ -181,7 +181,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { updateModelLastVersionAt } from './model.service';
+import { bustPostVersionCache, updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, deleteFilesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -3644,6 +3644,7 @@ export const mergeVersions = async ({
   // file row that slipped past the move and would be orphaned by the cascade.
   let sourceFileUrls: string[] = [];
 
+  let movedPostIds: number[] = [];
   await dbWrite.$transaction(
     async (tx) => {
       // 0. Lock the rows, in id order, so a run can't change status under these checks.
@@ -3834,6 +3835,11 @@ export const mergeVersions = async ({
       });
 
       // 6. Re-point Posts
+      const movedPosts = await tx.post.findMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        select: { id: true },
+      });
+      movedPostIds = movedPosts.map((post) => post.id);
       await tx.post.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
@@ -3972,6 +3978,7 @@ export const mergeVersions = async ({
   await Promise.all([
     bustMvCache(allVersionIds2, modelId, userId),
     dataForModelsCache.bust(modelId),
+    bustPostVersionCache(movedPostIds),
     deleteFilesForModelVersionCache(targetVersionId),
     ...sourceVersionIds.map((id) => deleteFilesForModelVersionCache(id)),
     preventReplicationLag('model', modelId),

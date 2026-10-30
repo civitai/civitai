@@ -10220,7 +10220,7 @@ model Placement {
   placer                User      @relation("PlacementPlacer", fields: [placerId], references: [id], onDelete: Cascade)
   data                  Json      @default("{}")
   status                String
-  /// 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+  /// 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
   /// removals refund different amounts, so the status alone cannot settle the
   /// money. Constrained by "Placement_removedBy_check" — a new value needs a
   /// migration even though the column is TEXT.
@@ -10530,6 +10530,34 @@ model StorylineChapterEdge {
   @@index([parentChapterId, createdAt])
 }
 
+/// A record kept when a storyline's owner or a chapter's author removes a chapter while a report
+/// on it (its post or the storyline) is open: the removal itself is the ordinary one, and this row
+/// is what moderators see of it in the report's context. It changes nothing for anyone else.
+/// Not related to its storyline or post, so it outlives them.
+model StorylineChapterRemovalHold {
+  id               Int      @id @default(autoincrement())
+  storylineId      Int
+  /// The storyline's title at removal: the hold outlives the storyline.
+  storylineTitle   String
+  /// The removed chapter's id, its post and its author, as they were.
+  chapterId        Int
+  postId           Int?
+  chapterUserId    Int
+  depth            Int
+  placementId      Int?
+  parentChapterIds Int[]
+  chapterCreatedAt DateTime
+  removedById      Int
+  /// 'owner' or 'author'.
+  removedByRole    String
+  /// The reports open when it was removed.
+  reportIds        Int[]
+  createdAt        DateTime @default(now())
+
+  @@index([postId])
+  @@index([storylineId])
+}
+
 /// The post author's note on one image of a storyline chapter, shown to readers under the
 /// image. No row means no caption: an empty caption deletes it.
 model ImageCaption {
@@ -10577,6 +10605,7 @@ model StorylineBranchChoice {
 
   @@id([userId, parentChapterId])
   @@index([parentChapterId, chapterId])
+  @@index([chapterId])
 }
 
 /// A signed-in reader asking for the "Create next section" tool at the end of a chapter. One row
@@ -11127,6 +11156,8 @@ model Crucible {
   // derive from the entries instead (getCrucibleTotalPrizePool).
   prizePool         Int            @default(0)
   entryLimit        Int            @default(1)
+  // Entries the owner removed from their own crucible, capped (CRUCIBLE_OWNER_REMOVAL_CAP). Moderator removals don't count.
+  ownerRemovalCount Int            @default(0)
   // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
   freeEntriesPerUser Int           @default(0)
   maxTotalEntries   Int?

@@ -39,9 +39,13 @@ const {
 // MINOR_FLAG_SNAPSHOT_KEY is read at module scope by the service's Prisma.sql
 // fragments — omitting it from the mock makes the whole file fail to import
 // (which vitest reports as a passing run with zero tests collected).
+const { mockRestoreOwnerFlagOverride } = vi.hoisted(() => ({
+  mockRestoreOwnerFlagOverride: vi.fn(),
+}));
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   MINOR_FLAG_SNAPSHOT_KEY: 'minorFlagSnapshot',
+  restoreOwnerFlagOverride: mockRestoreOwnerFlagOverride,
 }));
 vi.mock('~/server/services/poi-hash.service', () => ({
   confirmPoiHashAutoFlag: mockConfirmPoiHashAutoFlag,
@@ -1218,6 +1222,24 @@ describe('rollbackMinorHashAutoFlags', () => {
     );
   });
 
+  // An owner's override predates the snapshot, so the ruling it replaced goes back on top.
+  it("puts back the ruling an owner's override replaced after its own restore", async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 200 })]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    const restoreAt = mockDbWrite.$executeRaw.mock.calls.findIndex((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('SET nsfw')
+    );
+    expect(mockRestoreOwnerFlagOverride).toHaveBeenCalledTimes(1);
+    expect(mockRestoreOwnerFlagOverride).toHaveBeenCalledWith(200, { revertedFlag: 'minor' });
+    expect(mockRestoreOwnerFlagOverride.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.$executeRaw.mock.invocationCallOrder[restoreAt]
+    );
+  });
+
   it('drops the system nsfw lock marker in the restore write', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 200 })]);
 
@@ -1976,7 +1998,11 @@ describe('resolveMinorFlagAppeal', () => {
 
       await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
 
-      expect(mockConfirmPoiHashAutoFlag).toHaveBeenCalledWith({ modelId: 42, userId: 7 });
+      expect(mockConfirmPoiHashAutoFlag).toHaveBeenCalledWith({
+        modelId: 42,
+        userId: 7,
+        fromAppeal: true,
+      });
       expect(mockRevertPoiHashAutoFlag).not.toHaveBeenCalled();
       expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
         expect.objectContaining({ status: AppealStatus.Rejected })

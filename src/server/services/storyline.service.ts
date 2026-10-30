@@ -1064,6 +1064,219 @@ export async function deleteStoryline({
   return { id };
 }
 
+export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
+  firstChapter: "Chapter 1 can't be removed. Delete the storyline instead",
+  hasChildren: 'Other chapters continue from this one, so it cannot be removed',
+  waiting: 'This chapter has a continuation waiting for review; answer it first',
+  paidContinuation: "This chapter's payment hasn't settled yet. Try again once it has",
+  /** A taken-down storyline, and (for its owner) a chapter someone paid to add. */
+  moderatorOnly:
+    "You can't remove this chapter yourself. A moderator can remove it for you; contact support",
+  removed: 'This chapter was already removed',
+} as const;
+
+/**
+ * Takes a chapter out of its storyline for the storyline's owner, the chapter's author or a
+ * moderator. The post is not touched. Only a chapter nothing continues from can go, so no other
+ * chapter loses its way in. The owner's or author's removal deletes the row, with its edges and
+ * reader choices; a moderator's tombstones it, as a placement takedown does, so the row keeps
+ * holding its post and it cannot be submitted again. The placement that added it, if any, is
+ * marked removed; no Buzz moves, as with a moderator's takedown.
+ */
+export async function removeStorylineChapter({
+  chapterId,
+  userId,
+  isModerator,
+}: {
+  chapterId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const result = await dbWrite.$transaction(async (tx) => {
+    const [found] = await tx.$queryRaw<
+      { storylineId: number; ownerId: number; authorId: number }[]
+    >`
+      SELECT c."storylineId", s."userId" AS "ownerId", c."userId" AS "authorId"
+      FROM "StorylineChapter" c JOIN "Storyline" s ON s.id = c."storylineId"
+      WHERE c.id = ${chapterId}
+    `;
+    if (!found) throw throwNotFoundError('Chapter not found');
+    const { storylineId, ownerId } = found;
+    // Before any lock, so a stranger cannot hold up the storyline; checked again under the locks.
+    if (userId !== ownerId && userId !== found.authorId && !isModerator)
+      throw throwAuthorizationError();
+    // Exclusive against adds, submits, links and moves (`moveStorylineChapter`'s lock). A submit
+    // blocked here still lands on a moderator's tombstone, as on a takedown's, and is refunded by
+    // the orphaned-continuation job.
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean; title: string }[]>`
+      SELECT "tosViolation", title FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    `;
+    if (!storyline) throw throwNotFoundError('Chapter not found');
+    // The placement before the chapter, the order a placement takedown (`takeDownApproved`) locks
+    // them in. `placementId` never changes once written.
+    const [unlocked] = await tx.$queryRaw<{ placementId: number | null }[]>`
+      SELECT "placementId" FROM "StorylineChapter" WHERE id = ${chapterId}
+    `;
+    const [placement] =
+      unlocked?.placementId != null
+        ? await tx.$queryRaw<{ status: string; paid: boolean; inFlight: boolean }[]>`
+            SELECT p.status, (NOT p.free AND p.amount > 0) AS paid,
+              ${placementMoneyInFlightSql(Prisma.raw('p'))} AS "inFlight"
+            FROM "Placement" p WHERE p.id = ${unlocked.placementId} FOR UPDATE
+          `
+        : [];
+    const [chapter] = await tx.$queryRaw<
+      {
+        userId: number;
+        depth: number;
+        postId: number | null;
+        placementId: number | null;
+        removedAt: Date | null;
+        createdAt: Date;
+      }[]
+    >`
+      SELECT "userId", depth, "postId", "placementId", "removedAt", "createdAt" FROM "StorylineChapter"
+      WHERE id = ${chapterId} AND "storylineId" = ${storylineId} FOR UPDATE
+    `;
+    if (!chapter) throw throwNotFoundError('Chapter not found');
+
+    const role =
+      userId === ownerId
+        ? 'owner'
+        : userId === chapter.userId
+        ? 'author'
+        : isModerator
+        ? 'moderator'
+        : null;
+    if (!role) throw throwAuthorizationError();
+    if (storyline.tosViolation && role !== 'moderator')
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
+    if (chapter.depth === 0)
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.firstChapter);
+    // Deleting a tombstone would free its post to be submitted again.
+    if (chapter.removedAt) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.removed);
+
+    const [{ hasChildren, waiting }] = await tx.$queryRaw<
+      { hasChildren: boolean; waiting: boolean }[]
+    >`
+      SELECT
+        EXISTS (SELECT 1 FROM "StorylineChapterEdge" WHERE "parentChapterId" = ${chapterId})
+          AS "hasChildren",
+        (
+          EXISTS (
+            SELECT 1 FROM "Placement" pl
+            WHERE pl.surface = 'storyline' AND pl."targetType" = 'post'
+              AND pl."targetId" = ${chapter.postId} AND pl.status = 'pending'
+          )
+          OR EXISTS (SELECT 1 FROM "StorylinePendingChapter" WHERE "parentChapterId" = ${chapterId})
+        ) AS waiting
+    `;
+    if (hasChildren) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.hasChildren);
+    if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
+    if (placement?.inFlight)
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
+    // An owner's or author's removal during an open report is recorded for moderators.
+    const openReportIds =
+      role === 'moderator'
+        ? []
+        : (
+            await tx.$queryRaw<{ id: number }[]>`
+              SELECT r.id FROM "PostReport" pr JOIN "Report" r ON r.id = pr."reportId"
+              WHERE pr."postId" = ${chapter.postId}
+                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+              UNION
+              SELECT r.id FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+              WHERE sr."storylineId" = ${storylineId}
+                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+            `
+          ).map((r) => r.id);
+
+    if (chapter.placementId != null) {
+      // The contributor paid the owner to add it; the owner cannot take it back out for free.
+      if (placement?.paid && role === 'owner')
+        throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
+      if (placement?.status === 'approved')
+        await tx.$executeRaw`
+          UPDATE "Placement"
+          SET status = 'removed', "removedBy" = ${role === 'author' ? 'placer' : role},
+            "takenDownAt" = now(), "takenDownById" = ${userId}
+          WHERE id = ${chapter.placementId} AND status = 'approved'
+        `;
+    }
+
+    const parents = await tx.$queryRaw<{ parentChapterId: number }[]>`
+      SELECT "parentChapterId" FROM "StorylineChapterEdge" WHERE "chapterId" = ${chapterId}
+    `;
+    if (role === 'moderator')
+      await tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
+    else {
+      // Every owner's or author's removal is the same hard delete. When either must be kept for
+      // records, this same statement copies the chapter and the rows its delete cascades to, so the
+      // decision is made at the write. The row is locked, so no child row can join it meanwhile.
+      const kept = Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR ${ownerHeldSql(
+        Prisma.sql`${chapter.userId}::int`
+      )})`;
+      const ids = Prisma.sql`${ownerId}::int, ${chapter.userId}::int`;
+      await tx.$executeRaw`
+        WITH kept AS (SELECT ${kept} AS kept),
+        chapter AS (
+          INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,
+            "placementId", "createdAt", "removedAt", "ownerId", "authorId")
+          SELECT id, "storylineId", "postId", "userId", depth, "placementId", "createdAt",
+            "removedAt", ${ids}
+          FROM "StorylineChapter" WHERE id = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        edges AS (
+          INSERT INTO "HeldStorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId",
+            canon, "createdAt", "ownerId", "authorId")
+          SELECT "storylineId", "chapterId", "parentChapterId", canon, "createdAt", ${ids}
+          FROM "StorylineChapterEdge"
+          WHERE "chapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        choices AS (
+          INSERT INTO "HeldStorylineBranchChoice" ("userId", "parentChapterId", "chapterId",
+            "createdAt", "updatedAt", "ownerId", "authorId")
+          SELECT "userId", "parentChapterId", "chapterId", "createdAt", "updatedAt", ${ids}
+          FROM "StorylineBranchChoice"
+          WHERE ("chapterId" = ${chapterId} OR "parentChapterId" = ${chapterId}) AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        clicks AS (
+          INSERT INTO "HeldStorylineCreateClick" ("userId", "parentChapterId", "createdAt",
+            "ownerId", "authorId")
+          SELECT "userId", "parentChapterId", "createdAt", ${ids}
+          FROM "StorylineCreateClick"
+          WHERE "parentChapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        )
+        DELETE FROM "StorylineChapter" WHERE id = ${chapterId}
+      `;
+    }
+    if (openReportIds.length)
+      await tx.$executeRaw`
+        INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "storylineTitle", "chapterId",
+          "postId", "chapterUserId", depth, "placementId", "parentChapterIds", "chapterCreatedAt",
+          "removedById", "removedByRole", "reportIds")
+        VALUES (${storylineId}, ${storyline.title}, ${chapterId}, ${chapter.postId}, ${
+        chapter.userId
+      }, ${chapter.depth},
+          ${chapter.placementId}, ${parents.map((p) => p.parentChapterId)}::int[],
+          ${chapter.createdAt}, ${userId}, ${role}, ${openReportIds}::int[])
+      `;
+    if (role === 'moderator')
+      await trackModActivity(
+        userId,
+        { entityType: 'storyline', entityId: storylineId, activity: 'removeChapter' },
+        tx
+      );
+    return { storylineId, parentIds: parents.map((p) => p.parentChapterId) };
+  });
+
+  // Committed; stale counts until the entries expire beat reporting the removal as failed.
+  await Promise.all(
+    result.parentIds.map((id) => bustFetchThroughCache(forkCountsKey(id)).catch(() => undefined))
+  );
+  return { storylineId: result.storylineId, chapterId };
+}
+
 /**
  * Makes a post its owner has already published chapter 1 of their empty storyline. The post is
  * held to `createStoryline`'s rules and, like a chapter-1 draft going live (`promotePendingChapter`),
@@ -1604,7 +1817,14 @@ export async function setCanonChapter({
     select: {
       parentChapterId: true,
       storylineId: true,
-      chapter: { select: { removedAt: true } },
+      chapter: {
+        select: {
+          removedAt: true,
+          post: {
+            select: { tosViolation: true, user: { select: { bannedAt: true, deletedAt: true } } },
+          },
+        },
+      },
     },
     take: 2,
   });
@@ -1622,7 +1842,9 @@ export async function setCanonChapter({
     userId,
     isModerator,
   });
-  if (edge.chapter.removedAt)
+  // Every chapter the reading path tombstones as removed or deleted, moderators' view included.
+  const { removedAt, post } = edge.chapter;
+  if (removedAt || !post || post.tosViolation || post.user.bannedAt || post.user.deletedAt)
     throw throwBadRequestError('A removed chapter cannot be the main route');
 
   await dbWrite.$transaction(async (tx) => {
@@ -1929,17 +2151,17 @@ export async function moveStorylineChapter({
   const result = await dbWrite.$transaction(async (tx) => {
     // Exclusive against links, inserts and other moves, and against adds (`lockStorylineForAdd`):
     // nothing else changes which chapter follows which until the commit.
-    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
-      SELECT "tosViolation" FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean; title: string }[]>`
+      SELECT "tosViolation", title FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
     if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
 
     const chapters = await tx.$queryRaw<
-      { id: number; depth: number; userId: number; placementId: number | null }[]
+      { id: number; depth: number; userId: number; placementId: number | null; removed: boolean }[]
     >`
-      SELECT id, depth, "userId", "placementId" FROM "StorylineChapter"
-      WHERE "storylineId" = ${storylineId}
+      SELECT id, depth, "userId", "placementId", "removedAt" IS NOT NULL AS removed
+      FROM "StorylineChapter" WHERE "storylineId" = ${storylineId}
     `;
     const edgeRows = await tx.$queryRaw<{ chapterId: number; parentChapterId: number }[]>`
       SELECT "chapterId", "parentChapterId" FROM "StorylineChapterEdge"
@@ -1963,7 +2185,8 @@ export async function moveStorylineChapter({
     const children = (id: number) => childrenOf.get(id) ?? [];
     const isOwners = (id: number) => {
       const c = byId.get(id);
-      return !!c && c.userId === ownerId && c.placementId == null;
+      // A removed chapter is neither moved nor moved past.
+      return !!c && c.userId === ownerId && c.placementId == null && !c.removed;
     };
     // `next` is in the same run as `id`: the only way on from it, reached by no other way in.
     const linked = (id: number, next: number) =>

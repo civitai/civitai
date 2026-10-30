@@ -7,6 +7,7 @@ import {
   leaveStorylineSchema,
   linkStorylineChapterSchema,
   moveStorylineChapterSchema,
+  removeStorylineChapterSchema,
   moderateStorylineTitleSchema,
   setCanonChapterSchema,
   setFirstChapterSchema,
@@ -30,6 +31,7 @@ import {
   addStorylineCollaborator,
   createStoryline,
   deleteStoryline,
+  removeStorylineChapter,
   getStoryline,
   getStorylineCanonAhead,
   getStorylineChapterLevels,
@@ -277,6 +279,12 @@ export const storylineRouter = router({
     .input(moveStorylineChapterSchema)
     .mutation(({ input, ctx }) =>
       moveStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  removeChapter: storylineWriteProcedure
+    .input(removeStorylineChapterSchema)
+    .mutation(({ input, ctx }) =>
+      removeStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
 
   linkChapter: storylineWriteProcedure

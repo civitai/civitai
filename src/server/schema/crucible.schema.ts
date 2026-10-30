@@ -3,6 +3,10 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
+import {
+  CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH,
+  crucibleOwnerRemovalReasonKeys,
+} from '~/utils/crucible-helpers';
 import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
 import { baseModelByName } from '~/shared/constants/basemodel.constants';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -438,6 +442,18 @@ export const removeCrucibleEntrySchema = z.object({
 
 export type WithdrawCrucibleEntrySchema = z.infer<typeof withdrawCrucibleEntrySchema>;
 export const withdrawCrucibleEntrySchema = removeCrucibleEntrySchema;
+
+export type OwnerRemoveCrucibleEntrySchema = z.infer<typeof ownerRemoveCrucibleEntrySchema>;
+export const ownerRemoveCrucibleEntrySchema = z
+  .object({
+    entryId: z.number(),
+    reason: z.enum(crucibleOwnerRemovalReasonKeys),
+    note: z.string().trim().max(CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH).optional(),
+  })
+  .refine((input) => input.reason !== 'other' || !!input.note, {
+    message: 'Say why you are removing this entry',
+    path: ['note'],
+  });
 
 // Schema for user crucible stats (no input needed - uses authenticated user)
 export type GetUserCrucibleStatsSchema = z.infer<typeof getUserCrucibleStatsSchema>;

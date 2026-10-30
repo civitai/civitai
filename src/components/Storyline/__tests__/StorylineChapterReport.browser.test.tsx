@@ -54,6 +54,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
 }));
 vi.mock('~/components/Storyline/storyline.data', () => ({
   useMoveStorylineChapter: () => ({ isPending: false, error: null, mutate: vi.fn() }),
+  useRemoveStorylineChapter: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => <div /> }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
@@ -69,8 +70,6 @@ const storyline = {
   collaborators: [],
 } as never;
 const optionsOf = (n: number) => page.getByRole('button', { name: `Chapter ${n} options` });
-const hasOptions = (n: number) =>
-  !!document.querySelector(`button[aria-label="Chapter ${n} options"]`);
 
 beforeEach(() => {
   mocks.report.mockReset();
@@ -92,7 +91,11 @@ describe('reporting a chapter from the storyline page', () => {
     mocks.currentUser = { id: CONTRIBUTOR };
     renderWithProviders(<StorylineChapterLanes storyline={storyline} />);
 
-    await expect.element(optionsOf(1)).toBeInTheDocument();
-    expect(hasOptions(2)).toBe(false);
+    // Their menu has removal in it, never a report of their own chapter.
+    await optionsOf(2).click();
+    await expect
+      .element(page.getByRole('menuitem', { name: /Remove from storyline/ }))
+      .toBeVisible();
+    expect(document.body.textContent).not.toContain('Report chapter');
   });
 });

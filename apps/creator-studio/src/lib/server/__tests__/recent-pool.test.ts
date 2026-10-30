@@ -27,13 +27,25 @@ vi.mock('@civitai/db/kysely', () => ({
     const text = strings.join('?');
     return {
       text,
+      values,
       execute: async () => {
         if (text.includes('JOIN "Post"')) {
           world.newestImageQueries.push({ text: text.replace(/\s+/g, ' '), values });
-          const [, type, limit] = values as [number, string, number];
+          // Answer like Postgres: only apply the month window if the query actually asks for one. Its
+          // bounds are the two `::date` interpolations between the type and the limit; `to` is inclusive.
+          const windowed = /"createdAt" >= \?::date/.test(text);
+          const [, type] = values as [number, string];
+          const limit = values[values.length - 1] as number;
+          const day = (d: unknown) => String(d);
           const rows = world.images
             .filter((i) => i.type === type)
-            .sort((a, b) => b.id - a.id)
+            .filter(
+              (i) =>
+                !windowed ||
+                (i.createdAt.slice(0, 10) >= day(values[2]) &&
+                  i.createdAt.slice(0, 10) <= day(values[3]))
+            )
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id)
             .slice(0, limit)
             .map((i) => ({ id: i.id }));
           return { rows };
@@ -61,11 +73,19 @@ vi.mock('@civitai/db/kysely', () => ({
 // A chainable stand-in for the Kysely `Article` queries `fetchTopArticles` issues.
 vi.mock('$lib/server/db', () => {
   const builder = () => {
-    const q = { limit: undefined as number | undefined, ids: undefined as number[] | undefined };
+    const q = {
+      limit: undefined as number | undefined,
+      ids: undefined as number[] | undefined,
+      window: undefined as [string, string] | undefined,
+    };
     const self: Record<string, unknown> = {
-      where: (col: string, op: string, val: unknown) => {
+      where: (col: string | { text: string; values: unknown[] }, op?: string, val?: unknown) => {
         world.articleCalls.push({ method: 'where', args: [col, op, val] });
         if (op === 'in') q.ids = val as number[];
+        // A raw month-window predicate: `"createdAt" >= ?::date AND "createdAt" < (?::date + 1)`.
+        if (typeof col === 'object' && col.text.includes('"createdAt"')) {
+          q.window = [String(col.values[0]), String(col.values[1])];
+        }
         return self;
       },
       leftJoin: () => self,
@@ -82,8 +102,12 @@ vi.mock('$lib/server/db', () => {
       execute: async () => {
         let rows = [...world.articles];
         if (q.limit !== undefined) {
+          const w = q.window;
           rows = rows
             .filter((a) => a.status === 'Published')
+            .filter(
+              (a) => !w || (a.createdAt.slice(0, 10) >= w[0] && a.createdAt.slice(0, 10) <= w[1])
+            )
             .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id)
             .slice(0, q.limit);
         }
@@ -178,7 +202,7 @@ describe('Recent pool', () => {
 
   it('articles: the newest published article is in the pool; drafts are not', async () => {
     const articles = await getTopArticles({ ...range, pool: 'recent' });
-    expect(articles.map((a) => a.articleId).sort()).toEqual([1, 2]);
+    expect(articles.map((a) => a.articleId)).toEqual([2]);
     expect(articles.find((a) => a.articleId === 2)?.createdAt).toBe('2026-10-29T00:00:00.000Z');
   });
 
@@ -193,10 +217,52 @@ describe('Recent pool', () => {
       expect(text).toMatch(/i\."userId" = \?/);
       expect(values[0]).toBe(1);
       expect(text).toMatch(/p\."publishedAt" IS NOT NULL AND p\."publishedAt" <= now\(\)/);
-      expect(text).toMatch(/ORDER BY i\.id DESC/);
-      expect(values[2]).toBe(100);
+      expect(text).toMatch(/ORDER BY i\."createdAt" DESC, i\.id DESC/);
+      expect(values[values.length - 1]).toBe(100);
+      // inclusive `to`: the window ends before the day AFTER it
+      expect(text).toMatch(/"createdAt" >= \?::date AND i\."createdAt" < \(\?::date \+ 1\)/);
+      expect(values.slice(2, 4)).toEqual([range.from, range.to]);
     }
     expect(world.newestImageQueries.map((q) => q.values[1]).sort()).toEqual(['image', 'video']);
+  });
+
+  it('media: a past month lists only that month, newest first', async () => {
+    world.images = [
+      { id: 10, type: 'image', createdAt: '2026-09-01T10:00:00.000Z', reactions: 7 },
+      { id: 11, type: 'image', createdAt: '2026-09-30T23:00:00.000Z', reactions: 0 },
+      { id: 12, type: 'image', createdAt: '2026-10-02T00:00:00.000Z', reactions: 0 },
+      { id: 9, type: 'image', createdAt: '2026-08-31T23:59:00.000Z', reactions: 4 },
+    ];
+    const media = await getTopMedia({
+      userId: 1,
+      from: '2026-09-01',
+      to: '2026-09-30',
+      pool: 'recent',
+    });
+    expect(media.map((m) => m.imageId)).toEqual([11, 10]);
+    expect(media.find((m) => m.imageId === 10)?.reactions).toBe(7);
+  });
+
+  it('media: more than 100 in the month -> the newest 100 per type', async () => {
+    world.images = Array.from({ length: 130 }, (_, n) => ({
+      id: n + 1,
+      type: 'image' as const,
+      createdAt: '2026-10-15T00:00:00.000Z',
+      reactions: 0,
+    }));
+    const media = await getTopMedia({ ...range, pool: 'recent' });
+    expect(media).toHaveLength(100);
+    expect(media[0].imageId).toBe(130);
+  });
+
+  it('articles: a past month lists only that month', async () => {
+    const articles = await getTopArticles({
+      userId: 1,
+      from: '2026-08-01',
+      to: '2026-08-31',
+      pool: 'recent',
+    });
+    expect(articles.map((a) => a.articleId)).toEqual([1]);
   });
 
   it("articles: asks Postgres for the caller's own published articles, newest first, capped", async () => {
@@ -204,6 +270,13 @@ describe('Recent pool', () => {
     const calls = world.articleCalls;
     // the newest-pool query is the one carrying limit(); its filters precede it
     expect(calls.find((c) => c.method === 'limit')?.args).toEqual([100]);
+    const window = calls.find(
+      (c) =>
+        typeof c.args[0] === 'object' &&
+        (c.args[0] as { text: string }).text.includes('"createdAt"')
+    )?.args[0] as { text: string; values: unknown[] };
+    expect(window.text).toMatch(/"createdAt" >= \?::date AND "createdAt" < \(\?::date \+ 1\)/);
+    expect(window.values).toEqual([range.from, range.to]);
     expect(calls).toContainEqual({ method: 'where', args: ['status', '=', 'Published'] });
     expect(calls).toContainEqual({ method: 'where', args: ['userId', '=', 1] });
     const order = calls.filter((c) => c.method === 'orderBy');
