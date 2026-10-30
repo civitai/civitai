@@ -77,7 +77,7 @@ export default function StorylineFirstChapterModal({
             postsError={own.postsError}
             alreadyChapters={own.alreadyChapters}
             allChaptersText="All your recent posts are already chapters."
-            morePosts={own.morePosts}
+            paging={own.paging}
             postId={postId}
             onPostChange={setPostId}
             ceiling={ceiling}
