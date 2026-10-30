@@ -824,14 +824,32 @@ describe('upsertModel — content flags the row ends up with', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
-  it('refuses an owner save the profanity check turns nsfw on a poi model', async () => {
+  it('saves profane text on a poi model without marking it nsfw, keeping the matches', async () => {
     mockStored({ poi: true });
     mockEvaluateContent.mockReturnValue(profaneEvaluation);
 
-    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' })).rejects.toThrow(
-      'Mature content depicting actual people is not permitted.'
-    );
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData()).not.toHaveProperty('nsfw');
+    expect(updateData()).not.toHaveProperty('lockedProperties');
+    expect(updateData().meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('saves an unrelated edit to a profane-named SFW-only model', async () => {
+    mockStored({ sfwOnly: true });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      description: 'New description',
+      minor: false,
+      sfwOnly: true,
+    });
+
+    expect(updateData().description).toBe('New description');
+    expect(updateData()).not.toHaveProperty('nsfw');
   });
 
   it('creates a poi model SFW, without the profanity nsfw, when the text is profane', async () => {
@@ -907,9 +925,66 @@ describe('upsertModel — content flags the row ends up with', () => {
         minor: true,
         nsfw: false,
         sfwOnly: true,
-        lockedProperties: ['nsfw', 'minor'],
+        lockedProperties: ['nsfw', 'minor', 'sfwOnly'],
       })
     );
+    expect(updateData().meta).toEqual(
+      expect.objectContaining({
+        ownerFlagOverride: {
+          at: expect.any(String),
+          flag: 'minor',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      })
+    );
+  });
+
+  it('makes an owner save that marks poi SFW over a locked nsfw, and takes the poi locks', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'] });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: true, minor: false, sfwOnly: false });
+
+    expect(updateData()).toEqual(
+      expect.objectContaining({
+        poi: true,
+        nsfw: false,
+        sfwOnly: true,
+        lockedProperties: ['nsfw', 'poi', 'sfwOnly'],
+      })
+    );
+    expect(updateData().meta).toEqual(
+      expect.objectContaining({ ownerFlagOverride: expect.objectContaining({ flag: 'poi' }) })
+    );
+  });
+
+  it('never takes an owner-flag override record from the client', async () => {
+    const forged = {
+      at: '2026-01-01T00:00:00.000Z',
+      flag: 'minor',
+      prevNsfw: true,
+      prevSfwOnly: false,
+      prevLockedProperties: [],
+    };
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, meta: { ownerFlagOverride: forged } as never });
+
+    expect(updateData().meta).not.toHaveProperty('ownerFlagOverride');
+  });
+
+  it('writes sfwOnly over a moderator sfwOnly lock when an owner marks minor', async () => {
+    mockStored({ lockedProperties: ['sfwOnly'] });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false });
+
+    expect(updateData()).toEqual(expect.objectContaining({ minor: true, sfwOnly: true }));
+  });
+
+  it('holds the gallery at SFW on an owner create that marks poi', async () => {
+    await upsert({ userId: OWNER_ID, poi: true, minor: false, sfwOnly: false });
+
+    expect((createData().gallerySettings as { level: number }).level).toBe(sfwBrowsingLevelsFlag);
   });
 
   it('adds no lock when an owner marks poi under an nsfw lock already holding nsfw off', async () => {
@@ -922,12 +997,13 @@ describe('upsertModel — content flags the row ends up with', () => {
   });
 
   it('keeps minor and nsfw where an owner who marked minor over a locked nsfw left them', async () => {
-    mockStored({ minor: true, sfwOnly: true, lockedProperties: ['nsfw', 'minor'] });
+    mockStored({ minor: true, sfwOnly: true, lockedProperties: ['nsfw', 'minor', 'sfwOnly'] });
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: false, nsfw: true, sfwOnly: false });
 
     expect(updateData()).not.toHaveProperty('minor');
     expect(updateData()).not.toHaveProperty('nsfw');
+    expect(updateData()).not.toHaveProperty('sfwOnly');
   });
 
   it('makes an owner save that marks poi SFW without adding a lock when nsfw is unlocked', async () => {
@@ -952,13 +1028,25 @@ describe('upsertModel — content flags the row ends up with', () => {
     expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
   });
 
-  it('still refuses profane text on a poi row whose save sends poi unchanged', async () => {
-    mockStored({ poi: true });
+  it('drops the profanity nsfw when the row turned SFW-only after the first read', async () => {
+    lockLandsMidSave({}, { sfwOnly: true });
     mockEvaluateContent.mockReturnValue(profaneEvaluation);
 
-    await expect(
-      upsert({ id: MODEL_ID, userId: OWNER_ID, poi: true, minor: false, sfwOnly: false })
-    ).rejects.toThrow('Mature content depicting actual people is not permitted.');
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData().nsfw).toBeUndefined();
+    expect(updateData()).not.toHaveProperty('lockedProperties');
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('changes nothing on an unchanged save of a legacy nsfw poi row under an nsfw lock', async () => {
+    mockStored({ nsfw: true, poi: true, lockedProperties: ['nsfw'] });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: true });
+
+    expect(updateData()).not.toHaveProperty('sfwOnly');
+    expect(updateData()).not.toHaveProperty('lockedProperties');
+    expect(updateData().meta).not.toHaveProperty('ownerFlagOverride');
   });
 
   it('leaves nsfw off an owner save that marks minor with profane text', async () => {

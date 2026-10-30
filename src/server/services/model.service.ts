@@ -3354,22 +3354,44 @@ function raisedRestrictions(stored: ContentFlags, data: { minor?: boolean; poi?:
   return (['minor', 'poi'] as const).filter((flag) => data[flag] === true && !stored[flag]);
 }
 
+/** Whether the row is minor, POI or SFW-only after this save: the profanity rating stays off it. */
+function holdsRestriction(stored: ContentFlags, data: ContentFlagWrite) {
+  return !!(
+    (data.minor ?? stored.minor) ||
+    (data.poi ?? stored.poi) ||
+    (data.sfwOnly ?? stored.sfwOnly)
+  );
+}
+
 /**
  * An owner's save that turns minor or POI on takes what those flags carry, as `setModelMinor` and
- * `setModelPoi` write it, even over a stored nsfw lock. Clearing a locked nsfw this way also locks
- * the raised flag, so undoing either takes a moderator.
+ * `setModelPoi` write it, even over a stored nsfw or SFW-only lock. Clearing a locked nsfw this way
+ * also takes the locks those setters add, so undoing it takes a moderator, and returns what it
+ * replaced for the row's meta.
  */
 function applyRaisedRestrictions(
   stored: ContentFlags & { lockedProperties?: string[] },
   data: ContentFlagWrite & { lockedProperties?: string[] }
-) {
+): ModelMeta['ownerFlagOverride'] | undefined {
   const raised = raisedRestrictions(stored, data);
   if (!raised.length) return;
   data.nsfw = false;
   data.sfwOnly = true;
   const storedLocks = stored.lockedProperties ?? [];
-  if (stored.nsfw && storedLocks.includes('nsfw'))
-    data.lockedProperties = uniq([...storedLocks, ...raised]);
+  if (!stored.nsfw || !storedLocks.includes('nsfw')) return;
+  data.lockedProperties = uniq([
+    ...storedLocks,
+    ...raised.flatMap((flag) =>
+      flag === 'minor' ? MINOR_LOCKED_PROPERTIES : POI_LOCKED_PROPERTIES
+    ),
+  ]);
+  return {
+    at: new Date().toISOString(),
+    flag: raised[0],
+    prevNsfw: stored.nsfw,
+    prevSfwOnly: stored.sfwOnly,
+    prevLockedProperties: storedLocks,
+  };
 }
 
 /**
@@ -3540,15 +3562,15 @@ export const upsertModel = async (
   }
 
   let profanityAutoNsfw = false;
+  // The save's own nsfw, put back if the transaction finds the profanity nsfw must not apply.
+  let nsfwBeforeProfanity: boolean | undefined;
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // A save that turns minor or POI on is made SFW below, so the filter leaves its nsfw alone.
-    const raising = raisedRestrictions(beforeUpdate ?? NO_CONTENT_FLAGS, data).length > 0;
-    if (evaluation.shouldMarkNSFW && !data.nsfw && !raising) {
+    if (evaluation.shouldMarkNSFW && !data.nsfw) {
       meta = {
         ...(meta ?? {}),
         profanityMatches: evaluation.matchedWords,
@@ -3557,9 +3579,13 @@ export const upsertModel = async (
           metrics: evaluation.metrics,
         },
       };
-      // A stored nsfw lock is a moderator's call (minor-flagging sets it false): keep the
-      // detection for review, but never let the filter overturn it.
-      if (!storedLockedProperties.includes('nsfw')) {
+      // A stored nsfw lock is a moderator's call (minor-flagging sets it false), and a minor, POI
+      // or SFW-only model stays SFW: keep the detection for review, but never mark nsfw over them.
+      if (
+        !storedLockedProperties.includes('nsfw') &&
+        !holdsRestriction(beforeUpdate ?? NO_CONTENT_FLAGS, data)
+      ) {
+        nsfwBeforeProfanity = data.nsfw;
         data.nsfw = true;
         data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
         meta = { ...meta, systemNsfwLock: systemNsfwLockMarker('profanity-filter') };
@@ -3589,6 +3615,10 @@ export const upsertModel = async (
       throw throwBadRequestError('Private models are created from the private model flow.');
     if (!isModerator) applyRaisedRestrictions(NO_CONTENT_FLAGS, data);
     assertAllowedContentFlags(NO_CONTENT_FLAGS, data);
+    const createGallerySettings =
+      data.minor || data.sfwOnly
+        ? { ...gallerySettings, level: sfwBrowsingLevelsFlag }
+        : gallerySettings;
 
     const result = await dbWrite.$transaction(
       async (tx) => {
@@ -3598,7 +3628,7 @@ export const upsertModel = async (
             ...data,
             // Publishing goes through model.publish, which enforces what a create would skip.
             status: isModerator ? status : ModelStatus.Draft,
-            gallerySettings,
+            gallerySettings: createGallerySettings,
             meta:
               bountyId || meta
                 ? {
@@ -3749,15 +3779,18 @@ export const upsertModel = async (
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
           if (
             profanityAutoNsfw &&
-            (locked.lockedProperties.includes('nsfw') || raisedRestrictions(locked, data).length)
+            (locked.lockedProperties.includes('nsfw') || holdsRestriction(locked, data))
           ) {
             profanityAutoNsfw = false;
             meta = withoutSystemNsfwLock(meta ?? {});
+            // A locked nsfw was already stripped from the save above.
+            if (!locked.lockedProperties.includes('nsfw')) data.nsfw = nsfwBeforeProfanity;
           } else if (profanityAutoNsfw) {
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
-          applyRaisedRestrictions(locked, data);
+          const ownerFlagOverride = applyRaisedRestrictions(locked, data);
+          if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
         }
         if (
           !isModerator &&
