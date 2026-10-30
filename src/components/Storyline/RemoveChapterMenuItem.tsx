@@ -45,7 +45,7 @@ export function RemoveChapterMenuItem({
       children: (
         <Text size="sm">
           Remove <strong>{title}</strong> from the storyline? Its post stays published on its own.
-          {byAuthor && ' Any Buzz you paid to add it is not returned.'}
+          {byAuthor && ' If you paid to add it, that Buzz is not returned.'}
         </Text>
       ),
       labels: { confirm: 'Remove', cancel: 'Cancel' },
