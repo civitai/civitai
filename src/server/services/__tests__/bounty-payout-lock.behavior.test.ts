@@ -120,4 +120,26 @@ describe('the payout-pending query on real rows', () => {
     const [{ at: after }] = (await holder.db.query<{ at: Date }>(before.text)).rows;
     expect(after.getTime()).toBeGreaterThan(at.getTime());
   });
+
+  // The expiry job stamps awardedAt with this expression read through a subquery on the bounty.
+  it('stamps an expiry award with the same time as the payout it records', async () => {
+    await holder.db.exec(`
+      CREATE TABLE IF NOT EXISTS "BountyBenefactor" (
+        "bountyId" int, "userId" int, "awardedToId" int, "awardedAt" timestamp(3)
+      );
+      INSERT INTO "BountyBenefactor" VALUES (1, 7, NULL, NULL);
+      UPDATE "Bounty" SET "payoutSettledAt" = now() + interval '1 minute', "payoutRecordedAt" = NULL
+        WHERE id = 1;
+    `);
+    await holder.db.exec(`BEGIN;
+      UPDATE "BountyBenefactor" bf SET "awardedToId" = 9, "awardedAt" = (SELECT ${NEXT_PAYOUT_RECORDED_AT_SQL} FROM "Bounty" b WHERE b.id = 1) WHERE bf."bountyId" = 1 AND bf."awardedToId" IS NULL AND bf."awardedAt" IS NULL;
+      UPDATE "Bounty" b SET "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL} WHERE b.id = 1;
+      COMMIT;`);
+    const { rows } = await holder.db.query<{ awarded: Date; recorded: Date; settled: Date }>(
+      `SELECT bf."awardedAt" AS awarded, b."payoutRecordedAt" AS recorded, b."payoutSettledAt" AS settled
+       FROM "BountyBenefactor" bf JOIN "Bounty" b ON b.id = bf."bountyId" WHERE b.id = 1`
+    );
+    expect(rows[0].awarded).toEqual(rows[0].recorded);
+    expect(rows[0].recorded.getTime()).toBeGreaterThan(rows[0].settled.getTime());
+  });
 });

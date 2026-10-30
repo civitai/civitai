@@ -51,9 +51,10 @@ vi.mock('~/server/email/templates', () => ({
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { NEXT_PAYOUT_RECORDED_AT_SQL } from '~/server/services/bounty-payout-lock';
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const mockDbWrite = dbMock.dbWrite;
 const runPrepareBounties = bountyJobs[0] as unknown as () => Promise<void>;

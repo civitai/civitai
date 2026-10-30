@@ -176,9 +176,13 @@ function transactionClient(held: (() => void)[]) {
         Object.assign(b, data);
         return { ...b };
       },
-      findFirst: async () => {
+      findFirst: async ({ where }: { where: { awardedToId?: null; awardedAt?: null } }) => {
         await tick();
-        const b = benefactors.find((x) => x.awardedToId === null);
+        const b = benefactors.find(
+          (x) =>
+            (!('awardedToId' in where) || x.awardedToId === null) &&
+            (!('awardedAt' in where) || x.awardedAt == null)
+        );
         return b ? { userId: b.userId } : null;
       },
       findMany: async () => {
@@ -1056,6 +1060,21 @@ describe('several awards on one bounty', () => {
     expect(isPayoutPending(bounty!)).toBe(false);
   });
 
+  it('refuses a second award from a supporter whose awarded entry was deleted', async () => {
+    Object.assign(benefactors[0], { awardedToId: null, awardedAt: new Date(1000) });
+    await expect(awardBountyEntry({ id: 11, userId: 5 })).rejects.toThrow(
+      'Supporters have already awarded an entry.'
+    );
+    expect(attempts).toEqual([]);
+  });
+
+  it('completes the bounty once every supporter has awarded, counting a deleted entry', async () => {
+    Object.assign(benefactors[1], { awardedToId: null, awardedAt: new Date(1000) });
+    bounty!.payoutSettledAt = new Date(2000);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(bounty!.complete).toBe(true);
+  });
+
   it('records an award after the last record even when that record is ahead of this clock', async () => {
     const ahead = new Date(Date.now() + 60_000);
     bounty!.payoutRecordedAt = ahead;
@@ -1210,7 +1229,26 @@ describe('deleting an open bounty with an award not yet paid', () => {
 
   it('keeps the bounty when that award cannot be paid', async () => {
     buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
-    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow();
+    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('not deleted');
+    expect(bounty).not.toBeNull();
+    expect(bounty?.refunded).toBe(false);
+  });
+
+  it('lets a moderator go past an award with no winner, refunding instead', async () => {
+    bounty!.payoutWinnerUserId = null;
+    await deleteBountyById({ id: 4, isModerator: true });
+    expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    expect(bounty).toBeNull();
+  });
+
+  it('refuses to claim while awards keep arriving, and keeps the bounty', async () => {
+    // Each payment lands as another award is recorded, so the payout is never settled.
+    buzz.createBuzzTransactionMany.mockImplementation(async () => {
+      bounty!.payoutRecordedAt = new Date(bounty!.payoutRecordedAt!.getTime() + 1000);
+      return { transactions: ['t'], conflicts: [] };
+    });
+    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('kept arriving');
     expect(bounty).not.toBeNull();
     expect(bounty?.refunded).toBe(false);
   });

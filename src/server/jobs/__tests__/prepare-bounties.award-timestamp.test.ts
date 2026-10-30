@@ -64,16 +64,22 @@ vi.mock('~/server/email/templates', () => {
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { NEXT_PAYOUT_RECORDED_AT_SQL } from '~/server/services/bounty-payout-lock';
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mockDbWrite = dbMock.dbWrite;
 loggingMock.logToAxiom.mockImplementation(() => ({ catch: vi.fn() }));
 dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (sql: string) => {
   executedStatements.push(sql);
   return 1;
 });
-const lockedBounty = { complete: false, refunded: false };
+const lockedBounty: {
+  complete: boolean;
+  refunded: boolean;
+  payoutRecordedAt?: Date | null;
+  payoutSettledAt?: Date | null;
+} = { complete: false, refunded: false };
 
 const BOUNTY_ID = 4321;
 const WINNER_ENTRY_ID = 99;
@@ -110,6 +116,12 @@ describe('prepare-bounties auto-award', () => {
 
     lockedBounty.complete = false;
     lockedBounty.refunded = false;
+    lockedBounty.payoutRecordedAt = null;
+    lockedBounty.payoutSettledAt = null;
+    dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (sql: string) => {
+      executedStatements.push(sql);
+      return 1;
+    });
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
       const sql = strings.join('');
       if (sql.includes('FOR UPDATE')) return [{ ...lockedBounty }];
@@ -148,6 +160,34 @@ describe('prepare-bounties auto-award', () => {
       )
     ).toBe(true);
     expect(mockSettle).toHaveBeenCalledExactlyOnceWith(BOUNTY_ID, { firstAttempt: true });
+  });
+
+  it('re-awards only supporters who never awarded, not one whose awarded entry was deleted', async () => {
+    await runPrepareBounties();
+    const benefactorUpdate = executedStatements.find((sql) =>
+      sql.includes('UPDATE "BountyBenefactor"')
+    );
+    expect(benefactorUpdate).toMatch(
+      /WHERE bf\."bountyId" = 4321 AND bf\."awardedToId" IS NULL AND bf\."awardedAt" IS NULL;/
+    );
+  });
+
+  it('completes without recording a payout when every supporter has already awarded', async () => {
+    dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (sql: string) => {
+      executedStatements.push(sql);
+      return sql.includes('UPDATE "BountyBenefactor"') ? 0 : 1;
+    });
+    await runPrepareBounties();
+    const bountyUpdate = executedStatements.find((sql) => sql.includes('UPDATE "Bounty" b'));
+    expect(bountyUpdate).toContain('"complete" = true');
+    expect(bountyUpdate).not.toContain('payoutRecordedAt');
+  });
+
+  it('leaves a bounty whose award is still being paid to a later run', async () => {
+    lockedBounty.payoutRecordedAt = new Date();
+    await runPrepareBounties();
+    expect(executedStatements).toEqual([]);
+    expect(mockSettle).not.toHaveBeenCalled();
   });
 
   it('never picks an entry whose author is gone as the winner', async () => {

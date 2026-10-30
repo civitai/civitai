@@ -20,6 +20,7 @@ import {
   settleBountyPayout,
 } from '~/server/services/bounty.service';
 import {
+  isPayoutPending,
   lockBountyForPayout,
   NEXT_PAYOUT_RECORDED_AT_SQL,
 } from '~/server/services/bounty-payout-lock';
@@ -238,6 +239,8 @@ async function settleExpiredBounty({
   const claim = await dbWrite.$transaction(async (tx) => {
     const locked = await lockBountyForPayout(tx, id);
     if (!locked || locked.complete || locked.refunded) return null;
+    // An award still being paid is settled by its own path or the retry job first.
+    if (isPayoutPending(locked)) return { kind: 'awardPending' as const };
 
     const [mainBenefactor] = await tx.$queryRaw<{ currency: Currency }[]>`
         SELECT currency FROM "BountyBenefactor" bf WHERE bf."bountyId" = ${id} AND bf."userId" = ${userId} LIMIT 1;
@@ -287,17 +290,26 @@ async function settleExpiredBounty({
     }
 
     // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
-    await tx.$executeRawUnsafe(`
-        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = (SELECT ${NEXT_PAYOUT_RECORDED_AT_SQL} FROM "Bounty" b WHERE b.id = ${id}) WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
+    // A supporter who already awarded keeps that award, even after its entry was deleted.
+    const awarded = await tx.$executeRawUnsafe(`
+        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = (SELECT ${NEXT_PAYOUT_RECORDED_AT_SQL} FROM "Bounty" b WHERE b.id = ${id}) WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL AND bf."awardedAt" IS NULL;
       `);
-    await tx.$executeRawUnsafe(`
+    await tx.$executeRawUnsafe(
+      awarded
+        ? `
         UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL}, "payoutWinnerUserId" = ${winnerEntry.userId} WHERE b.id = ${id};
-      `);
+      `
+        : `UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};`
+    );
     return { kind: 'award' as const, currency, winnerEntry };
   });
 
   if (!claim) {
     log(` Bounty ${id} was already claimed; skipped`);
+    return;
+  }
+  if (claim.kind === 'awardPending') {
+    log(` Bounty ${id} has an award still being paid; postponed`);
     return;
   }
   if (claim.kind === 'postponed') {

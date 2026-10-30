@@ -259,7 +259,8 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
         where: { bountyId_userId: { userId, bountyId: entry.bountyId } },
       });
-      if (benefactor.awardedToId) {
+      // `awardedAt` outlives the awarded entry: an award stands after its entry is deleted.
+      if (benefactor.awardedToId || benefactor.awardedAt) {
         log('error', 'Benefactor already awarded an entry', {
           previouslyAwardedEntryId: benefactor.awardedToId,
         });
@@ -275,7 +276,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       const unawardedBountyBenefactors = await tx.bountyBenefactor.findFirst({
         select: { userId: true },
-        where: { awardedToId: null, bountyId: entry.bountyId },
+        where: { awardedToId: null, awardedAt: null, bountyId: entry.bountyId },
       });
       // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
       await tx.bounty.update({
