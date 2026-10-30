@@ -1090,7 +1090,12 @@ export const upsertArticle = async ({
         } catch (e) {
           // Non-blocking: continue even if image linking fails, but log the error
           const error = e as Error;
-          await keepOffPublicAfterLinkFailure(result.id, ArticleIngestionStatus.Pending);
+          await keepOffPublicAfterLinkFailure({
+            articleId: result.id,
+            content: result.content,
+            editorId: userId,
+            ingestion: ArticleIngestionStatus.Pending,
+          });
           logToAxiom({
             type: 'error',
             name: 'article-image-linking',
@@ -1537,7 +1542,13 @@ export async function applyArticleContentChange({
       } catch (e) {
         // Non-blocking: continue even if image linking fails, but log the error
         const error = e as Error;
-        if (scanContent) await keepOffPublicAfterLinkFailure(id, ArticleIngestionStatus.Rescan);
+        if (scanContent)
+          await keepOffPublicAfterLinkFailure({
+            articleId: id,
+            content,
+            editorId: userId,
+            ingestion: ArticleIngestionStatus.Rescan,
+          });
         logToAxiom({
           type: 'error',
           name: 'article-image-linking',
@@ -1934,10 +1945,34 @@ export async function unpublishArticleById({
 // --- Article Image Scanning Functions ---
 
 /**
- * Content whose images failed to link is shown with none of them scanned, so the article leaves
- * public until a later link or rescan settles it. Raw SQL: this is not an edit.
+ * Content whose images failed to link is shown with none of them scanned. Its urls with no row are
+ * deferred, so the recompute keeps the article off public and the settle job links them later; the
+ * article leaves public now. Raw SQL: this is not an edit.
  */
-async function keepOffPublicAfterLinkFailure(articleId: number, ingestion: ArticleIngestionStatus) {
+export async function keepOffPublicAfterLinkFailure({
+  articleId,
+  content,
+  editorId,
+  ingestion,
+  now = new Date(),
+}: {
+  articleId: number;
+  content: string;
+  editorId: number;
+  ingestion: ArticleIngestionStatus;
+  now?: Date;
+}) {
+  try {
+    const unlinked = await contentUrlsWithoutRows(content);
+    if (unlinked.length)
+      await writeContentLinkHold(dbWrite, {
+        articleId,
+        content,
+        hold: { deferred: unlinked, refused: [], editorId, deferredSince: now, reportedAt: null },
+      });
+  } catch (error) {
+    handleLogError(error as Error, 'article-image-linking-hold', { articleId });
+  }
   await dbWrite.$executeRaw`
     UPDATE "Article" SET ingestion = ${ingestion}::"ArticleIngestionStatus" WHERE id = ${articleId}
   `.catch((error) => handleLogError(error, 'article-image-linking-hold', { articleId }));
@@ -2093,7 +2128,7 @@ export async function linkArticleContentImages({
         urls: unlinked,
         ownerId,
         editorId: userId,
-        wasDeferred: new Set(previousHold?.deferred),
+        wasHeld: new Set([...(previousHold?.deferred ?? []), ...(previousHold?.refused ?? [])]),
         now,
       });
       hold = nextContentLinkHold(previousHold, { ...classified, editorId: userId }, now);

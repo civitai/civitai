@@ -68,14 +68,14 @@ export async function classifyUnlinkedContentUrls({
   urls,
   ownerId,
   editorId,
-  wasDeferred = new Set(),
+  wasHeld = new Set(),
   now,
 }: {
   urls: string[];
   ownerId: number;
   editorId: number;
-  /** Urls deferred before: once unrecorded keys are refused on save, one still unrecorded is too. */
-  wasDeferred?: Set<string>;
+  /** Urls held before: once unrecorded keys are refused on save, one still unrecorded stays refused. */
+  wasHeld?: Set<string>;
   now: Date;
 }) {
   const refuseUnrecorded = now >= UNRECORDED_KEYS_ACCEPTED_UNTIL;
@@ -97,7 +97,7 @@ export async function classifyUnlinkedContentUrls({
       const anyUnrecorded = keys.some((key) => unrecorded.has(key));
       if (keys.some((key) => others.has(key))) refused.push(url);
       else if (anyUnrecorded && lookupFailed) deferred.push(url);
-      else if (anyUnrecorded && refuseUnrecorded && wasDeferred.has(url)) refused.push(url);
+      else if (anyUnrecorded && refuseUnrecorded && wasHeld.has(url)) refused.push(url);
     }
   }
   return { refused, deferred };

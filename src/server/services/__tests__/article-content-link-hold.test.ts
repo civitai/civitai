@@ -40,8 +40,12 @@ vi.mock('~/server/services/article-rating-review.helpers', async (importOriginal
 const createReport = vi.hoisted(() => vi.fn(async () => null));
 vi.mock('~/server/services/report.service', () => ({ createReport }));
 
-const { assertArticleContentUrlsUsable, linkArticleContentImages, recomputeArticleIngestion } =
-  await import('~/server/services/article.service');
+const {
+  assertArticleContentUrlsUsable,
+  keepOffPublicAfterLinkFailure,
+  linkArticleContentImages,
+  recomputeArticleIngestion,
+} = await import('~/server/services/article.service');
 const { recordUploadKeyOwner, ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE } = await import(
   '~/server/services/image-url-ownership'
 );
@@ -581,5 +585,35 @@ describe('a deferred url still unrecorded once the lookups are back', () => {
     await settleContentLinkHolds(new Date('2026-11-01T00:00:00Z'));
     expect(await rows()).toEqual([KEY]);
     expect(await hold()).toBeNull();
+  });
+});
+
+describe('a failed link', () => {
+  it('takes the article off public and keeps it there until its urls settle', async () => {
+    await keepOffPublicAfterLinkFailure({
+      articleId: ARTICLE_ID,
+      content: CONTENT,
+      editorId: AUTHOR,
+      ingestion: 'Rescan' as never,
+      now: T0,
+    });
+    expect(await ingestion()).toBe('Rescan');
+    expect((await hold())?.deferred).toEqual([KEY]);
+    // A later recompute, from a webhook or the reconcile job, does not make it public again.
+    await recomputeArticleIngestion(ARTICLE_ID);
+    expect(await ingestion()).toBe('Pending');
+  });
+});
+
+describe('a refused url still unrecorded', () => {
+  it('stays refused on every later pass, not only the first', async () => {
+    lookupsDown();
+    await link();
+    lookupsUp();
+    await settleContentLinkHolds(at(10 * MINUTE));
+    await settleContentLinkHolds(at(20 * MINUTE));
+    await link({ now: at(30 * MINUTE) });
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.refused).toEqual([KEY]);
   });
 });
