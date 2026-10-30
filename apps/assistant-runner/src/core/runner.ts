@@ -852,13 +852,25 @@ export class Runner implements RunService {
     const remaining = begun.deadline - Date.now();
     if (remaining <= 0) return end('ran_out', { messages: carried, status: 'done', ranOut: true });
 
+    // The pass's tools now. A rebuild mid-reply (`reopenTools`) opens new ones: every set opened is
+    // closed once, whichever of the rebuild, a Stop or the pass's end comes to it first.
     let tools: OpenTools | undefined;
-    let closing: Promise<void> | undefined;
-    const closeTools = () =>
-      (closing ??= tools
-        ?.close()
-        .catch((error) => log.warn({ err: error, runId }, 'closing the tools failed')));
+    const closings = new Map<OpenTools, Promise<void>>();
+    const closeSet = (set: OpenTools | undefined): Promise<void> => {
+      if (!set) return Promise.resolve();
+      let closing = closings.get(set);
+      if (!closing) {
+        closing = set
+          .close()
+          .catch((error) => log.warn({ err: error, runId }, 'closing the tools failed'));
+        closings.set(set, closing);
+      }
+      return closing;
+    };
+    const closeTools = () => closeSet(tools);
+    let aborted = false;
     const abort = () => {
+      aborted = true;
       core.abort();
       void closeTools();
     };
@@ -875,8 +887,10 @@ export class Runner implements RunService {
       outcome = await core.run({
         seq,
         ...(from ? { from } : {}),
-        tools: async () => {
-          tools = await this.#deps.tools.open({
+        // Built again mid-reply when a tool's result says `reopenTools` (a new app's tools): then from
+        // where the reply is, and the tools built before are closed.
+        tools: async (sofar?: { messages: ModelMessage[] }) => {
+          const opened = await this.#deps.tools.open({
             userId,
             runId,
             conversationId,
@@ -886,10 +900,11 @@ export class Runner implements RunService {
               earlier: (head?.turns ?? [])
                 .filter((saved) => saved.seq < seq)
                 .flatMap((saved) => turnFrom(saved).assistant.messages),
-              current: from?.messages ?? [],
+              current: sofar?.messages ?? from?.messages ?? [],
             },
+            ...(sofar ? { rebuild: true } : {}),
             subagents: input.subagents === true,
-            model: () => this.#model(input, stop, carriesOn),
+            model: () => this.#model(input, stop, carriesOn, (buzz) => progress.charged(buzz)),
             maxOutputTokens: outputTokenCap(input.settings.maxOutputTokens),
             report: (result) => {
               emitter.flushParts();
@@ -903,9 +918,17 @@ export class Runner implements RunService {
             subagentProgress: (toolCallId, progress) =>
               emitter.emit({ type: 'subagent-progress', toolCallId, progress }),
           });
-          return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
+          const before = tools;
+          tools = opened;
+          // A Stop while these opened closed only the ones before: these are closed too.
+          if (aborted) await closeSet(opened);
+          await closeSet(before);
+          return runAfterSaved(opened.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
-        request: (toolSet) => this.#request(input, head, toolSet, stop, carriesOn, tools),
+        request: (toolSet) =>
+          this.#request(input, head, toolSet, stop, carriesOn, tools, (buzz) =>
+            progress.charged(buzz)
+          ),
         retrying: (attempt, trace) => {
           emitter.flushParts();
           emitter.emit({ type: 'network-retry', attempt, trace });
@@ -994,7 +1017,12 @@ export class Runner implements RunService {
     );
   }
 
-  #model(input: ReplyInput, signal: AbortSignal, carriesOn: boolean) {
+  #model(
+    input: ReplyInput,
+    signal: AbortSignal,
+    carriesOn: boolean,
+    onCharge?: (buzz: number) => void
+  ) {
     return this.#deps.models.languageModel({
       userId: input.userId,
       runId: input.runId,
@@ -1004,6 +1032,7 @@ export class Runner implements RunService {
       signal,
       seq: input.seq,
       ...(carriesOn ? { carriesOn: true } : {}),
+      ...(onCharge ? { onCharge } : {}),
     });
   }
 
@@ -1013,7 +1042,8 @@ export class Runner implements RunService {
     tools: ToolSet,
     signal: AbortSignal,
     carriesOn: boolean,
-    opened?: OpenTools
+    opened?: OpenTools,
+    onCharge?: (buzz: number) => void
   ): AgentCoreRequest {
     const { settings } = input;
     // A provider that builds the reply's instructions (App Assistant's) replaces the page's own.
@@ -1033,7 +1063,7 @@ export class Runner implements RunService {
       spoken: settings.spokenReplies,
     });
     return {
-      model: this.#model(input, signal, carriesOn),
+      model: this.#model(input, signal, carriesOn, onCharge),
       // As the browser's Agent builds it, with the provider's rules (`systemPrompt`) and own tools.
       system: buildSystemPrompt({
         now: new Date(),

@@ -424,6 +424,28 @@ describe('StorylineQueueList', () => {
     expect(button(el, 'Accept').disabled).toBe(true);
     expect(button(el, 'Decline').disabled).toBe(false);
   });
+
+  // Blocked is a moderation verdict on someone else's post: the owner is never shown it.
+  it('marks a Blocked-level row unusable without naming Blocked, and will not accept it', () => {
+    const blocked = {
+      ...row(3),
+      post: { id: 103, title: 'Gone', nsfwLevel: NsfwLevel.PG | NsfwLevel.Blocked },
+    };
+    const el = render(
+      React.createElement(StorylineQueueList, {
+        rows: [blocked],
+        hasMore: false,
+        onLoadMore: () => undefined,
+        onAct: () => undefined,
+        busy: null,
+      })
+    );
+
+    expect(visibleText(el)).toContain("can't be used in a storyline");
+    expect(visibleText(el)).not.toContain('Blocked');
+    expect(button(el, 'Accept').disabled).toBe(true);
+    expect(button(el, 'Decline').disabled).toBe(false);
+  });
 });
 
 async function clickAndSettle(node: HTMLButtonElement) {

@@ -260,13 +260,17 @@ describe('setFirstChapter', () => {
 
   it('refuses a post with an image taken down', async () => {
     await db.pg.exec(`UPDATE "Image" SET "tosViolation" = true WHERE "postId" = 100`);
-    await expect(attach(100)).rejects.toThrow('This post cannot be added to a storyline');
+    await expect(attach(100)).rejects.toThrow(
+      "This post or one of its images can't be used in a storyline"
+    );
     expect(await chaptersOf(EMPTY)).toEqual([]);
   });
 
   it('refuses a taken-down post', async () => {
     await db.pg.exec(`UPDATE "Post" SET "tosViolation" = true WHERE id = 100`);
-    await expect(attach(100)).rejects.toThrow('This post cannot be added to a storyline');
+    await expect(attach(100)).rejects.toThrow(
+      "This post or one of its images can't be used in a storyline"
+    );
     expect(await chaptersOf(EMPTY)).toEqual([]);
   });
 
@@ -293,7 +297,7 @@ describe('setFirstChapter', () => {
     `);
 
     await expect(attach(100)).rejects.toThrow(
-      "This post is rated above the storyline's maximum rating"
+      "This post is rated above this storyline's maximum. This storyline allows up to PG-13; this post is R"
     );
     expect(await ceilingOf(EMPTY)).toBe(PG13);
     expect(await chaptersOf(EMPTY)).toEqual([]);

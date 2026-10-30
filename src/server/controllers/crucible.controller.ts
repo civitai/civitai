@@ -5,6 +5,7 @@ import type {
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
+  TakeDownCrucibleSchema,
   RemoveCrucibleEntrySchema,
   WithdrawCrucibleEntrySchema,
   UpdateCrucibleSchema,
@@ -57,6 +58,8 @@ import {
   getUserActiveCrucibles,
   getUserCrucibleStats,
   isCrucibleHiddenByScan,
+  isCrucibleTakenDownForViewer,
+  takeDownCrucible,
   submitEntry,
   submitVote,
   withoutEntryScores,
@@ -117,6 +120,18 @@ export const getCrucibleByIdHandler = async ({
     blockedCreatorIds: await getAllBlockedCreatorIds(ctx.user),
   });
   const viewer = { viewerId: ctx.user?.id, isModerator: !!ctx.user?.isModerator };
+  if (crucible && isCrucibleTakenDownForViewer(crucible, viewer)) {
+    // Its owner sees why it was removed, not what was removed.
+    if (crucible.userId !== viewer.viewerId) return null;
+    return {
+      ...crucible,
+      description: null,
+      image: null,
+      heroImage: null,
+      viewerEntries: [],
+      prizeWinners: [],
+    };
+  }
   if (crucible && isCrucibleHiddenByScan(crucible, viewer)) return null;
   // On green a non-SFW crucible is returned so the page can point to the mature site; its adult
   // text stays off green.
@@ -327,6 +342,26 @@ export const cancelCrucibleHandler = async ({
       type: 'error',
       name: 'crucible-cancel-refund-failed',
       message: `Crucible ${input.id} was cancelled but ${result.failedRefunds.length} refund(s) failed; cancel it again to finish.`,
+      crucibleId: input.id,
+      userId: ctx.user.id,
+      failedRefunds: result.failedRefunds,
+    });
+  return result;
+};
+
+export const takeDownCrucibleHandler = async ({
+  input,
+  ctx,
+}: {
+  input: TakeDownCrucibleSchema;
+  ctx: ProtectedContext;
+}) => {
+  const result = await takeDownCrucible({ ...input, moderatorId: ctx.user.id });
+  if (result.failedRefunds.length)
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-takedown-refund-failed',
+      message: `Crucible ${input.id} was taken down but ${result.failedRefunds.length} refund(s) failed; take it down again to finish.`,
       crucibleId: input.id,
       userId: ctx.user.id,
       failedRefunds: result.failedRefunds,

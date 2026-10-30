@@ -237,12 +237,14 @@ export function getCrucibleManageActions({
   endAt,
   isCreator,
   isModerator,
+  takenDownAt = null,
   now = new Date(),
 }: {
   status: CrucibleStatus;
   endAt: Date | null;
   isCreator: boolean;
   isModerator: boolean;
+  takenDownAt?: Date | null;
   now?: Date;
 }) {
   const ended =
@@ -250,11 +252,14 @@ export function getCrucibleManageActions({
     status === CrucibleStatus.Cancelled ||
     (!!endAt && new Date(endAt) <= now);
   const isPending = status === CrucibleStatus.Pending;
+  // An Active crucible past its end is finalize's until it lands as Completed.
+  const finalizing = status === CrucibleStatus.Active && !!endAt && new Date(endAt) <= now;
   return {
     canEdit:
       !ended && (isModerator || (isCreator && (isPending || status === CrucibleStatus.Active))),
     canCancel: !ended && (isModerator || (isCreator && isPending)),
     canRemoveEntries: !ended && isModerator && status === CrucibleStatus.Active,
+    canTakeDown: isModerator && !takenDownAt && !finalizing,
   };
 }
 

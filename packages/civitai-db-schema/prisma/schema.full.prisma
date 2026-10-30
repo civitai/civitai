@@ -6185,8 +6185,28 @@ model Article {
   collectionItems    CollectionItem[]
   rewardsBonusEvents RewardsBonusEvent[]
   ratingReviews      ArticleRatingReview[]
+  contentLinkHold    ArticleContentLinkHold?
 
   @@index([status, ingestion, nsfwLevel])
+}
+
+/// Content urls of an article that linking created no Image row for yet: deferred until the
+/// upload key's issuer can be read, refused while it is someone other than the owner or editor.
+/// The article stays off public while any is held.
+model ArticleContentLinkHold {
+  articleId     Int       @id
+  article       Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  deferred      String[]  @default([])
+  refused       String[]  @default([])
+  /// Who saved the content; their own keys count as the owner's.
+  editorId      Int
+  /// When a url was first deferred, kept while any stays deferred.
+  deferredSince DateTime?
+  /// Set once a deferral outlives the backstop and a moderator report is filed.
+  reportedAt    DateTime?
+  checkedAt     DateTime  @default(now())
+
+  @@index([checkedAt])
 }
 
 model PressMention {
@@ -7394,6 +7414,18 @@ model ShopArtworkKeyOwner {
   key        String   @id
   userId     Int
   recordedAt DateTime @default(now())
+}
+
+/// A Creator Shop takedown's artwork key, kept after the listing is deleted so the url stays taken
+/// down. Written only by `recordShopTakedownArtwork`.
+model ImageCdnShopTakedown {
+  id          Int      @unique @default(autoincrement())
+  url         String
+  shopItemId  Int
+  userId      Int?
+  takenDownAt DateTime @default(now())
+
+  @@id([url, shopItemId])
 }
 
 /// A short lease on one url while a cdn-access-sync run calls the image server about it.
@@ -11127,6 +11159,12 @@ model Crucible {
   // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
   // shown to non-moderators.
   eventTags         String[]       @default([])
+  // A moderator takedown: the page is gone for everyone but moderators. Null on an owner's cancel.
+  takenDownAt       DateTime?
+  takenDownById     Int?
+  takedownReason    String?
+  // Decided when it is taken down, so every re-run (and a re-cancel) pays the creator the same way.
+  takedownRefundsCreator Boolean @default(false)
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
