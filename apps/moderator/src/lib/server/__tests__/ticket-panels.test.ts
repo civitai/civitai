@@ -14,6 +14,7 @@ const contentIssue = vi.fn();
 const generator = vi.fn();
 const lora = vi.fn();
 const supportAccount = vi.fn();
+const membership = vi.fn();
 const loaders = {
   account: (...a: unknown[]) => account(...a),
   appeals: (...a: unknown[]) => appeals(...a),
@@ -23,6 +24,7 @@ const loaders = {
   generator: (...a: unknown[]) => generator(...a),
   lora: (...a: unknown[]) => lora(...a),
   supportAccount: (...a: unknown[]) => supportAccount(...a),
+  membership: (...a: unknown[]) => membership(...a),
 } as never;
 const all = () => true;
 
@@ -44,6 +46,7 @@ beforeEach(() => {
   generator.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   lora.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   supportAccount.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
+  membership.mockReset().mockResolvedValue({ status: 'ok', userId: 7, subscription: null });
 });
 
 describe('loadPanels', () => {
@@ -146,6 +149,19 @@ describe('loadPanels', () => {
       expect(await loadPanels(t, (p) => p !== '/retool/user-lookup', loaders)).toEqual({});
     }
   );
+
+  it('shows only the membership panel on a support Billing or Membership ticket, under the User Lookup grant', async () => {
+    const t = { ...ticket, view: 'support' as const, cfFeature: 'Billing or Membership' };
+    const res = await loadPanels(t, all, loaders);
+    expect(Object.keys(res)).toEqual(['membership']);
+    expect(membership).toHaveBeenCalledWith({ ...t, civitaiUserId: 7 }, all);
+    expect(await loadPanels({ ...t, view: 'moderation' }, all, loaders)).toEqual({});
+    expect(await loadPanels({ ...t, civitaiUserId: null }, all, loaders)).toEqual({
+      membership: { status: 'unlinked' },
+    });
+    expect(await loadPanels(t, (p) => p !== '/retool/user-lookup', loaders)).toEqual({});
+    expect(membership).toHaveBeenCalledTimes(1);
+  });
 
   it('says only that no user is linked, without loading', async () => {
     expect(await loadPanels({ ...ticket, civitaiUserId: null }, all, loaders)).toEqual({

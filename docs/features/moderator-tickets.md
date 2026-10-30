@@ -78,6 +78,8 @@ is its own page grant. Acting on a ticket is a separate permission:
   - **LoRA Trainer**: recent training runs with their publish block (`/audit/training-models`), where Block /
     Allow publishing posts the intended state and is refused if the model is someone else's or already in that
     state. Buzz charges are not shown.
+  - **Billing or Membership** (read-only): the user's current subscription (`/retool/user-lookup`): plan, provider,
+    status, cancel-at-period-end, period end and price. No membership codes, payment method or provider ids.
 
   Support actions are registered only on the support page. Every panel action re-reads the ticket and is refused
   when its panel would be hidden in the ticket's current view.

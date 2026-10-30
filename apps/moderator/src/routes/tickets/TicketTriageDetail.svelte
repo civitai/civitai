@@ -23,6 +23,7 @@
   import TicketGeneratorRestrictions from './TicketGeneratorRestrictions.svelte';
   import TicketHistory from './TicketHistory.svelte';
   import TicketLoraRuns from './TicketLoraRuns.svelte';
+  import TicketMembership from './TicketMembership.svelte';
   import TicketRatingDisputes from './TicketRatingDisputes.svelte';
   import TicketReply from './TicketReply.svelte';
   import TicketStatusMenu from './TicketStatusMenu.svelte';
@@ -320,6 +321,9 @@
   {/if}
   {#if panels.lora}
     <TicketLoraRuns ticketId={row.id} lora={panels.lora} ondone={accountDone} />
+  {/if}
+  {#if panels.membership}
+    <TicketMembership membership={panels.membership} />
   {/if}
 {/snippet}
 

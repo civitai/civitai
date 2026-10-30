@@ -8,6 +8,7 @@ import { TRAINING_MODELS_PATH, loraPanelFor } from './lora-panel';
 import { RATINGS_PATH } from './rating-disputes';
 import type { TicketView } from './routing';
 import { supportAccountPanelFor } from './support-account-panel';
+import { USER_LOOKUP_PATH, membershipPanelFor } from './support-panels';
 
 /** What decides whether a panel applies to a ticket. */
 export type PanelContext = {
@@ -65,6 +66,11 @@ export const PANELS = {
   supportAccount: {
     readGrants: ['/retool/user-lookup'],
     visibility: supportAccountPanelFor,
+  },
+  // Read-only cards of User Lookup's sources, under its page grant.
+  membership: {
+    readGrants: [USER_LOOKUP_PATH],
+    visibility: membershipPanelFor,
   },
 } satisfies Record<string, PanelSpec>;
 
