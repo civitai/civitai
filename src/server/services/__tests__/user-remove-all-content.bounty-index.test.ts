@@ -129,7 +129,9 @@ beforeEach(() => {
       }));
     }
     if (!sql.text.includes(`'removedWithOwner' = 'true'`)) return [{ held: false }];
-    return (sql.values[0] as number[]).map((id) => ({ id }));
+    // Only a kept bounty still exists to carry the record; the deleted ones are gone.
+    const kept = keptByBountyDelete() as number[];
+    return (sql.values[0] as number[]).filter((id) => kept.includes(id)).map((id) => ({ id }));
   }) as never);
   bountyService.settleBountyPayout.mockImplementation(async () => false);
   bountyService.refundUnpayableBountyAward.mockImplementation(async () => false);

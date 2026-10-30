@@ -126,6 +126,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL,
       "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE
     );
+    CREATE DOMAIN "Availability" AS text;
+    CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);
     CREATE TABLE "Bounty" (
       id int PRIMARY KEY, "userId" int, complete boolean NOT NULL DEFAULT true,
       refunded boolean NOT NULL DEFAULT true, poi boolean NOT NULL DEFAULT false,
@@ -500,6 +502,13 @@ describe('the production delete paths keep held threads', () => {
         vi.mocked(dbMock.dbRead.bounty.findUnique).mockResolvedValue({
           userId: OWNER,
           expiresAt: new Date(),
+        } as never);
+        // The delete re-reads the row under its lock; no payout is recorded on it.
+        vi.mocked(dbMock.dbWrite.bounty.findUnique).mockResolvedValue({
+          id: 60,
+          userId: OWNER,
+          payoutRecordedAt: null,
+          payoutSettledAt: null,
         } as never);
       },
       run: () => deleteBountyById({ id: 60, isModerator: true }),
