@@ -16,9 +16,11 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
-const { assertGenerationInputUrlsUsable, assertStoredImageUrlsUnblocked } = await import(
-  '~/server/services/generation-input-urls'
-);
+const {
+  assertGenerationInputUrlsUsable,
+  assertStoredImageUrlsUnblocked,
+  GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+} = await import('~/server/services/generation-input-urls');
 const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
   '~/server/services/image-url-ownership'
 );
@@ -163,23 +165,28 @@ describe('assertGenerationInputUrlsUsable', () => {
     expect(await outcome()).toBe('accepted');
   });
 
-  it("matches another user's image however the url carries its key", async () => {
-    await givenImage();
-    expect(await outcome([`https://cdn.example/x/${KEY.toUpperCase()}/original=true`])).toBe(
-      'accepted'
-    );
-    await holder.db.exec(`UPDATE "Post" SET "publishedAt" = NULL`);
-    expect(await outcome([`https://cdn.example/x/${KEY.toUpperCase()}/original=true`])).toBe(
-      'refused'
-    );
+  it.each([
+    ['an absolute url on another host', `https://example.com/${KEY}`],
+    ['a url carrying it in a query string', `https://example.com/a.png?k=${KEY}`],
+    ['a url on the image host', `https://image.example/x/${KEY}/original=true`],
+    ['a relative path', `x/${KEY}`],
+    ['upper case', KEY.toUpperCase()],
+    ['padding', ` ${KEY}`],
+  ])("refuses the caller's own key given as %s", async (_, url) => {
+    await givenImage({ userId: CALLER });
+    expect(await outcome([KEY])).toBe('accepted');
+    expect(await outcome([url])).toBe('refused');
   });
 
-  it('matches an image stored under the full url it is sent as', async () => {
-    const url = `https://cdn.example/x/${KEY}/original=true`;
-    await givenImage({ url });
-    expect(await outcome([url])).toBe('accepted');
-    await holder.db.exec(`UPDATE "Post" SET "publishedAt" = NULL`);
-    expect(await outcome([url])).toBe('refused');
+  it('refuses with a message about the generation, not a cover image', async () => {
+    await expect(
+      assertGenerationInputUrlsUsable({ urls: [KEY], userId: CALLER, now: AFTER })
+    ).rejects.toThrow(GENERATION_IMAGE_UNAVAILABLE_MESSAGE);
+    await recordUploadKeyOwner(KEY, CALLER);
+    await givenImage({ blockedFor: 'moderated' });
+    await expect(
+      assertGenerationInputUrlsUsable({ urls: [KEY], userId: CALLER, now: AFTER })
+    ).rejects.toThrow(GENERATION_IMAGE_UNAVAILABLE_MESSAGE);
   });
 
   it('refuses more upload keys than one check takes', async () => {
@@ -241,6 +248,9 @@ describe('assertStoredImageUrlsUnblocked', () => {
     expect(await stored([KEY])).toBe('refused');
     expect(await stored([`https://cdn.example/x/${KEY.toUpperCase()}/original=true`])).toBe(
       'refused'
+    );
+    await expect(assertStoredImageUrlsUnblocked([KEY])).rejects.toThrow(
+      GENERATION_IMAGE_UNAVAILABLE_MESSAGE
     );
   });
 

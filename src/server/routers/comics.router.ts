@@ -127,12 +127,12 @@ import { registerMediaLocation } from '~/server/services/storage-resolver';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
-  imageUrlUnavailableError,
   recordUploadKeyOwner,
 } from '~/server/services/image-url-ownership';
 import {
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
+  generationImageUnavailableError,
 } from '~/server/services/generation-input-urls';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
@@ -760,7 +760,7 @@ async function getReferenceImages(referenceId: number) {
   });
 
   if (!reference) return { referenceName: '', refImages: [] };
-  if (reference.images.some((ri) => ri.image.blockedFor)) throw imageUrlUnavailableError();
+  if (reference.images.some((ri) => ri.image.blockedFor)) throw generationImageUnavailableError();
 
   return {
     referenceName: reference.name,
@@ -5825,7 +5825,9 @@ export const comicsRouter = router({
       }
       // A panel without a prompt saves its source image, and createImage checks it.
       await assertGenerationInputUrlsUsable({
-        urls: input.panels.filter((p) => p.prompt?.trim()).map((p) => p.sourceImageUrl),
+        urls: input.panels
+          .filter((p) => p.prompt?.trim() && p.sourceImageUrl)
+          .map((p) => p.sourceImageUrl),
         userId: ctx.user!.id,
       });
 

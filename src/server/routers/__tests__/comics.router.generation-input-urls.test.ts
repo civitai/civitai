@@ -17,7 +17,8 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mocks.getOrchestratorToken,
 }));
-vi.mock('~/server/services/generation-input-urls', () => ({
+vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   assertGenerationInputUrlsUsable: mocks.assertUsable,
   assertStoredImageUrlsUnblocked: mocks.assertStoredUnblocked,
 }));
@@ -26,6 +27,7 @@ import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { LAYOUT_OPTIONS } from '~/components/Comics/LayoutPicker';
 
 const USER_ID = 7;
 const SOURCE = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
@@ -146,12 +148,10 @@ describe('comics generation inputs', () => {
         code: 'BAD_REQUEST',
         message: expect.stringContaining('layoutImagePath'),
       });
-    await expect(
-      caller().createPanel({
-        ...input,
-        layoutImagePath: '/images/comics/layouts/3-panel-layout.png',
-      })
-    ).rejects.not.toMatchObject({ message: expect.stringContaining('layoutImagePath') });
+    for (const { imagePath } of LAYOUT_OPTIONS)
+      await expect(
+        caller().createPanel({ ...input, layoutImagePath: imagePath })
+      ).rejects.not.toMatchObject({ message: expect.stringContaining('layoutImagePath') });
   });
 
   it('bulkCreatePanels checks the source url of every panel it generates, and only those', async () => {
@@ -167,7 +167,7 @@ describe('comics generation inputs', () => {
         ],
       })
     ).rejects.toBe(refused);
-    expect(checkedUrls()).toEqual([[SOURCE, undefined]]);
+    expect(checkedUrls()).toEqual([[SOURCE]]);
     expectNothingStarted();
   });
 });
