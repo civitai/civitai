@@ -20,7 +20,7 @@ export const imageUrlUnavailableError = (message = COVER_IMAGE_UNAVAILABLE_MESSA
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 
-const MAX_KEYS = 64;
+export const MAX_KEYS = 64;
 // Overlapping matches too: one key's characters can begin another.
 const UUIDS = /(?=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))/gi;
 
@@ -56,7 +56,7 @@ function storedUrlsFor(url: string | null | undefined): string[] {
   return keys.length ? [url as string, ...keys] : [];
 }
 
-function keysIn(url: string | null | undefined): string[] {
+export function keysIn(url: string | null | undefined): string[] {
   if (!url) return [];
   return decodedForms(url).flatMap((value) =>
     [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())
@@ -337,4 +337,68 @@ export async function assertClientKeysIssuedToCaller({
     userId,
     keys: remaining.join(','),
   }).catch(() => undefined);
+}
+
+async function ownersFromShopArtwork(keys: string[], db: Db) {
+  const owners = new Map<string, number>();
+  if (!keys.length) return owners;
+  const rows = await db.$queryRaw<{ key: string; userId: number }[]>`
+    SELECT key, "userId" FROM "ShopArtworkKeyOwner" WHERE key = ANY(${keys}::text[])
+  `;
+  for (const { key, userId } of rows) owners.set(key, userId);
+  return owners;
+}
+
+/**
+ * The owner each key's issue record names: the record, then shop artwork's copy of it, then the
+ * upload request log. No row of anyone's counts. `failed`: a read failed, so a key missing from
+ * `owners` may still have a record.
+ */
+export async function keyIssueRecords(keys: string[], db: Db = dbWrite) {
+  const recorded = await ownersFromRedis(keys);
+  const kept = await ownersFromShopArtwork(
+    keys.filter((k) => !recorded.owners.has(k)),
+    db
+  );
+  for (const [key, owner] of kept) recorded.owners.set(key, owner);
+  const logged = await ownersFromClickhouse(keys.filter((k) => !recorded.owners.has(k)));
+  for (const [key, owner] of logged.owners) recorded.owners.set(key, owner);
+  return { owners: recorded.owners, failed: recorded.readFailed || logged.failed };
+}
+
+/**
+ * Shop artwork: each url must be a bare upload key with an issue record naming `userId` or
+ * `alsoIssuedTo`. Unlike `assertClientKeysIssuedToCaller`, a row of theirs is no proof and an
+ * unrecorded key is refused at once. Each proven key's owner is kept, so the proof outlives the
+ * record and the log.
+ */
+export async function assertShopArtworkKeysIssued({
+  urls,
+  userId,
+  alsoIssuedTo,
+  db = dbWrite,
+}: KeyIssuerArgs) {
+  const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
+  const given = urls.filter((url): url is string => !!url);
+  // Shop artwork is stored as the bare key the upload issued, never as a url.
+  if (given.some((url) => keysIn(url)[0] !== url)) throw imageUrlUnavailableError();
+  const keys = [...new Set(given)];
+  if (!keys.length) return;
+  if (keys.length > MAX_KEYS) throw imageUrlUnavailableError();
+
+  const { owners, failed } = await keyIssueRecords(keys, db);
+  if ([...owners.values()].some((owner) => !allowed.includes(owner)))
+    throw imageUrlUnavailableError();
+  if (owners.size) {
+    const proven = [...owners];
+    await db.$executeRaw`
+      INSERT INTO "ShopArtworkKeyOwner" (key, "userId")
+      SELECT * FROM unnest(${proven.map(([k]) => k)}::text[], ${proven.map(([, o]) => o)}::int[])
+      ON CONFLICT (key) DO NOTHING
+    `;
+  }
+
+  if (keys.every((k) => owners.has(k))) return;
+  uploadKeyOwnerCounter.inc({ outcome: failed ? 'request_log_unavailable' : 'unrecorded_refused' });
+  throw imageUrlUnavailableError();
 }

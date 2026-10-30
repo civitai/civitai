@@ -470,7 +470,14 @@ export const createReport = async ({
     !!emailVerificationRequired &&
     data.reason === ReportReason.NSFW &&
     (type === ReportEntity.Image || type === ReportEntity.Model);
+  // Filed Actioned, a post's mature-content report only flags the post; a chapter's must reach the
+  // queue, where a moderator sees the storyline around it.
+  const reportsStorylineChapter =
+    type === ReportEntity.Post &&
+    data.reason === ReportReason.NSFW &&
+    !!(await dbWrite.storylineChapter.findUnique({ where: { postId: id }, select: { id: true } }));
   const awaitsModerator =
+    reportsStorylineChapter ||
     type === ReportEntity.Crucible ||
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
@@ -489,7 +496,8 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          pendingOnly: castsNoTagVotes,
+          // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
+          pendingOnly: castsNoTagVotes || reportsStorylineChapter,
           tx: callerTx,
         })
       : null;

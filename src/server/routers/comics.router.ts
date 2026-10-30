@@ -129,6 +129,10 @@ import {
   assertClientKeysIssuedToCaller,
   recordUploadKeyOwner,
 } from '~/server/services/image-url-ownership';
+import {
+  assertGenerationInputUrlsUsable,
+  assertStoredImageUrlsUnblocked,
+} from '~/server/services/generation-input-urls';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -467,7 +471,11 @@ const createPanelSchema = z.object({
   prompt: z.string().min(1).max(2000),
   useContext: z.boolean().default(true),
   referencePanelId: z.number().int().optional(),
-  layoutImagePath: z.string().optional(),
+  // Appended to the site origin, so only a bundled layout image may be named.
+  layoutImagePath: z
+    .string()
+    .regex(/^\/images\/comics\/layouts\/[a-z0-9-]+\.png$/)
+    .optional(),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),
@@ -725,6 +733,19 @@ async function assertCanGrantEarlyAccess({
   }
 }
 
+/** A reference panel's image goes to the generation, so it must not be blocked. */
+async function assertReferencePanelImageUnblocked(
+  referencePanelId: number | undefined,
+  projectId: number
+) {
+  if (!referencePanelId) return;
+  const panel = await dbRead.comicPanel.findFirst({
+    where: { id: referencePanelId, chapter: { projectId } },
+    select: { imageUrl: true },
+  });
+  if (panel?.imageUrl) await assertStoredImageUrlsUnblocked([panel.imageUrl]);
+}
+
 // Shared helper: resolve a reference's images for generation
 async function getReferenceImages(referenceId: number) {
   const reference = await dbRead.comicReference.findUnique({
@@ -733,21 +754,25 @@ async function getReferenceImages(referenceId: number) {
       name: true,
       images: {
         orderBy: { position: 'asc' },
-        include: { image: { select: { id: true, url: true, width: true, height: true } } },
+        include: {
+          image: { select: { id: true, url: true, width: true, height: true, blockedFor: true } },
+        },
       },
     },
   });
 
   if (!reference) return { referenceName: '', refImages: [] };
-
   return {
     referenceName: reference.name,
-    refImages: reference.images.map((ri) => ({
-      imageId: ri.image.id,
-      url: getEdgeUrl(ri.image.url, { original: true }),
-      width: ri.image.width ?? 512,
-      height: ri.image.height ?? 512,
-    })),
+    // A blocked image is never sent to a generation.
+    refImages: reference.images
+      .filter((ri) => !ri.image.blockedFor)
+      .map((ri) => ({
+        imageId: ri.image.id,
+        url: getEdgeUrl(ri.image.url, { original: true }),
+        width: ri.image.width ?? 512,
+        height: ri.image.height ?? 512,
+      })),
   };
 }
 
@@ -2133,7 +2158,11 @@ export const comicsRouter = router({
             width: number;
             height: number;
           }[] = [];
-          for (const refId of input.referenceIds) {
+          const ownRefs = await dbRead.comicReference.findMany({
+            where: { id: { in: input.referenceIds }, userId: ctx.user.id },
+            select: { id: true },
+          });
+          for (const { id: refId } of ownRefs) {
             const { refImages: imgs } = await getReferenceImages(refId);
             characterRefImages.push(...imgs);
           }
@@ -2954,6 +2983,7 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      await assertReferencePanelImageUnblocked(input.referencePanelId, input.projectId);
 
       // Get all user's ready references for prompt context and auto-detection
       const allUserRefs = await dbRead.comicReference.findMany({
@@ -4375,6 +4405,10 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      await assertGenerationInputUrlsUsable({
+        urls: [input.sourceImageUrl, ...(input.userReferenceImages ?? []).map((ref) => ref.url)],
+        userId: ctx.user!.id,
+      });
 
       const modelConfig = getComicModelConfig(input.baseModel ?? project.baseModel);
       const effectiveVersionId =
@@ -4509,6 +4543,10 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputUrlsUsable({
+        urls: (input.userReferenceImages ?? []).map((ref) => ref.url),
+        userId: ctx.user!.id,
+      });
       const token = await getOrchestratorToken(ctx.user!.id, ctx).catch((error) => {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       });
@@ -5508,6 +5546,14 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      // Without a prompt the image is saved as the panel, and createImage checks it.
+      if (input.prompt?.trim() || input.forceGenerate) {
+        await assertGenerationInputUrlsUsable({
+          urls: [input.sourceImageUrl],
+          userId: ctx.user!.id,
+        });
+        await assertReferencePanelImageUnblocked(input.referencePanelId, input.projectId);
+      }
 
       // Get next position
       let nextPosition: number;
@@ -5784,6 +5830,13 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      // A panel without a prompt saves its source image, and createImage checks it.
+      await assertGenerationInputUrlsUsable({
+        urls: input.panels
+          .filter((p) => p.prompt?.trim() && p.sourceImageUrl)
+          .map((p) => p.sourceImageUrl),
+        userId: ctx.user!.id,
+      });
 
       const bulkModelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
 

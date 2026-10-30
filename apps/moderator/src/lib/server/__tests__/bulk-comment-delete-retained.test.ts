@@ -93,6 +93,35 @@ describe('a ToS restore with comments kept hidden', () => {
     expect(activities()).toEqual(['comments:restoreFromTos:retainedHidden:3']);
   });
 
+  it('is a failure the moderator sees when a clear errored, logging only what did change', async () => {
+    body = {
+      comment: { count: 1, reopenedReports: 1, retainedHidden: 0, failed: 1 },
+      commentV2: { count: 0, reopenedReports: 0, retainedHidden: 1, failed: 0 },
+    };
+
+    await expect(restore()).resolves.toEqual({
+      ok: false,
+      error: '1 could not be restored and stay hidden. Restored 1, kept hidden 1.',
+    });
+    expect(activities()).toEqual([
+      'comments:restoreFromTos:1',
+      'comments:restoreFromTos:retainedHidden:1',
+    ]);
+  });
+
+  it('is a failure, not "nothing changed", when every clear errored', async () => {
+    body = {
+      comment: { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 2 },
+      commentV2: { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 1 },
+    };
+
+    await expect(restore()).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('3 could not be restored'),
+    });
+    expect(activities()).toEqual([]);
+  });
+
   it('reports the restored and kept counts apart', async () => {
     body = {
       comment: { count: 1, reopenedReports: 0, retainedHidden: 1 },

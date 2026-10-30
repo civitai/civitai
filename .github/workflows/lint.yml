@@ -150,8 +150,11 @@ on:
   # `only` runs one suite (or one unit shard) instead of the whole fan-out, for
   # dispatches that care about a single suite. Every job's `if` reads it, and so
   # does every suite step in a job that hosts several (`packages` hosts
-  # apps-typecheck; `component` hosts geometry and the quarantine run); on
-  # pull_request and push `inputs.only` is empty and everything runs as before.
+  # apps-typecheck; `component` hosts geometry and the quarantine run). On
+  # pull_request and push `inputs.only` is empty, so it narrows nothing: what runs
+  # there is decided by each job's or step's own event gate (`unit` and the
+  # quarantine step skip pull requests; ESLint is PR-only; typecheck runs where
+  # Tekton does not).
   # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
   workflow_dispatch:
     inputs:
@@ -474,59 +477,57 @@ jobs:
     # calls itself the canonical fix; 98-102 is a separate hookTimeout fix.
     # Don't cite a cold-cache flake as a reason to keep this job Chromium-free.
     #
-    # REPORT-ONLY to start, deliberately. A full local run passed 8,937/8,943 but
-    # timed out 5 tests under machine load; every one of them passed in isolation
-    # (that file runs in 138ms — the cost is the ~33s import/transform phase, not
-    # the assertions). The per-test timeout is 60s, so a 2-core runner could trip
-    # the same way. Blocking on that from day one would red unrelated PRs and the
-    # job would be switched off within a week — the same reasoning the ESLint and
-    # Prettier modified-file steps are built on.
+    # ── NOT RUN ON PULL REQUESTS; REAL VERDICT ON `main` AND ON DISPATCH ──────
     #
-    # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate.
-    # Remove `continue-on-error` and this comment together.
+    # The `if` below skips this job on `pull_request`. It runs on every push to
+    # `main` (blocking in the sense every other job is: it renders red; `main` has
+    # no required checks) and on `workflow_dispatch`, where `only` still selects it.
     #
-    # WHERE THAT STANDS, measured 2026-08-20 so the next reader does not repeat the
-    # archaeology. Over the 39 most recent completed runs the `Unit tests` STEP was red
-    # in 8, across 8 DISTINCT branches — which reads as flake but was not: every one
-    # predates #4191, which fixed a ledger test that had been TRUNK red and therefore
-    # failed on every PR regardless of its contents. Of the runs started after that
-    # merge, 5 of 5 are green across 4 branches. Encouraging, and far too short a
-    # window to act on — 36 minutes is not "a couple of weeks".
+    # Why, measured over 24h (448 Lint runs, 2026-10): these four shards were 59% of
+    # all Lint job-minutes, ~12,400 of ~21,000, ~10,000 of it on PRs. The plan's
+    # org-wide concurrent-job limit was saturated around the clock and jobs queued
+    # 10-40+ minutes. On a PR that spend bought no verdict: the job was report-only
+    # (`continue-on-error` on `pull_request`) from its first day, so it never blocked
+    # anything, and it passed 760 of 793 shard runs (96%).
     #
-    # Two things to know before re-measuring. On a PULL REQUEST the run-level
-    # `conclusion` is USELESS here: `continue-on-error` makes it `success` while the
-    # step underneath is `failure`, so read `steps[].conclusion` from the jobs
-    # endpoint, not the run. That is not true of a push run — see below.
+    # THE TRADE, stated plainly: a unit regression is now found on `main` after
+    # merge instead of on the PR. The push run still renders red on the commit that
+    # caused it within minutes (`concurrency` above may fold a burst of commits into
+    # the newest one's run). The `test:lint-rules` convention guards
+    # (`src/server/services/__tests__/no-*.test.ts`) run inside this suite, so they
+    # move to `main` with it.
     #
-    # The second used to read "this workflow is `pull_request`-only, so the suite
-    # never runs against `main` itself — a trunk-red test shows up as every PR going
-    # red at once". That was accurate when written and is now the thing this change
-    # fixes; the signature it describes is still worth recognising in runs from
-    # before 2026-08-21.
+    # WANT A VERDICT BEFORE MERGING? Dispatch this workflow on your branch with
+    # `only: unit` (all four shards) or `only: unit-<n>` (one):
+    #   gh workflow run lint.yml --ref <branch> -f only=unit
+    # Or run `pnpm run test:unit:run` locally, which the root CLAUDE.md already asks for.
     #
-    # ── REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` ────────────────────
+    # REJECTED ALTERNATIVE, so nobody rebuilds it blind: run only the tests related
+    # to the PR's changed files (#7199, closed). Built and measured on 20 sampled
+    # PRs: 7 still selected the full suite (a change to a widely imported module
+    # reaches most of it), the rest a median 557 of ~3,930 files, for a modelled
+    # ~38% saving at the price of two new scripts. Not running on PRs saves all of
+    # the PR share with no new code, and a PR verdict was never enforced anyway.
     #
-    # The soak above is a claim about PRs and it is left exactly as it is: flipping
-    # the PR side to blocking is a separate, deliberately-unmade decision with its own
-    # open ticket, and nothing here should be read as making it.
+    # NO `continue-on-error`, deliberately. It used to be
+    # `${{ github.event_name == 'pull_request' }}` — report-only on PRs, the real
+    # verdict on push, because report-only on `main` would make a run read
+    # `success` while the suite underneath failed (a green that has to be
+    # disbelieved; scripts/__tests__/main-branch-ci-coverage.test.ts forbids an
+    # unconditionally report-only job on the push path). With no PR runs that
+    # expression is always false, and a dead PR clause only suggests PRs are still
+    # covered. If PR runs come back, deciding whether they block is part of that
+    # change, not something to inherit from here.
     #
-    # `main` is a different question, because the reason for report-only does not
-    # exist there. Report-only buys "do not red an unrelated PR over a load-timeout";
-    # on a push the merge has already happened, so there is no unrelated work to red
-    # and nothing to block. What `continue-on-error: true` WOULD buy on `main` is the
-    # exact failure this repo just spent two months inside: a run whose conclusion is
-    # `success` while the suite underneath is broken. A green that has to be
-    # disbelieved is worse than no run at all — checking "is main green?" would go on
-    # returning success, and the staleness would merely have been replaced by a lie.
+    # Reading a run: with no `continue-on-error`, the job and run conclusions now
+    # carry the suite's verdict. Before 2026-10 a PR run read `success` while the
+    # `Unit tests` step underneath was `failure`, so for those old runs read
+    # `steps[].conclusion` from the jobs endpoint, not the run.
     #
-    # So: the flake risk is accepted on `main` and the verdict is rendered honestly.
-    # If the suite proves too noisy there, the fix is to de-flake the tests or to
-    # narrow what runs on push — NOT to hide the result behind continue-on-error.
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
     # `only: unit` runs all four shards; `only: unit-<n>` runs that shard alone
     # (the matrix below narrows to it). The job-level `if` cannot read `matrix`,
     # which is why the shard pick lives in the matrix expression instead.
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-') }}
+    if: ${{ github.event_name != 'pull_request' && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
     # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
     #
     # Measured before the change, n=12 runs of this job, from the Actions API:
@@ -544,7 +545,7 @@ jobs:
     #
     # 🔴 WHY 4 AND NOT MORE. The apps job was 2.9m (2026-08-25). At N=4 this
     # job lands at ~3.4m and at N=5 it reaches parity, so past N=5 sharding
-    # optimises something that is NO LONGER THE BOTTLENECK — the PR's critical
+    # optimises something that is NO LONGER THE BOTTLENECK — the run's critical
     # path floors at ~2.9m however far you go. Raising this number without
     # first making the other jobs faster buys wall-clock nothing and costs
     # runner-minutes linearly.
@@ -652,31 +653,31 @@ jobs:
       # content is a function of the dependency set and the Vitest config, so
       # `pnpm-lock.yaml` is the right thing to key on.
       #
-      # Every one of the 4 shards rebuilds this from cold on every PR today, and
-      # nothing in the repo caches it. (Do not reach for the `optimizeDeps`
+      # Without it every shard rebuilds this from cold on every run, and nothing
+      # else in the repo caches it. (Do not reach for the `optimizeDeps`
       # pre-bundle list in vitest.config.mts as prior art here: that block belongs
       # to the `component` project, which this job does not run. It moves WHEN the
       # optimize pass happens within a run; it does not carry anything between
       # runs.)
       #
-      # 🔴 RESTORE ALWAYS, SAVE ONLY ON `main`, and that asymmetry is the whole
-      # design rather than a tuning choice. An Actions cache saved by a PR run is
-      # scoped to `refs/pull/N/merge`, readable by NOTHING else, and counts
-      # against the same 10 GB repo budget as everything useful. Saving from PRs
-      # would mint 4 dead entries per open PR — the exact leak this PR's sibling
-      # change exists to clean up (20 orphans, 9.65 GB, 95.3% of the budget).
-      # Saving only on `main` keeps this at FOUR entries total, restorable by
-      # every PR because a PR can read its base branch's scope.
+      # 🔴 RESTORE ALWAYS, SAVE ONLY ON A PUSH TO `main`. This job no longer runs
+      # on pull requests (see the job comment), so the readers are the next push
+      # to `main` and a `workflow_dispatch` on any branch, which can read the
+      # default branch's scope. A dispatch must not save: an entry saved on a
+      # feature branch is scoped to that ref, readable by nothing else, and counts
+      # against the same 10 GB repo budget as everything useful — the leak a
+      # sibling change once cleaned up (20 orphans, 9.65 GB, 95.3% of the budget).
+      # Saving only on `main` keeps this at FOUR entries total.
       #
       # Budget: 4 x 302 MB = 1.21 GB worst case, and that is an over-estimate
       # twice over — the 302 MB is the full local project set (this job runs
       # `--project unit*`, a subset) and Actions compresses on upload.
       #
-      # A PR that changes `pnpm-lock.yaml` misses the exact key and falls back to
-      # the prefix, restoring the previous lockfile's bundles; Vite validates its
-      # own optimizer metadata and re-optimizes what actually moved. It then
-      # saves nothing, so that PR pays cold-ish cost until it merges. That is the
-      # correct trade: lockfile changes are rare and per-PR entries are the bug.
+      # A run whose `pnpm-lock.yaml` differs from `main`'s last saved one misses the
+      # exact key and falls back to the prefix, restoring the previous lockfile's
+      # bundles; Vite validates its own optimizer metadata and re-optimizes what
+      # actually moved. A dispatch then saves nothing and pays cold-ish cost; the
+      # first push to `main` with that lockfile saves the new key.
       - name: Restore Vite pre-bundle cache
         id: vite-cache
         uses: actions/cache/restore@v4
@@ -732,11 +733,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
 
-      # See the restore step for why this is `main`-only. Three further details:
+      # See the restore step for why this is push-only. Three further details:
       #
       #   `!cancelled()` rather than the default — a RED suite still produced a
       #     valid set of pre-bundles, and refusing to save them would mean a
-      #     single red commit on `main` leaves every subsequent PR cold.
+      #     single red commit on `main` leaves every subsequent run cold.
       #   `cache-hit != 'true'` — an exact-key hit means this content is already
       #     stored under this key, so re-uploading ~300 MB would buy nothing. A
       #     PREFIX hit leaves this false, which is right: that content belongs to
@@ -744,7 +745,7 @@ jobs:
       #   `continue-on-error` — a cache save is best-effort infrastructure. Two
       #     shards can race the same key, and the loser reports "another job may
       #     be creating this cache". That must not red a commit on `main`, where
-      #     this job is no longer report-only.
+      #     a red on this job has to mean the code.
       - name: Save Vite pre-bundle cache
         if: ${{ !cancelled() && github.event_name == 'push' && steps.vite-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
@@ -769,17 +770,17 @@ jobs:
     # and two of them had been RED on `main` since #3592 corrected the schema out from under
     # their assertions, with nothing to say so.
     #
-    # NOT `continue-on-error`, unlike `unit`. Be precise about what that does and does not
-    # buy: `main` has branch protection but NO required_status_checks, so a red check here
-    # does not prevent a merge. The difference from `unit` is that this renders RED rather
-    # than red-but-ignored — a signal someone has to look at and dismiss, not one the UI
-    # hides. Making it an actual interlock means adding "Package unit tests" to the required
-    # checks, which is a repo-settings change, not a workflow one.
+    # NOT `continue-on-error`, and it runs on pull requests. Be precise about what that does
+    # and does not buy: `main` has branch protection but NO required_status_checks, so a red
+    # check here does not prevent a merge. What it buys is that a red renders RED on the PR —
+    # a signal someone has to look at and dismiss, not one the UI hides. Making it an actual
+    # interlock means adding "Package unit tests" to the required checks, which is a
+    # repo-settings change, not a workflow one.
     #
-    # The reasoning that made `unit` report-only still does not transfer, which is why this
-    # one is not marked ignorable: `unit` is ~12,000 tests whose cost is a ~33s
-    # import/transform phase per file, and it timed out five tests under load. This is 616
-    # tests with no browser, no database and no Next module graph — ~15s locally.
+    # Why this one runs on PRs when `unit` does not: `unit` is ~12,000+ tests whose cost is a
+    # ~33s import/transform phase per file, four shards and most of this workflow's
+    # job-minutes (see its comment). This is 616 tests with no browser, no database and no
+    # Next module graph — ~15s locally.
     #
     # DB-backed tiers self-skip: `@civitai/db-queries` sources DATABASE_URL from the root
     # `.env`, which does not exist on a runner, so its DB-backed tests (the `*.explain.test.ts`
@@ -834,8 +835,8 @@ jobs:
       # What it guards: `/api/og` returned 500 on every request for two days because Next
       # 16.3.0 leaves the libvips SVG loader blocked and `next/og` rasterizes through it. We
       # carry the upstream one-line fix as a pnpm patch. The behavioural regression test for
-      # that outage lives in the `unit` job above — which is `continue-on-error`, so it cannot
-      # stop the same breakage reaching production a second time. This runs the structural
+      # that outage lives in the `unit` job above — which does not run on pull requests, so it
+      # cannot stop the same breakage reaching production a second time. This runs the structural
       # half of it, against the INSTALLED node_modules rather than the patch file, so a patch
       # that exists but did not apply is caught. ~50ms, no test runner.
       - name: Next SVG loader patch applied
@@ -880,7 +881,7 @@ jobs:
           pnpm run db:check-generated
 
       # Same reasons as the step above: a TRACKED generated file must match its generator, and
-      # the unit test that also checks this runs in `unit`, which is continue-on-error on PRs. The
+      # the unit test that also checks this runs in `unit`, which does not run on PRs. The
       # tag-index decode worker runs from this bundle, so a stale one is the decoder that ships.
       # `--check` regenerates in memory and compares, so it writes nothing, and a missing file
       # counts as out of date (exit 1), not as a pass. Like every check here it shows red but does
@@ -1090,8 +1091,8 @@ jobs:
       # phone viewport. See `test/geometry-setup.tsx` for what it loads and why it is a separate
       # project from `component`.
       #
-      # `continue-on-error` is the same expression `unit` uses, and NOT a literal `true`. Both
-      # halves matter:
+      # `continue-on-error` is `${{ github.event_name == 'pull_request' }}` (the split
+      # windows-dev-env.yml also makes), and NOT a literal `true`. Both halves matter:
       #
       #   PR side: blocking on a brand-new tier from day one would red unrelated PRs and the
       #   step would be switched off within a week. `main` has NO required_status_checks, so
