@@ -8133,6 +8133,18 @@ model KnightsPlayerDay {
   @@id([playerId, day])
 }
 
+/// One daily-loop notification per player per UTC day. The primary key is the cap; a send claims its row first.
+model KnightsNotificationSend {
+  playerId    Int
+  day         DateTime  @db.Date
+  kind        String // verdicts | streak | new-images
+  sentAt      DateTime  @default(now())
+  confirmedAt DateTime? // null until the notifications app accepted the send; an unconfirmed claim still holds the day
+
+  @@id([playerId, day])
+  @@index([playerId, kind, sentAt])
+}
+
 /// One finished link-detection run. The main app writes a row when a run completes; Knights runs its post-detection pass (clearing gold, writing labels) once per row, `passedAt` marking it done.
 model KnightsDetectionRun {
   id          Int       @id @default(autoincrement())

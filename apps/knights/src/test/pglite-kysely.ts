@@ -20,6 +20,7 @@ const MIGRATIONS = [
   '20261212120000_knights_v2_trials',
   '20261213120000_knights_v2_progression',
   '20261215120000_knights_v2_daily',
+  '20261217120000_knights_v2_notify',
   '20261218120000_knights_v2_conversion',
   '20261219120000_knights_v2_smites',
   '20261221120000_knights_v2_yesno',
@@ -75,6 +76,13 @@ CREATE TABLE "ModActivity" (
   "entityType" TEXT,
   "entityId" INTEGER,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE "UserNotificationSettings" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "type" TEXT NOT NULL,
+  "disabledAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE ("userId", "type")
 );
 CREATE TABLE "NewOrderSmite" (
   "id" SERIAL PRIMARY KEY,

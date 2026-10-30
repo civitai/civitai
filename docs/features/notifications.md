@@ -45,8 +45,7 @@ Defined once in `packages/civitai-notifications/src/constants.ts` and re-exporte
 
 Processors live in `src/server/notifications/*.notifications.ts`, are built with
 `createNotificationProcessor()` from `base.notifications.ts`, and are collected in the
-`utils.notifications.ts` registry. Each defines query preparation, message formatting, and its
-category/settings.
+`utils.notifications.ts` registry. Each defines query preparation, message formatting, and its category/settings. An optional `section` groups a type under its own heading in the settings UI instead of its category's (the Knights of New Order types); the notification itself keeps its `category`.
 
 The registry is large and covers far more than the obvious feature areas — read it rather than
 assuming a notification type doesn't exist yet.
@@ -103,6 +102,23 @@ Omit it and the toggle renders, saves, and does nothing.
 in `pnpm run test:lint-rules`. Its file lists name `NotificationsCard.tsx` only — the
 `accountSettingsV2` pane is not yet covered. Its `KNOWN_INERT` list is empty and pinned, so a new inert type fails
 there rather than shipping unmuteable.
+
+An `optIn` type inverts this: a row means subscribed, and the processor's `prepareQuery` must derive
+recipients by joining `UserNotificationSettings` (the polarity test checks it). An `externalProducer`
+type is the exception: another app (today `apps/knights`, `/api/jobs/notify`) picks the recipients
+itself, applies the settings rows with the polarity the type declares (the Knights types are opt-out:
+default on for players who joined, a row turns one off) and sends through the bulk path. The processor
+has **no** `prepareQuery`; a query there would run a second recipient derivation, and
+`createNotification` must never be called for the type (a guard test scans for it).
+
+## Knights of New Order daily notifications
+
+`apps/knights` sends three `externalProducer` types (`knights-verdicts-in` > `knights-streak-ends-soon` > `knights-new-images`, settings section "Knights of New Order") from `POST /api/jobs/notify` (`Authorization: Bearer $JOBS_TOKEN`; schedule at least hourly so the streak warning goes out within the hour of `streakWarningHourUtc`). Code: `apps/knights/src/lib/server/notify`; table `KnightsNotificationSend` (migration `20261217120000_knights_v2_notify`, applied by hand before the job first runs); env `NOTIFICATIONS_ENDPOINT` / `NOTIFICATIONS_TOKEN`.
+
+- A player gets the best type they are eligible for and have not turned off, at most one per UTC day. Eligibility and ordering: `planNotifications` in `notify.service.ts`; thresholds in `notify/config.ts`.
+- Recipients: players who joined the game (a `NewOrderPlayer` row) and are not blocked (see below), minus those with a `UserNotificationSettings` row for the type (a row means off), who can open the app today: moderators, or the access flag evaluated locally with `{ id, isModerator }` only (`accessibleIds`), so a rule on tier, membership or early-adopter status can differ from sign-in.
+- Turned everything off: the settings page writes a row only for each type that exists then, so a player is judged against the types that existed at their latest change. Silenced means a row for every opt-out type whose first-seen time (earliest `disabledAt` of any row for it) is at or before their own latest row. The main app lists those types at `GET /api/mod/knights/notification-types` (`x-webhook-token`; cached an hour in the process, as `UserNotificationSettings` has no index on `type`); the job fetches it at the start of each run, and if it cannot be read or is empty the run sends nothing (`skipped`, route 500). A type added later does not undo an earlier silencing. The settings page shows the master switch on for such a user when a type is new, as for every new opt-out type.
+- Sending: a send claims the player's `(playerId, day)` row first, then sends through the bulk path (which does no settings lookup) with `retries: 0`. A refused batch (4xx) gives its claims back; an unknown outcome (timeout, network, 5xx, any error not known to precede the send) keeps them and ends the run, so a retry can never send a second notification that day; a 429 releases its claims and also ends the run. A claim is `confirmedAt` only once the app accepted the send; an unconfirmed claim holds its day but does not count as having told the player about verdicts. A run with `NOTIFICATIONS_*` unset claims nothing and answers 500, as does one with a failed confirmation (`confirmFailed`). A crash between claim and send loses that player's day and never double-sends. The batch key is derived from the day, kind and sorted player ids. Messages are the same for everyone in a batch.
 
 ## Caching
 
