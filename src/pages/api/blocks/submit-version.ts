@@ -9,6 +9,7 @@ import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/subm
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 /**
  * Dedicated upload route for the App Blocks W1 publish-request flow, for a SIGNED-IN BROWSER
@@ -28,8 +29,7 @@ import { requireFullScopeSession } from '~/server/utils/require-full-scope-sessi
  *     OAuth-client token never reaches the service here, scoped or not (the CLI route is the
  *     one that takes the `AppBlocksSubmit` scope),
  *   - not banned, and the authoring capability (`isAppBlocksAuthorEnabled`, mod floor) — the
- *     CLI route's step 2, verbatim. This route was moderator-only (`ModEndpoint`) while the
- *     CLI route had already moved to that capability; it now matches it,
+ *     CLI route's step 2, verbatim,
  *   - gated on the appBlocks flag (503 when off, mirroring enforceAppBlocksFlag),
  *   - requires bundle storage to be configured,
  *   - the same per-subject rate limit (`takeSubmitSlot`), keyed on the user,
@@ -45,9 +45,6 @@ export const config = {
     },
   },
 };
-
-/** The CLI route's refusal for a non-author, word for word. */
-const NOT_AN_AUTHOR = 'Apps are restricted to the Civitai team';
 
 export default AuthedEndpoint(
   async (req, res: NextApiResponse, user) => {
@@ -74,7 +71,7 @@ export default AuthedEndpoint(
     // `app-blocks-author` capability (static fallback mod-only). Before the flag and the body,
     // so a non-author never costs a decode.
     if (user.bannedAt || !(await isAppBlocksAuthorEnabled({ user }))) {
-      res.status(403).json({ message: NOT_AN_AUTHOR });
+      res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
       return;
     }
 

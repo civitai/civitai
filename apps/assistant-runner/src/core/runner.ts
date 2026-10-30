@@ -889,7 +889,7 @@ export class Runner implements RunService {
               current: from?.messages ?? [],
             },
             subagents: input.subagents === true,
-            model: () => this.#model(input, stop, carriesOn),
+            model: () => this.#model(input, stop, carriesOn, (buzz) => progress.charged(buzz)),
             maxOutputTokens: outputTokenCap(input.settings.maxOutputTokens),
             report: (result) => {
               emitter.flushParts();
@@ -905,7 +905,10 @@ export class Runner implements RunService {
           });
           return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
-        request: (toolSet) => this.#request(input, head, toolSet, stop, carriesOn, tools),
+        request: (toolSet) =>
+          this.#request(input, head, toolSet, stop, carriesOn, tools, (buzz) =>
+            progress.charged(buzz)
+          ),
         retrying: (attempt, trace) => {
           emitter.flushParts();
           emitter.emit({ type: 'network-retry', attempt, trace });
@@ -994,7 +997,12 @@ export class Runner implements RunService {
     );
   }
 
-  #model(input: ReplyInput, signal: AbortSignal, carriesOn: boolean) {
+  #model(
+    input: ReplyInput,
+    signal: AbortSignal,
+    carriesOn: boolean,
+    onCharge?: (buzz: number) => void
+  ) {
     return this.#deps.models.languageModel({
       userId: input.userId,
       runId: input.runId,
@@ -1004,6 +1012,7 @@ export class Runner implements RunService {
       signal,
       seq: input.seq,
       ...(carriesOn ? { carriesOn: true } : {}),
+      ...(onCharge ? { onCharge } : {}),
     });
   }
 
@@ -1013,7 +1022,8 @@ export class Runner implements RunService {
     tools: ToolSet,
     signal: AbortSignal,
     carriesOn: boolean,
-    opened?: OpenTools
+    opened?: OpenTools,
+    onCharge?: (buzz: number) => void
   ): AgentCoreRequest {
     const { settings } = input;
     // A provider that builds the reply's instructions (App Assistant's) replaces the page's own.
@@ -1033,7 +1043,7 @@ export class Runner implements RunService {
       spoken: settings.spokenReplies,
     });
     return {
-      model: this.#model(input, signal, carriesOn),
+      model: this.#model(input, signal, carriesOn, onCharge),
       // As the browser's Agent builds it, with the provider's rules (`systemPrompt`) and own tools.
       system: buildSystemPrompt({
         now: new Date(),
