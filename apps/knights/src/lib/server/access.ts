@@ -40,14 +40,25 @@ export async function accessFor(user: SessionUser): Promise<Access> {
  * `free`, membership `false` and early-adopter `false` for everyone. A rule that matches a positive
  * value (a tier, a member, a listed id) never admits someone by mistake, but skips those users here; a
  * rule that matches those defaults (free, not a member) could admit a different set than at sign-in.
+ * `unknown` is true when Flipt could not be evaluated: then only moderators are let in.
  */
 export async function accessibleIds(
   users: { id: number; isModerator: boolean }[]
-): Promise<number[]> {
-  const open: number[] = [];
-  for (const user of users) {
-    const flagOn = user.isModerator ? false : await isFlagOn({ id: user.id });
-    if (decideAccess({ isModerator: user.isModerator, flagOn }) === 'allow') open.push(user.id);
+): Promise<{ ids: number[]; unknown: boolean }> {
+  const others = users.some((user) => !user.isModerator);
+  let unknown = false;
+  if (others) {
+    try {
+      await getFlipt().ensureInitialized();
+    } catch (error) {
+      console.warn('[knights] access flag unavailable', error);
+      unknown = true;
+    }
   }
-  return open;
+  const ids: number[] = [];
+  for (const user of users) {
+    const flagOn = user.isModerator || unknown ? false : await isFlagOn({ id: user.id });
+    if (decideAccess({ isModerator: user.isModerator, flagOn }) === 'allow') ids.push(user.id);
+  }
+  return { ids, unknown };
 }

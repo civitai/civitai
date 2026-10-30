@@ -54,10 +54,10 @@ describe('accessibleIds', () => {
       { id: 3, isModerator: false },
     ]);
 
-    expect(open).toEqual([1, 2]);
+    expect(open).toEqual({ ids: [1, 2], unknown: false });
   });
 
-  it('lets in only moderators when Flipt is down', async () => {
+  it('lets in only moderators when Flipt is down, and says it could not tell', async () => {
     flipt.ensureInitialized.mockRejectedValue(new Error('down'));
 
     const open = await accessibleIds([
@@ -65,6 +65,12 @@ describe('accessibleIds', () => {
       { id: 2, isModerator: false },
     ]);
 
-    expect(open).toEqual([1]);
+    expect(open).toEqual({ ids: [1], unknown: true });
+  });
+
+  it('does not report unknown when only moderators were asked about', async () => {
+    flipt.ensureInitialized.mockRejectedValue(new Error('down'));
+
+    expect(await accessibleIds([{ id: 1, isModerator: true }])).toEqual({ ids: [1], unknown: false });
   });
 });

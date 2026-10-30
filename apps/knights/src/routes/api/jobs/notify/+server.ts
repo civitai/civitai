@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { isJobRequest } from '$lib/server/jobs-auth';
+import { logToAxiom } from '$lib/server/axiom';
 import { sendNotifications } from '$lib/server/notify/notify.service';
 import { accessibleToday, sendBatch } from '$lib/server/notify/runtime';
 import { env } from '$env/dynamic/private';
@@ -21,10 +22,15 @@ export const POST: RequestHandler = async ({ request }) => {
       accessible: accessibleToday,
       silenceTypes: await fetchSilenceTypes(),
     });
-    return json(result, {
-      status:
-        result.failed + result.unconfirmed + result.confirmFailed > 0 || result.skipped ? 500 : 200,
-    });
+    if (result.accessUnknown) {
+      console.warn('knights: access flag unavailable; only moderators were notified');
+      void logToAxiom({ type: 'warning', name: 'knights-notify-access-unknown' });
+    }
+    const incomplete =
+      result.failed + result.unconfirmed + result.confirmFailed > 0 ||
+      result.skipped ||
+      result.accessUnknown;
+    return json(result, { status: incomplete ? 500 : 200 });
   } catch (error) {
     console.error('knights: notify failed', error);
     return json({ error: 'job failed' }, { status: 500 });

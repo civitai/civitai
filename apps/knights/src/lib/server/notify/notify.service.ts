@@ -39,6 +39,8 @@ export type NotifyResult = {
   halted: boolean;
   /** Claims that were sent but could not be marked confirmed, so verdicts may be announced again. */
   confirmFailed: number;
+  /** The access flag could not be evaluated, so only moderators were notified. */
+  accessUnknown: boolean;
   /** The types to check for "turned everything off" were unavailable, so nothing was sent. */
   skipped: boolean;
 };
@@ -298,8 +300,8 @@ export async function sendNotifications(
   }: {
     now: Date;
     send: SendBatch;
-    /** The ids among those given who can open the app today. */
-    accessible: (ids: number[]) => Promise<number[]>;
+    /** The ids among those given who can open the app today; `unknown` when the access flag could not be evaluated. */
+    accessible: (ids: number[]) => Promise<{ ids: number[]; unknown: boolean }>;
     /**
      * The opt-out types a user who turned everything off has a row for, from the main app. Without
      * it every player would look as if they had not, so an empty list sends nothing.
@@ -317,13 +319,16 @@ export async function sendNotifications(
     halted: false,
     confirmFailed: 0,
     skipped: false,
+    accessUnknown: false,
   };
   if (silenceTypes.length === 0) {
     console.warn('knights: no notification types to check for silenced players; sending nothing');
     return { ...result, skipped: true };
   }
   const planned = await planNotifications(db, now, silenceTypes);
-  const open = new Set(await accessible([...new Set(Object.values(planned).flat())]));
+  const access = await accessible([...new Set(Object.values(planned).flat())]);
+  const open = new Set(access.ids);
+  result.accessUnknown = access.unknown;
   const plan = Object.fromEntries(
     NOTIFY_KINDS.map(({ kind }) => [
       kind,

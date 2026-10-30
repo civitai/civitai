@@ -17,7 +17,9 @@ export const sendBatch: SendBatch = makeSendBatch((rows) =>
 const MODERATOR_LOOKUP_CHUNK = 5000;
 
 /** Moderators are always let in; for everyone else the app's access flag decides, as for a signed-in player. */
-export async function accessibleToday(ids: number[]): Promise<number[]> {
+export async function accessibleToday(
+  ids: number[]
+): Promise<{ ids: number[]; unknown: boolean }> {
   const users: { id: number; isModerator: boolean }[] = [];
   for (let at = 0; at < ids.length; at += MODERATOR_LOOKUP_CHUNK) {
     const rows = await db

@@ -66,7 +66,7 @@ const seedSettledVote = (playerId: number, settledAt = '2026-12-16 10:00:00') =>
     [playerId * 100, playerId, Q, settledAt]
   );
 
-const everyone = async (ids: number[]) => ids;
+const everyone = async (ids: number[]) => ({ ids, unknown: false });
 
 /** What the main app's endpoint lists: each opt-out type with when anyone first switched it off. */
 const SILENCE_TYPES = [
@@ -90,7 +90,10 @@ function runner({
   const send = vi.fn(async (batch: NotificationBatch) => {
     batches.push(batch);
   });
-  const accessible = async (ids: number[]) => ids.filter((id) => !blocked.includes(id));
+  const accessible = async (ids: number[]) => ({
+    ids: ids.filter((id) => !blocked.includes(id)),
+    unknown: false,
+  });
   const run = (now: Date) =>
     sendNotifications(db, {
       now,
@@ -579,5 +582,22 @@ describe('sendNotifications', () => {
     await run(at(21));
 
     expect([...received().entries()]).toEqual([[2, ['verdicts']]]);
+  });
+
+  it('reports when access could not be determined, and still reaches the players it could', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await enqueueImage();
+    const { send } = runner();
+
+    const result = await sendNotifications(db, {
+      now: at(12),
+      send,
+      accessible: async (ids) => ({ ids: ids.filter((id) => id === 1), unknown: true }),
+      silenceTypes: SILENCE_TYPES,
+    });
+
+    expect(result).toMatchObject({ accessUnknown: true, sent: { 'new-images': 1 } });
+    expect(send.mock.calls[0]![0].userIds).toEqual([1]);
   });
 });
