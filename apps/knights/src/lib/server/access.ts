@@ -49,7 +49,12 @@ export async function accessibleIds(
   let unknown = false;
   if (others) {
     try {
-      await getFlipt().ensureInitialized();
+      const flipt = getFlipt();
+      await flipt.ensureInitialized();
+      // The client swallows an init failure; without a client only local overrides can still answer.
+      if (flipt.getClientSync() === null && flipt.isEnabledSync(KNIGHTS_APP_FLAG, '0') === null) {
+        throw new Error('Flipt client did not initialize');
+      }
     } catch (error) {
       console.warn('[knights] access flag unavailable', error);
       unknown = true;
