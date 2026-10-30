@@ -182,7 +182,11 @@ beforeEach(() => {
     userId: OWNER,
     depth: 0,
   });
-  db.insert('storylineCollaborator', { storylineId: STORY, userId: COLLABORATOR });
+  db.insert('storylineCollaborator', {
+    storylineId: STORY,
+    userId: COLLABORATOR,
+    acceptedAt: new Date(),
+  });
 });
 
 afterEach(() => vi.useRealTimers());

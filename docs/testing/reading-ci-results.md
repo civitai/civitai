@@ -20,17 +20,32 @@ gh api repos/<owner>/<repo>/commits/$sha/check-runs -q '.total_count'
 gh run list --branch <branch> --json headSha,name,conclusion
 ```
 
-**A healthy internal PR here has 6 `Lint` check-runs at head and a `success` combined status**
-carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Two of the six are `skipped` by
+**A healthy internal PR here has 5 `Lint` check-runs at head and a `success` combined status**
+carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Two of the five are `skipped` by
 design: `Typecheck` (Tekton's covers an internal PR) and `Unit tests` (runs on `main` and on
-dispatch only; it is one skipped check, not four shards). Expect `pr-review` on top, plus a check
-per job of any other workflow the PR's paths trigger. A count of
+dispatch only; it is one skipped check, not four shards). A PR that touches `apps/`, `packages/` or
+the root files the app suites read also gets 1 `App suites` check-run (`App unit tests + typecheck`);
+any other PR gets none, and that is by design, not a missing run (the list is the `paths:` filter in
+`.github/workflows/apps.yml`). Expect `pr-review` on top, plus a check per job of any other workflow
+the PR's paths trigger. A count of
 0 is obvious; a count of 4 would not have been, which is why the number is worth knowing.
 
 The two systems are separate and you need both. For an internal PR targeting `main`,
 `tekton / typecheck` is the **authoritative** typecheck — the GitHub Actions typecheck job
 deliberately skips that case (see the header of `.github/workflows/lint.yml`). So a check set that
 contains Actions results but no Tekton status does not cover the thing that gates.
+
+**On a draft PR, Lint runs ESLint only.** The same 5 `Lint` check-runs appear, but every one except
+`ESLint + Prettier (changed files)` is `skipped`, and the `App suites`, tRPC parity and schema drift
+jobs skip too. (The Windows dev-env smoke never runs on PRs; it runs on pushes to `main` and on
+dispatch: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>`.) That is the draft gate, not a broken run: the jobs start when the PR is
+marked ready (`gh pr ready <pr>`). To get a verdict while it is still a draft, dispatch one on the
+branch, which runs against the branch head rather than the merge with `main`:
+
+```bash
+gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>   # typecheck, unit, packages, component, ...
+gh workflow run apps.yml -R civitai/civitai --ref <branch>                 # app suites + app typecheck
+```
 
 ## 2. `gh pr view --json headRefOid` can hand you the previous SHA
 
@@ -43,7 +58,7 @@ PR's `headRefOid` — before reporting either way.
 | System | Surfaces as | Latency |
 | --- | --- | --- |
 | Tekton (in-cluster) | **commit statuses** — `tekton / typecheck`, `tekton / fixture-bootstrap` | ~3.5 min |
-| GitHub Actions | **check-runs** — Lint, Schema drift gate, Submodule Pin Guard, Windows dev-env | ~immediate |
+| GitHub Actions | **check-runs** — Lint, Schema drift gate, Submodule Pin Guard | ~immediate |
 
 Observed on PR #4640 over an evening, in order: branch created and pushed → 4 Actions runs + 2 Tekton
 statuses. Three amend + `--force-with-lease` pushes → **nothing from either**. One close/reopen →
@@ -76,7 +91,7 @@ what should have been there.
 
 ### What to do
 
-- **Count, don't skim.** A healthy internal PR here carries **6 `Lint` check-runs plus 2 Tekton statuses**
+- **Count, don't skim.** A healthy internal PR here carries **5 `Lint` check-runs plus 2 Tekton statuses**
   at head, and more checks from other workflows (see above). `Passed: 2` is not a pass.
 - **Check both mechanisms by SHA**, because one can be present while the other is absent:
 
@@ -90,8 +105,8 @@ gh api repos/<owner>/<repo>/commits/$sha/check-runs -q '.total_count'
   squash-merges, so it never reaches `main`'s history.
 - For an internal PR targeting `main`, `tekton / typecheck` is the **authoritative** typecheck — the
   Actions typecheck job deliberately skips that case (see the header of `.github/workflows/lint.yml`).
-  So Tekton present + Actions absent still leaves Lint, the schema drift gate, the submodule pin
-  guard and the Windows dev-env smoke unrun.
+  So Tekton present + Actions absent still leaves Lint, the schema drift gate and the submodule pin
+  guard unrun.
 
 > The workflow file already warns about the general form of this, about a different question:
 > *"Both were reasoning from the workflow's CONFIGURATION, which says nothing about whether the job

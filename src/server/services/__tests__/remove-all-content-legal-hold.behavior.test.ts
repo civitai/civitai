@@ -43,13 +43,30 @@ const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.ho
 }));
 
 const { payout, searchQueue } = vi.hoisted(() => ({
-  payout: { unsettled: [] as number[], settles: false },
+  payout: { settles: false as boolean | 'throws', claimed: [] as number[] },
   searchQueue: vi.fn(async (_args: { indexName: string; items: unknown[] }) => undefined),
 }));
 vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  settleBountyPayout: vi.fn(async () => payout.settles),
+  // Each writes the payout columns as the real one does, so a re-run reads the state it left.
+  settleBountyPayout: vi.fn(async (id: number) => {
+    if (payout.settles === 'throws') throw new Error('buzz down');
+    if (payout.settles)
+      await holder.db.query(
+        `UPDATE "Bounty" SET "payoutSettledAt" = "payoutRecordedAt" WHERE id = $1`,
+        [id]
+      );
+    return payout.settles;
+  }),
   refundUnpayableBountyAward: vi.fn(async () => false),
+  claimBountyRefundForDelete: vi.fn(async (id: number) => {
+    payout.claimed.push(id);
+    await holder.db.query(
+      `UPDATE "Bounty" SET complete = true, refunded = true, "payoutRecordedAt" = now() WHERE id = $1`,
+      [id]
+    );
+    return { owed: true, firstAttempt: true };
+  }),
 }));
 vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
   SearchIndexUpdate: { queueUpdate: searchQueue },
@@ -152,7 +169,10 @@ import {
   LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
-import { deleteSettledKeptBounties } from '~/server/services/bounty.service';
+import {
+  deleteSettledKeptBounties,
+  retryUnsettledBountyPayouts,
+} from '~/server/services/bounty.service';
 import { bulkClearCommentTosViolation } from '~/server/services/comment.service';
 import { deleteImages } from '~/server/services/image.service';
 import { refundBidsForVersions } from '~/server/services/auction.service';
@@ -222,6 +242,7 @@ beforeAll(async () => {
       (t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`
     ).join('\n')}
     CREATE TABLE "BountyBenefactor" ("awardedToId" int REFERENCES "BountyEntry"(id) ON DELETE SET NULL);
+    ALTER TABLE "BountyBenefactor" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
     ALTER TABLE "BountyEntry" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
     ALTER TABLE "Answer" ADD COLUMN "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE;
     ALTER TABLE "ResourceReview" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE;
@@ -229,8 +250,9 @@ beforeAll(async () => {
     CREATE DOMAIN "Availability" AS text;
     ALTER TABLE "Bounty" ADD COLUMN availability "Availability" NOT NULL DEFAULT 'Public',
       ADD COLUMN meta jsonb, ADD COLUMN "payoutSettledAt" timestamp(3),
-      ADD COLUMN "payoutRecordedAt" timestamp(3) NOT NULL DEFAULT now() - interval '1 hour',
-      ADD COLUMN complete boolean NOT NULL DEFAULT false;
+      ADD COLUMN "payoutRecordedAt" timestamp(3),
+      ADD COLUMN complete boolean NOT NULL DEFAULT false,
+      ADD COLUMN refunded boolean NOT NULL DEFAULT false;
     CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);
     ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
       ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
@@ -384,18 +406,11 @@ beforeEach(async () => {
     ).affectedRows,
   })) as never);
   // The account's bounties, less any kept.
-  payout.unsettled = [];
   payout.settles = false;
+  payout.claimed = [];
   vi.mocked(dbMock.dbWrite.bounty.findMany).mockImplementation((async (args: {
-    where: { userId: number; payoutRecordedAt?: unknown; id?: { notIn: number[] } };
+    where: { userId: number; id?: { notIn: number[] } };
   }) => {
-    if ('payoutRecordedAt' in args.where)
-      return (
-        await holder.db.query(`SELECT id FROM "Bounty" WHERE "userId" = $1 AND id = ANY($2)`, [
-          args.where.userId,
-          payout.unsettled,
-        ])
-      ).rows;
     const kept = args.where.id?.notIn ?? [];
     return (
       await holder.db.query(
@@ -1735,8 +1750,10 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
     ...searchQueue.mock.calls.flatMap(([{ items }]) => items),
   ];
 
-  beforeEach(() => {
-    payout.unsettled = [BOUNTY];
+  beforeEach(async () => {
+    await holder.db.exec(
+      `UPDATE "Bounty" SET "payoutRecordedAt" = now() - interval '1 hour' WHERE id = ${BOUNTY}`
+    );
   });
 
   it('is hidden, with where it was recorded, and taken out of search', async () => {
@@ -1815,6 +1832,49 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
       expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
     });
 
+    // The retry's own settle runs here, not the mock: a refund with no supporters left to pay,
+    // reading and stamping the real row.
+    it('retries a refund recorded after the payout that settled, then deletes it', async () => {
+      await holder.db.exec(`UPDATE "Bounty" SET complete = true, refunded = true,
+        "payoutSettledAt" = now() - interval '2 hours', "payoutRecordedAt" = now() - interval '1 hour'
+        WHERE id = ${BOUNTY}`);
+      vi.mocked(dbMock.dbWrite.bounty.findUnique).mockImplementationOnce(
+        (async () =>
+          (await holder.db.query(`SELECT * FROM "Bounty" WHERE id = ${BOUNTY}`)).rows[0]) as never
+      );
+      vi.mocked(dbMock.dbWrite.bounty.updateMany).mockImplementationOnce((async (args: {
+        where: { id: number; payoutRecordedAt: Date };
+        data: { payoutSettledAt: Date };
+      }) => ({
+        count: (
+          await holder.db.query(
+            `UPDATE "Bounty" SET "payoutSettledAt" = $1 WHERE id = $2 AND "payoutRecordedAt" = $3`,
+            [args.data.payoutSettledAt, args.where.id, args.where.payoutRecordedAt]
+          )
+        ).affectedRows,
+      })) as never);
+
+      expect(await retryUnsettledBountyPayouts()).toEqual({ settled: 1 });
+      expect(await deleteSettledKeptBounties()).toBe(1);
+      expect(await bounty()).toBeUndefined();
+    });
+
+    it('leaves a payout recorded in the last ten minutes to the attempt still making it', async () => {
+      await holder.db.exec(`UPDATE "Bounty" SET complete = true, refunded = true,
+        "payoutSettledAt" = NULL, "payoutRecordedAt" = now() - interval '1 minute'
+        WHERE id = ${BOUNTY}`);
+
+      expect(await retryUnsettledBountyPayouts()).toEqual({ settled: 0 });
+    });
+
+    it('retries nothing settled at or after its last record (control)', async () => {
+      await holder.db.exec(`UPDATE "Bounty" SET complete = true,
+        "payoutRecordedAt" = now() - interval '1 hour', "payoutSettledAt" = now() - interval '1 hour'
+        WHERE id = ${BOUNTY}`);
+
+      expect(await retryUnsettledBountyPayouts()).toEqual({ settled: 0 });
+    });
+
     it('leaves it hidden while its payout is still pending', async () => {
       expect(await deleteSettledKeptBounties()).toBe(0);
       expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
@@ -1856,5 +1916,78 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
         (await holder.db.query(`SELECT id FROM "Bounty" WHERE "userId" = ${BYSTANDER}`)).rows
       ).toHaveLength(1);
     });
+  });
+});
+
+describe('an open bounty with supporters, in a content wipe', () => {
+  const bountyRow = async () =>
+    (
+      await holder.db.query<{ availability: string; meta: unknown }>(
+        `SELECT availability, meta FROM "Bounty" WHERE id = ${BOUNTY}`
+      )
+    ).rows[0];
+
+  beforeEach(async () => {
+    await holder.db.exec(`INSERT INTO "BountyBenefactor" ("bountyId") VALUES (${BOUNTY})`);
+  });
+
+  it('refunds its supporters, then deletes it', async () => {
+    payout.settles = true;
+    await removeAllContent({ id: CLEAN });
+
+    expect(payout.claimed).toEqual([BOUNTY]);
+    expect(await bountyRow()).toBeUndefined();
+  });
+
+  it('keeps a bounty whose payout was recorded again after it settled, until that settles', async () => {
+    await holder.db.exec(`UPDATE "Bounty" SET complete = true,
+      "payoutSettledAt" = now() - interval '2 hours', "payoutRecordedAt" = now() - interval '1 hour'
+      WHERE id = ${BOUNTY}`);
+    await removeAllContent({ id: CLEAN });
+
+    expect(payout.claimed).toEqual([]);
+    expect((await bountyRow())?.availability).toBe('Private');
+  });
+
+  it('claims no bounty without supporters (control)', async () => {
+    await holder.db.exec(`TRUNCATE "BountyBenefactor"`);
+    await removeAllContent({ id: CLEAN });
+
+    expect(payout.claimed).toEqual([]);
+    expect(await bountyRow()).toBeUndefined();
+  });
+
+  it('keeps it, hidden, when its refund throws, and finishes the wipe', async () => {
+    payout.settles = 'throws';
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bountyRow()).toEqual({
+      availability: 'Private',
+      meta: { removedWithOwner: true, availabilityBeforeRemoval: 'Public' },
+    });
+    expect((await remaining(CLEAN)).Image).toBe(0);
+  });
+
+  it('settles a refund a failed wipe claimed on the next wipe, without claiming it again', async () => {
+    payout.settles = 'throws';
+    await removeAllContent({ id: CLEAN });
+    payout.settles = true;
+    await removeAllContent({ id: CLEAN });
+
+    expect(payout.claimed).toEqual([BOUNTY]);
+    expect(await bountyRow()).toBeUndefined();
+  });
+
+  it.each([
+    ['refund settles', true],
+    ['refund throws', 'throws'],
+  ] as const)('is kept for a hold landing mid-wipe after its %s', async (_, settles) => {
+    payout.settles = settles;
+    landsBefore = 'Bounty';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect(payout.claimed).toEqual([BOUNTY]);
+    expect((await remaining(CLEAN)).Bounty).toBe(1);
   });
 });

@@ -1268,7 +1268,8 @@ export type TrainingRun = {
 
 export async function getTrainingRuns(
   userId: number,
-  limit = 25
+  limit = 25,
+  { charges = true }: { charges?: boolean } = {}
 ): Promise<{ runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null }> {
   const rows = await dbRead
     .selectFrom('Model as m')
@@ -1369,7 +1370,7 @@ export async function getTrainingRuns(
     params: r.params,
   }));
 
-  return { runs, truncated, charges: await getTrainingCharges(userId, runs) };
+  return { runs, truncated, charges: charges ? await getTrainingCharges(userId, runs) : null };
 }
 
 export type TrainingChargeRow = {
@@ -1453,9 +1454,12 @@ async function getTrainingCharges(
         JSONExtractString(details, 'workflowId') AS workflowId
       FROM buzzTransactions
       WHERE type = 'training' AND fromAccountId = ${Math.trunc(userId)}
-      ORDER BY date DESC
     `);
     if (!rows.length) return null;
+    // Sorted here, not in the query: `ORDER BY date DESC` on this 1.5B-row table measured 13-30s+
+    // against 0.4-0.55s without it. There was no LIMIT, so only the order moves.
+    const at = (date: string) => utcMs(date) || 0;
+    rows.sort((a, b) => at(b.date) - at(a.date));
 
     // A retrain reuses the version, so one run can account for several charges — every `Submitted` in
     // its history is one. `submittedAt` covers the ~8% of files with no history array.

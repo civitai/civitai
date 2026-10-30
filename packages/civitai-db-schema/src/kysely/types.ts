@@ -5556,6 +5556,10 @@ export type StorylineCollaborator = {
   storylineId: number;
   userId: number;
   createdAt: Generated<Timestamp>;
+  /**
+   * When the user accepted the invitation; null while it is pending. Declining deletes the row.
+   */
+  acceptedAt: Timestamp | null;
 };
 export type StorylineCoverUpload = {
   storylineId: number;

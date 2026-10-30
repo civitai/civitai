@@ -4,7 +4,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { FormState } from '$lib/form-state.svelte';
-  import { disputeOutcome } from '$lib/rating-dispute';
+  import { disputeOutcome, isLowerOnly } from '$lib/rating-dispute';
   import type { TicketRatingDispute } from '$lib/server/tickets/rating-disputes';
 
   let {
@@ -31,6 +31,14 @@
         )
   );
   const label = (level: number) => ratingReviewLevelLabel(dispute.entityType, level);
+  // Must match the resolve action, which refuses to keep the rating the owner sees without a reason.
+  // A lower-only type's top option is its live level.
+  const needsReason = $derived(
+    chosen !== null &&
+      dispute.entityExists &&
+      (label(chosen) === label(dispute.currentLevel) ||
+        (isLowerOnly(dispute.entityType) && chosen === Math.max(...dispute.levelOptions)))
+  );
 
   const form = new FormState({
     onSuccess: (data) => ondone('Rating dispute decided', data),
@@ -74,7 +82,10 @@
       name="modComment"
       rows={2}
       maxlength={1000}
-      placeholder="Note to owner (optional, they see this)"
+      required={needsReason}
+      placeholder={needsReason
+        ? 'Reason for keeping this rating (required, the owner sees this)'
+        : 'Note to owner (optional, they see this)'}
       aria-label="Note to owner"
     />
     <div class="flex flex-wrap items-center gap-1.5">
