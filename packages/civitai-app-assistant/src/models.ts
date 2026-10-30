@@ -14,13 +14,18 @@ export interface AppAssistantModel {
 /** Replies use this one unless the viewer picks another for the chat. */
 export const APP_ASSISTANT_DEFAULT_MODEL = 'openai/gpt-6-luna';
 
-// Cost hints are relative to the default, from OpenRouter's list prices per million output tokens
-// when each was added (GPT-6 Luna $0.50, GLM 5.3 Flash $0.50, GLM 5.3 $1.40, Step 5 Preview $2.70).
+// Each id is in OpenRouter's public model list with tool calling. Cost hints compare its list price
+// per million output tokens with the default's when it was added (GPT-6 Luna $0.50, GLM 5.3 Flash
+// $0.07, Claude Haiku 5.5 $0.50, DeepSeek V4.1 Flash 1017 $1.20); the charge follows the actual price.
 export const APP_ASSISTANT_MODELS: readonly AppAssistantModel[] = [
-  { id: APP_ASSISTANT_DEFAULT_MODEL, label: 'GPT-6 Luna', note: 'Lowest cost' },
-  { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', note: 'About the same cost' },
-  { id: 'z-ai/glm-5.3', label: 'GLM 5.3', note: 'About 3× the cost' },
-  { id: 'stepfun/step-5-preview', label: 'Step 5 Preview', note: 'About 5× the cost' },
+  { id: APP_ASSISTANT_DEFAULT_MODEL, label: 'GPT-6 Luna', note: 'Standard cost' },
+  { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', note: 'Lower cost' },
+  { id: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5', note: 'About the same cost' },
+  {
+    id: 'deepseek/deepseek-v4.1-flash-1017',
+    label: 'DeepSeek V4.1 Flash',
+    note: 'About 2× the cost',
+  },
 ];
 
 const IDS: ReadonlySet<string> = new Set(APP_ASSISTANT_MODELS.map((model) => model.id));

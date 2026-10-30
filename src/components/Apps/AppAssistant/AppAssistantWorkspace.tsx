@@ -419,6 +419,7 @@ export function AppAssistantWorkspace({
         onReply: appTools.newReply,
         onBuild: () => void buildRef.current(),
         currentApp: () => live.current.active?.name ?? null,
+        appKeyOf: (name) => live.current.apps?.find((s) => s.name === name)?.app ?? null,
         // Submit for review: the user's press sends the app's export to the review queue as them.
         submit: {
           prepare: (name) => prepareSubmitRef.current(name),
