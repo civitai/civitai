@@ -3,7 +3,7 @@
  * The ledger row is an ordinary `KnightsVote` under the item's own id, so one vote per player and item holds as for any item.
  */
 export const YESNO_KEY_PREFIX = 'knights.yesno.';
-export const YESNO_SOURCE = 'atif-yesno';
+export const YESNO_SOURCE = 'yesno-import';
 
 export const YESNO_AUDIENCE = { players: 'players', moderators: 'moderators' } as const;
 export const YESNO_ANSWERS = [

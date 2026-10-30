@@ -4,6 +4,7 @@ import { RANK_LADDER } from './progression/config';
 import { rulesFacts } from './rules';
 import { SMITES } from './smites/config';
 import { TRIALS } from './trials/config';
+import { YESNO_CONSENSUS_VOTES } from './yesno/keys';
 
 describe('rulesFacts', () => {
   it('quotes the numbers the game runs on', () => {
@@ -21,6 +22,10 @@ describe('rulesFacts', () => {
   it('keeps a vote worth its immediate and graded XP together', () => {
     const { xp } = rulesFacts();
     expect(xp.atVote + xp.onCorrect).toBe(100);
+  });
+
+  it('quotes how many judges a yes/no question waits for', () => {
+    expect(rulesFacts().yesNo.judgesNeeded).toBe(YESNO_CONSENSUS_VOTES);
   });
 
   it('guides all six rating levels, Blocked last', () => {

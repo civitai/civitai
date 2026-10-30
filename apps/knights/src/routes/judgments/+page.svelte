@@ -9,6 +9,8 @@
     correct: 'Rightly judged',
     wrong: 'Not quite',
     inconclusive: 'Set aside',
+    matched: 'With the majority',
+    unmatched: 'Against the majority',
   } as const;
 </script>
 
@@ -66,7 +68,8 @@
   p {
     margin: 0.15rem 0;
   }
-  .state.correct {
+  .state.correct,
+  .state.matched {
     color: var(--gold);
   }
   .pager {

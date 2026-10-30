@@ -41,6 +41,12 @@
     carry more weight in a vote.
   </li>
   <li>
+    Some questions are plain yes or no questions about one image, asked in runs on one subject
+    (press Y or N). They are not graded as right or wrong: you earn {facts.xp.atVote} XP at once,
+    and your gold is paid only if your answer matches the majority once {facts.yesNo.judgesNeeded} judges
+    have answered.
+  </li>
+  <li>
     Judging is paced. Go too fast and you will be asked to rest for a short while before the next
     image. Moderators are not paced.
   </li>

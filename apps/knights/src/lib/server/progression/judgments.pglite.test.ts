@@ -98,4 +98,56 @@ describe('listJudgments', () => {
     await pg.exec(`UPDATE "KnightsVote" SET "settledAt"=now() WHERE "itemId"=${id}`);
     expect((await listJudgments(db, 1, { page: 1 })).judgments[0].status).toBe('correct');
   });
+
+  describe('yes/no answers', () => {
+    const NOW2 = new Date('2026-12-15T12:00:00Z');
+    async function answered(externalId: string, prompt: string) {
+      await seedImage(pg, 30);
+      await pg.exec(
+        `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options") VALUES ('knights.yesno.violence','bool','Generic words','[{"value":"yes","label":"Yes"},{"value":"no","label":"No"}]') ON CONFLICT DO NOTHING`
+      );
+      const item = await pg.query<{ id: number }>(
+        `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","externalId","audience","prompt","yesEffect","noEffect","updatedAt")
+         VALUES ('knights.yesno.violence',30,'t','Knight',5,$1,'players',$2,'R4','R3',now()) RETURNING id`,
+        [externalId, prompt]
+      );
+      await pg.query(
+        `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold","xp")
+         VALUES ($1,1,$2,'knights.yesno.violence',30,'Knight','yes',1,100,10)`,
+        [item.rows[0].id, NOW2]
+      );
+      return item.rows[0].id;
+    }
+
+    it('shows the words of the question, waits for the consensus, then says whether the answer matched the majority', async () => {
+      const id = await answered('q-secret', 'Is a hat worn?');
+
+      const pending = (await listJudgments(db, 1, { page: 1 })).judgments[0];
+      expect(pending).toMatchObject({
+        prompt: 'Is a hat worn?',
+        answerLabel: 'Yes',
+        status: 'pending',
+        gold: 100,
+      });
+
+      await pg.exec(
+        `UPDATE "KnightsVote" SET verdict='matched', "settledAt"=now() WHERE "itemId"=${id}`
+      );
+      expect((await listJudgments(db, 1, { page: 1 })).judgments[0].status).toBe('matched');
+
+      await pg.exec(`UPDATE "KnightsVote" SET verdict='unmatched', gold=0 WHERE "itemId"=${id}`);
+      expect((await listJudgments(db, 1, { page: 1 })).judgments[0]).toMatchObject({
+        status: 'unmatched',
+        gold: 0,
+      });
+    });
+
+    it('carries nothing of the question that a player must not see', async () => {
+      await answered('q-secret', 'Is a hat worn?');
+      const text = JSON.stringify((await listJudgments(db, 1, { page: 1 })).judgments);
+      for (const secret of ['q-secret', 'R4', 'R3', 'Effect', 'externalId']) {
+        expect(text).not.toContain(secret);
+      }
+    });
+  });
 });

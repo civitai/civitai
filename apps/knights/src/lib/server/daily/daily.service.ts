@@ -285,7 +285,7 @@ export async function getRecap(
           'failed'
         ),
         sql<string>`count(*) filter (where "settledAt" is null)`.as('pending'),
-        sql<string>`coalesce(sum("gold") filter (where "settledAt" is not null and "verdict" = 'correct'), 0)`.as(
+        sql<string>`coalesce(sum("gold") filter (where "settledAt" is not null and "verdict" in ('correct', 'matched')), 0)`.as(
           'gold'
         ),
       ])
