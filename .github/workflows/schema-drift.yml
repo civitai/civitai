@@ -72,11 +72,11 @@ jobs:
     steps:
       # No `submodules: true`. The gate reads the Prisma schema and a JSON snapshot; nothing
       # in its import graph reaches event-engine-common.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm

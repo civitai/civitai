@@ -198,7 +198,7 @@ describe('CI coverage for commits on main', () => {
   // is the same stale-TRUE shape as the outage this file guards — so on the push
   // path no job may be unconditionally report-only.
   //
-  // A conditional value is allowed (windows-dev-env.yml uses one to stay
+  // A conditional value is allowed (lint.yml's geometry steps use one to stay
   // report-only on PRs and render a real verdict on push) but it must be an
   // expression, i.e. it must be able to differ between a PR and a push. Literal
   // `true` cannot.

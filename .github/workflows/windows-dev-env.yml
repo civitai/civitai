@@ -1,6 +1,7 @@
 name: Windows dev-env smoke
 
-# Non-blocking canary for the DEFAULT (non-Nix) contributor setup on native Windows.
+# Canary for the DEFAULT (non-Nix) contributor setup on native Windows. Runs on a
+# push to `main` that touches the install path, and on dispatch; not on PRs.
 #
 # WHY: every other job in this repo runs on ubuntu-latest, so nothing validates
 # Windows — while Windows support is real and actively maintained:
@@ -24,11 +25,18 @@ name: Windows dev-env smoke
 # the TODO above was Git-Bash-specific. A pwsh-only job would not reproduce it, and
 # would report green over the one case we have written evidence about.
 #
-# DELIBERATELY NON-BLOCKING ON PULL REQUESTS to start. A gate that lands red on day
-# one and stops unrelated PRs trains everyone to click through, which is strictly
-# worse than no gate. Turn it off once this has been green long enough to mean
-# something. It is NOT non-blocking on a push to `main` — see the job's
-# `continue-on-error` comment for why the two cases differ.
+# ── NOT RUN ON PULL REQUESTS: PUSH TO `main` AND DISPATCH ONLY ───────────────
+#
+# It used to run on every PR that touched the install path, report-only
+# (`continue-on-error` on `pull_request`), so a PR run never blocked anything.
+# It still cost real capacity: each run holds two Windows job slots against the
+# org's concurrent-job limit, which queues everyone else's jobs. Measured over
+# the 24h to 2026-10-30: 145 PR runs, ~930 Windows job-minutes. A push to `main` that touches the install path
+# still gets a real verdict (no `continue-on-error`: a red step turns the run
+# red on the commit that caused it).
+#
+# WANT A VERDICT ON A BRANCH BEFORE MERGING? Dispatch it:
+#   gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>
 #
 # DELIBERATELY NOT starting the compose stack: those are Linux containers, and
 # Docker on Windows runners is slow and flaky — it would buy noise, not signal.
@@ -38,33 +46,28 @@ name: Windows dev-env smoke
 # COST: `windows-latest` is a standard GitHub-hosted runner, which is free for
 # public repositories. This adds no Actions minutes.
 #
-# ── ALSO RUNS ON PUSH TO `main`, AND THAT IS A CACHE FIX ─────────────────────
+# ── THE pnpm STORE CACHE: ONE ENTRY, ON `main` ───────────────────────────────
 #
 # `setup-node` with `cache: pnpm` writes an Actions cache entry keyed
 # `node-cache-Windows-x64-pnpm-<lockfile-hash>`. Actions caches are SCOPED TO A
-# REF: a PR run can READ an entry saved on its base branch, but it cannot read
-# one saved on another PR, and it saves into its own `refs/pull/N/merge` scope.
+# REF: a run can READ an entry saved on the default branch, and it saves into
+# its own ref's scope.
 #
-# With this workflow `pull_request`-only there was no entry on `refs/heads/main`
-# for a PR to restore from, so EVERY PR missed, re-resolved the whole store and
-# then saved its own ~518 MB copy under the same key in its own scope. Measured
-# 2026-08-25: 20 such copies, one per open PR, 9.65 GB — 95.3% of the repo's
-# 10 GB cache budget, against ONE 511 MB Linux entry on `main` from `lint.yml`.
-# The repo was over the limit, so LRU eviction was live and was evicting the
-# useful entries to keep 20 identical useless ones.
-#
-# `lint.yml` never had this problem, and the reason is exactly the leg added
-# below: it has a `push: [main]` trigger, so one base-branch entry serves every
-# PR and no PR ever saves its own. This makes that true here too. One entry,
-# reused by every PR, refreshed whenever `main` moves.
+# When this workflow was `pull_request`-only there was no entry on
+# `refs/heads/main` to restore from, so EVERY PR missed and saved its own
+# ~518 MB copy in its own scope. Measured 2026-08-25: 20 such copies, 9.65 GB —
+# 95.3% of the repo's 10 GB cache budget — so LRU eviction was dropping the
+# useful entries. The push leg fixed that by giving `main` the one entry. With
+# no PR runs left, the push runs keep that entry fresh and a dispatch on a
+# branch restores from it.
 #
 # The two matrix shells share one cache key (same OS, arch and lockfile), so on
 # `main` they race to save it and one logs "another job may be creating this
 # cache". That is the intended outcome — one entry is the point — not a defect.
 #
 # Nothing in this workflow reads `github.base_ref` or `github.event.pull_request`
-# (both are empty/null on a push), so no step needs gating. That is not luck:
-# `scripts/__tests__/main-branch-ci-coverage.test.ts` asserts it as a repo-wide
+# (both are empty/null on a push), so no step needs gating.
+# `scripts/__tests__/main-branch-ci-coverage.test.ts` asserts that as a repo-wide
 # relationship over every push-reachable job.
 
 # ── PATH FILTER: ONLY CHANGES TO WHAT THE STEPS BELOW EXECUTE ───────────────
@@ -93,37 +96,10 @@ name: Windows dev-env smoke
 # Not listed on purpose: src/** and the Windows-branching dev scripts named in
 # the header (test-unit-run.mjs, dev-server skill scripts). No step here runs
 # them, so a change to them alone would only re-run an unchanged install.
-# If you add a step, add what it reads here. Both triggers carry the same list;
-# on `main` that also keeps the cache fix above working, because the cache key
-# is the lockfile hash and the lockfile is in the list.
-#
-# Nothing hangs when this skips: `main` and `release` have no
-# required_status_checks. If this check ever becomes required, the filter has
-# to go, or a PR that skips it waits forever.
-#
-# Draft PRs skip the smoke run, like lint.yml's heavy jobs (see its header);
-# `ready_for_review` is in `types` so marking the PR ready starts it. On a
-# draft, dispatch it: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>`.
+# If you add a step, add what it reads here. The list also keeps the cache
+# entry above fresh, because the cache key is the lockfile hash and the
+# lockfile is in the list.
 on:
-  pull_request:
-    branches: [main, release]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - '.github/workflows/windows-dev-env.yml'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.npmrc'
-      - '.nvmrc'
-      - 'patches/**'
-      - '.husky/**'
-      - '.gitmodules'
-      - 'event-engine-common'
-      - 'scripts/generate-slim-schema.js'
-      - 'scripts/prisma-enum-generator.mjs'
-      - 'packages/*/package.json'
-      - 'packages/civitai-db-schema/**'
-      - 'apps/**'
   push:
     branches: [main]
     paths:
@@ -150,9 +126,9 @@ on:
 permissions:
   contents: read
 
-# One group per ref, for pull requests AND pushes: a new push to a PR branch
-# cancels its in-flight run, and a newer commit on `main` cancels the run for an
-# older one. The newest `main` run checks a tree containing every older commit,
+# One group per ref: a newer commit on `main` cancels the run for an older one,
+# and a new dispatch on a branch cancels that branch's in-flight dispatch. The
+# newest `main` run checks a tree containing every older commit,
 # so `main` still gets a verdict; intermediate commits show as `cancelled`.
 # Until 2026-10 a push grouped by `github.sha` so every `main` commit kept its
 # own run, which queued behind PR runs under the plan's concurrent-job limit.
@@ -165,15 +141,10 @@ jobs:
   smoke:
     name: Windows dev-env (${{ matrix.shell }})
     runs-on: windows-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main`. The header's
-    # non-blocking rationale is explicitly about not stopping UNRELATED PRs over
-    # a canary that might be red on day one. On a push the merge has already
-    # happened, so there is no unrelated work to stop and nothing to block; what
-    # `continue-on-error: true` would buy there is a run reporting `success`
-    # while the step underneath failed, which is a green that has to be
-    # disbelieved. `main` carries no required_status_checks either way.
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    # No `continue-on-error`. It used to be `${{ github.event_name == 'pull_request' }}`
+    # (report-only on PRs); with no PR trigger that is always false. A literal `true`
+    # would make a push run read `success` while a step underneath failed, a green
+    # that has to be disbelieved, and main-branch-ci-coverage.test.ts rejects it.
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -188,13 +159,13 @@ jobs:
       # `git submodule update --init event-engine-common`. Without it the install
       # fails in a way that looks like a code defect rather than a missing checkout
       # step — the exact confusion that cost a session earlier.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
