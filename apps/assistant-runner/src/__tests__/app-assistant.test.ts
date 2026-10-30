@@ -889,7 +889,7 @@ describe('a new chat beside an open app', () => {
       ],
     ]);
 
-  it('Build it after a checklist for another app changes nothing in the open app, and the new app is made instead', async () => {
+  it('a reply after a checklist shown for the open app, in a chat that never chose it, changes nothing in it, and makes the new app instead', async () => {
     const dashboard = fake.add(OPEN);
     const { tools, reported } = await open({
       conversationId: 'conv-new',
