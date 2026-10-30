@@ -2,6 +2,7 @@ import { isAppAssistantModel } from '@civitai/app-assistant';
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
+import { CivitaiCovers, runnerCoverOrchestration } from './app-assistant/cover';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { PreviewRestarter } from './app-assistant/preview-restart';
 import { AppAssistantTools } from './app-assistant/provider';
@@ -97,12 +98,18 @@ if (civitai) {
     secret: civitai.secret,
     log,
   });
+  // The store cover's listing read and attach, which civitai makes as a run's user, by its grant.
+  const covers = new CivitaiCovers({ civitaiUrl: civitai.civitaiUrl, secret: civitai.secret, log });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
         sandboxUrl: civitai.sandboxUrl,
         tokens: (runId) => credentials.forRun(runId),
         devTunnels: (runId) => devTunnels.forRun(() => grants.forRun(runId)),
+        covers: (runId) => ({
+          listings: covers.forRun(() => grants.forRun(runId)),
+          orchestration: runnerCoverOrchestration(orchestration, credentials.forRun(runId)),
+        }),
         log,
       })
     : noTools;

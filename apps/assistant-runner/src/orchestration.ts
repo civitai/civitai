@@ -1,3 +1,4 @@
+import type { AppCoverWorkflow } from '@civitai/app-assistant';
 import { authedFetch, type FreeTierStatus } from '@civitai/components-chat/core';
 
 import type { TokenSource } from './minter';
@@ -39,10 +40,13 @@ export interface WorkflowTemplate {
   externalId: string;
 }
 
-/** A refusal from orchestration, with its status. */
+/**
+ * A refusal from orchestration, with its status, and `detail`: what orchestration said about it
+ * (`error`, `message`, `detail` or `title` of its answer), as `@civitai/sdk`'s `ApiError` reads it.
+ */
 export class OrchestrationError extends Error {
   override name = 'OrchestrationError';
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly detail?: string) {
     super(message);
   }
 }
@@ -75,7 +79,11 @@ export class OrchestrationClient {
     return this.#json(tokens, 'GET', `${WORKFLOWS}?${params}`);
   }
 
-  submitWorkflow(tokens: TokenSource, template: WorkflowTemplate): Promise<Workflow> {
+  /** The conversation store's workflows, and `generate_app_cover`'s (`AppCoverWorkflow`). */
+  submitWorkflow(
+    tokens: TokenSource,
+    template: WorkflowTemplate | AppCoverWorkflow
+  ): Promise<Workflow> {
     return this.#json(tokens, 'POST', WORKFLOWS, template);
   }
 
@@ -149,8 +157,25 @@ export class OrchestrationClient {
     if (!response.ok)
       throw new OrchestrationError(
         response.status,
-        `orchestration answered ${response.status} to ${method} ${path.split('?')[0]}`
+        `orchestration answered ${response.status} to ${method} ${path.split('?')[0]}`,
+        detailOf(text)
       );
     return (text ? JSON.parse(text) : undefined) as T;
   }
+}
+
+/** What an error answer says, as `@civitai/sdk` reads it: `error`, `message`, `detail` or `title`. */
+function detailOf(text: string): string | undefined {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!body || typeof body !== 'object') return undefined;
+  for (const key of ['error', 'message', 'detail', 'title']) {
+    const value = (body as Record<string, unknown>)[key];
+    if (typeof value === 'string' && value) return value.slice(0, 500);
+  }
+  return undefined;
 }

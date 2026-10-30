@@ -65,6 +65,7 @@ import {
   chatTokenOrchestration,
   createBrowserCoverArtDeps,
   createCoverArt,
+  GENERATE_APP_COVER,
 } from '~/components/Apps/AppAssistant/coverArt';
 import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
 import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice';
@@ -413,7 +414,8 @@ export function AppAssistantWorkspace({
     gate.appChanged(activeName);
   }, [activeName, gate]);
 
-  // The store cover (`generate_app_cover`) is the page's own tool: the server runner does not offer it.
+  // The store cover (`generate_app_cover`). In the browser the page runs it; on the server runner it is
+  // the runner's (the same `createCoverArt`), and the page's copy only shows its calls.
   const trpcUtils = trpc.useUtils();
   const coverTools = useMemo(
     () =>
@@ -452,9 +454,9 @@ export function AppAssistantWorkspace({
       // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
       ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
-      ...(remoteRunner ? {} : coverTools),
+      ...coverTools,
     }),
-    [canPreview, gate, appTools, showPreview, remoteRunner, coverTools]
+    [canPreview, gate, appTools, showPreview, coverTools]
   );
 
   const instructions = useCallback(
@@ -491,6 +493,9 @@ export function AppAssistantWorkspace({
       if (isKeepLimitResult(result))
         setSlot((shown) => shown ?? { message: lastSent.current, deleting: false, error: null });
       if (!remoteRunner || result.isError) return;
+      // The runner put a cover on the listing: the page's listing reads it again, as after its own.
+      if (result.name === GENERATE_APP_COVER)
+        return void trpcUtils.appListings.getMyListingForApp.invalidate();
       const preview = runnerPreviewAction(result);
       if (preview && 'show' in preview)
         return showPreview({ ...preview.show, sessionId: null, view: ++runnerViews.current });
@@ -506,7 +511,7 @@ export function AppAssistantWorkspace({
         setActiveName(opened.name);
       });
     },
-    [gate, remoteRunner, showPreview, stopPreview]
+    [gate, remoteRunner, showPreview, stopPreview, trpcUtils]
   );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
