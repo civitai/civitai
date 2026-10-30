@@ -392,11 +392,11 @@ describe('the owner continuing their own story', () => {
   });
 
   // Blocked is a moderation verdict, not a rating: naming it would tell the author the verdict.
-  it('never names a Blocked level as the rating a continuation is above', async () => {
+  it('refuses a Blocked-level continuation as unusable, not by its rating', async () => {
     draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER }, { nsfwLevel: R | 32 });
 
     const outcome = await publish(OWNER);
-    expect(outcome).toMatchObject({ status: 'waiting', reason: 'aboveRating' });
+    expect(outcome).toMatchObject({ status: 'waiting', reason: 'cannotSubmit' });
     expect(outcome).not.toHaveProperty('rating', expect.anything());
   });
 

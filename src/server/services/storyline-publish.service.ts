@@ -225,6 +225,13 @@ type PendingChapterPromotion =
   /** No link: another writer promoted it first. */
   | { status: 'gone' };
 
+const aboveRatingWait = (gap: StorylineRatingGap): PendingChapterPromotion => {
+  const rating = storylineRatingGap(gap);
+  return rating
+    ? { status: 'waiting', reason: 'aboveRating', rating }
+    : { status: 'waiting', reason: 'cannotSubmit' };
+};
+
 /**
  * Writes the storyline owner's drafted post as its chapter, once the post is live (published, not
  * scheduled for later), every image scanned and out of review, and rated: chapter 1 by
@@ -283,14 +290,10 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
         if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
         const maxNsfwLevel = firstChapterMaxNsfwLevel(storyline, post);
         if (maxNsfwLevel === null)
-          return {
-            status: 'waiting',
-            reason: 'aboveRating',
-            rating: storylineRatingGap({
-              postLevel: post.nsfwLevel,
-              maxNsfwLevel: storylineCeiling(storyline),
-            }),
-          };
+          return aboveRatingWait({
+            postLevel: post.nsfwLevel,
+            maxNsfwLevel: storylineCeiling(storyline),
+          });
         if (maxNsfwLevel !== storyline.maxNsfwLevel) {
           ceilingRaisedTo = maxNsfwLevel;
           await tx.storyline.update({ where: { id: link.storylineId }, data: { maxNsfwLevel } });
@@ -318,11 +321,7 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
         );
         const maxNsfwLevel = storylineCeiling(parent.storyline);
         if (!storylineLevelAllowed({ postLevel: post.nsfwLevel, maxNsfwLevel }))
-          return {
-            status: 'waiting',
-            reason: 'aboveRating',
-            rating: storylineRatingGap({ postLevel: post.nsfwLevel, maxNsfwLevel }),
-          };
+          return aboveRatingWait({ postLevel: post.nsfwLevel, maxNsfwLevel });
         ({ chapterId } = await writeOwnerChapter(tx, {
           parentChapterId: link.parentChapterId,
           postId,

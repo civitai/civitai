@@ -144,9 +144,11 @@ export const STORYLINE_REFUSALS = {
 
 export type StorylineRatingGap = { postLevel: number; maxNsfwLevel: number };
 
-/** Undefined for a post at the Blocked level: a verdict, so its rating is never named. */
+/** The Blocked bit is a moderation verdict: such a post is refused as unusable, never by rating. */
+export const isStorylineVerdictLevel = (level: number) => (level & NsfwLevel.Blocked) !== 0;
+
 export const storylineRatingGap = (gap: StorylineRatingGap) =>
-  gap.postLevel & NsfwLevel.Blocked ? undefined : gap;
+  isStorylineVerdictLevel(gap.postLevel) ? undefined : gap;
 
 export function storylineAboveRatingRefusal(gap: StorylineRatingGap) {
   if (!storylineRatingGap(gap)) return STORYLINE_REFUSALS.cannotSubmit;
