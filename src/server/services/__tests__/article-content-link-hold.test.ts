@@ -46,9 +46,12 @@ const {
   linkArticleContentImages,
   recomputeArticleIngestion,
 } = await import('~/server/services/article.service');
-const { recordUploadKeyOwner, ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE } = await import(
-  '~/server/services/image-url-ownership'
-);
+const {
+  recordUploadKeyOwner,
+  ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE,
+  MAX_KEYS,
+  UNRECORDED_KEYS_ACCEPTED_UNTIL,
+} = await import('~/server/services/image-url-ownership');
 const { nextContentLinkHold, writeContentLinkHold } = await import(
   '~/server/services/article-content-link-hold'
 );
@@ -64,9 +67,11 @@ const KEY = '0a0b0c0d-0000-4000-8000-0000000000bb';
 const KEY2 = '0a0b0c0d-0000-4000-8000-0000000000cc';
 const img = (key: string) => `<img src="https://image.civitai.com/x/${key}/original=true/a.jpeg">`;
 const CONTENT = `<p>${img(KEY)}</p>`;
-const T0 = new Date('2026-12-01T00:00:00Z');
-const at = (ms: number) => new Date(T0.getTime() + ms);
 const MINUTE = 60_000;
+const DAY = 24 * 60 * MINUTE;
+// After unrecorded keys are refused on save.
+const T0 = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() + DAY);
+const at = (ms: number) => new Date(T0.getTime() + ms);
 
 const MIGRATION = readFileSync(
   path.resolve(
@@ -113,7 +118,8 @@ const holdDelegate = {
     where: { articleId: number };
     data: { checkedAt?: Date; reportedAt?: Date };
   }) => {
-    const [column, value] = Object.entries(data)[0];
+    const [column, value] = Object.entries(data)[0] ?? [];
+    if (!column) return { count: 0 };
     await q(
       `UPDATE "ArticleContentLinkHold" SET "${column}" = ($1::timestamptz AT TIME ZONE 'UTC') WHERE "articleId" = $2`,
       [(value as Date).toISOString(), where.articleId]
@@ -370,6 +376,11 @@ describe('saving content whose stored url cannot be proved', () => {
       holdDelegate.findFirst = findFirst;
     }
   });
+
+  it("goes through with the lookups up and the hold readable for the owner's key", async () => {
+    await recordUploadKeyOwner(KEY, AUTHOR);
+    expect(await save()).toBe('accepted');
+  });
 });
 
 describe('settling a held article', () => {
@@ -528,6 +539,20 @@ describe('classifying many urls', () => {
     await link({ content });
     expect((await hold())?.refused.sort()).toEqual([...keys].sort());
   });
+
+  it('refuses a media url naming more keys than one lookup reads', async () => {
+    const keys = Array.from(
+      { length: MAX_KEYS + 1 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    for (const key of keys) await recordUploadKeyOwner(key, AUTHOR);
+    const url = keys.join(' ');
+    const content = `<edge-media url="${url}"></edge-media>`;
+    await givenArticle({ content });
+    await link({ content });
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.refused).toEqual([url]);
+  });
 });
 
 describe('the hold write', () => {
@@ -582,7 +607,7 @@ describe('a deferred url still unrecorded once the lookups are back', () => {
   });
 
   it('links before that', async () => {
-    await settleContentLinkHolds(new Date('2026-11-01T00:00:00Z'));
+    await settleContentLinkHolds(new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() - MINUTE));
     expect(await rows()).toEqual([KEY]);
     expect(await hold()).toBeNull();
   });
