@@ -264,6 +264,16 @@ describe.each([
     await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  it.each(HIDDEN_FROM_READERS)(
+    'answers as missing to a member when the storyline is %s',
+    async (_l, arrange) => {
+      arrange();
+      await expect(
+        handlerOf()({ ctx: as(STRANGER), input: { id: 55 } as never })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    }
+  );
+
   it('a moderator still can on a taken-down storyline', async () => {
     dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow({ tosViolation: true }));
     await expect(
