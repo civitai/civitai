@@ -12,4 +12,4 @@ Several repo conventions are enforced by tests, not eslint. If one fails, fix th
 
 `no-lint-rules-script-drift` fails when the counts, the list, or the script disagree with the directory. It reads two exact phrasings — `<n> live in \`src/server/services/**tests**/no-\*.test.ts\`` and `` `test:lint-rules` names <n> files today `` — plus the backticked names in the list paragraph, so keep those shapes when you edit the numbers. This file is the only document it reads.
 
-`test:lint-rules` is a convenience selector, not the enforcement point: the guards match the `unit` project's `include`, so `pnpm run test:unit:run` and CI's `Unit tests` job already run them.
+`test:lint-rules` is a convenience selector, not the enforcement point: the guards match the `unit` project's `include`, so `pnpm run test:unit:run` already runs them, and so does CI's `Unit tests` job on pushes to `main` (it does not run on pull requests).

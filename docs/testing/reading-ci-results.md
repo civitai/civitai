@@ -20,10 +20,11 @@ gh api repos/<owner>/<repo>/commits/$sha/check-runs -q '.total_count'
 gh run list --branch <branch> --json headSha,name,conclusion
 ```
 
-**A healthy internal PR here has 9 `Lint` check-runs at head and a `success` combined status**
-carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Expect `pr-review` on top, plus a
-check per job of any other workflow the PR's paths trigger (the `Lint` count was 12 until #7195
-folded three of its jobs into others). A count of
+**A healthy internal PR here has 6 `Lint` check-runs at head and a `success` combined status**
+carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Two of the six are `skipped` by
+design: `Typecheck` (Tekton's covers an internal PR) and `Unit tests` (runs on `main` and on
+dispatch only; it is one skipped check, not four shards). Expect `pr-review` on top, plus a check
+per job of any other workflow the PR's paths trigger. A count of
 0 is obvious; a count of 4 would not have been, which is why the number is worth knowing.
 
 The two systems are separate and you need both. For an internal PR targeting `main`,
@@ -75,7 +76,7 @@ what should have been there.
 
 ### What to do
 
-- **Count, don't skim.** A healthy internal PR here carries **9 `Lint` check-runs plus 2 Tekton statuses**
+- **Count, don't skim.** A healthy internal PR here carries **6 `Lint` check-runs plus 2 Tekton statuses**
   at head, and more checks from other workflows (see above). `Passed: 2` is not a pass.
 - **Check both mechanisms by SHA**, because one can be present while the other is absent:
 
