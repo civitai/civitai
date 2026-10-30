@@ -162,10 +162,6 @@ const storylineReadSelect = {
   },
 } satisfies Prisma.StorylineSelect;
 
-/**
- * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
- * caller inside a transaction reads through it.
- */
 /** An invited collaborator has no say until they accept. */
 const acceptedCollaboratorWhere = {
   acceptedAt: { not: null },
@@ -173,6 +169,10 @@ const acceptedCollaboratorWhere = {
 const acceptedCollaboratorSql = (alias: string) =>
   Prisma.sql`${Prisma.raw(alias)}."acceptedAt" IS NOT NULL`;
 
+/**
+ * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
+ * caller inside a transaction reads through it.
+ */
 const isBlockedPair = (db: Db, a: number, b: number) =>
   a !== b && isPlacementBlocked({ ownerId: a, placerId: b }, db);
 
