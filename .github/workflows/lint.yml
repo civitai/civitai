@@ -154,29 +154,23 @@ name: Lint
 #
 # ── THE `full-ci` LABEL RUNS THE FULL SUITE ON A PR ─────────────────────────
 #
-# Adding the `full-ci` label to a PR (draft or not) runs every job here, the four
-# `Unit tests` shards included, and lifts the draft ESLint-only gate. It stays on:
-# `github.event.pull_request.labels` is the PR's CURRENT label set on every event,
-# so each later push runs the full suite too until the label is removed. apps.yml
-# honours the same label, behind its own `paths:` filter. To get it on every PR:
+# With the `full-ci` label on a PR (draft or not), every PR run here includes the
+# four `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
+# `github.event.pull_request.labels`, the PR's CURRENT label set, on every
+# opened/synchronize/reopened/ready_for_review run until the label is removed.
+# apps.yml honours the same label, behind its own `paths:` filter. To get it on
+# every PR:
 #   gh pr create ... --label full-ci     or     gh pr edit <n> --add-label full-ci
 #
-# `types` lists `labeled` for this, and that has two costs every job and the
-# concurrency group below must pay for. Adding ANY label fires `labeled`:
-#   1. Every job's `if` ends in
-#        (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
-#      so another label starts no work. (On push and dispatch `action` is null,
-#      so the clause is true there.)
-#   2. Every job skipping is not enough on its own: the run would still join the
-#      PR's concurrency group and CANCEL the real run in flight. So a labeled event
-#      for any other label gets a group of its own (keyed on `github.run_id`).
-#      `full-ci` itself stays in the PR's group and replaces the in-flight run,
-#      which it supersedes.
-# scripts/__tests__/full-ci-label.test.ts pins both.
+# ADDING the label does not fire this workflow: `types` deliberately omits
+# `labeled`. full-ci.yml listens for it and DISPATCHES this workflow (`only: all`)
+# and apps.yml on the PR branch, so the full suite starts at once; read its header
+# for why (a run started by any other label overlays the PR's real check results).
+# scripts/__tests__/full-ci-label.test.ts pins this shape.
 on:
   pull_request:
     branches: [main, release]
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '**'
       - '!docs/**'
@@ -245,12 +239,8 @@ permissions:
 # dispatch of the same suite on the same branch cancels the stale one, while
 # dispatches of DIFFERENT suites on one branch still run side by side. The
 # `dispatch-` prefix keeps these groups disjoint from the PR and push ones.
-#
-# A `labeled` event for any label but `full-ci` gets a `noise-<run_id>` group of
-# its own, so its all-skipped run cannot cancel the PR's real run (see the header).
-# A `full-ci` labeled event keeps the PR's group and replaces the in-flight run.
 concurrency:
-  group: lint-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.event.action == 'labeled' && github.event.label.name != 'full-ci' && format('noise-{0}', github.run_id) || github.ref }}
+  group: lint-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -270,10 +260,7 @@ jobs:
     # to pull_request events. That is the guard that catches the NEXT
     # base-relative job someone adds, which would otherwise be red on every
     # commit to `main` from the day it lands.
-    #
-    # The second clause skips it on a labeled event for any label but `full-ci` (see the
-    # header). A `full-ci` labeled event re-runs it, harmlessly.
-    if: github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
+    if: github.event_name == 'pull_request'
     # Sized for the full run (see the header), which lints every tracked file
     # twice, at HEAD and at the merge base, and may reinstall dependencies for
     # the base. A normal PR finishes far inside it. Keep a full run, including a
@@ -483,16 +470,16 @@ jobs:
     # The `only` clause is the workflow_dispatch selector (see `on:`); it is true
     # on every other event, so the three disjuncts above are unchanged. The next
     # clause skips draft PRs unless they carry the `full-ci` label (see the header);
-    # it is true on push and dispatch. The last skips a labeled event for any other
-    # label. Neither widens the three disjuncts: `full-ci` does not make an internal
-    # PR into `main` run this job.
+    # it is true on push and dispatch. It does not widen the three disjuncts:
+    # `full-ci` does not make an internal PR into `main` run this job on the PR
+    # run. (The full-ci.yml DISPATCH does run it: on workflow_dispatch the PR
+    # disjuncts compare null, which is true, as the note below explains.)
     if: >-
       (github.event_name == 'push'
       || github.event.pull_request.head.repo.full_name != github.repository
       || github.event.pull_request.base.ref != 'main')
       && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck')
       && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci'))
-      && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     # event-engine-common is public and fetched over HTTPS, so this needs no
     # secret — which is why the ssh-agent step is gone rather than merely unused.
     # Leaving it in would have kept the fork case broken AND masked the HTTPS
@@ -596,8 +583,8 @@ jobs:
     # which is why the shard pick lives in the matrix expression instead.
     #
     # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
-    # draft too); the last skips a labeled event for any label but `full-ci`.
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
+    # draft too).
+    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
     # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
     #
     # Measured before the change, n=12 runs of this job, from the Actions API:
@@ -734,7 +721,8 @@ jobs:
       # 🔴 RESTORE ALWAYS, SAVE ONLY ON A PUSH TO `main`. This job runs on a pull
       # request only when it carries the `full-ci` label (see the job comment), so
       # the readers are the next push to `main`, a `workflow_dispatch` on any
-      # branch and a labeled PR, all of which can read the default branch's scope.
+      # branch (full-ci.yml dispatches one) and a labeled PR, all of which can read
+      # the default branch's scope.
       # A dispatch or a PR must not save: an entry saved on a
       # feature branch is scoped to that ref, readable by nothing else, and counts
       # against the same 10 GB repo budget as everything useful — the leak a
@@ -829,10 +817,9 @@ jobs:
   packages:
     name: Package unit tests
     runs-on: ubuntu-latest
-    # Skips draft PRs unless they carry the `full-ci` label, and labeled events for any other
-    # label (see the header). The app typecheck that rode here moved to apps.yml with
+    # Skips draft PRs unless they carry the `full-ci` label (see the header). The app typecheck that rode here moved to apps.yml with
     # the app suites, so this job is the package suites plus the install-time asserts below.
-    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'packages') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
+    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'packages') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # The `packages/*` suites — 616 tests when this job was added, which until then NO CI job ran.
     # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
     # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
@@ -956,9 +943,8 @@ jobs:
   component:
     name: Component + geometry tests
     runs-on: ubuntu-latest
-    # The second clause skips draft PRs unless they carry the `full-ci` label; the third skips
-    # labeled events for any other label (see the header).
-    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (github.event.action != 'labeled' || github.event.label.name == 'full-ci') }}
+    # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
+    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # The three browser-mode suites, in one job so ONE checkout, install and Chromium install
     # serves all of them: `component` (blocking), `geometry` (report-only on PRs) and the
     # `component-quarantine` run (push to `main` and dispatch only). Each was its own job until

@@ -5,37 +5,36 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
-// The `full-ci` PR label (lint.yml and apps.yml): adding it runs the full suite on a PR.
+// The `full-ci` PR label: lint.yml and apps.yml read it on every PR run, and full-ci.yml
+// dispatches both when it is added.
 //
-// INVARIANT GUARD, not a regression test. Nothing here was ever broken on `main`; it pins
-// the shape of the change that added the label, and the behaviour behind that shape was
-// proven on a live throwaway PR when it shipped (see the PR that added this file): another
-// label started a run whose jobs all skipped and did NOT cancel the run in flight; `full-ci`
-// on a draft ran every job and the four unit shards; a later push ran them again; removing
-// the label went back to ESLint only.
+// INVARIANT GUARD, not a regression test. It pins the shape of the change that added the label;
+// the behaviour behind that shape was proven on a live throwaway PR when it shipped (see the PR
+// that added this file): another label started only the dispatcher's one skipped check and no
+// Lint or App suites run; `full-ci` dispatched both, with all four unit shards; a later push ran
+// the shards in the PR run; removing the label went back to ESLint only on a draft.
 //
-// What it guards against is the cheap way to break that: `types` lists `labeled`, so EVERY
-// label anyone adds fires these workflows. A new job written without the noise clause starts
-// work on every label; a concurrency group that loses its noise branch lets an all-skipped
-// run cancel the PR's real run. Neither shows up as a red check, only as wasted or lost runs.
+// The shape matters because the obvious alternative was built first and was wrong: `labeled` in
+// lint.yml / apps.yml makes EVERY label start a run whose skipped jobs carry the same names as
+// the real ones and overlay their results in `gh pr checks` (full-ci.yml's header has the
+// measurement). Nothing turns red when someone re-adds `labeled` there, so this test does.
 //
-// The clauses are pinned as whole normalised strings rather than keywords, and each must be a
-// top-level AND conjunct of the job's `if`: a clause that sits inside an `||` gates nothing.
+// Clauses are pinned as whole normalised strings, and as top-level AND conjuncts of the job's
+// `if`: a clause that sits inside an `||` gates nothing.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
 
 const FULL = "contains(github.event.pull_request.labels.*.name, 'full-ci')";
-const NOISE_SKIP = "(github.event.action != 'labeled' || github.event.label.name == 'full-ci')";
 const DRAFT_GATE = `(github.event_name != 'pull_request' || !github.event.pull_request.draft || ${FULL})`;
 const UNIT_PR_GATE = `(github.event_name != 'pull_request' || ${FULL})`;
-const NOISE_GROUP =
-  "github.event.action == 'labeled' && github.event.label.name != 'full-ci' && format('noise-{0}', github.run_id)";
+const DISPATCH_IF =
+  "github.event.label.name == 'full-ci' && github.event.pull_request.head.repo.full_name == github.repository";
 
-type Job = { if?: string };
+type Step = { name?: string; run?: string; env?: Record<string, string> };
+type Job = { name?: string; if?: string; permissions?: Record<string, string>; steps?: Step[] };
 type Workflow = {
-  on?: { pull_request?: { types?: string[] } };
-  concurrency?: { group?: string; 'cancel-in-progress'?: boolean };
+  on?: Record<string, { types?: string[] } | null>;
   jobs?: Record<string, Job>;
 };
 
@@ -64,10 +63,7 @@ function unwrap(expr: string): string {
   return expr.slice(1, -1).trim();
 }
 
-/**
- * Split an expression on the operator `op` at paren depth 0 (quotes respected). Returns
- * one part when `op` never appears at the top level.
- */
+/** Split on `op` at paren depth 0 (quotes respected). One part when `op` is not top-level. */
 function splitTop(expr: string, op: '&&' | '||'): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -89,56 +85,27 @@ function splitTop(expr: string, op: '&&' | '||'): string[] {
   return parts;
 }
 
-/** The top-level AND conjuncts of a job's `if`, or null when an `||` sits at the top level. */
-function conjuncts(ifExpr: string): string[] | null {
+/**
+ * The top-level AND conjuncts of a job's `if`. An `if` with a top-level `||` is one conjunct,
+ * wrapped in parentheses, so it can only match a clause that is itself the whole `if`.
+ */
+function conjuncts(ifExpr: string): string[] {
   const e = unwrap(norm(ifExpr));
-  if (splitTop(e, '||').length > 1) return null;
+  if (splitTop(e, '||').length > 1) return [`(${e})`];
   return splitTop(e, '&&');
 }
 
-const FILES = ['lint.yml', 'apps.yml'];
-
 describe('the full-ci label', () => {
-  it.each(FILES)('%s fires on labeled pull_request events', (file) => {
-    expect(load(file).on?.pull_request?.types).toContain('labeled');
+  // The masking hazard: a `labeled` trigger here means every label starts a run of same-named
+  // skipped jobs.
+  it.each(['lint.yml', 'apps.yml'])('%s does not fire on labeled events', (file) => {
+    const types = load(file).on?.pull_request?.types;
+    expect(types, `${file} must list its pull_request types explicitly`).toBeDefined();
+    expect(types).not.toContain('labeled');
   });
 
-  // (a) Every job, so a job added later without the clause fails here.
-  it.each(FILES)(
-    '%s: every job skips a labeled event for any other label (top-level conjunct)',
-    (file) => {
-      const offenders = Object.entries(load(file).jobs ?? {})
-        .filter(([, job]) => {
-          const parts = job.if ? conjuncts(job.if) : null;
-          return !parts || !parts.includes(NOISE_SKIP);
-        })
-        .map(([id]) => id);
-      expect(offenders, `jobs whose if lacks ${NOISE_SKIP} as a top-level && clause`).toEqual([]);
-    }
-  );
-
-  // (b) Pinned whole: the noise branch must sit between the dispatch branch and the ref
-  // fallback, and only github.run_id makes the group unique per run.
-  it('lint.yml routes a noise-labeled run to a group of its own', () => {
-    const c = load('lint.yml').concurrency;
-    expect(c?.['cancel-in-progress']).toBe(true);
-    expect(norm(c?.group ?? '')).toBe(
-      `lint-\${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || ${NOISE_GROUP} || github.ref }}`
-    );
-  });
-
-  it('apps.yml routes a noise-labeled run to a group of its own', () => {
-    const c = load('apps.yml').concurrency;
-    expect(c?.['cancel-in-progress']).toBe(true);
-    expect(norm(c?.group ?? '')).toBe(
-      `apps-\${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || ${NOISE_GROUP} || github.ref }}`
-    );
-  });
-
-  // (c) The point of the label: the unit shards run on a labeled PR.
   it('lint.yml runs the unit job on a PR only when it has the label', () => {
-    const parts = conjuncts(load('lint.yml').jobs?.unit?.if ?? '');
-    expect(parts).toContain(UNIT_PR_GATE);
+    expect(conjuncts(load('lint.yml').jobs?.unit?.if ?? '')).toContain(UNIT_PR_GATE);
   });
 
   // The label lifts the draft gate on every job that has one. `eslint` has none (it runs on
@@ -149,16 +116,50 @@ describe('the full-ci label', () => {
     ['lint.yml', 'component'],
     ['apps.yml', 'apps'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
-    const parts = conjuncts(load(file).jobs?.[id]?.if ?? '');
-    expect(parts).toContain(DRAFT_GATE);
+    expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
   });
 
-  // Ledger: the job set the two assertions above were written against. A new job fails here
-  // so its author decides which draft gate it takes; (a) already makes it carry the noise skip.
+  // Ledger: the job set the assertions above were written against. A new job fails here so its
+  // author decides which draft gate it takes.
   it.each([
     ['lint.yml', ['component', 'eslint', 'packages', 'typecheck', 'unit']],
     ['apps.yml', ['apps']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
+  });
+
+  describe('full-ci.yml, the dispatcher', () => {
+    const doc = load('full-ci.yml');
+    const jobs = Object.values(doc.jobs ?? {});
+
+    it('fires on pull_request labeled events and nothing else', () => {
+      expect(Object.keys(doc.on ?? {})).toEqual(['pull_request']);
+      expect(doc.on?.pull_request?.types).toEqual(['labeled']);
+    });
+
+    // One job, named so that its skipped check-run (every other label) overlays nothing.
+    it('has one job, gated on the label name and on a same-repo PR', () => {
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].name).toBe('Start full CI on label');
+      expect(norm(jobs[0].if ?? '')).toBe(DISPATCH_IF);
+      expect(jobs[0].permissions).toEqual({ actions: 'write', contents: 'read' });
+    });
+
+    // Script injection: the branch name is attacker-chosen text. It must reach the shell as an
+    // env var, and no `run:` may interpolate any `${{ }}` at all.
+    it('passes the head ref through env, and interpolates nothing into a script', () => {
+      const steps = jobs[0].steps ?? [];
+      const runs = steps.filter((s) => typeof s.run === 'string');
+      expect(runs.length).toBeGreaterThan(0);
+      for (const s of runs) expect(s.run).not.toContain('${{');
+      const dispatching = runs.filter((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
+      expect(dispatching).toHaveLength(1);
+      const step = dispatching[0];
+      expect(step.env?.HEAD_REF).toBe('${{ github.event.pull_request.head.ref }}');
+      expect(step.run).toContain(
+        'gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all'
+      );
+      expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
+    });
   });
 });

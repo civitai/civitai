@@ -55,11 +55,11 @@ name: App suites
 #
 # ── THE `full-ci` LABEL ──────────────────────────────────────────────────────────────────────
 #
-# Same label and same handling as lint.yml (read its header): `full-ci` lifts the draft gate,
-# `labeled` is in `types` for it, a labeled event for any other label skips the job AND gets a
-# concurrency group of its own so it cannot cancel the PR's run in flight. The `paths:` filter
-# above still applies to every event, the labeled one included: a PR that touches nothing these
-# suites read starts no run here even with the label.
+# Same label as lint.yml (read its header): on a PR carrying `full-ci` the draft gate is lifted.
+# `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
+# added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
+# events only); later pushes are: a PR that touches nothing these suites read starts no PR run
+# here even with the label.
 #
 # ── PUSH TO `main` IS UNFILTERED ─────────────────────────────────────────────────────────────
 #
@@ -68,7 +68,7 @@ name: App suites
 on:
   pull_request:
     branches: [main, release]
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/**'
       - 'packages/**'
@@ -106,10 +106,9 @@ permissions:
 # commit on `main` cancels the older one's run (the newest run checks a tree containing every
 # older commit, so `main` keeps a verdict). A `ready_for_review` run shares the PR's group, so
 # it cancels a still-running draft run, which is what we want. Dispatches get their own
-# `dispatch-` groups so one on `main` cannot cancel the push run. A labeled event for any label
-# but `full-ci` gets a `noise-<run_id>` group of its own (see the header).
+# `dispatch-` groups so one on `main` cannot cancel the push run.
 concurrency:
-  group: apps-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.event.action == 'labeled' && github.event.label.name != 'full-ci' && format('noise-{0}', github.run_id) || github.ref }}
+  group: apps-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -119,7 +118,7 @@ jobs:
     # on it.
     name: App unit tests + typecheck
     runs-on: ubuntu-latest
-    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across
     # five apps then): the root config registered `packages/*/vitest.config.*` as projects and
     # nothing for `apps/*`. And the root `pnpm run typecheck` is bounded by the root tsconfig
