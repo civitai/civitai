@@ -68,7 +68,7 @@ import {
 } from '~/server/services/resourceReview.service';
 import { deleteImageById, deleteImages } from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
-import { deleteBountyById } from '~/server/services/bounty.service';
+import { deleteBountyById, deleteSettledKeptBounties } from '~/server/services/bounty.service';
 import { purgeReleasedHeldCopies } from '~/server/services/held-review.service';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { deleteBountyEntry } from '~/server/services/bountyEntry.service';
@@ -140,6 +140,9 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL,
       "bountyId" int NOT NULL REFERENCES "Bounty"(id) ON DELETE CASCADE
     );
+    CREATE TABLE "BountyBenefactor" (
+      "bountyId" int NOT NULL REFERENCES "Bounty"(id) ON DELETE CASCADE, "userId" int
+    );
     CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int NOT NULL, "coverId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Thread" (
@@ -183,7 +186,7 @@ beforeEach(async () => {
   await db.exec(`
     TRUNCATE "CommentV2", "Thread", "Answer", "Question", "ResourceReview", "Model", "Post",
       "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article",
-      "HeldResourceReview", "HeldAnswer";
+      "HeldResourceReview", "HeldAnswer", "BountyBenefactor";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -767,6 +770,24 @@ describe("a held author's rows under a deleted parent", () => {
     expect(await purgeReleasedHeldCopies()).toEqual({ reviews: 2, answers: 2 });
     expect(await left()).toEqual({ reviews: [], answers: [] });
   });
+
+  it.each([
+    ['the entrant', HELD, []],
+    ['the entrant, while its owner is held', HELD, [OWNER]],
+  ])(
+    'deletes a kept bounty once %s is released, and not before',
+    async (_, entrant, heldOwners) => {
+      await seedEnteredBounty(entrant);
+      await deleteBountyById({ id: 60, isModerator: true });
+      for (const owner of heldOwners)
+        await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${owner})`);
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = ${entrant}`);
+      expect(await deleteSettledKeptBounties()).toBe(heldOwners.length ? 0 : 1);
+      expect((await rows(`SELECT id FROM "Bounty"`)).length).toBe(heldOwners.length ? 1 : 0);
+    }
+  );
 
   it('deletes a bounty only an unheld user entered, with the entry (control)', async () => {
     await seedEnteredBounty(OTHER);
