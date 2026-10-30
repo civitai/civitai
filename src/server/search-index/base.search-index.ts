@@ -477,6 +477,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
      * invisible to such a test unless it can compare the two.
      */
     prepareBatches,
+    /** Exposed for the same reason as `prepareBatches`. */
+    pullData: processor.pullData,
     async getData(ids: number[]) {
       const ctx = {
         db: dbWrite,
