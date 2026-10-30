@@ -548,10 +548,10 @@ describe('the app’s data on the runner', () => {
   });
 });
 
-describe('Build it on the runner', () => {
+describe('the checklist on the runner', () => {
   const LABELS = ['Split the bill', 'Round up the tip'];
   const items = (...done: boolean[]) => LABELS.map((label, i) => ({ label, done: done[i] }));
-  /** The reply that showed the list and waited for Build it, as the conversation saved it. */
+  /** The reply that showed the list, as the conversation saved it (one from before the plan stopped waiting). */
   const shownEarlier = () =>
     messagesOf([
       [
@@ -563,7 +563,7 @@ describe('Build it on the runner', () => {
   const checklistsReported = (reported: ChatToolResult[]) =>
     reported.filter((result) => result.name === 'set_checklist').map((result) => result.output);
 
-  it('the reply after Build it ticks the list off without offering Build it again', async () => {
+  it('a later reply ticks the list off as progress', async () => {
     fake.add('my-app');
     const { tools, reported } = await open({
       history: { earlier: shownEarlier(), current: [] },
@@ -578,17 +578,17 @@ describe('Build it on the runner', () => {
       open: 0,
       app: 'my-app',
     });
-    // What the page is told, which decides its Build it.
+    // What the page is told.
     expect(checklistsReported(reported)).toEqual([
       { updated: true, open: 1, app: 'my-app' },
       { updated: true, open: 0, app: 'my-app' },
     ]);
   });
 
-  it('the reply after an errored Build it reply ticks the list off without offering Build it again', async () => {
+  it('the reply after an errored reply ticks the list off as progress', async () => {
     fake.add('my-app');
     const earlier: ModelMessage[] = [
-      // The plan reply, then the Build it reply up to where it errored, its last call cut off.
+      // The plan reply, then the building reply up to where it errored, its last call cut off.
       ...messagesOf([
         [
           'set_checklist',
@@ -627,19 +627,27 @@ describe('Build it on the runner', () => {
     ]);
   });
 
-  it('a new list, with other labels, still waits for Build it', async () => {
+  it('a first list is the plan: it does not end the reply, so the reply goes on building', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const shown = await call(tools.tools, 'set_checklist', { items: items(false, false) });
+    expect(shown).toMatchObject({ shown: true, app: 'my-app' });
+    expect(shown).not.toHaveProperty('awaitsUser');
+  });
+
+  it('a new list, with other labels, does not end the reply either', async () => {
     fake.add('my-app');
     const { tools } = await open({ history: { earlier: shownEarlier(), current: [] } });
     expect(
       await call(tools.tools, 'set_checklist', {
         items: [{ label: 'Split the bill' }, { label: 'Pick a currency' }],
       })
-    ).toMatchObject({ shown: true, awaitsUser: true, app: 'my-app' });
+    ).toEqual({ updated: true, open: 2, app: 'my-app' });
   });
 
-  // An all-done list newly saying sample data still waits: the user must agree to sample data. A data
-  // change that needs no agreement (to 'civitai') on a finished list is progress, as #7153 has it.
-  it('a finished list that newly says sample data waits for the user; one saying civitai does not', async () => {
+  // INVARIANT GUARD (unchanged from before the plan stopped waiting): a list newly saying sample data
+  // still ends the reply, since the user must agree to sample data (#7156). One saying civitai does not.
+  it('a list that newly says sample data waits for the user; one saying civitai does not', async () => {
     fake.add('my-app');
     const sample = await open({ history: { earlier: shownEarlier(), current: [] } });
     expect(
@@ -652,6 +660,41 @@ describe('Build it on the runner', () => {
         data: 'civitai',
       })
     ).toEqual({ updated: true, open: 0, app: 'my-app' });
+  });
+});
+
+describe('building a new app in the reply that made it (reopenTools)', () => {
+  it('create_app making a new app carries the reply on with its tools built again', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const made = await call(tools.tools, 'create_app', { name: 'Tip calculator' });
+    expect(made).toMatchObject({ app: 'tip-calculator', reopenTools: true });
+    expect((made as { note: string }).note).toMatch(/build it straight away/);
+  });
+
+  it('built again mid-reply, the tools are for the app the reply made, not the one open in the page', async () => {
+    fake.add('my-app');
+    fake.add('tip-calculator');
+    const current = messagesOf([
+      [
+        'create_app',
+        { name: 'Tip calculator' },
+        { app: 'tip-calculator', state: 'running', note: 'made', reopenTools: true },
+      ],
+    ]);
+    const { tools } = await open({ history: { earlier: [], current } });
+    expect(tools.instructions).toMatch(/for the app "tip-calculator"/);
+    // The reply made it, so its changes to it run (no "this chat has not been asked" refusal).
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: 'tip-calculator/a.ts', content: 'x' })
+    ).not.toHaveProperty('error');
+  });
+
+  it('NEGATIVE CONTROL: with nothing made in the reply, the tools are for the page’s app', async () => {
+    fake.add('my-app');
+    fake.add('tip-calculator');
+    const { tools } = await open();
+    expect(tools.instructions).toMatch(/for the app "my-app"/);
   });
 });
 
@@ -695,7 +738,7 @@ describe('the gate follows the app', () => {
     fake.add('my-app');
     const { tools } = await open();
     expect(await call(tools.tools, 'set_checklist', { items: [{ label: 'Tip' }] })).toMatchObject({
-      awaitsUser: true,
+      shown: true,
       app: 'my-app',
     });
   });

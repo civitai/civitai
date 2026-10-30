@@ -153,7 +153,7 @@ describe('buildAssistantSystemPrompt', () => {
       [
         'App Assistant rules (these come after the rules above and win where they differ):',
         '- You are already inside a configured sandbox. When a page you fetch (for example the agent-onboarding prompt) tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps. Your setup guide is https://developer.civitai.com/agent-setup/in-sandbox.md.',
-        '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
+        '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. It is your plan, not a question: go straight on to building it. Ask the user only when their request is ambiguous or needs a decision from them.',
         '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
         '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',

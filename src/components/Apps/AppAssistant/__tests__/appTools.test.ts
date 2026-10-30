@@ -59,15 +59,55 @@ describe('create_app', () => {
     const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
     const result = await run(tool([sandbox('quiz-game', 'suspended')], open), 'Quiz Game');
     expect(open).toHaveBeenCalledWith('quiz-game-2');
+    // No toolsReady: the new app's tools come with the next reply, and the reply does not carry on.
     expect(result).toEqual({
       app: 'quiz-game-2',
       state: 'starting',
       note: expect.stringMatching(
-        /^The app quiz-game-2 is starting.*tap Build it.*then call set_checklist/
+        /^The app quiz-game-2 was made\..*arrive with your next reply: call set_checklist/
       ),
     });
+    expect(result).not.toHaveProperty('reopenTools');
+    expect((result as { note: string }).note).not.toMatch(/Build it/);
     // A result with no `error` is not shown to the user, so only this one may name tools.
     expect(result).not.toHaveProperty('error');
+  });
+
+  it('carries the reply on with the new app’s tools once they are ready (reopenTools)', async () => {
+    const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
+    const toolsReady = vi.fn(async () => true);
+    const tools = createAppTools({ apps: () => [], current: () => null, open, toolsReady });
+    const result = await run(tools.tools.create_app, 'Tip calculator');
+    expect(toolsReady).toHaveBeenCalledWith('tip-calculator');
+    expect(result).toEqual({
+      app: 'tip-calculator',
+      state: 'starting',
+      reopenTools: true,
+      note: expect.stringMatching(
+        /^The app tip-calculator was made\..*tools are ready for this reply: call set_checklist.*then build it straight away/
+      ),
+    });
+  });
+
+  it('NEGATIVE CONTROL: tools not ready in time (or the wait failing) carry nothing on', async () => {
+    const open = vi.fn(async (app: string) => ({ sandbox: sandbox(app), created: true }));
+    for (const toolsReady of [async () => false, async () => Promise.reject(new Error('x'))]) {
+      const tools = createAppTools({ apps: () => [], current: () => null, open, toolsReady });
+      const result = await run(tools.tools.create_app, 'Tip calculator');
+      expect(result).not.toHaveProperty('reopenTools');
+    }
+  });
+
+  it('an app the service already had is not carried on into: the user is asked first', async () => {
+    const open = vi.fn(async (app: string) => ({
+      sandbox: sandbox(app, 'running'),
+      created: false,
+    }));
+    const toolsReady = vi.fn(async () => true);
+    const tools = createAppTools({ apps: () => [], current: () => null, open, toolsReady });
+    const result = await run(tools.tools.create_app, 'Tip calculator');
+    expect(result).not.toHaveProperty('reopenTools');
+    expect(toolsReady).not.toHaveBeenCalled();
   });
 
   it('tells the assistant to ask first when the service had the app already', async () => {
