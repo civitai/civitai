@@ -4502,10 +4502,48 @@ async function removeEntry(entryId: number, remover: EntryRemover) {
   if (entry.userId === moderatorId) throw throwBadRequestError("You can't remove your own entry");
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
     throw throwBadRequestError(NOT_RUNNING);
-  // Checked before the refund; the UPDATE below is the backstop for concurrent removals.
-  if (isOwnerRemoval && crucible.ownerRemovalCount >= CRUCIBLE_OWNER_REMOVAL_CAP)
-    throw throwBadRequestError(OWNER_CAP_REACHED);
   const fee = entry.buzzTransactionId ? crucible.entryFee : 0;
+
+  // An owner's slot is taken before any money moves: a refund can't be taken back, so concurrent
+  // removals past the cap must be turned away here, not after they have paid out.
+  if (isOwnerRemoval) {
+    const reserved = await dbWrite.$executeRaw`
+      UPDATE "Crucible"
+      SET "ownerRemovalCount" = "ownerRemovalCount" + 1
+      WHERE id = ${crucibleId}
+        AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+        AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+        AND "ownerRemovalCount" < ${CRUCIBLE_OWNER_REMOVAL_CAP}
+    `;
+    if (!reserved) {
+      const [row] = await dbWrite.$queryRaw<{ capped: boolean }[]>`
+        SELECT "ownerRemovalCount" >= ${CRUCIBLE_OWNER_REMOVAL_CAP} AS capped
+        FROM "Crucible" WHERE id = ${crucibleId}
+      `;
+      throw throwBadRequestError(row?.capped ? OWNER_CAP_REACHED : NOT_RUNNING);
+    }
+  }
+  const releaseSlot = async () => {
+    if (!isOwnerRemoval) return;
+    try {
+      await dbWrite.$executeRaw`
+        UPDATE "Crucible"
+        SET "ownerRemovalCount" = GREATEST("ownerRemovalCount" - 1, 0)
+        WHERE id = ${crucibleId}
+      `;
+    } catch (releaseError) {
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-entry-removal-slot-release-failed',
+        message: `Entry ${entryId} was kept but the owner removal it reserved on crucible ${crucibleId} wasn't given back: ${
+          releaseError instanceof Error ? releaseError.message : String(releaseError)
+        }`,
+        crucibleId,
+        entryId,
+        ...actor,
+      });
+    }
+  };
 
   if (entry.buzzTransactionId) {
     try {
@@ -4520,6 +4558,7 @@ async function removeEntry(entryId: number, remover: EntryRemover) {
         reason: 'entry-removed',
       });
     } catch (error) {
+      await releaseSlot();
       logToAxiom({
         type: 'error',
         name: 'crucible-entry-removal-refund-failed',
@@ -4537,51 +4576,32 @@ async function removeEntry(entryId: number, remover: EntryRemover) {
     }
   }
 
-  let raced: 'end' | 'cap' | null = null;
+  let ended = false;
   try {
     await dbWrite.$transaction(async (tx) => {
-      // Holds the crucible row, so finalize can't rank the entry while it's being removed. An
-      // owner's removal also takes a slot of the cap here, so concurrent ones can't pass it.
-      const running = isOwnerRemoval
-        ? await tx.$executeRaw`
-            UPDATE "Crucible"
-            SET "prizePool" = "prizePool" - ${fee}, "ownerRemovalCount" = "ownerRemovalCount" + 1
-            WHERE id = ${crucibleId}
-              AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
-              AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
-              AND "ownerRemovalCount" < ${CRUCIBLE_OWNER_REMOVAL_CAP}
-          `
-        : await tx.$executeRaw`
-            UPDATE "Crucible"
-            SET "prizePool" = "prizePool" - ${fee}
-            WHERE id = ${crucibleId}
-              AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
-              AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
-          `;
+      // Holds the crucible row, so finalize can't rank the entry while it's being removed.
+      const running = await tx.$executeRaw`
+        UPDATE "Crucible"
+        SET "prizePool" = "prizePool" - ${fee}
+        WHERE id = ${crucibleId}
+          AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+          AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+      `;
       if (!running) {
-        const [row] = isOwnerRemoval
-          ? await tx.$queryRaw<{ capped: boolean }[]>`
-              SELECT "ownerRemovalCount" >= ${CRUCIBLE_OWNER_REMOVAL_CAP} AS capped
-              FROM "Crucible" WHERE id = ${crucibleId}
-            `
-          : [];
-        raced = row?.capped ? 'cap' : 'end';
-        throw throwBadRequestError(raced === 'cap' ? OWNER_CAP_REACHED : NOT_RUNNING);
+        ended = true;
+        throw throwBadRequestError(NOT_RUNNING);
       }
       await tx.crucibleEntry.delete({ where: { id: entryId } });
     });
   } catch (error) {
-    // Ended, or (owner removals) hit the cap, between the checks above and here: the fee is back
-    // with the entrant, but the entry still counts toward the pool finalize pays out.
-    if (raced && fee)
+    await releaseSlot();
+    // Ended between the check above and here: the fee is back with the entrant, but the entry
+    // still counts toward the pool finalize pays out.
+    if (ended && fee)
       logToAxiom({
         type: 'error',
-        name: `crucible-entry-removal-raced-${raced}`,
-        message: `Entry ${entryId}'s fee was refunded but ${
-          raced === 'cap'
-            ? "another removal took the last of its crucible's owner removals"
-            : 'the crucible ended'
-        } before it was removed, so the pool still counts it.`,
+        name: 'crucible-entry-removal-raced-end',
+        message: `Entry ${entryId}'s fee was refunded but the crucible ended before it was removed, so the pool still counts it.`,
         crucibleId,
         entryId,
         ...actor,
