@@ -47,6 +47,7 @@ import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
+import { reconcileSubscriptionHistoryJob } from '~/server/jobs/reconcile-subscription-history';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
 import { countReviewImages } from '~/server/jobs/count-review-images';
@@ -281,6 +282,7 @@ export const jobs: Job[] = [
   expireReferralTokens,
   advanceReferralSubs,
   ...prepaidMembershipJobs,
+  reconcileSubscriptionHistoryJob,
   ...entityModerationJobs,
   ...placementJobs,
   ...creatorServiceDealJobs,

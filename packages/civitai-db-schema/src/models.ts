@@ -789,6 +789,28 @@ export interface CustomerSubscription {
   updatedAt: Date | null;
 }
 
+export interface CustomerSubscriptionHistory {
+  id: number;
+  userId: number;
+  subscriptionId: string;
+  buzzType: string;
+  productId: string;
+  priceId: string;
+  status: string;
+  metadata: JsonValue;
+  cancelAtPeriodEnd: boolean;
+  cancelAt: Date | null;
+  canceledAt: Date | null;
+  startedAt: Date;
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+  endedAt: Date | null;
+  closedAt: Date | null;
+  closedReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface MembershipGift {
   id: string;
   gifterId: number;

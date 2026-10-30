@@ -8,6 +8,7 @@ import { ConnectedAppsCard } from '~/components/Account/ConnectedAppsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
 import { DeleteCard } from '~/components/Account/DeleteCard';
 import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
+import { MembershipHistoryCard } from '~/components/Account/MembershipHistoryCard';
 import { OAuthAppsCard } from '~/components/Account/OAuthAppsCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { ProfileCard } from '~/components/Account/ProfileCard';
@@ -80,6 +81,7 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
       return (
         <SettingsStack>
           <SubscriptionCard flat />
+          <MembershipHistoryCard flat />
           <PaymentMethodsCard flat />
           <UserPaymentConfigurationCard flat />
           <MembershipGiftsCard pointer />

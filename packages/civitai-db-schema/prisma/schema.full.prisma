@@ -693,6 +693,36 @@ model CustomerSubscription {
   @@unique([userId, buzzType])
 }
 
+/// One row per membership, kept by a trigger on CustomerSubscription (which holds only the
+/// current state of each slot). At most one open row (closedAt null) per (userId, buzzType);
+/// that partial unique index and the trigger live only in the migration
+/// 20261122120000_customer_subscription_history. Never write this table from the app.
+/// No relation to User on purpose: an FK locks "User" while it validates.
+model CustomerSubscriptionHistory {
+  id                 Int       @id @default(autoincrement())
+  userId             Int
+  subscriptionId     String
+  buzzType           String
+  productId          String
+  priceId            String
+  status             String
+  metadata           Json      @default("{}")
+  cancelAtPeriodEnd  Boolean   @default(false)
+  cancelAt           DateTime?
+  canceledAt         DateTime?
+  startedAt          DateTime
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  endedAt            DateTime?
+  /// Set when the live row moved on: 'removed' | 'replaced' | 'plan-changed' | 'restarted'
+  closedAt           DateTime?
+  closedReason       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now())
+
+  @@index([userId])
+}
+
 enum PaymentProvider {
   Stripe
   Paddle
