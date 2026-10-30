@@ -58,6 +58,7 @@ vi.mock('~/server/services/model.service', () => ({
   setModelMinor: vi.fn(),
   applyModelFlagSideEffects: vi.fn(),
   clearPoiHashMeta: vi.fn(),
+  restoreOwnerFlagOverride: vi.fn(),
 }));
 vi.mock('~/server/services/minor-hash.service', () => ({
   confirmMinorHashAutoFlag: vi.fn(),

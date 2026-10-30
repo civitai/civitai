@@ -12,6 +12,7 @@ import {
   POI_FLAG_SNAPSHOT_KEY,
   POI_HASH_CLEARED_KEY,
   POI_HASH_MATCH_KEY,
+  restoreOwnerFlagOverride,
   setModelPoi,
 } from '~/server/services/model.service';
 import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
@@ -484,6 +485,7 @@ export async function revertPoiHashAutoFlag({
         meta = ${withoutSystemNsfwLockSql('meta')}
     WHERE id = ${modelId} AND NOT poi AND NOT minor
   `;
+  await restoreOwnerFlagOverride(modelId, { revertedFlag: 'poi' });
   await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);
   // The restore moves sfwOnly and the gallery level after setModelPoi's own cache bust.

@@ -634,7 +634,7 @@ export async function grantModelTextScanPoi({
   });
   if (!before?.poi) return false;
 
-  const [after] = await writeTextScanRuling(
+  const [granted] = await writeTextScanRuling(
     { modelId, labels: ['poi'], decision: 'appealGranted', via, moderatorId: userId, reason, note },
     (tx) => tx.$queryRaw<ModelFlagRow[]>`
     UPDATE "Model" m
@@ -685,9 +685,14 @@ export async function grantModelTextScanPoi({
   `,
     (rows) => rows.length > 0
   );
-  if (!after) return false;
+  if (!granted) return false;
 
-  const { applyModelFlagSideEffects, clearPoiHashMeta } = await loadModelService();
+  const { applyModelFlagSideEffects, clearPoiHashMeta, restoreOwnerFlagOverride } =
+    await loadModelService();
+  const after = {
+    ...granted,
+    ...(await restoreOwnerFlagOverride(modelId, { revertedFlag: 'poi' })),
+  };
   await clearPoiHashMeta(modelId);
   await applyModelFlagSideEffects({ before, after });
   await updateModelNsfwLevels([modelId]);

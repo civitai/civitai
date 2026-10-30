@@ -38,6 +38,10 @@ vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
   settleFlagAppealsAfterModeratorLift: mockSettleAppeals,
 }));
 const { mockReassertPoi } = vi.hoisted(() => ({ mockReassertPoi: vi.fn() }));
+const { mockUpdateModelNsfwLevels } = vi.hoisted(() => ({ mockUpdateModelNsfwLevels: vi.fn() }));
+vi.mock('~/server/services/nsfwLevels.service', () => ({
+  updateModelNsfwLevels: mockUpdateModelNsfwLevels,
+}));
 const { mockBustGallerySettings } = vi.hoisted(() => ({ mockBustGallerySettings: vi.fn() }));
 vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   bustModelGallerySettings: mockBustGallerySettings,
@@ -124,7 +128,12 @@ vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
 import type { Tracker } from '~/server/clickhouse/client';
-import { MINOR_LOCKED_PROPERTIES, setModelMinor } from '~/server/services/model.service';
+import {
+  MINOR_LOCKED_PROPERTIES,
+  restoreOwnerFlagOverride,
+  setModelMinor,
+} from '~/server/services/model.service';
+import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { rowChangesBeforeLock, sqlOf as sqlText } from './model-row-lock.fake';
@@ -149,7 +158,7 @@ const baseModelRow = {
   lockedProperties: [] as string[],
 };
 
-function mockBefore(overrides: Partial<typeof baseModelRow>) {
+function mockBefore(overrides: Partial<typeof baseModelRow> & { meta?: unknown }) {
   mockDbWrite.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
 }
 
@@ -386,6 +395,481 @@ describe('setModelMinor — unset', () => {
   });
 });
 
+describe('setModelMinor — a lift restores the nsfw ruling the flag replaced', () => {
+  const AT = '2026-10-01T00:00:00.000Z';
+  const ownerFlagOverride = {
+    at: AT,
+    flags: ['minor'],
+    prevNsfw: true,
+    prevSfwOnly: false,
+    prevLockedProperties: ['nsfw', 'name'],
+  };
+  const flagged = {
+    minor: true,
+    nsfw: false,
+    sfwOnly: true,
+    lockedProperties: ['nsfw', 'name', 'minor', 'sfwOnly'],
+  };
+  const writtenData = () => mockDbWrite.model.update.mock.calls[0][0].data;
+  const overrideWrites = () =>
+    mockDbWrite.$executeRaw.mock.calls
+      .map((call) => JSON.stringify(call.slice(1)))
+      .filter((values) => values.includes('ownerFlagOverride'));
+
+  // The same call an appeal overturn makes for a flag that is not automated.
+  it('after an owner override, puts back the rating, the SFW-only setting and the locks it replaced', async () => {
+    mockBefore({ ...flagged, meta: { ownerFlagOverride } });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    const data = writtenData();
+    expect(data).toMatchObject({ minor: false, nsfw: true, sfwOnly: false });
+    expect([...data.lockedProperties].sort()).toEqual(['name', 'nsfw']);
+    expect(data).not.toHaveProperty('gallerySettings');
+    expect(overrideWrites()).toHaveLength(1);
+    expect(overrideWrites()[0]).not.toContain('flags');
+  });
+
+  it("after a moderator's nsfw lock, puts back the rating, its lock and the gallery level from the flag snapshot", async () => {
+    mockBefore({
+      ...flagged,
+      lockedProperties: [...MINOR_LOCKED_PROPERTIES],
+      gallerySettings: { level: sfwBrowsingLevelsFlag, users: [3], tags: [] },
+      meta: {
+        minorFlagSnapshot: {
+          at: AT,
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevGalleryLevel: 31,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toEqual({
+      minor: false,
+      nsfw: true,
+      sfwOnly: false,
+      lockedProperties: ['nsfw'],
+      gallerySettings: { level: 31, users: [3], tags: [] },
+    });
+  });
+
+  // A flagged model is never nsfw, so an override always predates a snapshot of the same flag.
+  it('takes the rating and gallery level from the older owner override', async () => {
+    mockBefore({
+      ...flagged,
+      gallerySettings: { level: sfwBrowsingLevelsFlag, users: [], tags: [] },
+      meta: {
+        ownerFlagOverride: { ...ownerFlagOverride, prevGalleryLevel: 31 },
+        minorFlagSnapshot: {
+          at: '2026-10-02T00:00:00.000Z',
+          source: 'auto',
+          prevNsfw: false,
+          prevSfwOnly: true,
+          prevGalleryLevel: sfwBrowsingLevelsFlag,
+          prevLockedProperties: ['nsfw', 'minor', 'sfwOnly'],
+        },
+      },
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toMatchObject({
+      nsfw: true,
+      sfwOnly: false,
+      gallerySettings: { level: 31 },
+    });
+    expect([...writtenData().lockedProperties].sort()).toEqual(['name', 'nsfw']);
+  });
+
+  it('leaves the rating alone when the flag replaced no locked ruling', async () => {
+    mockBefore({
+      ...flagged,
+      lockedProperties: [...MINOR_LOCKED_PROPERTIES],
+      meta: {
+        minorFlagSnapshot: {
+          at: AT,
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: [],
+        },
+      },
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toEqual({ minor: false, lockedProperties: [] });
+  });
+
+  it('leaves the rating to a moderator who changed it while the flag was on, and drops the override', async () => {
+    mockBefore({ ...flagged, sfwOnly: false, meta: { ownerFlagOverride } });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toEqual({ minor: false, lockedProperties: ['name'] });
+    expect(overrideWrites()).toHaveLength(1);
+    expect(overrideWrites()[0]).not.toContain('flags');
+  });
+
+  it('ignores a flag snapshot that an earlier lift already ended', async () => {
+    mockBefore({
+      ...flagged,
+      lockedProperties: [...MINOR_LOCKED_PROPERTIES],
+      meta: {
+        minorFlagSnapshot: {
+          at: AT,
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+    mockDbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      Promise.resolve(strings.join('?').includes('ModActivity') ? [{ found: 1 }] : [])) as never);
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toEqual({ minor: false, lockedProperties: [] });
+    const [strings, ...values] = mockDbWrite.$queryRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('ModActivity')
+    ) as [TemplateStringsArray, ...unknown[]];
+    expect(strings.join('?')).toMatch(/"createdAt" > \?::timestamptz/);
+    expect(values).toContainEqual(MODEL_ID);
+    expect(values).toContainEqual(AT);
+    expect(values).toContainEqual([
+      'unsetMinor',
+      'rollbackMinorAutoHash',
+      'setSfwOnly',
+      'unsetSfwOnly',
+      'lockProperty:nsfw',
+      'unlockProperty:nsfw',
+    ]);
+  });
+
+  it('ignores a flag snapshot stamped as superseded, without asking the activity log', async () => {
+    mockBefore({
+      ...flagged,
+      lockedProperties: [...MINOR_LOCKED_PROPERTIES],
+      meta: {
+        minorFlagSnapshot: {
+          at: AT,
+          supersededAt: '2026-10-03T00:00:00.000Z',
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toEqual({ minor: false, lockedProperties: [] });
+    const askedLog = mockDbWrite.$queryRaw.mock.calls.some((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('ModActivity')
+    );
+    expect(askedLog).toBe(false);
+  });
+
+  it("ignores an override older than a moderator's later ruling on the rating", async () => {
+    mockBefore({ ...flagged, meta: { ownerFlagOverride } });
+    mockDbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      Promise.resolve(strings.join('?').includes('ModActivity') ? [{ found: 1 }] : [])) as never);
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toEqual({ minor: false, lockedProperties: ['name'] });
+    const [, ...values] = mockDbWrite.$queryRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('ModActivity')
+    ) as [TemplateStringsArray, ...unknown[]];
+    expect(values).toContainEqual(AT);
+    expect(values).toContainEqual([
+      'setSfwOnly',
+      'unsetSfwOnly',
+      'lockProperty:nsfw',
+      'unlockProperty:nsfw',
+    ]);
+  });
+
+  it('leaves a private model SFW-only', async () => {
+    mockBefore({ ...flagged, availability: 'Private', meta: { ownerFlagOverride } } as never);
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toEqual({ minor: false, lockedProperties: ['name'] });
+  });
+
+  it('restores nothing from a record that was both mature and SFW-only', async () => {
+    mockBefore({
+      ...flagged,
+      meta: { ownerFlagOverride: { ...ownerFlagOverride, prevSfwOnly: true } },
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toEqual({ minor: false, lockedProperties: ['name'] });
+  });
+
+  it('removes the gallery level when the snapshot recorded none', async () => {
+    mockBefore({
+      ...flagged,
+      lockedProperties: [...MINOR_LOCKED_PROPERTIES],
+      gallerySettings: { level: sfwBrowsingLevelsFlag, users: [3], tags: [] },
+      meta: {
+        minorFlagSnapshot: {
+          at: AT,
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevGalleryLevel: null,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData().gallerySettings).toEqual({ users: [3], tags: [] });
+  });
+
+  it("recomputes the model's nsfw level after restoring a mature rating, and only then", async () => {
+    mockBefore({ ...flagged, meta: { ownerFlagOverride } });
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+    expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
+    expect(vi.mocked(bustPublicModelResponseCache)).toHaveBeenCalledWith(MODEL_ID);
+
+    mockUpdateModelNsfwLevels.mockClear();
+    mockBefore({ ...flagged, meta: {} });
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+    expect(mockUpdateModelNsfwLevels).not.toHaveBeenCalled();
+  });
+
+  it('keeps the restrictions while the real-person flag stays on, and the override for it', async () => {
+    mockBefore({
+      ...flagged,
+      poi: true,
+      lockedProperties: ['nsfw', 'minor', 'sfwOnly', 'poi'],
+      meta: { ownerFlagOverride: { ...ownerFlagOverride, flags: ['minor', 'poi'] } },
+    });
+    mockUpdateReturns({ poi: true });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).not.toHaveProperty('nsfw');
+    expect(overrideWrites()).toHaveLength(1);
+    expect(overrideWrites()[0]).toContain('\\"flags\\":[\\"poi\\"]');
+  });
+
+  it('restores once the second of two overridden flags is lifted', async () => {
+    // What the first lift (real-person) left: minor still on, the override narrowed to it.
+    mockBefore({
+      ...flagged,
+      lockedProperties: ['name', 'minor', 'nsfw', 'sfwOnly'],
+      meta: { ownerFlagOverride: { ...ownerFlagOverride, flags: ['minor'] } },
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(writtenData()).toMatchObject({ nsfw: true, sfwOnly: false });
+    expect([...writtenData().lockedProperties].sort()).toEqual(['name', 'nsfw']);
+  });
+
+  it('restores nothing on a rollback, which puts back its own snapshot', async () => {
+    mockBefore({ ...flagged, meta: { ownerFlagOverride } });
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: MODERATOR_ID,
+      activity: 'rollbackMinorAutoHash',
+    });
+
+    expect(writtenData()).not.toHaveProperty('nsfw');
+    expect(overrideWrites()).toHaveLength(0);
+  });
+});
+
+describe('restoreOwnerFlagOverride — after a revert put back its own snapshot', () => {
+  const reverted = {
+    minor: false,
+    nsfw: false,
+    sfwOnly: true,
+    lockedProperties: ['minor', 'nsfw', 'sfwOnly'],
+  };
+
+  it('puts back the ruling the override replaced, since it is the older record', async () => {
+    mockBefore({
+      ...reverted,
+      meta: {
+        ownerFlagOverride: {
+          at: '2026-10-01T00:00:00.000Z',
+          flags: ['minor'],
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    const written = await restoreOwnerFlagOverride(MODEL_ID, { revertedFlag: 'poi' });
+
+    const expected = { nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] };
+    expect(mockDbWrite.model.update).toHaveBeenCalledWith({
+      where: { id: MODEL_ID },
+      data: expected,
+    });
+    expect(written).toEqual(expected);
+    const dropped = mockDbWrite.$executeRaw.mock.calls.filter((call) =>
+      JSON.stringify(call.slice(1)).includes('ownerFlagOverride')
+    );
+    expect(dropped).toHaveLength(1);
+    expect(JSON.stringify(dropped[0])).not.toContain('flags');
+    expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
+    expect(vi.mocked(bustPublicModelResponseCache)).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  // The revert undoes the automated flag; the owner's own declaration of it stands.
+  // Kept, it would be restored by the later lift or revert of the flag still set.
+  it('drops the override outright when the owner declared the reverted flag and another stays set', async () => {
+    mockBefore({
+      ...reverted,
+      poi: true,
+      lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
+      meta: {
+        ownerFlagOverride: {
+          at: '2026-10-01T00:00:00.000Z',
+          flags: ['minor'],
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    expect(await restoreOwnerFlagOverride(MODEL_ID, { revertedFlag: 'minor' })).toBeUndefined();
+    const writes = mockDbWrite.$executeRaw.mock.calls.filter((call) =>
+      JSON.stringify(call.slice(1)).includes('ownerFlagOverride')
+    );
+    expect(writes).toHaveLength(1);
+    expect(JSON.stringify(writes[0])).not.toContain('flags');
+  });
+
+  it('restores nothing, and drops the override, when the owner declared the reverted flag', async () => {
+    mockBefore({
+      ...reverted,
+      meta: {
+        ownerFlagOverride: {
+          at: '2026-10-01T00:00:00.000Z',
+          flags: ['minor'],
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    expect(await restoreOwnerFlagOverride(MODEL_ID, { revertedFlag: 'minor' })).toBeUndefined();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    // A later revert of the other flag would otherwise restore from it.
+    const dropped = mockDbWrite.$executeRaw.mock.calls.filter((call) =>
+      JSON.stringify(call.slice(1)).includes('ownerFlagOverride')
+    );
+    expect(dropped).toHaveLength(1);
+    expect(JSON.stringify(dropped[0])).not.toContain('flags');
+  });
+
+  it('drops the override and restores nothing when a moderator changed the rating since', async () => {
+    mockBefore({
+      ...reverted,
+      sfwOnly: false,
+      meta: {
+        ownerFlagOverride: {
+          at: '2026-10-01T00:00:00.000Z',
+          flags: ['minor'],
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    expect(await restoreOwnerFlagOverride(MODEL_ID, { revertedFlag: 'poi' })).toBeUndefined();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockUpdateModelNsfwLevels).not.toHaveBeenCalled();
+    const dropped = mockDbWrite.$executeRaw.mock.calls.filter((call) =>
+      JSON.stringify(call.slice(1)).includes('ownerFlagOverride')
+    );
+    expect(dropped).toHaveLength(1);
+    expect(JSON.stringify(dropped[0])).not.toContain('flags');
+  });
+
+  // Only a minor lift reads the snapshot; a revert put back its own already.
+  it('falls back to no flag snapshot when the override has been ruled on since', async () => {
+    const OVERRIDE_AT = '2026-10-01T00:00:00.000Z';
+    mockBefore({
+      ...reverted,
+      meta: {
+        ownerFlagOverride: {
+          at: OVERRIDE_AT,
+          flags: ['minor'],
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+        minorFlagSnapshot: {
+          at: '2026-10-02T00:00:00.000Z',
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+    mockDbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      Promise.resolve(
+        strings.join('?').includes('ModActivity') && values.includes(OVERRIDE_AT)
+          ? [{ found: 1 }]
+          : []
+      )) as never);
+
+    expect(await restoreOwnerFlagOverride(MODEL_ID, { revertedFlag: 'poi' })).toBeUndefined();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing without an override, even over a flag snapshot that holds a ruling', async () => {
+    mockBefore({
+      ...reverted,
+      meta: {
+        minorFlagSnapshot: {
+          at: '2026-10-01T00:00:00.000Z',
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    expect(await restoreOwnerFlagOverride(MODEL_ID, { revertedFlag: 'poi' })).toBeUndefined();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+});
+
 // Unset strips the nsfw/sfwOnly locks the poi restriction also depends on.
 describe('setModelMinor — unset on a model that stays poi', () => {
   it.each([
@@ -505,12 +989,16 @@ describe('setModelMinor — pre-state snapshot', () => {
     expect(text).toContain('i.minor');
   });
 
-  it('does not snapshot when unsetting minor', async () => {
+  it('takes no snapshot when unsetting minor, and marks the existing one as ended', async () => {
     mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
 
     await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
 
-    expect(snapshotCall()).toBeUndefined();
+    const sql = mockDbWrite.$executeRaw.mock.calls.map((call) =>
+      Array.from(call[0] as TemplateStringsArray).join('?')
+    );
+    expect(sql.some((text) => text.includes('prevNsfw'))).toBe(false);
+    expect(sql.some((text) => text.includes("'supersededAt'"))).toBe(true);
   });
 
   it('still flags when the snapshot write fails — losing it must not block the flag', async () => {
