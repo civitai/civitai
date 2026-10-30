@@ -5,6 +5,10 @@ vi.mock('../user-lookup.service', () => ({ getIdentity: vi.fn() }));
 vi.mock('../user-actions.service', () => ({ getTimedMute: vi.fn() }));
 
 const { loadPanels } = await import('../tickets/panels');
+const { membershipSectionFor } = await import('../tickets/membership');
+const { payoutsSectionFor } = await import('../tickets/payouts');
+const { shopSectionFor } = await import('../tickets/shop-purchases');
+const { loraSectionFor } = await import('../tickets/lora-runs');
 
 const account = vi.fn();
 const appeals = vi.fn();
@@ -327,5 +331,46 @@ describe('the history and rating disputes panels', () => {
     expect(res.history).toEqual({ status: 'unavailable', userId: 7 });
     expect(res.ratingDisputes).toEqual({ status: 'unavailable', userId: 7 });
     expect(res.appeals).toMatchObject({ status: 'ok' });
+  });
+});
+
+describe('the single-read support cards', () => {
+  const support = (cfFeature: string) => ({ ...ticket, view: 'support' as const, cfFeature });
+  const down = () => Promise.reject(new Error('db down'));
+  const real = {
+    ...(loaders as object),
+    membership: ({ civitaiUserId }: { civitaiUserId: number }) =>
+      membershipSectionFor({ userId: civitaiUserId }, { subscription: down }),
+    payouts: ({ civitaiUserId }: { civitaiUserId: number }) =>
+      payoutsSectionFor({ userId: civitaiUserId }, { payouts: down }),
+    shop: ({ civitaiUserId }: { civitaiUserId: number }) =>
+      shopSectionFor({ userId: civitaiUserId }, { purchases: down }),
+  } as never;
+
+  it.each([
+    ['membership', 'Billing or Membership'],
+    ['payouts', 'Buzz (Receiving)'],
+    ['shop', 'Cosmetic Shop'],
+  ])('%s is unavailable when its read fails', async (key, feature) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await loadPanels(support(feature), all, real);
+    expect(res[key as 'membership']).toEqual({ status: 'unavailable', userId: 7 });
+  });
+
+  it.each([
+    ['the runs cannot be read', { runs: down, models: vi.fn() }],
+    [
+      'the publish state cannot',
+      { runs: () => Promise.resolve({ runs: [{ modelId: 1 }], truncated: false }), models: down },
+    ],
+  ])('lora is unavailable when %s', async (_name, reads) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const lora = ({ civitaiUserId }: { civitaiUserId: number }) =>
+      loraSectionFor({ userId: civitaiUserId }, reads as never);
+    const res = await loadPanels(support('LoRA Trainer'), all, {
+      ...(loaders as object),
+      lora,
+    } as never);
+    expect(res.lora).toEqual({ status: 'unavailable', userId: 7 });
   });
 });

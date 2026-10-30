@@ -1,6 +1,6 @@
 import type { getBounties, getBountyEntries } from '../user-account.service';
 import { SUPPORT_ROWS } from '$lib/tickets/support-panels';
-import type { HistorySection } from './history';
+import { section, type CardSection } from './section';
 
 /** Free-text descriptions are deliberately not carried: the card names the bounty, User Lookup holds the rest. */
 export type BountyRow = {
@@ -27,8 +27,8 @@ export type TicketBounties =
   | {
       status: 'ok';
       userId: number;
-      bounties: HistorySection<BountyRow>;
-      entries: HistorySection<BountyEntryRow>;
+      bounties: CardSection<BountyRow>;
+      entries: CardSection<BountyEntryRow>;
     };
 
 export type BountiesReads = {
@@ -44,19 +44,6 @@ const liveReads: BountiesReads = {
     (await import('../user-account.service')).getBountyEntries(userId, limit),
 };
 
-/** One section: a failing read is that section's `unavailable`, never the card's. */
-async function section<T>(
-  label: string,
-  read: () => Promise<{ rows: T[]; truncated: boolean }>
-): Promise<HistorySection<T>> {
-  try {
-    return { status: 'ok', ...(await read()) };
-  } catch (e) {
-    console.error(`[tickets] bounties ${label} failed`, e);
-    return { status: 'unavailable' };
-  }
-}
-
 /** The bounties the linked user funded and the entries they submitted. The caller has checked the User Lookup grant. */
 export async function bountiesSectionFor(
   ticket: { userId: number },
@@ -64,7 +51,7 @@ export async function bountiesSectionFor(
 ): Promise<Extract<TicketBounties, { status: 'ok' }>> {
   const { userId } = ticket;
   const [bounties, entries] = await Promise.all([
-    section('funded', async () => {
+    section('bounties', 'funded', async () => {
       const { items, truncated } = await reads.bounties(userId, SUPPORT_ROWS);
       return {
         truncated,
@@ -81,7 +68,7 @@ export async function bountiesSectionFor(
         ),
       };
     }),
-    section('entries', async () => {
+    section('bounties', 'entries', async () => {
       const { items, truncated } = await reads.entries(userId, SUPPORT_ROWS);
       return {
         truncated,

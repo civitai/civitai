@@ -1,14 +1,11 @@
 import type { getUserNotes } from '../moderation-memory.service';
 import type { getImageRemovals, getModActivity } from '../user-account.service';
 import type { getLiveStrikes } from '../user-lookup.service';
+import { capped, section, type CardSection } from './section';
 
 /** Rows shown per section; each read asks for one more so a cut is told from a total. */
 export const HISTORY_ROWS = 10;
 const NOTE_CHARS = 300;
-
-export type HistorySection<T> =
-  | { status: 'ok'; rows: T[]; truncated: boolean }
-  | { status: 'unavailable' };
 
 export type HistoryStrike = {
   id: number;
@@ -44,10 +41,10 @@ export type TicketHistory =
   | {
       status: 'ok';
       userId: number;
-      strikes: HistorySection<HistoryStrike>;
-      notes: HistorySection<HistoryNote>;
-      activity: HistorySection<HistoryActivity>;
-      removals: HistorySection<HistoryRemoval>;
+      strikes: CardSection<HistoryStrike>;
+      notes: CardSection<HistoryNote>;
+      activity: CardSection<HistoryActivity>;
+      removals: CardSection<HistoryRemoval>;
     };
 
 export type HistoryReads = {
@@ -97,24 +94,6 @@ export const toVisibleRemovals = (rows: RemovalRow[]): HistoryRemoval[] =>
 
 const iso = (d: Date | string | null) => (d ? new Date(d).toISOString() : null);
 
-/** One section: a failing read is that section's `unavailable`, never the panel's. */
-async function section<T>(
-  label: string,
-  read: () => Promise<{ rows: T[]; truncated: boolean }>
-): Promise<HistorySection<T>> {
-  try {
-    return { status: 'ok', ...(await read()) };
-  } catch (e) {
-    console.error(`[tickets] history ${label} failed`, e);
-    return { status: 'unavailable' };
-  }
-}
-
-const capped = <T, R>(rows: T[], map: (row: T) => R) => ({
-  rows: rows.slice(0, HISTORY_ROWS).map(map),
-  truncated: rows.length > HISTORY_ROWS,
-});
-
 /**
  * The linked user's moderation history, newest first, each section bounded. Read-only: it lists, and
  * User Lookup holds the whole record. A strike's free-text description is not carried.
@@ -125,9 +104,10 @@ export async function historySectionFor(
 ): Promise<Extract<TicketHistory, { status: 'ok' }>> {
   const { userId } = ticket;
   const [strikes, notes, activity, removals] = await Promise.all([
-    section('strikes', async () =>
+    section('history', 'strikes', async () =>
       capped(
         await reads.strikes(userId, HISTORY_ROWS + 1),
+        HISTORY_ROWS,
         (s): HistoryStrike => ({
           id: s.id,
           reason: s.reason,
@@ -140,9 +120,10 @@ export async function historySectionFor(
         })
       )
     ),
-    section('notes', async () =>
+    section('history', 'notes', async () =>
       capped(
         await reads.notes(userId),
+        HISTORY_ROWS,
         (n): HistoryNote => ({
           id: n.id,
           text: (n.notes ?? '').slice(0, NOTE_CHARS),
@@ -151,9 +132,10 @@ export async function historySectionFor(
         })
       )
     ),
-    section('activity', async () =>
+    section('history', 'activity', async () =>
       capped(
         await reads.activity(userId, HISTORY_ROWS + 1),
+        HISTORY_ROWS,
         (a): HistoryActivity => ({
           id: a.id,
           activity: a.activity,
@@ -164,7 +146,7 @@ export async function historySectionFor(
         })
       )
     ),
-    section('removals', async () => {
+    section('history', 'removals', async () => {
       const { rows, next } = await reads.removals(userId, HISTORY_ROWS);
       return {
         rows: toVisibleRemovals(rows),

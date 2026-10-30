@@ -119,3 +119,6 @@ export function formatMinorUnits(amount: number, currency: string | null): strin
     return `${(amount / 100).toFixed(2)} ${code}`.trim();
   }
 }
+
+/** A PascalCase reason or activity name as words: `CopyrightInfringement` reads "Copyright Infringement". */
+export const spaced = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2');

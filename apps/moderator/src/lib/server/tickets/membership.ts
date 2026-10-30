@@ -36,32 +36,27 @@ const liveReads: MembershipReads = {
   subscription: async (userId) => (await import('../user-lookup.service')).getSubscription(userId),
 };
 
-/** The linked user's current subscription. The caller has checked the User Lookup grant. A failing read is `unavailable`. */
+/** The linked user's current subscription. The caller has checked the User Lookup grant. */
 export async function membershipSectionFor(
   ticket: { userId: number },
   reads: MembershipReads = liveReads
-): Promise<Extract<TicketMembership, { status: 'ok' | 'unavailable' }>> {
+): Promise<Extract<TicketMembership, { status: 'ok' }>> {
   const { userId } = ticket;
-  try {
-    const s = await reads.subscription(userId);
-    const paidByCard = !!s && !PERKS_ONLY.has(s.buzzType ?? '');
-    return {
-      status: 'ok',
-      userId,
-      subscription: s && {
-        productName: s.productName,
-        provider: s.provider,
-        status: s.status,
-        buzzType: s.buzzType,
-        cancelAtPeriodEnd: s.cancelAtPeriodEnd === true,
-        currentPeriodEnd: s.currentPeriodEnd?.toISOString() ?? null,
-        interval: paidByCard ? s.interval : null,
-        unitAmount: paidByCard ? s.unitAmount : null,
-        currency: paidByCard ? s.currency : null,
-      },
-    };
-  } catch (e) {
-    console.error('[tickets] membership failed', e);
-    return { status: 'unavailable', userId };
-  }
+  const s = await reads.subscription(userId);
+  const paidByCard = !!s && !PERKS_ONLY.has(s.buzzType ?? '');
+  return {
+    status: 'ok',
+    userId,
+    subscription: s && {
+      productName: s.productName,
+      provider: s.provider,
+      status: s.status,
+      buzzType: s.buzzType,
+      cancelAtPeriodEnd: s.cancelAtPeriodEnd === true,
+      currentPeriodEnd: s.currentPeriodEnd?.toISOString() ?? null,
+      interval: paidByCard ? s.interval : null,
+      unitAmount: paidByCard ? s.unitAmount : null,
+      currency: paidByCard ? s.currency : null,
+    },
+  };
 }

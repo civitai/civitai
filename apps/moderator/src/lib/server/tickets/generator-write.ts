@@ -1,6 +1,6 @@
 import { fail, type RequestEvent } from '@sveltejs/kit';
 import { GENERATOR_RESTRICTIONS_PATH, GENERATOR_RESTRICTION_TYPES } from '$lib/restriction-types';
-import { checkTicketTarget, type TicketActionDeps } from './panel-write';
+import { NOT_PERMITTED, checkTicketTarget, type TicketActionDeps } from './panel-write';
 import { ruleTicketRestriction, type RestrictionRulingDeps } from './restriction-ruling';
 
 export type GeneratorWriteDeps = TicketActionDeps &
@@ -8,8 +8,6 @@ export type GeneratorWriteDeps = TicketActionDeps &
     /** The viewer's grant on a page, checked as the page's own action is. */
     canAct: (user: App.Locals['user'], path: string) => boolean;
   };
-
-const NOT_PERMITTED = 'Not permitted.';
 
 /**
  * 🔴 GATED AS THE GENERATOR RESTRICTIONS PAGE'S OWN `resolve` IS: its page grant and nothing more (that

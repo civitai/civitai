@@ -84,13 +84,4 @@ describe('membershipSectionFor', () => {
       expect(json).not.toContain(leak);
     }
   });
-
-  it('turns a failing read into unavailable', async () => {
-    subscription.mockRejectedValue(new Error('db down'));
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await membershipSectionFor({ userId: 7 }, reads)).toEqual({
-      status: 'unavailable',
-      userId: 7,
-    });
-  });
 });

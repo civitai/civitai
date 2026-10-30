@@ -296,8 +296,6 @@
     <TicketAccount
       ticketId={row.id}
       account={panels.supportAccount}
-      canAct={false}
-      canUnban={false}
       readOnly
       ondone={accountDone}
     />

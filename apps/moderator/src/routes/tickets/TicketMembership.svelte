@@ -5,18 +5,18 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { formatMinorUnits, intervalLabel, subscriptionBadge } from '$lib/tickets/labels';
   import type { TicketMembership } from '$lib/server/tickets/membership';
+  import TicketCardState from './TicketCardState.svelte';
 
   let { membership }: { membership: TicketMembership } = $props();
 </script>
 
 <TriageCard title="Membership" dense>
-  {#if membership.status === 'unlinked'}
-    <p class="m-0 text-dark-2">No linked Civitai account — membership unavailable</p>
-  {:else if membership.status === 'unavailable'}
-    <p class="m-0 text-amber-300">
-      Membership unavailable.
-      <a class={LINK_CLASS} href={userLookupUrl(membership.userId, 'basic')}>User #{membership.userId}</a>
-    </p>
+  {#if membership.status !== 'ok'}
+    <TicketCardState
+      card={membership}
+      unlinked="membership unavailable"
+      unavailable="Membership unavailable."
+    />
   {:else}
     {@const { subscription: s, userId } = membership}
     <div class="flex flex-col gap-1">

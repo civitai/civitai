@@ -129,20 +129,6 @@ describe('loraSectionFor', () => {
     });
   });
 
-  it('is unavailable when the runs cannot be read, or the publish state cannot', async () => {
-    runs.mockRejectedValue(new Error('db down'));
-    expect(await loraSectionFor({ userId: 7 }, reads)).toEqual({
-      status: 'unavailable',
-      userId: 7,
-    });
-    runs.mockResolvedValue({ runs: [run(1)], truncated: false, charges: null });
-    models.mockRejectedValue(new Error('db down'));
-    expect(await loraSectionFor({ userId: 7 }, reads)).toEqual({
-      status: 'unavailable',
-      userId: 7,
-    });
-  });
-
   it('skips the model read for a user with no runs', async () => {
     runs.mockResolvedValue({ runs: [], truncated: false, charges: null });
     expect(await loraSectionFor({ userId: 7 }, reads)).toMatchObject({

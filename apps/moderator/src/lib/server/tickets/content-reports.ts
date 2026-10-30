@@ -2,7 +2,8 @@ import type { getReportsReceived } from '../user-reports.service';
 import type { getImageRemovals } from '../user-account.service';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
 import { CONTENT_ROWS, IMAGE_REMOVALS_PATH, USER_REPORTS_PATH } from '$lib/tickets/content-panel';
-import { toVisibleRemovals, type HistoryRemoval, type HistorySection } from './history';
+import { toVisibleRemovals, type HistoryRemoval } from './history';
+import { capped, section, type CardSection } from './section';
 
 export type ContentReport = {
   id: number;
@@ -19,9 +20,9 @@ export type TicketContentIssue =
       status: 'ok';
       userId: number;
       /** Left out when the viewer does not hold the report queues' page grant. */
-      reports?: HistorySection<ContentReport>;
+      reports?: CardSection<ContentReport>;
       /** Left out when the viewer does not hold User Lookup's page grant. */
-      removals?: HistorySection<HistoryRemoval>;
+      removals?: CardSection<HistoryRemoval>;
     };
 
 export type ContentIssueReads = {
@@ -47,19 +48,6 @@ const liveReads: ContentIssueReads = {
     (await import('../user-account.service')).getImageRemovals(userId, undefined, limit),
 };
 
-/** One section: a failing read is that section's `unavailable`, never the card's. */
-async function section<T>(
-  label: string,
-  read: () => Promise<{ rows: T[]; truncated: boolean }>
-): Promise<HistorySection<T>> {
-  try {
-    return { status: 'ok', ...(await read()) };
-  } catch (e) {
-    console.error(`[tickets] content ${label} failed`, e);
-    return { status: 'unavailable' };
-  }
-}
-
 /**
  * Open reports on the linked user's content and their image removals, each bounded and read only under its own source
  * page's grant. Read-only: the report queue and User Lookup hold the whole record.
@@ -71,24 +59,22 @@ export async function contentIssueSectionFor(
   const { userId, canRead } = ticket;
   const [reports, removals] = await Promise.all([
     canRead(USER_REPORTS_PATH)
-      ? section('reports', async () => {
-          const rows = await reads.reportsReceived(userId, CONTENT_ROWS + 1);
-          return {
-            truncated: rows.length > CONTENT_ROWS,
-            rows: rows.slice(0, CONTENT_ROWS).map(
-              (r): ContentReport => ({
-                id: r.id,
-                reason: r.reason,
-                status: r.status,
-                createdAt: r.createdAt.toISOString(),
-                reporter: r.reporter,
-              })
-            ),
-          };
-        })
+      ? section('content', 'reports', async () =>
+          capped(
+            await reads.reportsReceived(userId, CONTENT_ROWS + 1),
+            CONTENT_ROWS,
+            (r): ContentReport => ({
+              id: r.id,
+              reason: r.reason,
+              status: r.status,
+              createdAt: r.createdAt.toISOString(),
+              reporter: r.reporter,
+            })
+          )
+        )
       : undefined,
     canRead(IMAGE_REMOVALS_PATH)
-      ? section('removals', async () => {
+      ? section('content', 'removals', async () => {
           const { rows, next } = await reads.removals(userId, CONTENT_ROWS);
           return {
             truncated: next !== null,

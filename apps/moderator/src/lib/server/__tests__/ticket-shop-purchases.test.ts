@@ -56,13 +56,4 @@ describe('shopSectionFor', () => {
     purchases.mockResolvedValue({ items: [purchase(1)], truncated: true });
     expect(await shopSectionFor({ userId: 7 }, reads)).toMatchObject({ truncated: true });
   });
-
-  it('turns a failing read into unavailable', async () => {
-    purchases.mockRejectedValue(new Error('db down'));
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await shopSectionFor({ userId: 7 }, reads)).toEqual({
-      status: 'unavailable',
-      userId: 7,
-    });
-  });
 });

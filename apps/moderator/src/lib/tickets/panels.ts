@@ -8,8 +8,8 @@ import { TRAINING_MODELS_PATH, loraPanelFor } from './lora-panel';
 import { RATINGS_PATH } from './rating-disputes';
 import type { TicketView } from './routing';
 import { supportAccountPanelFor } from './support-account-panel';
+import { USER_LOOKUP_PATH } from './support-feature';
 import {
-  USER_LOOKUP_PATH,
   bountyPanelFor,
   membershipPanelFor,
   payoutsPanelFor,
@@ -39,7 +39,7 @@ export type PanelSpec = {
  */
 export const PANELS = {
   account: {
-    readGrants: ['/retool/user-lookup'],
+    readGrants: [USER_LOOKUP_PATH],
     visibility: accountPanelFor,
   },
   appeals: {
@@ -48,7 +48,7 @@ export const PANELS = {
   },
   // Read-only: the lists User Lookup shows, under its grant. Held on the tickets the Appeals card shows on.
   history: {
-    readGrants: ['/retool/user-lookup'],
+    readGrants: [USER_LOOKUP_PATH],
     visibility: appealsPanelFor,
   },
   ratingDisputes: {
@@ -70,7 +70,7 @@ export const PANELS = {
   },
   // The Account card without its actions, for Account Login and Email Change tickets.
   supportAccount: {
-    readGrants: ['/retool/user-lookup'],
+    readGrants: [USER_LOOKUP_PATH],
     visibility: supportAccountPanelFor,
   },
   // Read-only cards of User Lookup's sources, under its page grant.

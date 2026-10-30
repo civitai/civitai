@@ -2,7 +2,7 @@ import type { getBlockedPrompts } from '../user-signals.service';
 import type { getGenerationRestrictions } from '../user-restriction.service';
 import { GENERATOR_RESTRICTIONS_PATH, unwiredRulingReason } from '$lib/restriction-types';
 import { BLOCKED_PROMPTS_PATH, GENERATOR_ROWS } from '$lib/tickets/generator-panel';
-import type { HistorySection } from './history';
+import { capped, section, type CardSection } from './section';
 
 /** A prompt is shown whole up to this, so one pasted essay cannot fill the card. */
 const PROMPT_CHARS = 300;
@@ -38,9 +38,9 @@ export type TicketGenerator =
       status: 'ok';
       userId: number;
       /** Left out when the viewer does not hold the generator restrictions page grant. */
-      restrictions?: HistorySection<GeneratorRestriction>;
+      restrictions?: CardSection<GeneratorRestriction>;
       /** Left out when the viewer does not hold User Lookup's page grant. */
-      blockedPrompts?: HistorySection<GeneratorBlockedPrompt>;
+      blockedPrompts?: CardSection<GeneratorBlockedPrompt>;
     };
 
 export type GeneratorReads = {
@@ -63,19 +63,6 @@ const liveReads: GeneratorReads = {
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
-/** One section: a failing read is that section's `unavailable`, never the card's. */
-async function section<T>(
-  label: string,
-  read: () => Promise<{ rows: T[]; truncated: boolean }>
-): Promise<HistorySection<T>> {
-  try {
-    return { status: 'ok', ...(await read()) };
-  } catch (e) {
-    console.error(`[tickets] generator ${label} failed`, e);
-    return { status: 'unavailable' };
-  }
-}
-
 /**
  * The linked user's generator restrictions and blocked prompts, each bounded and read only under its own
  * source page's grant. Rulings are a separate write (`generatorResolveRestriction`).
@@ -87,40 +74,39 @@ export async function generatorSectionFor(
   const { userId, canRead } = ticket;
   const [restrictions, blockedPrompts] = await Promise.all([
     canRead(GENERATOR_RESTRICTIONS_PATH)
-      ? section('restrictions', async () => {
+      ? section('generator', 'restrictions', async () => {
           const { items } = await reads.restrictions(userId, GENERATOR_ROWS + 1);
-          return {
-            truncated: items.length > GENERATOR_ROWS,
-            rows: items.slice(0, GENERATOR_ROWS).map(
-              (r): GeneratorRestriction => ({
-                id: r.id,
-                type: r.type,
-                status: r.status,
-                createdAt: r.createdAt.toISOString(),
-                resolvedAt: iso(r.resolvedAt),
-                resolvedReason: r.resolvedReason,
-                triggerCount: r.triggers.length,
-                rulable: r.status === 'Pending' && unwiredRulingReason(r.type) === null,
-              })
-            ),
-          };
+          return capped(
+            items,
+            GENERATOR_ROWS,
+            (r): GeneratorRestriction => ({
+              id: r.id,
+              type: r.type,
+              status: r.status,
+              createdAt: r.createdAt.toISOString(),
+              resolvedAt: iso(r.resolvedAt),
+              resolvedReason: r.resolvedReason,
+              triggerCount: r.triggers.length,
+              rulable: r.status === 'Pending' && unwiredRulingReason(r.type) === null,
+            })
+          );
         })
       : undefined,
     canRead(BLOCKED_PROMPTS_PATH)
-      ? section('blocked prompts', async () => {
+      ? section('generator', 'blocked prompts', async () => {
           const { prompts, total } = await reads.blockedPrompts(userId, GENERATOR_ROWS + 1);
-          return {
-            truncated: total > GENERATOR_ROWS || prompts.length > GENERATOR_ROWS,
-            rows: prompts.slice(0, GENERATOR_ROWS).map(
-              (p): GeneratorBlockedPrompt => ({
-                key: p.key,
-                time: p.time,
-                prompt: p.prompt.slice(0, PROMPT_CHARS),
-                negativePrompt: p.negativePrompt?.slice(0, PROMPT_CHARS) ?? null,
-                source: p.source,
-              })
-            ),
-          };
+          const shown = capped(
+            prompts,
+            GENERATOR_ROWS,
+            (p): GeneratorBlockedPrompt => ({
+              key: p.key,
+              time: p.time,
+              prompt: p.prompt.slice(0, PROMPT_CHARS),
+              negativePrompt: p.negativePrompt?.slice(0, PROMPT_CHARS) ?? null,
+              source: p.source,
+            })
+          );
+          return { ...shown, truncated: shown.truncated || total > GENERATOR_ROWS };
         })
       : undefined,
   ]);

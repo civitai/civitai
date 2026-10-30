@@ -2,7 +2,12 @@ import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { TRAINING_MODELS_PATH } from '$lib/tickets/lora-panel';
 import { int4Id, parseForm } from '../query';
-import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
+import {
+  NOT_PERMITTED,
+  addTicketNote,
+  checkTicketTarget,
+  type TicketActionDeps,
+} from './panel-write';
 
 export type LoraWriteDeps = TicketActionDeps & {
   /** The viewer's grant on a page, checked as the page's own action is. */
@@ -12,8 +17,6 @@ export type LoraWriteDeps = TicketActionDeps & {
   /** Sets the block in one conditional write; true when it changed, false when the model was already in that state. */
   setCannotPublish: (modelId: number, value: boolean) => Promise<boolean>;
 };
-
-const NOT_PERMITTED = 'Not permitted.';
 
 const input = z.object({ modelId: int4Id, cannotPublish: z.enum(['true', 'false']) });
 

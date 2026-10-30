@@ -1,6 +1,11 @@
 import { fail, type RequestEvent } from '@sveltejs/kit';
 import type { ActionResult } from '../user-actions.service';
-import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
+import {
+  NOT_PERMITTED,
+  addTicketNote,
+  checkTicketTarget,
+  type TicketActionDeps,
+} from './panel-write';
 import { ruleTicketRestriction, type RestrictionRulingDeps } from './restriction-ruling';
 
 /** A shared action: `requiresGrant` hands back a refusal directly, the others a promise. */
@@ -13,8 +18,6 @@ export type AccountWriteDeps = TicketActionDeps &
     canAct: (user: App.Locals['user']) => boolean;
     revokeTimedMute: (input: { userId: number; moderatorId: number }) => Promise<ActionResult>;
   };
-
-const NOT_PERMITTED = 'Not permitted.';
 
 /** A form carrying exactly these fields, so a forged extra one never reaches a shared action. */
 const innerEvent = (event: RequestEvent, fields: Record<string, string>): RequestEvent => {

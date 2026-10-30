@@ -16,17 +16,18 @@
     userId,
     restrictionId,
     action = 'accountResolveRestriction',
-    enabled,
-    why,
+    enabled = true,
+    why = '',
     ondone,
   }: {
     ticketId: string;
     userId: number;
     restrictionId: number;
     /** The page action that makes the ruling: the account card's, or the generator card's. */
-    action?: string;
-    enabled: boolean;
-    why: string;
+    action?: 'accountResolveRestriction' | 'generatorResolveRestriction';
+    /** False greys the controls out, with `why` as the reason. */
+    enabled?: boolean;
+    why?: string;
     ondone: (what: string, data: Record<string, unknown> | undefined) => void;
   } = $props();
 

@@ -35,32 +35,27 @@ const liveReads: PayoutsReads = {
     (await import('../user-account.service')).getPayouts(userId, limit),
 };
 
-/** The linked user's newest payout and withdrawal requests. The caller has checked the User Lookup grant. A failing read is `unavailable`. */
+/** The linked user's newest payout and withdrawal requests. The caller has checked the User Lookup grant. */
 export async function payoutsSectionFor(
   ticket: { userId: number },
   reads: PayoutsReads = liveReads
-): Promise<Extract<TicketPayouts, { status: 'ok' | 'unavailable' }>> {
+): Promise<Extract<TicketPayouts, { status: 'ok' }>> {
   const { userId } = ticket;
-  try {
-    const { items, truncated } = await reads.payouts(userId, SUPPORT_ROWS);
-    return {
-      status: 'ok',
-      userId,
-      truncated,
-      payouts: items.map(
-        (p): PayoutRow => ({
-          id: p.key,
-          kind: p.kind,
-          at: p.createdAt?.toISOString() ?? null,
-          status: p.status,
-          requested: p.requested,
-          transferred: p.transferred,
-          provider: p.provider,
-        })
-      ),
-    };
-  } catch (e) {
-    console.error('[tickets] payouts failed', e);
-    return { status: 'unavailable', userId };
-  }
+  const { items, truncated } = await reads.payouts(userId, SUPPORT_ROWS);
+  return {
+    status: 'ok',
+    userId,
+    truncated,
+    payouts: items.map(
+      (p): PayoutRow => ({
+        id: p.key,
+        kind: p.kind,
+        at: p.createdAt?.toISOString() ?? null,
+        status: p.status,
+        requested: p.requested,
+        transferred: p.transferred,
+        provider: p.provider,
+      })
+    ),
+  };
 }

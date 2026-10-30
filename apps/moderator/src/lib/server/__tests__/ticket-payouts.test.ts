@@ -114,13 +114,4 @@ describe('payoutsSectionFor', () => {
     payouts.mockResolvedValue({ items: [payout(1)], truncated: true });
     expect(await payoutsSectionFor({ userId: 7 }, reads)).toMatchObject({ truncated: true });
   });
-
-  it('turns a failing read into unavailable', async () => {
-    payouts.mockRejectedValue(new Error('db down'));
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await payoutsSectionFor({ userId: 7 }, reads)).toEqual({
-      status: 'unavailable',
-      userId: 7,
-    });
-  });
 });

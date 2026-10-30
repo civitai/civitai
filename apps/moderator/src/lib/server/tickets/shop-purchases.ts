@@ -26,30 +26,25 @@ const liveReads: ShopReads = {
     (await import('../user-account.service')).getShopPurchases(userId, limit),
 };
 
-/** The linked user's newest Cosmetic Shop purchases. The caller has checked the User Lookup grant. A failing read is `unavailable`. */
+/** The linked user's newest Cosmetic Shop purchases. The caller has checked the User Lookup grant. */
 export async function shopSectionFor(
   ticket: { userId: number },
   reads: ShopReads = liveReads
-): Promise<Extract<TicketShop, { status: 'ok' | 'unavailable' }>> {
+): Promise<Extract<TicketShop, { status: 'ok' }>> {
   const { userId } = ticket;
-  try {
-    const { items, truncated } = await reads.purchases(userId, SUPPORT_ROWS);
-    return {
-      status: 'ok',
-      userId,
-      truncated,
-      purchases: items.map(
-        (p): ShopPurchaseRow => ({
-          id: p.buzzTransactionId,
-          title: p.title,
-          amount: p.unitAmount,
-          at: p.purchasedAt.toISOString(),
-          refunded: p.refunded,
-        })
-      ),
-    };
-  } catch (e) {
-    console.error('[tickets] shop purchases failed', e);
-    return { status: 'unavailable', userId };
-  }
+  const { items, truncated } = await reads.purchases(userId, SUPPORT_ROWS);
+  return {
+    status: 'ok',
+    userId,
+    truncated,
+    purchases: items.map(
+      (p): ShopPurchaseRow => ({
+        id: p.buzzTransactionId,
+        title: p.title,
+        amount: p.unitAmount,
+        at: p.purchasedAt.toISOString(),
+        refunded: p.refunded,
+      })
+    ),
+  };
 }

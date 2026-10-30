@@ -76,40 +76,35 @@ const liveReads: LoraReads = {
 /**
  * The linked user's recent training runs and whether each model is blocked from publishing. The caller
  * has checked the training models page grant (`PANELS.lora.readGrants`). Runs of deleted models are left
- * out. A failing read is `unavailable`.
+ * out.
  */
 export async function loraSectionFor(
   ticket: { userId: number },
   reads: LoraReads = liveReads
-): Promise<Extract<TicketLora, { status: 'ok' | 'unavailable' }>> {
+): Promise<Extract<TicketLora, { status: 'ok' }>> {
   const { userId } = ticket;
-  try {
-    const { runs: all, truncated } = await reads.runs(userId, LORA_ROWS);
-    const { username, live, blocked } = all.length
-      ? await reads.models(userId, [...new Set(all.map((r) => r.modelId))])
-      : { username: null, live: new Set<number>(), blocked: new Set<number>() };
-    // A run of a deleted model has no publish state to show, and its toggle would 404.
-    const runs = all.filter((r) => live.has(r.modelId));
-    return {
-      status: 'ok',
-      userId,
-      username,
-      truncated,
-      runs: runs.map(
-        (r): LoraRun => ({
-          modelVersionId: r.modelVersionId,
-          modelId: r.modelId,
-          modelName: r.modelName,
-          name: r.name,
-          status: r.status,
-          createdAt: r.submittedAt ?? r.startedAt,
-          updatedAt: r.completedAt,
-          cannotPublish: blocked.has(r.modelId),
-        })
-      ),
-    };
-  } catch (e) {
-    console.error('[tickets] lora runs failed', e);
-    return { status: 'unavailable', userId };
-  }
+  const { runs: all, truncated } = await reads.runs(userId, LORA_ROWS);
+  const { username, live, blocked } = all.length
+    ? await reads.models(userId, [...new Set(all.map((r) => r.modelId))])
+    : { username: null, live: new Set<number>(), blocked: new Set<number>() };
+  // A run of a deleted model has no publish state to show, and its toggle would 404.
+  const runs = all.filter((r) => live.has(r.modelId));
+  return {
+    status: 'ok',
+    userId,
+    username,
+    truncated,
+    runs: runs.map(
+      (r): LoraRun => ({
+        modelVersionId: r.modelVersionId,
+        modelId: r.modelId,
+        modelName: r.modelName,
+        name: r.name,
+        status: r.status,
+        createdAt: r.submittedAt ?? r.startedAt,
+        updatedAt: r.completedAt,
+        cannotPublish: blocked.has(r.modelId),
+      })
+    ),
+  };
 }

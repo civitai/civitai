@@ -12,17 +12,17 @@
   let {
     ticketId,
     account,
-    canAct,
-    canUnban,
+    canAct = false,
+    canUnban = false,
     readOnly = false,
     ondone,
   }: {
     ticketId: string;
     account: TicketAccount;
     /** The `/users` page grant, which mutes and restriction rulings need in User Lookup too. */
-    canAct: boolean;
+    canAct?: boolean;
     /** The `user.ban` permission, which an unban needs in User Lookup too. */
-    canUnban: boolean;
+    canUnban?: boolean;
     /** The support card: status only, no appeal ruling and no actions. */
     readOnly?: boolean;
     ondone: (what: string, data: Record<string, unknown> | undefined) => void;
