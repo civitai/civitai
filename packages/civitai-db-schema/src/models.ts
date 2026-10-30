@@ -3814,6 +3814,18 @@ export interface Article {
   collectionItems?: CollectionItem[];
   rewardsBonusEvents?: RewardsBonusEvent[];
   ratingReviews?: ArticleRatingReview[];
+  contentLinkHold?: ArticleContentLinkHold | null;
+}
+
+export interface ArticleContentLinkHold {
+  articleId: number;
+  article?: Article;
+  deferred: string[];
+  refused: string[];
+  editorId: number;
+  deferredSince: Date | null;
+  reportedAt: Date | null;
+  checkedAt: Date;
 }
 
 export interface PressMention {
@@ -4599,6 +4611,20 @@ export interface ImageCdnModeratorDelete {
   userId: number | null;
   csamReview: boolean;
   deletedAt: Date;
+}
+
+export interface ShopArtworkKeyOwner {
+  key: string;
+  userId: number;
+  recordedAt: Date;
+}
+
+export interface ImageCdnShopTakedown {
+  id: number;
+  url: string;
+  shopItemId: number;
+  userId: number | null;
+  takenDownAt: Date;
 }
 
 export interface ImageCdnAccessClaim {
@@ -7037,6 +7063,10 @@ export interface Crucible {
   textNsfw: boolean;
   timeAdjustedPlacement: boolean;
   eventTags: string[];
+  takenDownAt: Date | null;
+  takenDownById: number | null;
+  takedownReason: string | null;
+  takedownRefundsCreator: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

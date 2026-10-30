@@ -25,7 +25,6 @@ vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   upsertComment: (...args: unknown[]) => upsertComment(...(args as [])),
   getComment: (...args: unknown[]) => getComment(...(args as [])),
   getCommentThreadBounty: vi.fn(async () => null),
-  getCommentThreadCrucibleId: vi.fn(async () => null),
   getCommentThreadStorylineId: (...args: unknown[]) => getCommentThreadStorylineId(...(args as [])),
   getCommentStorylineId: (...args: unknown[]) => getCommentStorylineId(...(args as [])),
   isViewerContentOwner: vi.fn(async () => false),

@@ -160,8 +160,7 @@ jobs:
   smoke:
     name: Windows dev-env (${{ matrix.shell }})
     runs-on: windows-latest
-    # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` — the same split
-    # `lint.yml`'s `unit` job makes, for the same reason. The header's
+    # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main`. The header's
     # non-blocking rationale is explicitly about not stopping UNRELATED PRs over
     # a canary that might be red on day one. On a push the merge has already
     # happened, so there is no unrelated work to stop and nothing to block; what

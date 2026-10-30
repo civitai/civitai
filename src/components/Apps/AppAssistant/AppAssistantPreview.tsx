@@ -173,12 +173,8 @@ export function AppAssistantPreview({
         <RestartPreview restart={restart} reason={NO_LIVE_PREVIEW} />
       </Center>
     );
-  if (!session)
-    return (
-      <EmptyState>
-        Your app appears here once it runs. Ask the assistant to start the live preview.
-      </EmptyState>
-    );
+  // The workspace shows the pane only with a preview, or with Restart preview for one that went.
+  if (!session) return null;
 
   return (
     <div

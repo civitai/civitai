@@ -1,3 +1,4 @@
+import { isAppAssistantModel } from '@civitai/app-assistant';
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
@@ -135,6 +136,8 @@ const runner = new Runner({
 const verifier = civitai ? createTokenVerifier(civitai.publicKey) : undefined;
 const app = buildApp({
   service: runner,
+  // Only the models App Assistant's page offers: any other id is refused (400).
+  acceptsModel: isAppAssistantModel,
   ...(verifier ? { authenticator: viewerAuthenticator(verifier), grants: verifier } : {}),
   ...(previews ? { previews } : {}),
   basePath: config.basePath,

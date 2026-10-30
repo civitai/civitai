@@ -11,6 +11,7 @@ import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/
 import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -18,12 +19,9 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * TOKEN-AUTHENTICATED bundle-submit route for the `civitai` CLI's `app submit`.
  *
  * This is a SECOND auth front-door to the SAME publish flow as the session
- * route at `src/pages/api/blocks/submit-version.ts`. The session route takes a
- * signed-in session or a full-access personal key (`requireFullScopeSession`),
- * the same author capability as this route, and a prod Origin check — usable
- * from a logged-in browser (App Assistant's Submit for review) but not from a
- * headless CLI, which sends no Origin and may hold a scoped OAuth token. This route accepts
- * `Authorization: Bearer <civitai API key>` instead, resolves the key → user via
+ * route at `src/pages/api/blocks/submit-version.ts` (a signed-in browser's), for a
+ * headless CLI, which sends no Origin and may hold a scoped OAuth token. It accepts
+ * `Authorization: Bearer <civitai API key>`, resolves the key → user via
  * the EXISTING API-key infrastructure (`getSessionFromBearerToken`, the same
  * helper that backs `/api/v1/*` REST auth and the retool bearer endpoint), then
  * applies the SAME gates the session route applies and calls the SAME
@@ -46,8 +44,6 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *   - Author: the resolved user must not be banned and must hold the authoring
  *     capability (`isAppBlocksAuthorEnabled`: the `app-blocks-author` Flipt cohort,
  *     with moderators always in), on BOTH the personal-key and OAuth-token paths.
- *     The session route applies the same capability to a signed-in session or a
- *     full-access personal key.
  *
  * ## Why no CSRF / Origin check here (unlike the session route)
  * The session route guards Origin because it takes the session COOKIE: a logged-in
@@ -147,11 +143,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // costs a decode. (This is AUTHZ; the `isAppBlocksEnabled` kill-switch below
   // is a separate gate.)
   if (user.bannedAt) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
 

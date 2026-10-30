@@ -153,6 +153,7 @@ beforeAll(async () => {
       "rootThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
       "commentId" int,
       "storylineId" int,
+      "crucibleId" int,
       metadata jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "CommentV2" (

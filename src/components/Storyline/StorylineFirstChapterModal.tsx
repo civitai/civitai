@@ -11,6 +11,7 @@ import {
   getHighestBrowsingLevelBit,
 } from '~/shared/constants/browsingLevel.constants';
 import { storylineLevelAllowed } from '~/shared/utils/storyline';
+import { isStorylineVerdictLevel, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -51,8 +52,10 @@ export default function StorylineFirstChapterModal({
   const canRaise = storyline?.maxNsfwLevel === storyline?.ownerMaxNsfwLevel;
   const fits = (postLevel: number) =>
     !!storyline && storylineLevelAllowed({ postLevel, maxNsfwLevel: storyline.maxNsfwLevel });
-  const isAboveCeiling = (postLevel: number) => !!postLevel && !canRaise && !fits(postLevel);
-  const raisesCeiling = !!post?.nsfwLevel && canRaise && !fits(post.nsfwLevel);
+  const isAboveCeiling = (postLevel: number) =>
+    !!postLevel && !isStorylineVerdictLevel(postLevel) && !canRaise && !fits(postLevel);
+  const unusable = !!post && isStorylineVerdictLevel(post.nsfwLevel);
+  const raisesCeiling = !!post?.nsfwLevel && !unusable && canRaise && !fits(post.nsfwLevel);
   const aboveCeiling = !!post && isAboveCeiling(post.nsfwLevel);
 
   return (
@@ -74,7 +77,7 @@ export default function StorylineFirstChapterModal({
             postsError={own.postsError}
             alreadyChapters={own.alreadyChapters}
             allChaptersText="All your recent posts are already chapters."
-            morePosts={own.morePosts}
+            paging={own.paging}
             postId={postId}
             onPostChange={setPostId}
             ceiling={ceiling}
@@ -83,6 +86,11 @@ export default function StorylineFirstChapterModal({
           {post && !post.nsfwLevel && (
             <Alert color="red" icon={<IconAlertTriangle size={18} />}>
               <Text size="sm">This post has not been rated yet. Try again once it has been.</Text>
+            </Alert>
+          )}
+          {unusable && (
+            <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+              <Text size="sm">{STORYLINE_REFUSALS.cannotSubmit}.</Text>
             </Alert>
           )}
           {aboveCeiling && (
@@ -110,7 +118,7 @@ export default function StorylineFirstChapterModal({
               Cancel
             </Button>
             <Button
-              disabled={!post?.nsfwLevel || aboveCeiling}
+              disabled={!post?.nsfwLevel || aboveCeiling || unusable}
               loading={setFirstChapter.isPending}
               onClick={() => post && setFirstChapter.mutate({ storylineId, postId: post.id })}
             >
