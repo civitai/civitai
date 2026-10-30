@@ -622,6 +622,26 @@ describe('a chapter add whose parent changes after its first read', () => {
       expect(await depthOf(chapterId)).toBe(7);
     });
 
+    // The reading path stops at STORYLINE_PATH_LIMIT (200) chapters; the end is past that.
+    it('finds the end of a main path longer than the reading cap', async () => {
+      await db.pg.exec(`
+        INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt")
+          VALUES (2, 1, 'Very Long', 1, now());
+        INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth)
+          SELECT 5000 + n, 2, 1, n FROM generate_series(0, 204) n;
+        INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
+          SELECT 2, 5000 + n, 4999 + n, true FROM generate_series(1, 204) n;
+      `);
+
+      const { chapterId } = await addOwnerChapterAtEnd({
+        storylineId: 2,
+        postId: await post(),
+        userId: OWNER,
+      });
+
+      expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5204, canon: true });
+    });
+
     it('refuses rather than branch when the end moves while it adds', async () => {
       const [addedPost, otherPost] = [await post(), await post()];
       const { pausedAt, release } = holdAddAtItsPost(addedPost);
