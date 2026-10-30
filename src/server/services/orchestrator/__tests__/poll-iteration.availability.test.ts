@@ -130,6 +130,22 @@ describe('pollIterationWorkflow availability', () => {
     );
   });
 
+  it("logs the stored key as an upload request through the poller's request", async () => {
+    givenWorkflow([output({ nsfwLevel: SAFE })]);
+    const imageUploadRequest = vi.fn(async () => true);
+
+    await pollIterationWorkflow({
+      workflowId: 'wf-1',
+      width: 512,
+      height: 512,
+      userId: 7,
+      ctx: { domain: 'red', user: { id: 7, showNsfw: true }, track: { imageUploadRequest } },
+    });
+
+    const key = (mocks.createImage.mock.calls[0][0] as { url: string }).url;
+    await vi.waitFor(() => expect(imageUploadRequest).toHaveBeenCalledExactlyOnceWith(key, 7));
+  });
+
   it('formats nothing while the workflow is still running', async () => {
     givenWorkflow([], { status: 'processing' });
 

@@ -6,6 +6,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
+import type { Tracker } from '~/server/clickhouse/client';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { sanitizeStepErrors } from './provider-errors';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -45,7 +46,8 @@ async function downloadAndUploadImage(
   userId: number,
   width: number,
   height: number,
-  prompt?: string
+  prompt?: string,
+  tracker?: Tracker
 ): Promise<{ s3Key: string; imageId: number } | null> {
   try {
     const imageResponse = await fetch(imageUrl);
@@ -63,7 +65,7 @@ async function downloadAndUploadImage(
       })
     );
     registerMediaLocation(s3Key, backend, imageBuffer.length);
-    await recordMintedUploadKey(s3Key, userId);
+    await recordMintedUploadKey(s3Key, userId, tracker);
 
     const image = await createImage({
       url: s3Key,
@@ -168,7 +170,14 @@ export async function pollIterationWorkflow({
 
     const results = await Promise.all(
       outputImages.map(async (url) => {
-        const uploaded = await downloadAndUploadImage(url, userId, imgWidth, imgHeight, prompt);
+        const uploaded = await downloadAndUploadImage(
+          url,
+          userId,
+          imgWidth,
+          imgHeight,
+          prompt,
+          ctx.track
+        );
         if (!uploaded) return null;
         return {
           ...uploaded,
