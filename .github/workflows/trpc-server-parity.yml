@@ -98,14 +98,14 @@ jobs:
       - name: Work directory
         run: echo "WORK=$RUNNER_TEMP/parity" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
       # Dependencies only for `fill-required-env.ts`, which loads the app's env schemas.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -300,7 +300,7 @@ jobs:
         run: |
           for c in next trpc mutant; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: trpc-server-parity

@@ -250,13 +250,18 @@ jobs:
     # it rather than letting a config PR time out with no verdict.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      # pnpm/action-setup installs the version `packageManager` in package.json pins.
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      # `cache: pnpm` (the pnpm store, keyed on the lockfile) is the ONLY dependency cache in
+      # every workflow here. setup-node's automatic caching (`package-manager-cache`, v5+)
+      # applies only when `packageManager` names npm, and pnpm/action-setup's own `cache` input
+      # defaults to false, so neither adds a second one.
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -462,13 +467,13 @@ jobs:
     # the new HTTPS URL back over SSH.
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -566,12 +571,13 @@ jobs:
     # So T(N) = 66.5 + 555.5/N:  1 -> 10.4m, 2 -> 5.7m, 3 -> 4.2m, 4 -> 3.4m,
     # 6 -> 2.7m, 8 -> 2.3m. Runner-minutes go 10.4 -> 13.7 at N=4 (+32%).
     #
-    # 🔴 WHY 4 AND NOT MORE. The apps job (now apps.yml) was 2.9m (2026-08-25). At N=4 this
-    # job lands at ~3.4m and at N=5 it reaches parity, so past N=5 sharding
-    # optimises something that is NO LONGER THE BOTTLENECK — the run's critical
-    # path floors at ~2.9m however far you go. Raising this number without
-    # first making the other jobs faster buys wall-clock nothing and costs
-    # runner-minutes linearly.
+    # 🔴 WHY 4 AND NOT MORE. The curve is already flat at 4: the fifth shard saves
+    # ~0.5m of wall clock (3.4m -> 3.0m) and the sixth ~0.3m, while EVERY shard adds
+    # the 66.5s fixed overhead to runner-minutes (13.7m at N=4, 14.8m at N=5) and
+    # takes one more slot of the plan's org-wide concurrent-job limit, which this
+    # workflow already saturates — so each extra shard queues someone else's job
+    # for longer than it saves this one. Shrink the fixed overhead or the suite
+    # before raising this number.
     #
     # BALANCE: ASSUMED BEFOREHAND, NOW MEASURED. `--shard` is not cost-aware and
     # this suite's cost is bimodal (p50 66 modules per file, p75 1088 — see
@@ -648,13 +654,13 @@ jobs:
       # Likewise for the kysely-hot-reads-6 suite (its own `hot_reads_6_parity` schema).
       KYSELY_HOT_READS_6_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -703,7 +709,7 @@ jobs:
       # first push to `main` with that lockfile saves the new key.
       - name: Restore Vite pre-bundle cache
         id: vite-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: node_modules/.vite
           key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -772,7 +778,7 @@ jobs:
       - name: Save Vite pre-bundle cache
         if: ${{ !cancelled() && github.event_name == 'push' && steps.vite-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: node_modules/.vite
           key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -815,13 +821,15 @@ jobs:
     # ever approaches that, re-read the step durations rather than raising it blind.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
+      # No `submodules: true`: nothing this job runs reads event-engine-common. No file
+      # under `packages/` imports it, the submodule is not a pnpm workspace member, and the
+      # import closure of the tag-index decode worker the step below bundles does not reach
+      # it. The `typecheck`, `unit` and `component` jobs do read it and keep the checkout.
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -942,13 +950,13 @@ jobs:
       SUITE_COMPONENT: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
       SUITE_GEOMETRY: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -975,9 +983,70 @@ jobs:
       # this repo. The escape hatch is `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`,
       # honoured by vitest.config.mts. Do NOT move the repo's playwright pin to
       # match a laptop — see docs/dev/worktrees.md, "Browser/component tests on NixOS".
+      #
+      # ── BROWSER CACHE: RESTORE ALWAYS, SAVE ONLY ON A PUSH TO `main` ──────
+      #
+      # `~/.cache/ms-playwright` is cached so a run does not download Chromium
+      # again. The key is the version of the INSTALLED `playwright` package, read
+      # from node_modules: that is exactly the package `pnpm exec playwright`
+      # runs, and its version fixes the Chromium revision it wants. Not the
+      # lockfile hash, which changes on every dependency bump and would miss for
+      # reasons unrelated to the browser.
+      #
+      # Save is main-push only, for the reason the `unit` job's Vite cache gives:
+      # an entry saved on a PR or a dispatch is scoped to that ref, readable by
+      # nothing else, and spends the repo's 10 GB cache budget. One entry per
+      # Playwright version, refreshed when the version moves. So a PR or a
+      # dispatch restores `main`'s entry, and MISSES until a push to `main` with
+      # that Playwright version has saved one.
+      #
+      # The cache holds browser files only, not the system libraries. On a hit,
+      # `install-deps` puts those back, and `install chromium` then finds the
+      # cached revision complete and downloads nothing (it fetches whatever is
+      # missing, so a partial entry still ends with a usable browser). On a miss
+      # the command is the one this step always ran. Either way the step id stays
+      # `chromium`, and `steps.chromium.outcome == 'success'` still means
+      # "Chromium and its system libraries are installed" to the steps that gate on it.
+      - name: Resolve Playwright version
+        id: playwright
+        # An assignment, not `echo "version=$(...)"`: a failing command substitution inside
+        # an echo argument does not fail the step, and an empty version would key every run
+        # to the same wrong entry.
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('playwright/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright browsers
+        id: playwright-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
       - name: Install Chromium for Playwright
         id: chromium
-        run: pnpm exec playwright install --with-deps chromium
+        env:
+          CACHE_HIT: ${{ steps.playwright-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [ "$CACHE_HIT" = true ]; then
+            echo "browser cache hit: installing system dependencies only"
+            pnpm exec playwright install-deps chromium
+            pnpm exec playwright install chromium
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
+
+      # Right after the install, so a red suite later still leaves the entry saved.
+      # `continue-on-error`: best-effort infrastructure, like the Vite cache save.
+      - name: Save Playwright browsers
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.playwright-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
       # Not sharded, and `pnpm run test:component` takes NO arguments, on purpose:
       # its wrapper hands the JSON report to scripts/ci/assert-component-suite-ran.mjs,
@@ -995,8 +1064,8 @@ jobs:
       # phone viewport. See `test/geometry-setup.tsx` for what it loads and why it is a separate
       # project from `component`.
       #
-      # `continue-on-error` is `${{ github.event_name == 'pull_request' }}` (the split
-      # windows-dev-env.yml also makes), and NOT a literal `true`. Both halves matter:
+      # `continue-on-error` is `${{ github.event_name == 'pull_request' }}`, and NOT a
+      # literal `true`. Both halves matter:
       #
       #   PR side: blocking on a brand-new tier from day one would red unrelated PRs and the
       #   step would be switched off within a week. `main` has NO required_status_checks, so
@@ -1136,15 +1205,16 @@ jobs:
       # read from runs on `main`. Count the green
       # streak from this STEP's conclusion in push runs on `main` (jobs endpoint): here it is a
       # real verdict, so a red quarantine run turns the `main` run red, attributed by step name.
-      # The `continue-on-error` expression is inert while the step skips PRs; it is kept so
-      # re-enabling PR runs cannot silently make the quarantine blocking there.
+      # No `continue-on-error`: it was `${{ github.event_name == 'pull_request' }}`, which is
+      # always false on a step that never runs on a PR. If PR runs come back, decide then
+      # whether they block (a literal `true` is rejected by main-branch-ci-coverage.test.ts,
+      # since it would also apply on push).
       #
       # A `--project` that matches nothing exits 0, so the run's JSON report goes through the
       # same gate as the blocking suite (`--narrowed`: a floor and file ledger make no sense for
       # one file). The gate only ever adds a failure; it never turns vitest's red into green.
       - name: Quarantined component tests
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' && github.event_name != 'pull_request' && env.SUITE_COMPONENT == 'true' }}
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           rc=0
           pnpm exec vitest run --project component-quarantine \

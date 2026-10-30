@@ -35,9 +35,9 @@ name: App suites
 #       the DDL apps/notifications' behavioural test builds its database from.
 #   package.json
 #       also read directly by apps/assistant-runner's SDK version tests.
-#   event-engine-common, .gitmodules
-#       nothing under `apps/` imports the submodule today, but checkout fetches it, so a broken
-#       pin fails this job's checkout. Kept to match what the job actually does.
+#
+# Not listed: `event-engine-common` and `.gitmodules`. Nothing under `apps/` imports the
+# submodule and the job's checkout does not fetch it, so a pin change cannot affect this job.
 #
 # Not listed on purpose: `scripts/test-unit-run.mjs`. queued-check only imports it when it
 # queues a run, and it never queues when `CI` is set.
@@ -70,8 +70,6 @@ on:
       - '.nvmrc'
       - 'patches/**'
       - 'tsconfig.json'
-      - '.gitmodules'
-      - 'event-engine-common'
       - '.github/workflows/apps.yml'
       - 'vitest.config.mts'
       - 'scripts/test-cache/core.mjs'
@@ -144,13 +142,14 @@ jobs:
     env:
       ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
+      # No `submodules: true`: nothing under `apps/` imports event-engine-common (the
+      # out-of-tree scan in scripts/ci/assert-apps-paths-filter.mjs would list it if one did),
+      # and it is not a pnpm workspace member, so neither the install nor the suites read it.
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm

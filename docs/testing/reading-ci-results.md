@@ -36,8 +36,9 @@ deliberately skips that case (see the header of `.github/workflows/lint.yml`). S
 contains Actions results but no Tekton status does not cover the thing that gates.
 
 **On a draft PR, Lint runs ESLint only.** The same 5 `Lint` check-runs appear, but every one except
-`ESLint + Prettier (changed files)` is `skipped`, and the `App suites`, Windows dev-env, tRPC parity and
-schema drift jobs skip too. That is the draft gate, not a broken run: the jobs start when the PR is
+`ESLint + Prettier (changed files)` is `skipped`, and the `App suites`, tRPC parity and schema drift
+jobs skip too. (The Windows dev-env smoke never runs on PRs; it runs on pushes to `main` and on
+dispatch: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>`.) That is the draft gate, not a broken run: the jobs start when the PR is
 marked ready (`gh pr ready <pr>`). To get a verdict while it is still a draft, dispatch one on the
 branch, which runs against the branch head rather than the merge with `main`:
 
@@ -57,7 +58,7 @@ PR's `headRefOid` — before reporting either way.
 | System | Surfaces as | Latency |
 | --- | --- | --- |
 | Tekton (in-cluster) | **commit statuses** — `tekton / typecheck`, `tekton / fixture-bootstrap` | ~3.5 min |
-| GitHub Actions | **check-runs** — Lint, Schema drift gate, Submodule Pin Guard, Windows dev-env | ~immediate |
+| GitHub Actions | **check-runs** — Lint, Schema drift gate, Submodule Pin Guard | ~immediate |
 
 Observed on PR #4640 over an evening, in order: branch created and pushed → 4 Actions runs + 2 Tekton
 statuses. Three amend + `--force-with-lease` pushes → **nothing from either**. One close/reopen →
@@ -104,8 +105,8 @@ gh api repos/<owner>/<repo>/commits/$sha/check-runs -q '.total_count'
   squash-merges, so it never reaches `main`'s history.
 - For an internal PR targeting `main`, `tekton / typecheck` is the **authoritative** typecheck — the
   Actions typecheck job deliberately skips that case (see the header of `.github/workflows/lint.yml`).
-  So Tekton present + Actions absent still leaves Lint, the schema drift gate, the submodule pin
-  guard and the Windows dev-env smoke unrun.
+  So Tekton present + Actions absent still leaves Lint, the schema drift gate and the submodule pin
+  guard unrun.
 
 > The workflow file already warns about the general form of this, about a different question:
 > *"Both were reasoning from the workflow's CONFIGURATION, which says nothing about whether the job
