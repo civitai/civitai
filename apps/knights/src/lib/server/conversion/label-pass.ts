@@ -1,7 +1,13 @@
 import { sql, type Kysely } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { ensureQuestionRules, writeLabelBatch, type LabelCursor } from './labels';
+import {
+  ensureChoiceRules,
+  ensureYesNoRules,
+  hasUnlabelled,
+  writeLabelBatch,
+  type LabelCursor,
+} from './labels';
 
 export type PassLog = (event: Record<string, unknown>) => unknown;
 
@@ -24,8 +30,6 @@ export async function runLabelPass(
     batchSize = DEFAULTS.batchSize,
   }: { now: Date; log?: PassLog; budgetMs?: number; batchSize?: number }
 ): Promise<LabelPassResult> {
-  await ensureQuestionRules(db);
-
   const deadline = Date.now() + budgetMs;
   const outOfTime = () => Date.now() >= deadline;
   const totals = { labelsWritten: 0, labelFailures: 0 };
@@ -33,6 +37,12 @@ export async function runLabelPass(
   // Yes/no answers are labelled as given, not when graded; the cursor is their own.
   let done = true;
   for (const kind of ['rating', 'yesno'] as const) {
+    if (outOfTime()) {
+      done = false;
+      continue;
+    }
+    if (!(await hasUnlabelled(db, kind))) continue;
+    await (kind === 'yesno' ? ensureYesNoRules(db) : ensureChoiceRules(db));
     let cursor: LabelCursor | null = null;
     let kindDone = false;
     while (!kindDone && !outOfTime()) {

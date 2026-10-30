@@ -7,6 +7,9 @@ import { heldSql } from './held';
 /** A vote the store has refused this many times is given up on (its reason stays in `record_failure`), so it is not retried forever. */
 const MAX_REFUSALS = 5;
 
+/** A vote the store refused, or whose write raised, is not tried again for this long, so a short outage cannot use up its refusals. */
+const RETRY_AFTER_MINUTES = 10;
+
 export type LabelCursor = { settledAt: Date; itemId: number; playerId: number };
 export type LabelBatch = {
   scanned: number;
@@ -22,6 +25,11 @@ export type LabelBatch = {
  * been answered one under its own label question (the producer's id), so the store can compute its majority. Idempotent.
  */
 export async function ensureQuestionRules(db: Kysely<DB>): Promise<void> {
+  await ensureChoiceRules(db);
+  await ensureYesNoRules(db);
+}
+
+export async function ensureChoiceRules(db: Kysely<DB>): Promise<void> {
   await sql`
     INSERT INTO label_store.rule ("question", "questionVersion", "minHuman", "requireUnanimous")
     SELECT q."key", q."version", q."votesToResolve", false
@@ -29,6 +37,9 @@ export async function ensureQuestionRules(db: Kysely<DB>): Promise<void> {
     WHERE q."kind" = 'choice'
     ON CONFLICT DO NOTHING
   `.execute(db);
+}
+
+export async function ensureYesNoRules(db: Kysely<DB>): Promise<void> {
   await sql`
     INSERT INTO label_store.rule ("question", "questionVersion", "minHuman", "requireUnanimous")
     SELECT ${YESNO_KEY_PREFIX}::text || i."externalId", q."version", q."votesToResolve", false
@@ -63,8 +74,10 @@ function shapeOf(kind: LabelKind) {
       join: sql`JOIN "KnightsQueueItem" it ON it."id" = v."itemId" AND it."audience" IS NOT NULL AND it."externalId" IS NOT NULL`,
       eligible: sql`v."itemId" > 0`,
       externalId: sql`it."externalId"`,
-      ref: (hash: ReturnType<typeof sql>) =>
-        sql`'KnightsYesNoVote:' || b."externalId" || ':' || ${hash}`,
+      ref: (hash: ReturnType<typeof sql>, at: 'b' | 'source') =>
+        sql`'KnightsYesNoVote:' || ${sql.ref(
+          `${at === 'b' ? 'b' : 'it'}.externalId`
+        )} || ':' || ${hash}`,
       question: sql`${YESNO_KEY_PREFIX}::text || b."externalId"`,
     };
   }
@@ -74,7 +87,8 @@ function shapeOf(kind: LabelKind) {
     eligible: sql`v."settledAt" IS NOT NULL
         AND EXISTS (SELECT 1 FROM "KnightsQuestion" kq WHERE kq."key" = v."questionKey" AND kq."kind" = 'choice')`,
     externalId: sql`NULL::text`,
-    ref: (hash: ReturnType<typeof sql>) => sql`'KnightsVote:' || b."itemId" || ':' || ${hash}`,
+    ref: (hash: ReturnType<typeof sql>, at: 'b' | 'source') =>
+      sql`'KnightsVote:' || ${sql.ref(`${at === 'b' ? 'b' : 'v'}.itemId`)} || ':' || ${hash}`,
     question: sql`b."questionKey"`,
   };
 }
@@ -105,12 +119,15 @@ async function runBatch(
         ${afterClause}
         ${onlyClause}
         AND NOT ${heldSql('v.playerId')}
+        AND ${notRecentlyFailed(
+          shape.ref(sql`label_store.person_hash('labeller', v."playerId")`, 'source')
+        )}
       ORDER BY ${shape.when}, v."itemId", v."playerId"
       LIMIT ${limit}
     ), base AS (
       SELECT b.*, i."url", i."pHash", q."version",
         i."id" IS NOT NULL AND q."key" IS NOT NULL AS "hasSubject",
-        ${shape.ref(sql`label_store.person_hash('labeller', b."playerId")`)} AS "ref"
+        ${shape.ref(sql`label_store.person_hash('labeller', b."playerId")`, 'b')} AS "ref"
       FROM batch b
       LEFT JOIN "Image" i ON i."id" = b."imageId"
       LEFT JOIN "KnightsQuestion" q ON q."key" = b."questionKey"
@@ -156,6 +173,23 @@ async function runBatch(
   return rows;
 }
 
+/** Whether any vote of this kind is waiting for a label, so a quiet tick can skip the setup writes. */
+export async function hasUnlabelled(db: Kysely<DB>, kind: LabelKind): Promise<boolean> {
+  const shape = shapeOf(kind);
+  const { rows } = await sql`
+    SELECT 1 FROM "KnightsVote" v
+    ${shape.join}
+    WHERE NOT v."labelled" AND ${shape.eligible} AND NOT ${heldSql('v.playerId')}
+    LIMIT 1
+  `.execute(db);
+  return rows.length > 0;
+}
+
+/** True when the store has no failure for `ref` newer than the retry age. */
+const notRecentlyFailed = (ref: ReturnType<typeof sql>) =>
+  sql`NOT EXISTS (SELECT 1 FROM label_store.record_failure rf WHERE rf."sourceRef" = ${ref}
+    AND rf."createdAt" > now() - make_interval(mins => ${RETRY_AFTER_MINUTES}))`;
+
 function summarize(rows: Row[], after: LabelCursor | null, extraFailed = 0): LabelBatch {
   const last = rows[rows.length - 1];
   return {
@@ -178,7 +212,7 @@ const raisedRef = (itemId: number, playerId: number) =>
 
 /**
  * When a batch raises, one bad vote would fail every pass on the same batch. Each vote is tried alone instead:
- * the one that raises is recorded as a failure, counts toward `MAX_REFUSALS`, and the others are written.
+ * the one that raises is recorded as a failure, counts toward `MAX_REFUSALS`, and the others are written. A vote that failed within the retry age is skipped, and when every vote tried raises the store is taken to be down and none is recorded.
  */
 async function writeRowByRow(db: Kysely<DB>, args: BatchArgs): Promise<LabelBatch> {
   const shape = shapeOf(args.kind ?? 'rating');
@@ -198,7 +232,8 @@ async function writeRowByRow(db: Kysely<DB>, args: BatchArgs): Promise<LabelBatc
     LIMIT ${args.limit}
   `.execute(db);
   const rows: Row[] = [];
-  let raised = 0;
+  const raisedVotes: { ref: ReturnType<typeof sql>; error: unknown }[] = [];
+  let attempted = 0;
   for (const key of keys) {
     const only = { itemId: Number(key.itemId), playerId: Number(key.playerId) };
     const ref = raisedRef(only.itemId, only.playerId);
@@ -211,13 +246,26 @@ async function writeRowByRow(db: Kysely<DB>, args: BatchArgs): Promise<LabelBatc
       );
       continue;
     }
+    const { rows: recent } = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM label_store.record_failure f
+      WHERE f."sourceRef" = ${ref} AND f."createdAt" > now() - make_interval(mins => ${RETRY_AFTER_MINUTES})
+    `.execute(db);
+    if (Number(recent[0].n) > 0) continue;
+    attempted++;
     try {
       rows.push(...(await runBatch(db, { ...args, only, limit: 1 })));
     } catch (error) {
-      raised++;
+      raisedVotes.push({ ref, error });
+    }
+  }
+  // When every vote tried raised, the store is down rather than the votes bad: nothing is recorded against them.
+  const storeDown = attempted > 1 && raisedVotes.length === attempted;
+  if (!storeDown) {
+    for (const { ref, error } of raisedVotes) {
       await sql`SELECT label_store.note_failure(${ref}, ${String(error)})`.execute(db);
     }
   }
+  const raised = raisedVotes.length;
   const last = keys[keys.length - 1];
   return {
     ...summarize(rows, args.after, raised),

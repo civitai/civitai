@@ -28,6 +28,9 @@ const labelled = async (playerId: number) =>
       [playerId]
     )
   ).rows.map((r) => r.labelled);
+/** Moves every recorded failure back past the retry age, as if the time had passed. */
+const wait = () =>
+  pg.exec(`UPDATE label_store.record_failure SET "createdAt" = "createdAt" - interval '1 hour'`);
 const hold = (userId: number) =>
   pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"='2026-12-11' WHERE "userId"=${userId}`);
 const release = (userId: number) =>
@@ -189,6 +192,7 @@ describe('labels', () => {
       `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options","version") VALUES ('knights.image.flag','bool','Flag?','[]'::jsonb,1)
        ON CONFLICT DO NOTHING`
     );
+    await vote(1, 1, 101);
     await pass();
     await pass();
 
@@ -220,12 +224,36 @@ describe('labels', () => {
     const failures: number[] = [];
     for (let i = 0; i < 8; i++) {
       failures.push((await pass()).labelFailures);
+      await wait();
     }
 
     expect(failures.slice(0, 5)).toEqual([1, 1, 1, 1, 1]);
     expect(failures.slice(-2)).toEqual([0, 0]);
     expect(await labelled(1)).toEqual([true]);
     expect(await labels()).toHaveLength(1);
+  });
+
+  it('does not try a refused vote again before the retry age', async () => {
+    await seedPlayer(pg, 1);
+    await vote(1, 1, 101);
+    await pg.exec(
+      `INSERT INTO label_store.erased_subject ("subjectType","subjectId") VALUES ('image','101')`
+    );
+
+    expect(await pass()).toMatchObject({ labelFailures: 1 });
+    expect(await pass()).toMatchObject({ labelFailures: 0 });
+    expect(
+      (await pg.query(`SELECT count(*)::int AS n FROM label_store.record_failure`)).rows
+    ).toEqual([{ n: 1 }]);
+  });
+
+  it('writes nothing and sets up no rules on a tick with no votes waiting', async () => {
+    await pg.exec(`DELETE FROM label_store.rule WHERE "question" LIKE 'knights.%'`);
+    await pass();
+
+    expect(
+      (await pg.query(`SELECT 1 FROM label_store.rule WHERE "question" LIKE 'knights.%'`)).rows
+    ).toEqual([]);
   });
 
   describe('when the store raises for one vote', () => {
@@ -238,6 +266,25 @@ describe('labels', () => {
                 FROM label_store.secret s);
       END $$`;
     afterEach(() => pg.exec(personHash('')));
+
+    it('still labels every vote once the store is back after being down for several ticks', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      for (const id of [1, 2, 3]) await seedPlayer(pg, id);
+      await vote(1, 1, 101);
+      await vote(2, 2, 102);
+      await vote(3, 3, 103);
+      await pg.exec(personHash(`RAISE EXCEPTION 'store down';`));
+
+      for (let i = 0; i < 8; i++) {
+        await pass();
+        await wait();
+      }
+      expect(await labelled(1)).toEqual([false]);
+
+      await pg.exec(personHash(''));
+      expect(await pass()).toMatchObject({ labelsWritten: 3, labelFailures: 0 });
+      expect(await labels()).toHaveLength(3);
+    });
 
     it('writes the other votes of the batch, records the failure and gives up on that vote after a few passes', async () => {
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -252,6 +299,7 @@ describe('labels', () => {
       expect(await labelled(2)).toEqual([false]);
 
       for (let i = 0; i < 5; i++) {
+        await wait();
         await pass();
       }
 
