@@ -39,10 +39,13 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
 const {
+  assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  assertShopArtworkKeysIssued,
   keyIssueRecords,
   keyIssuers,
   recordUploadKeyOwner,
+  UNFINISHED_UPLOAD_MESSAGE,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
 } = await import('~/server/services/image-url-ownership');
 
@@ -280,6 +283,52 @@ describe('assertClientKeysIssuedToCaller', () => {
 
   it('accepts a url with no upload key', async () => {
     expect(await outcome('https://example.com/picture.png')).toBe('accepted');
+  });
+});
+
+describe('an image url that names no stored object', () => {
+  // The browser's url for a file whose upload has not finished; its id is not an upload key.
+  const BLOB = `blob:https://civitai.red/${KEY}`;
+  const message = (check: Promise<unknown>) =>
+    check.then(
+      () => 'accepted',
+      (e: Error) => e.message
+    );
+
+  beforeEach(() => recordUploadKeyOwner(KEY, CALLER));
+
+  it('is refused by each client url check with a message to add the image again', async () => {
+    expect(await message(assertClientImageUrlsUsable({ urls: [BLOB], userId: CALLER }))).toBe(
+      UNFINISHED_UPLOAD_MESSAGE
+    );
+    expect(
+      await message(assertClientKeysIssuedToCaller({ urls: [BLOB], userId: CALLER, now: BEFORE }))
+    ).toBe(UNFINISHED_UPLOAD_MESSAGE);
+    expect(await message(assertShopArtworkKeysIssued({ urls: [BLOB], userId: CALLER }))).toBe(
+      UNFINISHED_UPLOAD_MESSAGE
+    );
+  });
+
+  it('is refused in any scheme but http(s), however it is spelled', async () => {
+    for (const url of [`data:image/png;base64,${KEY}`, ` BLOB:${KEY}`, `bl\tob:${KEY}`])
+      expect(await message(assertClientImageUrlsUsable({ urls: [url], userId: CALLER })), url).toBe(
+        UNFINISHED_UPLOAD_MESSAGE
+      );
+  });
+
+  it('holds no upload key', async () => {
+    expect(await keyIssuers({ urls: [BLOB], userId: OTHER })).toMatchObject({
+      issuedToOthers: [],
+      unrecorded: [],
+    });
+    expect((await keyIssuers({ urls: [KEY], userId: OTHER })).issuedToOthers).toEqual([KEY]);
+  });
+
+  it('leaves the same key over https to the key checks', async () => {
+    const url = `https://image.civitai.com/x/${KEY}/original=true/a.jpeg`;
+    const usable = assertClientImageUrlsUsable({ urls: [url], userId: CALLER, shopArtwork: false });
+    expect(await message(usable)).toBe('accepted');
+    expect(await outcome(url)).toBe('accepted');
   });
 });
 

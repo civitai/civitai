@@ -18,6 +18,26 @@ export const ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE =
 export const imageUrlUnavailableError = (message = COVER_IMAGE_UNAVAILABLE_MESSAGE) =>
   new TRPCError({ code: 'BAD_REQUEST', message });
 
+export const UNFINISHED_UPLOAD_MESSAGE =
+  "An image didn't finish uploading. Remove it and add it again.";
+
+const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+
+/**
+ * A url with a scheme other than http(s), such as the `blob:` url a browser shows for a file
+ * before its upload finishes. It names no stored object, so it holds no upload key.
+ */
+export function isUnfinishedUploadUrl(url: string | null | undefined) {
+  const scheme = url ? SCHEME.exec(compacted(url).trim())?.[1].toLowerCase() : undefined;
+  return !!scheme && scheme !== 'http' && scheme !== 'https';
+}
+
+/** Refuses a save holding an image url that names no stored object. */
+export function assertNoUnfinishedUploads(urls: (string | null | undefined)[]) {
+  if (urls.some(isUnfinishedUploadUrl))
+    throw new TRPCError({ code: 'BAD_REQUEST', message: UNFINISHED_UPLOAD_MESSAGE });
+}
+
 type Db = Prisma.TransactionClient | typeof dbWrite;
 
 export const MAX_KEYS = 64;
@@ -57,7 +77,7 @@ function storedUrlsFor(url: string | null | undefined): string[] {
 }
 
 export function keysIn(url: string | null | undefined): string[] {
-  if (!url) return [];
+  if (!url || isUnfinishedUploadUrl(url)) return [];
   return decodedForms(url).flatMap((value) =>
     [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())
   );
@@ -115,6 +135,7 @@ export async function assertClientImageUrlsUsable({
     throw new Error(
       'assertClientImageUrlsUsable: a shop artwork write needs the shop artwork check'
     );
+  assertNoUnfinishedUploads(urls);
   if (
     shopRow &&
     urls.some((url) => url && storedUrlsFor(url).length && storedUrlsFor(url)[1] !== url)
@@ -315,6 +336,7 @@ export async function assertClientKeysIssuedToCaller({
   ...args
 }: KeyIssuerArgs & { now?: Date }) {
   const { userId } = args;
+  assertNoUnfinishedUploads(args.urls);
   const {
     tooMany,
     issuedToOthers,
@@ -383,6 +405,7 @@ export async function assertShopArtworkKeysIssued({
   db = dbWrite,
 }: KeyIssuerArgs) {
   const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
+  assertNoUnfinishedUploads(urls);
   const given = urls.filter((url): url is string => !!url);
   // Shop artwork is stored as the bare key the upload issued, never as a url.
   if (given.some((url) => keysIn(url)[0] !== url)) throw imageUrlUnavailableError();
