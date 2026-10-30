@@ -1,6 +1,6 @@
 {
   "name": "@civitai/assistant-runner-app",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -14,7 +14,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.77",
     "@civitai/app-assistant": "workspace:*",
-    "@civitai/components-chat": "0.33.0",
+    "@civitai/components-chat": "0.35.0",
     "@dbos-inc/dbos-sdk": "5.3.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "ai": "6.0.289",

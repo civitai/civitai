@@ -16,6 +16,7 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
+import { payoutPendingSql } from '~/server/services/bounty-payout-lock';
 import {
   bountyThreadParents,
   detachHeldThreadsCte,
@@ -938,6 +939,25 @@ export const toggleFollowUser = async ({
     select: { type: true },
   });
 
+  // The block lives on the reverse pair, so the row read above never shows it.
+  // Only the branches that can establish a follow are gated; unfollowing stays allowed.
+  if (!engagement || engagement.type === 'Hide') {
+    const blocked = await amIBlockedByUser({ userId, targetUserId, confirmOnPrimary: true });
+    if (blocked) throw throwBadRequestError('You cannot follow a user that has blocked you');
+  }
+  // A block committing between that check and our write clears the reverse Follow
+  // before ours exists, so check again once it does: each side writes, then reads.
+  const lostToBlock = async () => {
+    const block = await dbWrite.userEngagement.findFirst({
+      where: { userId: targetUserId, targetUserId: userId, type: UserEngagementType.Block },
+      select: { userId: true },
+    });
+    if (!block) return false;
+    await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Follow });
+    await setUserFollowCached({ userId, targetUserId, following: false });
+    return true;
+  };
+
   // Every write below is scoped by `type`. The row read a moment ago may already
   // be a different type — a block applied from another tab, say — and an
   // unqualified `delete`/`update` on the PK would take that block with it while
@@ -957,8 +977,9 @@ export const toggleFollowUser = async ({
       // second concurrent toggle that won this same `updateMany`. Asserting `false`
       // there writes a WRONG entry that stands for the rest of the day-long TTL,
       // where the refetch merely costs.
-      if (count) await setUserFollowCached({ userId, targetUserId, following: true });
-      else await userFollowsCache.refresh(userId);
+      const followed = count > 0 && !(await lostToBlock());
+      if (followed) await setUserFollowCached({ userId, targetUserId, following: true });
+      else if (!count) await userFollowsCache.refresh(userId);
       // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
       // Without this the target stays hidden from the feed of the user who just
       // followed them, until the hash TTL expires.
@@ -966,7 +987,7 @@ export const toggleFollowUser = async ({
       // Zero rows means the Hide is gone — replaced by a Block, most likely — so
       // no follow was established and saying otherwise would be a lie the caller
       // acts on (reward, notification, tracking event).
-      return count > 0;
+      return followed;
     }
 
     return false;
@@ -999,6 +1020,7 @@ export const toggleFollowUser = async ({
     return followed;
   }
 
+  if (await lostToBlock()) return false;
   await setUserFollowCached({ userId, targetUserId, following: true });
 
   {
@@ -1692,20 +1714,45 @@ export const removeAllContent = async ({
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
-  const unsettled = await dbWrite.bounty.findMany({
-    // `isPayoutPending` as a query; keep the two in step.
-    where: { userId: id, payoutRecordedAt: { not: null }, payoutSettledAt: null },
-    select: { id: true },
-  });
+  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from, so an
+  // unsettled payout is settled first and an open bounty's supporters are refunded.
+  const owing = await dbWrite.$queryRaw<{ id: number; pending: boolean; open: boolean }[]>`
+    SELECT b.id, ${payoutPendingSql} AS pending,
+      (NOT b.complete AND NOT b.refunded) AS open
+    FROM "Bounty" b
+    WHERE b."userId" = ${id}
+      AND (${payoutPendingSql} OR (NOT b.complete AND NOT b.refunded
+        AND EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id)))`;
   const keptBountyIds: number[] = [];
-  if (unsettled.length) {
-    const { settleBountyPayout, refundUnpayableBountyAward } = await import(
-      '~/server/services/bounty.service'
-    );
-    for (const { id: bountyId } of unsettled)
-      if (!(await settleBountyPayout(bountyId)) && !(await refundUnpayableBountyAward(bountyId)))
-        keptBountyIds.push(bountyId);
+  if (owing.length) {
+    const { claimBountyRefundForDelete, settleBountyPayout, refundUnpayableBountyAward } =
+      await import('~/server/services/bounty.service');
+    const settle = async (bountyId: number, firstAttempt = false) =>
+      (await settleBountyPayout(bountyId, {
+        firstAttempt,
+        refundDescription: 'Refund reason: owner content removed',
+      })) || (await refundUnpayableBountyAward(bountyId));
+    for (const { id: bountyId, pending, open } of owing) {
+      let settled = false;
+      try {
+        // A pending award is paid before the claim turns the bounty into a refund.
+        settled = !pending || (await settle(bountyId));
+        if (settled && open) {
+          const claim = await claimBountyRefundForDelete(bountyId);
+          if (claim?.owed) settled = await settle(bountyId, claim.firstAttempt);
+        }
+      } catch (e) {
+        settled = false;
+        logToAxiom({
+          name: 'remove-all-content',
+          type: 'error',
+          message: `Bounty payout failed - ${(e as Error).message}`,
+          userId: id,
+          bountyId,
+        }).catch(() => undefined);
+      }
+      if (!settled) keptBountyIds.push(bountyId);
+    }
     if (keptBountyIds.length)
       logToAxiom({
         name: 'remove-all-content',

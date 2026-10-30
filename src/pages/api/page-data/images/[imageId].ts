@@ -4,7 +4,10 @@ import {
   hasImageDetailQueryFilters,
   parseImageQueryParams,
 } from '~/components/Image/image-query-params';
-import { SHELL_MAIN_IMAGE_URL_KEY } from '~/components/Shell/shell-page-data';
+import {
+  encodeShellMainImageHeader,
+  SHELL_MAIN_IMAGE_HEADER,
+} from '~/components/Shell/shell-page-data';
 import { STORYLINE_CHAPTER_PARAM } from '~/components/Storyline/storyline-mode.utils';
 import { logToAxiom } from '~/server/logging/client';
 import { resolveImageDetailPageData } from '~/server/page-data/image-detail';
@@ -34,7 +37,8 @@ import {
  * `GET /api/page-data/images/[imageId]` — everything a server render of `/images/[imageId]`
  * computes for ITS viewer, in one response: the settings bootstrap and the session, the feature
  * flags and their per-user overlay, chat settings, region, `adsGated`, and the page's `trpcState` —
- * plus the URL of the page's main image for this viewer, for the shell to preload.
+ * plus, in the `SHELL_MAIN_IMAGE_HEADER` response header, the URL of the page's main image for
+ * this viewer, for the shell to preload.
  * It is what the static (viewer-independent) shell of the page reads instead of being rendered
  * per viewer.
  *
@@ -141,6 +145,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     syncShellRouteCookie(req, res, 'images', !!session?.user, { refresh: true });
 
+    // The exact URL the page's main `<img>` will request for THIS viewer, or no header when it
+    // will request none (video, gated, blur-dependent, hidden). The shell's inline head script
+    // preloads it as soon as this response's headers arrive (`shellPageDataPrefetchScript`),
+    // without waiting for the body below. Here and never in the cached shell HTML, which is the
+    // same for every viewer; the response is `private, no-store` like the body.
+    const mainImageUrl = mainImageFromImageGet(req.query)
+      ? imageDetailPreloadUrl({
+          image: result.image,
+          viewer: session?.user,
+          forcedBrowsingLevel: result.forcedBrowsingLevel,
+          canViewNsfw: !!flags.canViewNsfw,
+        })
+      : undefined;
+    if (mainImageUrl) {
+      res.setHeader(SHELL_MAIN_IMAGE_HEADER, encodeShellMainImageHeader(mainImageUrl));
+    }
+
     // Named one by one, under the `pageProps` names `_app` gives them, so a field the bootstrap
     // gains later is not published here unreviewed.
     return send(200, {
@@ -159,18 +180,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       region: getRegion(req),
       adsGated: resolveAdsGated(result, flags),
       trpcState: dehydrateSsgState(ssg, req.url),
-      // The exact URL the page's main `<img>` will request for THIS viewer, or absent when it
-      // will request none (video, gated, blur-dependent, hidden). The shell's inline head script
-      // preloads it the moment this body arrives (`shellPageDataPrefetchScript`). Here and never
-      // in the cached shell HTML, which is the same for every viewer.
-      [SHELL_MAIN_IMAGE_URL_KEY]: mainImageFromImageGet(req.query)
-        ? imageDetailPreloadUrl({
-            image: result.image,
-            viewer: session?.user,
-            forcedBrowsingLevel: result.forcedBrowsingLevel,
-            canViewNsfw: !!flags.canViewNsfw,
-          })
-        : undefined,
     });
   } catch (e) {
     logToAxiom({

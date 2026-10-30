@@ -2889,6 +2889,10 @@ export type Crucible = {
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
   eventTags: Generated<string[]>;
+  takenDownAt: Timestamp | null;
+  takenDownById: number | null;
+  takedownReason: string | null;
+  takedownRefundsCreator: Generated<boolean>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -5552,6 +5556,10 @@ export type StorylineCollaborator = {
   storylineId: number;
   userId: number;
   createdAt: Generated<Timestamp>;
+  /**
+   * When the user accepted the invitation; null while it is pending. Declining deletes the row.
+   */
+  acceptedAt: Timestamp | null;
 };
 export type StorylineCoverUpload = {
   storylineId: number;

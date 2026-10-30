@@ -11,6 +11,7 @@ import {
   setAsideState,
   type SetAsideState,
 } from './csam-queue-set-aside';
+import { outOfCsamQueuePending as outOfPending } from '@civitai/db-queries/csam-queue';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -205,38 +206,6 @@ function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Block
 
 export const CSAM_QUEUE_USER_LIMIT = 500;
 
-/** A CSAM-queue image listed as `{ id }` in a sent image report on its owner, unless that send
- *  recorded it as missing. The send reads only `{ id }` entries. `image` is the table or alias the
- *  image row is read as. */
-function coveredBySentCsamReport(image: string) {
-  const col = (name: string) => sql.ref(`${image}.${name}`);
-  return sql<boolean>`exists (
-    select 1
-    from "CsamReport" r
-    cross join lateral jsonb_array_elements(
-      case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
-    ) e
-    where r."userId" = ${col('userId')}
-      and r."reportSentAt" is not null
-      and r.type = 'Image'
-      and e ->> 'id' = ${col('id')}::text
-      and not exists (
-        select 1
-        from jsonb_array_elements(
-          case when jsonb_typeof(r.details -> 'images') = 'array' then r.details -> 'images'
-          else '[]'::jsonb end
-        ) d
-        where d ->> 'id' = ${col('id')}::text
-          and d ->> 'source' = 'missing'
-      )
-  )`;
-}
-
-/** Out of the CSAM queue's pending count: covered by a sent report, or set aside. */
-function outOfPending(image: string, setAside: SetAsideState) {
-  return sql<boolean>`(${coveredBySentCsamReport(image)} or ${setAsideCounts(image, setAside)})`;
-}
-
 /** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
  *  the status is unknown rather than that this user is on a hold. */
 export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
@@ -254,6 +223,8 @@ export type CsamQueueUser = {
   latestImageId: number;
   /** Newest `reportSentAt` of the user's CSAM reports; null when none was sent. */
   reportSentAt: Date | null;
+  /** The user's newest sent image report, which a supplemental report refers to. */
+  latestSentImageReportId: number | null;
   /** Any CSAM report row for the user, sent or not. */
   reported: boolean;
   /** The holds on the user's account; empty when there are none. */
@@ -295,7 +266,13 @@ export async function getCsamQueueByUser({
     dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
     dbRead
       .selectFrom('CsamReport')
-      .select(['userId', sql<Date | null>`max("reportSentAt")`.as('reportSentAt')])
+      .select([
+        'userId',
+        sql<Date | null>`max("reportSentAt")`.as('reportSentAt'),
+        sql<number | null>`(array_agg(id order by "reportSentAt" desc) filter (
+          where type = 'Image' and "reportSentAt" is not null and "reportId" is not null
+        ))[1]`.as('latestSentImageReportId'),
+      ])
       .where('userId', 'in', userIds)
       .groupBy('userId')
       .execute(),
@@ -317,7 +294,7 @@ export async function getCsamQueueByUser({
       : legs.map((leg) => (leg === 'evidenceHold' ? 'evidenceHoldUnknown' : leg));
   const removedByUser = new Map(removed.map((r) => [r.userId, r]));
   const usernames = new Map(users.map((u) => [u.id, u.username]));
-  const reportsByUser = new Map(reports.map((r) => [r.userId, r.reportSentAt]));
+  const reportsByUser = new Map(reports.map((r) => [r.userId, r]));
 
   return {
     users: page.map((g) => ({
@@ -328,7 +305,8 @@ export async function getCsamQueueByUser({
       removed: Number(removedByUser.get(g.userId)?.count ?? 0),
       removedVersion: removedByUser.get(g.userId)?.version ?? null,
       latestImageId: Number(g.latestImageId),
-      reportSentAt: reportsByUser.get(g.userId) ?? null,
+      reportSentAt: reportsByUser.get(g.userId)?.reportSentAt ?? null,
+      latestSentImageReportId: reportsByUser.get(g.userId)?.latestSentImageReportId ?? null,
       reported: reportsByUser.has(g.userId),
       heldBy: reasons(holds.get(g.userId)),
     })),

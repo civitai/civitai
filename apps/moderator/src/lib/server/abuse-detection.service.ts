@@ -369,6 +369,11 @@ async function writeRun(
   return db.transaction().execute(async (trx) => {
     // Asked once per report, inside the transaction whose statements are shaped by the answer.
     const support = await verdictColumnSupport(trx);
+    if (input.requireGroupKey && !support.canStoreGroupKey && input.findings.length > 0)
+      throw new Error(
+        `abuse_detection_finding has no ${GROUP_KEY_COLUMN} column and ${input.detector} requires ` +
+          'grouped findings — apply apps/moderator/abuse-detection/schema.sql'
+      );
 
     const run = await trx
       .insertInto('abuse_detection_run')

@@ -25,6 +25,7 @@ type Row = {
   ingestion: CrucibleIngestionStatus;
   userId: number;
   image: { ingestion: ImageIngestionStatus; nsfwLevel: number };
+  takenDownAt: Date | null;
 };
 
 const row = (id: number, overrides: Partial<Row> = {}): Row => ({
@@ -38,6 +39,7 @@ const row = (id: number, overrides: Partial<Row> = {}): Row => ({
   ingestion: CrucibleIngestionStatus.Scanned,
   userId: 1,
   image: { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.PG },
+  takenDownAt: null,
   ...overrides,
 });
 

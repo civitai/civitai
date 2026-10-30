@@ -10,6 +10,12 @@ import type { TokenVerifier } from './tokens';
 export { lastEventId, loggerOptions } from './core/app';
 
 export interface AppOptions extends Omit<RunAppOptions, 'grants' | 'routes' | 'patchRefusal'> {
+  /**
+   * Whether a start (or a patch) may name this model: `isAppAssistantModel` in a deployment, so it
+   * never takes a model id the page does not offer. Required, so no deployment can leave it out;
+   * tests running scripted models pass their own.
+   */
+  acceptsModel(model: string): boolean;
   /** Checks the run grant a start (or a patch) carries. Without one every start is refused. */
   grants?: Pick<TokenVerifier, 'grant'>;
   /** The page's Restart preview (`POST apps/:app/preview`). Without it that answers 503. */
@@ -28,7 +34,10 @@ const RESTART_STATUS: Record<RestartErrorCode, number> = {
 
 const previewBody = z.object({ v: z.literal(1) });
 
-/** The run API (`core/app.ts`) as civitai serves it: civitai's grants, mint refusals and Restart preview. */
+/**
+ * The run API (`core/app.ts`) as civitai serves it: civitai's grants, mint refusals, App Assistant's
+ * models and Restart preview.
+ */
 export function buildApp(options: AppOptions): FastifyInstance {
   const { previews, ...run } = options;
   return buildRunApp({

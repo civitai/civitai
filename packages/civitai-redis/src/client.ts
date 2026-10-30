@@ -2669,6 +2669,12 @@ export const REDIS_SYS_KEYS = {
     // JSON `PrepayoutLimits`. Ops-owned; deliberately no default in code.
     PREPAYOUT_LIMITS: 'creator-program:prepayout-limits',
   },
+  LINKED_ACCOUNT_REVIEW: {
+    // JSON `LinkedAccountReviewConfig`. Ops-owned; deliberately no default in code.
+    CONFIG: 'linked-account-review:config',
+    // Hash: field = group signature, value = ISO time it was last filed.
+    FILED: 'linked-account-review:filed',
+  },
   NEW_ORDER: {
     EXP: 'new-order:exp',
     FERVOR: 'new-order:fervor',

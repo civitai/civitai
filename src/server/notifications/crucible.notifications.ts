@@ -70,6 +70,44 @@ export const crucibleNotifications = createNotificationProcessor({
       url: `/crucibles/${details.crucibleId}`,
     }),
   },
+  // Sent to the creator when a moderator takes their crucible down
+  'crucible-taken-down': {
+    displayName: 'Crucible Removed by Moderators',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => {
+      const funds: Record<string, string> = {
+        refunded: ' The Buzz you paid to create it was refunded.',
+        pending: ' The Buzz you paid to create it is being refunded.',
+        held: ' The Buzz you paid to create it is held pending review.',
+        forfeited: ' The Buzz you paid to create it was not refunded.',
+      };
+      return {
+        message: `Your crucible${quotedName(details.crucibleName)} was removed by moderators.${
+          details.reason ? ` Reason: ${details.reason}` : ''
+        }${funds[details.creatorFunds] ?? ''}`,
+        url: `/crucibles/${details.crucibleId}`,
+      };
+    },
+  },
+  // Sent to each entrant when a moderator takes down a crucible they entered; never the reason
+  'crucible-removed': {
+    displayName: 'Crucible Removed',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `The crucible${quotedName(
+        details.crucibleName
+      )} you entered was removed by moderators.${
+        details.refunded === false
+          ? ''
+          : details.refundPending
+          ? ' Your entry fee refund is being processed.'
+          : ' Any entry fees you paid have been refunded.'
+      }`,
+      url: '/crucibles',
+    }),
+  },
   // Sent to all participants when crucible finalizes with their position
   'crucible-won': {
     displayName: 'Crucible Prize Won',
