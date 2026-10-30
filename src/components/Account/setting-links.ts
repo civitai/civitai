@@ -30,6 +30,7 @@ export const settingPanes: Record<string, string> = {
   topics: 'content',
   'hidden-tags': 'content',
   'hidden-users': 'content',
+  'hidden-models': 'content',
 
   'metric-visibility': 'creator',
   stickers: 'creator',

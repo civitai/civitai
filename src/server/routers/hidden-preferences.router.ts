@@ -2,12 +2,16 @@ import { CacheTTL } from '~/server/common/constants';
 import { noEdgeCache, rateLimit } from '~/server/middleware.trpc';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import {
+  clearHiddenSchema,
   getHiddenImagesForUserSchema,
+  getHiddenModelsSchema,
   toggleHiddenSchema,
 } from '~/server/schema/user-preferences.schema';
 import {
+  clearHidden,
   getAllHiddenForUser,
   getHiddenImagesForUser,
+  getHiddenModelsForUser,
   toggleHidden,
 } from '~/server/services/user-preferences.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -53,4 +57,15 @@ export const hiddenPreferencesRouter = router({
     .input(toggleHiddenSchema)
     .use(blockUserRateLimit)
     .mutation(({ input, ctx }) => toggleHidden({ ...input, userId: ctx.user.id })),
+  getHiddenModels: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .use(noEdgeCache())
+    .input(getHiddenModelsSchema)
+    // A name search reads every one of the user's Hide rows; whales run ~1.7s per request.
+    .use(rateLimit({ limit: 30, period: CacheTTL.xs }, (input) => !!input.query))
+    .query(({ input, ctx }) => getHiddenModelsForUser({ ...input, userId: ctx.user.id })),
+  clearHidden: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(clearHiddenSchema)
+    .mutation(({ input, ctx }) => clearHidden({ ...input, userId: ctx.user.id })),
 });
