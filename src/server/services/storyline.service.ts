@@ -1061,6 +1061,7 @@ export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
   paidByContributor: 'Someone paid to add this chapter, so only they or a moderator can remove it',
   takenDown: 'This storyline was taken down',
   removed: 'This chapter was already removed',
+  underReport: 'This chapter is under report, so only a moderator can remove it',
 } as const;
 
 /**
@@ -1155,6 +1156,23 @@ export async function removeStorylineChapter({
     `;
     if (hasChildren) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.hasChildren);
     if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
+    // As `deleteStoryline`: what is under report stays for the moderator to see.
+    if (role !== 'moderator') {
+      const open = Prisma.sql`r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")`;
+      const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM "PostReport" pr JOIN "Report" r ON r.id = pr."reportId"
+            WHERE pr."postId" = ${chapter.postId} AND ${open}
+          )
+          OR EXISTS (
+            SELECT 1 FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+            WHERE sr."storylineId" = ${storylineId} AND ${open}
+          )
+        ) AS reported
+      `;
+      if (reported) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.underReport);
+    }
 
     if (chapter.placementId != null) {
       if (placement?.inFlight)

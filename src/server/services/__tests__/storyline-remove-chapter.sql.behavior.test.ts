@@ -66,6 +66,7 @@ beforeAll(async () => {
       "publishedAt" timestamp(3), "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
     CREATE TABLE "Report" ("id" integer PRIMARY KEY, "status" "ReportStatus" NOT NULL DEFAULT 'Pending');
+    CREATE TABLE "PostReport" ("postId" integer NOT NULL, "reportId" integer NOT NULL);
     CREATE TABLE "PlacementSpace" ("id" serial PRIMARY KEY, "surface" text NOT NULL,
       "entityType" text NOT NULL, "entityId" integer NOT NULL, "mode" text NOT NULL, "price" integer);
     CREATE TABLE "Placement" ("id" serial PRIMARY KEY, "surface" text NOT NULL,
@@ -139,6 +140,7 @@ beforeEach(async () => {
     DELETE FROM "CommentV2";
     DELETE FROM "Thread";
     DELETE FROM "StorylineReport";
+    DELETE FROM "PostReport";
     DELETE FROM "Report";
     DELETE FROM "PlacementTransaction";
     DELETE FROM "Placement";
@@ -289,6 +291,35 @@ describe('removeStorylineChapter', () => {
     await expect(remove(MODERATOR, true)).rejects.toThrow(REFUSED.paidContinuation);
     expect(await chapterIds()).toEqual([10, 11]);
     expect((await placement900()).status).toBe('approved');
+  });
+
+  it('keeps a chapter under an open report for a moderator', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Report" (id, status) VALUES (70, 'Pending'), (71, 'Actioned');
+      INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 70);
+    `);
+    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.underReport);
+    await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
+    await expect(remove(OWNER)).rejects.toThrow(REFUSED.underReport);
+    expect(await chapterIds()).toEqual([10, 11]);
+
+    // An answered report does not hold it; nor does a report about the storyline once answered.
+    await db.pg.exec(`
+      UPDATE "Report" SET status = 'Actioned' WHERE id = 70;
+      INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (71, 1);
+    `);
+    await remove(CONTRIBUTOR);
+    expect(await chapterIds()).toEqual([10]);
+  });
+
+  it('keeps every chapter of a storyline under an open report for a moderator', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Report" (id, status) VALUES (72, 'Processing');
+      INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (72, 1);
+    `);
+    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.underReport);
+    await remove(MODERATOR, true);
+    expect(trackModActivity).toHaveBeenCalled();
   });
 
   it('refuses chapter 1', async () => {
