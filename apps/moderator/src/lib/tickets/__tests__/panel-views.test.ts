@@ -4,6 +4,7 @@ import {
   ACCOUNT_RESTRICTION_FEATURE,
   CONTENT_RELATED_FEATURE,
   IMAGE_GENERATOR_FEATURE,
+  LORA_TRAINER_FEATURE,
   type TicketView,
 } from '../routing';
 
@@ -14,6 +15,7 @@ const SHOWN_IN: Record<PanelKey, TicketView> = {
   ratingDisputes: 'moderation',
   contentIssue: 'support',
   generator: 'support',
+  lora: 'support',
 };
 
 // A ticket every panel would show on, in the view it belongs to: features and topics of both views.
@@ -21,6 +23,7 @@ const triggers = [
   { cfFeature: ACCOUNT_RESTRICTION_FEATURE, routerTopic: 'account-issue' },
   { cfFeature: IMAGE_GENERATOR_FEATURE, routerTopic: null },
   { cfFeature: CONTENT_RELATED_FEATURE, routerTopic: null },
+  { cfFeature: LORA_TRAINER_FEATURE, routerTopic: null },
 ];
 
 describe('PANELS', () => {

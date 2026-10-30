@@ -22,6 +22,7 @@
   import TicketEscalate from './TicketEscalate.svelte';
   import TicketGeneratorRestrictions from './TicketGeneratorRestrictions.svelte';
   import TicketHistory from './TicketHistory.svelte';
+  import TicketLoraRuns from './TicketLoraRuns.svelte';
   import TicketRatingDisputes from './TicketRatingDisputes.svelte';
   import TicketReply from './TicketReply.svelte';
   import TicketStatusMenu from './TicketStatusMenu.svelte';
@@ -306,6 +307,9 @@
   {/if}
   {#if panels.generator}
     <TicketGeneratorRestrictions ticketId={row.id} generator={panels.generator} ondone={accountDone} />
+  {/if}
+  {#if panels.lora}
+    <TicketLoraRuns ticketId={row.id} lora={panels.lora} ondone={accountDone} />
   {/if}
 {/snippet}
 

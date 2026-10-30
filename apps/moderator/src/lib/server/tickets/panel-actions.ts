@@ -3,6 +3,7 @@ import { ticketAppealActions } from './appeal-actions';
 import { ticketFlagAppealActions } from './appeal-flag-actions';
 import { ticketQueueAppealActions } from './appeal-queue-actions';
 import { ticketGeneratorActions } from './generator-actions';
+import { ticketLoraActions } from './lora-actions';
 import { ticketRatingActions } from './rating-actions';
 
 /**
@@ -20,4 +21,5 @@ export const moderationPanelActions = {
 /** The support view's, spread into the support page's `actions`. */
 export const supportPanelActions = {
   ...ticketGeneratorActions,
+  ...ticketLoraActions,
 };

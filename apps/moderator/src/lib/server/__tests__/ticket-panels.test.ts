@@ -12,6 +12,7 @@ const history = vi.fn();
 const ratingDisputes = vi.fn();
 const contentIssue = vi.fn();
 const generator = vi.fn();
+const lora = vi.fn();
 const loaders = {
   account: (...a: unknown[]) => account(...a),
   appeals: (...a: unknown[]) => appeals(...a),
@@ -19,6 +20,7 @@ const loaders = {
   ratingDisputes: (...a: unknown[]) => ratingDisputes(...a),
   contentIssue: (...a: unknown[]) => contentIssue(...a),
   generator: (...a: unknown[]) => generator(...a),
+  lora: (...a: unknown[]) => lora(...a),
 } as never;
 const all = () => true;
 
@@ -38,6 +40,7 @@ beforeEach(() => {
     .mockResolvedValue({ status: 'ok', userId: 7, disputes: [], truncated: false });
   contentIssue.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   generator.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
+  lora.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
 });
 
 describe('loadPanels', () => {
@@ -110,6 +113,19 @@ describe('loadPanels', () => {
     expect(await loadPanels(gen, (p) => p === '/retool/user-lookup', loaders)).toHaveProperty(
       'generator'
     );
+  });
+
+  it('shows the LoRA panel on a support LoRA Trainer ticket only, under the training models grant', async () => {
+    const lt = { ...ticket, view: 'support' as const, cfFeature: 'LoRA Trainer' };
+    const res = await loadPanels(lt, all, loaders);
+    expect(Object.keys(res)).toEqual(['lora']);
+    expect(lora).toHaveBeenCalledWith({ ...lt, civitaiUserId: 7 }, all);
+    expect(await loadPanels({ ...lt, view: 'moderation' }, all, loaders)).toEqual({});
+    expect(await loadPanels({ ...lt, civitaiUserId: null }, all, loaders)).toEqual({
+      lora: { status: 'unlinked' },
+    });
+    expect(await loadPanels(lt, (p) => p !== '/audit/training-models', loaders)).toEqual({});
+    expect(lora).toHaveBeenCalledTimes(1);
   });
 
   it('says only that no user is linked, without loading', async () => {

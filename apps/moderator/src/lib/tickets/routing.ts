@@ -7,6 +7,7 @@ export const isTicketView = (v: unknown): v is TicketView => v === 'moderation' 
 export const ACCOUNT_RESTRICTION_FEATURE = 'Account Restriction or Banned Account';
 export const CONTENT_RELATED_FEATURE = 'Content Related Issue';
 export const IMAGE_GENERATOR_FEATURE = 'Image Generator';
+export const LORA_TRAINER_FEATURE = 'LoRA Trainer';
 
 /**
  * Which tickets belong to the moderation view. Everything else is support's. Edit this constant to move

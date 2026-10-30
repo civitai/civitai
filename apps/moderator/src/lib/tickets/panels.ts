@@ -4,6 +4,7 @@ import { APPEAL_QUEUE_PATHS } from './appeals';
 import { appealsPanelFor } from './appeals-panel';
 import { IMAGE_REMOVALS_PATH, USER_REPORTS_PATH, contentPanelFor } from './content-panel';
 import { BLOCKED_PROMPTS_PATH, generatorPanelFor } from './generator-panel';
+import { TRAINING_MODELS_PATH, loraPanelFor } from './lora-panel';
 import { RATINGS_PATH } from './rating-disputes';
 import type { TicketView } from './routing';
 
@@ -54,6 +55,10 @@ export const PANELS = {
   generator: {
     readGrants: [GENERATOR_RESTRICTIONS_PATH, BLOCKED_PROMPTS_PATH],
     visibility: generatorPanelFor,
+  },
+  lora: {
+    readGrants: [TRAINING_MODELS_PATH],
+    visibility: loraPanelFor,
   },
 } satisfies Record<string, PanelSpec>;
 
