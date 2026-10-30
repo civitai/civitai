@@ -1088,8 +1088,9 @@ export async function removeStorylineChapter({
     `;
     if (!found) throw throwNotFoundError('Chapter not found');
     const { storylineId, ownerId } = found;
-    // Exclusive against adds, submits, links and moves (`moveStorylineChapter`'s lock), so no
-    // continuation of this chapter can arrive between the checks and the delete.
+    // Exclusive against adds, submits, links and moves (`moveStorylineChapter`'s lock). A submit
+    // blocked here still lands on a moderator's tombstone, as on a takedown's, and is refunded by
+    // the orphaned-continuation job.
     const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
       SELECT "tosViolation" FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
     `;
