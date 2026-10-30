@@ -41,7 +41,7 @@ export type LoraReads = {
 // Imported when read, so loading the ticket detail module opens no database or ClickHouse connection.
 const liveReads: LoraReads = {
   runs: async (userId, limit) =>
-    (await import('../user-account.service')).getTrainingRuns(userId, limit),
+    (await import('../user-account.service')).getTrainingRuns(userId, limit, { charges: false }),
   models: async (userId, modelIds) => {
     const [{ dbRead }, { sql }] = await Promise.all([
       import('../db'),
@@ -76,7 +76,6 @@ export async function loraSectionFor(
 ): Promise<Extract<TicketLora, { status: 'ok' | 'unavailable' }>> {
   const { userId } = ticket;
   try {
-    // `charges` is the Buzz spend; it is read by the service and dropped here.
     const { runs, truncated } = await reads.runs(userId, LORA_ROWS);
     const { username, blocked } = runs.length
       ? await reads.models(userId, [...new Set(runs.map((r) => r.modelId))])
