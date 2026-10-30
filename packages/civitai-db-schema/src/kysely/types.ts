@@ -4405,7 +4405,7 @@ export type Placement = {
   data: Generated<unknown>;
   status: string;
   /**
-   * 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+   * 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
    * removals refund different amounts, so the status alone cannot settle the
    * money. Constrained by "Placement_removedBy_check" — a new value needs a
    * migration even though the column is TEXT.
@@ -5552,6 +5552,34 @@ export type StorylineChapterEdge = {
   canon: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineChapterRemovalHold = {
+  id: Generated<number>;
+  storylineId: number;
+  /**
+   * The storyline's title at removal: the hold outlives the storyline.
+   */
+  storylineTitle: string;
+  /**
+   * The removed chapter's id, its post and its author, as they were.
+   */
+  chapterId: number;
+  postId: number | null;
+  chapterUserId: number;
+  depth: number;
+  placementId: number | null;
+  parentChapterIds: number[];
+  chapterCreatedAt: Timestamp;
+  removedById: number;
+  /**
+   * 'owner' or 'author'.
+   */
+  removedByRole: string;
+  /**
+   * The reports open when it was removed.
+   */
+  reportIds: number[];
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineCollaborator = {
   storylineId: number;
   userId: number;
@@ -6673,6 +6701,7 @@ export type DB = {
   StorylineBranchChoice: StorylineBranchChoice;
   StorylineChapter: StorylineChapter;
   StorylineChapterEdge: StorylineChapterEdge;
+  StorylineChapterRemovalHold: StorylineChapterRemovalHold;
   StorylineCollaborator: StorylineCollaborator;
   StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;

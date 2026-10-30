@@ -6701,6 +6701,23 @@ export interface StorylineChapterEdge {
   createdAt: Date;
 }
 
+export interface StorylineChapterRemovalHold {
+  id: number;
+  storylineId: number;
+  storylineTitle: string;
+  chapterId: number;
+  postId: number | null;
+  chapterUserId: number;
+  depth: number;
+  placementId: number | null;
+  parentChapterIds: number[];
+  chapterCreatedAt: Date;
+  removedById: number;
+  removedByRole: string;
+  reportIds: number[];
+  createdAt: Date;
+}
+
 export interface ImageCaption {
   imageId: number;
   image?: Image;

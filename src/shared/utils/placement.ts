@@ -46,10 +46,11 @@ export type PlacementStatus = 'pending' | 'approved' | 'declined' | 'expired' | 
  * the artwork's maker's rather than the placer's — so `removed` alone cannot
  * tell a reconcile or a retry which one happened.
  *
- * The column is TEXT, not a database enum, so a new value here is a code change
- * and not a migration.
+ * The column is TEXT, but "Placement_removedBy_check" lists the values, so a new
+ * one needs a migration too.
  */
-export type PlacementRemovedBy = 'owner' | 'moderator' | 'cosmeticTakedown';
+// `placer`: a storyline contributor taking out the chapter their approved, settled placement added.
+export type PlacementRemovedBy = 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer';
 
 /**
  * Every movement of money a placement can make, one row each in the ledger.
@@ -981,6 +982,8 @@ export function placementOutcomeFromStatus(
       if (removedBy === 'owner') return 'removedByOwner';
       if (removedBy === 'moderator') return 'removedByModerator';
       if (removedBy === 'cosmeticTakedown') return 'removedByCosmeticTakedown';
+      if (removedBy === 'placer')
+        throw new Error('placement outcome: a placer removes only a settled placement');
       throw new Error('placement outcome: a removed placement must record who removed it');
     case 'pending':
       throw new Error('placement outcome: a pending placement has no settled outcome');
