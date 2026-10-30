@@ -78,15 +78,19 @@ const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours 
 const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
 
 function servableItems(db: Executor) {
-  return db
-    .selectFrom('KnightsQueueItem as i')
-    .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
-    .innerJoin('Image as img', 'img.id', 'i.imageId')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .where('i.status', '=', 'Open')
-    .where('i.isHiddenCheck', '=', false)
-    .where('q.active', '=', true)
-    .where(servableImage);
+  return (
+    db
+      .selectFrom('KnightsQueueItem as i')
+      .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
+      .innerJoin('Image as img', 'img.id', 'i.imageId')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .where('i.status', '=', 'Open')
+      .where('i.isHiddenCheck', '=', false)
+      // Yes/no questions are served and answered by the yesno module, never as ratings.
+      .where('i.audience', 'is', null)
+      .where('q.active', '=', true)
+      .where(servableImage)
+  );
 }
 
 export async function getFeed(

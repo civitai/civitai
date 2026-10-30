@@ -8038,7 +8038,7 @@ model KnightsQuestion {
   items          KnightsQueueItem[]
 }
 
-/// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Ruling | Closed. Ruling is an Inquisitor's claim: resolvedBy holds it, nextAttemptAt is the lease end.
+/// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Ruling | Closed; a yes/no item (question kind `bool`) is Open | Consensus | Closed and is never Resolved. Ruling is an Inquisitor's claim: resolvedBy holds it, nextAttemptAt is the lease end.
 model KnightsQueueItem {
   id                Int             @id @default(autoincrement())
   questionKey       String
@@ -8060,6 +8060,19 @@ model KnightsQueueItem {
   nextAttemptAt     DateTime? // the next write-back try is not due before this; also the lease of a running try
   reason            String? // why an item left the normal path: blocked | moderator-ruled | missing | level-moved | attempts-exhausted
   prediction        Json? // the producing model's expected answer; not served to players
+  /// Yes/no items only (question kind `bool`): the producer's id for the question, unique across items.
+  externalId        String?         @unique
+  /// Yes/no items only: the question as asked about this image. Rating items use their question's prompt.
+  prompt            String?
+  /// Yes/no items only: who answers it, `players` | `moderators`. Null for rating items.
+  audience          String?
+  /// Yes/no items only: what the producing model would rate the image if the answer were yes / no. Never served.
+  yesEffect         String?
+  noEffect          String?
+  /// Yes/no items only: where the question came from (provenance, not served).
+  meta              Json?
+  /// Yes/no items only: answers so far; serving finishes questions that are under way first.
+  voteCount         Int             @default(0)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 

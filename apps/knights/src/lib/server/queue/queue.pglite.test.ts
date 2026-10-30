@@ -120,6 +120,19 @@ describe('getFeed', () => {
     expect(JSON.stringify(feed)).not.toMatch(/"nsfwLevel"\s*:/);
   });
 
+  it('keeps yes/no questions out of the rating feed and refuses a vote on one', async () => {
+    await player(1, 'Knight');
+    await image(10);
+    const yesNo = await item(10, { question: 'knights.test.bool' });
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "audience" = 'players', "prompt" = 'Hat?' WHERE id = $1`,
+      [yesNo]
+    );
+
+    expect(await getFeed(db, 1)).toBeNull();
+    expect(await vote(1, yesNo, 'yes')).toEqual({ status: 'rejected', reason: 'unavailable' });
+  });
+
   it('puts escalated items first for Templars and keeps Knights off them', async () => {
     await player(1, 'Knight');
     await player(2, 'Templar');
