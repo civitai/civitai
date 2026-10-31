@@ -51,3 +51,4 @@ repo) bumps + rolls the deployment. No GitHub Actions, no `release` branch. See
 - Email magic-link provider not yet implemented.
 - GitHub email needs the follow-up `/user/emails` call for the verified primary.
 - No consent/account-merge UX yet; new-user provisioning is minimal.
+
