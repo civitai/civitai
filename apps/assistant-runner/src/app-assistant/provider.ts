@@ -16,6 +16,7 @@ import {
   chosenAppOf,
   createSandboxClient,
   openApp,
+  type CoverOrchestration,
   unconfiguredFeedbackSource,
   type AppFeedbackSource,
   type Sandbox,
@@ -40,6 +41,7 @@ import type { ToolSet } from 'ai';
 
 import type { Logger, OpenTools, ToolContext, ToolProvider } from '../core/interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
+import { runnerCoverTools, type CoverListings } from './cover';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
 import { RunnerPreview, type AutoPreview } from './preview';
@@ -120,6 +122,11 @@ export interface AppAssistantToolsOptions {
    */
   devTunnels?(runId: string): DevTunnels;
   /**
+   * `generate_app_cover` for one run: civitai's cover endpoints with its grant
+   * (`CivitaiCovers.forRun`) and orchestration on its `chat` token (`runnerCoverOrchestration`).
+   * Unset, the runner does not offer it.
+   */
+  covers?(runId: string): { listings: CoverListings; orchestration: CoverOrchestration };
    * civitai's app-feedback reads with one run's grant (`CivitaiAppFeedback.forRun`). Unset, the
    * feedback tools say they cannot read it here.
    */
@@ -292,6 +299,11 @@ export class AppAssistantTools implements ToolProvider {
           signal,
         });
       const sdkUpgrade = await upgradeSdk();
+      // The store cover, the page's own code (`createCoverArt`): spends the user's Buzz on their token.
+      const covers = this.#options.covers?.(runId);
+      const coverTools: Record<string, ChatTool> = covers
+        ? runnerCoverTools({ currentApp: () => sandbox.active?.app ?? null, ...covers, signal })
+        : {};
       const feedback = createFeedbackTools({
         current: () => sandbox.active?.app ?? null,
         source: this.#options.appFeedback?.(runId, signal) ?? unconfiguredFeedbackSource,
@@ -303,11 +315,14 @@ export class AppAssistantTools implements ToolProvider {
         ...core.tools,
         [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], upgradeSdk),
         ...preview.tools(),
+        ...coverTools,
       };
       // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same
       // descriptions and the same failure note. No chat files reach them on the runner.
       const page = hostToolSet(
-        Object.fromEntries(RUNNER_PAGE_TOOLS.map((name) => [name, pageTools[name]!])),
+        Object.fromEntries(
+          [...RUNNER_PAGE_TOOLS, ...Object.keys(coverTools)].map((name) => [name, pageTools[name]!])
+        ),
         sandboxTools,
         {
           conversationId,
