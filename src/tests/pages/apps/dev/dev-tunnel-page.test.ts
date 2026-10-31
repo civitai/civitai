@@ -518,12 +518,13 @@ describe('/apps/dev/[blockId] and its Retry endpoint apply the same gates', () =
 
   const ON = { appBlocks: true, appBlocksAuthor: true };
 
-  it.each([
-    ['App Blocks off', { appBlocksAuthor: true }, () => undefined],
-    ['the author capability off', { appBlocks: true }, () => undefined],
-    ['the kill switch off', ON, () => mockDevTunnelEnabled.mockResolvedValue(false)],
-    ['a block the caller does not own', ON, () => mockResolveDev.mockResolvedValue(null)],
-  ])(
+  const refusals: [string, Record<string, boolean>, () => void][] = [
+    ['App Blocks off', { appBlocksAuthor: true }, () => {}],
+    ['the author capability off', { appBlocks: true }, () => {}],
+    ['the kill switch off', ON, () => void mockDevTunnelEnabled.mockResolvedValue(false)],
+    ['a block the caller does not own', ON, () => void mockResolveDev.mockResolvedValue(null)],
+  ];
+  it.each(refusals)(
     '%s: the page is notFound and the endpoint the same bare 404',
     async (_n, features, arrange) => {
       arrange();
