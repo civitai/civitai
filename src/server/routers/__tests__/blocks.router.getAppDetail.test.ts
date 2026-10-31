@@ -15,19 +15,30 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * GATING INVARIANT pinned here (FAILS if regressed):
  *   - anon WITHOUT the flag → NOT_FOUND, registry NEVER consulted (DARK today).
  *   - non-mod WITHOUT the flag → NOT_FOUND, registry NEVER consulted.
- *   - anon WITH the flag granted (the lit path post-segment-widen) → served;
- *     proves it is anon-CAPABLE, NOT mod-only — there is NO isModerator belt.
+ *   - anon WITH the flag granted, on a PUBLIC listing → served (anon-capable).
  *   - moderator (the live state) → served.
  *   - a non-approved / missing app → NOT_FOUND (service returns null).
+ *
+ * LISTING-VISIBILITY GATE (civitai/flipt-state#263 widens the flag to everyone, so the flag
+ * can no longer stand in for the audience): the backing listing's level is applied with the
+ * SAME predicate the store detail uses (`listingVisibleInStore` + the viewer's audience
+ * floor). The database is driven through the canonical `dbMock`, so the real access
+ * resolver and the real level reader execute:
+ *   - `dbRead.appBlock.findUnique`       → `resolveAppAccess` (owner / editor seat);
+ *   - `dbRead.appCollaborator.findFirst` → the accepted editor seat;
+ *   - `dbRead.appListing.findFirst`      → the block's canonical listing (status);
+ *   - `dbRead.$queryRaw`                 → `readListingVisibility` (the level column).
  */
 
-const { mockIsAppBlocksEnabled, mockGetAppDetail } = vi.hoisted(() => ({
+const { mockIsAppBlocksEnabled, mockGetAppDetail, mockFloor } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockGetAppDetail: vi.fn(),
+  mockFloor: vi.fn(),
 }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
+  resolveViewerAudienceFloor: mockFloor,
 }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
@@ -116,11 +127,39 @@ const PUBLIC_DETAIL = {
   liveUrl: 'https://cool-block.civit.ai',
 };
 
+/** The faithful floor: a moderator floors at `moderators`, anyone else at `public` unless a
+ * test names them a tester. */
+function fakeFloor(opts?: { user?: { isModerator?: boolean } }) {
+  return Promise.resolve(opts?.user?.isModerator === true ? 'moderators' : 'public');
+}
+
+const OWNER_ID = 77;
+const EDITOR_ID = 78;
+
+/** The block's canonical listing, at `status` and `visibility` (null = level unset). */
+function listingIs(status: string, visibility: string | null) {
+  dbMock.dbRead.appListing.findFirst.mockResolvedValue({ id: 'al_1', status } as never);
+  dbMock.dbRead.$queryRaw.mockResolvedValue([{ visibility }] as never);
+}
+
 beforeEach(() => {
   mockIsAppBlocksEnabled.mockReset();
   mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
   mockGetAppDetail.mockReset();
   mockGetAppDetail.mockResolvedValue(PUBLIC_DETAIL);
+  mockFloor.mockReset();
+  mockFloor.mockImplementation(fakeFloor);
+  // The app is owned by OWNER_ID; EDITOR_ID holds an accepted seat on its listing.
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({
+    id: 'ab_1',
+    app: { userId: OWNER_ID },
+    appListing: { id: 'al_1' },
+  } as never);
+  dbMock.dbRead.appCollaborator.findFirst.mockImplementation((async (args: {
+    where: { userId: number };
+  }) => (args.where.userId === EDITOR_ID ? { userId: EDITOR_ID } : null)) as never);
+  // Default: an approved listing with no level set (the pre-feature rule: visible).
+  listingIs('approved', null);
 });
 
 const input = { appBlockId: 'ab_1' };
@@ -144,6 +183,7 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     // user. getAppDetail is publicProcedure; there is NO secondary isModerator
     // gate left to block this. (This test FAILS if an isModerator belt is added.)
     mockIsAppBlocksEnabled.mockResolvedValue(true);
+    listingIs('approved', 'public');
     const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
     const result = await caller.getAppDetail(input);
     expect(result).toEqual(PUBLIC_DETAIL);
@@ -169,5 +209,79 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     mockGetAppDetail.mockResolvedValue(null);
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await expect(caller.getAppDetail(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe("blocks.getAppDetail — the listing's visibility level applies (post civitai/flipt-state#263)", () => {
+  // `app-blocks-enabled` is on for EVERYONE in every case below — the state #263 creates — so
+  // the flag no longer decides anything and the listing's level must.
+  beforeEach(() => {
+    mockIsAppBlocksEnabled.mockResolvedValue(true);
+  });
+
+  const viewer = (id: number) => ({ id, isModerator: false, tier: 'free', username: `u${id}` });
+  const asTester = () => mockFloor.mockResolvedValue('testers');
+
+  it('🔴 a signed-in NON-tester cannot fetch a testers-only app: NOT_FOUND, like a missing one', async () => {
+    listingIs('approved', 'testers');
+    const caller = blocksRouter.createCaller(fakeCtx(viewer(5)) as never);
+    await expect(caller.getAppDetail(input)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'App block not found',
+    });
+  });
+
+  it('🔴 a SIGNED-OUT caller cannot fetch a testers-only app', async () => {
+    listingIs('approved', 'testers');
+    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.getAppDetail(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('🔴 a private app is NOT_FOUND to a non-owner, even a tester (private is off the store)', async () => {
+    asTester();
+    listingIs('approved', 'private');
+    const caller = blocksRouter.createCaller(fakeCtx(viewer(5)) as never);
+    await expect(caller.getAppDetail(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('🔴 an app with NO listing fails closed to NOT_FOUND for a non-owner', async () => {
+    dbMock.dbRead.appListing.findFirst.mockResolvedValue(null as never);
+    const caller = blocksRouter.createCaller(fakeCtx(viewer(5)) as never);
+    await expect(caller.getAppDetail(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('a TESTER can fetch a testers-only app', async () => {
+    asTester();
+    listingIs('approved', 'testers');
+    const caller = blocksRouter.createCaller(fakeCtx(viewer(5)) as never);
+    await expect(caller.getAppDetail(input)).resolves.toEqual(PUBLIC_DETAIL);
+  });
+
+  it('the OWNER (not a tester) can fetch their own testers-only and private app', async () => {
+    for (const level of ['testers', 'private']) {
+      listingIs('approved', level);
+      const caller = blocksRouter.createCaller(fakeCtx(viewer(OWNER_ID)) as never);
+      await expect(caller.getAppDetail(input)).resolves.toEqual(PUBLIC_DETAIL);
+    }
+  });
+
+  it('an accepted COLLABORATOR (not a tester) can fetch the app', async () => {
+    listingIs('approved', 'private');
+    const caller = blocksRouter.createCaller(fakeCtx(viewer(EDITOR_ID)) as never);
+    await expect(caller.getAppDetail(input)).resolves.toEqual(PUBLIC_DETAIL);
+  });
+
+  it('a MODERATOR can fetch testers-only and private apps (unchanged)', async () => {
+    for (const level of ['testers', 'private', 'moderators']) {
+      listingIs('approved', level);
+      const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+      await expect(caller.getAppDetail(input)).resolves.toEqual(PUBLIC_DETAIL);
+    }
+  });
+
+  it('CONTROL: the same non-tester CAN fetch a public app, so the refusals above are the level', async () => {
+    listingIs('approved', 'public');
+    const caller = blocksRouter.createCaller(fakeCtx(viewer(5)) as never);
+    await expect(caller.getAppDetail(input)).resolves.toEqual(PUBLIC_DETAIL);
   });
 });
