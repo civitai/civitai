@@ -89,8 +89,10 @@ async function assertKeysUsable({
   if (!unrowed.length) return;
   if (imagesOnly) {
     // Only an issue record to someone else marks it as ours; an unrecorded uuid may be anyone's id.
-    const { tooMany, issuedToOthers } = await keyIssuers({ urls: unrowed, userId });
-    if (tooMany || issuedToOthers.length) throw generationImageUnavailableError();
+    const issuers = await keyIssuers({ urls: unrowed, userId });
+    const unreadable = issuers.recordReadFailed && issuers.requestLogReadFailed;
+    if (issuers.tooMany || issuers.issuedToOthers.length || unreadable)
+      throw generationImageUnavailableError();
     return;
   }
   try {

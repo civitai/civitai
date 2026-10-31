@@ -8,7 +8,11 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite, refuseExternal: false }));
+const holder = vi.hoisted(() => ({
+  db: null as unknown as PGlite,
+  refuseExternal: false,
+  clickhouseDown: false,
+}));
 
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: {
@@ -19,7 +23,14 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 
 // No upload request log rows: a key with no record is answered by the issue record alone.
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: async () => [] } }));
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: {
+    $query: async () => {
+      if (holder.clickhouseDown) throw new Error('clickhouse down');
+      return [];
+    },
+  },
+}));
 
 dbMock.dbWrite.$queryRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
@@ -66,6 +77,7 @@ beforeEach(async () => {
   `);
   redis.clear();
   holder.refuseExternal = false;
+  holder.clickhouseDown = false;
   redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
     redis.set(key, value);
     return 'OK';
@@ -492,6 +504,14 @@ describe('assertGenerationInputsUsable', () => {
     ],
   ])('does not trust %s', async (_, url) => {
     expect(await gate([url], 'iterateGenerate')).toBe('refused');
+  });
+
+  it('refuses a key in an allowed external url when neither issue record store can be read', async () => {
+    const foreign = `https://replicate.example/pbxt/${KEY}/out.png`;
+    holder.clickhouseDown = true;
+    expect(await gate([foreign], 'generateFromGraph')).toBe('accepted');
+    redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+    expect(await gate([foreign], 'generateFromGraph')).toBe('refused');
   });
 
   it('refuses an allowed external url carrying a blocked image key', async () => {
