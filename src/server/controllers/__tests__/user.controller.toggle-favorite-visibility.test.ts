@@ -3,7 +3,6 @@ import { TRPCError } from '@trpc/server';
 import type * as UserService from '~/server/services/user.service';
 import type * as ItemVisibility from '~/server/services/collection-item-visibility';
 import type * as ResourceReviewService from '~/server/services/resourceReview.service';
-import type * as RedisClient from '~/server/redis/client';
 
 // Favoriting a model the user may not see is refused before anything is saved: no review, no
 // notify engagement, no bookmark. Model 66 is hidden from the user here.
@@ -31,12 +30,9 @@ vi.mock('~/server/services/resourceReview.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ResourceReviewService>()),
   getUserResourceReview: vi.fn(async () => []),
 }));
-vi.mock('~/server/redis/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof RedisClient>()),
-  redis: { del: vi.fn(async () => 1) },
-}));
-
 import { toggleFavoriteHandler } from '~/server/controllers/user.controller';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.del.mockImplementation(async () => 1);
 
 const favorite = (modelId: number, setTo: boolean, isModerator = false) =>
   toggleFavoriteHandler({
