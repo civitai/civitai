@@ -276,8 +276,8 @@ describe('deleteImageRows', () => {
 
   it('keeps an image a hold covers by the time of the delete, after the check passed it', async () => {
     await image(2);
-    // Flags image 2 between the check and its delete: the first CollectionItem delete runs after
-    // the check, before any Image delete.
+    // Flags image 2 between the check and its delete: the trigger fires on the first image's
+    // CollectionItem delete, which runs after the check and before image 2's Image delete.
     await db.exec(`
       CREATE FUNCTION flag_late() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 2; RETURN OLD; END $$;
