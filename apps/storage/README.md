@@ -38,3 +38,4 @@ The wire contract is the zod schema in `@civitai/storage` (`schema.ts`) — the 
 See `.env.example`. The **default** backend (R2, `S3_UPLOAD_*`) is required at boot; other backends fail
 lazily on first use with a clear error. `STORAGE_TOKEN` is required in production (empty disables the
 auth gate — dev only).
+
