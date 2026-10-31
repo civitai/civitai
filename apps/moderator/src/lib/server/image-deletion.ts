@@ -67,6 +67,10 @@ async function heldImages(trx: Kysely<DB>, ids: number[]): Promise<KeptImage[]> 
  * throws, so the transaction rolls back and the image stays.
  */
 export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<DeletedImageRows> {
+  // A hold written to one of these rows now waits for this delete rather than landing between its
+  // statements; a new report listing one is still caught by the guards below.
+  if (ids.length)
+    await trx.selectFrom('Image').select('id').where('id', 'in', ids).forUpdate().execute();
   const untouched = (await heldImages(trx, ids)).filter((image) => image.reason !== 'evidence');
   const skip = new Set(untouched.map((image) => image.id));
   const toDelete = ids.filter((id) => !skip.has(id));
@@ -80,7 +84,7 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
       .deleteFrom('CollectionItem')
       .where('imageId', '=', id)
       .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = ${id} AND NOT ${deletable})`
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = ${id} AND ${imageHeld})`
       )
       .execute();
     const image = await trx
