@@ -234,9 +234,16 @@ describe('the public model API on a held model', () => {
   });
 
   it('serves a model without the flags whole', async () => {
+    rowWith({ minor: false, sfwOnly: false });
     galleryReads(() => JSON.stringify({ none: true }));
     const { items } = await getModelsWithVersions({ input });
     expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([ABOVE, WITHIN]);
+  });
+
+  it('holds a flagged row even when its cached settings still say it is not held', async () => {
+    galleryReads(() => JSON.stringify({ none: true }));
+    const { items } = await getModelsWithVersions({ input });
+    expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
   });
 });
 
@@ -291,8 +298,27 @@ describe('the model feed on a held model', () => {
   });
 
   it('shows every viewer the whole showcase of a model without the flags', async () => {
+    mockCancellableQuery.mockResolvedValue({
+      result: async () => [
+        {
+          id: MODEL_ID,
+          userId: OWNER,
+          name: 'M',
+          minor: false,
+          sfwOnly: false,
+          cursorId: null,
+          meta: null,
+          rank: {},
+        },
+      ],
+    });
     galleryReads(() => JSON.stringify({ none: true }));
     expect(await imageIds()).toEqual([ABOVE, WITHIN]);
+  });
+
+  it('holds a flagged row even when its cached settings still say it is not held', async () => {
+    galleryReads(() => JSON.stringify({ none: true }));
+    expect(await imageIds()).toEqual([WITHIN]);
   });
 
   it('shows another viewer only images within the held level', async () => {

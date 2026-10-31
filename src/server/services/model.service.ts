@@ -64,6 +64,7 @@ import {
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { env } from '~/env/server';
 import {
   isTransientMeiliError,
   MeiliCallTimeoutError,
@@ -1887,9 +1888,12 @@ export const getModelsWithImagesAndModelVersions = async ({
   const [heldLevels, coverImages] = await Promise.all([
     heldViewer?.isModerator
       ? new Map<number, number>()
-      : getHeldLevelsByModel(
-          items.filter((model) => model.minor || model.sfwOnly).map((model) => model.id)
-        ),
+      : (() => {
+          const flagged = items
+            .filter((model) => model.minor || model.sfwOnly)
+            .map((model) => model.id);
+          return getHeldLevelsByModel(flagged, { flaggedIds: flagged });
+        })(),
     getCoverImages({
       covers: items.map((model) => ({
         modelId: model.id,
@@ -6041,7 +6045,11 @@ export async function getHeldLevelsByPost(postIds: number[]) {
 }
 
 const HELD_LEVEL_READ_CONCURRENCY = 20;
-const PUBLIC_RESPONSE_REBUST_DELAY_MS = 5_000;
+// Past the replica lag the recent-write tracker assumes, so the rebuild reads the new flags.
+const PUBLIC_RESPONSE_REBUST_DELAY_MS = Math.max(
+  5_000,
+  ((Number(env.REPLICATION_LAG_DELAY) || 0) + 1) * 1_000
+);
 
 /**
  * For each minor or SFW-only model, the level its gallery is held at. A model not held is absent.
@@ -6050,7 +6058,14 @@ const PUBLIC_RESPONSE_REBUST_DELAY_MS = 5_000;
  */
 export async function getHeldLevelsByModel(
   modelIds: number[],
-  { onReadFailure = 'floor' }: { onReadFailure?: 'floor' | 'throw' } = {}
+  {
+    onReadFailure = 'floor',
+    flaggedIds,
+  }: {
+    onReadFailure?: 'floor' | 'throw';
+    /** Models the caller just read as minor or SFW-only: an older cached entry cannot unhold them. */
+    flaggedIds?: Iterable<number>;
+  } = {}
 ) {
   const levels = new Map<number, number>();
   const ids = uniq(modelIds);
@@ -6117,6 +6132,9 @@ export async function getHeldLevelsByModel(
     }),
     5
   );
+  // A settings entry rebuilt while a replica still lacked the flag says "not held" for a week.
+  for (const id of flaggedIds ?? [])
+    if (!levels.has(id)) levels.set(id, heldGalleryLevel(undefined));
   return levels;
 }
 
@@ -6182,9 +6200,10 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
       modelOf.set(version.id, { modelId: version.modelId });
   }
 
+  const read = [...modelOf.values()].filter((m) => m.flagged !== false);
   const levels = await getHeldLevelsByModel(
-    [...modelOf.values()].filter((m) => m.flagged !== false).map((m) => m.modelId),
-    { onReadFailure }
+    read.map((m) => m.modelId),
+    { onReadFailure, flaggedIds: read.filter((m) => m.flagged).map((m) => m.modelId) }
   );
   const owners = new Map<number, number>();
   if (viewer && levels.size) {
