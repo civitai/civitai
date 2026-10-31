@@ -1676,4 +1676,21 @@ describe('setModelMinor — lift restore on a real row', () => {
 
     expect(await row()).toMatchObject(restored);
   });
+
+  // A rollback undoes only the flag the snapshot belongs to, so it needs to know the model was minor before it.
+  it.each([
+    [false, false],
+    [true, true],
+  ])(
+    'a flag on a model whose minor is %s records that in its snapshot',
+    async (minor, prevMinor) => {
+      await pg.query(`UPDATE "Model" SET minor = $2 WHERE id = $1`, [MODEL_ID, minor]);
+
+      await flag();
+
+      expect(((await row()).meta as Record<string, unknown>).minorFlagSnapshot).toMatchObject({
+        prevMinor,
+      });
+    }
+  );
 });
