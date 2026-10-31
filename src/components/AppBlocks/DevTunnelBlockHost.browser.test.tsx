@@ -82,6 +82,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete (window as { __NEXT_DATA__?: unknown }).__NEXT_DATA__;
+  vi.unstubAllGlobals();
 });
 
 describe('/apps/dev/[blockId] client', () => {
@@ -332,5 +333,88 @@ describe('/apps/dev/[blockId] client', () => {
     await renderWithProviders(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     expect(m.gate).toBeNull();
+  });
+});
+
+/**
+ * 🔴 REGRESSION: the frame's Retry (a load that timed out or failed) reloaded the entry URL this
+ * page was served, whose short-lived entry token the edge refuses once expired — so on this page
+ * Retry could never recover. The page now hands the host a fetcher for a freshly signed URL
+ * (`/api/apps/dev/entry-url`, behind this page's own gates). The host's half — a Retry awaits the
+ * fetcher and loads what it returns, in place — is pinned in `PageBlockHostAutoRetry.browser.test.tsx`;
+ * these pin the page's half, through the real `DevTunnelBlockHost`.
+ */
+describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL', () => {
+  const FRESH_SRC = `https://${HOST}/?dev=fresh-entry-token`;
+  const fetchMock = vi.fn<(...args: unknown[]) => Promise<Response>>();
+  const answer = (status: number, body: unknown) =>
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+  const refreshOf = () => m.hostProps?.onRefreshEntryUrl as undefined | (() => Promise<string>);
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  test('a Retry fetches a freshly signed URL for this app, and the host loads it without a remount', async () => {
+    answer(200, { iframeSrc: FRESH_SRC, host: HOST });
+    await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    expect(refreshOf(), 'the page gave the host no fresh URL for a Retry').toBeTypeOf('function');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await expect(refreshOf()!()).resolves.toBe(FRESH_SRC);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/apps/dev/entry-url?blockId=my-app');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ credentials: 'same-origin' });
+    // In place: no server-props re-run, no reload, no remount (the auto-retry budget survives).
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.reload).not.toHaveBeenCalled();
+    expect(m.hostMounts).toBe(1);
+  });
+
+  test('the block id is encoded into the request', async () => {
+    answer(200, { iframeSrc: FRESH_SRC, host: HOST });
+    await renderWithProviders(<DevTunnelPage {...FRAME} blockId="a&b=c" />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    await refreshOf()!();
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/apps/dev/entry-url?blockId=a%26b%3Dc');
+  });
+
+  test.each([
+    [404, { error: 'App not found' }],
+    [409, { error: 'No live dev tunnel' }],
+    [200, { host: HOST }],
+    [200, { iframeSrc: '', host: HOST }],
+  ])(
+    'an answer with no URL (%i %j) rejects, so the host re-arms on the URL it has',
+    async (status, body) => {
+      answer(status, body);
+      await renderWithProviders(<DevTunnelPage {...FRAME} />);
+      await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+      await expect(refreshOf()!()).rejects.toThrow();
+      expect(router.reload).not.toHaveBeenCalled();
+    }
+  );
+
+  test('a fresh URL on another host is never framed: the page reloads for a document whose policy allows it', async () => {
+    answer(200, { iframeSrc: `https://${OTHER}/?dev=fresh`, host: OTHER });
+    await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    await expect(refreshOf()!()).rejects.toThrow();
+    expect(router.reload).toHaveBeenCalledTimes(1);
+  });
+
+  test('a URL whose origin is not the host it names is refused', async () => {
+    // The server derives both from one record; a mismatch is never framed.
+    answer(200, { iframeSrc: `https://${OTHER}/?dev=fresh`, host: HOST });
+    await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    await expect(refreshOf()!()).rejects.toThrow();
   });
 });
