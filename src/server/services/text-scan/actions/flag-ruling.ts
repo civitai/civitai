@@ -97,6 +97,9 @@ async function rule({
   }
 
   if (label === 'minor') {
+    // The ruling undoes the automation and is recorded on the text; a minor flag from before the
+    // automation stays, and the result says so.
+    let keptMinor = false;
     const meta = model.meta as Record<string, unknown> | null;
     if (meta?.[MINOR_FLAG_SNAPSHOT_KEY]) {
       const report = await revertMinorHashAutoFlag({
@@ -104,7 +107,8 @@ async function rule({
         userId,
         recordTextScanRuling: false,
       });
-      if (report.rolledBack !== 1)
+      keptMinor = report.keptMinor === 1;
+      if (report.rolledBack !== 1 && !keptMinor)
         throw throwBadRequestError('The flag could not be lifted. Reload and try again.');
     } else
       await setModelMinor({
@@ -143,6 +147,7 @@ async function rule({
       liftedLabels: ['minor'],
       recordRulings: false,
     });
+    if (keptMinor) return { ruled: 'keptMinor' as const, label, modelId };
   } else {
     const granted = await grantModelTextScanPoi({
       modelId,

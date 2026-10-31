@@ -153,7 +153,13 @@
   {ondecision}
   bind:current
   outcomeFor={(result, outcome) =>
-    result.type === 'success' && result.data?.resolved === 'closed' ? 'Already flagged' : outcome}
+    result.type !== 'success'
+      ? outcome
+      : result.data?.resolved === 'closed'
+      ? 'Already flagged'
+      : result.data?.resolved === 'keptMinor'
+      ? 'Flag undone; stays minor (minor before the flag)'
+      : outcome}
   pageNumber={data.page}
   hasMore={data.hasMore}
   offset={data.offset}

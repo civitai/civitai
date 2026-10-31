@@ -50,6 +50,7 @@ import {
   rollbackMinorHashAutoFlags,
   sweepMinorHashMatches,
 } from '~/server/services/minor-hash.service';
+import { logToAxiom } from '~/server/logging/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
@@ -79,6 +80,18 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
 
   if (modelIds && action !== 'rollback')
     return res.status(400).json({ error: 'modelIds is only valid with action=rollback' });
+
+  if (action === 'rollback' && modelIds?.length && !dryRun)
+    await logToAxiom(
+      {
+        type: 'info',
+        name: 'minor-hash-rollback',
+        message: 'targeted rollback requested',
+        actor: 'webhook',
+        modelIds,
+      },
+      'webhooks'
+    ).catch(() => null);
 
   try {
     const report =

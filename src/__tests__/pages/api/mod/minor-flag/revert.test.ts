@@ -25,6 +25,7 @@ vi.mock('~/server/services/minor-hash.service', async (importOriginal) => ({
 
 import handler from '~/pages/api/mod/minor-flag/revert';
 
+let responseBody: unknown;
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
   let statusCode = 200;
@@ -33,7 +34,10 @@ function call(body: Record<string, unknown>) {
       statusCode = c;
       return res;
     },
-    json: () => res,
+    json: (payload: unknown) => {
+      responseBody = payload;
+      return res;
+    },
     setHeader: vi.fn(),
     end: () => res,
   } as unknown as Parameters<typeof handler>[1];
@@ -53,6 +57,15 @@ beforeEach(() => {
 
 // A moderator's revert must hold against a rescan of the same text, which the ruling stamp does.
 describe('minorFlag.revert', () => {
+  // A model left minor is not a revert, so a caller reading `reverted` never takes it for one.
+  it('reports a flag undone on a model that stays minor as kept, not reverted', async () => {
+    mockRevert.mockResolvedValueOnce({ rolledBack: 0, keptMinor: 1, failed: 0, candidates: 1 });
+
+    expect(await call({ modelId: 42 })).toBe(200);
+
+    expect(responseBody).toMatchObject({ reverted: 0, keptMinor: 1 });
+  });
+
   it("records the moderator's text-scan ruling", async () => {
     expect(await call({ modelId: 42 })).toBe(200);
     expect(mockRevert).toHaveBeenCalledWith({

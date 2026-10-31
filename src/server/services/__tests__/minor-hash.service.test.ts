@@ -45,6 +45,7 @@ const { mockRestoreOwnerFlagOverride } = vi.hoisted(() => ({
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   MINOR_FLAG_SNAPSHOT_KEY: 'minorFlagSnapshot',
+  MINOR_LOCKED_PROPERTIES: ['minor', 'nsfw', 'sfwOnly'],
   restoreOwnerFlagOverride: mockRestoreOwnerFlagOverride,
 }));
 vi.mock('~/server/services/poi-hash.service', () => ({
@@ -63,6 +64,7 @@ vi.mock('~/server/services/report.service', () => ({
 // every registered profile module.
 vi.mock('~/server/services/text-scan/actions/model-poi-minor', () => ({
   grantModelTextScanPoi: mockGrantModelTextScanPoi,
+  POI_LOCKED_PROPERTIES: ['poi', 'nsfw', 'sfwOnly'],
   stampModelTextScanAppeal: mockStampModelTextScanAppeal,
   reassertModelPoiRestrictions: mockReassertModelPoiRestrictions,
 }));
@@ -1199,7 +1201,10 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(text).toContain('"lockedProperties"');
     expect(text).toContain(`meta = (COALESCE(meta, '{}'::jsonb) - `);
     expect(values).toContain(31); // prevGalleryLevel
-    expect(values).toContainEqual(['poi']); // prevLockedProperties
+    // prevLockedProperties, inside the fragment that adds the real-person locks.
+    expect(
+      Prisma.sql(strings as TemplateStringsArray, ...(values as never[])).values
+    ).toContainEqual(['poi']);
 
     expect(report).toMatchObject({ candidates: 1, rolledBack: 1, skipped: 0, failed: 0 });
   });
@@ -1718,6 +1723,33 @@ describe('resolveMinorFlagAppeal', () => {
     );
   });
 
+  // The owner asked and a moderator agreed: a minor flag from before the automation goes too.
+  it.each([
+    ['unsets minor after a revert that kept it', { prevMinor: true }, true],
+    ['does not unset again after a revert that cleared it', { prevMinor: false }, false],
+  ])('an overturn %s', async (_, snapshot, unsetByModerator) => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { minorFlagSnapshot: { at: 'x', source: 'auto' } },
+    });
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ source: 'auto', humanSince: false }]);
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ source: 'auto', humanSince: false }]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      { ...rollbackRow(), ownerDeclaredMinor: false, ...snapshot },
+    ]);
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    const moderatorUnset = mockSetModelMinor.mock.calls.some(
+      ([input]) => input.userId === 7 && input.minor === false
+    );
+    expect(moderatorUnset).toBe(unsetByModerator);
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ status: AppealStatus.Approved })
+    );
+  });
+
   // Resolving last leaves a half-applied decision visible: the appeal stays open
   // rather than closing against a model nothing happened to.
   it('leaves the appeal open when the confirm write fails', async () => {
@@ -2103,6 +2135,7 @@ describe('resolveMinorFlagAppeal', () => {
       poi: false,
       meta: { minorFlagSnapshot: { at: 'x', source: 'manual' } },
     });
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ source: 'manual', humanSince: false }]);
 
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
@@ -2116,20 +2149,22 @@ describe('resolveMinorFlagAppeal', () => {
     );
   });
 
-  it('still fully reverts an auto flag a moderator later confirmed', async () => {
+  // A confirmation makes the flag the moderator's, so it is unset like one rather than rolled back.
+  it('takes the plain unset path for an auto flag a moderator later confirmed', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
       minor: true,
       poi: false,
       meta: { minorFlagSnapshot: { at: 'x', source: 'manual', confirmedFrom: 'auto' } },
     });
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ source: 'manual', humanSince: true }]);
 
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
-    expect(mockTrackModActivity).toHaveBeenCalledWith(
+    expect(mockTrackModActivity).not.toHaveBeenCalledWith(
       7,
       expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
     );
-    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(mockSetModelMinor).toHaveBeenCalledWith({ id: 42, minor: false, userId: 7 });
   });
 
   // Review Focus 2.

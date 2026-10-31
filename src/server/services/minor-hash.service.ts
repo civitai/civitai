@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { uniq } from 'lodash-es';
 import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
@@ -7,6 +8,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import {
   MINOR_FLAG_SNAPSHOT_KEY,
+  MINOR_LOCKED_PROPERTIES,
   restoreOwnerFlagOverride,
   setModelMinor,
 } from '~/server/services/model.service';
@@ -22,6 +24,7 @@ import {
 } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
   grantModelTextScanPoi,
+  POI_LOCKED_PROPERTIES,
   reassertModelPoiRestrictions,
   stampModelTextScanAppeal,
 } from '~/server/services/text-scan/actions/model-poi-minor';
@@ -707,6 +710,9 @@ export async function revertMinorHashAutoFlag({
   /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
   textHash?: string;
 }) {
+  const refusal = await minorRevertRefusal(modelId);
+  if (refusal) throw throwBadRequestError(refusal);
+
   // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
   if (
     recordTextScanRuling &&
@@ -749,6 +755,25 @@ export async function revertMinorHashAutoFlag({
     });
 
   return report;
+}
+
+/**
+ * Why a revert may not undo this model's flag: it undoes automation only, never a moderator's flag
+ * or one a moderator set or confirmed since the automation's snapshot. The admin rollback with
+ * explicit model ids stays the way to undo those.
+ */
+export async function minorRevertRefusal(modelId: number): Promise<string | undefined> {
+  const [row] = await dbWrite.$queryRaw<{ source: string | null; humanSince: boolean }[]>`
+    SELECT m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS source,
+           ${humanConfirmedPredicate} AS "humanSince"
+    FROM "Model" m
+    WHERE m.id = ${modelId}
+  `;
+  if (!row?.source) return;
+  if (row.source !== 'auto' && row.source !== 'text-scan')
+    return 'This minor flag was set by a moderator, not by automation, so it cannot be reverted. Unset it by hand.';
+  if (row.humanSince)
+    return 'A moderator has set or confirmed this minor flag since it was applied, so it cannot be reverted. Unset it by hand.';
 }
 
 export type MinorFlagAppealRow = {
@@ -909,12 +934,11 @@ export async function resolveMinorFlagAppeal({
       labels: ['minor'],
       grantHashes,
     });
-    const snapshot = meta?.minorFlagSnapshot;
-    const origin = snapshot?.confirmedFrom ?? snapshot?.source;
     // A moderator's own flag is unset, never rolled back to a pre-state they did not choose.
-    if (origin === 'auto' || origin === 'text-scan')
-      await revertMinorHashAutoFlag({ modelId, userId });
-    else await setModelMinor({ id: modelId, minor: false, userId });
+    const revertable = !!meta?.minorFlagSnapshot && !(await minorRevertRefusal(modelId));
+    const report = revertable ? await revertMinorHashAutoFlag({ modelId, userId }) : undefined;
+    // The owner asked and a moderator agreed, so a minor flag from before the automation goes too.
+    if (!report?.rolledBack) await setModelMinor({ id: modelId, minor: false, userId });
   }
   // With both flags, the text-scan grant lifts the flag, restores its own pre-state and drops the
   // hash snapshot.
@@ -1019,7 +1043,7 @@ const notAcceptedPredicate = Prisma.sql`
   NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
 `;
 
-export type RollbackOutcome = 'rolledBack' | 'skipped' | 'failed';
+export type RollbackOutcome = 'rolledBack' | 'keptMinor' | 'skipped' | 'failed';
 export type RollbackSample = { modelId: number; outcome: RollbackOutcome };
 
 export type RollbackReport = {
@@ -1027,10 +1051,17 @@ export type RollbackReport = {
   rolledBack: number;
   skipped: number;
   failed: number;
-  /** Of `rolledBack`: models left minor, because they were minor before the flag. */
+  /** Flags undone on models left minor, because they were minor before the flag. Not in `rolledBack`. */
   keptMinor: number;
   sample: RollbackSample[];
 };
+
+// In the restore's own statement, so a failure before the reassert cannot leave a real-person model
+// without its locks.
+const withPoiLocksSql = (locks: string[]) => Prisma.sql`CASE
+  WHEN poi THEN ARRAY(SELECT DISTINCT unnest(${locks}::text[] || ${POI_LOCKED_PROPERTIES}::text[]))
+  ELSE ${locks}::text[]
+END`;
 
 /**
  * Rolls back a flag on a model that was minor before it: the locks it added go, and the snapshot
@@ -1040,9 +1071,14 @@ async function rollBackFlagOnMinorModel(
   row: RollbackCandidateRow,
   keptBy: NonNullable<ReturnType<typeof minorBeforeFlag>>
 ) {
+  // A keep resting on inference keeps the flag's locks too, so only a moderator can clear it.
+  const locks =
+    keptBy === 'recorded' || keptBy === 'declared'
+      ? row.prevLockedProperties
+      : uniq([...row.prevLockedProperties, ...MINOR_LOCKED_PROPERTIES]);
   await dbWrite.$executeRaw`
     UPDATE "Model"
-    SET "lockedProperties" = ${row.prevLockedProperties}::text[],
+    SET "lockedProperties" = ${withPoiLocksSql(locks)},
         meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY} - ${SYSTEM_NSFW_LOCK_META_KEY}::text)
           || jsonb_build_object(${MINOR_HASH_CLEARED_KEY}, jsonb_build_object('at', now()))
     WHERE id = ${row.modelId}
@@ -1052,7 +1088,6 @@ async function rollBackFlagOnMinorModel(
     entityId: row.modelId,
     activity: 'rollbackMinorAutoHash',
   }).catch(() => null);
-  // The restored locks can drop the real-person ones.
   await reassertModelPoiRestrictions(row.modelId);
   if (keptBy === 'sfwOnly')
     await logToAxiom(
@@ -1150,9 +1185,9 @@ export async function rollbackMinorHashAutoFlags({
 
   if (dryRun) {
     for (const row of rows) {
-      report.rolledBack++;
-      if (minorBeforeFlag(row)) report.keptMinor++;
-      addSample(row.modelId, 'rolledBack');
+      const outcome = minorBeforeFlag(row) ? 'keptMinor' : 'rolledBack';
+      report[outcome]++;
+      addSample(row.modelId, outcome);
     }
     addConfirmedSamples();
     return report;
@@ -1163,9 +1198,8 @@ export async function rollbackMinorHashAutoFlags({
       const keptBy = minorBeforeFlag(row);
       if (keptBy) {
         await rollBackFlagOnMinorModel(row, keptBy);
-        report.rolledBack++;
         report.keptMinor++;
-        addSample(row.modelId, 'rolledBack');
+        addSample(row.modelId, 'keptMinor');
         return;
       }
 
@@ -1184,7 +1218,9 @@ export async function rollbackMinorHashAutoFlags({
       await dbWrite.$executeRaw`
         UPDATE "Model"
         SET nsfw = CASE WHEN poi OR availability = 'Private' THEN false ELSE ${row.prevNsfw} END,
-            "sfwOnly" = CASE WHEN poi OR availability = 'Private' THEN true ELSE ${row.prevSfwOnly} END,
+            "sfwOnly" = CASE WHEN poi OR availability = 'Private' THEN true ELSE ${
+              row.prevSfwOnly
+            } END,
             "gallerySettings" = CASE
               WHEN poi OR availability = 'Private' THEN "gallerySettings"
               WHEN ${row.prevGalleryLevel}::int IS NULL
@@ -1192,7 +1228,7 @@ export async function rollbackMinorHashAutoFlags({
               ELSE COALESCE("gallerySettings", '{}'::jsonb)
                 || jsonb_build_object('level', ${row.prevGalleryLevel}::int)
             END,
-            "lockedProperties" = ${row.prevLockedProperties}::text[],
+            "lockedProperties" = ${withPoiLocksSql(row.prevLockedProperties)},
             -- The snapshot goes, so the clear stamp is the only surviving record
             -- that a human said "not minor" — see notMinorHashClearedPredicate.
             meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY} - ${SYSTEM_NSFW_LOCK_META_KEY}::text)

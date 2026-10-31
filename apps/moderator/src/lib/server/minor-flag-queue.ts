@@ -300,7 +300,7 @@ async function ruleFlag(
   if (flag.source === 'hash' || flag.source === 'file-match') {
     const result = await hashRuling(flag.source, flag.label, keep)(modelId);
     return result.ok
-      ? { ok: true, resolved: keep ? 'kept' : 'dismissed' }
+      ? { ok: true, resolved: keep ? 'kept' : result.keptMinor ? 'keptMinor' : 'dismissed' }
       : { ok: false, error: result.error ?? 'Action failed.' };
   }
   const textHash = flag.textHash!;

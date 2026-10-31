@@ -116,7 +116,7 @@ export async function resolveRedetection(
 }
 
 export type FlagRulingResult =
-  | { ok: true; ruled: 'kept' | 'lifted'; label: 'minor' | 'poi'; modelId: number }
+  | { ok: true; ruled: 'kept' | 'lifted' | 'keptMinor'; label: 'minor' | 'poi'; modelId: number }
   | { ok: false; error: string };
 
 /** Rules on a standing text-scan flag outside an appeal, for the text the moderator was shown
@@ -141,7 +141,13 @@ export async function ruleTextScanFlag({
   );
   if (!result.ok) return result;
   await bustMinorQueueCounts();
-  return { ok: true, ruled: result.body.ruled === 'lifted' ? 'lifted' : 'kept', label, modelId };
+  const ruled = result.body.ruled;
+  return {
+    ok: true,
+    ruled: ruled === 'lifted' || ruled === 'keptMinor' ? ruled : 'kept',
+    label,
+    modelId,
+  };
 }
 
 /**
@@ -158,6 +164,15 @@ export async function revertMinorFlag(modelId: number): Promise<ActionResult> {
   if (reverted > 0) {
     await bustMinorQueueCounts();
     return { ok: true };
+  }
+  if (Number(result.body.keptMinor ?? 0) > 0) {
+    await bustMinorQueueCounts();
+    return {
+      ok: true,
+      keptMinor: true,
+      warning:
+        'The automated flag was undone, but the model stays minor: it was minor before the flag. Unset it by hand if that is wrong.',
+    };
   }
   return {
     ok: false,
