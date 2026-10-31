@@ -217,6 +217,20 @@ describe('account last used long ago', () => {
   });
 });
 
+describe('a prior session whose account was last used long ago', () => {
+  it('does not let a new account join the list', async () => {
+    const idle = String(Date.now() - TTL_MS - DAY_MS);
+    h.sys.lua.setHash(list(DEVICE), { '100': idle, '200': now });
+    h.verified.set('prior', { sub: '100', jti: 'j' });
+    const jar = makeCookies({ 'civ-device': DEVICE, 'civ-token': 'prior' });
+
+    await establishSession(jar.cookies, user(300));
+
+    expect(jar.device()).not.toBe(DEVICE);
+    expect(h.sys.lua.hash(list(DEVICE))).toEqual({ '100': idle, '200': now });
+  });
+});
+
 describe('creating a list', () => {
   it('a second sign-in pair on the same new device id is refused rather than merged', async () => {
     const fresh = 'device-2';
@@ -240,6 +254,31 @@ describe("the browser's family record", () => {
     expect(h.sys.lua.set(families(victim))).toEqual(['victim-fam']);
     expect(h.sys.lua.hash(list(victim))).toBeUndefined();
     expect(h.sys.lua.errors).toEqual([]);
+  });
+
+  it('a first added account keeps the device id and starts the list', async () => {
+    const device = 'device-5';
+    h.sys.lua.setSet(families(device), ['fam-a']);
+    h.verified.set('prior', { sub: '100', sid: 'fam-a', jti: 'j' });
+    const jar = makeCookies({ 'civ-device': device, 'civ-token': 'prior' });
+
+    await establishSession(jar.cookies, user(200));
+
+    expect(jar.device()).toBe(device);
+    expect(Object.keys(h.sys.lua.hash(list(device))!).sort()).toEqual(['100', '200']);
+    expect(h.sys.lua.set(families(device))).toEqual(['fam-a']);
+  });
+
+  it('a single-account browser signing in after its session lapsed moves to a new device id', async () => {
+    const device = 'device-6';
+    h.sys.lua.setSet(families(device), ['old-fam']);
+    const jar = makeCookies({ 'civ-device': device });
+
+    await establishSession(jar.cookies, user(300));
+
+    expect(jar.device()).not.toBe(device);
+    expect(h.sys.lua.set(families(device))).toEqual(['old-fam']);
+    expect(h.sys.lua.set(families(jar.device()!))).toHaveLength(1);
   });
 
   it('an account in the list signing in again joins the family record', async () => {

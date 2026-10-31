@@ -130,6 +130,22 @@ export async function mintSession(
   return { token, family: familyId({ sid: lineage.sid, jti: tokenId }) ?? tokenId };
 }
 
+/** Re-sign an existing session under the same jti, keeping its lineage and 90-day limit, and re-track it. */
+export async function reissueSession(
+  claims: SessionClaims,
+  userId: number,
+  jti: string
+): Promise<string> {
+  const now = Date.now();
+  const lineage = familyClaims(claims, { now });
+  const token = await getSigner().mintSessionToken(
+    { sub: String(userId), signedAt: now, ...lineage },
+    { jti, expiresIn: sessionExpiresIn(lineage, now) }
+  );
+  await sessions.trackToken(jti, userId).catch(() => undefined);
+  return token;
+}
+
 export async function mintUserSession(user: SessionUser, opts?: MintOptions): Promise<string> {
   return (await mintSession(user, opts)).token;
 }

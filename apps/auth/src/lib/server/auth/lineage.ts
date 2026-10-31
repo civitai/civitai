@@ -32,11 +32,37 @@ export async function markFamilyLive(family: string | undefined): Promise<void> 
   ).catch(() => undefined);
 }
 
+/**
+ * Whether the hub keeps honouring its own session cookie: the family was used on some host within 30 days, or
+ * the token itself was signed within 30 days. Records the use when it does. Unknown liveness (no redis, or an
+ * error) counts as live; the 90-day limit still bounds the session.
+ */
+export async function acceptHubSession(claims: SessionClaims): Promise<boolean> {
+  const family = familyId(claims);
+  if (!family) return true;
+  const recent = claims.signedAt != null && Date.now() - claims.signedAt < FAMILY_LIVE_TTL_MS;
+  if (!recent && !(await isFamilyLive(family))) return false;
+  await markFamilyLive(family);
+  return true;
+}
+
+async function isFamilyLive(family: string): Promise<boolean> {
+  const sys = getSysRedis();
+  if (!sys) return true;
+  try {
+    return (await sys.hGet<string>(REDIS_SYS_KEYS.SESSION.FAMILY_LIVE, family)) != null;
+  } catch {
+    return true;
+  }
+}
+
 // A browser's family record is joined only with proof that the browser is signed in to it: a family already in
 // it (the browser's prior hub session). A new record also takes the proof family, so a session from before these
-// records existed is ended by a sign-out here too. 0: created; 1: joined; -1: refused.
+// records existed is ended by a sign-out here too. A browser with an account list but no record yet gets none:
+// a sign-out from it would forget that list. 0: created; 1: joined; -1: refused.
 const ADD_FAMILY_SCRIPT = `
   if redis.call('EXISTS', KEYS[1]) == 0 then
+    if redis.call('EXISTS', KEYS[2]) == 1 then return -1 end
     if ARGV[2] ~= '' then redis.call('SADD', KEYS[1], ARGV[2]) end
     redis.call('SADD', KEYS[1], ARGV[1])
     redis.call('EXPIRE', KEYS[1], ARGV[3])
@@ -53,7 +79,7 @@ const ADD_FAMILY_SCRIPT = `
 
 /**
  * Remember that `family` signed in on this browser, so signing out here ends it too. `proofFamily` is the family
- * of the verified hub session the same request carries. Returns `'rotate'` when the browser has a record this
+ * of the verified hub session the same request carries. Returns `'rotate'` when the browser has a record (or an account list) this
  * request can't show it belongs to: the caller moves the browser to a new device id. Best-effort.
  */
 export async function addDeviceFamily(
@@ -65,7 +91,7 @@ export async function addDeviceFamily(
   try {
     const result = await evalSys(
       ADD_FAMILY_SCRIPT,
-      [deviceFamiliesKey(deviceId)],
+      [deviceFamiliesKey(deviceId), deviceAccountsKey(deviceId)],
       [family, opts.proofFamily ?? '', String(DEVICE_FAMILIES_TTL_S)]
     );
     return Number(result) === -1 ? 'rotate' : 'added';

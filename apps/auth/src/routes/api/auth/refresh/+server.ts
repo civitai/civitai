@@ -1,16 +1,10 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { verifier } from '$lib/server/auth/verifier';
-import { familyClaims, familyId } from '@civitai/auth';
-import {
-  getSigner,
-  refuseModerationAccount,
-  SESSION_COOKIE,
-  sessionExpiresIn,
-} from '$lib/server/auth/session';
+import { familyId } from '@civitai/auth';
+import { refuseModerationAccount, reissueSession, SESSION_COOKIE } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { markFamilyLive } from '$lib/server/auth/lineage';
-import { sessions } from '$lib/server/auth/registry';
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { bearerToken } from '$lib/server/auth/request';
 import { readInternalCaller } from '$lib/server/auth/s2s';
@@ -38,15 +32,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     error(403, 'account_disabled');
 
   // Same jti, family, sign-in time and impersonation: the same session with a fresh window.
-  const now = Date.now();
-  const lineage = familyClaims(claims, { now });
-  const fresh = await getSigner().mintSessionToken(
-    { sub: String(userId), signedAt: now, ...lineage },
-    { jti, expiresIn: sessionExpiresIn(lineage, now) }
-  );
+  const fresh = await reissueSession(claims, userId, jti);
   await markFamilyLive(familyId(claims));
-  // Refresh the token-tracking TTL so an actively-used session's tracking entry doesn't lapse.
-  await sessions.trackToken(jti, userId).catch(() => {});
 
   // Keep the ACTIVE account fresh in this browser's switcher: a rolling refresh (section C) means the user is
   // active, so slide the account's 30-day idle clock + roll the device record TTL. Without this, an actively-
