@@ -6,10 +6,12 @@ import { bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { deleteImageRows, finishImageDeletes } from './image-deletion';
 import { syncSearchIndex } from './search-index';
+import { logToAxiom } from './axiom';
+import type { KeptImage } from '$lib/image-kept-reasons';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
-type ModerateResult = { ok: true } | { ok: false; error: string };
+type ModerateResult = { ok: true; kept?: KeptImage[] } | { ok: false; error: string };
 
 const UNPUBLISHED: ArticleStatus[] = [
   ArticleStatus.Unpublished,
@@ -28,11 +30,12 @@ export async function moderateArticle(
         customMessage: string | null;
       }
 ): Promise<ModerateResult> {
+  let kept: KeptImage[] | undefined;
   try {
     if (input.action === 'restore') await restoreArticle(input.articleId);
     else if (input.action === 'unpublish')
       await unpublishArticle(input.articleId, input.userId, input.reason, input.customMessage);
-    else await deleteArticle(input.articleId);
+    else kept = await deleteArticle(input.articleId);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -48,7 +51,7 @@ export async function moderateArticle(
   if (input.action === 'unpublish')
     void recordArticleEvent('Unpublish', input.articleId, input.userId);
 
-  return { ok: true };
+  return kept?.length ? { ok: true, kept } : { ok: true };
 }
 
 async function recordArticleEvent(
@@ -286,7 +289,8 @@ async function restoreArticle(id: number): Promise<void> {
   await bustArticleCounts(userId);
 }
 
-async function deleteArticle(id: number): Promise<void> {
+/** Deletes the article and its orphaned images; returns the images a hold kept. */
+async function deleteArticle(id: number): Promise<KeptImage[]> {
   // Capture the content image ids before the transaction deletes the connections, or they're lost.
   const contentImageIds = (
     await dbWrite
@@ -346,5 +350,15 @@ async function deleteArticle(id: number): Promise<void> {
     return toDelete.length ? deleteImageRows(trx, toDelete) : null;
   });
 
-  if (rows) await finishImageDeletes(rows);
+  if (!rows) return [];
+  if (rows.refused.length)
+    void logToAxiom({
+      type: 'info',
+      name: 'image-deletion',
+      message: 'images kept by a hold',
+      articleId: id,
+      kept: rows.refused,
+    }).catch(() => undefined);
+  await finishImageDeletes(rows);
+  return rows.refused;
 }
