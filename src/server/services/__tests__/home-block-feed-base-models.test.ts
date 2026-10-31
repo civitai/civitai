@@ -66,6 +66,20 @@ describe('feed baseModels filter', () => {
     ).toBeUndefined();
   });
 
+  it('reads the models feed as no one in particular, whoever is signed in', async () => {
+    await getHomeBlockData({
+      input: {},
+      user: { id: 5, isModerator: true } as never,
+      homeBlock: feedBlock({ entity: 'models' }),
+    });
+
+    expect(getModelsWithImagesAndModelVersionsMock).toHaveBeenCalledTimes(1);
+    const args = getModelsWithImagesAndModelVersionsMock.mock.calls[0]?.[0] as {
+      heldViewer?: unknown;
+    };
+    expect(args.heldViewer).toBeUndefined();
+  });
+
   it('still forwards baseModels to the models feed', async () => {
     await getHomeBlockData({
       input: {},

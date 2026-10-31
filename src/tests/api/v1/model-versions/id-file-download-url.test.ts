@@ -41,7 +41,11 @@ vi.mock('~/server/db/client', () => {
   // client; a partial mock makes Vitest throw on the first one it can't find.
   return { dbRead: stub, dbWrite: stub, dbKV: stub, dbReadLong: stub, dbReadReplica: stub };
 });
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: mockGetVaeFiles }));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: mockGetVaeFiles,
+  // These suites cover other behaviour; the hold has its own.
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+}));
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: mockGetImages,
 }));

@@ -220,7 +220,21 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
   });
   // The tag-attaching wrapper (`getImagesForModelVersionCache`) costs a second cache
   // round-trip for tags no auction card reads.
-  const imageData = await imagesForModelVersionsCache.fetch(entityIds);
+  // Held for every viewer: the cards are the same for everyone who opens the auction.
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  const imageData = await holdShowcaseImages(await imagesForModelVersionsCache.fetch(entityIds), {
+    models: new Map(
+      mvData.map((d) => [
+        d.id,
+        // `minor` only: SFW-only is not selected here, so an unflagged row is still read.
+        {
+          modelId: d.model.id,
+          ownerId: d.model.user.id,
+          flagged: d.model.minor ? true : undefined,
+        },
+      ])
+    ),
+  });
   const mvById = new Map(mvData.map((d) => [d.id, d]));
 
   return data.map((b) => {

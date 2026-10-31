@@ -59,6 +59,34 @@ const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
 const INDEX_ID = MODELS_SEARCH_INDEX;
 
+/**
+ * Showcase images held at each minor or SFW-only model's level: the document is public, so no one
+ * is exempt. A flag change queues the model's update, which re-runs this.
+ */
+async function heldShowcaseImages(
+  modelVersionIds: number[],
+  models: { id: number; minor?: boolean; sfwOnly?: boolean; modelVersions: { id: number }[] }[],
+  onReadFailure: 'floor' | 'throw'
+) {
+  // Loaded on demand: the model service imports this index.
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  return holdShowcaseImages(await imagesForModelVersionsCache.fetch(modelVersionIds), {
+    models: new Map(
+      models.flatMap((model) =>
+        model.modelVersions.map(
+          // Flagged rows only: every model is still read, so a just-changed flag is read past lag.
+          (version) =>
+            [
+              version.id,
+              { modelId: model.id, flagged: model.minor || model.sfwOnly ? true : undefined },
+            ] as const
+        )
+      )
+    ),
+    onReadFailure,
+  });
+}
+
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -653,7 +681,8 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  // Served live (the resource picker), not stored: PG only on a failed read, like the feed.
+  const imagesCache = await heldShowcaseImages(modelVersionIds, models, 'floor');
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
@@ -842,7 +871,8 @@ export const pullModelsData = async (
     for (const versionBatch of versionBatches) {
       tasks.push(async () => {
         logger(`PullData :: Pull images`, batchLogKey);
-        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
+        // A document written now is kept: fail the batch so it retries, rather than store PG only.
+        const imagesCache = await heldShowcaseImages(versionBatch, batch, 'throw');
         const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
         logger(`PullData :: Pulled images`, batchLogKey);
 
