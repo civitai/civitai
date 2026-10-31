@@ -4,7 +4,11 @@ import { IconPlayerPlay, IconRefresh } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
 import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
-import { fetchPreviewFrame, PreviewGoneError } from '~/components/Apps/AppAssistant/previewFrame';
+import {
+  fetchPreviewEntryUrl,
+  fetchPreviewFrame,
+  PreviewGoneError,
+} from '~/components/Apps/AppAssistant/previewFrame';
 import type { SandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 
@@ -229,6 +233,10 @@ export function AppAssistantPreview({
             // The app reloaded itself (Vite live reload): the Reload button's own path. Not
             // `cancelRefetch`, so reports arriving mid-fetch join it rather than restart it.
             onGuestReloaded={() => void frame.refetch({ cancelRefetch: false })}
+            // The frame's Retry: the same signed-URL fetch, but handed to the host rather than to
+            // this query, so the host keeps its mount (and its bounded auto-retry budget) and only
+            // the frame reloads — on a URL whose entry token has not expired.
+            refreshEntryUrl={() => fetchPreviewEntryUrl(session.blockId)}
             tokenErrorFallback={
               <Stack p="md">
                 <Alert color="red" variant="light">

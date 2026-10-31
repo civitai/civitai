@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
+import {
+  fetchPreviewEntryUrl,
+  fetchPreviewFrame,
+} from '~/components/Apps/AppAssistant/previewFrame';
 
 const FRAME = { blockId: 'my app', iframeSrc: 'https://dev-0123456789abcdef.apps.example/?dev=t' };
 const respond = (status: number, body: unknown) =>
@@ -44,5 +47,26 @@ describe('fetchPreviewFrame', () => {
     await expect(fetchPreviewFrame('my-app', fetchMock)).rejects.toThrow(
       'The preview is unavailable'
     );
+  });
+});
+
+describe('fetchPreviewEntryUrl', () => {
+  it("returns just the frame's freshly signed entry URL", async () => {
+    expect(await fetchPreviewEntryUrl('my app', respond(200, FRAME))).toBe(FRAME.iframeSrc);
+  });
+
+  it('rejects while the host is not resolvable yet (nothing to load)', async () => {
+    await expect(fetchPreviewEntryUrl('my-app', respond(200, { preparing: true }))).rejects.toThrow(
+      'The preview is not ready yet'
+    );
+  });
+
+  it('rejects when the preview is gone', async () => {
+    await expect(
+      fetchPreviewEntryUrl(
+        'my-app',
+        respond(409, { error: 'No live preview is running for this app' })
+      )
+    ).rejects.toThrow('No live preview is running for this app');
   });
 });

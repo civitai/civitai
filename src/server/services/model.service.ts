@@ -2754,6 +2754,7 @@ async function captureMinorFlagSnapshot(
         ${MINOR_FLAG_SNAPSHOT_KEY}, jsonb_build_object(
           'at', now(),
           'source', ${source},
+          'prevMinor', m.minor,
           'prevNsfw', m.nsfw,
           'prevSfwOnly', m."sfwOnly",
           'prevGalleryLevel', (m."gallerySettings"->>'level')::int,

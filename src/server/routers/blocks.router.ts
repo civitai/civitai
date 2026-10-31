@@ -3147,45 +3147,98 @@ export const blocksRouter = router({
         kind: string;
       }
     >();
-    if (appBlockIds.length) {
-      const listings = await dbRead.appListing.findMany({
-        where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
-        select: {
-          id: true,
-          appBlockId: true,
-          status: true,
-          kind: true,
-          iconId: true,
-          coverId: true,
-          description: true,
-          tagline: true,
-          category: true,
-          contentRating: true,
-          // Filtered COUNT — only screenshots whose Image is still live. A row
-          // whose Image was deleted (imageId → null via onDelete: SetNull) has
-          // no displayable asset, so it must not inflate the count, else the
-          // `no-screenshots` warning is a false-negative. Matches the
-          // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
-          // in app-listing-assets.service.ts (buildAssetStatus).
-          _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+    // The listing projection both queries below select — the keyed backing listing and the
+    // pre-approval draft — so the two feed `computeListingProblems` identically.
+    const listingSelect = {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      status: true,
+      kind: true,
+      iconId: true,
+      coverId: true,
+      description: true,
+      tagline: true,
+      category: true,
+      contentRating: true,
+      // Filtered COUNT — only screenshots whose Image is still live. A row
+      // whose Image was deleted (imageId → null via onDelete: SetNull) has
+      // no displayable asset, so it must not inflate the count, else the
+      // `no-screenshots` warning is a false-negative. Matches the
+      // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
+      // in app-listing-assets.service.ts (buildAssetStatus).
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+    } as const;
+    type ProjectedListing = {
+      id: string;
+      appBlockId: string | null;
+      slug?: string;
+      status: string;
+      kind?: string | null;
+      iconId: number | null;
+      coverId: number | null;
+      description: string | null;
+      tagline: string | null;
+      category: string | null;
+      contentRating?: string | null;
+      _count: { screenshots: number };
+    };
+    const toListingFacts = (l: ProjectedListing) => ({
+      id: l.id,
+      status: l.status,
+      // A narrow test fake that ignores `select` yields `undefined`; both `where`
+      // clauses admit only on-site rows, so that is the honest fallback.
+      kind: l.kind ?? 'onsite',
+      iconId: l.iconId,
+      coverId: l.coverId,
+      description: l.description,
+      tagline: l.tagline,
+      category: l.category,
+      screenshotCount: l._count.screenshots,
+      contentRating: l.contentRating ?? null,
+    });
+
+    // 🔴 THE PRE-APPROVAL DRAFT OF A FIRST-VERSION REQUEST. W13 draft-at-submit mints the
+    // app's on-site listing at SUBMIT (`submitVersion`: status='draft', appBlockId=NULL,
+    // userId=submitter), and that is the row /apps/mine reads and flags. Keyed on
+    // `appBlockId` alone, this read never found it — a pending first version has no
+    // AppBlock until approve — so `problems` came back EMPTY for exactly the listing
+    // /apps/mine was reporting as "cannot be published yet": two surfaces running the
+    // same `computeListingProblems` over the same listing and disagreeing. Resolved with
+    // `approveRequest`'s OWN `draftTransitionWhere` (slug + owner + draft + unkeyed), so
+    // the listing flagged here is the one that approve will transition — never a draft
+    // another user holds on a released slug. Only for unkeyed PENDING / REJECTED rows: a
+    // withdraw deletes the draft (a later draft on the slug is not that row's), and a
+    // reject keeps it for the resubmit.
+    //
+    // Deliberately feeds `problems` ONLY. `appListingId` / `listingStatus` stay the
+    // backing (keyed) listing's — their consumers drive owner unpublish/republish, which
+    // a pre-approval draft is not eligible for.
+    const readsDraft = (r: RawRow) =>
+      !r.appBlock?.id && (r.status === 'pending' || r.status === 'rejected');
+    const draftSlugs = [...new Set(rows.filter(readsDraft).map((r: RawRow) => r.slug))];
+    const draftBySlug = new Map<string, ReturnType<typeof toListingFacts>>();
+    if (draftSlugs.length) {
+      const { draftTransitionWhere } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      const userId = ctx.user.id;
+      const drafts = (await dbRead.appListing.findMany({
+        where: {
+          OR: draftSlugs.map((slug) => draftTransitionWhere({ slug, submittedByUserId: userId })),
         },
-      });
+        select: listingSelect,
+      })) as ProjectedListing[];
+      for (const d of drafts) if (d.slug) draftBySlug.set(d.slug, toListingFacts(d));
+    }
+
+    if (appBlockIds.length) {
+      const listings = (await dbRead.appListing.findMany({
+        where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
+        select: listingSelect,
+      })) as ProjectedListing[];
       for (const l of listings) {
-        if (l.appBlockId)
-          listingByBlockId.set(l.appBlockId, {
-            id: l.id,
-            status: l.status,
-            // A narrow test fake that ignores `select` yields `undefined`; the `where`
-            // clause above admits only on-site rows, so that is the honest fallback.
-            kind: l.kind ?? 'onsite',
-            iconId: l.iconId,
-            coverId: l.coverId,
-            description: l.description,
-            tagline: l.tagline,
-            category: l.category,
-            screenshotCount: l._count.screenshots,
-            contentRating: l.contentRating ?? null,
-          });
+        if (l.appBlockId) listingByBlockId.set(l.appBlockId, toListingFacts(l));
       }
     }
 
@@ -3237,6 +3290,10 @@ export const blocksRouter = router({
       const totalSubs = counts?.userSubscriptions ?? null;
       const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
       const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
+      // The listing the completeness advisory describes: the keyed backing listing, or —
+      // for an unkeyed pending/rejected first version — its pre-approval draft (see the
+      // `draftBySlug` note above).
+      const problemsListing = listing ?? (readsDraft(r) ? draftBySlug.get(r.slug) : undefined);
       return {
         ...rest,
         modelInstallCount: pinnedCount,
@@ -3249,23 +3306,24 @@ export const blocksRouter = router({
         listingStatus: listing?.status ?? null,
         lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
         // Advisory listing-completeness problems (missing assets + empty key
-        // fields). Empty when there's no backing listing yet (a pending first
-        // version) — nothing to flag until a listing row exists.
-        problems: listing
+        // fields) — the same `computeListingProblems` /apps/mine runs over the same
+        // listing. Empty only when there is no listing row at all (a legacy pending
+        // request from before draft-at-submit, or a draft create that failed).
+        problems: problemsListing
           ? computeListingProblems({
-              kind: listing.kind as ListingProblemKind,
-              iconId: listing.iconId,
-              coverId: listing.coverId,
-              screenshotCount: listing.screenshotCount,
-              description: listing.description,
-              tagline: listing.tagline,
-              category: listing.category,
-              status: listing.status,
-              contentRating: listing.contentRating,
+              kind: problemsListing.kind as ListingProblemKind,
+              iconId: problemsListing.iconId,
+              coverId: problemsListing.coverId,
+              screenshotCount: problemsListing.screenshotCount,
+              description: problemsListing.description,
+              tagline: problemsListing.tagline,
+              category: problemsListing.category,
+              status: problemsListing.status,
+              contentRating: problemsListing.contentRating,
               declaredContentRating: declaredListingRating({
-                kind: listing.kind,
+                kind: problemsListing.kind,
                 appRating: r.appBlock?.contentRating,
-                listingRating: listing.contentRating,
+                listingRating: problemsListing.contentRating,
               }),
             }).problems
           : [],

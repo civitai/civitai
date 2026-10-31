@@ -1341,7 +1341,6 @@ export function AppAssistantWorkspace({
               slot ? (
                 <FreeUpSlotCard
                   apps={apps}
-                  openName={activeName}
                   deleting={slot.deleting}
                   error={slot.error}
                   exporting={exporting}

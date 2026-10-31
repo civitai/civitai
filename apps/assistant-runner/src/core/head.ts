@@ -76,6 +76,13 @@ export interface TurnStart {
    * message is named after the edited one). Without it, a turn already saved keeps its message.
    */
   edit?: boolean;
+  /**
+   * The chat's own model, kept in a new head: a chat picks its model before anything is saved and
+   * sends it with its first run only, so the head the first run makes is where it is kept (the
+   * browser runner saves it with the chat's first save). A head that exists keeps its own; a model
+   * change after the first save reaches it as a patch.
+   */
+  model?: string;
 }
 
 /** The head with the user's turn saved as the reply starts (a new head when there is none). */
@@ -91,6 +98,7 @@ export function startTurn(head: Head | null, start: TurnStart): Head {
     updatedAt: now,
     turns: [],
     ...(start.scope ? { scope: start.scope } : {}),
+    ...(start.model ? { model: start.model } : {}),
   };
   const existing = base.turns.find((turn) => turn.seq === start.seq);
   const renamed =

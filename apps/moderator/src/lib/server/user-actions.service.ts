@@ -48,7 +48,11 @@ import type { HeldSummary } from './removal-hold';
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 
 export type ActionResult =
-  | { ok: true; warning?: string }
+  | {
+      ok: true;
+      warning?: string;
+      /** A minor revert undid the automation; the model stays minor. */ keptMinor?: true;
+    }
   | { ok: false; error: string; retryAfterSeconds?: number };
 
 /** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach

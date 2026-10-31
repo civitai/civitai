@@ -359,6 +359,8 @@ export type MinorFlagSnapshot = {
   confirmedFrom?: 'auto' | 'manual' | 'text-scan';
   confirmedAt?: string;
   confirmedBy?: number;
+  /** Absent on snapshots written before it was kept. */
+  prevMinor?: boolean;
   prevNsfw?: boolean;
   prevSfwOnly?: boolean;
   prevGalleryLevel?: number | null;
