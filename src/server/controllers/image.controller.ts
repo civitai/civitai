@@ -968,8 +968,16 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       postId: result.postId ?? null,
     });
     // A failed hold lookup serves the image without media rather than failing the page.
-    const servable =
-      canSeeMedia && !!(await withoutHeldFromViewer(ctx, [result]).catch(() => [])).length;
+    const heldChecked = await withoutHeldFromViewer(ctx, [result]).catch((error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'image-get-held-level',
+        message: (error as Error).message,
+        imageId: input.id,
+      }).catch(() => undefined);
+      return [];
+    });
+    const servable = canSeeMedia && !!heldChecked.length;
     return servable ? result : withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
