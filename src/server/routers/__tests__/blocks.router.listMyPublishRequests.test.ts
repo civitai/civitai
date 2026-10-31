@@ -251,18 +251,9 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
 });
 
 /**
- * 🔴 THE PRE-APPROVAL DRAFT FEEDS `problems` — the two surfaces must agree.
- *
- * W13 draft-at-submit mints a first version's on-site listing at SUBMIT (status `draft`,
- * `appBlockId` NULL, owned by the submitter). /apps/mine (`listMine`) reads that row and
- * flags it ("This listing cannot be published yet"), while this proc joined listings by
- * `appBlockId` only — which a pending first version does not have until approve — so it
- * returned `problems: []` for the very same listing. Observed in prod on a 0.1.0 submit:
- * empty `problems` here, five items in the /apps/mine popover.
- *
- * The draft fixture mirrors that case: no icon, no cover, no screenshots, no description,
- * no category, but a tagline — so the expected list is five specific codes, not "anything
- * non-empty", and a mutant that read a neighbouring field cannot produce it.
+ * /apps/mine and this proc must agree: a pending first version's listing is the unkeyed
+ * draft minted at submit. The fixture has no icon/cover/screenshots/description/category,
+ * so the expected list is five specific codes.
  */
 describe('listMyPublishRequests — a pending first version reports its pre-approval DRAFT', () => {
   const firstVersionRow = (id: string, slug: string, status: string) => ({
@@ -311,7 +302,7 @@ describe('listMyPublishRequests — a pending first version reports its pre-appr
     }) => (args.where.OR ? drafts : keyed)) as never);
   }
 
-  it('🔴 a PENDING first version gets the draft listing’s problems (empty before the fix)', async () => {
+  it('🔴 a PENDING first version gets the draft listing’s problems', async () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       firstVersionRow('req-1', 'new-app', 'pending'),
     ]);
@@ -362,7 +353,6 @@ describe('listMyPublishRequests — a pending first version reports its pre-appr
 
     expect(byId['req-r'].problems.map((p) => p.code)).toEqual(INCOMPLETE_DRAFT_CODES);
     expect(byId['req-w'].problems).toEqual([]);
-    // Only the rejected row's slug is looked up.
     const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
       where: { OR: { slug: string }[] };
     };
@@ -401,7 +391,6 @@ describe('listMyPublishRequests — a pending first version reports its pre-appr
 
     expect(rows[0].problems).toEqual([]);
     expect(rows[0]).toMatchObject({ appListingId: 'l-k', listingStatus: 'approved' });
-    // Only the keyed lookup ran.
     expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
     const args = mockDbRead.appListing.findMany.mock.calls[0][0] as { where: { OR?: unknown } };
     expect(args.where.OR).toBeUndefined();

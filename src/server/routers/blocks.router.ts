@@ -3250,22 +3250,12 @@ export const blocksRouter = router({
       contentRating: l.contentRating ?? null,
     });
 
-    // 🔴 THE PRE-APPROVAL DRAFT OF A FIRST-VERSION REQUEST. W13 draft-at-submit mints the
-    // app's on-site listing at SUBMIT (`submitVersion`: status='draft', appBlockId=NULL,
-    // userId=submitter), and that is the row /apps/mine reads and flags. Keyed on
-    // `appBlockId` alone, this read never found it — a pending first version has no
-    // AppBlock until approve — so `problems` came back EMPTY for exactly the listing
-    // /apps/mine was reporting as "cannot be published yet": two surfaces running the
-    // same `computeListingProblems` over the same listing and disagreeing. Resolved with
-    // `approveRequest`'s OWN `draftTransitionWhere` (slug + owner + draft + unkeyed), so
-    // the listing flagged here is the one that approve will transition — never a draft
-    // another user holds on a released slug. Only for unkeyed PENDING / REJECTED rows: a
-    // withdraw deletes the draft (a later draft on the slug is not that row's), and a
-    // reject keeps it for the resubmit.
-    //
-    // Deliberately feeds `problems` ONLY. `appListingId` / `listingStatus` stay the
-    // backing (keyed) listing's — their consumers drive owner unpublish/republish, which
-    // a pre-approval draft is not eligible for.
+    // Pre-approval draft of an unkeyed pending/rejected first version (no AppBlock until
+    // approve). Uses approveRequest's draftTransitionWhere so we flag the listing approve
+    // will transition, never another user's draft on a released slug. Withdraw deletes the
+    // draft, so it is read only for pending/rejected. Feeds `problems` ONLY:
+    // appListingId/listingStatus drive owner unpublish/republish, which a draft is not
+    // eligible for.
     const readsDraft = (r: RawRow) =>
       !r.appBlock?.id && (r.status === 'pending' || r.status === 'rejected');
     const draftSlugs = [...new Set(rows.filter(readsDraft).map((r: RawRow) => r.slug))];

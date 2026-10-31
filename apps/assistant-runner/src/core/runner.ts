@@ -718,7 +718,6 @@ export class Runner implements RunService {
         // This run owns the turn now: an older run of it writes to it no more.
         runId: input.runId,
         ...(input.edit ? { edit: true } : {}),
-        // A model picked before the chat's first message reaches the runner only with this start.
         ...(input.model !== this.#deps.defaultModel ? { model: input.model } : {}),
       })
     );
