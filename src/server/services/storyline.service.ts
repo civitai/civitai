@@ -3023,7 +3023,14 @@ export async function getStorylinesForPosts({
         postId: true,
         depth: true,
         removedAt: true,
-        post: { select: { nsfwLevel: true, userId: true } },
+        post: {
+          select: {
+            nsfwLevel: true,
+            userId: true,
+            tosViolation: true,
+            user: { select: { bannedAt: true, deletedAt: true } },
+          },
+        },
         storyline: {
           select: {
             id: true,
@@ -3049,7 +3056,8 @@ export async function getStorylinesForPosts({
   for (const c of chapters) {
     if (c.postId == null || !c.post) continue;
     // As getStorylineChapterTombstone: only moderators are shown a removed chapter.
-    if (c.removedAt && !viewer?.isModerator) continue;
+    if (!viewer?.isModerator && isStorylineChapterRemoved({ post: c.post, removed: !!c.removedAt }))
+      continue;
     if (isStorylineHidden(c.storyline, viewer, blockedUserIds)) continue;
     if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;
     // The post's own author is told it is a chapter whatever their level, as the owner is.

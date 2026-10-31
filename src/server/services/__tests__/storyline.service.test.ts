@@ -1191,7 +1191,7 @@ describe('getStorylinesForPosts', () => {
     id: postId + 1000,
     postId,
     depth: 1,
-    post: { nsfwLevel: level, userId: AUTHOR_OF_POSTS },
+    post: { nsfwLevel: level, userId: AUTHOR_OF_POSTS, tosViolation: false, user: notBanned },
     storyline: {
       id: 10,
       title: 'A story',
@@ -2756,13 +2756,25 @@ describe('a chapter whose placement was removed', () => {
     });
   });
 
+  // Every chapter the reading path shows as removed, not only one removed itself: otherwise the post
+  // says it is a chapter and the storyline shows a tombstone where it should be.
   it('gives no storyline pill to anyone but moderators', async () => {
-    const chapter = (postId: number, removedAt: Date | null) => ({
+    const chapter = (
+      postId: number,
+      removedAt: Date | null,
+      post: { tosViolation?: boolean; user?: typeof notBanned } = {}
+    ) => ({
       id: postId + 1000,
       postId,
       depth: 1,
       removedAt,
-      post: { nsfwLevel: NsfwLevel.PG, userId: STRANGER },
+      post: {
+        nsfwLevel: NsfwLevel.PG,
+        userId: STRANGER,
+        tosViolation: false,
+        user: notBanned,
+        ...post,
+      },
       storyline: {
         id: 10,
         title: 'A story',
@@ -2778,16 +2790,28 @@ describe('a chapter whose placement was removed', () => {
     r.storylineChapter.findMany.mockResolvedValue([
       chapter(1, null),
       chapter(2, REMOVED_AT),
+      chapter(3, null, { tosViolation: true }),
+      chapter(4, null, { user: { ...notBanned, bannedAt: REMOVED_AT } }),
+      chapter(5, null, { user: { ...notBanned, deletedAt: REMOVED_AT } }),
     ] as never);
     const pills = async (viewer: { id: number; isModerator?: boolean }) =>
       Object.keys(
-        await getStorylinesForPosts({ postIds: [1, 2], viewer, browsingLevel: NsfwLevel.PG })
+        await getStorylinesForPosts({
+          postIds: [1, 2, 3, 4, 5],
+          viewer,
+          browsingLevel: NsfwLevel.PG,
+        })
       );
     expect(await pills(viewers.reader)).toEqual(['1']);
     expect(await pills(viewers.author)).toEqual(['1']);
-    expect(await pills(viewers.moderator)).toEqual(['1', '2']);
+    expect(await pills(viewers.moderator)).toEqual(['1', '2', '3', '4', '5']);
     expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
-      select: { removedAt: true },
+      select: {
+        removedAt: true,
+        post: {
+          select: { tosViolation: true, user: { select: { bannedAt: true, deletedAt: true } } },
+        },
+      },
     });
   });
 
@@ -4018,7 +4042,7 @@ describe('title moderation', () => {
         postId,
         depth: 1,
         removedAt: null,
-        post: { nsfwLevel: PG, userId: AUTHOR_OF_POSTS },
+        post: { nsfwLevel: PG, userId: AUTHOR_OF_POSTS, tosViolation: false, user: notBanned },
         storyline: {
           id: postId,
           title: `s${postId}`,
@@ -4264,7 +4288,7 @@ describe('a storyline the title scan holds as about a minor', () => {
           id: 1001,
           postId: 1,
           depth: 1,
-          post: { nsfwLevel: R, userId: AUTHOR_OF_POSTS },
+          post: { nsfwLevel: R, userId: AUTHOR_OF_POSTS, tosViolation: false, user: notBanned },
           storyline: {
             id: 10,
             title: 'A story',
