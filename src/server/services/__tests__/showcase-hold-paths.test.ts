@@ -226,24 +226,31 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     expect(data.images.map((image) => image.id)).toEqual([WITHIN]);
   });
 
-  it('the models search document of a minor row is held even when its cached settings say it is not', async () => {
-    galleryReads(() => JSON.stringify({ none: true }));
-    const db = {
-      model: {
-        findMany: async () => [
-          { id: HELD_MODEL, minor: true, sfwOnly: true, modelVersions: [{ id: VERSION }] },
-        ],
-      },
-    };
-    const data = await pullModelsData(
-      { db, logger: () => undefined } as never,
-      {
-        type: 'update',
-        ids: [HELD_MODEL],
-      } as never
-    );
-    expect(data.images.map((image) => image.id)).toEqual([WITHIN]);
-  });
+  it.each([
+    { row: 'minor', minor: true, sfwOnly: false, images: [WITHIN] },
+    { row: 'SFW-only', minor: false, sfwOnly: true, images: [WITHIN] },
+    { row: 'unflagged', minor: false, sfwOnly: false, images: [ABOVE, WITHIN] },
+  ])(
+    'the models search document of a $row row follows the row when its cached settings say it is not limited',
+    async ({ minor, sfwOnly, images }) => {
+      galleryReads(() => JSON.stringify({ none: true }));
+      const db = {
+        model: {
+          findMany: async () => [
+            { id: HELD_MODEL, minor, sfwOnly, modelVersions: [{ id: VERSION }] },
+          ],
+        },
+      };
+      const data = await pullModelsData(
+        { db, logger: () => undefined } as never,
+        {
+          type: 'update',
+          ids: [HELD_MODEL],
+        } as never
+      );
+      expect(data.images.map((image) => image.id)).toEqual(images);
+    }
+  );
 
   it('the models search document fails its batch, to be retried, when the gallery settings cannot be read', async () => {
     failGalleryReads();
@@ -286,7 +293,7 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     expect(redisMock.redis.get).toHaveBeenCalledWith(`model:gallery-settings:${HELD_MODEL}`);
   });
 
-  it('an auction card shows the first image within the held level, for every viewer', async () => {
+  function auctionOf(model: { minor: boolean }) {
     dbMock.dbWrite.auction.findFirst.mockResolvedValue({
       id: 1,
       quantity: 1,
@@ -298,13 +305,30 @@ describe("a held model's showcase on paths that read it from the shared cache", 
         name: 'v1',
         model: {
           id: HELD_MODEL,
-          name: 'held',
+          name: 'model',
           meta: null,
+          minor: model.minor,
           user: { id: OWNER, profilePicture: null },
         },
       },
     ]);
-    const auction = await getAuctionBySlug({ slug: 'featured' });
+    return getAuctionBySlug({ slug: 'featured' });
+  }
+
+  it.each([
+    { row: 'minor', minor: true, image: WITHIN },
+    { row: 'unflagged', minor: false, image: ABOVE },
+  ])(
+    'an auction card of a $row model follows the row when its cached settings say it is not limited',
+    async ({ minor, image }) => {
+      galleryReads(() => JSON.stringify({ none: true }));
+      const auction = await auctionOf({ minor });
+      expect(auction.bids[0].entityData?.image?.id).toBe(image);
+    }
+  );
+
+  it('an auction card shows the first image within the held level, for every viewer', async () => {
+    const auction = await auctionOf({ minor: false });
     expect(auction.bids[0].entityData?.image?.id).toBe(WITHIN);
   });
 
