@@ -160,8 +160,9 @@ export const PUBLIC_MANIFEST_FIELDS = ['name', 'description', 'targets', 'hasPag
  * subscriptions land later in the same column with a small SQL change.
  *
  * `manifest` is the PUBLIC allowlist subset only (see PublicBlockManifest) —
- * not the raw stored manifest. This shape is returned by the anon-capable
- * `blocks.listAvailable` (F-E E1), so it must carry no private/internal data.
+ * not the raw stored manifest. This shape is returned by `blocks.listAvailable`
+ * (F-E E1; moderator-only since the apps launch, designed anon-capable), so it
+ * must carry no private/internal data.
  *
  * F-E E3 additions (still anon-safe):
  *   - `category`      — the mod-assigned marketplace category (free-text
@@ -277,7 +278,7 @@ export type GetAppDetailInput = z.infer<typeof getAppDetailSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * Input for the public, anon-capable `blocks.getFeaturedBlocks` (F-E E4
+ * Input for `blocks.getFeaturedBlocks` (moderator-only; F-E E4
  * featured rail). Only a `limit` — the featured set is the curated staff-pick
  * list, so there's no client-controlled filter/sort (the order is the
  * mod-assigned `featured_order`). Same exposure posture as `listAvailable`:
