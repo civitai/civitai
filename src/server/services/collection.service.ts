@@ -123,12 +123,13 @@ import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challe
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
+  collectionItemCoversSql,
   getServableCoverCollectionIds,
-  itemUploadSql,
-  publishedArticleSql,
-  servableCollectionCoverSql,
 } from '~/server/services/collection-cover-visibility';
-import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  assertImagesVisibleToViewer,
+  assertImageVisibleToViewer,
+} from '~/server/services/image-visibility.service';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   collectionSupportsCollaborators,
@@ -1039,6 +1040,14 @@ export const saveItemInCollections = async ({
       .map((upsert) => upsert.collectionId)
   );
 
+  // Before the contest gates: they can charge an entry fee.
+  if (
+    itemKey === 'imageId' &&
+    upsertCollectionItems.some((upsert) => !unwrittenCollectionIds.has(upsert.collectionId))
+  ) {
+    await assertImagesVisibleToViewer({ ids: [input.imageId as number], userId, isModerator });
+  }
+
   // Check if any contest collections are involved and validate ONCE
   const contestCollections = collections.filter(
     (c) => c.mode === CollectionMode.Contest && !unwrittenCollectionIds.has(c.id)
@@ -1739,6 +1748,8 @@ export const upsertCollection = async ({
   if (type === CollectionType.Model3D && mode === CollectionMode.Contest) {
     throw throwBadRequestError('3D model collections cannot be contests');
   }
+
+  if (imageId) await assertImagesVisibleToViewer({ ids: [imageId], userId, isModerator });
 
   // TODO allow cover image
   const collection = await dbWrite.collection.create({
@@ -3464,6 +3475,8 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  if (imageIds.length > 0)
+    await assertImagesVisibleToViewer({ ids: imageIds, userId, isModerator });
   const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
 
   if (
@@ -3764,118 +3777,11 @@ export const getCollectionCoverImages = async ({
 
   const itemImages: CollectionImageRaw[] =
     collectionIds?.length > 0
-      ? await dbRead.$queryRaw<CollectionImageRaw[]>`
-    WITH target AS MATERIALIZED (
-      SELECT *
-      FROM (
-        SELECT *,
-        ROW_NUMBER() OVER (
-            PARTITION BY ci."collectionId"
-            ORDER BY ci.id
-          ) AS idx
-        FROM "CollectionItem" ci
-        WHERE ci.status = 'ACCEPTED'
-          AND ci."collectionId" IN (${Prisma.join(collectionIds)})
-      ) t
-      WHERE idx <= ${imagesPerCollection}
-    ), imageItemImage AS MATERIALIZED (
-      SELECT
-        ti."collectionId",
-        i.id,
-        ${imageSql}
-      FROM target ti
-      JOIN "Image" i ON i.id = ti."imageId"
-      LEFT JOIN "Post" p ON p.id = i."postId"
-      WHERE ${servableCollectionCoverSql({
-        postlessAllowed: itemUploadSql(Prisma.sql`ti."addedById"`),
-      })}
-    ), postItemImage AS MATERIALIZED (
-      SELECT * FROM (
-          SELECT
-            i."postId" id,
-            ${imageSql},
-            ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
-          FROM "Image" i
-          JOIN "Post" p ON p.id = i."postId"
-          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
-            AND i."ingestion" = 'Scanned'
-            AND i."needsReview" IS NULL
-            AND i."blockedFor" IS NULL
-            AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-            AND p."publishedAt" < now()
-            AND p."availability" != 'Private'
-      ) t
-      WHERE t.rn = 1
-    ), modelItemImage AS MATERIALIZED (
-      SELECT * FROM (
-          SELECT
-            m.id,
-            ${imageSql},
-            ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
-          FROM "Image" i
-          JOIN "Post" p ON p.id = i."postId"
-          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-          JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
-          WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
-              AND i."ingestion" = 'Scanned'
-              AND i."needsReview" IS NULL
-              AND i."blockedFor" IS NULL
-              AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-              AND p."publishedAt" < now()
-              AND p."availability" != 'Private'
-              AND m.status = 'Published'
-              AND m."deletedAt" IS NULL
-              AND m.availability != 'Private'
-              AND m.mode IS DISTINCT FROM 'TakenDown'
-              AND mv.status = 'Published'
-              AND mv.availability != 'Private'
-              AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
-      ) t
-      WHERE t.rn = 1
-    ), articleItemImage AS MATERIALIZED (
-        SELECT
-          a.id,
-          ${imageSql}
-        FROM "Article" a
-        JOIN "Image" i ON i.id = a."coverId"
-        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
-          AND i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-          AND i."blockedFor" IS NULL
-          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-          AND ${publishedArticleSql}
-    ), articleItemSrc AS MATERIALIZED (
-        SELECT a.id, a.cover src FROM "Article" a
-        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
-          AND ${publishedArticleSql}
-    ), model3dItemImage AS MATERIALIZED (
-        SELECT
-          m3.id,
-          ${imageSql}
-        FROM "Model3D" m3
-        JOIN "Image" i ON i.id = m3."thumbnailImageId"
-        WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
-          AND i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-          AND i."blockedFor" IS NULL
-          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-          AND m3.status = 'Published'
-          AND m3."deletedAt" IS NULL
-          AND m3.availability != 'Private'
-    )
-    SELECT
-        target."collectionId" id,
-        COALESCE(
-          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId" AND iii."collectionId" = target."collectionId" LIMIT 1),
-          (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
-          (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
-          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
-          (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
-          NULL
-        ) image,
-        (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
-    FROM target
-  `
+      ? await dbRead.$queryRaw<CollectionImageRaw[]>`${collectionItemCoversSql({
+          collectionIds,
+          itemsPerCollection: imagesPerCollection,
+          imageSql,
+        })}`
       : [];
 
   // Use Redis cache for tag lookups (much faster than direct DB query)
