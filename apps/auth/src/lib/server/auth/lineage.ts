@@ -9,9 +9,9 @@ import { sessions } from './registry';
 const DAY_S = 24 * 60 * 60;
 const FAMILY_LIVE_TTL_MS = 30 * DAY_S * 1000;
 // Outlasts the 90-day session limit, so a family's membership can't lapse while its sessions are accepted.
-const DEVICE_FAMILIES_TTL_S = 91 * DAY_S;
+export const DEVICE_FAMILIES_TTL_S = 91 * DAY_S;
 
-const deviceFamiliesKey = (deviceId: string) =>
+export const deviceFamiliesKey = (deviceId: string) =>
   `${REDIS_SYS_KEYS.SESSION.DEVICE_FAMILIES}:${deviceId}` as const;
 const deviceAccountsKey = (deviceId: string) =>
   `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}` as const;
@@ -33,18 +33,19 @@ export async function markFamilyLive(family: string | undefined): Promise<void> 
 }
 
 // A browser's family record is joined only with proof that the browser is signed in to it: a family already in
-// it (the browser's prior hub session), or `ARGV[3] == '1'` when the caller already proved it another way.
-// 0: created; 1: joined; -1: refused.
+// it (the browser's prior hub session). A new record also takes the proof family, so a session from before these
+// records existed is ended by a sign-out here too. 0: created; 1: joined; -1: refused.
 const ADD_FAMILY_SCRIPT = `
   if redis.call('EXISTS', KEYS[1]) == 0 then
+    if ARGV[2] ~= '' then redis.call('SADD', KEYS[1], ARGV[2]) end
     redis.call('SADD', KEYS[1], ARGV[1])
-    redis.call('EXPIRE', KEYS[1], ARGV[4])
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
     return 0
   end
-  if ARGV[3] == '1' or redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1
+  if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1
     or (ARGV[2] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1) then
     redis.call('SADD', KEYS[1], ARGV[1])
-    redis.call('EXPIRE', KEYS[1], ARGV[4])
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
     return 1
   end
   return -1
@@ -58,14 +59,14 @@ const ADD_FAMILY_SCRIPT = `
 export async function addDeviceFamily(
   deviceId: string | undefined,
   family: string | undefined,
-  opts: { proofFamily?: string; proven?: boolean } = {}
+  opts: { proofFamily?: string } = {}
 ): Promise<'added' | 'rotate'> {
   if (!deviceId || !family) return 'added';
   try {
     const result = await evalSys(
       ADD_FAMILY_SCRIPT,
       [deviceFamiliesKey(deviceId)],
-      [family, opts.proofFamily ?? '', opts.proven ? '1' : '0', String(DEVICE_FAMILIES_TTL_S)]
+      [family, opts.proofFamily ?? '', String(DEVICE_FAMILIES_TTL_S)]
     );
     return Number(result) === -1 ? 'rotate' : 'added';
   } catch {

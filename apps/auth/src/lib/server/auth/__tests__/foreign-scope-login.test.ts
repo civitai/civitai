@@ -108,7 +108,7 @@ describe('a login bound for a spoke OUTSIDE the hub cookie scope', () => {
       returnUrl: RED,
     });
 
-    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100);
+    expect(h.linkAccount).toHaveBeenCalledWith('device-xyz', 200, 100, undefined);
   });
 
   it('falls back to the session cookie when the hand-off could not be stored', async () => {

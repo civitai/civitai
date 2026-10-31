@@ -187,6 +187,17 @@ describe("a browser's family record", () => {
     expect(await revoked({ jti: 'y', sid: 'family-c' })).toBe(false);
   });
 
+  it("a site session on a browser with no record also records the hub session's family", async () => {
+    expect(await addDeviceFamily('device-1', 'family-b', { proofFamily: 'hub-fam' })).toBe('added');
+    expect([...h.sys.sets.get(deviceFamilies('device-1'))!].sort()).toEqual([
+      'family-b',
+      'hub-fam',
+    ]);
+
+    await endDeviceSessions({ jti: 'j', sid: 'hub-fam' }, 'device-1');
+    expect(await revoked({ jti: 'x', sid: 'family-b' })).toBe(true);
+  });
+
   it('signing out still clears the record when ending one of its families fails', async () => {
     await h.sys.sAdd(deviceFamilies('device-1'), ['mine', 'b', 'c']);
     await h.sys.hSet(deviceAccounts('device-1'), '100', '1');

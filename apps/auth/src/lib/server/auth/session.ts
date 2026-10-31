@@ -19,7 +19,6 @@ import { sessions } from './registry';
 import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
-import { addDeviceFamily } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
 import { isRefusedModerationAccount } from './moderation-account';
@@ -206,18 +205,15 @@ export async function establishSession(
   const proofFamily = prior ? familyId(prior) : undefined;
   // The prior session proves the browser is signed in to its principal: the moderator, when impersonating.
   const priorPrincipal = prior ? prior.impersonatedBy ?? priorUserId : undefined;
-  const link = (id: string) =>
-    linkAccount(id, user.id, priorPrincipal).catch(() => 'none' as const);
-  let deviceId = getOrCreateDeviceId(cookies);
-  const listed = await link(deviceId);
-  const recorded =
-    listed === 'rotate'
-      ? 'rotate'
-      : await addDeviceFamily(deviceId, family, { proofFamily, proven: listed === 'joined' });
-  if (recorded === 'rotate') {
-    deviceId = rotateDeviceId(cookies);
-    await link(deviceId);
-    await addDeviceFamily(deviceId, family);
+  const link = (id: string, proof?: string) =>
+    linkAccount(
+      id,
+      user.id,
+      priorPrincipal,
+      family ? { family, proofFamily: proof } : undefined
+    ).catch(() => 'none' as const);
+  if ((await link(getOrCreateDeviceId(cookies), proofFamily)) === 'rotate') {
+    await link(rotateDeviceId(cookies));
   }
 }
 

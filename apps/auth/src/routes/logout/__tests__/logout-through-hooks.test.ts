@@ -40,6 +40,7 @@ vi.mock('$lib/server/auth/verifier', () => ({
   signatureVerifier: { verifyToken: async (token: string) => h.tokens.get(token) ?? null },
 }));
 
+import { deviceCookieName, sessionCookieName } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { handle } from '../../../hooks.server';
 import { POST } from '../+server';
@@ -49,17 +50,26 @@ const DEVICE = 'device-1';
 const familiesKey = `${REDIS_SYS_KEYS.SESSION.DEVICE_FAMILIES}:${DEVICE}`;
 const accountsKey = `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${DEVICE}`;
 
-async function siteLogout(body: Record<string, unknown>) {
+async function siteLogout(body: Record<string, unknown>, hubCookie?: string) {
   const url = new URL('https://auth.civitai.com/logout');
   const event = {
     url,
     route: { id: '/logout' },
     request: new Request(url, {
       method: 'POST',
-      headers: { authorization: 'Bearer internal-secret', 'content-type': 'application/json' },
+      headers: hubCookie
+        ? { origin: url.origin, 'sec-fetch-site': 'same-origin' }
+        : { authorization: 'Bearer internal-secret', 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }),
-    cookies: { get: () => undefined, set: vi.fn(), delete: vi.fn() },
+    cookies: {
+      get: (name: string) =>
+        hubCookie
+          ? { [sessionCookieName()]: hubCookie, [deviceCookieName()]: DEVICE }[name]
+          : undefined,
+      set: vi.fn(),
+      delete: vi.fn(),
+    },
     locals: {},
   };
   const resolve = async (e: RequestEvent) => {
@@ -97,12 +107,21 @@ describe('a site signing out through the hub', () => {
     expect(h.sys.hashes.has(accountsKey)).toBe(false);
   });
 
-  it("still does when the caller's session was already signed out", async () => {
+  it("still does from the browser's own hub session after an earlier leg signed it out", async () => {
+    await sessions.invalidateFamily('family-a');
+
+    expect((await siteLogout({}, 'site-token')).status).toBe(302);
+
+    expect(await revoked({ jti: 'x', sid: 'family-b' })).toBe(true);
+    expect(h.sys.hashes.has(accountsKey)).toBe(false);
+  });
+
+  it('a site naming a session already signed out ends nothing else on the browser', async () => {
     await sessions.invalidateFamily('family-a');
 
     await siteLogout({ token: 'site-token', deviceId: DEVICE });
 
-    expect(await revoked({ jti: 'x', sid: 'family-b' })).toBe(true);
-    expect(h.sys.hashes.has(accountsKey)).toBe(false);
+    expect(await revoked({ jti: 'x', sid: 'family-b' })).toBe(false);
+    expect(h.sys.hashes.has(accountsKey)).toBe(true);
   });
 });

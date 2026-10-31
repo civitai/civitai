@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { REDIS_SYS_KEYS } from '@civitai/redis';
+import { makeSysRedis, type SysRedisFake } from '../../../../../../test/sys-redis.fake';
 
 /**
  * Upgrade-on-read — `POST /api/auth/oauth/legacy-exchange`.
@@ -19,6 +21,7 @@ const h = vi.hoisted(() => ({
   mintSession: vi.fn(),
   touchAccount: vi.fn(),
   isInternalRequest: vi.fn(),
+  sys: undefined as unknown as SysRedisFake,
 }));
 
 vi.mock('$lib/server/auth/verifier', () => ({ verifier: { verifyToken: h.verifyToken } }));
@@ -29,6 +32,12 @@ vi.mock('$lib/server/auth/session', () => ({ mintSession: h.mintSession }));
 vi.mock('$lib/server/auth/device', () => ({
   getDeviceId: () => 'dev-1',
   touchAccount: h.touchAccount,
+}));
+vi.mock('$lib/server/redis', () => ({
+  getSysRedis: () => h.sys,
+  getRedis: () => null,
+  evalSys: (script: string, keys: string[], args: string[]) =>
+    h.sys.eval(script, { keys, arguments: args }),
 }));
 vi.mock('$lib/server/auth/internal', () => ({ isInternalRequest: h.isInternalRequest }));
 
@@ -104,5 +113,29 @@ describe('legacy-exchange token format', () => {
     const res = await call('not-a-token');
     expect(res.status).toBe(401);
     expect(h.mintSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("legacy-exchange and the browser's family record", () => {
+  const families = (deviceId: string) => `${REDIS_SYS_KEYS.SESSION.DEVICE_FAMILIES}:${deviceId}`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.sys = makeSysRedis();
+    h.isInternalRequest.mockReturnValue(true);
+    h.verifyToken.mockResolvedValue({ sub: '42' });
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 42 });
+    h.mintSession.mockResolvedValue({ token: 'fresh.civ.jwt', family: 'f' });
+  });
+
+  it('a forwarded device id whose family record it is not in is replaced, and left unchanged', async () => {
+    h.sys.sets.set(families('dev-1'), new Set(['other']));
+
+    const res = await call();
+    const { deviceId } = await res.json();
+
+    expect(deviceId).not.toBe('dev-1');
+    expect([...h.sys.sets.get(families(deviceId))!]).toEqual(['f']);
+    expect([...h.sys.sets.get(families('dev-1'))!]).toEqual(['other']);
   });
 });

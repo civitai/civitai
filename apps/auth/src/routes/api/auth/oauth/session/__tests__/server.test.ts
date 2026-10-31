@@ -190,6 +190,20 @@ describe('oauth/session +server — family', () => {
     expect(h.addDeviceFamily).toHaveBeenCalledWith('d', 'family-b', { proofFamily: 'family-a' });
   });
 
+  it("still completes, recording nothing more, when the browser's record refuses the family", async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'family-b' });
+    h.addDeviceFamily.mockResolvedValueOnce('rotate');
+    h.consumeOidcContext.mockResolvedValue({ deviceId: 'd', proofFamily: 'family-a' });
+
+    const res = await POST(makeEvent());
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ token: 'tok', deviceId: 'd' });
+    expect(h.addDeviceFamily).toHaveBeenCalledTimes(1);
+  });
+
   it('starts a new family when the authorization carried none', async () => {
     h.getAuthorizationCode.mockResolvedValue(validCode());
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });

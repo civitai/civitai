@@ -4,6 +4,7 @@ import { DEVICE_COOKIE_BASE, deviceCookieName, isSecureCookie } from '@civitai/a
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { evalSys, getSysRedis } from '../redis';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
+import { DEVICE_FAMILIES_TTL_S, deviceFamiliesKey } from './lineage';
 
 // DEVICE-LEVEL account linking (docs/main-app-auth-cutover.md, section E). A browser is identified by an
 // httpOnly `device` cookie; the hub keeps a per-device set of accounts that have authenticated on it, each
@@ -100,57 +101,79 @@ export async function touchAccount(deviceId: string, userId: number): Promise<vo
   }
 }
 
-// No list: create one with both accounts when a distinct prior account is signed in (2), else write nothing (0).
-// A list: joined (1) by an account already in it and used within ACCOUNT_IDLE_MS, or by a sign-in made while one
-// of its accounts is signed in on this browser (the prior hub session); otherwise refused (-1).
-// ARGV: new user, prior user ('' if none), now (ms), TTL (s), idle limit (ms).
+// Account list (KEYS[1]). No list: create one with both accounts when a distinct prior account is signed in (2),
+// else write nothing (0). A list: joined (1) by an account already in it and used within ACCOUNT_IDLE_MS, or by a
+// sign-in made while one of its accounts is signed in on this browser (the prior hub session); otherwise -1.
+// Family record (KEYS[2], when given): joined by a list join, or when it holds the new or the prior family;
+// created (with the prior family) when absent; otherwise -1. Either -1 writes nothing to both.
+// ARGV: new user, prior user ('' if none), now (ms), list TTL (s), idle limit (ms), family, prior family
+// ('' if none), family record TTL (s).
 const JOIN_SCRIPT = `
+  local listed
   if redis.call('EXISTS', KEYS[1]) == 0 then
-    if ARGV[2] ~= '' and ARGV[2] ~= ARGV[1] then
-      redis.call('HSET', KEYS[1], ARGV[2], ARGV[3], ARGV[1], ARGV[3])
-      redis.call('EXPIRE', KEYS[1], ARGV[4])
-      return 2
+    listed = (ARGV[2] ~= '' and ARGV[2] ~= ARGV[1]) and 2 or 0
+  else
+    local own = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '')
+    local recent = own ~= nil and tonumber(ARGV[3]) - own <= tonumber(ARGV[5])
+    if not (recent or (ARGV[2] ~= '' and redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1)) then
+      return -1
     end
-    return 0
+    listed = 1
   end
-  local own = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '')
-  local recent = own ~= nil and tonumber(ARGV[3]) - own <= tonumber(ARGV[5])
-  if recent or (ARGV[2] ~= '' and redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1) then
+  local fam = KEYS[2] ~= nil and ARGV[6] ~= ''
+  local famExists = fam and redis.call('EXISTS', KEYS[2]) == 1
+  if famExists and listed ~= 1 and redis.call('SISMEMBER', KEYS[2], ARGV[6]) == 0
+    and not (ARGV[7] ~= '' and redis.call('SISMEMBER', KEYS[2], ARGV[7]) == 1) then
+    return -1
+  end
+  if listed == 2 then
+    redis.call('HSET', KEYS[1], ARGV[2], ARGV[3], ARGV[1], ARGV[3])
+  elseif listed == 1 then
     redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
-    redis.call('EXPIRE', KEYS[1], ARGV[4])
-    return 1
   end
-  return -1
+  if listed ~= 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
+  if fam then
+    if not famExists and ARGV[7] ~= '' then redis.call('SADD', KEYS[2], ARGV[7]) end
+    redis.call('SADD', KEYS[2], ARGV[6])
+    redis.call('EXPIRE', KEYS[2], ARGV[8])
+  end
+  return listed
 `;
 
 /**
- * Add a signed-in account to this browser's account list (the switcher). `priorUserId` is the user of the
- * verified hub session the browser held before this sign-in, never a value from the request.
+ * Add a signed-in account to this browser's account list (the switcher) and, with `families`, its session family
+ * to the browser's family record. `priorUserId` and `families.proofFamily` come from the verified hub session the
+ * browser held before this sign-in, never from the request.
  *
- * `'joined'`: the account is in a list on this device. `'none'`: there is no list (a single-account browser).
- * `'rotate'`: the browser has a list this sign-in can't show it belongs to; the caller moves the browser to a
- * new device id.
+ * `'created'`: a new list holds both accounts. `'joined'`: the account joined an existing list. `'none'`: there
+ * is no list (a single-account browser). `'rotate'`: the browser has a list or family record this sign-in can't
+ * show it belongs to, and nothing was written; the caller moves the browser to a new device id.
  */
 export async function linkAccount(
   deviceId: string,
   newUserId: number,
-  priorUserId?: number | null
-): Promise<'joined' | 'none' | 'rotate'> {
+  priorUserId?: number | null,
+  families?: { family: string; proofFamily?: string }
+): Promise<'created' | 'joined' | 'none' | 'rotate'> {
   const result = Number(
     await evalSys(
       JOIN_SCRIPT,
-      [key(deviceId)],
+      families ? [key(deviceId), deviceFamiliesKey(deviceId)] : [key(deviceId)],
       [
         String(newUserId),
         priorUserId != null ? String(priorUserId) : '',
         String(Date.now()),
         String(DEVICE_TTL_S),
         String(ACCOUNT_IDLE_MS),
+        families?.family ?? '',
+        families?.proofFamily ?? '',
+        String(DEVICE_FAMILIES_TTL_S),
       ]
     )
   );
   if (result === -1) return 'rotate';
-  return result >= 1 ? 'joined' : 'none';
+  if (result === 2) return 'created';
+  return result === 1 ? 'joined' : 'none';
 }
 
 /** Both the caller's principal and the target are in this browser's account list and used within 30 days. */
