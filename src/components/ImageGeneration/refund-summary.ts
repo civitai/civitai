@@ -30,12 +30,25 @@ export function getRefundSummary(
 ): RefundSummary | null {
   if (!status || !failedStatuses.includes(status)) return null;
   const list = transactions ?? [];
-  const credits = list.filter((t) => t.type === 'credit' && t.amount > 0);
-  if (!credits.length) return null;
+  // Match credits to debits per account, so a refund never exceeds what that
+  // account was charged and the label/denominator describe the same Buzz.
+  const sumBy = (type: TransactionInfo['type']) => {
+    const m = new Map<TransactionInfo['accountType'], number>();
+    for (const t of list)
+      if (t.type === type) m.set(t.accountType, (m.get(t.accountType) ?? 0) + t.amount);
+    return m;
+  };
+  const debits = sumBy('debit');
+  const credits = sumBy('credit');
+  let amount = 0;
+  let charged = 0;
+  for (const [account, debited] of debits) {
+    charged += debited;
+    amount += Math.min(debited, credits.get(account) ?? 0);
+  }
+  if (amount <= 0) return null;
 
-  const amount = credits.reduce((acc, t) => acc + t.amount, 0);
-  const charged = list.filter((t) => t.type === 'debit').reduce((acc, t) => acc + t.amount, 0);
-  const accounts = Array.from(new Set(credits.map((t) => t.accountType)));
+  const accounts = Array.from(debits.keys());
   const prefix = accounts.length === 1 ? accountLabel[accounts[0]] : undefined;
   const label = prefix ? `${prefix} Buzz` : 'Buzz';
   const partial = amount < charged;
@@ -46,7 +59,7 @@ export function getRefundSummary(
     charged,
     label,
     text: partial
-      ? `Refunded ${amount.toLocaleString()} of ${charged.toLocaleString()} ${label}`
-      : `Refunded ${amount.toLocaleString()} ${label}`,
+      ? `Refunded ${amount.toLocaleString('en-US')} of ${charged.toLocaleString('en-US')} ${label}`
+      : `Refunded ${amount.toLocaleString('en-US')} ${label}`,
   };
 }
