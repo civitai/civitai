@@ -1,13 +1,13 @@
 import { familyId, type SessionClaims } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
-import { getSysRedis } from '../redis';
+import { evalSys, getSysRedis } from '../redis';
 import { sessions } from './registry';
 
 // A family is every session descended from one sign-in on one browser (see @civitai/auth `familyClaims`).
 // These records let the hub tell a family is still in use, and end every family a browser signed in with.
 
 const DAY_S = 24 * 60 * 60;
-const FAMILY_LIVE_TTL_S = 30 * DAY_S;
+const FAMILY_LIVE_TTL_MS = 30 * DAY_S * 1000;
 // Outlasts the 90-day session limit, so a family's membership can't lapse while its sessions are accepted.
 const DEVICE_FAMILIES_TTL_S = 91 * DAY_S;
 
@@ -16,30 +16,60 @@ const deviceFamiliesKey = (deviceId: string) =>
 const deviceAccountsKey = (deviceId: string) =>
   `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}` as const;
 
+const MARK_LIVE_SCRIPT = `
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  redis.call('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', '1', ARGV[1])
+  return 1
+`;
+
 /** Record that `family` was just used. Best-effort. */
 export async function markFamilyLive(family: string | undefined): Promise<void> {
-  const sys = getSysRedis();
-  if (!sys || !family) return;
-  try {
-    await sys.hSet(REDIS_SYS_KEYS.SESSION.FAMILY_LIVE, family, String(Date.now()));
-    await sys.hExpire(REDIS_SYS_KEYS.SESSION.FAMILY_LIVE, family, FAMILY_LIVE_TTL_S);
-  } catch {
-    // best-effort
-  }
+  if (!family) return;
+  await evalSys(
+    MARK_LIVE_SCRIPT,
+    [REDIS_SYS_KEYS.SESSION.FAMILY_LIVE],
+    [family, String(Date.now()), String(FAMILY_LIVE_TTL_MS)]
+  ).catch(() => undefined);
 }
 
-/** Remember that `family` signed in on this browser, so signing out here ends it too. Best-effort. */
+// A browser's family record is joined only with proof that the browser is signed in to it: a family already in
+// it (the browser's prior hub session), or `ARGV[3] == '1'` when the caller already proved it another way.
+// 0: created; 1: joined; -1: refused.
+const ADD_FAMILY_SCRIPT = `
+  if redis.call('EXISTS', KEYS[1]) == 0 then
+    redis.call('SADD', KEYS[1], ARGV[1])
+    redis.call('EXPIRE', KEYS[1], ARGV[4])
+    return 0
+  end
+  if ARGV[3] == '1' or redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1
+    or (ARGV[2] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1) then
+    redis.call('SADD', KEYS[1], ARGV[1])
+    redis.call('EXPIRE', KEYS[1], ARGV[4])
+    return 1
+  end
+  return -1
+`;
+
+/**
+ * Remember that `family` signed in on this browser, so signing out here ends it too. `proofFamily` is the family
+ * of the verified hub session the same request carries. Returns `'rotate'` when the browser has a record this
+ * request can't show it belongs to: the caller moves the browser to a new device id. Best-effort.
+ */
 export async function addDeviceFamily(
   deviceId: string | undefined,
-  family: string | undefined
-): Promise<void> {
-  const sys = getSysRedis();
-  if (!sys || !deviceId || !family) return;
+  family: string | undefined,
+  opts: { proofFamily?: string; proven?: boolean } = {}
+): Promise<'added' | 'rotate'> {
+  if (!deviceId || !family) return 'added';
   try {
-    await sys.sAdd(deviceFamiliesKey(deviceId), [family]);
-    await sys.expire(deviceFamiliesKey(deviceId), DEVICE_FAMILIES_TTL_S);
+    const result = await evalSys(
+      ADD_FAMILY_SCRIPT,
+      [deviceFamiliesKey(deviceId)],
+      [family, opts.proofFamily ?? '', opts.proven ? '1' : '0', String(DEVICE_FAMILIES_TTL_S)]
+    );
+    return Number(result) === -1 ? 'rotate' : 'added';
   } catch {
-    // best-effort
+    return 'added';
   }
 }
 
@@ -58,14 +88,20 @@ export async function endDeviceSessions(
 
   const sys = getSysRedis();
   if (!sys || !deviceId) return;
+  let members: string[];
   try {
-    const members = (await sys.sMembers<unknown>(deviceFamiliesKey(deviceId))).map(String);
-    if (!members.includes(family)) return;
-    for (const other of members) {
-      if (other !== family) await sessions.invalidateFamily(other);
-    }
-    await sys.del([deviceFamiliesKey(deviceId), deviceAccountsKey(deviceId)]);
+    members = (await sys.sMembers<unknown>(deviceFamiliesKey(deviceId))).map(String);
   } catch {
-    // best-effort: the caller's own family is already ended
+    return;
+  }
+  if (!members.includes(family)) return;
+  try {
+    for (const other of members) {
+      if (other !== family) await sessions.invalidateFamily(other).catch(() => undefined);
+    }
+  } finally {
+    await sys
+      .del([deviceFamiliesKey(deviceId), deviceAccountsKey(deviceId)])
+      .catch(() => undefined);
   }
 }

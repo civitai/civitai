@@ -28,11 +28,11 @@ const clears = (setCookies: string[], name: string, domain?: string) =>
 describe('spokeLogout', () => {
   it('revokes the token and finishes through the hub, back to the spoke', async () => {
     const revoke = vi.fn(async () => {});
-    const res = await spokeLogout(request('__Secure-civ-token=tok; other=1'), {
-      hubBase: HUB,
-      sessionTokenClient: { revoke },
-    });
-    expect(revoke).toHaveBeenCalledWith('tok');
+    const res = await spokeLogout(
+      request('__Secure-civ-token=tok; __Secure-civ-device=dev-1; other=1'),
+      { hubBase: HUB, sessionTokenClient: { revoke } }
+    );
+    expect(revoke).toHaveBeenCalledWith('tok', { deviceId: 'dev-1' });
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe(
       `${HUB}/logout?returnUrl=${encodeURIComponent('https://moderator.civitai.com')}`
@@ -63,7 +63,7 @@ describe('spokeLogout', () => {
       hubBase: HUB,
       sessionTokenClient: { revoke },
     });
-    expect(revoke).toHaveBeenCalledWith('tok%E0%A4%A');
+    expect(revoke).toHaveBeenCalledWith('tok%E0%A4%A', { deviceId: undefined });
     expect(res.status).toBe(302);
     expect(clears(res.headers.getSetCookie(), '__Secure-civ-token')).toBe(true);
   });
@@ -75,7 +75,7 @@ describe('spokeLogout', () => {
       hubBase: HUB,
       sessionTokenClient: { revoke },
     });
-    expect(revoke).toHaveBeenCalledWith('host-tok');
+    expect(revoke).toHaveBeenCalledWith('host-tok', { deviceId: undefined });
     expect(clears(res.headers.getSetCookie(), '__Host-civ-token')).toBe(true);
   });
 

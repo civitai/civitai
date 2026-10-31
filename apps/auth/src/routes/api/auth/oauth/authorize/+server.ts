@@ -7,7 +7,7 @@ import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
 import { familyId } from '@civitai/auth';
-import { addDeviceFamily, markFamilyLive } from '$lib/server/auth/lineage';
+import { markFamilyLive } from '$lib/server/auth/lineage';
 import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import {
@@ -338,10 +338,7 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       ? locals.session
       : undefined;
   const family = hubSession ? familyId(hubSession) : undefined;
-  if (family) {
-    await markFamilyLive(family);
-    await addDeviceFamily(deviceId, family);
-  }
+  await markFamilyLive(family);
   await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
     openid: scopeRequest.openid || undefined,
@@ -349,6 +346,9 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     deviceId,
     family,
     iat0: hubSession?.iat0,
+    impersonatedBy: hubSession?.impersonatedBy,
+    impExp: hubSession?.impExp,
+    proofFamily: isFirstParty && locals.session ? familyId(locals.session) : undefined,
   });
 
   logOAuthEvent({

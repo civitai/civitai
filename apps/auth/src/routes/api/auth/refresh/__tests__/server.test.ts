@@ -27,7 +27,12 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
     },
   }),
 }));
-vi.mock('$lib/server/redis', () => ({ getSysRedis: () => h.sys, getRedis: () => null }));
+vi.mock('$lib/server/redis', () => ({
+  getSysRedis: () => h.sys,
+  getRedis: () => null,
+  evalSys: (script: string, keys: string[], args: string[]) =>
+    h.sys.eval(script, { keys, arguments: args }),
+}));
 vi.mock('$lib/server/auth/verifier', () => ({
   verifier: { verifyToken: async () => h.claims },
 }));

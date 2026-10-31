@@ -283,7 +283,16 @@ describe('authorize — family', () => {
     await start({}, { user: { id: 7 }, session });
     expect(storeOidcContext).toHaveBeenCalledWith(
       'the-code',
-      expect.objectContaining({ family: undefined, iat0: undefined })
+      expect.objectContaining({ family: undefined, iat0: undefined, proofFamily: 'family-b' })
+    );
+  });
+
+  it("hands an impersonation hub session's impersonation to the site's session", async () => {
+    const session = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
+    await start({}, { user: { id: 7 }, session });
+    expect(storeOidcContext).toHaveBeenCalledWith(
+      'the-code',
+      expect.objectContaining({ family: 'family-a', impersonatedBy: 100, impExp: 999 })
     );
   });
 });

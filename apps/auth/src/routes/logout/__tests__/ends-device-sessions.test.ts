@@ -9,7 +9,12 @@ const h = vi.hoisted(() => {
   delete process.env.AUTH_COOKIE_DOMAIN;
   return { sys: undefined as unknown as SysRedisFake };
 });
-vi.mock('$lib/server/redis', () => ({ getSysRedis: () => h.sys, getRedis: () => null }));
+vi.mock('$lib/server/redis', () => ({
+  getSysRedis: () => h.sys,
+  getRedis: () => null,
+  evalSys: (script: string, keys: string[], args: string[]) =>
+    h.sys.eval(script, { keys, arguments: args }),
+}));
 vi.mock('$lib/server/oauth/first-party', () => ({
   buildPostLoginOriginCheck: async () => () => true,
 }));

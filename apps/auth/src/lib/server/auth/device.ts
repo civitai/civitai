@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
 import { DEVICE_COOKIE_BASE, deviceCookieName, isSecureCookie } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
-import { getSysRedis } from '../redis';
+import { evalSys, getSysRedis } from '../redis';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 
 // DEVICE-LEVEL account linking (docs/main-app-auth-cutover.md, section E). A browser is identified by an
@@ -43,6 +43,13 @@ export function getOrCreateDeviceId(cookies: Cookies): string {
   return id;
 }
 
+/** Give this browser a new device id, leaving whatever list the old one had behind. */
+export function rotateDeviceId(cookies: Cookies): string {
+  const id = randomUUID();
+  cookies.set(DEVICE_COOKIE, id, { ...cookieOpts, maxAge: DEVICE_TTL_S });
+  return id;
+}
+
 /** Read the device id without creating one (switch / list paths — no device cookie ⇒ no linked accounts). */
 export function getDeviceId(cookies: Cookies): string | undefined {
   return cookies.get(DEVICE_COOKIE);
@@ -66,84 +73,95 @@ export function clearDeviceCookie(cookies: Cookies): void {
   clearOtherCookieNames(cookies, DEVICE_COOKIE_BASE, DEVICE_COOKIE);
 }
 
+// Refreshes an account already in a multi-account list; never adds one.
+const TOUCH_SCRIPT = `
+  if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1 and redis.call('HLEN', KEYS[1]) >= 2 then
+    redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    return 1
+  end
+  return 0
+`;
+
 /**
- * REFRESH an account's `lastSwitchedAt` on this device's set — but ONLY if the set holds ≥2 accounts (i.e. the
- * browser is genuinely in multi-account mode, the only case where the switcher has any value). On a set with
- * <2 fields — a single-account set or no set at all — this is a NO-OP: it deliberately neither creates a
- * singleton hash nor refreshes one. Gating on hLen rather than `exists` is deliberate: ~7.9M PRE-EXISTING
- * single-account keys (legacy bloat written before LAZY MATERIALIZATION) still EXIST, and an `exists` gate
- * would re-roll their 30-day TTL on every login → the bloat would never drain. Letting <2-field keys fall
- * through to TTL expiry drains that legacy keyspace (and any 2→1 remnant) over ≤30 days. A genuine multi-
- * account set is first materialized by `linkAccount` once a 2nd distinct account appears. Callers that just
- * want to keep the active account fresh (authorize / session / legacy-exchange / refresh / switch) use this;
- * the explicit switch path always has a ≥2-account set (it's gated by `isLinkedAndFresh`), so its refresh
- * still lands. Best-effort.
+ * Slide an account's `lastSwitchedAt` and the list's TTL, only when the account is already in a list of ≥2.
+ * Never adds an account (only `linkAccount` does, with proof). Lists with <2 fields are left to expire: ~7.9M
+ * legacy single-account keys still exist, and refreshing them would stop that keyspace draining. Best-effort.
  */
 export async function touchAccount(deviceId: string, userId: number): Promise<void> {
-  const sys = getSysRedis();
-  if (!sys) return;
   try {
-    // Refresh ONLY a genuine multi-account set (≥2 accounts). Gating on hLen — not `exists` — is the drain
-    // fix: the ~7.9M PRE-EXISTING single-account keys (legacy bloat from before LAZY MATERIALIZATION) still
-    // EXIST, so an `exists` gate would re-`expire` (roll the 30d TTL on) every legacy singleton a returning
-    // user logs in with → the bloat never drains, the keyspace just plateaus. hLen<2 means there's no
-    // switcher value (one account can't be switched away from), so we write NOTHING and let that key expire
-    // naturally — draining the legacy singletons (and any 2→1 remnant) over ≤30d. hLen on a missing key is 0,
-    // so this also covers the ordinary single-account login (no key yet) the old `exists` check handled. One
-    // O(1) redis call. A racing first-create is handled by linkAccount (the only writer that creates a set).
-    if ((await sys.hLen(key(deviceId))) < 2) return; // <2 accounts ⇒ no switcher value ⇒ write nothing
-    await sys.hSet(key(deviceId), String(userId), String(Date.now()));
-    await sys.expire(key(deviceId), DEVICE_TTL_S);
+    await evalSys(
+      TOUCH_SCRIPT,
+      [key(deviceId)],
+      [String(userId), String(Date.now()), String(DEVICE_TTL_S)]
+    );
   } catch {
     // best-effort — a redis blip must not fail login/switch
   }
 }
 
+// No list: create one with both accounts when a distinct prior account is signed in (2), else write nothing (0).
+// A list: joined (1) by an account already in it and used within ACCOUNT_IDLE_MS, or by a sign-in made while one
+// of its accounts is signed in on this browser (the prior hub session); otherwise refused (-1).
+// ARGV: new user, prior user ('' if none), now (ms), TTL (s), idle limit (ms).
+const JOIN_SCRIPT = `
+  if redis.call('EXISTS', KEYS[1]) == 0 then
+    if ARGV[2] ~= '' and ARGV[2] ~= ARGV[1] then
+      redis.call('HSET', KEYS[1], ARGV[2], ARGV[3], ARGV[1], ARGV[3])
+      redis.call('EXPIRE', KEYS[1], ARGV[4])
+      return 2
+    end
+    return 0
+  end
+  local own = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '')
+  local recent = own ~= nil and tonumber(ARGV[3]) - own <= tonumber(ARGV[5])
+  if recent or (ARGV[2] ~= '' and redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1) then
+    redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
+    redis.call('EXPIRE', KEYS[1], ARGV[4])
+    return 1
+  end
+  return -1
+`;
+
 /**
- * LAZY-CREATE the device set when a SECOND distinct account is being added to this browser. Call on a login/
- * session mint for `newUserId` whenever the request already carries a valid session for `existingUserId`.
+ * Add a signed-in account to this browser's account list (the switcher). `priorUserId` is the user of the
+ * verified hub session the browser held before this sign-in, never a value from the request.
  *
- *  - existing set present (already multi-account)  → just refresh `newUserId` (delegates to touchAccount).
- *  - no set yet AND existingUserId is a DIFFERENT user → MATERIALIZE BOTH accounts (backfill `existingUserId`
- *    with its own `lastSwitchedAt` so the first account isn't silently dropped) and set the TTL.
- *  - no set yet AND no distinct existing user (ordinary single-account login) → NO-OP (write nothing).
- *
- * This is the only writer that may create a `device:accounts:*` key, so single-account users never get one.
- * Best-effort: a redis blip must never fail the login it rides on.
+ * `'joined'`: the account is in a list on this device. `'none'`: there is no list (a single-account browser).
+ * `'rotate'`: the browser has a list this sign-in can't show it belongs to; the caller moves the browser to a
+ * new device id.
  */
 export async function linkAccount(
   deviceId: string,
   newUserId: number,
-  existingUserId?: number | null
-): Promise<void> {
-  const sys = getSysRedis();
-  if (!sys) return;
-  try {
-    if (await sys.exists(key(deviceId))) {
-      // Already multi-account on this browser — just slide the new account's clock + roll the TTL.
-      await sys.hSet(key(deviceId), String(newUserId), String(Date.now()));
-      await sys.expire(key(deviceId), DEVICE_TTL_S);
-      return;
-    }
-    // No set yet. Only materialize when a genuine 2nd distinct account is appearing.
-    if (existingUserId == null || existingUserId === newUserId) return;
-    const now = String(Date.now());
-    // Backfill the FIRST account (existingUserId) alongside the new one — the set was never written for it
-    // (single-account users get no key), so this is the moment to record both. Same timestamp is fine: both
-    // are active right now, and listAccounts sorts by it (ties are arbitrary but both are fresh).
-    //
-    // ATOMIC materialize: write BOTH fields AND the TTL in a single EVAL. A non-atomic hSet→hSet→expire
-    // sequence that died mid-way would leave a TTL-LESS key — reintroducing the exact unbounded-growth
-    // failure this PR exists to fix. hSetMultiWithExpire guarantees the key is never observable with
-    // fields but no TTL.
-    await sys.hSetMultiWithExpire(
-      key(deviceId),
-      [String(existingUserId), now, String(newUserId), now],
-      DEVICE_TTL_S
-    );
-  } catch {
-    // best-effort — a redis blip must not fail login
-  }
+  priorUserId?: number | null
+): Promise<'joined' | 'none' | 'rotate'> {
+  const result = Number(
+    await evalSys(
+      JOIN_SCRIPT,
+      [key(deviceId)],
+      [
+        String(newUserId),
+        priorUserId != null ? String(priorUserId) : '',
+        String(Date.now()),
+        String(DEVICE_TTL_S),
+        String(ACCOUNT_IDLE_MS),
+      ]
+    )
+  );
+  if (result === -1) return 'rotate';
+  return result >= 1 ? 'joined' : 'none';
+}
+
+/** Both the caller's principal and the target are in this browser's account list and used within 30 days. */
+export async function canSwitch(
+  deviceId: string,
+  principal: number,
+  target: number
+): Promise<boolean> {
+  return (
+    (await isLinkedAndFresh(deviceId, principal)) && (await isLinkedAndFresh(deviceId, target))
+  );
 }
 
 /** The device's linked accounts (idle >30d pruned). */

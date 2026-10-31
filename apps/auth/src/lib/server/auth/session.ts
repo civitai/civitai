@@ -16,7 +16,7 @@ import {
   type SessionUser,
 } from '@civitai/auth';
 import { sessions } from './registry';
-import { getOrCreateDeviceId, linkAccount } from './device';
+import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
 import { addDeviceFamily } from './lineage';
@@ -201,16 +201,21 @@ export async function establishSession(
     setSessionCookie(cookies, minted.token);
   }
 
-  // Link this account to the browser's device set (the account-switch list — see
-  // docs/auth/auth-hub-spoke-overview.md). LAZY: only writes a
-  // `device:accounts:*` key when this is a genuine 2nd distinct account (priorUserId set + != user.id), or when
-  // the set already exists. An ordinary single-account login writes nothing. Best-effort.
-  // Resolve the device id on its own line FIRST: getOrCreateDeviceId is SYNCHRONOUS and (re)sets the device
-  // cookie — keeping it outside the `.catch(...)` chain ensures the cookie-roll always lands and can't be
-  // swallowed as if it were part of linkAccount's best-effort redis write.
-  const deviceId = getOrCreateDeviceId(cookies);
-  await linkAccount(deviceId, user.id, priorUserId).catch(() => {});
-  await addDeviceFamily(deviceId, family);
+  // Link this account and family to the browser's records (docs/auth/auth-hub-spoke-overview.md). Records this
+  // browser can't show it is signed in to stay with the old device id; the sign-in starts on a new one.
+  const proofFamily = prior ? familyId(prior) : undefined;
+  const link = (id: string) => linkAccount(id, user.id, priorUserId).catch(() => 'none' as const);
+  let deviceId = getOrCreateDeviceId(cookies);
+  const listed = await link(deviceId);
+  const recorded =
+    listed === 'rotate'
+      ? 'rotate'
+      : await addDeviceFamily(deviceId, family, { proofFamily, proven: listed === 'joined' });
+  if (recorded === 'rotate') {
+    deviceId = rotateDeviceId(cookies);
+    await link(deviceId);
+    await addDeviceFamily(deviceId, family);
+  }
 }
 
 /**

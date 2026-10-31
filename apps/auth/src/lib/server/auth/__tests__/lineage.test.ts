@@ -27,7 +27,12 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
     },
   }),
 }));
-vi.mock('../../redis', () => ({ getSysRedis: () => h.sys, getRedis: () => null }));
+vi.mock('../../redis', () => ({
+  getSysRedis: () => h.sys,
+  getRedis: () => null,
+  evalSys: (script: string, keys: string[], args: string[]) =>
+    h.sys.eval(script, { keys, arguments: args }),
+}));
 vi.mock('../verifier', () => ({
   verifier: {
     verifyToken: async (token: string) => {
@@ -47,7 +52,7 @@ import type { SessionUser } from '@civitai/auth';
 import type { Cookies } from '@sveltejs/kit';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { establishSession, sessionExpiresIn } from '../session';
-import { endDeviceSessions } from '../lineage';
+import { addDeviceFamily, endDeviceSessions, markFamilyLive } from '../lineage';
 import { sessions } from '../registry';
 
 const user = (id: number) => ({ id, username: `u${id}` } as unknown as SessionUser);
@@ -133,6 +138,78 @@ describe('session families', () => {
     expect(await revoked({ jti: 'x', sid: 'mine' })).toBe(true);
     expect(await revoked({ jti: 'y', sid: 'their-family' })).toBe(false);
     expect(h.sys.hashes.has(deviceAccounts('someone-elses-device'))).toBe(true);
+  });
+});
+
+describe("a browser's family record", () => {
+  it('a sign-in with no prior session on a browser with a record moves to a new device id', async () => {
+    await h.sys.sAdd(deviceFamilies('device-1'), ['someone-else']);
+    const jar = makeCookies({ 'civ-device': 'device-1' });
+
+    await establishSession(jar, user(200));
+
+    const fresh = jar.get('civ-device')!;
+    const { jti } = h.minted[0];
+    expect(fresh).not.toBe('device-1');
+    expect([...h.sys.sets.get(deviceFamilies('device-1'))!]).toEqual(['someone-else']);
+    expect([...h.sys.sets.get(deviceFamilies(fresh))!]).toEqual([jti]);
+
+    // Signing out presenting the old id ends only the caller's own family.
+    await endDeviceSessions({ jti: jti! }, 'device-1');
+    expect(await revoked({ jti: jti! })).toBe(true);
+    expect(await revoked({ jti: 'x', sid: 'someone-else' })).toBe(false);
+  });
+
+  it("a sign-in while the browser's recorded session is signed in joins its record", async () => {
+    await h.sys.sAdd(deviceFamilies('device-1'), ['family-a', 'earlier']);
+    h.verified.set('prior-token', { sub: '100', jti: 'j', sid: 'family-a' });
+    const jar = makeCookies({ 'civ-token': 'prior-token', 'civ-device': 'device-1' });
+
+    await establishSession(jar, user(100));
+
+    expect(jar.get('civ-device')).toBe('device-1');
+    expect([...h.sys.sets.get(deviceFamilies('device-1'))!].sort()).toEqual([
+      'earlier',
+      'family-a',
+    ]);
+  });
+
+  it("a site session for another account joins the record on the hub session's proof", async () => {
+    await h.sys.sAdd(deviceFamilies('device-1'), ['family-a']);
+
+    expect(await addDeviceFamily('device-1', 'family-b', { proofFamily: 'family-a' })).toBe(
+      'added'
+    );
+    expect(await addDeviceFamily('device-1', 'family-c')).toBe('rotate');
+
+    await endDeviceSessions({ jti: 'j', sid: 'family-a' }, 'device-1');
+    expect(await revoked({ jti: 'x', sid: 'family-b' })).toBe(true);
+    expect(await revoked({ jti: 'y', sid: 'family-c' })).toBe(false);
+  });
+
+  it('signing out still clears the record when ending one of its families fails', async () => {
+    await h.sys.sAdd(deviceFamilies('device-1'), ['mine', 'b', 'c']);
+    await h.sys.hSet(deviceAccounts('device-1'), '100', '1');
+    const real = sessions.invalidateFamily;
+    const spy = vi
+      .spyOn(sessions, 'invalidateFamily')
+      .mockImplementation(async (f: string) =>
+        f === 'b' ? Promise.reject(new Error('blip')) : real(f)
+      );
+
+    await endDeviceSessions({ jti: 'j', sid: 'mine' }, 'device-1');
+    spy.mockRestore();
+
+    expect(await revoked({ jti: 'x', sid: 'c' })).toBe(true);
+    expect(h.sys.sets.has(deviceFamilies('device-1'))).toBe(false);
+    expect(h.sys.hashes.has(deviceAccounts('device-1'))).toBe(false);
+  });
+
+  it('a used family is remembered for 30 days', async () => {
+    await markFamilyLive('family-a');
+    expect(h.sys.ttls.get(`${REDIS_SYS_KEYS.SESSION.FAMILY_LIVE}|family-a`)).toBe(
+      30 * 24 * 60 * 60
+    );
   });
 });
 

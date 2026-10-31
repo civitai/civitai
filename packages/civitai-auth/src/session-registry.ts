@@ -27,7 +27,15 @@ export interface SessionRegistryRedis {
   ): Promise<{ cursor: number; tuples: Array<{ field: string; value: string }> }>;
   get(key: string): Promise<string | null | undefined>;
   set(key: string, value: string, opts?: { EX?: number }): Promise<unknown>;
+  /** When present, a field and its TTL are written in one script, so the field can't outlive a failed TTL write. */
+  eval?(script: string, opts: { keys: string[]; arguments: string[] }): Promise<unknown>;
 }
+
+const SET_FIELD_WITH_TTL = `
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  redis.call('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', '1', ARGV[1])
+  return 1
+`;
 
 export type InvalidateInfo = { scope: 'token' | 'user' | 'all'; tokenId?: string; userId?: number };
 
@@ -220,6 +228,13 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   }
 
   async function invalidateFamily(familyId: string) {
+    if (redis.eval) {
+      await redis.eval(SET_FIELD_WITH_TTL, {
+        keys: [keys.familyState],
+        arguments: [familyId, 'invalid', String(markerTtl * 1000)],
+      });
+      return;
+    }
     await redis.hSet(keys.familyState, familyId, 'invalid');
     if (redis.hExpire) await redis.hExpire(keys.familyState, familyId, markerTtl);
   }
