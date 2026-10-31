@@ -1,4 +1,5 @@
 import {
+  APP_FEEDBACK_TOOLS,
   CREATE_APP,
   NO_APP_REFUSAL,
   REPORT_READY,
@@ -10,11 +11,14 @@ import {
   assistantSystemPrompt,
   buildAssistantInstructions,
   createAppTools,
+  createFeedbackTools,
   createGateCore,
   chosenAppOf,
   createSandboxClient,
   openApp,
   type CoverOrchestration,
+  unconfiguredFeedbackSource,
+  type AppFeedbackSource,
   type Sandbox,
   type ToolResult,
 } from '@civitai/app-assistant';
@@ -102,6 +106,9 @@ const RUNNER_PAGE_TOOLS = [
   SUBMIT_FOR_REVIEW,
   'start_preview',
   'stop_preview',
+  // The open app's moderator review and user feedback, read by civitai as the run's user; and the
+  // offer to change a feedback item's status, which the page's card, not the runner, carries out.
+  ...APP_FEEDBACK_TOOLS,
 ] as const;
 
 export interface AppAssistantToolsOptions {
@@ -120,6 +127,10 @@ export interface AppAssistantToolsOptions {
    * Unset, the runner does not offer it.
    */
   covers?(runId: string): { listings: CoverListings; orchestration: CoverOrchestration };
+   * civitai's app-feedback reads with one run's grant (`CivitaiAppFeedback.forRun`). Unset, the
+   * feedback tools say they cannot read it here.
+   */
+  appFeedback?(runId: string, signal: AbortSignal): AppFeedbackSource;
   log: Logger;
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
@@ -145,8 +156,10 @@ const unconfiguredTunnels: DevTunnels = {
  * App Assistant's tools on the server runner: the open app's sandbox MCP tools, `create_app`,
  * `set_checklist` and `report_ready`, behind App Assistant's own gate (the per-reply call cap and
  * `report_ready`'s checks, from `@civitai/app-assistant`, the same code the page runs), and read-only
- * subagents when civitai's grant says the viewer has them, and the live preview (`start_preview`,
- * `stop_preview`), which civitai opens for the run and the runner connects the sandbox to.
+ * subagents when civitai's grant says the viewer has them, the live preview (`start_preview`,
+ * `stop_preview`), which civitai opens for the run and the runner connects the sandbox to, and the
+ * open app's feedback (`get_review_feedback`, `get_user_feedback`, `set_feedback_status`), which
+ * civitai reads as the run's user and whose status changes only the page's card makes.
  */
 export class AppAssistantTools implements ToolProvider {
   readonly #options: AppAssistantToolsOptions;
@@ -196,6 +209,7 @@ export class AppAssistantTools implements ToolProvider {
 
     let preview: RunnerPreview | undefined;
     let apps: Sandbox[] | undefined;
+    let feedbackOffers = 0;
     try {
       apps = await client.list();
     } catch (error) {
@@ -290,8 +304,14 @@ export class AppAssistantTools implements ToolProvider {
       const coverTools: Record<string, ChatTool> = covers
         ? runnerCoverTools({ currentApp: () => sandbox.active?.app ?? null, ...covers, signal })
         : {};
+      const feedback = createFeedbackTools({
+        current: () => sandbox.active?.app ?? null,
+        source: this.#options.appFeedback?.(runId, signal) ?? unconfiguredFeedbackSource,
+        nextId: () => `${runId}-feedback-${++feedbackOffers}`,
+      });
       const pageTools: Record<string, ChatTool> = {
         ...appTools.tools,
+        ...feedback.tools,
         ...core.tools,
         [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], upgradeSdk),
         ...preview.tools(),

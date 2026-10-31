@@ -220,4 +220,15 @@ describe('storyline router — stepping down and taking down', () => {
     await callerFor({ isModerator: true }).setTakedown({ id: 10, takenDown: true });
     expect(writers.setStorylineTakedown).toHaveBeenCalledWith({ id: 10, takenDown: true });
   });
+
+  // The service lets a moderator remove any storyline's chapter only when told the caller is one.
+  it.each([true, false])(
+    'passes isModerator %s through to removing a chapter',
+    async (isModerator) => {
+      await callerFor({ isModerator }).removeChapter({ chapterId: 4 });
+      expect(writers.removeStorylineChapter).toHaveBeenCalledWith(
+        expect.objectContaining({ chapterId: 4, isModerator })
+      );
+    }
+  );
 });

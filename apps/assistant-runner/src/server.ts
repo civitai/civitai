@@ -1,8 +1,9 @@
-import { isAppAssistantModel } from '@civitai/app-assistant';
+import { APP_ASSISTANT_DEFAULT_MODEL, isAppAssistantModel } from '@civitai/app-assistant';
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
 import { CivitaiCovers, CoverWorkflows, runnerCoverOrchestration } from './app-assistant/cover';
+import { CivitaiAppFeedback } from './app-assistant/app-feedback';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { PreviewRestarter } from './app-assistant/preview-restart';
 import { AppAssistantTools } from './app-assistant/provider';
@@ -105,6 +106,13 @@ if (civitai) {
   // The store cover's listing read and attach, which civitai makes as a run's user, by its grant.
   const covers = new CivitaiCovers({ civitaiUrl: civitai.civitaiUrl, secret: civitai.secret, log });
   const liveCovers = (coverWorkflows = new CoverWorkflows(log));
+  // The open app's review and user feedback, which civitai reads as a run's user: each call reads
+  // the run's grant inside its own fetch, as the dev tunnel's do.
+  const appFeedback = new CivitaiAppFeedback({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
@@ -117,6 +125,7 @@ if (civitai) {
             runnerCoverOrchestration(orchestration, credentials.forRun(runId))
           ),
         }),
+        appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
         log,
       })
     : noTools;
@@ -143,6 +152,8 @@ const runner = new Runner({
   stopGraceMs: config.stopGraceMs,
   // Serving viewers without the sandbox service would answer App Assistant with no tools at all.
   ...(civitai && !civitai.sandboxUrl ? { startRefusal: TOOLS_NOT_SET_UP } : {}),
+  // A chat that follows the page's default is not saved as having picked it.
+  defaultModel: APP_ASSISTANT_DEFAULT_MODEL,
 });
 
 // Without civitai's public key every run-API request is refused (401), so nothing reaches the

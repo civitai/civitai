@@ -35,6 +35,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = __dirname;
 const projectRoot = resolve(__dirname, '../../..');
 
+// Which file supplied each key this script set. A key already in the process environment has no
+// entry: the caller chose it on purpose.
+const envSource = {};
+
 // Simple .env parser (avoid external dependencies)
 function loadEnv() {
   const envFiles = [
@@ -57,6 +61,7 @@ function loadEnv() {
         // must not hand the run to the root .env, which names a different database.
         if (process.env[key] === undefined) {
           process.env[key] = value;
+          envSource[key] = envPath;
         }
       }
       loaded = true;
@@ -210,6 +215,20 @@ if (!connectionString) {
   process.exit(1);
 }
 
+// The repo-root .env is the app's own config: its database keys name the local development
+// database, under the same names this skill uses for remote ones. Only --dev may read a URL from
+// it; every other target refuses rather than label a local database with a remote target's name.
+const skillEnvPath = resolve(skillDir, '.env');
+const connectionSource = envSource[connectionVar];
+if (targetName !== 'dev' && connectionSource && connectionSource !== skillEnvPath) {
+  console.error(
+    `Error: ${connectionVar} for ${target.flag} was read from ${connectionSource}, the app's own .env, ` +
+      `which does not point at ${target.label}.`
+  );
+  console.error(`Put ${connectionVar} in ${skillEnvPath} (see SKILL.md), or set it in the environment.`);
+  process.exit(1);
+}
+
 // `sslmode=require` in a connection string makes pg verify the certificate chain, and
 // it WINS over the `ssl` option below - so `--notifications` failed outright with
 // `self-signed certificate in certificate chain` against the bastion, while every other
@@ -296,6 +315,24 @@ if (!writable || target.readOnly) {
 async function main() {
   try {
     await client.connect();
+
+    // The read-only prod target is a hot standby. A server that is not in recovery is a primary or a
+    // copy, so whatever it returns is not a prod replica read, whatever the URL's name says.
+    if (targetName === 'prod' && connectionVar === 'DATABASE_REPLICA_URL') {
+      const { rows } = await client.query(
+        'SELECT inet_server_addr()::text AS addr, pg_is_in_recovery() AS in_recovery'
+      );
+      const { addr, in_recovery: inRecovery } = rows[0] ?? {};
+      console.error(`Server: ${addr ?? '(local socket)'}, in recovery: ${inRecovery}`);
+      if (inRecovery !== true) {
+        console.error(
+          `Error: ${connectionVar} reached a server that is not a hot standby, so it is not the ` +
+            `${target.label} replica. Check ${connectionSource ?? 'the environment'}.`
+        );
+        await client.end();
+        process.exit(1);
+      }
+    }
 
     const finalQuery = explain ? `EXPLAIN ANALYZE ${query}` : query;
     const start = Date.now();

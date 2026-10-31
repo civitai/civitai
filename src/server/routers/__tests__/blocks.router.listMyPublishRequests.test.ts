@@ -212,7 +212,7 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
     expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it('a row with no backing listing (pending first version) → null listing fields, null last action', async () => {
+  it('a row with no backing listing AND no draft (legacy pending first version) → null listing fields, null last action', async () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       {
         id: 'req-p',
@@ -241,10 +241,170 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
       listingStatus: null,
       lastModerationAction: null,
       hasPage: false,
+      problems: [],
     });
-    // No app-block ids on the page → no backing-listing / moderation queries at all.
-    expect(mockDbRead.appListing.findMany).not.toHaveBeenCalled();
+    // No app-block ids on the page → only the pre-approval-draft lookup (which found
+    // nothing here), no keyed backing-listing or moderation queries.
+    expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
     expect(mockDbRead.appListingModerationEvent.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 THE PRE-APPROVAL DRAFT FEEDS `problems` — the two surfaces must agree.
+ *
+ * W13 draft-at-submit mints a first version's on-site listing at SUBMIT (status `draft`,
+ * `appBlockId` NULL, owned by the submitter). /apps/mine (`listMine`) reads that row and
+ * flags it ("This listing cannot be published yet"), while this proc joined listings by
+ * `appBlockId` only — which a pending first version does not have until approve — so it
+ * returned `problems: []` for the very same listing. Observed in prod on a 0.1.0 submit:
+ * empty `problems` here, five items in the /apps/mine popover.
+ *
+ * The draft fixture mirrors that case: no icon, no cover, no screenshots, no description,
+ * no category, but a tagline — so the expected list is five specific codes, not "anything
+ * non-empty", and a mutant that read a neighbouring field cannot produce it.
+ */
+describe('listMyPublishRequests — a pending first version reports its pre-approval DRAFT', () => {
+  const firstVersionRow = (id: string, slug: string, status: string) => ({
+    id,
+    appBlockId: null,
+    slug,
+    version: '0.1.0',
+    status,
+    submittedAt: new Date('2026-01-01'),
+    reviewedAt: null,
+    rejectionReason: null,
+    approvalNotes: null,
+    deployState: null,
+    deployDetail: null,
+    deployUpdatedAt: null,
+    fileSummary: null,
+    manifestDiffSummary: null,
+    appBlock: null,
+  });
+  const draftListing = (slug: string) => ({
+    id: `draft-${slug}`,
+    appBlockId: null,
+    slug,
+    status: 'draft',
+    kind: 'onsite',
+    iconId: null,
+    coverId: null,
+    description: null,
+    tagline: 'A tagline',
+    category: null,
+    contentRating: 'g',
+    _count: { screenshots: 0 },
+  });
+  const INCOMPLETE_DRAFT_CODES = [
+    'missing-icon',
+    'missing-cover',
+    'no-screenshots',
+    'empty-description',
+    'empty-category',
+  ];
+
+  /** Draft lookups (an `OR` of draft wheres) get the drafts; any keyed lookup gets `keyed`. */
+  function routeListingQueries(drafts: unknown[], keyed: unknown[] = []) {
+    mockDbRead.appListing.findMany.mockImplementation((async (args: {
+      where: { OR?: unknown[] };
+    }) => (args.where.OR ? drafts : keyed)) as never);
+  }
+
+  it('🔴 a PENDING first version gets the draft listing’s problems (empty before the fix)', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      firstVersionRow('req-1', 'new-app', 'pending'),
+    ]);
+    routeListingQueries([draftListing('new-app')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems.map((p) => p.code)).toEqual(INCOMPLETE_DRAFT_CODES);
+    expect(rows[0].problems.filter((p) => p.severity === 'blocking').map((p) => p.code)).toEqual([
+      'missing-icon',
+      'missing-cover',
+    ]);
+    // The owner-control fields stay the KEYED listing's: a draft is not unpublishable.
+    expect(rows[0]).toMatchObject({ appListingId: null, listingStatus: null });
+  });
+
+  it('🔴 the draft lookup is owner-scoped, unkeyed, draft-only and on-site — the approve-transition where', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      firstVersionRow('req-1', 'new-app', 'pending'),
+    ]);
+    routeListingQueries([]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    await caller.listMyPublishRequests();
+
+    expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+      where: { OR: unknown[] };
+      select: Record<string, unknown>;
+    };
+    expect(args.where.OR).toEqual([
+      { slug: 'new-app', kind: 'onsite', appBlockId: null, status: 'draft', userId: owner.id },
+    ]);
+    expect(args.select.slug).toBe(true);
+  });
+
+  it('a REJECTED first version still reads its kept draft; a WITHDRAWN one does not', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      firstVersionRow('req-r', 'rej-app', 'rejected'),
+      firstVersionRow('req-w', 'wd-app', 'withdrawn'),
+    ]);
+    routeListingQueries([draftListing('rej-app'), draftListing('wd-app')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+
+    expect(byId['req-r'].problems.map((p) => p.code)).toEqual(INCOMPLETE_DRAFT_CODES);
+    expect(byId['req-w'].problems).toEqual([]);
+    // Only the rejected row's slug is looked up.
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+      where: { OR: { slug: string }[] };
+    };
+    expect(args.where.OR.map((w) => w.slug)).toEqual(['rej-app']);
+  });
+
+  it('a KEYED row never reads a draft, even when a draft on its slug exists', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        ...firstVersionRow('req-k', 'keyed-app', 'pending'),
+        appBlock: { id: 'blk-k', manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
+      },
+    ]);
+    routeListingQueries(
+      [draftListing('keyed-app')],
+      [
+        {
+          id: 'l-k',
+          appBlockId: 'blk-k',
+          slug: 'keyed-app',
+          status: 'approved',
+          kind: 'onsite',
+          iconId: 41,
+          coverId: 53,
+          description: 'A description.',
+          tagline: 'A tagline',
+          category: 'utility',
+          contentRating: 'g',
+          _count: { screenshots: 7 },
+        },
+      ]
+    );
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
+    expect(rows[0]).toMatchObject({ appListingId: 'l-k', listingStatus: 'approved' });
+    // Only the keyed lookup ran.
+    expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as { where: { OR?: unknown } };
+    expect(args.where.OR).toBeUndefined();
   });
 });
 

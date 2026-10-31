@@ -171,7 +171,7 @@ export async function resolveRemovedAppeal({
     await getNotifications().createNotification({
       userId: appeal.userId,
       type: 'entity-appeal-content-removed',
-      category: NotificationCategory.Other,
+      category: NotificationCategory.Moderation,
       // The worker drops a repeated key; the sweep already sent this appeal's "under-review" notice.
       key: `entity-appeal-content-removed:${appeal.id}:${outcome}`,
       details: {

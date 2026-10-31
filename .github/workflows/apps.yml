@@ -29,8 +29,10 @@ name: App suites
 #       the root `postinstall` (`db:generate`) runs them during `pnpm install`, and they write
 #       the generated `@civitai/db-schema` sources most apps import.
 #   src/components/Account/creator-score-copy.ts
-#       read by apps/creator-studio's creator-score-tips test (the one root `src/` file any app
-#       touches; it pins the app's copy against the main app's).
+#       read by apps/creator-studio's creator-score-tips test (it pins the app's copy against the
+#       main app's).
+#   src/server/utils/__tests__/redis-lua-harness.ts
+#       the real-Lua redis harness apps/auth's device tests run their scripts through.
 #   containers/notification-db/docker-init/**
 #       the DDL apps/notifications' behavioural test builds its database from.
 #   package.json
@@ -50,7 +52,16 @@ name: App suites
 #
 # Same rule as lint.yml: a draft PR runs ESLint only, so this job skips on a draft and starts
 # when the PR is marked ready (`ready_for_review`, which the default `types` list omits). Want
-# a verdict on a draft? `gh workflow run apps.yml -R civitai/civitai --ref <branch>`.
+# a verdict on a draft? `gh workflow run apps.yml -R civitai/civitai --ref <branch>`, or add the
+# `full-ci` label.
+#
+# ── THE `full-ci` LABEL ──────────────────────────────────────────────────────────────────────
+#
+# Same label as lint.yml (read its header): on a PR carrying `full-ci` the draft gate is lifted.
+# `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
+# added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
+# events only); later pushes are: a PR that touches nothing these suites read starts no PR run
+# here even with the label.
 #
 # ── PUSH TO `main` IS UNFILTERED ─────────────────────────────────────────────────────────────
 #
@@ -85,6 +96,7 @@ on:
       - 'scripts/prisma-enum-generator.mjs'
       - 'scripts/prisma-updated-at-generator.mjs'
       - 'src/components/Account/creator-score-copy.ts'
+      - 'src/server/utils/__tests__/redis-lua-harness.ts'
       - 'containers/notification-db/docker-init/**'
   push:
     branches: [main]
@@ -109,7 +121,7 @@ jobs:
     # on it.
     name: App unit tests + typecheck
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across
     # five apps then): the root config registered `packages/*/vitest.config.*` as projects and
     # nothing for `apps/*`. And the root `pnpm run typecheck` is bounded by the root tsconfig

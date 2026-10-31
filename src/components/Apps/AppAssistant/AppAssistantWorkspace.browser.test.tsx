@@ -2148,8 +2148,11 @@ describe('AppAssistantWorkspace tool gate', () => {
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
       'create_app',
       'generate_app_cover',
+      'get_review_feedback',
+      'get_user_feedback',
       'report_ready',
       'set_checklist',
+      'set_feedback_status',
       'start_preview',
       'stop_preview',
       'submit_for_review',
@@ -2459,11 +2462,15 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
   // The runner offers generate_app_cover itself now (the same `createCoverArt`); the page's copy shows its calls.
   test('hands the chat the tools the runner offers, generate_app_cover included', async () => {
     await mountRunner();
+    // The runner's host tools (its `RUNNER_PAGE_TOOLS`), the feedback tools' cards included.
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
       'create_app',
       'generate_app_cover',
+      'get_review_feedback',
+      'get_user_feedback',
       'report_ready',
       'set_checklist',
+      'set_feedback_status',
       'start_preview',
       'stop_preview',
       'submit_for_review',
@@ -2963,13 +2970,15 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card()).toBeVisible();
     return screen;
   }
+  /** The user picks the app themselves (nothing is chosen for them), then confirms. */
   async function confirmDelete(app: string) {
+    await card().getByRole('radio', { name: app }).click();
     await card().getByRole('button', { name: 'Delete and continue' }).click();
     await expect.element(page.getByRole('dialog', { name: `Delete ${app}?` })).toBeVisible();
     await page.getByRole('button', { name: 'Delete app' }).click();
   }
 
-  test('appears after the limit refusal: every app with its status and last use, the one used longest ago chosen', async () => {
+  test('appears after the limit refusal: every app with its status and last use, none chosen', async () => {
     await atLimit();
     await expect.element(card().getByText('Free up a slot', { exact: true })).toBeVisible();
     await expect
@@ -2980,9 +2989,8 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
         )
       )
       .toBeVisible();
-    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
-    await expect.element(card().getByRole('radio', { name: 'app-aaaa' })).not.toBeChecked();
-    await expect.element(card().getByRole('radio', { name: 'app-cccc' })).not.toBeChecked();
+    for (const app of ['app-aaaa', 'app-bbbb', 'app-cccc'])
+      await expect.element(card().getByRole('radio', { name: app })).not.toBeChecked();
     for (const line of [
       'Running · last used 2 days ago',
       'Paused · last used 9 days ago',
@@ -3040,7 +3048,20 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     expect(card().element().closest('[data-testid="chat"]')).not.toBeNull();
   });
 
-  test('when the app used longest ago is the open one, the next oldest is chosen', async () => {
+  test('Delete and continue stays disabled until the user picks an app, then deletes that one', async () => {
+    await atLimit();
+    const del = card().getByRole('button', { name: 'Delete and continue' });
+    await expect.element(del).toBeDisabled();
+    await card().getByRole('radio', { name: 'app-cccc' }).click();
+    await expect.element(card().getByRole('radio', { name: 'app-cccc' })).toBeChecked();
+    await expect.element(del).toBeEnabled();
+    await del.click();
+    await expect.element(page.getByRole('dialog', { name: 'Delete app-cccc?' })).toBeVisible();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    await vi.waitFor(() => expect(m.remove.mock.calls).toEqual([['sbx-cccccccccccc']]));
+  });
+
+  test('nothing is chosen whichever app is open', async () => {
     m.list = [
       sandbox('sbx-aaaaaaaaaaaa', {
         state: 'suspended',
@@ -3058,9 +3079,11 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await openFromSwitcher('app-bbbb');
     await userSends('Make a quiz night app');
     await createApp(keepCap());
-    await expect.element(card().getByRole('radio', { name: 'app-cccc' })).toBeChecked();
-    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
-    await expect.element(card().getByRole('radio', { name: 'app-aaaa' })).not.toBeChecked();
+    for (const app of ['app-aaaa', 'app-bbbb', 'app-cccc'])
+      await expect.element(card().getByRole('radio', { name: app })).not.toBeChecked();
+    await expect
+      .element(card().getByRole('button', { name: 'Delete and continue' }))
+      .toBeDisabled();
   });
 
   test('NEGATIVE CONTROL: the running-app limit shows no card', async () => {
@@ -3080,6 +3103,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
 
   test('Keep it in the confirmation deletes nothing and keeps the card', async () => {
     await atLimit();
+    await card().getByRole('radio', { name: 'app-bbbb' }).click();
     await card().getByRole('button', { name: 'Delete and continue' }).click();
     await expect.element(page.getByRole('dialog', { name: 'Delete app-bbbb?' })).toBeVisible();
     await page.getByRole('button', { name: 'Keep it' }).click();
@@ -3091,7 +3115,6 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
 
   test('confirmed, deletes the app picked, then the request carries on: one copy of the message and a fresh reply', async () => {
     await atLimit();
-    await card().getByRole('radio', { name: 'app-cccc' }).click();
     await confirmDelete('app-cccc');
     await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
     expect(m.remove.mock.calls).toEqual([['sbx-cccccccccccc']]);
@@ -3180,7 +3203,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
       output: { error: KEEP },
       isError: true,
     });
-    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
+    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
     await confirmDelete('app-bbbb');
     // The request carries on in place: asked again, never sent as a second message.
     await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
@@ -3210,7 +3233,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
       },
       isError: true,
     });
-    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
+    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
     await confirmDelete('app-bbbb');
     // The request carries on in place: asked again, never sent as a second message.
     await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']));

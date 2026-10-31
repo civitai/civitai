@@ -327,7 +327,6 @@ export const storylineRouter = router({
       })
     ),
 
-  // Declining is `leave`, which a muted invitee can still reach.
   acceptInvite: storylineWriteProcedure
     .input(leaveStorylineSchema)
     .mutation(({ input, ctx }) =>

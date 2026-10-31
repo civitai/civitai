@@ -24,16 +24,19 @@ import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service
  * search service is mocked so no Prisma/Meili/Flipt is loaded.
  */
 
-const { mockRunImageSearch, mockCheckRateLimit, mockGetHeldGalleryLevel } = vi.hoisted(() => ({
-  mockRunImageSearch: vi.fn(),
-  mockCheckRateLimit: vi.fn(),
-  mockGetHeldGalleryLevel: vi.fn(),
-}));
+const { mockRunImageSearch, mockCheckRateLimit, mockGetHeldGalleryLevel, mockWithoutHeld } =
+  vi.hoisted(() => ({
+    mockWithoutHeld: vi.fn(),
+    mockRunImageSearch: vi.fn(),
+    mockCheckRateLimit: vi.fn(),
+    mockGetHeldGalleryLevel: vi.fn(),
+  }));
 
 const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined };
 
 vi.mock('~/server/services/image-search.service', () => ({
   runImageSearch: mockRunImageSearch,
+  withoutHeldImages: mockWithoutHeld,
 }));
 
 vi.mock('~/server/services/model.service', () => ({
@@ -208,6 +211,28 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(input.data).not.toHaveProperty('nsfw');
     expect(input.data).not.toHaveProperty('browsingLevel');
     expect(input.data).not.toHaveProperty('someJunk');
+  });
+
+  it.each([{ ids: '1,2' }, { imageId: '2' }])(
+    'leaves out held images from a search by image id (%o)',
+    async (query) => {
+      claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+      const found = [{ id: 1 }, { id: 2 }];
+      mockRunImageSearch.mockResolvedValue({ items: found, nextCursor: undefined });
+      mockWithoutHeld.mockResolvedValue([{ id: 1 }]);
+
+      const res = await invoke(query);
+
+      expect(mockWithoutHeld).toHaveBeenCalledWith(found);
+      expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
+    }
+  );
+
+  it('does not filter a search that names no image id', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    await invoke({ username: 'someone' });
+
+    expect(mockWithoutHeld).not.toHaveBeenCalled();
   });
 
   it('forwards the selector params (type/limit/sort/modelId/postId/username)', async () => {

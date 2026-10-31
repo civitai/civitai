@@ -1299,7 +1299,7 @@ export function notifyOrphanedAppeal(
   return createNotification({
     userId: appeal.userId,
     type: 'entity-appeal-content-removed',
-    category: NotificationCategory.Other,
+    category: NotificationCategory.Moderation,
     // The worker drops a repeated key, so the outcome is part of it: a closing notice after
     // "under-review" would never arrive.
     key: `entity-appeal-content-removed:${appeal.id}:${outcome}`,
@@ -1596,7 +1596,7 @@ export async function resolveEntityAppeal({
     await createNotification({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
+      category: NotificationCategory.Moderation,
       // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
       // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
       key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${

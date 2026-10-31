@@ -10,6 +10,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowRight,
   IconCrown,
@@ -28,6 +29,7 @@ import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterIm
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
+import { useSetStorylineMainPath } from '~/components/Storyline/storyline.data';
 import {
   useStorylineChildren,
   useStorylineContinueTerms,
@@ -93,6 +95,29 @@ export function StorylineEndOfChapter({
   // The owner is never "closed out" of their own storyline, so their terms are not read.
   const terms = useStorylineContinueTerms(isOwner ? undefined : parentPostId);
   const canWrite = !!parentPostId && (isOwner || !!terms?.open);
+  const setMainPath = useSetStorylineMainPath();
+  // The server refuses a removed chapter. A moderator is not shown one as removed, so is offered it
+  // and sees the refusal. A deleted chapter has no post left to lead to.
+  const makeMainFor = (child: StorylineChild) =>
+    (isOwner || currentUser?.isModerator) &&
+    child.rank !== 'canon' &&
+    child.tombstone !== 'removed' &&
+    child.tombstone !== 'deleted'
+      ? () =>
+          openConfirmModal({
+            title: 'Make this the main path',
+            children: (
+              <Text size="sm">
+                Make <strong>{getStorylineChapterName(child)}</strong> the main path after chapter{' '}
+                {chapterDepth + 1}? Readers are sent this way first. The current main path stays, as
+                one of the other paths.
+              </Text>
+            ),
+            labels: { confirm: 'Make main path', cancel: 'Cancel' },
+            onConfirm: () =>
+              setMainPath.mutate({ chapterId: child.chapterId, parentChapterId: chapterId }),
+          })
+      : undefined;
 
   // Numbered from this chapter, not by their own depth, which a rejoined chapter takes from another branch.
   const [main, ...others] = (children ?? []).map((child) => ({
@@ -175,6 +200,8 @@ export function StorylineEndOfChapter({
                 shares={forkShares}
                 onContinue={onContinue}
                 hotkey={arrowContinues}
+                onMakeMain={makeMainFor(main)}
+                makingMain={setMainPath.isPending}
               />
             )}
             {others.length > 0 && (
@@ -193,6 +220,8 @@ export function StorylineEndOfChapter({
                       child={child}
                       shares={forkShares}
                       onContinue={onContinue}
+                      onMakeMain={makeMainFor(child)}
+                      makingMain={setMainPath.isPending}
                     />
                   ))}
                 </div>
@@ -328,6 +357,23 @@ function ShareBar({ percent, hidden }: { percent: number; hidden?: boolean }) {
   );
 }
 
+/** Above the card's own opener, so it is not read as opening the chapter. */
+function MakeMainButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
+  return (
+    <Button
+      variant="subtle"
+      size="compact-xs"
+      leftSection={<IconCrown size={12} />}
+      onClick={onClick}
+      loading={loading}
+      className="relative z-10 self-start"
+      data-testid="storyline-make-main"
+    >
+      Make main path
+    </Button>
+  );
+}
+
 /** Author, plus the chapter number unless an untitled chapter's name already is it. */
 function byline(child: StorylineChild) {
   const author = child.post?.username ? `by ${child.post.username}` : '';
@@ -350,12 +396,17 @@ function LeadFork({
   shares,
   onContinue,
   hotkey,
+  onMakeMain,
+  makingMain = false,
 }: {
   child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
   /** → also takes this way, so the button says so. */
   hotkey?: boolean;
+  /** Offered to the owner and moderators when this way is not already the main path. */
+  onMakeMain?: () => void;
+  makingMain?: boolean;
 }) {
   const hidden = !child.post;
   const share = getForkShare(shares, child.chapterId);
@@ -446,6 +497,7 @@ function LeadFork({
             Read chapter {child.depth + 1}
           </Button>
         )}
+        {onMakeMain && <MakeMainButton onClick={onMakeMain} loading={makingMain} />}
       </div>
     </div>
   );
@@ -455,10 +507,14 @@ function OtherFork({
   child,
   shares,
   onContinue,
+  onMakeMain,
+  makingMain = false,
 }: {
   child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
+  onMakeMain?: () => void;
+  makingMain?: boolean;
 }) {
   const hidden = !child.post;
   const share = getForkShare(shares, child.chapterId);
@@ -508,6 +564,7 @@ function OtherFork({
             </Text>
           </div>
         )}
+        {onMakeMain && <MakeMainButton onClick={onMakeMain} loading={makingMain} />}
       </div>
       <ForkOpener child={child} name={name} onContinue={onContinue} />
     </div>

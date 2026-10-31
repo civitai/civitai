@@ -22,6 +22,7 @@ import {
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
+import { useIsMounted } from '~/hooks/useIsMounted';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   BLOCK_READY_TIMEOUT_MS,
@@ -302,6 +303,9 @@ const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), {
  * surface from `readyWaitPolicyFor`, never from this constant directly.
  */
 export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
+
+/** How long a dev-tunnel Retry waits for `onRefreshEntryUrl` before re-arming on the current URL. */
+const ENTRY_REFRESH_TIMEOUT_MS = 10_000;
 
 /**
  * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly
@@ -758,7 +762,7 @@ export interface PageBlockHostProps {
    *  because `token`/`tokenError` are owned upstream — only re-minting can. Wired
    *  to the same useBlockToken.refresh as onConsentGranted (it aborts any
    *  in-flight mint; the endpoint is rate-limited 60/min). Omitted → Retry on an
-   *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
+   *  auth error only remounts (a dead end), so the route MUST pass it. */
   onRetryToken?: () => void;
   /**
    * DEV-TUNNEL ONLY: the app reloaded itself inside the frame after it was ready (Vite's
@@ -767,6 +771,16 @@ export interface PageBlockHostProps {
    * other surface never calls it. See `isDevTunnelGuestReload` for the signal and why.
    */
   onGuestReloaded?: () => void;
+  /**
+   * DEV-TUNNEL ONLY: resolve a freshly signed entry URL for the frame. The dev entry token in
+   * `iframeSrc` is short-lived (minutes), and the edge refuses an entry-document load whose token
+   * has expired, so a Retry that remounted the ORIGINAL `iframeSrc` would load a refusal page and
+   * time out again. With this wired, every dev-tunnel Retry (manual and automatic) first awaits a
+   * fresh URL and remounts the frame on it IN PLACE: this host is not remounted, so the bounded
+   * auto-retry budget carries across attempts. A rejected or empty result keeps the current URL.
+   * Ignored on every other surface, whose `iframeSrc` does not expire.
+   */
+  onRefreshEntryUrl?: () => Promise<string>;
   /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
@@ -919,6 +933,7 @@ export function PageBlockHost({
   onConsentGranted,
   onRetryToken,
   onGuestReloaded,
+  onRefreshEntryUrl,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
@@ -1022,6 +1037,10 @@ export function PageBlockHost({
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
   // frame instead of a wedged one. See `handleRetry`.
   const [reloadNonce, setReloadNonce] = useState<number>(0);
+  // DEV-TUNNEL Retry: the fresh entry URL `onRefreshEntryUrl` returned, and the `iframeSrc` it
+  // replaces (see `entrySrc` and `performRetry`). Set in the same batch as the `reloadNonce` bump,
+  // so the re-keyed <iframe> mounts on the fresh URL and never loads the expired one first.
+  const [freshEntry, setFreshEntry] = useState<{ base: string; src: string } | null>(null);
   // BOUNDED AUTO-RETRY budget for this mount. State (not a ref) because the
   // scheduling effect AND the render-failure beacon both derive from it, so it
   // has to drive re-renders. `attempts` counts every automatic attempt;
@@ -1293,13 +1312,18 @@ export function PageBlockHost({
     return () => clearTimeout(t);
   }, [status, revealMs]);
 
+  // The entry URL the frame loads: `iframeSrc`, or the fresh one a dev-tunnel Retry obtained
+  // through `onRefreshEntryUrl` (see `performRetry`). The fresh one is tied to the `iframeSrc` it
+  // replaced, so a parent that hands down a NEW `iframeSrc` always wins over it.
+  const entrySrc = freshEntry && freshEntry.base === iframeSrc ? freshEntry.src : iframeSrc;
+
   const expectedOrigin = useMemo(() => {
     try {
-      return new URL(iframeSrc).origin;
+      return new URL(entrySrc).origin;
     } catch {
       return '';
     }
-  }, [iframeSrc]);
+  }, [entrySrc]);
 
   // The `src` actually rendered: the publisher's src plus the init-fragment
   // fast path, but ONLY when this block+surface is gated on for it. Off by
@@ -1310,7 +1334,7 @@ export function PageBlockHost({
   // The page host's render mode is `'iframe'` by construction — the literal
   // this component already puts in its BLOCK_INIT payload below.
   const renderedIframeSrc = useBlockIframeSrc(
-    iframeSrc,
+    entrySrc,
     { theme, renderMode: 'iframe', blockInstanceId },
     blockInitFragmentEnabled({ surface, blockId, slug })
   );
@@ -5509,7 +5533,7 @@ export function PageBlockHost({
   // 🔴 It deliberately no longer resets `blockRenderEmittedRef`. See the
   // BEACON-SEMANTICS block on the render-failure beacon: one beacon per mount
   // describing the outcome the host settles on.
-  const performRetry = useCallback(
+  const rearm = useCallback(
     ({ remint }: { remint: boolean }) => {
       if (remint) onRetryToken?.();
       controllerRef.current?.dispose();
@@ -5519,6 +5543,47 @@ export function PageBlockHost({
       setStatus('loading');
     },
     [onRetryToken]
+  );
+  const iframeSrcRef = useRef(iframeSrc);
+  iframeSrcRef.current = iframeSrc;
+  const onRefreshEntryUrlRef = useRef(onRefreshEntryUrl);
+  onRefreshEntryUrlRef.current = onRefreshEntryUrl;
+  const entryRefreshInFlightRef = useRef(false);
+  const isMounted = useIsMounted();
+  // 🔴 DEV-TUNNEL: remounting alone reloads the expired entry URL, so when the
+  // parent wires `onRefreshEntryUrl` the Retry waits for a fresh one and swaps it
+  // in (`freshEntry`) in the same batch as the re-key. The in-flight guard stops a
+  // second fetch. A failed, empty or timed-out (`ENTRY_REFRESH_TIMEOUT_MS`) fetch
+  // re-arms on the current URL.
+  const performRetry = useCallback(
+    ({ remint }: { remint: boolean }) => {
+      const refreshEntryUrl = surface === 'dev-tunnel' ? onRefreshEntryUrlRef.current : undefined;
+      if (!refreshEntryUrl) {
+        rearm({ remint });
+        return;
+      }
+      if (entryRefreshInFlightRef.current) return;
+      entryRefreshInFlightRef.current = true;
+      const base = iframeSrcRef.current;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ENTRY_REFRESH_TIMEOUT_MS);
+      });
+      const fetched = Promise.resolve()
+        .then(refreshEntryUrl)
+        .then(
+          (src) => src,
+          () => null
+        );
+      void Promise.race([fetched, timedOut]).then((src) => {
+        clearTimeout(timer);
+        entryRefreshInFlightRef.current = false;
+        if (!isMounted()) return;
+        if (src) setFreshEntry({ base, src });
+        rearm({ remint });
+      });
+    },
+    [rearm, surface, isMounted]
   );
 
   const handleRetry = useCallback(() => {
@@ -5534,8 +5599,11 @@ export function PageBlockHost({
     // construction: `performRetry` flips the status back to 'loading', which makes
     // `decideAutoRetry` return 'none', which tears down the pending backoff timer
     // in the scheduling effect's cleanup — so exactly ONE attempt runs, the one
-    // the user asked for. It also does NOT consume the automatic budget: the user
-    // taking over shouldn't spend the platform's remaining recovery attempts.
+    // the user asked for. (A dev-tunnel Retry flips the status only once its fresh
+    // entry URL arrives; until then the timer skips itself while that fetch is in
+    // flight — see the scheduling effect.) It also does NOT consume the automatic
+    // budget: the user taking over shouldn't spend the platform's remaining
+    // recovery attempts.
     performRetry({ remint: prior === 'error' || prior === 'no_token' });
   }, [performRetry]);
 
@@ -5565,6 +5633,11 @@ export function PageBlockHost({
     if (autoRetry.kind !== 'retry') return;
     const { delayMs, remint } = autoRetry;
     const t = setTimeout(() => {
+      // A dev-tunnel Retry is already fetching its fresh entry URL (a manual Retry
+      // the user clicked during this backoff): that attempt is the one that runs,
+      // and its re-arm recomputes this decision. Firing here would spend the
+      // automatic budget on an attempt `performRetry` drops.
+      if (entryRefreshInFlightRef.current) return;
       // Consume the budget FIRST so the decision recomputes to the next attempt
       // (or to 'none') even if the retry re-fails instantly.
       setAutoRetryBudget((b) => ({
