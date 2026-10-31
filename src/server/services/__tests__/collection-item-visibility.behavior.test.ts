@@ -168,6 +168,35 @@ describe.each([
   });
 });
 
+describe('a batch', () => {
+  it('refuses the whole batch when any item is hidden', async () => {
+    await expect(
+      assertCollectionItemsVisibleToViewer({ itemKey: 'postId', ids: [1, 2], userId: VIEWER })
+    ).rejects.toMatchObject(refused);
+  });
+
+  it('accepts a batch split across the replica and the primary', async () => {
+    await primary.exec(`INSERT INTO "Article" (id, "userId") VALUES (9, ${OWNER});`);
+    await expect(
+      assertCollectionItemsVisibleToViewer({ itemKey: 'articleId', ids: [1, 9], userId: VIEWER })
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('block list', () => {
+  beforeEach(() => getCached.mockResolvedValue([{ id: OWNER, username: 'owner' }]));
+
+  it("does not apply to the item's owner", async () => {
+    await expect(check('postId', 1, { userId: OWNER })).resolves.toBeUndefined();
+  });
+
+  it('does not apply to staff', async () => {
+    await expect(
+      check('postId', 1, { userId: VIEWER, isModerator: true })
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe('across databases', () => {
   it('accepts a post the replica still shows as a draft, once the primary has the publish', async () => {
     await replica.exec(`UPDATE "Post" SET "publishedAt" = NULL WHERE id = 1;`);
@@ -187,7 +216,11 @@ describe('across databases', () => {
 
 describe('models with restricted visibility', () => {
   it('refuses a model the viewer may not see under the model rule', async () => {
-    hiddenModels.mockResolvedValue(new Set([1]));
+    hiddenModels.mockImplementation(async (ids: unknown, viewer: unknown) =>
+      JSON.stringify([ids, viewer]) === JSON.stringify([[1], { id: VIEWER }])
+        ? new Set([1])
+        : new Set()
+    );
     await expect(check('modelId', 1, { userId: VIEWER })).rejects.toMatchObject(refused);
   });
 

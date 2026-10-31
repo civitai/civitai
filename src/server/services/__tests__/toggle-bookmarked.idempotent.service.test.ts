@@ -39,6 +39,14 @@ vi.mock('~/server/metrics', () => ({
 }));
 // Mirrors the engagement-toggle test: stub the user-preferences module surface user.service
 // reaches at import time so module load doesn't pull in the real cache layer.
+// Entity 66 is one the user may not see; the rule itself has its own test.
+vi.mock('~/server/services/collection-item-visibility', () => ({
+  assertCollectionItemsVisibleToViewer: vi.fn(
+    async ({ ids, isModerator }: { ids: number[]; isModerator?: boolean }) => {
+      if (ids.includes(66) && !isModerator) throw new Error('Item not found');
+    }
+  ),
+}));
 vi.mock('~/server/services/user-preferences.service', () => ({
   HiddenModels: { refreshCache: vi.fn(async () => undefined) },
   HiddenModels3D: { refreshCache: vi.fn(async () => undefined) },
@@ -176,5 +184,29 @@ describe('toggleBookmarked — race #1: collection.create P2002 is caught and re
     await expect(toggleBookmarked(args)).rejects.toThrow(
       'bookmark collection missing after create race'
     );
+  });
+});
+
+describe('toggleBookmarked — only what the user may see', () => {
+  it.each([CollectionType.Model, CollectionType.Article])(
+    'refuses to bookmark a %s the user cannot see, writing nothing',
+    async (type) => {
+      await expect(toggleBookmarked({ ...args, type, entityId: 66 })).rejects.toThrow(
+        'Item not found'
+      );
+      expect(mockDb.collectionItem.createMany).not.toHaveBeenCalled();
+    }
+  );
+
+  it('lets staff bookmark it', async () => {
+    await expect(toggleBookmarked({ ...args, entityId: 66, isModerator: true })).resolves.toBe(
+      true
+    );
+  });
+
+  it('still removes an existing bookmark of it', async () => {
+    mockDb.collectionItem.findFirst.mockResolvedValueOnce({ id: 555 });
+    await expect(toggleBookmarked({ ...args, entityId: 66 })).resolves.toBe(false);
+    expect(mockDb.collectionItem.deleteMany).toHaveBeenCalledTimes(1);
   });
 });

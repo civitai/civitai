@@ -58,6 +58,7 @@ import {
 } from '~/shared/constants/challenge.constants';
 import {
   addSimpleImagePostInput,
+  BULK_SAVE_MAX_ITEMS,
   bulkSaveCollectionItemsInput,
 } from '~/server/schema/collection.schema';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
@@ -258,7 +259,11 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
     const data = { collectionId, imageIds: selectedImageIds, tagId };
     const results = bulkSaveCollectionItemsInput.safeParse(data);
     if (!results.success) {
-      setError('You must select at least one image.');
+      setError(
+        selectedImageIds.length > BULK_SAVE_MAX_ITEMS
+          ? `You can add up to ${BULK_SAVE_MAX_ITEMS} images at a time`
+          : 'You must select at least one image.'
+      );
       return;
     }
 
@@ -356,7 +361,11 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
     const data = { collectionId, images };
     const results = addSimpleImagePostInput.safeParse(data);
     if (!results.success) {
-      setError('You must upload at least one image.');
+      setError(
+        images.length > BULK_SAVE_MAX_ITEMS
+          ? `You can upload up to ${BULK_SAVE_MAX_ITEMS} images at a time`
+          : 'You must upload at least one image.'
+      );
       return;
     }
 

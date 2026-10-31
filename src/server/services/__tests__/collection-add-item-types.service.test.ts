@@ -13,9 +13,12 @@ const mockDbWrite = dbMock.dbWrite;
 
 const HIDDEN = 66;
 
-const { assertVisible } = vi.hoisted(() => ({
-  assertVisible: vi.fn(async ({ ids }: { ids: number[] }) => {
-    if (ids.includes(66)) throw new TRPCError({ code: 'NOT_FOUND', message: 'Item not found' });
+// Hidden only under the key the test names, so a list checked under the wrong type passes.
+const { assertVisible, hiddenKey } = vi.hoisted(() => ({
+  hiddenKey: { value: '' },
+  assertVisible: vi.fn(async ({ itemKey, ids }: { itemKey: string; ids: number[] }) => {
+    if (itemKey === hiddenKey.value && ids.includes(66))
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Item not found' });
   }),
 }));
 vi.mock('~/server/services/collection-item-visibility', async (importOriginal) => ({
@@ -90,6 +93,10 @@ const arrange = (type: string) => {
 };
 
 describe.each(TYPES)('adding a %s', (type, key, bulkKey) => {
+  beforeEach(() => {
+    hiddenKey.value = key;
+  });
+
   it('refuses one the caller cannot see, through saveItemInCollections', async () => {
     arrange(type);
     await expect(
@@ -104,6 +111,22 @@ describe.each(TYPES)('adding a %s', (type, key, bulkKey) => {
       })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+    expect(assertVisible).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds one the caller can see, through saveItemInCollections', async () => {
+    arrange(type);
+    await expect(
+      saveItemInCollections({
+        input: {
+          type,
+          [key]: 5,
+          userId: SUBMITTER_ID,
+          collections: [{ collectionId: COLLECTION_ID }],
+          removeFromCollectionIds: [],
+        } as never,
+      })
+    ).resolves.toBe('added');
   });
 
   it('refuses one the caller cannot see, through bulkSaveItems', async () => {
@@ -115,6 +138,7 @@ describe.each(TYPES)('adding a %s', (type, key, bulkKey) => {
       })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockDbWrite.collectionItem.createMany).not.toHaveBeenCalled();
+    expect(assertVisible).toHaveBeenCalledWith(expect.objectContaining({ itemKey: key }));
   });
 
   it('refuses one the caller cannot see as the first item of a new collection', async () => {
@@ -128,6 +152,7 @@ describe.each(TYPES)('adding a %s', (type, key, bulkKey) => {
 });
 
 it('refuses a hidden 3D model as the first item of a new collection', async () => {
+  hiddenKey.value = 'model3dId';
   await expect(
     upsertCollection({
       input: { name: 'Mine', type: 'Model3D', read: 'Public', model3dId: HIDDEN, userId: 1 },
@@ -154,4 +179,24 @@ it('passes the item type and the caller to the check', async () => {
     userId: SUBMITTER_ID,
     isModerator: true,
   });
+});
+
+it('judges the item that was sent, when other item fields arrive empty', async () => {
+  hiddenKey.value = 'postId';
+  arrange('Post');
+  await expect(
+    saveItemInCollections({
+      input: {
+        type: 'Post',
+        imageId: undefined,
+        modelId: undefined,
+        articleId: undefined,
+        postId: HIDDEN,
+        userId: SUBMITTER_ID,
+        collections: [{ collectionId: COLLECTION_ID }],
+        removeFromCollectionIds: [],
+      } as never,
+    })
+  ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
 });

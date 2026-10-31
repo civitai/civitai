@@ -1125,6 +1125,7 @@ export async function toggleFavoriteHandler({
       type: 'Model',
       entityId: modelId,
       userId,
+      isModerator: ctx.user.isModerator,
       setTo,
     });
   } else {

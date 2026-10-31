@@ -981,8 +981,9 @@ export const saveItemInCollections = async ({
     canAccessUserChallenges?: boolean;
   };
 }) => {
-  const itemKey = Object.keys(inputToCollectionType).find((key) =>
-    input.hasOwnProperty(key)
+  // `!= null`, not hasOwnProperty: a key sent as undefined would name an item that isn't there.
+  const itemKey = Object.keys(inputToCollectionType).find(
+    (key) => input[key as keyof typeof input] != null
   ) as keyof typeof inputToCollectionType;
   if (!itemKey) throw throwBadRequestError(`We don't know the type of thing you're adding`);
   // Safeguard against duppes.
