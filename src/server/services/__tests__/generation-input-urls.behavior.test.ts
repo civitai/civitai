@@ -480,6 +480,26 @@ describe('assertGenerationInputsUsable', () => {
       'refused'
     );
   });
+
+  it.each([
+    [
+      'a subdomain of the proxy host',
+      'https://evil.orchestration-proxy.civitai.com/v2/consumer/blobs/x',
+    ],
+    [
+      'a host that starts with it',
+      'https://orchestration-proxy.civitai.com.evil.example/v2/consumer/blobs/x',
+    ],
+  ])('does not trust %s', async (_, url) => {
+    expect(await gate([url], 'iterateGenerate')).toBe('refused');
+  });
+
+  it('refuses an allowed external url carrying a blocked image key', async () => {
+    await givenImage({ blockedFor: 'moderated' });
+    expect(
+      await gate([`https://proxy.example/?url=${encodeURIComponent(CDN())}`], 'generateFromGraph')
+    ).toBe('refused');
+  });
 });
 
 describe('generationInputUrlsIn', () => {
@@ -520,18 +540,44 @@ describe('generationInputUrlsIn', () => {
     ['a path', `/x/${KEY}/original=true`],
     ['no scheme', `image.civitai.com/x/${KEY}/original=true`],
     ['a zero-width space in front', `\u200bhttps://image.civitai.com/x/${KEY}/original=true`],
+    ['a protocol-relative url with no key', '//evil.example/a.png'],
+    ['another scheme with no key', 's3://bucket/a.png'],
+    ['a file url with no slashes', 'file:/etc/x.png'],
+    ['a blob url', 'blob:abc'],
+    ['an ftp url', 'ftp:host/a.png'],
+    ['a ws url', 'ws:host/a'],
+    ['a wss url', 'wss:host/a'],
   ])('collects an image url with %s', (_, url) => {
     expect(generationInputUrlsIn({ images: [{ url }], prompt: url })).toEqual([url]);
   });
 
-  it('leaves text fields, AIR urns and scheme-like words alone', () => {
+  it.each([
+    'prompt',
+    'negativePrompt',
+    'musicDescription',
+    'lyrics',
+    'description',
+    'title',
+    'texturePrompt',
+    'yue2Abc',
+    'name',
+    'trainedWords',
+  ])('leaves the text field %s alone, as a string or a list of strings', (field) => {
+    const url = `https://image.civitai.com/x/${KEY}/original=true`;
+    expect(generationInputUrlsIn({ [field]: url })).toEqual([]);
+    expect(generationInputUrlsIn({ [field]: ['text', url] })).toEqual([]);
+  });
+
+  it('still walks an object or a mixed list under a text field name', () => {
+    expect(generationInputUrlsIn({ description: { url: KEY } })).toEqual([KEY]);
+    expect(generationInputUrlsIn({ title: ['x', { url: KEY }] })).toEqual([KEY]);
+  });
+
+  it('leaves AIR urns and scheme-like setting values alone', () => {
     const input = {
-      title: 'Data: The Song',
-      texturePrompt: 'file: rusty metal',
       workflow: 'txt2img:draft',
       aspectRatio: '16:9',
-      resources: [{ air: `urn:air:sdxl:lora:orchestrator:blob@${KEY}`, name: `//${KEY}` }],
-      model: { trainedWords: ['//style', KEY, 'https://example.com/x'] },
+      resources: [{ air: `urn:air:sdxl:lora:orchestrator:blob@${KEY}` }],
     };
     expect(generationInputUrlsIn(input)).toEqual([]);
   });

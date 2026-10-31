@@ -100,10 +100,11 @@ describe('comics generation inputs', () => {
       })
     ).rejects.toBe(refused);
     expect(mocks.assertInputs).toHaveBeenCalledTimes(1);
-    expect(mocks.assertInputs.mock.calls[0][0]).toMatchObject({
+    expect(mocks.assertInputs.mock.calls[0][0]).toEqual({
       urls: [SOURCE, cdnRef],
       userId: USER_ID,
       entry: 'comicsCostEstimate',
+      isApiCaller: false,
     });
     expect(mocks.getOrchestratorToken).not.toHaveBeenCalled();
   });
