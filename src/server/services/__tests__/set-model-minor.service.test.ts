@@ -1625,16 +1625,16 @@ describe('setModelMinor — lift restore on a real row', () => {
   });
 
   it.each([
-    ['on another model', 'model', MODEL_ID + 1, '+'],
-    ['on another entity type', 'image', MODEL_ID, '+'],
-    ['before the flag', 'model', MODEL_ID, '-'],
+    ['on another model', 'model', MODEL_ID + 1, '+ 1 second'],
+    ['on another entity type', 'image', MODEL_ID, '+ 1 second'],
+    ['before the flag', 'model', MODEL_ID, '- 1 hour'],
   ])(
     'a rating ruling logged %s does not stop the restore',
-    async (_, entityType, entityId, sign) => {
+    async (_, entityType, entityId, offset) => {
       await flag();
       await pg.query(
         `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
-       VALUES ($1, 'setSfwOnly', $2, $3, now() ${sign} interval '1 second')`,
+       VALUES ($1, 'setSfwOnly', $2, $3, now() ${offset[0]} interval '${offset.slice(2)}')`,
         [MODERATOR_ID, entityType, entityId]
       );
 
