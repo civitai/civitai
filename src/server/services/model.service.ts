@@ -2709,7 +2709,7 @@ export async function applyModelFlagSideEffects({
   if (minorChanged)
     setTimeout(
       () => bustPublicModelResponseCache(id).catch(() => null),
-      PUBLIC_RESPONSE_REBUST_DELAY_MS
+      publicResponseRebustDelayMs(env.REPLICATION_LAG_DELAY)
     ).unref?.();
 
   if (minorChanged || poiChanged) {
@@ -6045,11 +6045,10 @@ export async function getHeldLevelsByPost(postIds: number[]) {
 }
 
 const HELD_LEVEL_READ_CONCURRENCY = 20;
-// Past the replica lag the recent-write tracker assumes, so the rebuild reads the new flags.
-const PUBLIC_RESPONSE_REBUST_DELAY_MS = Math.max(
-  5_000,
-  ((Number(env.REPLICATION_LAG_DELAY) || 0) + 1) * 1_000
-);
+/** Past the replica lag the recent-write tracker assumes, so the rebuild reads the new flags. */
+export function publicResponseRebustDelayMs(lagSeconds: unknown) {
+  return Math.max(5_000, ((Number(lagSeconds) || 0) + 1) * 1_000);
+}
 
 /**
  * For each minor or SFW-only model, the level its gallery is held at. A model not held is absent.

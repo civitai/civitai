@@ -226,6 +226,25 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     expect(data.images.map((image) => image.id)).toEqual([WITHIN]);
   });
 
+  it('the models search document of a minor row is held even when its cached settings say it is not', async () => {
+    galleryReads(() => JSON.stringify({ none: true }));
+    const db = {
+      model: {
+        findMany: async () => [
+          { id: HELD_MODEL, minor: true, sfwOnly: true, modelVersions: [{ id: VERSION }] },
+        ],
+      },
+    };
+    const data = await pullModelsData(
+      { db, logger: () => undefined } as never,
+      {
+        type: 'update',
+        ids: [HELD_MODEL],
+      } as never
+    );
+    expect(data.images.map((image) => image.id)).toEqual([WITHIN]);
+  });
+
   it('the models search document fails its batch, to be retried, when the gallery settings cannot be read', async () => {
     failGalleryReads();
     const db = {

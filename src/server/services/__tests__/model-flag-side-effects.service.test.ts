@@ -100,7 +100,10 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import { applyModelFlagSideEffects } from '~/server/services/model.service';
+import {
+  applyModelFlagSideEffects,
+  publicResponseRebustDelayMs,
+} from '~/server/services/model.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -152,6 +155,13 @@ describe('applyModelFlagSideEffects — public API response', () => {
     expect(mockBustRest).not.toHaveBeenCalled();
     vi.advanceTimersByTime(5_000);
     expect(mockBustRest.mock.calls).toEqual([[42]]);
+  });
+
+  it('waits out the configured replica lag, and never less than 5 seconds', () => {
+    expect(publicResponseRebustDelayMs(30)).toBe(31_000);
+    expect(publicResponseRebustDelayMs(2)).toBe(5_000);
+    expect(publicResponseRebustDelayMs(undefined)).toBe(5_000);
+    expect(publicResponseRebustDelayMs('nope')).toBe(5_000);
   });
 
   it('schedules nothing more when neither minor nor SFW-only changed', async () => {

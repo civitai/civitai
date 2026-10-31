@@ -65,7 +65,7 @@ const INDEX_ID = MODELS_SEARCH_INDEX;
  */
 async function heldShowcaseImages(
   modelVersionIds: number[],
-  models: { id: number; modelVersions: { id: number }[] }[],
+  models: { id: number; minor?: boolean; sfwOnly?: boolean; modelVersions: { id: number }[] }[],
   onReadFailure: 'floor' | 'throw'
 ) {
   // Loaded on demand: the model service imports this index.
@@ -73,7 +73,14 @@ async function heldShowcaseImages(
   return holdShowcaseImages(await imagesForModelVersionsCache.fetch(modelVersionIds), {
     models: new Map(
       models.flatMap((model) =>
-        model.modelVersions.map((version) => [version.id, { modelId: model.id }] as const)
+        model.modelVersions.map(
+          // Flagged rows only: every model is still read, so a just-changed flag is read past lag.
+          (version) =>
+            [
+              version.id,
+              { modelId: model.id, flagged: model.minor || model.sfwOnly ? true : undefined },
+            ] as const
+        )
       )
     ),
     onReadFailure,

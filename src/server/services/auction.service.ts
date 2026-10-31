@@ -223,7 +223,17 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
   // Held for every viewer: the cards are the same for everyone who opens the auction.
   const { holdShowcaseImages } = await import('~/server/services/model.service');
   const imageData = await holdShowcaseImages(await imagesForModelVersionsCache.fetch(entityIds), {
-    models: new Map(mvData.map((d) => [d.id, { modelId: d.model.id, ownerId: d.model.user.id }])),
+    models: new Map(
+      mvData.map((d) => [
+        d.id,
+        // `minor` only: SFW-only is not selected here, so an unflagged row is still read.
+        {
+          modelId: d.model.id,
+          ownerId: d.model.user.id,
+          flagged: d.model.minor ? true : undefined,
+        },
+      ])
+    ),
   });
   const mvById = new Map(mvData.map((d) => [d.id, d]));
 
