@@ -469,4 +469,51 @@ describe('generationInputUrlsIn', () => {
       ].sort()
     );
   });
+
+  it.each([
+    ['a space in the path', `https://image.civitai.com/x/${KEY}/original=true/my pic.jpeg`],
+    ['a no-break space in the path', `https://image.civitai.com/x/${KEY}/original=true/my\u00a0pic.jpeg`],
+    ['no slashes after the scheme', `https:image.civitai.com/x/${KEY}/original=true`],
+    ['one slash after the scheme', `https:/image.civitai.com/x/${KEY}/original=true`],
+    ['a key without dashes', KEY.replace(/-/g, '')],
+    ['a key in braces', `{${KEY}}`],
+  ])('collects an image url with %s', (_, url) => {
+    expect(generationInputUrlsIn({ images: [{ url }], prompt: url })).toEqual([url]);
+  });
+});
+
+describe('a url spelled so the input walk once missed it', () => {
+  const gateGraph = (input: unknown) =>
+    assertGenerationInputsUsable({
+      urls: generationInputUrlsIn(input),
+      userId: CALLER,
+      entry: 'generateFromGraph',
+      isApiCaller: false,
+      now: AFTER,
+    }).then(
+      () => 'accepted',
+      () => 'refused'
+    );
+
+  it.each([
+    ['a space in the path', `https://image.civitai.com/x/${KEY}/original=true/my pic.jpeg`],
+    ['no slashes after the scheme', `https:image.civitai.com/x/${KEY}/original=true`],
+    ['a key without dashes', KEY.replace(/-/g, '')],
+  ])("is refused for another user's private image, with %s", async (_, url) => {
+    await givenImage({ postId: null });
+    expect(await gateGraph({ images: [{ url: `https://image.civitai.com/x/${KEY}/original=true` }] })).toBe(
+      'refused'
+    );
+    expect(await gateGraph({ images: [{ url }] })).toBe('refused');
+  });
+
+  it("accepts the same spellings of another user's public image where they parse", async () => {
+    await givenImage();
+    expect(
+      await gateGraph({ images: [{ url: `https://image.civitai.com/x/${KEY}/original=true/my pic.jpeg` }] })
+    ).toBe('accepted');
+    expect(await gateGraph({ images: [{ url: `https:image.civitai.com/x/${KEY}/original=true` }] })).toBe(
+      'accepted'
+    );
+  });
 });

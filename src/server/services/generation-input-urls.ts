@@ -193,18 +193,34 @@ const refusalCounter = registerCounterWithLabels({
   labelNames: ['entry', 'class', 'caller', 'mode'] as const,
 });
 
-/** A whole value that names something to fetch: `scheme://…`, `data:…` or `//host…`. */
-const FETCHABLE = /^\s*(?:[a-z][a-z0-9+.-]*:\/\/|data:|\/\/)/i;
+/** Schemes a fetcher may resolve. `urn:` (AIR ids) is not one of them. */
+const FETCH_SCHEMES = new Set(['http:', 'https:', 'data:', 'blob:', 'ftp:', 'file:', 'ws:', 'wss:']);
+
+/** Graph fields that hold free text, never a url read by a handler. */
+const FREE_TEXT_FIELDS = new Set(['prompt', 'negativePrompt', 'musicDescription', 'lyrics', 'description']);
+
+/** Anything that may be a key in another spelling: uuid hex with or without dashes or braces. */
+const KEY_LIKE = /^\{?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\}?$/i;
+
+/** Whether `value` is something a fetcher would treat as a url or a key. Decided by parsing. */
+function isFetchableValue(value: string) {
+  const trimmed = value.trim();
+  if (KEY_LIKE.test(trimmed) || trimmed.startsWith('//')) return true;
+  try {
+    return FETCH_SCHEMES.has(new URL(trimmed).protocol);
+  } catch {
+    return false;
+  }
+}
 
 /**
- * Every string anywhere in `value` that is, as a whole, a bare upload key or a fetchable url.
- * Text that merely contains a url (a prompt) and AIR urns are not collected.
+ * Every string in `value` that parses as a fetchable url or is key-shaped, at any depth, except the
+ * free-text fields (a prompt that mentions a url is not an input image).
  */
 export function generationInputUrlsIn(value: unknown, out: string[] = [], depth = 0): string[] {
   if (depth > 32 || value == null) return out;
   if (typeof value === 'string') {
-    const isUrl = FETCHABLE.test(value) && !/\s/.test(value.trim());
-    if (BARE_KEY.test(value.trim().toLowerCase()) || isUrl) out.push(value);
+    if (isFetchableValue(value)) out.push(value);
     return out;
   }
   if (Array.isArray(value)) {
@@ -212,8 +228,9 @@ export function generationInputUrlsIn(value: unknown, out: string[] = [], depth 
     return out;
   }
   if (typeof value === 'object') {
-    for (const item of Object.values(value as Record<string, unknown>))
-      generationInputUrlsIn(item, out, depth + 1);
+    for (const [field, item] of Object.entries(value as Record<string, unknown>))
+      if (!(FREE_TEXT_FIELDS.has(field) && typeof item === 'string'))
+        generationInputUrlsIn(item, out, depth + 1);
   }
   return out;
 }
