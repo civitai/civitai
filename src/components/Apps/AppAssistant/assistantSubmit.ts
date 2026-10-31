@@ -6,6 +6,8 @@ import {
   type SensitiveScopeManifestInput,
 } from '~/shared/constants/block-scope.constants';
 import { getBase64 } from '~/utils/file-utils';
+import type { SubmitListingReadiness } from '~/server/services/blocks/publish-request.service';
+import { FLOOR_PROBLEM_CODES } from '~/shared/utils/listing-publish-floor';
 
 /**
  * Submit for review from App Assistant: the user's press on the card a `submit_for_review` call shows
@@ -40,25 +42,14 @@ export interface SubmitReceipt {
 
 /**
  * The store-listing half of a submit's answer (the route's `listing`), reduced to what the card
- * says: the step a moderator's approval waits on, and what else the listing should have.
+ * says: the route's `approvalBlocked` and `nextStep`, and what else the listing should have.
  */
-export interface SubmitListingNotice {
-  /** True when a moderator cannot approve this submission until the listing has an icon and a cover. */
-  approvalBlocked: boolean;
-  /** The route's plain-words next step when approval is blocked. */
-  nextStep: string | null;
+export type SubmitListingNotice = Pick<SubmitListingReadiness, 'approvalBlocked' | 'nextStep'> & {
   /** Labels of the other problems that keep the listing from going live (e.g. a blocked image). */
   required: string[];
   /** Labels of the recommended-but-optional problems. */
   recommended: string[];
-}
-
-/**
- * The floor problems `nextStep` words. Dropped ONLY when a next step is shown: on an update to
- * a listing that went live without art, approval is not blocked, there is no next step, and
- * these are the only words saying the icon or cover is missing.
- */
-const FLOOR_PROBLEM_CODES = new Set(['missing-icon', 'missing-cover']);
+};
 
 /** `value` (the route's `listing`) as a notice, or `undefined` when it is absent or malformed. */
 export function listingNoticeOf(value: unknown): SubmitListingNotice | undefined {
@@ -73,7 +64,8 @@ export function listingNoticeOf(value: unknown): SubmitListingNotice | undefined
       )
     : [];
   const approvalBlocked = v.approvalBlocked === true;
-  const nextStep = approvalBlocked && typeof v.nextStep === 'string' ? v.nextStep : null;
+  const nextStep = typeof v.nextStep === 'string' && v.nextStep ? v.nextStep : null;
+  // Drop the floor problems only when nextStep words them; an update to a live listing has no nextStep.
   return {
     approvalBlocked,
     nextStep,

@@ -195,13 +195,13 @@ import { updateBlockUserSettingsFromClaims } from '~/server/services/blocks/user
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
 import {
   computeListingProblems,
+  listingProblemInput,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
 // The ONE spelling of "which moderation actions can explain a removal". Value import:
 // it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
 import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isRedCapableHost } from '~/server/utils/server-domain';
-import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -3170,35 +3170,6 @@ export const blocksRouter = router({
     // live/removed listing state. A publish request stays `approved` after an owner
     // unpublish, so the request status alone can't tell live from owner-hidden. One
     // batched findMany (NOT per-row) keyed by appBlockId.
-    // Additive projection (advisory listing-completeness warning on
-    // /apps/my-submissions): the asset ids + key text fields + a screenshot
-    // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
-    // helper below. Purely additive — the owner-controls fields are unchanged.
-    const listingByBlockId = new Map<
-      string,
-      {
-        id: string;
-        status: string;
-        iconId: number | null;
-        coverId: number | null;
-        description: string | null;
-        tagline: string | null;
-        category: string | null;
-        screenshotCount: number;
-        contentRating: string | null;
-        /**
-         * The listing's kind, threaded into `computeListingProblems` so the three
-         * empty-text problems name the right remedy.
-         *
-         * 🔴 PROJECTED, NOT ASSUMED, even though the `where` below filters
-         * `kind: 'onsite'`. A literal `'onsite'` at the call site would be a SECOND
-         * place that has to stay in step with that filter, and it would go wrong
-         * SILENTLY (wrong advice, no error) if the filter is ever widened. Reading
-         * the column costs nothing and cannot drift.
-         */
-        kind: string;
-      }
-    >();
     // The listing projection both queries below select — the keyed backing listing and the
     // pre-approval draft — so the two feed `computeListingProblems` identically.
     const listingSelect = {
@@ -3235,20 +3206,7 @@ export const blocksRouter = router({
       contentRating?: string | null;
       _count: { screenshots: number };
     };
-    const toListingFacts = (l: ProjectedListing) => ({
-      id: l.id,
-      status: l.status,
-      // A narrow test fake that ignores `select` yields `undefined`; both `where`
-      // clauses admit only on-site rows, so that is the honest fallback.
-      kind: l.kind ?? 'onsite',
-      iconId: l.iconId,
-      coverId: l.coverId,
-      description: l.description,
-      tagline: l.tagline,
-      category: l.category,
-      screenshotCount: l._count.screenshots,
-      contentRating: l.contentRating ?? null,
-    });
+    const listingByBlockId = new Map<string, ProjectedListing>();
 
     // 🔴 THE PRE-APPROVAL DRAFT OF A FIRST-VERSION REQUEST. W13 draft-at-submit mints the
     // app's on-site listing at SUBMIT (`submitVersion`: status='draft', appBlockId=NULL,
@@ -3269,7 +3227,7 @@ export const blocksRouter = router({
     const readsDraft = (r: RawRow) =>
       !r.appBlock?.id && (r.status === 'pending' || r.status === 'rejected');
     const draftSlugs = [...new Set(rows.filter(readsDraft).map((r: RawRow) => r.slug))];
-    const draftBySlug = new Map<string, ReturnType<typeof toListingFacts>>();
+    const draftBySlug = new Map<string, ProjectedListing>();
     if (draftSlugs.length) {
       const { draftTransitionWhere } = await import(
         '~/server/services/blocks/publish-request.service'
@@ -3281,7 +3239,7 @@ export const blocksRouter = router({
         },
         select: listingSelect,
       })) as ProjectedListing[];
-      for (const d of drafts) if (d.slug) draftBySlug.set(d.slug, toListingFacts(d));
+      for (const d of drafts) if (d.slug) draftBySlug.set(d.slug, d);
     }
 
     if (appBlockIds.length) {
@@ -3290,9 +3248,22 @@ export const blocksRouter = router({
         select: listingSelect,
       })) as ProjectedListing[];
       for (const l of listings) {
-        if (l.appBlockId) listingByBlockId.set(l.appBlockId, toListingFacts(l));
+        if (l.appBlockId) listingByBlockId.set(l.appBlockId, l);
       }
     }
+    // The scan dimension of `problems` (blocked / still-scanning media), batched over every
+    // listing the page reports on, as /apps/mine reads it.
+    const { loadListingAssetScansBatch } = await import(
+      '~/server/services/blocks/app-listing-assets.service'
+    );
+    const problemListings = [
+      ...new Map(
+        [...listingByBlockId.values(), ...draftBySlug.values()].map((l) => [l.id, l])
+      ).values(),
+    ];
+    const scansByListingId = await loadListingAssetScansBatch(
+      problemListings.map((l) => ({ id: l.id, iconId: l.iconId, coverId: l.coverId }))
+    );
 
     // For every REMOVED backing listing, its MOST-RECENT STATUS-CHANGING moderation-event
     // action — so the UI distinguishes an owner-hidden listing (last event
@@ -3362,22 +3333,14 @@ export const blocksRouter = router({
         // listing. Empty only when there is no listing row at all (a legacy pending
         // request from before draft-at-submit, or a draft create that failed).
         problems: problemsListing
-          ? computeListingProblems({
-              kind: problemsListing.kind as ListingProblemKind,
-              iconId: problemsListing.iconId,
-              coverId: problemsListing.coverId,
-              screenshotCount: problemsListing.screenshotCount,
-              description: problemsListing.description,
-              tagline: problemsListing.tagline,
-              category: problemsListing.category,
-              status: problemsListing.status,
-              contentRating: problemsListing.contentRating,
-              declaredContentRating: declaredListingRating({
-                kind: problemsListing.kind,
+          ? computeListingProblems(
+              listingProblemInput(problemsListing, {
+                // kind is always selected; ?? only satisfies the type
+                kind: (problemsListing.kind ?? 'onsite') as ListingProblemKind,
                 appRating: r.appBlock?.contentRating,
-                listingRating: problemsListing.contentRating,
-              }),
-            }).problems
+                assetScans: scansByListingId.get(problemsListing.id) ?? [],
+              })
+            ).problems
           : [],
         // Whether the manifest declares a launchable page (drives the Open-live →
         // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
