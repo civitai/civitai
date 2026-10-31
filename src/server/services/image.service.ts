@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { reviewCollectionImageSql } from '~/server/services/collection-review.sql';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type { EventViewer } from '~/server/events/event-access';
@@ -1954,6 +1955,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   // Server-only: the caller takes a post's images in the requested sort (the gallery's post
   // completion), so the feed service may serve `postIds` for the website too.
   postIdsInRequestedSort?: boolean;
+  // Server-only: a hub's held models do not hold this viewer (a moderator on a full credential).
+  holdExempt?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -2102,6 +2105,12 @@ const getAllImagesUncaptured = async (
     throwOnStatementTimeout?: boolean;
     /** `false`: the per-image caches serve hits but don't write misses back. */
     cacheWriteBack?: boolean;
+    /**
+     * With `pending`: a collection whose REVIEW and REJECTED submissions the viewer reviews, so its
+     * images not yet rated are shown to them too. Server-set only; checked against the viewer's
+     * ownership or MANAGE permission in the query.
+     */
+    reviewCollectionId?: number;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -2179,6 +2188,7 @@ const getAllImagesUncaptured = async (
     minorOnly,
     pendingReviewOnly,
     cacheWriteBack,
+    reviewCollectionId,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
   let { dbTarget = 'read' } = input;
@@ -2786,7 +2796,14 @@ const getAllImagesUncaptured = async (
     } else if (userId) {
       AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
       AND.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId})))`
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId}))${
+          reviewCollectionId
+            ? Prisma.sql` OR ${reviewCollectionImageSql({
+                collectionId: reviewCollectionId,
+                userId,
+              })}`
+            : Prisma.empty
+        })`
       );
     }
   } else {
@@ -3896,6 +3913,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
+  holdExempt?: boolean;
   offset?: number;
   entry?: number;
   blockedFor?: string[];
@@ -4272,6 +4290,7 @@ async function resolvedHubSources(input: ImageSearchInput) {
     hubId: input.hubId,
     userId: input.currentUserId,
     isModerator: input.isModerator,
+    holdExempt: input.holdExempt,
     excludedSources: input.hubExcludedSources,
   });
 }

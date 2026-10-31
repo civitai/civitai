@@ -300,7 +300,7 @@ async function ruleFlag(
   if (flag.source === 'hash' || flag.source === 'file-match') {
     const result = await hashRuling(flag.source, flag.label, keep)(modelId);
     return result.ok
-      ? { ok: true, resolved: keep ? 'kept' : 'dismissed' }
+      ? { ok: true, resolved: keep ? 'kept' : result.keptMinor ? 'keptMinor' : 'dismissed' }
       : { ok: false, error: result.error ?? 'Action failed.' };
   }
   const textHash = flag.textHash!;
@@ -573,7 +573,7 @@ async function flagFileMatch(
   earlier: readonly { flag: PlannedFlagRef; result: RuleResult }[]
 ): Promise<RuleResult> {
   const state = await getModelFlagState(modelId);
-  // set-poi applies the flag whatever the queue says, so the lead must still be there.
+  // flag-match re-checks this under the row lock; refusing here keeps the message specific.
   if (label === 'poi' && !state.poi && !state.poiMatchQueued)
     return {
       ok: false,

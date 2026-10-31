@@ -45,6 +45,8 @@ import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { getHeldGalleryLevel } from '~/server/services/model.service';
+import { Flags } from '~/shared/utils/flags';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
   AddPostTagInput,
@@ -83,6 +85,18 @@ export const getPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // A minor or SFW-only model's posts are served only at its gallery's held level, except to
+    // moderators, who must see what they may need to remove.
+    const heldLevel =
+      ctx.user?.isModerator && isSessionOrFullUserKey(ctx)
+        ? undefined
+        : await getHeldGalleryLevel({ ...input, postIds: input.ids });
+    if (heldLevel !== undefined) {
+      const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
+      // The feed reads 0 as no filter, so an empty intersection is an empty page.
+      if (!browsingLevel) return { items: [], nextCursor: undefined };
+      input = { ...input, browsingLevel };
+    }
     return await getPostsInfinite({ ...input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

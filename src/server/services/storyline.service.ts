@@ -71,6 +71,7 @@ import {
   getStorylineChapterRank,
   getStorylineChapterTombstone,
   isStorylineCeilingLevel,
+  isStorylineChapterRemoved,
   STORYLINE_MINOR_CEILING,
   storylineCeiling,
   storylineLevelAllowed,
@@ -420,21 +421,20 @@ const lockStorylineForAdd = (db: Db, storylineId: number) =>
   db.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR SHARE`;
 
 /**
- * Inserts a chapter under a parent, canon when the storyline's owner wrote it and the parent has
- * no canon child yet. Edges point at the parent CHAPTER, never its post, so a later takedown of
- * the parent's post leaves this chapter attached.
+ * Inserts a chapter under a parent, canon when the parent has no canon child yet. Whoever wrote it:
+ * a chapter gets here only as the owner's own, one the owner approved, or an accepted
+ * collaborator's. Edges point at the parent CHAPTER, never its post, so a later takedown of the
+ * parent's post leaves this chapter attached.
  */
 async function insertChildChapter(
   db: Db,
   {
     parent,
-    ownerId,
     postId,
     authorId,
     placementId,
   }: {
     parent: { id: number; storylineId: number };
-    ownerId: number;
     postId: number;
     authorId: number;
     placementId?: number;
@@ -463,7 +463,7 @@ async function insertChildChapter(
     select: { id: true },
   });
 
-  const canon = authorId === ownerId && (await takesCanonSlot(db, parent.id));
+  const canon = await takesCanonSlot(db, parent.id);
 
   await db.storylineChapterEdge.create({
     data: {
@@ -525,7 +525,6 @@ export async function writeChapterEdgeForPlacement(
 
   const chapterId = await insertChildChapter(db, {
     parent,
-    ownerId: parent.storyline.userId,
     postId,
     authorId: placerId,
     placementId,
@@ -1720,9 +1719,9 @@ export async function addOwnerChapter(input: {
 }
 
 /**
- * The owner adds a post at the end of the main path: chapter 1 of an empty storyline, else the
- * canon child of the main path's last chapter. Found here, under the storyline's lock and with no
- * path cap, not by the client: a stale or capped read would add it as a side branch instead.
+ * The owner's post at the end of the main path: chapter 1 of an empty storyline, else the canon
+ * child of its last chapter. The end is found here, under the storyline's lock: the client's read
+ * is capped and can be stale, and a wrong end makes a side branch.
  */
 export async function addOwnerChapterAtEnd({
   storylineId,
@@ -1740,7 +1739,7 @@ export async function addOwnerChapterAtEnd({
 
   return dbWrite.$transaction(async (tx) => {
     await lockStorylineForAdd(tx, storylineId);
-    // One canon child per parent; the step cap only guards against a cycle.
+    // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
     const [end] = await tx.$queryRaw<{ id: number }[]>`
       WITH RECURSIVE main AS (
         SELECT ${root.id}::int AS id, 1 AS step
@@ -1793,7 +1792,6 @@ export async function writeOwnerChapter(
   });
   const chapterId = await insertChildChapter(tx, {
     parent,
-    ownerId: parent.storyline.userId,
     postId,
     authorId: userId,
   });
@@ -1820,7 +1818,14 @@ export async function setCanonChapter({
     select: {
       parentChapterId: true,
       storylineId: true,
-      chapter: { select: { removedAt: true } },
+      chapter: {
+        select: {
+          removedAt: true,
+          post: {
+            select: { tosViolation: true, user: { select: { bannedAt: true, deletedAt: true } } },
+          },
+        },
+      },
     },
     take: 2,
   });
@@ -1838,7 +1843,9 @@ export async function setCanonChapter({
     userId,
     isModerator,
   });
-  if (edge.chapter.removedAt)
+  // Every chapter the reading path tombstones as removed or deleted, moderators' view included.
+  const { removedAt, post } = edge.chapter;
+  if (!post || isStorylineChapterRemoved({ post, removed: !!removedAt }))
     throw throwBadRequestError('A removed chapter cannot be the main route');
 
   await dbWrite.$transaction(async (tx) => {
@@ -3016,7 +3023,14 @@ export async function getStorylinesForPosts({
         postId: true,
         depth: true,
         removedAt: true,
-        post: { select: { nsfwLevel: true, userId: true } },
+        post: {
+          select: {
+            nsfwLevel: true,
+            userId: true,
+            tosViolation: true,
+            user: { select: { bannedAt: true, deletedAt: true } },
+          },
+        },
         storyline: {
           select: {
             id: true,
@@ -3042,7 +3056,8 @@ export async function getStorylinesForPosts({
   for (const c of chapters) {
     if (c.postId == null || !c.post) continue;
     // As getStorylineChapterTombstone: only moderators are shown a removed chapter.
-    if (c.removedAt && !viewer?.isModerator) continue;
+    if (!viewer?.isModerator && isStorylineChapterRemoved({ post: c.post, removed: !!c.removedAt }))
+      continue;
     if (isStorylineHidden(c.storyline, viewer, blockedUserIds)) continue;
     if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;
     // The post's own author is told it is a chapter whatever their level, as the owner is.

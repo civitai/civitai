@@ -599,8 +599,7 @@ describe('a chapter add whose parent changes after its first read', () => {
     });
   });
 
-  // "Add to a storyline" from a post's menu. The client once picked the end from its own read,
-  // capped and possibly stale, and a wrong guess quietly made a side branch.
+  // "Add to a storyline" from a post's menu.
   describe('at the end of the main path', () => {
     const edgeOf = async (chapterId: number) =>
       (
@@ -695,13 +694,29 @@ describe('around the insert', () => {
       where: { chapterId: number; parentChapterId: number };
     }) =>
       (
-        await rows<{ parentChapterId: number; storylineId: number; removedAt: Date | null }>(
-          `SELECT e."parentChapterId", e."storylineId", c."removedAt" FROM "StorylineChapterEdge" e
+        await rows<{
+          parentChapterId: number;
+          storylineId: number;
+          removedAt: Date | null;
+          postId: number | null;
+          tosViolation: boolean;
+        }>(
+          `SELECT e."parentChapterId", e."storylineId", c."removedAt", c."postId", p."tosViolation"
+           FROM "StorylineChapterEdge" e
            JOIN "StorylineChapter" c ON c.id = e."chapterId"
+           LEFT JOIN "Post" p ON p.id = c."postId"
            WHERE e."chapterId" = $1 AND e."parentChapterId" = $2`,
           [where.chapterId, where.parentChapterId]
         )
-      ).map(({ removedAt, ...edge }) => ({ ...edge, chapter: { removedAt } }))) as never);
+      ).map(({ parentChapterId, storylineId, removedAt, postId, tosViolation }) => ({
+        parentChapterId,
+        storylineId,
+        // This schema keeps no ban or account deletion on its users.
+        chapter: {
+          removedAt,
+          post: postId ? { tosViolation, user: { bannedAt: null, deletedAt: null } } : null,
+        },
+      }))) as never);
     w.storylineChapterEdge.updateMany.mockImplementation((async ({
       where,
       data,
@@ -730,6 +745,8 @@ describe('around the insert', () => {
       }
     }) as never);
     const insertedPost = await post();
+    // A chapter with no post is refused before the race this is about.
+    await db.pg.exec(`UPDATE "StorylineChapter" SET "postId" = ${await post()} WHERE id = ${C}`);
     // Held at its owner check, after it has read the edge and before its transaction.
     let release!: () => void;
     const released = new Promise<void>((resolve) => (release = resolve));
@@ -837,6 +854,17 @@ describe('insertStorylineChapter refusals', () => {
       await refuses(
         async () => insert(await post({ nsfwLevel: 0 })),
         badRequest('This post has not been rated yet. Try again once it has been')
+      );
+    });
+
+    // Blocked is a moderation verdict, not a rating: refused as unusable, never as "rated above".
+    it.each([
+      ['Blocked', NsfwLevel.Blocked],
+      ['Blocked alongside a rating that fits', NsfwLevel.PG | NsfwLevel.Blocked],
+    ])('refuses a post rated %s as unusable', async (_name, nsfwLevel) => {
+      await refuses(
+        async () => insert(await post({ nsfwLevel })),
+        badRequest("This post or one of its images can't be used in a storyline")
       );
     });
 

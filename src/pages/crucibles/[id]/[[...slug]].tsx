@@ -54,6 +54,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
+import { openCrucibleOwnerRemoveEntryModal } from '~/components/Crucible/CrucibleOwnerRemoveEntryModal';
 import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
@@ -348,6 +349,17 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   });
 
   const handleRemoveEntry = (entry: CrucibleEntryData) => {
+    // A moderator who owns the crucible removes as a moderator: no cap, no reason.
+    if (!isModerator) {
+      openCrucibleOwnerRemoveEntryModal({
+        crucibleId: crucible.id,
+        entryId: entry.id,
+        entrantName: entry.user.username,
+        entryFee: crucible.entryFee,
+        removalsLeft: crucible.ownerRemovalsLeft ?? 0,
+      });
+      return;
+    }
     openConfirmModal({
       title: 'Remove entry',
       children: (

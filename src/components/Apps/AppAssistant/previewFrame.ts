@@ -32,3 +32,17 @@ export async function fetchPreviewFrame(
   if (!res.ok || !data?.iframeSrc) throw new Error(data?.error ?? 'The preview is unavailable');
   return data as PreviewFrame;
 }
+
+/**
+ * Just a freshly signed entry URL for `blockId`'s preview, for the frame's Retry (which swaps it in
+ * without remounting the host). Rejects when there is none to give: the preview is gone, or its
+ * host is not resolvable yet.
+ */
+export async function fetchPreviewEntryUrl(
+  blockId: string,
+  fetchImpl?: typeof fetch
+): Promise<string> {
+  const frame = await fetchPreviewFrame(blockId, fetchImpl);
+  if ('preparing' in frame) throw new Error('The preview is not ready yet');
+  return frame.iframeSrc;
+}

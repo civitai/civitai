@@ -33,6 +33,12 @@ vi.mock('~/server/events/points/sync', async (importOriginal) => ({
 import { restoreUser } from '~/server/services/user.service';
 
 const USER_ID = 7;
+const LOOKALIKES = [
+  'Civ1taiModeration',
+  'Civitai_Moderation',
+  'CivitaiModerat\u0456on',
+  'Civitai\u200bModeration',
+];
 
 const restore = (username: string) =>
   restoreUser({ id: USER_ID, username, email: 'back@x.com', restoreModels: false });
@@ -57,6 +63,17 @@ describe('restoreUser and the reserved username', () => {
       expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     }
   );
+
+  it.each(LOOKALIKES)('refuses restoring another account as the lookalike %j', async (username) => {
+    await expect(restore(username)).rejects.toThrow(/reserved/);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses restoring the shared account under a lookalike of its name', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: USER_ID });
+    await expect(restore(LOOKALIKES[0])).rejects.toThrow(/keeps its reserved username/);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
 
   it('refuses restoring the shared account under another name', async () => {
     setEnv({ CIVITAI_MODERATION_USER_ID: USER_ID });

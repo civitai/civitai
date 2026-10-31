@@ -88,7 +88,7 @@ describe('AddToStorylineModal', () => {
     expect(mocks.feedInput).toMatchObject({ filter: 'mine' });
   });
 
-  // The server finds the end of the main path; the client's own read could be capped or stale.
+  // The end is the server's to find: the client's read can be capped or stale.
   test('asks the server to add the post at the end, then opens the storyline', async () => {
     mocks.storylines = [storyline(1)];
     renderWithProviders(<AddToStorylineModal post={post} />);
