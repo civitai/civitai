@@ -253,11 +253,11 @@ function parsedProtocol(value: string) {
 
 /**
  * Whether `value` may name something to fetch: it parses to a fetch scheme, holds `://` or starts
- * with `//`, is key-shaped, or carries an upload key anywhere. AIR urns are not inputs.
+ * with `//`, is key-shaped, or carries an upload key in an http(s) or scheme-less value (`keysIn`
+ * finds none behind another scheme, so an AIR urn is not collected).
  */
 function isFetchableValue(value: string) {
   const protocol = parsedProtocol(value);
-  if (protocol === 'urn:') return false;
   if (protocol && FETCH_SCHEMES.has(protocol)) return true;
   const trimmed = value.trim();
   return (
