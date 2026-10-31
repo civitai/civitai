@@ -17,9 +17,6 @@ const USER_ID = 5;
 const MODERATION = 900;
 const SYSTEM_META = { systemAccount: true };
 
-/** The primary's view of the key owner. */
-let owner: { isModerator: boolean; roles: string[] } | null;
-
 function keyOwnedBy(userId: number) {
   dbMock.dbWrite.apiKey.findFirst.mockResolvedValue({
     id: 77,
@@ -37,7 +34,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   installFakeCacheRedis();
   setEnv({ CIVITAI_MODERATION_USER_ID: MODERATION });
-  owner = { isModerator: false, roles: [] };
   getSessionUserById.mockResolvedValue({
     id: USER_ID,
     isModerator: false,
@@ -45,14 +41,6 @@ beforeEach(() => {
     meta: SYSTEM_META,
   });
   keyOwnedBy(USER_ID);
-  dbMock.dbWrite.user.findUnique.mockImplementation(
-    (async () =>
-      owner && {
-        isModerator: owner.isModerator,
-        roles: owner.roles.map((role) => ({ role })),
-      }) as never
-  );
-  dbMock.dbWrite.appPageAccess.findFirst.mockResolvedValue({ path: '/' } as never);
 });
 
 const MODERATOR_ACCESS = [
@@ -68,7 +56,6 @@ describe('a bearer key owned by a system account', () => {
   });
 
   it.each(MODERATOR_ACCESS)('resolves to the account while it holds %s', async (_, held) => {
-    owner = { ...held, roles: [...held.roles] };
     getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
     const session = await getSessionFromBearerToken('k');
     expect(session?.user.id).toBe(USER_ID);
