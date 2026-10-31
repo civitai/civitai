@@ -74,7 +74,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "ShopArtworkKeyOwner", "ItemDefinition", "ImageCdnShopTakedown"`);
+  await holder.db.exec(
+    `TRUNCATE "Image", "ShopArtworkKeyOwner", "ItemDefinition", "ImageCdnShopTakedown"`
+  );
   holder.issued = [];
   holder.logDown = false;
   redis.clear();
@@ -130,6 +132,24 @@ describe('clientKeysToReupload', () => {
     await holder.db.exec(`INSERT INTO "ItemDefinition" ("imageUrl") VALUES ('${OWN}')`);
     await holder.db.exec(`INSERT INTO "ImageCdnShopTakedown" (url) VALUES ('${OTHERS}')`);
     expect(await check([OWN, OTHERS])).toEqual([OWN, OTHERS]);
+  });
+
+  it('marks nothing while the request log is down, even a key the issue record gives another user', async () => {
+    await recordUploadKeyOwner(OTHERS, OTHER);
+    holder.logDown = true;
+    expect(await check([OTHERS])).toEqual([]);
+  });
+
+  it('takes the issue record over the request log for a key both hold', async () => {
+    await recordUploadKeyOwner(OWN, CALLER);
+    holder.issued = [{ key: OWN, userId: OTHER }];
+    expect(await check([OWN])).toEqual([]);
+  });
+
+  it('marks a key sent in upper case, as sent', async () => {
+    await recordUploadKeyOwner(OTHERS, CALLER);
+    await holder.db.exec(`INSERT INTO "Image" ("userId", url) VALUES (${OTHER}, '${OTHERS}')`);
+    expect(await check([OTHERS.toUpperCase()])).toEqual([OTHERS.toUpperCase()]);
   });
 
   it('rejects, rather than marks, when the row check fails', async () => {

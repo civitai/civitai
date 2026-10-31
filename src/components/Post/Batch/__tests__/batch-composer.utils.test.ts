@@ -411,6 +411,19 @@ describe('withoutReuploads', () => {
     expect(await withoutReuploads(draft, check, 2)).toEqual({ draft, dropped: 0 });
   });
 
+  it('sends one check at a time', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const check = async () => {
+      most = Math.max(most, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return [] as string[];
+    };
+    await withoutReuploads(draftOf([key(1), key(2), key(3)]), check, 1);
+    expect(most).toBe(1);
+  });
+
   it('keeps the whole draft when the checks do not answer in time', async () => {
     vi.useFakeTimers();
     try {

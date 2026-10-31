@@ -308,13 +308,21 @@ type KeyIssuerArgs = {
   userId: number;
   alsoIssuedTo?: number;
   db?: Db;
+  /** Read the request log for every key, not only those the issue record lacks. */
+  readLogForAll?: boolean;
 };
 
 /**
  * The upload keys in `urls` that were issued to someone other than `userId` and `alsoIssuedTo`,
  * and those with no issue record and no `Image` row of theirs.
  */
-export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: KeyIssuerArgs) {
+export async function keyIssuers({
+  urls,
+  userId,
+  alsoIssuedTo,
+  db = dbWrite,
+  readLogForAll = false,
+}: KeyIssuerArgs) {
   const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
   const keys = [...new Set(urls.flatMap(keysIn))];
   const result = {
@@ -332,9 +340,9 @@ export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: K
   const { owners, readFailed } = await ownersFromRedis(keys);
   result.recordReadFailed = readFailed;
   const unrecorded = keys.filter((k) => !owners.has(k));
-  const logged = await ownersFromClickhouse(unrecorded);
+  const logged = await ownersFromClickhouse(readLogForAll ? keys : unrecorded);
   result.requestLogReadFailed = logged.failed;
-  for (const [key, owner] of logged.owners) owners.set(key, owner);
+  for (const [key, owner] of logged.owners) if (!owners.has(key)) owners.set(key, owner);
   result.issuedToOthers = [...owners].filter(([, o]) => !allowed.includes(o)).map(([k]) => k);
 
   const remaining = keys.filter((k) => !owners.has(k));
@@ -420,7 +428,8 @@ export async function clientKeysToReupload({
   uploadKeyOwnerCounter.inc({ outcome: 'draft_check' });
   if (keys.length > MAX_KEYS) return keys;
   const at = now < UNRECORDED_KEYS_ACCEPTED_UNTIL ? UNRECORDED_KEYS_ACCEPTED_UNTIL : now;
-  const issuers = await keyIssuers({ urls: keys, userId });
+  // Every key reaches the request log, so whether it failed does not depend on which keys were sent.
+  const issuers = await keyIssuers({ urls: keys, userId, readLogForAll: true });
   // Marked only from records that were read, or a key of another user's would differ from an absent one.
   if (issuers.recordReadFailed || issuers.requestLogReadFailed) return [];
   const refused = new Set(issuerRefusals(issuers, at).refused);
