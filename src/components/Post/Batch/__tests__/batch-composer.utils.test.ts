@@ -387,13 +387,45 @@ describe('draft serialisation', () => {
 describe('withoutReuploads', () => {
   const key = (n: number) => `${String(n).padStart(8, '0')}-ef56-4a7b-8c9d-0e1f2a3b4c5d`;
   const draftOf = (urls: string[]) =>
-    ({ media: urls.map((url) => ({ url, status: 'added' })) } as unknown as ComposerDraft);
+    ({
+      media: urls.map((url) => ({ url, status: 'added' })),
+      imagesPerPost: 3,
+      seed: 42,
+    } as unknown as ComposerDraft);
 
-  it('drops the uploads the check marks, and counts them', async () => {
+  it('drops the uploads the check marks, counts them, and keeps the rest of the draft', async () => {
     const draft = draftOf([key(1), key(2), key(3)]);
     const result = await withoutReuploads(draft, async () => [key(2)], 64);
-    expect(result.draft.media.map((m) => m.url)).toEqual([key(1), key(3)]);
-    expect(result.dropped).toBe(1);
+    expect(result).toEqual({
+      draft: { ...draft, media: [draft.media[0], draft.media[2]] },
+      dropped: 1,
+    });
+  });
+
+  it('keeps the whole draft when a later check fails', async () => {
+    const draft = draftOf([key(1), key(2), key(3)]);
+    const check = vi
+      .fn<(keys: string[]) => Promise<string[]>>()
+      .mockResolvedValueOnce([key(1)])
+      .mockRejectedValueOnce(new Error('offline'));
+    expect(await withoutReuploads(draft, check, 2)).toEqual({ draft, dropped: 0 });
+  });
+
+  it('keeps the whole draft when the checks do not answer in time', async () => {
+    vi.useFakeTimers();
+    try {
+      const draft = draftOf([key(1)]);
+      const result = withoutReuploads(
+        draft,
+        () => new Promise<string[]>(() => undefined),
+        64,
+        5_000
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await result).toEqual({ draft, dropped: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the whole draft when a check fails', async () => {

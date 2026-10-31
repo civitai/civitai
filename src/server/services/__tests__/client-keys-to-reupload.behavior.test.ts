@@ -74,7 +74,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "ShopArtworkKeyOwner"`);
+  await holder.db.exec(`TRUNCATE "Image", "ShopArtworkKeyOwner", "ItemDefinition", "ImageCdnShopTakedown"`);
   holder.issued = [];
   holder.logDown = false;
   redis.clear();
@@ -99,12 +99,43 @@ describe('clientKeysToReupload', () => {
     expect(await check([ABSENT], AFTER)).toEqual([ABSENT]);
   });
 
-  it("marks another user's key exactly as it marks an absent one", async () => {
+  it("marks another user's key, by record or by request log, as it marks an absent one", async () => {
+    await recordUploadKeyOwner(OWN, CALLER);
     await recordUploadKeyOwner(OTHERS, OTHER);
-    expect(await check([OTHERS])).toEqual([OTHERS]);
-    expect(await check([OWN, OTHERS])).toEqual(
-      (await check([OWN, ABSENT])).map((k) => (k === ABSENT ? OTHERS : k))
-    );
+    expect(await check([OWN, OTHERS])).toEqual([OTHERS]);
+    expect(await check([OWN, ABSENT])).toEqual([ABSENT]);
+    redis.clear();
+    holder.issued = [
+      { key: OWN, userId: CALLER },
+      { key: OTHERS, userId: OTHER },
+    ];
+    expect(await check([OWN, OTHERS])).toEqual([OTHERS]);
+  });
+
+  it('marks every key of a call over the key cap', async () => {
+    await recordUploadKeyOwner(OWN, CALLER);
+    const many = [
+      OWN,
+      ...Array.from(
+        { length: MAX_KEYS },
+        (_, i) => `${String(i).padStart(8, '0')}-ef56-4a7b-8c9d-0e1f2a3b4c5d`
+      ),
+    ];
+    expect(await check(many)).toEqual(many);
+  });
+
+  it('marks a key used by shop artwork or taken down from the shop', async () => {
+    await recordUploadKeyOwner(OWN, CALLER);
+    await recordUploadKeyOwner(OTHERS, CALLER);
+    await holder.db.exec(`INSERT INTO "ItemDefinition" ("imageUrl") VALUES ('${OWN}')`);
+    await holder.db.exec(`INSERT INTO "ImageCdnShopTakedown" (url) VALUES ('${OTHERS}')`);
+    expect(await check([OWN, OTHERS])).toEqual([OWN, OTHERS]);
+  });
+
+  it('rejects, rather than marks, when the row check fails', async () => {
+    await recordUploadKeyOwner(OWN, CALLER);
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('db down'));
+    await expect(check([OWN])).rejects.toThrow('db down');
   });
 
   it("marks a key of the caller's that another user's image row already has", async () => {
@@ -121,11 +152,15 @@ describe('clientKeysToReupload', () => {
     expect(await check([OWN, ABSENT, OTHERS])).toEqual([OTHERS]);
   });
 
-  it('marks nothing unrecorded when a lookup fails, and the save still refuses it after the cutoff', async () => {
+  it('marks nothing when a lookup fails, and the save still refuses after the cutoff', async () => {
+    await recordUploadKeyOwner(OTHERS, OTHER);
+    await holder.db.exec(`INSERT INTO "Image" ("userId", url) VALUES (${OTHER}, '${OTHERS}')`);
     holder.logDown = true;
-    expect(await check([ABSENT])).toEqual([]);
+    expect(await check([ABSENT, OTHERS])).toEqual([]);
+    holder.logDown = false;
     redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('down'));
-    expect(await check([ABSENT])).toEqual([]);
+    holder.issued = [{ key: OTHERS, userId: OTHER }];
+    expect(await check([ABSENT, OTHERS])).toEqual([]);
 
     const refusal = await assertClientKeysIssuedToCaller({
       urls: [ABSENT],
@@ -136,12 +171,7 @@ describe('clientKeysToReupload', () => {
       (e: unknown) => e
     );
     expect(refusal).toBeInstanceOf(TRPCError);
-  });
-
-  it('still marks a key recorded to another user when the request log is down', async () => {
-    await recordUploadKeyOwner(OTHERS, OTHER);
-    holder.logDown = true;
-    expect(await check([OTHERS])).toEqual([OTHERS]);
+    expect((refusal as TRPCError).code).toBe('BAD_REQUEST');
   });
 
   it('writes nothing and counts only the check', async () => {

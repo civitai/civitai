@@ -153,25 +153,51 @@ export async function assertClientImageUrlsUsable({
     if (owned.length) throw imageUrlUnavailableError();
     return;
   }
-  // Whatever the other row's state.
-  const owned = await db.$queryRaw<unknown[]>`
-    SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[])
+  if ((await keysOnOtherRows({ keys, userId, shopRow, db, firstOnly: true })).length)
+    throw imageUrlUnavailableError();
+}
+
+/**
+ * The stored values among `keys` that another user's `Image` row, or shop artwork other than
+ * `shopRow`'s own, already has, whatever that row's state. `firstOnly` stops at the first.
+ */
+async function keysOnOtherRows({
+  keys,
+  userId,
+  shopRow,
+  db,
+  firstOnly,
+}: {
+  keys: string[];
+  userId: number;
+  shopRow?: ShopArtworkRow;
+  db: Db;
+  firstOnly: boolean;
+}) {
+  const rows = await db.$queryRaw<{ key: string }[]>`
+    SELECT url AS key FROM "Image" WHERE url = ANY(${keys}::text[])
       AND (${shopRow !== undefined} OR "userId" <> ${userId})
     UNION ALL
-    SELECT 1 FROM "Cosmetic" WHERE ${keyIn(`"data"->>'url'`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"data"->>'url'`)} FROM "Cosmetic" WHERE ${keyIn(
+    `"data"->>'url'`
+  )} = ANY(${keys}::text[])
       AND ${soldInShop}
       AND id IS DISTINCT FROM ${shopRow?.cosmeticId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "CosmeticShopItem" WHERE ${keyIn(`"meta"->>'coverUrl'`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"meta"->>'coverUrl'`)} FROM "CosmeticShopItem" WHERE ${keyIn(
+    `"meta"->>'coverUrl'`
+  )} = ANY(${keys}::text[])
       AND id IS DISTINCT FROM ${shopRow?.shopItemId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "ItemDefinition" WHERE ${keyIn(`"imageUrl"`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"imageUrl"`)} FROM "ItemDefinition" WHERE ${keyIn(
+    `"imageUrl"`
+  )} = ANY(${keys}::text[])
       AND id IS DISTINCT FROM ${shopRow?.itemDefinitionId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "ImageCdnShopTakedown" WHERE url = ANY(${keys}::text[])
-    LIMIT 1
+    SELECT url FROM "ImageCdnShopTakedown" WHERE url = ANY(${keys}::text[])
+    ${firstOnly ? Prisma.sql`LIMIT 1` : Prisma.empty}
   `;
-  if (owned.length) throw imageUrlUnavailableError();
+  return rows.map((row) => row.key);
 }
 
 /** The urls among `urls` that name a key shop artwork uses. */
@@ -392,24 +418,25 @@ export async function clientKeysToReupload({
   now?: Date;
 }) {
   uploadKeyOwnerCounter.inc({ outcome: 'draft_check' });
+  if (keys.length > MAX_KEYS) return keys;
   const at = now < UNRECORDED_KEYS_ACCEPTED_UNTIL ? UNRECORDED_KEYS_ACCEPTED_UNTIL : now;
   const issuers = await keyIssuers({ urls: keys, userId });
-  if (issuers.tooMany) return keys;
-  const degraded = issuers.recordReadFailed || issuers.requestLogReadFailed;
-  const refused = new Set(
-    issuerRefusals(degraded ? { ...issuers, unrecorded: [] } : issuers, at).refused
+  // Marked only from records that were read, or a key of another user's would differ from an absent one.
+  if (issuers.recordReadFailed || issuers.requestLogReadFailed) return [];
+  const refused = new Set(issuerRefusals(issuers, at).refused);
+  // The row check a save runs, once for all the keys.
+  const stored = new Map(keys.map((key) => [key, storedUrlsFor(key)]));
+  const onOtherRows = new Set(
+    await keysOnOtherRows({
+      keys: [...new Set([...stored.values()].flat())],
+      userId,
+      db: dbWrite,
+      firstOnly: false,
+    })
   );
-  await Promise.all(
-    keys
-      .filter((key) => !refused.has(key.toLowerCase()))
-      .map((key) =>
-        assertClientImageUrlsUsable({ urls: [key], userId }).catch((e: unknown) => {
-          if (e instanceof TRPCError && e.code === 'BAD_REQUEST') refused.add(key.toLowerCase());
-          else throw e;
-        })
-      )
+  return keys.filter(
+    (key) => refused.has(key.toLowerCase()) || stored.get(key)!.some((v) => onOtherRows.has(v))
   );
-  return keys.filter((key) => refused.has(key.toLowerCase()));
 }
 
 async function ownersFromShopArtwork(keys: string[], db: Db) {

@@ -463,23 +463,29 @@ const UPLOAD_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 /**
  * The draft without the uploads the server says must be uploaded again, and how many those were.
- * `check` takes at most `perCheck` keys; if any check fails the draft is kept whole, since the
- * save decides again anyway.
+ * `check` takes at most `perCheck` keys, one call at a time. If any call fails or the checks take
+ * longer than `timeoutMs` the draft is kept whole, since the save decides again anyway.
  */
 export async function withoutReuploads(
   draft: ComposerDraft,
   check: (keys: string[]) => Promise<string[]>,
-  perCheck: number
+  perCheck: number,
+  timeoutMs = 10_000
 ): Promise<{ draft: ComposerDraft; dropped: number }> {
   const keys = draft.media.map((item) => item.url).filter((url) => UPLOAD_KEY.test(url));
-  const chunks = Array.from({ length: Math.ceil(keys.length / perCheck) }, (_, i) =>
-    keys.slice(i * perCheck, (i + 1) * perCheck)
-  );
-  let reupload: Set<string>;
+  const reupload = new Set<string>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timed out')), timeoutMs);
+  });
   try {
-    reupload = new Set((await Promise.all(chunks.map((chunk) => check(chunk)))).flat());
+    for (let i = 0; i < keys.length; i += perCheck)
+      for (const key of await Promise.race([check(keys.slice(i, i + perCheck)), timedOut]))
+        reupload.add(key);
   } catch {
     return { draft, dropped: 0 };
+  } finally {
+    clearTimeout(timer);
   }
   const media = draft.media.filter((item) => !reupload.has(item.url));
   return { draft: { ...draft, media }, dropped: draft.media.length - media.length };

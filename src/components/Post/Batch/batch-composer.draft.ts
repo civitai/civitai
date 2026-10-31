@@ -91,6 +91,8 @@ export function useDraftPersistence(store: BatchComposerStore, userId: number | 
         : { draft: saved, dropped: 0 };
       if (cancelled) return;
       store.getState().hydrate(draft);
+      // Saved now, so the dropped uploads are not restored, and checked, again on the next visit.
+      if (dropped) void saveDraft(userId, toDraft(store.getState()));
       if (dropped)
         showNotification({
           color: 'yellow',
