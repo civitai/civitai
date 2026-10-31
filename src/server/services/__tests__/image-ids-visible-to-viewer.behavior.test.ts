@@ -160,3 +160,35 @@ describe('assertImagesVisibleToViewer', () => {
     ).resolves.toBeUndefined();
   });
 });
+
+// A moderator article delete leaves an image under a CSAM review or block exactly as it was
+// (apps/moderator image-deletion.ts), so being left must not leave it public.
+describe('an image a moderator article delete keeps for a CSAM review or block', () => {
+  it('stays hidden from a stranger, with or without the article it was the cover of', async () => {
+    const seed = `
+      INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "nsfwLevelLocked") VALUES
+        (201, ${OWNER}, 1, ${NsfwLevel.Blocked}, 'Blocked', NULL, false),
+        -- A block whose rescan errored: only the Blocked level still hides it.
+        (202, ${OWNER}, 1, ${NsfwLevel.Blocked}, 'Error', NULL, true),
+        (203, ${OWNER}, 1, 1, 'Scanned', 'csam', false),
+        (204, ${OWNER}, NULL, 1, 'Scanned', 'csam', false),
+        (205, ${OWNER}, NULL, 1, 'Scanned', NULL, false);
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt", ingestion) VALUES
+        (1, 204, 'Published', now() - interval '1 day', 'Scanned'),
+        (2, 205, 'Published', now() - interval '1 day', 'Scanned');`;
+    await Promise.all([replica.exec(seed), primary.exec(seed)]);
+    const held = [201, 202, 203, 204];
+
+    // 205 is the control: a clean cover of a readable article is public.
+    expect(
+      [...(await getImageIdsVisibleToViewer({ ids: [...held, 205], userId: VIEWER }))].sort()
+    ).toEqual([205]);
+
+    const deleteArticle = `DELETE FROM "Article" WHERE id = 1;`;
+    await Promise.all([replica.exec(deleteArticle), primary.exec(deleteArticle)]);
+    expect([...(await getImageIdsVisibleToViewer({ ids: held, userId: VIEWER }))]).toEqual([]);
+
+    const cleanup = `TRUNCATE "Article";`;
+    await Promise.all([replica.exec(cleanup), primary.exec(cleanup)]);
+  });
+});

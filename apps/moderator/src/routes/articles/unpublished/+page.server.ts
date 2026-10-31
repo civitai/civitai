@@ -32,7 +32,7 @@ async function runAction(action: 'restore' | 'delete', request: Request, userId:
 
   const result = await moderateArticle({ action, articleId, userId });
   if (!result.ok) return fail(502, { error: result.error });
-  return { success: true };
+  return { success: true, kept: result.kept ?? [] };
 }
 
 export const actions: Actions = {

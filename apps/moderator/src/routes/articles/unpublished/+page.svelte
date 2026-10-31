@@ -26,6 +26,8 @@
   import { userUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { Alert, AlertDescription, AlertTitle } from '@civitai/ui/components/ui/alert/index.js';
+  import { imageKeptReasonLabel } from '$lib/image-kept-reasons';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -61,6 +63,18 @@
 
 {#if form?.error}
   <ErrorAlert class="mb-4" message={form.error} />
+{/if}
+{#if form?.kept?.length}
+  <Alert class="mb-4">
+    <AlertTitle>The article was deleted, but a hold kept {form.kept.length} of its images</AlertTitle>
+    <AlertDescription>
+      <ul>
+        {#each form.kept as image (image.id)}
+          <li>Image {image.id}: {imageKeptReasonLabel[image.reason]}</li>
+        {/each}
+      </ul>
+    </AlertDescription>
+  </Alert>
 {/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
