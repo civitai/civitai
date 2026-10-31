@@ -13,7 +13,9 @@
  *             'sweep'    flags same-uploader hash matches (see sweepMinorHashMatches).
  *             'rollback' undoes prior flags using the snapshot setModelMinor records,
  *                        restoring nsfw/sfwOnly/gallery level/lockedProperties and
- *                        previously-minor images. Without `modelIds` it covers only
+ *                        previously-minor images. A model that was minor before the
+ *                        flag stays minor (counted in `keptMinor`); only the flag's
+ *                        own locks are undone. Without `modelIds` it covers only
  *                        AUTOMATED flags, and skips any a moderator has since
  *                        confirmed by hand (see rollbackMinorHashAutoFlags).
  *   modelIds - rollback only. Comma-separated model ids for a targeted undo, e.g.

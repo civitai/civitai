@@ -960,12 +960,33 @@ export async function dismissMinorHashMatch({
 
 type RollbackCandidateRow = {
   modelId: number;
+  /** Null on a snapshot written before it was kept. */
+  prevMinor: boolean | null;
+  ownerDeclaredMinor: boolean;
   prevNsfw: boolean;
   prevSfwOnly: boolean;
   prevGalleryLevel: number | null;
   prevLockedProperties: string[];
   prevMinorImageIds: number[];
 };
+
+/**
+ * Why the model was minor before the flag being rolled back, if it was: the rollback undoes that
+ * flag, never an earlier one. A snapshot from before `prevMinor` was kept has to be read from what
+ * it did record, and doubt keeps the flag: a wrongly kept one costs a moderator a click.
+ */
+function minorBeforeFlag(
+  row: Pick<
+    RollbackCandidateRow,
+    'prevMinor' | 'ownerDeclaredMinor' | 'prevNsfw' | 'prevSfwOnly' | 'prevLockedProperties'
+  >
+): 'recorded' | 'declared' | 'locked' | 'sfwOnly' | undefined {
+  if (typeof row.prevMinor === 'boolean') return row.prevMinor ? 'recorded' : undefined;
+  if (row.ownerDeclaredMinor) return 'declared';
+  if (row.prevLockedProperties.includes('minor')) return 'locked';
+  // The state a minor flag leaves; nothing recorded says whether one did.
+  if (row.prevSfwOnly && !row.prevNsfw) return 'sfwOnly';
+}
 
 // A moderator has since reviewed and affirmed the flag by hand (a later
 // `ModActivity` row with activity = 'setMinor') — their decision must stand.
@@ -1006,8 +1027,44 @@ export type RollbackReport = {
   rolledBack: number;
   skipped: number;
   failed: number;
+  /** Of `rolledBack`: models left minor, because they were minor before the flag. */
+  keptMinor: number;
   sample: RollbackSample[];
 };
+
+/**
+ * Rolls back a flag on a model that was minor before it: the locks it added go, and the snapshot
+ * with them, while the earlier minor flag and everything it holds stay.
+ */
+async function rollBackFlagOnMinorModel(
+  row: RollbackCandidateRow,
+  keptBy: NonNullable<ReturnType<typeof minorBeforeFlag>>
+) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET "lockedProperties" = ${row.prevLockedProperties}::text[],
+        meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY} - ${SYSTEM_NSFW_LOCK_META_KEY}::text)
+          || jsonb_build_object(${MINOR_HASH_CLEARED_KEY}, jsonb_build_object('at', now()))
+    WHERE id = ${row.modelId}
+  `;
+  await trackModActivity(SYSTEM_USER_ID, {
+    entityType: 'model',
+    entityId: row.modelId,
+    activity: 'rollbackMinorAutoHash',
+  }).catch(() => null);
+  // The restored locks can drop the real-person ones.
+  await reassertModelPoiRestrictions(row.modelId);
+  if (keptBy === 'sfwOnly')
+    await logToAxiom(
+      {
+        type: 'info',
+        name: 'minor-hash-rollback',
+        message: 'kept minor: an older snapshot recorded an SFW-only model, and no prior flag',
+        modelId: row.modelId,
+      },
+      'webhooks'
+    ).catch(() => null);
+}
 
 export async function rollbackMinorHashAutoFlags({
   dryRun,
@@ -1055,6 +1112,8 @@ export async function rollbackMinorHashAutoFlags({
 
   const rows = await dbRead.$queryRaw<RollbackCandidateRow[]>`
     SELECT m.id AS "modelId",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevMinor')::boolean AS "prevMinor",
+           COALESCE(m.meta->'ownerFlagOverride'->'flags' ? 'minor', false) AS "ownerDeclaredMinor",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevSfwOnly')::boolean AS "prevSfwOnly",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel",
@@ -1076,6 +1135,7 @@ export async function rollbackMinorHashAutoFlags({
     rolledBack: 0,
     skipped: confirmed?.total ?? 0,
     failed: 0,
+    keptMinor: 0,
     sample: [],
   };
 
@@ -1091,6 +1151,7 @@ export async function rollbackMinorHashAutoFlags({
   if (dryRun) {
     for (const row of rows) {
       report.rolledBack++;
+      if (minorBeforeFlag(row)) report.keptMinor++;
       addSample(row.modelId, 'rolledBack');
     }
     addConfirmedSamples();
@@ -1099,6 +1160,15 @@ export async function rollbackMinorHashAutoFlags({
 
   const tasks = rows.map((row) => async () => {
     try {
+      const keptBy = minorBeforeFlag(row);
+      if (keptBy) {
+        await rollBackFlagOnMinorModel(row, keptBy);
+        report.rolledBack++;
+        report.keptMinor++;
+        addSample(row.modelId, 'rolledBack');
+        return;
+      }
+
       // Reuses setModelMinor's own machinery (search index, caches, image
       // propagation) instead of hand-rolling the unset — it also clears every
       // image's `minor`, including ones legitimately minor beforehand, which is
@@ -1110,11 +1180,13 @@ export async function rollbackMinorHashAutoFlags({
         activity: 'rollbackMinorAutoHash',
       });
 
+      // A real-person or private model stays SFW-only as the flag left it, so no read sees it mature.
       await dbWrite.$executeRaw`
         UPDATE "Model"
-        SET nsfw = ${row.prevNsfw},
-            "sfwOnly" = ${row.prevSfwOnly},
+        SET nsfw = CASE WHEN poi OR availability = 'Private' THEN false ELSE ${row.prevNsfw} END,
+            "sfwOnly" = CASE WHEN poi OR availability = 'Private' THEN true ELSE ${row.prevSfwOnly} END,
             "gallerySettings" = CASE
+              WHEN poi OR availability = 'Private' THEN "gallerySettings"
               WHEN ${row.prevGalleryLevel}::int IS NULL
                 THEN COALESCE("gallerySettings", '{}'::jsonb) - 'level'
               ELSE COALESCE("gallerySettings", '{}'::jsonb)
@@ -1172,6 +1244,7 @@ export async function rollbackMinorHashAutoFlags({
       message: 'rollback complete',
       candidates: report.candidates,
       rolledBack: report.rolledBack,
+      keptMinor: report.keptMinor,
       skipped: report.skipped,
       failed: report.failed,
     },
