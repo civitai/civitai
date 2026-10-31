@@ -164,7 +164,7 @@ describe('minorFlag.rule', () => {
       modelId: 42,
       userId: 7,
       recordTextScanRuling: false,
-      skipRefusal: true,
+      keepWhenRefused: true,
     });
     expect(m.stamp).toHaveBeenCalledWith({
       modelId: 42,

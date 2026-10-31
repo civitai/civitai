@@ -701,6 +701,7 @@ export async function revertMinorHashAutoFlag({
   note,
   textHash,
   skipRefusal,
+  keepWhenRefused,
 }: {
   modelId: number;
   userId: number;
@@ -713,8 +714,12 @@ export async function revertMinorHashAutoFlag({
   /** The caller has already decided the flag is the automation's: a granted appeal, or a ruling
    * that checked minorRevertRefusal itself. */
   skipRefusal?: boolean;
-}) {
+  /** Leave a flag the revert may not undo in place and report it in `keptMinor`, instead of refusing. */
+  keepWhenRefused?: boolean;
+}): Promise<RollbackReport> {
   const refusal = skipRefusal ? undefined : await minorRevertRefusal(modelId);
+  if (refusal && keepWhenRefused)
+    return { candidates: 1, rolledBack: 0, skipped: 0, failed: 0, keptMinor: 1, sample: [] };
   if (refusal) throw throwBadRequestError(refusal);
 
   // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
@@ -1067,7 +1072,7 @@ export type RollbackReport = {
   rolledBack: number;
   skipped: number;
   failed: number;
-  /** Flags undone on models left minor, because they were minor before the flag. Not in `rolledBack`. */
+  /** Models left minor: minor before the flag, or a flag a revert may not undo. Not in `rolledBack`. */
   keptMinor: number;
   sample: RollbackSample[];
 };
