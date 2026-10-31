@@ -456,6 +456,30 @@ describe('assertGenerationInputsUsable', () => {
     await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
     expect(await gate([proxied], 'generateFromGraph')).toBe('refused');
   });
+
+  it("accepts an allowed external url whose uuid is another service's id, not an image", async () => {
+    const foreign = `https://replicate.example/pbxt/${KEY}/out.png`;
+    expect(await gate([foreign], 'generateFromGraph')).toBe('accepted');
+    // The same unrecorded key given as an input itself is refused after the cutoff.
+    expect(await gate([KEY], 'generateFromGraph')).toBe('refused');
+  });
+
+  it('refuses an allowed external url carrying a key issued to another user', async () => {
+    await recordUploadKeyOwner(KEY, OTHER);
+    expect(
+      await gate([`https://proxy.example/?url=${encodeURIComponent(CDN())}`], 'generateFromGraph')
+    ).toBe('refused');
+  });
+
+  it('treats the orchestrator region proxy as the orchestrator', async () => {
+    const proxied = 'https://orchestration-proxy.civitai.com/v2/consumer/blobs/ABC.jpeg?sig=s';
+    dbMock.dbWrite.$queryRaw.mockClear();
+    expect(await gate([proxied], 'iterateGenerate')).toBe('accepted');
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(await gate([`${proxied}&u=${encodeURIComponent(CDN())}`], 'iterateGenerate')).toBe(
+      'refused'
+    );
+  });
 });
 
 describe('generationInputUrlsIn', () => {
@@ -490,8 +514,26 @@ describe('generationInputUrlsIn', () => {
     ['one slash after the scheme', `https:/image.civitai.com/x/${KEY}/original=true`],
     ['a key without dashes', KEY.replace(/-/g, '')],
     ['a key in braces', `{${KEY}}`],
+    ['another scheme', `s3://bucket/${KEY}.png`],
+    ['a made-up scheme carrying a key', `civitai://${KEY}`],
+    ['a file name', `${KEY}.jpeg`],
+    ['a path', `/x/${KEY}/original=true`],
+    ['no scheme', `image.civitai.com/x/${KEY}/original=true`],
+    ['a zero-width space in front', `\u200bhttps://image.civitai.com/x/${KEY}/original=true`],
   ])('collects an image url with %s', (_, url) => {
     expect(generationInputUrlsIn({ images: [{ url }], prompt: url })).toEqual([url]);
+  });
+
+  it('leaves text fields, AIR urns and scheme-like words alone', () => {
+    const input = {
+      title: 'Data: The Song',
+      texturePrompt: 'file: rusty metal',
+      workflow: 'txt2img:draft',
+      aspectRatio: '16:9',
+      resources: [{ air: `urn:air:sdxl:lora:orchestrator:blob@${KEY}`, name: `//${KEY}` }],
+      model: { trainedWords: ['//style', KEY, 'https://example.com/x'] },
+    };
+    expect(generationInputUrlsIn(input)).toEqual([]);
   });
 });
 

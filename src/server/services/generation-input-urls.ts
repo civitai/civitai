@@ -10,10 +10,12 @@ import {
 import {
   assertClientKeysIssuedToCaller,
   imageUrlUnavailableError,
+  keyIssuers,
   keysIn,
   MAX_KEYS,
 } from '~/server/services/image-url-ownership';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
+import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
 
 export const GENERATION_IMAGE_UNAVAILABLE_MESSAGE =
   'One of the images for this generation is no longer available. Please choose or upload another.';
@@ -44,17 +46,21 @@ type InputImageRow = { url: string; userId: number; visible: boolean; blocked: b
  * Each key must name the caller's own image, another user's publicly visible image, or, with no
  * image yet, a key issued to the caller. A blocked or removed image is refused whoever owns it.
  * `urls` are the values the keys came from, matched too for images stored under a full url.
+ * `imagesOnly`: a key with no image passes unless it was issued to someone else (an unrecorded uuid
+ * may be another service's id).
  */
 async function assertKeysUsable({
   keys,
   urls,
   userId,
   now,
+  imagesOnly = false,
 }: {
   keys: string[];
   urls: string[];
   userId: number;
   now?: Date;
+  imagesOnly?: boolean;
 }) {
   if (!keys.length) return;
   if (keys.length > MAX_KEYS) throw generationImageUnavailableError();
@@ -81,6 +87,12 @@ async function assertKeysUsable({
 
   const unrowed = keys.filter((key) => !rowsByKey.get(key)?.length);
   if (!unrowed.length) return;
+  if (imagesOnly) {
+    // Only an issue record to someone else marks it as ours; an unrecorded uuid may be anyone's id.
+    const { tooMany, issuedToOthers } = await keyIssuers({ urls: unrowed, userId });
+    if (tooMany || issuedToOthers.length) throw generationImageUnavailableError();
+    return;
+  }
   try {
     await assertClientKeysIssuedToCaller({ urls: unrowed, userId, now });
   } catch (error) {
@@ -178,7 +190,8 @@ export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass
     return 'invalid';
   if (parsed.username || parsed.password) return 'invalid';
 
-  if (isTrustedOrchestratorUrl(raw))
+  // The region proxy is a transparent route to the orchestrator: same blobs, same rule.
+  if (isTrustedOrchestratorUrl(raw) || host === ORCHESTRATOR_PROXY_HOST)
     return carriesUrl(parsed.pathname + parsed.search + parsed.hash)
       ? 'civitai_other'
       : 'orchestrator';
@@ -216,25 +229,48 @@ const FREE_TEXT_FIELDS = new Set([
   'musicDescription',
   'lyrics',
   'description',
+  'title',
+  'texturePrompt',
+  'yue2Abc',
+  'name',
+  'trainedWords',
 ]);
+
+/** A free-text field's value: a string, or a list of strings (trained words). */
+const isText = (item: unknown) =>
+  typeof item === 'string' || (Array.isArray(item) && item.every((x) => typeof x === 'string'));
 
 /** Anything that may be a key in another spelling: uuid hex with or without dashes or braces. */
 const KEY_LIKE = /^\{?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\}?$/i;
 
-/** Whether `value` is something a fetcher would treat as a url or a key. Decided by parsing. */
-function isFetchableValue(value: string) {
-  const trimmed = value.trim();
-  if (KEY_LIKE.test(trimmed) || trimmed.startsWith('//')) return true;
+function parsedProtocol(value: string) {
   try {
-    return FETCH_SCHEMES.has(new URL(trimmed).protocol);
+    return new URL(value.trim()).protocol;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
 /**
- * Every string in `value` that parses as a fetchable url or is key-shaped, at any depth, except the
- * free-text fields (a prompt that mentions a url is not an input image).
+ * Whether `value` may name something to fetch: it parses to a fetch scheme, holds `://` or starts
+ * with `//`, is key-shaped, or carries an upload key anywhere. AIR urns are not inputs.
+ */
+function isFetchableValue(value: string) {
+  const protocol = parsedProtocol(value);
+  if (protocol === 'urn:') return false;
+  if (protocol && FETCH_SCHEMES.has(protocol)) return true;
+  const trimmed = value.trim();
+  return (
+    KEY_LIKE.test(trimmed) ||
+    trimmed.startsWith('//') ||
+    value.includes('://') ||
+    keysIn(value).length > 0
+  );
+}
+
+/**
+ * Every string in `value` that may name something to fetch (`isFetchableValue`), at any depth,
+ * except the free-text fields (a prompt that mentions a url is not an input image).
  */
 export function generationInputUrlsIn(value: unknown, out: string[] = [], depth = 0): string[] {
   if (depth > 32 || value == null) return out;
@@ -248,7 +284,7 @@ export function generationInputUrlsIn(value: unknown, out: string[] = [], depth 
   }
   if (typeof value === 'object') {
     for (const [field, item] of Object.entries(value as Record<string, unknown>))
-      if (!(FREE_TEXT_FIELDS.has(field) && typeof item === 'string'))
+      if (!(FREE_TEXT_FIELDS.has(field) && isText(item)))
         generationInputUrlsIn(item, out, depth + 1);
   }
   return out;
@@ -284,6 +320,8 @@ export async function assertGenerationInputsUsable({
 
   const keys = new Set<string>();
   const keyedUrls: string[] = [];
+  // Keys found inside allowed external urls: refused only when they name an image that fails.
+  const externalKeys = new Set<string>();
   for (const url of given) {
     const cls = classifyGenerationInputUrl(url);
     if (cls === 'orchestrator') continue;
@@ -302,8 +340,8 @@ export async function assertGenerationInputsUsable({
       if (await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS))
         throw refuse(cls);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
-      // A proxy or wrapper url may carry one of our keys: those keys are checked like any other.
-      keysIn(url).forEach((key) => keys.add(key));
+      // A proxy or wrapper url may carry one of our image keys.
+      keysIn(url).forEach((key) => externalKeys.add(key));
       continue;
     }
     throw refuse(cls);
@@ -311,6 +349,8 @@ export async function assertGenerationInputsUsable({
 
   try {
     await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now });
+    const imageOnlyKeys = [...externalKeys].filter((key) => !keys.has(key));
+    await assertKeysUsable({ keys: imageOnlyKeys, urls: [], userId, now, imagesOnly: true });
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });
