@@ -136,6 +136,14 @@ describe('generateFromGraph — input url check, prompt audit and submit', () =>
     );
   });
 
+  it('a submission the prompt audit rejects is not submitted', async () => {
+    mocks.assertInputs.mockResolvedValue(undefined);
+    const rejected = new TRPCError({ code: 'BAD_REQUEST', message: 'prompt refused' });
+    mocks.auditPromptServer.mockRejectedValueOnce(rejected);
+    await expect(submit()).rejects.toBe(rejected);
+    expect(mocks.submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('a refused submission is neither audited nor submitted', async () => {
     mocks.assertInputs.mockRejectedValue(refused);
     await expect(submit()).rejects.toBe(refused);

@@ -160,6 +160,7 @@ describe('generateFromGraph — the prompt audit gate', () => {
       sourceProvenance: ['provenance-token-abc'],
       userId: USER_ID,
       isModerator: false,
+      inputGate: { entry: 'generateFromGraph', isApiCaller: false },
     } as never).catch(() => undefined);
     expect(mockUnionSourceImageIds).toHaveBeenCalledWith(
       expect.objectContaining({ tokens: ['provenance-token-abc'] })
