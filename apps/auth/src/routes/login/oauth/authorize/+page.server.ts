@@ -7,6 +7,7 @@ import { parsePrompt } from '$lib/server/oauth/prompt';
 import { clientErrorUrl, redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import {
+  canSwitch,
   getDeviceId,
   isLinkedAndFresh,
   listAccounts,
@@ -94,7 +95,9 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
   // select_account asked for it). Resolve username/image the same way GET /api/auth/accounts does.
   // Display only — switching is authorized server-side against the device set (see the `switch` action).
   const deviceId = getDeviceId(cookies);
-  const linked = deviceId ? await listAccounts(deviceId) : [];
+  const principal = locals.impersonatedBy ?? locals.user.id;
+  const linked =
+    deviceId && (await isLinkedAndFresh(deviceId, principal)) ? await listAccounts(deviceId) : [];
   // select_account always lists the signed-in account, even if this browser's device set doesn't have it.
   const currentUserId = locals.user.id;
   const shown = linked.length >= 2 || selectAccount ? linked.map((a) => a.userId) : [];
@@ -136,10 +139,9 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
 
 export const actions: Actions = {
   // Switch — authorize as a different linked account, then reload the consent screen as that account so
-  // Approve issues the code for it. Mirrors POST /api/auth/switch (the device-level switch): authorized by
-  // BOTH an active session AND the target being linked to THIS browser's device set and fresh (<30d) — never
-  // a client-supplied credential. All the original auth params are forwarded as hidden fields and copied
-  // back onto the consent redirect so the in-flight request survives the round-trip.
+  // Approve issues the code for it. Requires an active session and the same membership rule as
+  // /api/auth/switch. All the original auth params are forwarded as hidden fields and copied back onto the
+  // consent redirect so the in-flight request survives the round-trip.
   // hooks.server.ts refuses a POST here that doesn't come from a hub page.
   switch: async ({ request, cookies, locals, url }) => {
     if (!locals.user) error(401, 'active session required');
@@ -149,7 +151,8 @@ export const actions: Actions = {
     if (!deviceId || !Number.isFinite(targetUserId)) return fail(400, { switchError: true });
 
     if (targetUserId !== locals.user.id) {
-      if (!(await isLinkedAndFresh(deviceId, targetUserId)))
+      const principal = locals.impersonatedBy ?? locals.user.id;
+      if (!(await canSwitch(deviceId, principal, targetUserId)))
         return fail(403, { switchError: true });
       const user = await getOrProduceSessionUser(targetUserId);
       if (!user) return fail(404, { switchError: true });
