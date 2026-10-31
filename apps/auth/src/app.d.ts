@@ -1,4 +1,4 @@
-import type { SessionUser } from '@civitai/auth';
+import type { SessionClaims, SessionUser } from '@civitai/auth';
 
 // See https://svelte.dev/docs/kit/types#app.d.ts
 declare global {
@@ -6,6 +6,8 @@ declare global {
     // interface Error {}
     interface Locals {
       user?: SessionUser;
+      /** The verified claims of the session this request acts as. */
+      session?: SessionClaims;
       /** The current session's token id (jti) — used by /logout to invalidate it. */
       tokenId?: string;
       /** Moderator impersonation (F): the moderator's id when this is an impersonation session. */

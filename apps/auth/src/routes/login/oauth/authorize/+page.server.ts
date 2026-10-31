@@ -156,7 +156,10 @@ export const actions: Actions = {
         return fail(403, { switchError: true });
       const user = await getOrProduceSessionUser(targetUserId);
       if (!user) return fail(404, { switchError: true });
-      const token = await mintUserSession(user);
+      const token = await mintUserSession(user, {
+        parent: locals.session,
+        clearImpersonation: true,
+      });
       await touchAccount(deviceId, targetUserId); // slide the 30-day idle clock
       setSessionCookie(cookies, token);
       rollDeviceCookie(cookies, deviceId);

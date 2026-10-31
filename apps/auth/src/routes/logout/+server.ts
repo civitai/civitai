@@ -1,10 +1,13 @@
 import { redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import type { RequestHandler } from './$types';
-import { clearSession } from '$lib/server/auth/session';
+import { clearSession, SESSION_COOKIE } from '$lib/server/auth/session';
 import { clearDeviceCookie } from '$lib/server/auth/device';
 import { clearLegacyCookies } from '$lib/server/auth/legacy-cookies';
 import { sessions } from '$lib/server/auth/registry';
+import { endDeviceSessions } from '$lib/server/auth/lineage';
+import { signatureVerifier } from '$lib/server/auth/verifier';
+import { readInternalCaller } from '$lib/server/auth/s2s';
 import { readReturnUrl, buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 
@@ -55,10 +58,14 @@ export const GET: RequestHandler = async ({ url }) => {
   });
 };
 
-export const POST: RequestHandler = async ({ cookies, locals, url }) => {
+export const POST: RequestHandler = async ({ cookies, locals, request, url }) => {
   if (locals.tokenId) {
     await sessions.invalidateToken(locals.tokenId, locals.user?.id).catch(() => {});
   }
+  // Every site and account signed in from this browser signs out with it, including when the caller's session was
+  // already signed out by an earlier leg of the same logout.
+  const caller = locals.session ?? (await signedOutCaller(request, cookies.get(SESSION_COOKIE)));
+  await endDeviceSessions(caller, locals.deviceId);
   // Clear the hub's session AND device cookies under every name, `.civitai.com` and host-only (the
   // seamless-switch account set must not survive logout on a shared machine). Also clear any leftover LEGACY
   // next-auth cookies on `.civitai.com` — the main app's hybrid fallback still honors the legacy session cookie,
@@ -75,3 +82,10 @@ export const POST: RequestHandler = async ({ cookies, locals, url }) => {
   const target = buildPostLoginRedirect(returnUrl, null, url.origin, dev, isAllowedOrigin);
   redirect(302, target && target !== '/' ? target : '/login');
 };
+
+async function signedOutCaller(request: Request, cookieToken: string | undefined) {
+  const token = (await readInternalCaller(request))?.token ?? cookieToken;
+  return token
+    ? (await signatureVerifier.verifyToken(token).catch(() => null)) ?? undefined
+    : undefined;
+}

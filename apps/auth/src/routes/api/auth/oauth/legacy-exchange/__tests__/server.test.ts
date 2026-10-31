@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const h = vi.hoisted(() => ({
   verifyToken: vi.fn(),
   getOrProduceSessionUser: vi.fn(),
-  mintUserSession: vi.fn(),
+  mintSession: vi.fn(),
   touchAccount: vi.fn(),
   isInternalRequest: vi.fn(),
 }));
@@ -25,7 +25,7 @@ vi.mock('$lib/server/auth/verifier', () => ({ verifier: { verifyToken: h.verifyT
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: h.getOrProduceSessionUser,
 }));
-vi.mock('$lib/server/auth/session', () => ({ mintUserSession: h.mintUserSession }));
+vi.mock('$lib/server/auth/session', () => ({ mintSession: h.mintSession }));
 vi.mock('$lib/server/auth/device', () => ({
   getDeviceId: () => 'dev-1',
   touchAccount: h.touchAccount,
@@ -53,28 +53,28 @@ describe('legacy-exchange ban gate', () => {
     vi.clearAllMocks();
     h.isInternalRequest.mockReturnValue(true);
     h.verifyToken.mockResolvedValue({ sub: '42' });
-    h.mintUserSession.mockResolvedValue('fresh.civ.jwt');
+    h.mintSession.mockResolvedValue({ token: 'fresh.civ.jwt', family: 'f' });
   });
 
   it('mints for an ordinary account', async () => {
     h.getOrProduceSessionUser.mockResolvedValue({ id: 42 });
     const res = await call();
     expect(res.status).toBe(200);
-    expect(h.mintUserSession).toHaveBeenCalled();
+    expect(h.mintSession).toHaveBeenCalled();
   });
 
   it('refuses to mint for a BANNED account', async () => {
     h.getOrProduceSessionUser.mockResolvedValue({ id: 42, bannedAt: new Date() });
     const res = await call();
     expect(res.status).toBe(403);
-    expect(h.mintUserSession).not.toHaveBeenCalled();
+    expect(h.mintSession).not.toHaveBeenCalled();
   });
 
   it('refuses to mint for a DELETED account', async () => {
     h.getOrProduceSessionUser.mockResolvedValue({ id: 42, deletedAt: new Date() });
     const res = await call();
     expect(res.status).toBe(403);
-    expect(h.mintUserSession).not.toHaveBeenCalled();
+    expect(h.mintSession).not.toHaveBeenCalled();
   });
 });
 
@@ -85,7 +85,7 @@ describe('legacy-exchange token format', () => {
     // The shared verifier accepts both formats, so the route has to tell them apart itself.
     h.verifyToken.mockResolvedValue({ sub: '42' });
     h.getOrProduceSessionUser.mockResolvedValue({ id: 42 });
-    h.mintUserSession.mockResolvedValue('fresh.civ.jwt');
+    h.mintSession.mockResolvedValue({ token: 'fresh.civ.jwt', family: 'f' });
   });
 
   it('accepts a legacy next-auth JWE', async () => {
@@ -97,12 +97,12 @@ describe('legacy-exchange token format', () => {
     const res = await call(CIV_TOKEN);
     expect(res.status).toBe(401);
     expect(h.verifyToken).not.toHaveBeenCalled();
-    expect(h.mintUserSession).not.toHaveBeenCalled();
+    expect(h.mintSession).not.toHaveBeenCalled();
   });
 
   it('rejects a token with no readable header', async () => {
     const res = await call('not-a-token');
     expect(res.status).toBe(401);
-    expect(h.mintUserSession).not.toHaveBeenCalled();
+    expect(h.mintSession).not.toHaveBeenCalled();
   });
 });
