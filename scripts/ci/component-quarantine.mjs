@@ -16,4 +16,7 @@
  */
 export const QUARANTINED_COMPONENT_FILES = [
   'src/components/Apps/AppAssistant/AppAssistantWorkspace.browser.test.tsx',
+  // Added 2026-10-31: random "Test timed out in 15000ms" on main and PR runs (a different test each
+  // time, e.g. main run 41230744040), all 62 tests pass locally. Same exit rule as above.
+  'src/components/Apps/ScopeRevoke.browser.test.tsx',
 ];
