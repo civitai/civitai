@@ -61,6 +61,15 @@ say the same host and port. That cost an hour and produced a confidently wrong r
 2026-08-16: `limit: 8` from the app's DB and `limit: 40` from this skill's, reported as a config bug
 that did not exist.
 
+Two checks make the wrong database fail loudly instead of answering:
+
+- **Every target except `--dev` refuses a URL that came from the root `.env`.** A checkout with no
+  skill `.env` exits 1 and names the file it would have read. A URL set in the process environment
+  is still accepted: that is a deliberate choice.
+- **`--prod` (read-only) checks that it reached a hot standby.** After connecting it prints
+  `Server: <addr>, in recovery: <bool>` and exits 1 if the server is not in recovery, since a primary
+  or a local copy is not the replica.
+
 ### Options
 
 | Flag | Description |
