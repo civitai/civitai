@@ -62,7 +62,8 @@ const statusOf = async () => {
 };
 
 beforeEach(() => {
-  h.sys = makeSysRedis();
+  h.sys ??= makeSysRedis();
+  h.sys.reset();
   h.minted = [];
   h.claims = { sub: String(USER), jti: 'j1', sid: 'family-a', iat0, signedAt: Date.now() };
   h.users = new Map([

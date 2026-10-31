@@ -1,5 +1,6 @@
 // In-memory stand-in for the sys redis client: the hash, set and string commands the session registry and
-// lineage records use, with per-field and per-key TTLs recorded rather than enforced.
+// lineage records use, with per-field and per-key TTLs recorded rather than enforced. Reset it between tests
+// rather than replacing it: the session registry keeps the first client it is given.
 export function makeSysRedis() {
   const hashes = new Map<string, Map<string, string>>();
   const sets = new Map<string, Set<string>>();
@@ -11,6 +12,9 @@ export function makeSysRedis() {
     sets,
     strings,
     ttls,
+    reset() {
+      for (const m of [hashes, sets, strings, ttls]) m.clear();
+    },
     async hSet(key: string, field: string, value: string | number) {
       hash(key).set(field, String(value));
     },

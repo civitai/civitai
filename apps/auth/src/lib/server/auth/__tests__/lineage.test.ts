@@ -70,7 +70,8 @@ const revoked = (claims: { jti: string; sid?: string }) =>
   sessions.isRevoked({ ...claims, signedAt: Date.now() });
 
 beforeEach(() => {
-  h.sys = makeSysRedis();
+  h.sys ??= makeSysRedis();
+  h.sys.reset();
   h.minted = [];
   h.verified.clear();
 });
