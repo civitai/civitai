@@ -44,7 +44,11 @@ import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import { getGallerySettingsByModelId, getHeldGalleryLevel } from '~/server/services/model.service';
+import {
+  getGallerySettingsByModelId,
+  getHeldGalleryLevel,
+  getHeldLevelsByPost,
+} from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -344,6 +348,16 @@ export const setTosViolationHandler = async ({
  * credentials the moderator procedures accept, so an app a moderator authorised does not get it.
  */
 const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+
+/**
+ * An image on a minor or SFW-only model's post, above that model's held level, is served whole only to
+ * the model's owner and moderators.
+ */
+async function heldFromViewer(ctx: Context, image: { postId?: number | null; nsfwLevel: number }) {
+  if (!image.postId || moderatorView(ctx)) return false;
+  const held = (await getHeldLevelsByPost([image.postId])).get(image.postId);
+  return !!held && held.ownerId !== ctx.user?.id && !Flags.intersects(held.level, image.nsfwLevel);
+}
 
 export const getInfiniteImagesHandler = async ({
   input,
@@ -938,7 +952,9 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: result.user.id,
       postId: result.postId ?? null,
     });
-    return canSeeMedia ? result : withoutMedia({ ...result, eventDecoration: null });
+    return canSeeMedia && !(await heldFromViewer(ctx, result))
+      ? result
+      : withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

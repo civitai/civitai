@@ -7,7 +7,7 @@ vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   getCreatorGalleryHiddenUserIds: vi.fn(async () => []),
 }));
 
-const { bustPostVersionCache, getHeldGalleryLevel } = await import(
+const { bustPostVersionCache, getHeldGalleryLevel, getHeldLevelsByPost } = await import(
   '~/server/services/model.service'
 );
 
@@ -199,5 +199,33 @@ describe('getHeldGalleryLevel', () => {
 
   it('holds nothing for an unheld model and its version', async () => {
     expect(await getHeldGalleryLevel({ modelId: 3, modelVersionId: 30 })).toBeUndefined();
+  });
+});
+
+describe('getHeldLevelsByPost', () => {
+  beforeEach(() => {
+    dbMock.dbRead.model.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] } };
+    }) => where.id.in.map((id) => ({ id, userId: id * 11 }))) as never);
+  });
+
+  it("gives each post on a held model that model's held level and owner, and no other post", async () => {
+    const held = await getHeldLevelsByPost([100, 200, 300, 7, 100]);
+
+    expect(Object.fromEntries(held)).toEqual({
+      100: { level: 1, ownerId: 11 },
+      200: { level: 2, ownerId: 22 },
+    });
+    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: expect.arrayContaining([1, 2]) } } })
+    );
+  });
+
+  it('asks nothing for no posts, or for posts on no held model', async () => {
+    expect((await getHeldLevelsByPost([])).size).toBe(0);
+    expect((await getHeldLevelsByPost([300, 7])).size).toBe(0);
+    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
   });
 });

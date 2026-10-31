@@ -30,6 +30,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { isDefined } from '~/utils/type-guards';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import {
@@ -102,6 +103,17 @@ const imagesEndpointSchema = z.object({
 // inner getImagesFromSearch timer doesn't capture. route label keeps it queryable
 // alongside the search-fn timing without extra cardinality.
 const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
+
+async function withoutHeldImages<T extends { postId: unknown; browsingLevel: number }>(items: T[]) {
+  const { getHeldLevelsByPost } = await import('~/server/services/model.service');
+  const postIdOf = (image: T) => (typeof image.postId === 'number' ? image.postId : undefined);
+  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined));
+  return items.filter((image) => {
+    const postId = postIdOf(image);
+    const hold = postId ? held.get(postId) : undefined;
+    return !hold || Flags.intersects(hold.level, image.browsingLevel);
+  });
+}
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   // When the long-task LABELS tier is armed, attribute any synchronous event-loop
@@ -234,10 +246,12 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // runImageSearch. The PUBLIC endpoint passes its existing region/nsfw-derived
     // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
     // block endpoint passes a server-clamped value. No other lever differs.
-    const { items, nextCursor } = await runImageSearch(
+    const { items: found, nextCursor } = await runImageSearch(
       { limit, skip, cursor, type, withMeta, flatMeta, withTags, feedService: true, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
+    // Images picked by id name no model, so each is held by its own post's model.
+    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
 
     const metadata: Metadata = {
       nextCursor,
