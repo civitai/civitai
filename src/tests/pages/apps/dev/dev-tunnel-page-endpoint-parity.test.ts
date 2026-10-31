@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as ServerSideHelpers from '~/server/utils/server-side-helpers';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as RequireFullScopeSession from '~/server/utils/require-full-scope-session';
+import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as BlockRegistryService from '~/server/services/block-registry.service';
+import type * as DevTunnelService from '~/server/services/blocks/dev-tunnel.service';
+import type * as DevTunnelDnsService from '~/server/services/blocks/dev-tunnel-dns.service';
 
 /**
  * `/apps/dev/[blockId]` and its Retry endpoint (`/api/apps/dev/entry-url`) refuse the same
@@ -20,36 +27,44 @@ const m = vi.hoisted(() => ({
   hostPublished: vi.fn<(host: string) => Promise<boolean>>(),
 }));
 
-vi.mock('~/server/utils/server-side-helpers', () => ({
+vi.mock('~/server/utils/server-side-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerSideHelpers>()),
   createServerSideProps: (opts: { resolver: PageResolver }) => {
     m.pageResolver = opts.resolver;
     return async () => ({ props: {} });
   },
 }));
-vi.mock('~/server/utils/endpoint-helpers', () => ({
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof EndpointHelpers>()),
   AuthedEndpoint:
     (handler: (req: unknown, res: unknown, user: unknown) => Promise<unknown>) =>
     (req: unknown, res: unknown) =>
       handler(req, res, m.author),
 }));
-vi.mock('~/server/utils/require-full-scope-session', () => ({
+vi.mock('~/server/utils/require-full-scope-session', async (importOriginal) => ({
+  ...(await importOriginal<typeof RequireFullScopeSession>()),
   requireFullScopeSession: () => true,
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsAsync: async () => m.features.current,
 }));
-vi.mock('~/server/services/app-blocks-flag', () => ({
+vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksDevTunnelEnabled: (...a: unknown[]) => m.devTunnelEnabled(...a),
   isAppBlocksDevTunnelUnsubmittedSpendEnabled: async () => true,
 }));
-vi.mock('~/server/services/block-registry.service', () => ({
+// BlockRegistry is a class whose statics a spread would drop, so only it is replaced.
+vi.mock('~/server/services/block-registry.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockRegistryService>()),
   BlockRegistry: { resolveDevPageBlockForAuthor: (...a: unknown[]) => m.resolveDev(...a) },
 }));
-vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
+vi.mock('~/server/services/blocks/dev-tunnel.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof DevTunnelService>()),
   getActiveDevTunnel: (...a: unknown[]) => m.activeTunnel(...a),
 }));
-vi.mock('~/server/services/blocks/dev-tunnel-dns.service', () => ({
+vi.mock('~/server/services/blocks/dev-tunnel-dns.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof DevTunnelDnsService>()),
   isDevTunnelHostPublished: (host: string) => m.hostPublished(host),
 }));
 
