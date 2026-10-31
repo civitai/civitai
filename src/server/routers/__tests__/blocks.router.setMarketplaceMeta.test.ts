@@ -217,7 +217,7 @@ describe('blocks.getMarketplaceMeta — MOD-ONLY read (F-E E4)', () => {
   });
 });
 
-describe('blocks.getFeaturedBlocks — anon-capable, dark behind the flag (F-E E4)', () => {
+describe('blocks.getFeaturedBlocks — legacy read: flag gate, then moderator-only (F-E E4)', () => {
   it('anon WITHOUT the flag: gate disables → EMPTY rail, service NOT consulted', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
     const result = await caller.getFeaturedBlocks({ limit: 12 });

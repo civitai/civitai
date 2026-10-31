@@ -167,7 +167,7 @@ describe('enforceAppBlocksFlag — query (listForModel)', () => {
   });
 });
 
-describe('listAvailable — anon-capable read path, dark behind the flag gate (F-E E1)', () => {
+describe('listAvailable — legacy read: flag gate, then moderator-only (F-E E1)', () => {
   it('anonymous WITHOUT the flag: gate disables → empty (dark today), registry NOT consulted', async () => {
     // Real anon today: the mod-segmented flag can never match without a mod
     // context, so the middleware sets _appBlocksDisabled → empty. This is the
