@@ -47,7 +47,7 @@ export const reportHolds = (hc: string) =>
   Prisma.raw(`(
     ${hc}."reportSentAt" IS NULL
     OR ${hc}."archivedAt" IS NULL
-    OR ${hc}."reportSentAt" > now() - interval '1 year'
+    OR ${hc}."reportSentAt" > now() - interval '2 years'
   )`);
 
 /**
