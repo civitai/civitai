@@ -22,6 +22,7 @@
  * looks exactly like a component that returned null. The negative tests render a sibling marker and
  * wait for it, so the zero has a positive control.
  */
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
@@ -32,7 +33,7 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
 const mocks = vi.hoisted(() => ({
   card: undefined as unknown,
   cardInputs: [] as unknown[],
-  cardProps: [] as { card: unknown; canOpenPage?: boolean }[],
+  cardProps: [] as { card: unknown; canOpenPage?: boolean; embedded?: boolean }[],
   appBlocksPages: false,
 }));
 
@@ -42,9 +43,20 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 
 vi.mock('~/components/Apps/AppListingCard', () => ({
-  AppListingCard: (props: { card: { name: string }; canOpenPage?: boolean }) => {
+  AppListingCard: (props: {
+    card: { name: string };
+    canOpenPage?: boolean;
+    embedded?: boolean;
+    coverBadge?: ReactNode;
+  }) => {
     mocks.cardProps.push(props);
-    return <div data-testid="stub-listing-card">{props.card.name}</div>;
+    // The real card pins `coverBadge` over its cover; the stub renders it first so the credit's
+    // wording is still read as one string with the card's name after it.
+    return (
+      <div data-testid="stub-listing-card">
+        <span>{props.coverBadge}</span> <span>{props.card.name}</span>
+      </div>
+    );
   },
 }));
 
@@ -135,7 +147,7 @@ describe('PostPublishedWithApp', () => {
     expect(mocks.cardInputs[0]).toEqual({ slug: 'custom-generators' });
   });
 
-  test('a resolved card renders as the store card under the label, with the page-open flag', async () => {
+  test('a resolved card renders as the embedded store card, the label on its cover, with the page-open flag', async () => {
     mocks.card = { id: 'l1', slug: 'custom-generators', name: 'Custom Generators Card' };
     mocks.appBlocksPages = true;
     await rendered(viewable);
@@ -143,6 +155,10 @@ describe('PostPublishedWithApp', () => {
     expect(sentence()).toBe('Made with Custom Generators Card');
     expect((mocks.cardProps.at(-1)?.card as ListingCard).slug).toBe('custom-generators');
     expect(mocks.cardProps.at(-1)?.canOpenPage).toBe(true);
+    expect(mocks.cardProps.at(-1)?.embedded).toBe(true);
+    // No heading above the card any more: the label is the cover badge, inside the card.
+    expect(chip()?.querySelector('p')).toBeNull();
+    expect(page.getByTestId('post-published-with-app-label').elements()).toHaveLength(1);
     // The card replaces the name link; no second link to the same page.
     expect(chip()?.querySelector('a')).toBeNull();
   });
