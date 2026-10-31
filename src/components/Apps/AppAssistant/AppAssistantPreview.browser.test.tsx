@@ -23,9 +23,12 @@ const SESSION = { blockId: 'my-app', sessionId: 'bki_1', host: HOST };
 
 const m = vi.hoisted(() => ({
   fetchFrame: vi.fn(),
+  fetchEntryUrl: vi.fn(),
   gate: null as null | { blockId: string; onSettled: () => void },
   /** The mounted frame host's reload callback (latest render). */
   onGuestReloaded: null as null | (() => void),
+  /** The mounted frame host's Retry URL source (latest render). */
+  refreshEntryUrl: null as null | (() => Promise<string>),
   /** Times a DevTunnelBlockHost MOUNTED — a remount is what resets the page host's handshake. */
   frameMounts: 0,
 }));
@@ -33,6 +36,7 @@ const m = vi.hoisted(() => ({
 vi.mock('~/components/Apps/AppAssistant/previewFrame', async (importOriginal) => ({
   ...(await importOriginal<typeof PreviewFrameMod>()),
   fetchPreviewFrame: m.fetchFrame,
+  fetchPreviewEntryUrl: m.fetchEntryUrl,
 }));
 vi.mock('~/components/AppBlocks/DevTunnelBlockHost', async () => {
   const { useEffect } = await import('react');
@@ -40,11 +44,14 @@ vi.mock('~/components/AppBlocks/DevTunnelBlockHost', async () => {
     DevTunnelBlockHost: ({
       iframeSrc,
       onGuestReloaded,
+      refreshEntryUrl,
     }: {
       iframeSrc: string;
       onGuestReloaded?: () => void;
+      refreshEntryUrl?: () => Promise<string>;
     }) => {
       m.onGuestReloaded = onGuestReloaded ?? null;
+      m.refreshEntryUrl = refreshEntryUrl ?? null;
       useEffect(() => {
         m.frameMounts += 1;
       }, []);
@@ -64,8 +71,10 @@ const { AppAssistantPreview } = await import('./AppAssistantPreview');
 beforeEach(() => {
   m.gate = null;
   m.onGuestReloaded = null;
+  m.refreshEntryUrl = null;
   m.frameMounts = 0;
   m.fetchFrame.mockReset();
+  m.fetchEntryUrl.mockReset();
 });
 
 describe('AppAssistantPreview — a preview whose host is not resolvable yet', () => {
@@ -236,5 +245,44 @@ describe('AppAssistantPreview — the app reloaded itself in the frame', () => {
     expect(page.getByTestId('frame').query()).toBeNull();
     await new Promise((r) => setTimeout(r, 100));
     expect(m.fetchFrame).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * The frame's own Retry (a load that timed out or failed) needs a fresh entry URL too: the one the
+ * pane fetched expires minutes later, and the edge refuses it after that. Unlike a reload it must
+ * NOT remount the host — the host's bounded auto-retry budget lives in that mount — so the pane
+ * hands the host a fetcher instead of refetching its own query. Before the fix the pane passed
+ * none, so the first test below is red.
+ */
+describe('AppAssistantPreview — the frame retries a failed load', () => {
+  const FRESH_SRC = `https://${HOST}/?dev=entry-token-retry`;
+
+  test('gives the host a fetcher for a fresh entry URL of the session’s app', async () => {
+    m.fetchFrame.mockResolvedValue(FRAME);
+    m.fetchEntryUrl.mockResolvedValue(FRESH_SRC);
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
+    expect(m.refreshEntryUrl, 'the preview gave the host no fresh URL for a Retry').toBeTypeOf(
+      'function'
+    );
+
+    await expect(m.refreshEntryUrl!()).resolves.toBe(FRESH_SRC);
+    expect(m.fetchEntryUrl).toHaveBeenCalledTimes(1);
+    expect(m.fetchEntryUrl).toHaveBeenLastCalledWith('my-app');
+  });
+
+  test('fetching it neither refetches the pane’s frame nor remounts the host', async () => {
+    m.fetchFrame.mockResolvedValue(FRAME);
+    m.fetchEntryUrl.mockResolvedValue(FRESH_SRC);
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
+    expect(m.frameMounts).toBe(1);
+
+    await m.refreshEntryUrl?.();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+    expect(m.frameMounts).toBe(1);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
   });
 });
