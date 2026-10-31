@@ -1,7 +1,15 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { verifier } from '$lib/server/auth/verifier';
-import { getSigner, refuseModerationAccount, SESSION_COOKIE } from '$lib/server/auth/session';
+import { familyClaims, familyId } from '@civitai/auth';
+import {
+  getSigner,
+  refuseModerationAccount,
+  SESSION_COOKIE,
+  sessionExpiresIn,
+} from '$lib/server/auth/session';
+import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
+import { markFamilyLive } from '$lib/server/auth/lineage';
 import { sessions } from '$lib/server/auth/registry';
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { bearerToken } from '$lib/server/auth/request';
@@ -24,17 +32,19 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   const jti = claims?.jti;
   if (!claims || !Number.isFinite(userId) || !jti) error(401, 'unauthorized');
   refuseModerationAccount({ id: userId }, 'refresh');
+  // Checked against the current account, not the token: a session that rolls must not outlive a ban.
+  if (!(await isActiveAccount(userId))) error(403, 'account_disabled');
+  if (claims.impersonatedBy != null && !(await isActiveAccount(claims.impersonatedBy)))
+    error(403, 'account_disabled');
 
+  // Same jti, family, sign-in time and impersonation: the same session with a fresh window.
+  const now = Date.now();
+  const lineage = familyClaims(claims, { now });
   const fresh = await getSigner().mintSessionToken(
-    {
-      sub: String(userId),
-      signedAt: Date.now(),
-      // Preserve moderator impersonation (F) across the roll — otherwise an impersonation session older than
-      // the update age silently becomes a real session for the target (and the exit path / audit break).
-      ...(claims.impersonatedBy ? { impersonatedBy: claims.impersonatedBy } : {}),
-    },
-    { jti } // same jti → same session, fresh window
+    { sub: String(userId), signedAt: now, ...lineage },
+    { jti, expiresIn: sessionExpiresIn(lineage, now) }
   );
+  await markFamilyLive(familyId(claims));
   // Refresh the token-tracking TTL so an actively-used session's tracking entry doesn't lapse.
   await sessions.trackToken(jti, userId).catch(() => {});
 
@@ -47,3 +57,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
   return json({ token: fresh });
 };
+
+async function isActiveAccount(userId: number): Promise<boolean> {
+  const user = await getOrProduceSessionUser(userId);
+  return !!user && !user.bannedAt && !user.deletedAt;
+}

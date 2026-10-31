@@ -51,6 +51,7 @@ import { DELETE as removePost } from '../../../../routes/api/auth/accounts/+serv
 
 const DEVICE = 'device-1';
 const list = (deviceId: string) => `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}`;
+const families = (deviceId: string) => `${REDIS_SYS_KEYS.SESSION.DEVICE_FAMILIES}:${deviceId}`;
 const user = (id: number) => ({ id, username: `u${id}` } as unknown as SessionUser);
 
 function makeCookies(initial: Record<string, string>) {
@@ -219,10 +220,39 @@ describe('account last used long ago', () => {
 describe('creating a list', () => {
   it('a second sign-in pair on the same new device id is refused rather than merged', async () => {
     const fresh = 'device-2';
-    expect(await linkAccount(fresh, 200, 100)).toBe('joined');
+    expect(await linkAccount(fresh, 200, 100)).toBe('created');
     expect(await linkAccount(fresh, 400, 300)).toBe('rotate');
     expect(Object.keys(h.sys.lua.hash(list(fresh))!).sort()).toEqual(['100', '200']);
     expect(h.sys.lua.pttl(list(fresh))).toBe(TTL_MS);
+  });
+});
+
+describe("the browser's family record", () => {
+  it('a sign-in that would start a new list is not proof for a family record it is not in', async () => {
+    const victim = 'device-3';
+    h.sys.lua.setSet(families(victim), ['victim-fam']);
+    h.verified.set('prior', { sub: '300', sid: 'atk-fam', jti: 'j' });
+    const jar = makeCookies({ 'civ-device': victim, 'civ-token': 'prior' });
+
+    await establishSession(jar.cookies, user(301));
+
+    expect(jar.device()).not.toBe(victim);
+    expect(h.sys.lua.set(families(victim))).toEqual(['victim-fam']);
+    expect(h.sys.lua.hash(list(victim))).toBeUndefined();
+    expect(h.sys.lua.errors).toEqual([]);
+  });
+
+  it('an account in the list signing in again joins the family record', async () => {
+    const device = 'device-4';
+    h.sys.lua.setSet(families(device), ['old-fam']);
+    h.sys.lua.setHash(list(device), { '300': now, '301': now });
+    const jar = makeCookies({ 'civ-device': device });
+
+    await establishSession(jar.cookies, user(300));
+
+    expect(jar.device()).toBe(device);
+    expect(h.sys.lua.set(families(device))).toHaveLength(2);
+    expect(h.sys.lua.set(families(device))).toContain('old-fam');
   });
 });
 
