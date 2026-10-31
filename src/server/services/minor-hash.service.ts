@@ -700,6 +700,7 @@ export async function revertMinorHashAutoFlag({
   reason,
   note,
   textHash,
+  fromAppeal,
 }: {
   modelId: number;
   userId: number;
@@ -709,8 +710,10 @@ export async function revertMinorHashAutoFlag({
   recordTextScanRuling?: boolean;
   /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
   textHash?: string;
+  /** A granted appeal, which has already decided the flag is the automation's. */
+  fromAppeal?: boolean;
 }) {
-  const refusal = await minorRevertRefusal(modelId);
+  const refusal = fromAppeal ? undefined : await minorRevertRefusal(modelId);
   if (refusal) throw throwBadRequestError(refusal);
 
   // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
@@ -934,9 +937,21 @@ export async function resolveMinorFlagAppeal({
       labels: ['minor'],
       grantHashes,
     });
-    // A moderator's own flag is unset, never rolled back to a pre-state they did not choose.
-    const revertable = !!meta?.minorFlagSnapshot && !(await minorRevertRefusal(modelId));
-    const report = revertable ? await revertMinorHashAutoFlag({ modelId, userId }) : undefined;
+    const snapshot = meta?.minorFlagSnapshot;
+    const origin = snapshot?.confirmedFrom ?? snapshot?.source;
+    // A moderator's own flag is unset, never rolled back to a pre-state they did not choose. A
+    // confirmed automated flag is still rolled back: the owner's appeal is against the automation.
+    const report =
+      origin === 'auto' || origin === 'text-scan'
+        ? await revertMinorHashAutoFlag({ modelId, userId, fromAppeal: true })
+        : undefined;
+    if (report?.failed)
+      logToAxiom({
+        type: 'error',
+        name: 'minor-hash-rollback',
+        message: 'appeal overturn: the flag rollback failed, unsetting minor instead',
+        modelId,
+      }).catch(() => null);
     // The owner asked and a moderator agreed, so a minor flag from before the automation goes too.
     if (!report?.rolledBack) await setModelMinor({ id: modelId, minor: false, userId });
   }

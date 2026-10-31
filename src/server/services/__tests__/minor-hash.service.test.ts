@@ -112,6 +112,7 @@ beforeEach(() => {
   // (which only clears call history, not implementations) and leaks into sweepMinorHashMatches.
   mockSetModelMinor.mockReset();
   mockDbRead.$queryRaw.mockResolvedValue([]);
+  mockDbWrite.$queryRaw.mockResolvedValue([]);
   mockReplicaModelFindUnique.mockResolvedValue({ minor: true });
   mockPrimaryModelFindUnique.mockResolvedValue({ minor: true });
   mockLogToAxiom.mockResolvedValue(undefined);
@@ -1733,8 +1734,6 @@ describe('resolveMinorFlagAppeal', () => {
       poi: false,
       meta: { minorFlagSnapshot: { at: 'x', source: 'auto' } },
     });
-    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ source: 'auto', humanSince: false }]);
-    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ source: 'auto', humanSince: false }]);
     mockDbRead.$queryRaw.mockResolvedValueOnce([
       { ...rollbackRow(), ownerDeclaredMinor: false, ...snapshot },
     ]);
@@ -2135,7 +2134,6 @@ describe('resolveMinorFlagAppeal', () => {
       poi: false,
       meta: { minorFlagSnapshot: { at: 'x', source: 'manual' } },
     });
-    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ source: 'manual', humanSince: false }]);
 
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
@@ -2149,22 +2147,27 @@ describe('resolveMinorFlagAppeal', () => {
     );
   });
 
-  // A confirmation makes the flag the moderator's, so it is unset like one rather than rolled back.
-  it('takes the plain unset path for an auto flag a moderator later confirmed', async () => {
+  // The appeal is against the automation, so a moderator's confirmation does not stop the rollback
+  // that the revert button refuses.
+  it('still fully reverts an auto flag a moderator later confirmed', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
       minor: true,
       poi: false,
       meta: { minorFlagSnapshot: { at: 'x', source: 'manual', confirmedFrom: 'auto' } },
     });
-    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ source: 'manual', humanSince: true }]);
+    // What the revert button's refusal would read for this flag.
+    mockDbWrite.$queryRaw.mockResolvedValue([{ source: 'manual', humanSince: true }]);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      { ...rollbackRow(), prevMinor: false, ownerDeclaredMinor: false },
+    ]);
 
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
-    expect(mockTrackModActivity).not.toHaveBeenCalledWith(
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
       7,
       expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
     );
-    expect(mockSetModelMinor).toHaveBeenCalledWith({ id: 42, minor: false, userId: 7 });
+    expect(mockSetModelMinor).not.toHaveBeenCalledWith({ id: 42, minor: false, userId: 7 });
   });
 
   // Review Focus 2.

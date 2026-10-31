@@ -1,5 +1,5 @@
 /**
- * Backfill + rollback for hash-based repeat-uploader detection (ClickUp 868kfvpjc).
+ * Backfill + rollback for hash-based repeat-uploader detection.
  * =============================================================================
  *
  * Guarded by WEBHOOK_TOKEN via `?token=` query param.
