@@ -1043,6 +1043,19 @@ describe('submitVersion', () => {
       });
     });
 
+    it('🔴 an UPDATE to an app with no on-site listing row: null, not the first-version "no store listing yet" step', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      // The app is already live, so "once it is approved" would be wrong, and listMyPublishRequests
+      // reports no problems for a keyed request with no on-site listing.
+      existingAppOwnedBy(42);
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle({ version: '0.2.0' }),
+        submittedByUserId: 42,
+      });
+      expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+      expect(result.listing).toBeNull();
+    });
+
     it('🔴 reports the same problems /apps/mine shows for the same listing, blocked and scanning media included', async () => {
       const { submitVersion } = await import('../publish-request.service');
       const { listMyAppListings } = await import('../app-access.service');

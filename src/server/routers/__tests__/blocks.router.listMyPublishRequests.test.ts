@@ -395,6 +395,23 @@ describe('listMyPublishRequests — a pending first version reports its pre-appr
     const args = mockDbRead.appListing.findMany.mock.calls[0][0] as { where: { OR?: unknown } };
     expect(args.where.OR).toBeUndefined();
   });
+
+  // Agrees with submitVersion's readiness (null) for an update to an app with no on-site listing.
+  it('a KEYED row whose app has no on-site listing reports no problems', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        ...firstVersionRow('req-n', 'no-listing-app', 'pending'),
+        appBlock: { id: 'blk-n', manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
+      },
+    ]);
+    routeListingQueries([draftListing('no-listing-app')], []);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
+    expect(rows[0]).toMatchObject({ appListingId: null, listingStatus: null });
+  });
 });
 
 /**
