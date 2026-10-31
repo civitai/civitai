@@ -1549,18 +1549,20 @@ describe('setModelMinor — lift restore on a real row', () => {
     // A moderator's mature ruling with its nsfw lock, before any flag.
     await pg.query(
       `INSERT INTO "Model" (id, "userId", nsfw, "sfwOnly", "lockedProperties", "gallerySettings")
-       VALUES ($1, $2, true, false, '{nsfw}', '{"level": 31, "users": [], "tags": []}')`,
+       VALUES ($1, $2, true, false, '{nsfw}', '{"level": 31, "users": [9], "tags": [4]}')`,
       [MODEL_ID, OWNER_ID]
     );
     transaction = mockDbWrite.$transaction.getMockImplementation();
     trackModActivity = mockTrackModActivity.getMockImplementation();
     mockDbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) =>
       pg.transaction((tx) => fn(client(tx)))) as never);
+    // Backdated: createdAt rounds to the millisecond, which could otherwise put an audit row after
+    // the snapshot a flag takes right behind it.
     mockTrackModActivity.mockImplementation(
       async (userId: number, { activity, entityType, entityId }: Record<string, unknown>) => {
         await pg.query(
-          `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
-           VALUES ($1, $2, $3, $4)`,
+          `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+           VALUES ($1, $2, $3, $4, now() - interval '1 second')`,
           [userId, activity, entityType, entityId]
         );
       }
@@ -1578,14 +1580,14 @@ describe('setModelMinor — lift restore on a real row', () => {
     nsfw: true,
     sfwOnly: false,
     lockedProperties: ['nsfw'],
-    gallerySettings: { level: 31, users: [], tags: [] },
+    gallerySettings: { level: 31, users: [9], tags: [4] },
   };
   const notRestored = {
     minor: false,
     nsfw: false,
     sfwOnly: true,
     lockedProperties: [],
-    gallerySettings: { level: sfwBrowsingLevelsFlag, users: [], tags: [] },
+    gallerySettings: { level: sfwBrowsingLevelsFlag, users: [9], tags: [4] },
   };
 
   it('a lift puts back the rating, SFW-only, nsfw lock and gallery level the flag replaced', async () => {
@@ -1622,12 +1624,35 @@ describe('setModelMinor — lift restore on a real row', () => {
     expect(await row()).toMatchObject(notRestored);
   });
 
+  it.each([
+    ['on another model', 'model', MODEL_ID + 1, '+'],
+    ['on another entity type', 'image', MODEL_ID, '+'],
+    ['before the flag', 'model', MODEL_ID, '-'],
+  ])(
+    'a rating ruling logged %s does not stop the restore',
+    async (_, entityType, entityId, sign) => {
+      await flag();
+      await pg.query(
+        `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+       VALUES ($1, 'setSfwOnly', $2, $3, now() ${sign} interval '1 second')`,
+        [MODERATOR_ID, entityType, entityId]
+      );
+
+      await lift();
+
+      expect(await row()).toMatchObject(restored);
+    }
+  );
+
   it('a second lift does not restore the snapshot the first lift used up', async () => {
     await flag();
     // The first lift's audit row is lost, so only the snapshot's own mark records the lift.
     mockTrackModActivity.mockRejectedValueOnce(new Error('audit write failed'));
     await lift();
     expect(await row()).toMatchObject(restored);
+    expect((await pg.query(`SELECT activity FROM "ModActivity"`)).rows).toEqual([
+      { activity: 'setMinor' },
+    ]);
     // A save raises the flag again without a snapshot of its own.
     await pg.query(
       `UPDATE "Model" SET minor = true, nsfw = false, "sfwOnly" = true,
