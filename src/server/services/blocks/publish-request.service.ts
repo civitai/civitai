@@ -163,7 +163,7 @@ export type SubmitVersionResult = {
   /**
    * The store listing's readiness for THIS submission, so the submitter is told at submit
    * time what a moderator will refuse on. `null` when it could not be read (best-effort: the
-   * submit never fails over it).
+   * submit never fails over it) or for an update to an app with no on-site listing.
    */
   listing: SubmitListingReadiness | null;
 };
@@ -1454,8 +1454,9 @@ class ListingFloorRefusal extends Error {
  *
  * The listing read is the one `approveRequest` will publish ({@link resolvePublishTarget}),
  * falling back to the app's live listing for an update. `approvalBlocked` is set only for a
- * first go-live, the exact case `approveRequest` refuses. With no listing row at all, icon and
- * cover are reported missing with what to do once the listing exists.
+ * first go-live, the exact case `approveRequest` refuses. A first version with no listing row
+ * reports icon and cover missing with what to do once the listing exists; an update with no
+ * on-site listing reports nothing (`null`), as listMyPublishRequests does.
  *
  * BEST-EFFORT: the submit has already been queued, so a failed read yields `null` rather than
  * failing a submission that succeeded.
@@ -1517,6 +1518,9 @@ async function submitListingReadiness(args: {
           })
         : null) as Row | null);
     if (!row) {
+      // An update to an app with no on-site listing: the first-version step below would say
+      // "once it is approved" about an app that already is.
+      if (args.existingAppBlockId) return null;
       const missing = [...FLOOR_ASSETS];
       return {
         approvalBlocked: false,
@@ -2973,7 +2977,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // decision and a table that role cannot read, nothing is refused and nothing is written to it:
   // the approve goes ahead as it did before the split existed.
   //
-  // Shared with the 3b writes so the gate and the writes pick the same row.
+  // The gate and the listing writes below must resolve the same row.
   const goLive = await resolvePublishTarget<{
     id: string;
     iconId: number | null;

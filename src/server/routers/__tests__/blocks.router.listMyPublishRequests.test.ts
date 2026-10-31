@@ -595,9 +595,8 @@ describe('listMyPublishRequests — OWNER-ONLY scoping (guards the build-failure
  * "spells the constant": it fails iff the value is hardcoded. That is why the router
  * projects the column instead of restating the filter's conclusion.
  *
- * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 3 of the
- * 5 cases below go RED — the on-site label, the `kind` projection, and the narrow-fake
- * degrade. The other 2 PASS at base and are INVARIANT GUARDS, not coverage of this bug:
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 2 of the
+ * 4 cases below go RED — the on-site label and the `kind` projection. The other 2 PASS at base and are INVARIANT GUARDS, not coverage of this bug:
  * at base EVERY listing got the original label, so the off-site discriminating control
  * and the code-invariance case were green by construction. The discriminating control
  * still earns its place — it is the ONLY case that kills a hardcoded `'onsite'` at the
@@ -707,25 +706,6 @@ describe('listMyPublishRequests — the advisory is KIND-AWARE', () => {
     expect(args.select.kind).toBe(true);
     // The filter this projection deliberately does NOT restate at the call site.
     expect(args.where.kind).toBe('onsite');
-  });
-
-  it('a narrow fake omitting `kind` degrades to the on-site labels (this query only admits on-site rows)', async () => {
-    // The pre-existing cases in this file use exactly such a fake; this pins that the
-    // fallback is the honest one for THIS caller rather than an accident.
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([requestRow('req-n', 'blk-n')]);
-    mockDbRead.appListing.findMany.mockResolvedValue([
-      {
-        id: 'l-n',
-        appBlockId: 'blk-n',
-        status: 'approved',
-        tagline: null,
-        _count: { screenshots: 7 },
-      },
-    ]);
-
-    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
-    const rows = await caller.listMyPublishRequests();
-    expect(taglineLabelOf(rows[0])).toBe(MANIFEST_TAGLINE);
   });
 });
 

@@ -2,17 +2,9 @@
  * The store-listing PUBLISH FLOOR: a listing must have an icon AND a cover before it can go
  * live. Screenshots, description, tagline and category are recommended, never required.
  *
- * 🔴 ONE PREDICATE. The callers that check the floor all ask {@link checkListingMeetsFloor}:
- * the off-site submit / approve / apply gates and the owner-republish review pre-check
- * (through `assertListingMeetsFloor` in `app-listing-assets.service`, which re-exports this),
- * the on-site version approve (`approveRequest` — a first version's draft only, up front and
- * again in the draft transition's `where`), the moderator queue's "Approve is disabled" fact
- * (`listingFactsForRequests`), and the readiness a submit answers with (`submitVersion`).
- *
- * Not every go-live checks this: mod-reset re-approve, relistListing and immediate owner
- * republish restore existing assets unchecked; an update to an already-live listing does not
- * re-check it; and the legacy approve-time create (a first version with no draft row) mints a
- * listing with no art.
+ * Every floor check calls {@link checkListingMeetsFloor}. Intentionally ungated: the restore
+ * paths (mod-reset re-approve, relistListing, immediate owner republish), updates to an
+ * already-live listing, and the legacy approve-time create, which mints a listing with no art.
  *
  * It lives in `shared/` — PURE, no server imports — so the review UI can word the same
  * missing set the server refused on.

@@ -3197,7 +3197,7 @@ export const blocksRouter = router({
       appBlockId: string | null;
       slug?: string;
       status: string;
-      kind?: string | null;
+      kind: ListingProblemKind;
       iconId: number | null;
       coverId: number | null;
       description: string | null;
@@ -3325,8 +3325,7 @@ export const blocksRouter = router({
         problems: problemsListing
           ? computeListingProblems(
               listingProblemInput(problemsListing, {
-                // kind is always selected; ?? only satisfies the type
-                kind: (problemsListing.kind ?? 'onsite') as ListingProblemKind,
+                kind: problemsListing.kind,
                 appRating: r.appBlock?.contentRating,
                 assetScans: scansByListingId.get(problemsListing.id) ?? [],
               })
