@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type * as ModelPoiMinor from '~/server/services/text-scan/actions/model-poi-minor';
 
 // Unit tests for setModelMinor — the moderator "Set as Minor" quick action.
@@ -137,6 +138,7 @@ import { bustPublicModelResponseCache } from '~/server/services/model-version.se
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { rowChangesBeforeLock, sqlOf as sqlText } from './model-row-lock.fake';
+import { Prisma } from '@prisma/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
@@ -1462,5 +1464,158 @@ describe('setModelMinor — decides from the row it locks', () => {
 
     expect(commitSeen).toHaveLength(3);
     expect(commitSeen.every(Boolean)).toBe(true);
+  });
+});
+
+describe('setModelMinor — lift restore on a real row', () => {
+  const JSONB = ['meta', 'gallerySettings'];
+  let pg: PGlite;
+  const row = async () =>
+    (await pg.query<Record<string, unknown>>(`SELECT * FROM "Model" WHERE id = $1`, [MODEL_ID]))
+      .rows[0];
+
+  const TEXT_OID = 25;
+  const TEXT_ARRAY_OID = 1009;
+  // The transaction's raw SQL with its parameters typed as Prisma sends them (a bare string is text),
+  // and its ORM calls as the single-row reads and writes Prisma would send.
+  const client = (db: Pick<PGlite, 'query'>) => {
+    const raw = (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = Prisma.sql(strings, ...values);
+      const paramTypes = sql.values.map((v) =>
+        typeof v === 'string' ? TEXT_OID : Array.isArray(v) ? TEXT_ARRAY_OID : 0
+      );
+      return db.query(sql.text, sql.values, { paramTypes });
+    };
+    const select = async (id: number, keys: string[]) =>
+      (
+        await db.query<Record<string, unknown>>(
+          `SELECT ${keys.map((k) => `"${k}"`).join(', ')} FROM "Model" WHERE id = $1`,
+          [id]
+        )
+      ).rows[0] ?? null;
+    return {
+      $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) =>
+        (await raw(strings, ...values)).affectedRows ?? 0,
+      $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) =>
+        (await raw(strings, ...values)).rows,
+      model: {
+        findUnique: ({ where, select: keys }: { where: { id: number }; select: object }) =>
+          select(where.id, Object.keys(keys)),
+        update: async ({
+          where,
+          data,
+          select: keys,
+        }: {
+          where: { id: number };
+          data: Record<string, unknown>;
+          select: object;
+        }) => {
+          const entries = Object.entries(data);
+          await db.query(
+            `UPDATE "Model" SET ${entries
+              .map(([k], i) => `"${k}" = $${i + 2}`)
+              .join(', ')} WHERE id = $1`,
+            [where.id, ...entries.map(([k, v]) => (JSONB.includes(k) ? JSON.stringify(v) : v))]
+          );
+          return select(where.id, Object.keys(keys));
+        },
+      },
+    };
+  };
+
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int, name text, description text,
+        status text NOT NULL DEFAULT 'Published', availability text NOT NULL DEFAULT 'Public',
+        mode text, meta jsonb, "lockedProperties" text[] NOT NULL DEFAULT '{}',
+        nsfw bool NOT NULL DEFAULT false, minor bool NOT NULL DEFAULT false,
+        "sfwOnly" bool NOT NULL DEFAULT false, poi bool NOT NULL DEFAULT false,
+        "gallerySettings" jsonb);
+      CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int);
+      CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
+      CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, minor bool NOT NULL DEFAULT false);
+      CREATE TABLE "ModActivity" (id serial, "userId" int, activity text, "entityType" text,
+        "entityId" int, "createdAt" timestamptz NOT NULL DEFAULT clock_timestamp());
+    `);
+  }, 60_000);
+
+  let transaction: ReturnType<typeof mockDbWrite.$transaction.getMockImplementation>;
+  beforeEach(async () => {
+    await pg.exec(`TRUNCATE "Model", "ModActivity"`);
+    // A moderator's mature ruling with its nsfw lock, before any flag.
+    await pg.query(
+      `INSERT INTO "Model" (id, "userId", nsfw, "sfwOnly", "lockedProperties", "gallerySettings")
+       VALUES ($1, $2, true, false, '{nsfw}', '{"level": 31, "users": [], "tags": []}')`,
+      [MODEL_ID, OWNER_ID]
+    );
+    transaction = mockDbWrite.$transaction.getMockImplementation();
+    mockDbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) =>
+      pg.transaction((tx) => fn(client(tx)))) as never);
+    mockTrackModActivity.mockImplementation(
+      async (userId: number, { activity, entityType, entityId }: Record<string, unknown>) => {
+        await pg.query(
+          `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+           VALUES ($1, $2, $3, $4)`,
+          [userId, activity, entityType, entityId]
+        );
+      }
+    );
+  });
+  afterEach(() => mockDbWrite.$transaction.mockImplementation(transaction as never));
+
+  const flag = () => setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+  const lift = () => setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+  const restored = {
+    minor: false,
+    nsfw: true,
+    sfwOnly: false,
+    lockedProperties: ['nsfw'],
+    gallerySettings: { level: 31, users: [], tags: [] },
+  };
+
+  it('a lift puts back the rating, SFW-only, nsfw lock and gallery level the flag replaced', async () => {
+    await flag();
+    expect(await row()).toMatchObject({
+      minor: true,
+      nsfw: false,
+      sfwOnly: true,
+      gallerySettings: { level: sfwBrowsingLevelsFlag },
+    });
+
+    await lift();
+
+    expect(await row()).toMatchObject(restored);
+  });
+
+  it('a lift after a moderator ruled on the rating keeps that ruling', async () => {
+    await flag();
+    await pg.query(
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+       VALUES ($1, 'setSfwOnly', 'model', $2)`,
+      [MODERATOR_ID, MODEL_ID]
+    );
+
+    await lift();
+
+    expect(await row()).toMatchObject({ minor: false, nsfw: false, sfwOnly: true });
+  });
+
+  it('a second lift does not restore the snapshot the first lift used up', async () => {
+    await flag();
+    // The first lift's audit row is lost, so only the snapshot's own mark records the lift.
+    mockTrackModActivity.mockRejectedValueOnce(new Error('audit write failed'));
+    await lift();
+    expect(await row()).toMatchObject(restored);
+    // A save raises the flag again without a snapshot of its own.
+    await pg.query(
+      `UPDATE "Model" SET minor = true, nsfw = false, "sfwOnly" = true,
+         "lockedProperties" = '{minor,nsfw,sfwOnly}' WHERE id = $1`,
+      [MODEL_ID]
+    );
+
+    await lift();
+
+    expect(await row()).toMatchObject({ minor: false, nsfw: false, sfwOnly: true });
   });
 });
