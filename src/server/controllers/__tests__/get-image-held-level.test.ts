@@ -99,6 +99,12 @@ describe("getImageHandler on a minor or SFW-only model's post", () => {
     expect(await urlFor(NsfwLevel.R, { user: { id: MODEL_OWNER } })).toBe('media-key');
   });
 
+  it("holds the model's owner coming through an app they authorised", async () => {
+    expect(
+      await urlFor(NsfwLevel.R, { user: { id: MODEL_OWNER }, subject: { type: 'oauth' } })
+    ).toBeNull();
+  });
+
   it('serves a moderator the image whole', async () => {
     expect(await urlFor(NsfwLevel.R, { user: { id: 5, isModerator: true } })).toBe('media-key');
   });

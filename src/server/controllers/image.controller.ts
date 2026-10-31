@@ -351,7 +351,7 @@ const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFu
 
 /**
  * The images a viewer may see whole: one on a minor or SFW-only model's post, above that model's held
- * level, only the model's owner and moderators may.
+ * level, only the model's owner and moderators may, each in their own session or with a full key.
  */
 async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLevel: number }>(
   ctx: Context,
@@ -362,7 +362,7 @@ async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLev
   const held = await getHeldLevelsByPost(postIds);
   return images.filter((image) => {
     const hold = image.postId ? held.get(image.postId) : undefined;
-    const owner = !!ctx.user && hold?.ownerId === ctx.user.id;
+    const owner = !!ctx.user && isSessionOrFullUserKey(ctx) && hold?.ownerId === ctx.user.id;
     return !hold || owner || Flags.intersects(hold.level, image.nsfwLevel);
   });
 }

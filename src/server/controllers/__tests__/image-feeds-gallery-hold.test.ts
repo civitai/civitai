@@ -339,6 +339,21 @@ describe('image.getInfinite by image id', () => {
     expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, ctx(false, true)))).toEqual([1, 2, 3, 4]);
   });
 
+  const key = (tokenScope: number) => ({
+    apiKeyId: 1,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope,
+  });
+  it.each([
+    ['a full-access key', key(TokenScope.Full), [1, 2, 3, 4]],
+    ['a scoped key', key(TokenScope.ModelsRead), [1, 3, 4]],
+    ['an app they authorised', { subject: { type: 'oauth', id: 'app' } }, [1, 3, 4]],
+  ])("serves the model's owner on %s as its scope allows", async (_, credential, served) => {
+    const owner = { ...ctx(false), user: { id: OWNER }, ...credential } as unknown as Context;
+    expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, owner))).toEqual(served);
+  });
+
   it("holds a signed-out viewer when the model's owner is not known", async () => {
     heldByPost.mockResolvedValue(new Map([[HELD_POST, { level: NsfwLevel.PG }]]));
     const signedOut = { ...ctx(false), user: undefined } as unknown as Context;
