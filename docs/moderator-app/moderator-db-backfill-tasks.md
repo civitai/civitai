@@ -31,17 +31,17 @@ tables, text on one, and absent entirely on a fourth.
 
 Attribution columns — all `text`, all holding two schemes:
 
-| Table | Column | Rows | Distinct names |
-| --- | --- | --- | --- |
-| `RatingChanges` | `updatedBy` | 363,488 | 12 |
-| `ReToolActions` | `User` | 132,041 | 43 |
-| `FrontPageTimers` | `username` | 66,701 | 16 |
-| `UserNotes` | `lastUpdateBy` | 58,148 | 22 |
-| `Mods_TaskTimers` | `lastUpdateBy` | 18,656 | 18 |
-| `UserStrikes` | `createdBy` | 12,902 | 17 |
-| `ModelNotes` | `createdBy` | 938 | 9 — **two schemes as of 2026-09-29**, when Model Lookup began writing `locals.user.username`. ⚠️ This column is also the **edit authorisation** (`where "createdBy" = <username>`), so replacing the text with an id changes who may edit which note. |
-| `ModerationImageHelp` | `createdBy` / `handledBy` | 37 | 11 |
-| `TimedMutes` | `createdBy` | 0 | — (table dropped, §C) |
+| Table | Column | Distinct names |
+| --- | --- | --- |
+| `RatingChanges` | `updatedBy` | 12 |
+| `ReToolActions` | `User` | 43 |
+| `FrontPageTimers` | `username` | 16 |
+| `UserNotes` | `lastUpdateBy` | 22 |
+| `Mods_TaskTimers` | `lastUpdateBy` | 18 |
+| `UserStrikes` | `createdBy` | 17 |
+| `ModelNotes` | `createdBy` | 9 — **two schemes as of 2026-09-29**, when Model Lookup began writing `locals.user.username`. ⚠️ This column is also the **edit authorisation** (`where "createdBy" = <username>`), so replacing the text with an id changes who may edit which note. |
+| `ModerationImageHelp` | `createdBy` / `handledBy` | 11 |
+| `TimedMutes` | `createdBy` | — (table dropped, §C) |
 
 Subject columns — the account the row is *about*:
 
@@ -95,17 +95,17 @@ literal sentinel `splitQueue` there. Any name→id backfill must skip it — see
       thousands of unrelated rows; see `parity-findings.md`). The durable fix is a derived
       `subjectUserId integer` column, backfilled once by parsing the known phrasings:
 
-      | Shape | Rows | Subject |
-      | --- | --- | --- |
-      | `ToS N images from <id>` | 44,431 | trailing id |
-      | `UNMUTE: User <id>` | 29,452 | trailing id |
-      | `VERIFY MUTE: User <id>` | 20,178 | trailing id |
-      | `Strike number N on user <id>` / `Strike N on user <id>` | 12,969 | trailing id |
-      | `BAN: UserID <id>` | 1,036 | trailing id |
-      | `ToS N images from modelId <id>` | 1,013 | **a model, not a user** |
-      | `Banned N accounts` | 710 | none — a count only |
+      | Shape | Subject |
+      | --- | --- |
+      | `ToS N images from <id>` | trailing id |
+      | `UNMUTE: User <id>` | trailing id |
+      | `VERIFY MUTE: User <id>` | trailing id |
+      | `Strike number N on user <id>` / `Strike N on user <id>` | trailing id |
+      | `BAN: UserID <id>` | trailing id |
+      | `ToS N images from modelId <id>` | **a model, not a user** |
+      | `Banned N accounts` | none — a count only |
 
-      1,127 rows contain no number at all. Anything unparsed stays null rather than guessing.
+      Some rows contain no number at all. Anything unparsed stays null rather than guessing.
 
 ### D. Decide the destination
 
