@@ -171,7 +171,7 @@ export async function revertMinorFlag(modelId: number): Promise<ActionResult> {
       ok: true,
       keptMinor: true,
       warning:
-        'The automated flag was undone, but the model stays minor: it was minor before the flag. Unset it by hand if that is wrong.',
+        'The automated flag was undone, but the model stays minor: its state before the flag marks it minor. Unset it by hand if that is wrong.',
     };
   }
   return {

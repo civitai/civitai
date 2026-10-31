@@ -1091,11 +1091,13 @@ async function rollBackFlagOnMinorModel(
   row: RollbackCandidateRow,
   keptBy: NonNullable<ReturnType<typeof minorBeforeFlag>>
 ) {
-  // A keep resting on inference keeps the flag's locks too, so only a moderator can clear it.
+  // A keep resting on an earlier minor lock keeps the flag's locks too, so only a moderator can
+  // clear it. The others put back the locks from before: a minor lock would make the model a
+  // seed for automated repeat-uploader flags, and nobody confirmed it.
   const locks =
-    keptBy === 'recorded' || keptBy === 'declared'
-      ? row.prevLockedProperties
-      : uniq([...row.prevLockedProperties, ...MINOR_LOCKED_PROPERTIES]);
+    keptBy === 'locked'
+      ? uniq([...row.prevLockedProperties, ...MINOR_LOCKED_PROPERTIES])
+      : row.prevLockedProperties;
   await dbWrite.$executeRaw`
     UPDATE "Model"
     SET "lockedProperties" = ${withPoiLocksSql(locks)},

@@ -82,7 +82,7 @@ dbMock.dbWrite.$executeRaw.mockImplementation(
 dbMock.dbRead.$queryRaw.mockImplementation(query);
 dbMock.dbWrite.$queryRaw.mockImplementation(query);
 
-const { rollbackMinorHashAutoFlags, revertMinorHashAutoFlag } = await import(
+const { rollbackMinorHashAutoFlags, revertMinorHashAutoFlag, findMinorHashMatches } = await import(
   '~/server/services/minor-hash.service'
 );
 const { ruleModelTextScanFlag } = await import('~/server/services/text-scan/actions/flag-ruling');
@@ -96,6 +96,8 @@ const MODEL_ID = 1;
 const MODERATOR_ID = 7;
 const MATURE_LEVEL = 31;
 const MINOR_LOCKS = ['minor', 'nsfw', 'sfwOnly'];
+const UPLOADER_ID = 3;
+const FILE_HASH = 'ABC123';
 
 type Seed = {
   poi?: boolean;
@@ -175,6 +177,10 @@ beforeEach(async () => {
       status TEXT NOT NULL DEFAULT 'Published', "deletedAt" TIMESTAMP(3)
     );
     CREATE TABLE "Image" (id INTEGER PRIMARY KEY, minor BOOLEAN NOT NULL DEFAULT false);
+    CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
+    CREATE TABLE "ModelFile" (id INTEGER PRIMARY KEY, "modelVersionId" INTEGER NOT NULL,
+      type TEXT NOT NULL);
+    CREATE TABLE "ModelFileHash" ("fileId" INTEGER NOT NULL, type TEXT NOT NULL, hash TEXT NOT NULL);
     CREATE TABLE "ModActivity" (
       id SERIAL PRIMARY KEY, "userId" INTEGER, activity TEXT NOT NULL, "entityType" TEXT,
       "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
@@ -249,18 +255,46 @@ describe('a rollback on a model that was minor before the flag', () => {
     expect(after.lockedProperties).toEqual(['tags']);
   });
 
-  // Only a moderator can clear a minor flag kept on inference.
+  // Only a moderator can clear a minor flag kept on an earlier minor lock.
+  it("keeps an older snapshot's minor and the minor locks when it recorded a minor lock", async () => {
+    await seed({ snapshot: { ...mature, prevLockedProperties: ['minor', 'tags'] } });
+
+    const after = await keptMinor();
+
+    expect(sorted(after.lockedProperties)).toEqual(sorted([...MINOR_LOCKS, 'tags']));
+  });
+
+  it("keeps an older SFW-only snapshot's minor with only the locks from before", async () => {
+    await seed({ snapshot: { ...sfwOnlyBefore, prevLockedProperties: ['tags'] } });
+
+    const after = await keptMinor();
+
+    expect(after.lockedProperties).toEqual(['tags']);
+  });
+
+  // A seed flags the same uploader's other models automatically; a keep nobody confirmed must not.
   it.each([
-    ['a minor lock', { ...mature, prevLockedProperties: ['minor', 'tags'] }],
-    ['an SFW-only model', { ...sfwOnlyBefore, prevLockedProperties: ['tags'] }],
+    ['does not seed', 'an SFW-only model', { ...sfwOnlyBefore, prevLockedProperties: [] }, []],
+    [
+      'still seeds',
+      'a minor lock',
+      { ...mature, prevLockedProperties: ['minor'] },
+      [{ modelId: MODEL_ID, userId: UPLOADER_ID }],
+    ],
   ])(
-    "keeps an older snapshot's minor and the minor locks when it recorded %s",
-    async (_, snapshot) => {
+    '%s automated repeat-upload flags when it kept minor on %s',
+    async (_, __, snapshot, matches) => {
       await seed({ snapshot });
+      await holder.db.exec(`
+        UPDATE "Model" SET "userId" = ${UPLOADER_ID};
+        INSERT INTO "ModelVersion" (id, "modelId") VALUES (1, ${MODEL_ID});
+        INSERT INTO "ModelFile" (id, "modelVersionId", type) VALUES (1, 1, 'Model');
+        INSERT INTO "ModelFileHash" ("fileId", type, hash) VALUES (1, 'SHA256', '${FILE_HASH}');
+      `);
 
-      const after = await keptMinor();
+      await keptMinor();
 
-      expect(sorted(after.lockedProperties)).toEqual(sorted([...MINOR_LOCKS, 'tags']));
+      expect(await findMinorHashMatches(FILE_HASH.toLowerCase())).toEqual(matches);
     }
   );
 
