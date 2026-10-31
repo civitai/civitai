@@ -1897,6 +1897,47 @@ model ComicProjectReport {
   @@index([comicProjectId], type: Hash)
 }
 
+/// A copy of a held author's ResourceReview, written in the same statement as a delete that would
+/// cascade it. Purged once the author's hold ends.
+model HeldResourceReview {
+  /// The original ResourceReview id.
+  id             Int       @id
+  modelId        Int
+  modelVersionId Int
+  userId         Int
+  rating         Int
+  recommended    Boolean
+  details        String?
+  exclude        Boolean
+  nsfw           Boolean
+  tosViolation   Boolean
+  metadata       Json?
+  createdAt      DateTime
+  updatedAt      DateTime
+  heldAt         DateTime  @default(now())
+  /// The holds on the author when it was copied.
+  holdReasons    String[]
+
+  @@index([userId])
+}
+
+/// A copy of a held author's Answer, written in the same statement as a Question delete that would
+/// cascade it. Purged once the author's hold ends.
+model HeldAnswer {
+  /// The original Answer id.
+  id          Int      @id
+  questionId  Int
+  userId      Int
+  content     String
+  createdAt   DateTime
+  updatedAt   DateTime
+  heldAt      DateTime @default(now())
+  /// The holds on the author when it was copied.
+  holdReasons String[]
+
+  @@index([userId])
+}
+
 model ResourceReview {
   id             Int                      @id @default(autoincrement())
   modelId        Int
