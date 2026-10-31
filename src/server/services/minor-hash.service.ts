@@ -711,8 +711,7 @@ export async function revertMinorHashAutoFlag({
   recordTextScanRuling?: boolean;
   /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
   textHash?: string;
-  /** The caller has already decided the flag is the automation's: a granted appeal, or a ruling
-   * that checked minorRevertRefusal itself. */
+  /** A granted appeal, which has already decided the flag is the automation's. */
   skipRefusal?: boolean;
   /** Leave a flag the revert may not undo in place and report it in `keptMinor`, instead of refusing. */
   keepWhenRefused?: boolean;
