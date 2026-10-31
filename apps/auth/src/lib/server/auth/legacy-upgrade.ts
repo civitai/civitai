@@ -9,6 +9,7 @@ import {
   sessionCookieNameForSlot,
   legacySessionCookieName,
   type SessionClaims,
+  type SessionUser,
 } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { evalSys } from '../redis';
@@ -17,7 +18,8 @@ import { setDeviceCookie } from './device';
 import { clearLegacyCookies } from './legacy-cookies';
 import { acceptHubSession, addDeviceFamily, markFamilyLive } from './lineage';
 import { sessions } from './registry';
-import { getSigner, sessionExpiresIn, setSessionCookie } from './session';
+import { canHoldSession, getSigner, sessionExpiresIn, setSessionCookie } from './session';
+import { getOrProduceSessionUser } from './session-producer';
 import { signatureVerifier, verifier } from './verifier';
 
 // The hub moves its own session from the shared slot (Domain=<registrable>) to its host-only slot. Before the hub
@@ -67,17 +69,20 @@ async function isSameSession(token: string | undefined, of: SessionClaims): Prom
   return !!claims && claims.sub === of.sub && familyId(claims) === familyId(of);
 }
 
-async function isHonouredSession(token: string): Promise<boolean> {
+async function honouredSession(token: string): Promise<SessionClaims | null> {
   const claims = await verifier.verifyToken(token).catch(() => null);
-  return !!claims && Number.isFinite(Number(claims.sub)) && (await acceptHubSession(claims));
+  if (!claims || !Number.isFinite(Number(claims.sub))) return null;
+  return (await acceptHubSession(claims)) ? claims : null;
 }
 
-/** The shared-slot device id becomes the host-only one, so the browser keeps its account list. */
+/**
+ * The shared-slot device id becomes the host-only one, so the browser keeps its account list. The shared one
+ * wins when both exist: it is where a sign-in that moved the browser to a new id wrote it.
+ */
 function carryDeviceId(cookies: Cookies): string {
   const host = cookies.get(deviceCookieNameForSlot('host'));
-  if (host) return host;
-  const id = cookies.get(deviceCookieNameForSlot('shared')) ?? randomUUID();
-  setDeviceCookie(cookies, id, 'host');
+  const id = cookies.get(deviceCookieNameForSlot('shared')) ?? host ?? randomUUID();
+  if (host !== id) setDeviceCookie(cookies, id, 'host');
   return id;
 }
 
@@ -88,11 +93,15 @@ async function recordFamily(cookies: Cookies, family: string | undefined): Promi
 
 /**
  * At /authorize, give the hub a host-only copy of a session it read from the shared slot: same family and 90-day
- * clock, a new jti. The shared-slot token is left as it is. An impersonation session is never copied, and a
- * host-only session that is already this one is kept.
+ * clock, a new jti. The shared-slot token is left as it is. An impersonation session, or one whose account
+ * may not hold a session, is never copied, and a host-only session that is already this one is kept.
  */
-export async function preUpgradeHubSession(cookies: Cookies, shared: SessionClaims): Promise<void> {
-  if (!slotsDiffer() || shared.impersonatedBy != null) return;
+export async function preUpgradeHubSession(
+  cookies: Cookies,
+  shared: SessionClaims,
+  user: SessionUser | undefined
+): Promise<void> {
+  if (!slotsDiffer() || shared.impersonatedBy != null || !canHoldSession(user)) return;
   if (await isSameSession(cookies.get(hostSessionCookieName()), shared)) return;
   const upgrade = newUpgrade(shared);
   const token = await sign(upgrade);
@@ -141,8 +150,10 @@ async function awaitWinner(jti: string): Promise<Upgrade | null> {
 /**
  * In host mode, move a browser that reaches the hub with a shared-slot token onto a host-only session and end
  * the shared-slot token. Requests racing on the same token all get the one session the first of them minted,
- * for 60 seconds after that token is ended. A host-only session the hub honours is kept, whoever it belongs to.
- * Returns the host-only token, or null when neither is a session the hub honours.
+ * for 60 seconds after that token is ended. A host-only session the hub honours is kept, whoever it belongs to;
+ * the shared-slot token is ended only when it is that same session. An impersonation session, or one whose
+ * account may not hold a session, is not moved: it is served from the shared slot until it ends.
+ * Returns the host-only token, or null when there is none to give.
  */
 export async function upgradeHubSession(
   cookies: Cookies,
@@ -151,12 +162,20 @@ export async function upgradeHubSession(
   if (!slotsDiffer()) return null;
   const hostToken = cookies.get(hostSessionCookieName());
   // Other hosts can write the shared slot, so it never displaces a host-only session.
-  if (hostToken && (await isHonouredSession(hostToken))) {
+  const host = hostToken ? await honouredSession(hostToken) : null;
+  if (host) {
+    const shared = await signatureVerifier.verifyToken(sharedToken).catch(() => null);
+    if (shared?.jti && shared.sub === host.sub && familyId(shared) === familyId(host)) {
+      await sessions.invalidateToken(shared.jti, Number(shared.sub)).catch(() => undefined);
+    }
     expireSharedSlot(cookies);
-    return hostToken;
+    return hostToken!;
   }
   const j0 = await signatureVerifier.verifyToken(sharedToken).catch(() => null);
   if (!j0?.jti || !Number.isFinite(Number(j0.sub))) return null;
+  if (j0.impersonatedBy != null) return null;
+  const user = await getOrProduceSessionUser(Number(j0.sub)).catch(() => null);
+  if (!canHoldSession(user)) return null;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const stored = await storedUpgrade(j0.jti);

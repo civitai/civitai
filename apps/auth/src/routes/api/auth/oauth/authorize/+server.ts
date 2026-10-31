@@ -341,7 +341,7 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   const family = hubSession ? familyId(hubSession) : undefined;
   await markFamilyLive(family);
   if (locals.session && locals.sessionSlot === 'shared') {
-    await preUpgradeHubSession(cookies, locals.session).catch(() => undefined);
+    await preUpgradeHubSession(cookies, locals.session, locals.user).catch(() => undefined);
   }
   await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,

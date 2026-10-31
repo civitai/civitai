@@ -92,6 +92,11 @@ export function refuseModerationAccount(
   if (isRefusedModerationAccount(user, source)) error(403, 'This account cannot sign in.');
 }
 
+/** Whether this account may be given a new or re-signed session cookie. */
+export function canHoldSession(user: SessionUser | null | undefined): user is SessionUser {
+  return !!user && !user.bannedAt && !user.deletedAt && !isRefusedModerationAccount(user, 'cookie');
+}
+
 /** Seconds a session minted now may live: the normal lifetime, cut short by the 90-day limit and `impExp`. */
 export function sessionExpiresIn(lineage: FamilyClaims, now = Date.now()): number {
   let until = now + getSigner().maxAge * 1000;

@@ -4,6 +4,7 @@ import {
   DEVICE_COOKIE_BASE,
   deviceCookieName,
   deviceCookieNameForSlot,
+  hostDeviceCookieName,
   isSecureCookie,
   readDeviceId,
   sessionCookieMode,
@@ -46,17 +47,26 @@ const cookieOpts = {
   sameSite: 'lax' as const,
 };
 
-/** Write the device cookie (30-day rolling) into `slot`; the host-only slot carries no Domain. */
+/**
+ * Write the device cookie (30-day rolling) into `slot`; the host-only slot carries no Domain. A shared-slot write
+ * also replaces a different host-only device id, so host mode can't bring back an id the hub moved off.
+ */
 export function setDeviceCookie(
   cookies: Cookies,
   deviceId: string,
   slot: CookieSlot = sessionCookieMode()
 ): void {
-  cookies.set(deviceCookieNameForSlot(slot), deviceId, {
+  const name = deviceCookieNameForSlot(slot);
+  cookies.set(name, deviceId, {
     ...cookieOpts,
     domain: slot === 'host' ? undefined : cookieOpts.domain,
     maxAge: DEVICE_TTL_S,
   });
+  const host = hostDeviceCookieName();
+  if (slot === 'shared' && host !== name) {
+    const held = cookies.get(host);
+    if (held !== undefined && held !== deviceId) setDeviceCookie(cookies, deviceId, 'host');
+  }
 }
 
 /** Read the device id (or mint one) and ALWAYS (re)set the cookie so its 30-day TTL rolls. Call on login. */

@@ -6,7 +6,12 @@ import {
   type SessionClaims,
   type SessionUser,
 } from '@civitai/auth';
-import { readHubSession, reissueSession, setSessionCookie } from '$lib/server/auth/session';
+import {
+  canHoldSession,
+  readHubSession,
+  reissueSession,
+  setSessionCookie,
+} from '$lib/server/auth/session';
 import { upgradeHubSession } from '$lib/server/auth/legacy-upgrade';
 import { acceptHubSession } from '$lib/server/auth/lineage';
 import { verifier } from '$lib/server/auth/verifier';
@@ -31,9 +36,7 @@ function shouldRoll(request: Request, claims: SessionClaims, user: SessionUser |
     request.headers.get('sec-fetch-mode') === 'navigate' &&
     !!claims.jti &&
     claims.impersonatedBy == null &&
-    !!user &&
-    !user.bannedAt &&
-    !user.deletedAt &&
+    canHoldSession(user) &&
     Date.now() - (claims.signedAt ?? 0) >= UPDATE_AGE_MS
   );
 }

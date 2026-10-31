@@ -12,6 +12,7 @@ const h = vi.hoisted(() => {
   return {
     sys: undefined as unknown as SysRedisFake,
     tokens: new Map<string, Record<string, unknown>>(),
+    users: new Map<number, Record<string, unknown>>(),
   };
 });
 
@@ -45,10 +46,13 @@ vi.mock('$lib/server/auth/verifier', async () => {
     },
   };
 });
-vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn(), logToAxiom: vi.fn() }));
+vi.mock('$lib/server/axiom', () => ({
+  logAxiomError: vi.fn(),
+  logToAxiom: vi.fn(async () => undefined),
+}));
 vi.mock('$lib/server/db/db', () => ({ db: {} }));
 vi.mock('$lib/server/auth/session-producer', () => ({
-  getOrProduceSessionUser: async (id: number) => ({ id }),
+  getOrProduceSessionUser: async (id: number) => h.users.get(id) ?? { id },
 }));
 vi.mock('$lib/server/auth/pending-authz', () => ({
   resolveAuthorizingUser: async ({ sessionUser }: { sessionUser: unknown }) => sessionUser,
@@ -172,12 +176,25 @@ beforeEach(() => {
   h.sys ??= makeSysRedis();
   h.sys.reset();
   h.tokens.clear();
+  h.users.clear();
   setMode('shared');
 });
 afterEach(() => {
   vi.useRealTimers();
   delete process.env.AUTH_SESSION_COOKIE_MODE;
+  delete process.env.CIVITAI_MODERATION_USER_ID;
 });
+
+const TOKEN_STATE = REDIS_SYS_KEYS.SESSION.TOKEN_STATE;
+const accountsOf = (deviceId: string) => `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}`;
+const asUser = (id: number) => ({ id } as SessionUser);
+
+// Accounts the hub must not give a new cookie to, as the session producer would return them.
+const refusedAccounts = [
+  ['banned', () => h.users.set(100, { id: 100, bannedAt: new Date() })],
+  ['deleted', () => h.users.set(100, { id: 100, deletedAt: new Date() })],
+  ['the moderation account', () => (process.env.CIVITAI_MODERATION_USER_ID = '100')],
+] as const;
 
 describe('/authorize copying the hub session into the host-only slot', () => {
   it('keeps the hub signed in, on the same device id, after the shared-slot session lapses', async () => {
@@ -191,6 +208,7 @@ describe('/authorize copying the hub session into the host-only slot', () => {
     expect(copy!.jti).not.toBe('j0');
     expect(cookies.sets.find((s) => s.name === HOST())?.opts.domain).toBeUndefined();
     expect(cookies.get(HOST_DEVICE())).toBe('dev-d');
+    expect(cookies.sets.find((s) => s.name === HOST_DEVICE())?.opts.domain).toBeUndefined();
 
     cookies.values.delete(SHARED());
     cookies.values.delete(SHARED_DEVICE());
@@ -208,6 +226,38 @@ describe('/authorize copying the hub session into the host-only slot', () => {
     await authorize(cookies);
 
     expect(cookies.get(HOST())).toBeUndefined();
+  });
+
+  it.each(refusedAccounts)(
+    'does not copy the session of an account that is %s',
+    async (_, refuse) => {
+      sharedSession();
+      refuse();
+      const cookies = jar({ [SHARED()]: J0 });
+
+      await authorize(cookies);
+
+      expect(cookies.sets.some((s) => s.name === HOST())).toBe(false);
+    }
+  );
+
+  it('a device id a shared-mode sign-in moved to is the one host mode reads', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+    await authorize(cookies);
+    cookies.values.delete(SHARED());
+    cookies.values.delete(HOST());
+    await h.sys.hSet(accountsOf('dev-d'), '100', String(Date.now()));
+    await h.sys.hSet(accountsOf('dev-d'), '200', String(Date.now()));
+
+    await establishSession(cookies as never, asUser(300));
+    const moved = cookies.get(SHARED_DEVICE());
+    cookies.values.delete(SHARED());
+    setMode('host');
+
+    expect(moved).not.toBe('dev-d');
+    expect(cookies.get(HOST_DEVICE())).toBe(moved);
+    expect((await visit(cookies)).deviceId).toBe(moved);
   });
 
   it('keeps a host-only copy that is already this session', async () => {
@@ -295,6 +345,73 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
     expect(performance.now() - started).toBeLessThan(3_000);
   });
 
+  it('an impersonation session is served from the shared slot, not moved and not ended', async () => {
+    sharedSession({ impersonatedBy: 7 });
+    const cookies = jar({ [SHARED()]: J0 });
+
+    const locals = await visit(cookies);
+
+    expect(locals.session?.impersonatedBy).toBe(7);
+    expect(cookies.sets.some((s) => s.name === HOST())).toBe(false);
+    expect(h.sys.hashes.get(TOKEN_STATE)?.has('j0')).toBeFalsy();
+  });
+
+  it.each(refusedAccounts)(
+    'the session of an account that is %s is not moved',
+    async (_, refuse) => {
+      sharedSession();
+      refuse();
+      const cookies = jar({ [SHARED()]: J0 });
+
+      await visit(cookies);
+
+      expect(cookies.sets.some((s) => s.name === HOST())).toBe(false);
+      expect(h.sys.hashes.get(TOKEN_STATE)?.has('j0')).toBeFalsy();
+    }
+  );
+
+  it('carries the shared-slot device id over a different host-only one', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-new', [HOST_DEVICE()]: 'dev-d' });
+
+    const locals = await visit(cookies);
+
+    expect(locals.deviceId).toBe('dev-new');
+    expect(cookies.get(HOST_DEVICE())).toBe('dev-new');
+  });
+
+  it('a host-only copy of the same session ends the shared-slot token', async () => {
+    setMode('shared');
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+    await authorize(cookies);
+    setMode('host');
+
+    const locals = await visit(cookies);
+
+    expect(locals.session?.sub).toBe('100');
+    expect(locals.session?.jti).not.toBe('j0');
+    expect(h.sys.hashes.get(TOKEN_STATE)?.get('j0')).toBeTruthy();
+    expect((await visit(jar({ [SHARED()]: J0 }))).session).toBeUndefined();
+  });
+
+  it('a host-only session the hub no longer honours gives way to a live shared-slot one', async () => {
+    sharedSession();
+    h.tokens.set('host-idle', {
+      sub: '100',
+      jti: 'hi',
+      sid: 'fam-old',
+      signedAt: Date.now() - 40 * DAY_MS,
+    });
+    const cookies = jar({ [HOST()]: 'host-idle', [SHARED()]: J0 });
+
+    const locals = await visit(cookies);
+
+    expect(locals.session).toMatchObject({ sub: '100', sid: 'j0' });
+    expect(cookies.get(HOST())).not.toBe('host-idle');
+    expect(cookies.get(SHARED())).toBeUndefined();
+  });
+
   it("keeps a host-only session, whoever's it is, over a live shared-slot one", async () => {
     sharedSession({ sub: '200' });
     h.tokens.set('host-a', { sub: '100', jti: 'ha', sid: 'fam-a', signedAt: Date.now() });
@@ -344,7 +461,6 @@ describe('re-signing the hub session under the slot it was read from', () => {
 });
 
 describe('a sign-in on a browser carrying a device id from a signed-out account list', () => {
-  const user = (id: number) => ({ id } as SessionUser);
   const accounts = `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:dev-d`;
 
   it.each(['shared', 'host'] as const)(
@@ -355,7 +471,7 @@ describe('a sign-in on a browser carrying a device id from a signed-out account 
       await h.sys.hSet(accounts, '200', String(Date.now()));
       const cookies = jar({ [HOST_DEVICE()]: 'dev-d' });
 
-      await establishSession(cookies as never, user(300));
+      await establishSession(cookies as never, asUser(300));
 
       const written = cookies.sets.filter((s) => s.name.endsWith('civ-device')).at(-1);
       expect(written?.value).toBeDefined();
