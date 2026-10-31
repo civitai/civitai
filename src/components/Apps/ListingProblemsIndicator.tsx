@@ -12,11 +12,9 @@ export type ListingProblem = { code: string; label: string; severity?: 'blocking
  * only advisory ones remain. Renders NOTHING when `problems` is empty.
  *
  * `blocking` problems are enforced at review: approving a listing into the store without an
- * icon and a cover is refused (the publish floor, `checkListingMeetsFloor`, on an on-site
- * first version's draft and the off-site approve paths — not on a moderator reset's
- * re-approve, a moderator relist or an owner's immediate republish, which restore a listing
- * that already went live), and a blocked image keeps it
- * from going live (the scan-clean gate).
+ * icon and a cover is refused (the publish floor, `checkListingMeetsFloor`; its ungated
+ * paths are listed in `listing-publish-floor.ts`), and a blocked image keeps it from going
+ * live (the scan-clean gate).
  * This component only REPORTS them; the gates are server-side. So the card groups by
  * severity: "Required before publishing" lists ONLY the blocking problems, and everything
  * advisory (screenshots, description, tagline, category, a still-scanning image) sits under
