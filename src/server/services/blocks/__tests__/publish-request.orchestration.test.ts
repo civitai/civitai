@@ -1053,10 +1053,11 @@ describe('submitVersion', () => {
           { id: 9, ingestion: 'Pending', nsfwLevel: null },
           { id: 31, ingestion: 'Scanned', nsfwLevel: null },
         ].filter((i) => args?.where?.id?.in?.includes(i.id) ?? true);
-      for (const db of [mockDbRead, mockDbWrite]) {
-        db.appListingScreenshot.findMany.mockImplementation(shots);
-        db.image.findMany.mockImplementation(images);
-      }
+      // Both reads see the same assets: the submit reads the primary, /apps/mine the replica.
+      mockDbWrite.appListingScreenshot.findMany.mockImplementation(shots);
+      mockDbWrite.image.findMany.mockImplementation(images);
+      mockDbRead.appListingScreenshot.findMany.mockImplementation(shots);
+      mockDbRead.image.findMany.mockImplementation(images);
 
       const result = await submitVersion({
         bundleBuffer: await makeValidBundle(),

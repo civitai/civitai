@@ -16,8 +16,10 @@ import { readListingVisibility } from '~/server/services/blocks/app-listing-visi
 import { readListingForkable } from '~/server/services/blocks/app-fork.service';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
-import { computeListingProblems } from '~/server/services/blocks/listing-problems';
-import { declaredListingRating } from '~/shared/utils/listing-rating-display';
+import {
+  computeListingProblems,
+  listingProblemInput,
+} from '~/server/services/blocks/listing-problems';
 import type {
   AppRole,
   ListingCapability,
@@ -1276,27 +1278,17 @@ async function hydrateMyAppListings(
         // `assetScans` comes from the ONE batched read above — see its note. Absent from
         // the map (which cannot happen for a row that was in `subjects`) degrades to `[]`,
         // i.e. the pre-scan-dimension behaviour, never to an invented problem.
-        problems: computeListingProblems({
-          // 🔴 The row's OWN kind, not a constant: `listMine` returns BOTH kinds, and the
-          // three empty-text problems give different (opposite) advice per kind. This is
-          // the same `kind` the row already reports, so the advisory and the capabilities
-          // can never disagree about what sort of listing this is.
-          kind,
-          iconId: r.iconId ?? null,
-          coverId: r.coverId ?? null,
-          screenshotCount: r._count?.screenshots ?? 0,
-          description: r.description ?? null,
-          tagline: r.tagline ?? null,
-          category: r.category ?? null,
-          assetScans: scansByListingId.get(r.id) ?? [],
-          status: r.status,
-          contentRating: r.contentRating ?? null,
-          declaredContentRating: declaredListingRating({
+        problems: computeListingProblems(
+          listingProblemInput(r, {
+            // 🔴 The row's OWN kind, not a constant: `listMine` returns BOTH kinds, and the
+            // three empty-text problems give different (opposite) advice per kind. This is
+            // the same `kind` the row already reports, so the advisory and the capabilities
+            // can never disagree about what sort of listing this is.
             kind,
             appRating: r.appBlock?.contentRating,
-            listingRating: r.contentRating,
-          }),
-        }).problems,
+            assetScans: scansByListingId.get(r.id) ?? [],
+          })
+        ).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
         // returning an action would let a stale event re-open Republish on a live listing.
         //

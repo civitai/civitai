@@ -6,16 +6,11 @@
  * the off-site submit / approve / apply gates and the owner-republish review pre-check
  * (through `assertListingMeetsFloor` in `app-listing-assets.service`, which re-exports this),
  * the on-site version approve (`approveRequest` — a first version's draft only, up front and
- * again in the draft transition's `where`; a moderator reset's restore is exempt), the moderator queue's "Approve is disabled" fact
+ * again in the draft transition's `where`), the moderator queue's "Approve is disabled" fact
  * (`listingFactsForRequests`), and the readiness a submit answers with (`submitVersion`).
  *
- * ⚠️ NOT EVERY GO-LIVE CHECKS IT. A moderator reset's re-approve (exempt by operator decision
- * 2026-10-31: the listing already went live once), a moderator `relistListing` (removed →
- * approved) and an
- * owner `republishOwnListing` that restores immediately (no review) re-publish a listing's
- * existing assets without this check, and the legacy approve-time create (a first version
- * with no draft) mints an art-less listing. Those paths restore or mint what was there; they
- * are not gated by this predicate today.
+ * Not every go-live checks this: mod-reset re-approve, relistListing and immediate owner
+ * republish restore existing assets unchecked.
  *
  * It lives in `shared/` — PURE, no server imports — so the review UI can word the same
  * missing set the server refused on.
@@ -25,6 +20,15 @@
 export const FLOOR_ASSETS = ['icon', 'cover'] as const;
 
 export type FloorAsset = (typeof FLOOR_ASSETS)[number];
+
+/** The listing-problem code that names each missing floor asset (`computeListingProblems`). */
+export const FLOOR_PROBLEM_CODE = {
+  icon: 'missing-icon',
+  cover: 'missing-cover',
+} as const satisfies Record<FloorAsset, string>;
+
+/** The problem codes that are the floor: what {@link listingFloorNextStep} already words. */
+export const FLOOR_PROBLEM_CODES: ReadonlySet<string> = new Set(Object.values(FLOOR_PROBLEM_CODE));
 
 export type ListingFloorResult = { ok: true } | { ok: false; missing: FloorAsset[] };
 
@@ -64,6 +68,16 @@ export function listingFloorNextStep(missing: readonly FloorAsset[]): string {
   return `Add ${floorAssetsPhrase(
     missing
   )} on your listing's Media tab before a moderator can approve it.`;
+}
+
+/**
+ * What the DEVELOPER is told at submit when the app has no store listing row yet: nothing
+ * could be checked, and the listing the approve mints has no art.
+ */
+export function listingFloorNoListingNextStep(): string {
+  return `Your app has no store listing yet. Once it is approved, add ${floorAssetsPhrase(
+    FLOOR_ASSETS
+  )} on its listing's Media tab.`;
 }
 
 /** What a MODERATOR is told when Approve is refused (and why the button is disabled). */
