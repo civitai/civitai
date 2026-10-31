@@ -11,10 +11,20 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
-const { mockSetModelMinor, mockRestoreOwnerFlagOverride, mockReassertPoi } = vi.hoisted(() => ({
+const {
+  mockSetModelMinor,
+  mockRestoreOwnerFlagOverride,
+  mockReassertPoi,
+  mockStampAppeal,
+  mockSettle,
+  SCANNED_HASH,
+} = vi.hoisted(() => ({
   mockSetModelMinor: vi.fn(),
   mockRestoreOwnerFlagOverride: vi.fn(),
   mockReassertPoi: vi.fn(),
+  mockStampAppeal: vi.fn(),
+  mockSettle: vi.fn(),
+  SCANNED_HASH: 'scanned-text',
 }));
 
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
@@ -26,6 +36,21 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
 vi.mock('~/server/services/text-scan/actions/model-poi-minor', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   reassertModelPoiRestrictions: mockReassertPoi,
+  stampModelTextScanAppeal: mockStampAppeal,
+}));
+// The text-scan side of a ruling: the flag stands on the scanned text, and the ruling records.
+vi.mock('~/server/services/text-scan/flag-snapshot', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  readTextScanFlags: () => ({ minor: { textHash: SCANNED_HASH } }),
+  hasOpenTextScanFlag: () => true,
+}));
+vi.mock('~/server/services/text-scan/actions/redetection', () => ({
+  withResolutionLock: (_: number, __: string, fn: () => unknown) => fn(),
+  hasOpenModelAppeal: async () => false,
+}));
+vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  settleFlagAppealsAfterModeratorLift: mockSettle,
 }));
 vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   bustModelGallerySettings: vi.fn(),
@@ -59,6 +84,12 @@ dbMock.dbWrite.$queryRaw.mockImplementation(query);
 
 const { rollbackMinorHashAutoFlags, revertMinorHashAutoFlag } = await import(
   '~/server/services/minor-hash.service'
+);
+const { ruleModelTextScanFlag } = await import('~/server/services/text-scan/actions/flag-ruling');
+dbMock.dbWrite.model.findUnique.mockImplementation(
+  (async ({ where }: { where: { id: number } }) =>
+    (await holder.db.query(`SELECT * FROM "Model" WHERE id = $1`, [where.id])).rows[0] ??
+    null) as never
 );
 
 const MODEL_ID = 1;
@@ -122,6 +153,8 @@ beforeEach(async () => {
   loggingMock.logToAxiom.mockResolvedValue(undefined);
   mockReassertPoi.mockResolvedValue(false);
   mockRestoreOwnerFlagOverride.mockResolvedValue(undefined);
+  mockStampAppeal.mockResolvedValue(true);
+  mockSettle.mockResolvedValue(undefined);
   // The unset a rollback asks for: minor and its locks go, the rating stays as the flag left it.
   mockSetModelMinor.mockImplementation(async ({ id }: { id: number }) => {
     await holder.db.query(
@@ -352,5 +385,40 @@ describe('a moderator revert of a minor flag', () => {
     else await revert();
 
     expect(await row()).toMatchObject({ minor: refused });
+  });
+});
+
+describe("a moderator's text-scan lift of a minor flag", () => {
+  const lift = () =>
+    ruleModelTextScanFlag({
+      modelId: MODEL_ID,
+      label: 'minor',
+      keep: false,
+      textHash: SCANNED_HASH,
+      userId: MODERATOR_ID,
+    });
+
+  it('records the ruling and keeps minor when a moderator set it minor after the flag', async () => {
+    await seed({ snapshot: { ...mature, prevMinor: false, source: 'text-scan' } });
+    await holder.db.query(
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+       VALUES ($1, 'setMinor', 'model', $2, '2020-01-02T00:00:00Z')`,
+      [MODERATOR_ID, MODEL_ID]
+    );
+
+    expect(await lift()).toMatchObject({ ruled: 'keptMinor', modelId: MODEL_ID });
+    expect(await row()).toMatchObject({ minor: true, nsfw: false });
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(mockStampAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'appealGranted', expectTextHash: SCANNED_HASH })
+    );
+    expect(mockSettle).toHaveBeenCalledWith(expect.objectContaining({ liftedLabels: ['minor'] }));
+  });
+
+  it('undoes the automated flag when no moderator has flagged it since', async () => {
+    await seed({ snapshot: { ...mature, prevMinor: false, source: 'text-scan' } });
+
+    expect(await lift()).toMatchObject({ ruled: 'lifted' });
+    expect(await row()).toMatchObject({ minor: false, nsfw: true });
   });
 });

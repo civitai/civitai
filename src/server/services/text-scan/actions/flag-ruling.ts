@@ -2,6 +2,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   confirmMinorHashAutoFlag,
+  minorRevertRefusal,
   revertMinorHashAutoFlag,
 } from '~/server/services/minor-hash.service';
 import { MINOR_FLAG_SNAPSHOT_KEY, setModelMinor } from '~/server/services/model.service';
@@ -97,11 +98,12 @@ async function rule({
   }
 
   if (label === 'minor') {
-    // The ruling undoes the automation and is recorded on the text; a minor flag from before the
-    // automation stays, and the result says so.
+    // The ruling undoes the automation and is recorded on the text. Minor stays, and the result says
+    // so, when it was minor before the automation or a moderator set or confirmed it.
     let keptMinor = false;
     const meta = model.meta as Record<string, unknown> | null;
-    if (meta?.[MINOR_FLAG_SNAPSHOT_KEY]) {
+    if (meta?.[MINOR_FLAG_SNAPSHOT_KEY] && (await minorRevertRefusal(modelId))) keptMinor = true;
+    else if (meta?.[MINOR_FLAG_SNAPSHOT_KEY]) {
       const report = await revertMinorHashAutoFlag({
         modelId,
         userId,

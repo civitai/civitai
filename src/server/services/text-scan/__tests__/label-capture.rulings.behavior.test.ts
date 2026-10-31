@@ -62,6 +62,7 @@ vi.mock('~/server/services/model.service', () => ({
 }));
 vi.mock('~/server/services/minor-hash.service', () => ({
   confirmMinorHashAutoFlag: vi.fn(),
+  minorRevertRefusal: vi.fn(),
   revertMinorHashAutoFlag: vi.fn(),
 }));
 vi.mock('~/server/services/report.service', () => ({ resolveEntityAppeal: vi.fn() }));
