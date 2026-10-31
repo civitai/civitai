@@ -88,15 +88,13 @@ export const isMinorMatureImage = (image: { minor?: boolean | null; nsfwLevel: n
 
 /**
  * A minor-flagged image rated R or above is shown only to its owner and moderators, whatever the
- * viewer's browsing settings, as SQL over `"<alias>"`. With no viewer it is shown to nobody, so a
+ * viewer's browsing settings, as SQL over `"Image" i`. With no viewer it is shown to nobody, so a
  * viewer-independent read (a shared cache, a search document) never carries one.
  */
 export const minorMatureImageVisibleSql = (
-  viewer: { userId?: number; isModerator?: boolean } = {},
-  alias = 'i'
+  viewer: { userId?: number; isModerator?: boolean } = {}
 ) => {
   if (viewer.isModerator) return Prisma.sql`TRUE`;
-  const t = Prisma.raw(`"${alias}"`);
-  const ownImage = viewer.userId ? Prisma.sql` OR ${t}."userId" = ${viewer.userId}` : Prisma.empty;
-  return Prisma.sql`(${t}."minor" IS NOT TRUE OR ${t}."nsfwLevel" < ${NsfwLevel.R}${ownImage})`;
+  const ownImage = viewer.userId ? Prisma.sql` OR i."userId" = ${viewer.userId}` : Prisma.empty;
+  return Prisma.sql`(i."minor" IS NOT TRUE OR i."nsfwLevel" < ${NsfwLevel.R}${ownImage})`;
 };

@@ -5,6 +5,7 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as RedisCaches from '~/server/redis/caches';
+import type * as UserService from '~/server/services/user.service';
 
 /**
  * A minor-flagged image rated R or above reaches only its owner and moderators on image.get, the
@@ -26,6 +27,10 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof RedisCaches>()),
   tagIdsForImagesCache: { fetch: vi.fn().mockResolvedValue({}) },
 }));
+vi.mock('~/server/services/user.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserService>()),
+  amIBlockedByUser: vi.fn().mockResolvedValue(false),
+}));
 
 import {
   getImagesForModelVersion,
@@ -33,7 +38,10 @@ import {
   imagesForModelVersionsCache,
 } from '../image.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  imageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
 import type { SessionUser } from '~/types/session';
 
 const OWNER = 10;
@@ -44,8 +52,13 @@ const MINOR_R = 1;
 const MINOR_X = 2;
 const MINOR_PG13 = 3;
 const ADULT_R = 4;
-const ALL = [MINOR_R, MINOR_X, MINOR_PG13, ADULT_R];
-const SHOWN_TO_OTHERS = [MINOR_PG13, ADULT_R];
+const UNFLAGGED_R = 5; // minor is NULL
+const MINOR_XXX = 6;
+const ALL = [MINOR_R, MINOR_X, MINOR_PG13, ADULT_R, UNFLAGGED_R, MINOR_XXX];
+const SHOWN_TO_OTHERS = [MINOR_PG13, ADULT_R, UNFLAGGED_R];
+// Version 2's only post holds nothing but minor-flagged mature images.
+const ALL_FLAGGED_VERSION = 2;
+const ALL_FLAGGED_IMAGES = [7, 8];
 
 // PG | PG13 | R | X | XXX: a viewer who opted into every mature level.
 const ALL_MATURE_LEVELS = 31;
@@ -86,14 +99,19 @@ beforeAll(async () => {
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
 
     INSERT INTO "Model" VALUES (1, ${OWNER});
-    INSERT INTO "ModelVersion" VALUES (1, 1);
+    INSERT INTO "ModelVersion" VALUES (1, 1), (${ALL_FLAGGED_VERSION}, 1);
     INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
-      (1, ${OWNER}, 1, now() - interval '1 day');
+      (1, ${OWNER}, 1, now() - interval '1 day'),
+      (2, ${OWNER}, ${ALL_FLAGGED_VERSION}, now() - interval '1 day');
     INSERT INTO "Image" (id, "userId", "postId", index, "nsfwLevel", minor) VALUES
       (${MINOR_R}, ${OWNER}, 1, 0, 4, true),
       (${MINOR_X}, ${OWNER}, 1, 1, 8, true),
       (${MINOR_PG13}, ${OWNER}, 1, 2, 2, true),
-      (${ADULT_R}, ${OWNER}, 1, 3, 4, false);
+      (${ADULT_R}, ${OWNER}, 1, 3, 4, false),
+      (${UNFLAGGED_R}, ${OWNER}, 1, 4, 4, NULL),
+      (${MINOR_XXX}, ${OWNER}, 1, 5, 16, true),
+      (${ALL_FLAGGED_IMAGES[0]}, ${OWNER}, 2, 0, 4, true),
+      (${ALL_FLAGGED_IMAGES[1]}, ${OWNER}, 2, 1, 8, true);
   `);
   // Typed integer parameters, as Prisma binds them: `unnest(ARRAY[$1])` is text otherwise.
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -129,6 +147,24 @@ const paths: [string, (viewer: Viewer) => Promise<number[]>][] = [
         const rows =
           await raw.queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
         if (rows.length) visible.push(id);
+      }
+      return visible;
+    },
+  ],
+  [
+    'assertImageVisibleToViewer',
+    async (viewer) => {
+      const visible: number[] = [];
+      for (const id of ALL) {
+        const shown = await assertImageVisibleToViewer({
+          id,
+          userId: viewer?.id,
+          isModerator: viewer?.isModerator,
+        }).then(
+          () => true,
+          () => false
+        );
+        if (shown) visible.push(id);
       }
       return visible;
     },
@@ -188,7 +224,7 @@ describe('getImagesForModelVersion with no viewer, as the shared cache and the v
 describe('imagesForModelVersionsCache', () => {
   it('leaves out a minor-flagged image rated R or above from an entry cached before the lookup did', async () => {
     installFakeCacheRedis();
-    const image = (id: number, nsfwLevel: number, minor: boolean) => ({
+    const image = (id: number, nsfwLevel: number, minor: boolean | null) => ({
       id,
       userId: OWNER,
       modelVersionId: 9,
@@ -197,11 +233,58 @@ describe('imagesForModelVersionsCache', () => {
     });
     await redis.packed.set(`${REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION}:9` as never, {
       modelVersionId: 9,
-      images: [image(MINOR_R, 4, true), image(MINOR_PG13, 2, true), image(ADULT_R, 4, false)],
+      images: [
+        image(MINOR_R, 4, true),
+        image(MINOR_PG13, 2, true),
+        image(ADULT_R, 4, false),
+        image(UNFLAGGED_R, 4, null),
+      ],
+      cachedAt: new Date(),
+    });
+    await redis.packed.set(`${REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION}:8` as never, {
+      modelVersionId: 8,
+      images: [image(MINOR_R, 4, true), image(MINOR_X, 8, true)],
       cachedAt: new Date(),
     });
 
-    const cached = await imagesForModelVersionsCache.fetch([9]);
+    const cached = await imagesForModelVersionsCache.fetch([9, 8]);
     expect(ids(cached[9].images)).toEqual(SHOWN_TO_OTHERS);
+    expect(cached[8]).toEqual({ modelVersionId: 8, images: [] });
+  });
+});
+
+describe('getImagesForModelVersion for a version whose images are all minor-flagged and mature', () => {
+  it('returns its other versions and nothing for it, for a stranger', async () => {
+    const rows = await getImagesForModelVersion({
+      modelVersionIds: [1, ALL_FLAGGED_VERSION],
+      imagesPerVersion: 20,
+      user: asUser({ id: STRANGER }),
+    });
+    expect(rows.some((row) => row.modelVersionId === ALL_FLAGGED_VERSION)).toBe(false);
+    expect(ids(rows)).toEqual(SHOWN_TO_OTHERS);
+  });
+
+  it('still returns them to the owner (control)', async () => {
+    const rows = await getImagesForModelVersion({
+      modelVersionIds: [ALL_FLAGGED_VERSION],
+      imagesPerVersion: 20,
+      user: asUser({ id: OWNER }),
+    });
+    expect(ids(rows)).toEqual(ALL_FLAGGED_IMAGES);
+  });
+});
+
+// The v1 model-version routes spread these rows into their response as they are.
+describe('getImagesForModelVersion rows for a viewer who cannot see some', () => {
+  it('are the rows the owner gets, minus the hidden ones, field for field', async () => {
+    const read = (viewer: Viewer) =>
+      getImagesForModelVersion({
+        modelVersionIds: [1],
+        imagesPerVersion: 20,
+        include: ['meta'],
+        user: asUser(viewer),
+      });
+    const [ownerRows, strangerRows] = await Promise.all([read({ id: OWNER }), read(undefined)]);
+    expect(strangerRows).toEqual(ownerRows.filter((row) => SHOWN_TO_OTHERS.includes(row.id)));
   });
 });

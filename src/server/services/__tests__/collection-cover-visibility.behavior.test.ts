@@ -98,6 +98,7 @@ const OWNER_REMOVED = 215; // the collection owner's own removed upload
 const REMOVED_LEVEL = 213; // stranger's image, Scanned with no reason but rated at the removed level
 const MINOR_R = 216; // the viewer's minor-flagged image rated R, on a published public post
 const MINOR_PG13 = 217; // the viewer's minor-flagged image rated PG-13, on the same post
+const UNFLAGGED_R = 218; // the viewer's image rated R with no minor flag set (NULL)
 
 beforeAll(async () => {
   const schema = `
@@ -158,7 +159,8 @@ beforeAll(async () => {
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion") VALUES (${PENDING_SCAN}, ${STRANGER}, 1, 'Pending');
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel", "minor") VALUES
       (${MINOR_R}, ${VIEWER}, 5, 4, true),
-      (${MINOR_PG13}, ${VIEWER}, 5, 2, true);
+      (${MINOR_PG13}, ${VIEWER}, 5, 2, true),
+      (${UNFLAGGED_R}, ${VIEWER}, 5, 4, NULL);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion", "blockedFor") VALUES (${OWNER_REMOVED}, ${OWNER}, NULL, 'Blocked', 'Moderated');
     INSERT INTO "CollectionContributor" ("collectionId", "userId", "permissions") VALUES
       (${COLLECTION}, ${MANAGER}, ARRAY['VIEW', 'MANAGE']::"CollectionContributorPermission"[]),
@@ -225,6 +227,10 @@ describe('a minor-flagged cover', () => {
   it('is shown to anyone at PG-13', async () => {
     expect(await servable(MINOR_PG13)).toBe(true);
     expect(await servable(MINOR_PG13, { id: STRANGER })).toBe(true);
+  });
+
+  it('is shown to anyone at R when the flag is unset', async () => {
+    expect(await servable(UNFLAGGED_R, { id: STRANGER })).toBe(true);
   });
 });
 

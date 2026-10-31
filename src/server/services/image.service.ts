@@ -7502,6 +7502,10 @@ export const getEntityCoverImage = async ({
     [Prisma.sql`TRUE`, ...imageVisibilityConditions({ userId: viewer?.id, isModerator })],
     ' AND '
   );
+  const minorMatureVisible = minorMatureImageVisibleSql({
+    userId: signedIn ? viewerId ?? undefined : undefined,
+    isModerator,
+  });
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
@@ -7583,6 +7587,7 @@ export const getEntityCoverImage = async ({
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${minorMatureVisible}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
@@ -7621,6 +7626,7 @@ export const getEntityCoverImage = async ({
           )
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${minorMatureVisible}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
             OR NOT i."modelRestricted"
@@ -7665,6 +7671,7 @@ export const getEntityCoverImage = async ({
           )
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND ${minorMatureVisible}
         ) t
 
         UNION
@@ -7689,6 +7696,7 @@ export const getEntityCoverImage = async ({
             )
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND ${minorMatureVisible}
             AND (
               (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
               OR NOT i."modelRestricted"
@@ -7745,6 +7753,7 @@ export const getEntityCoverImage = async ({
           LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId"
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND ${minorMatureVisible}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
