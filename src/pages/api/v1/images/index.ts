@@ -8,7 +8,7 @@ import { ImageSort } from '~/server/common/enums';
 import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
-import { runImageSearch } from '~/server/services/image-search.service';
+import { runImageSearch, withoutHeldImages } from '~/server/services/image-search.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
@@ -30,7 +30,6 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { isDefined } from '~/utils/type-guards';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import {
@@ -103,17 +102,6 @@ const imagesEndpointSchema = z.object({
 // inner getImagesFromSearch timer doesn't capture. route label keeps it queryable
 // alongside the search-fn timing without extra cardinality.
 const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
-
-async function withoutHeldImages<T extends { postId: unknown; browsingLevel: number }>(items: T[]) {
-  const { getHeldLevelsByPost } = await import('~/server/services/model.service');
-  const postIdOf = (image: T) => (typeof image.postId === 'number' ? image.postId : undefined);
-  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined));
-  return items.filter((image) => {
-    const postId = postIdOf(image);
-    const hold = postId ? held.get(postId) : undefined;
-    return !hold || Flags.intersects(hold.level, image.browsingLevel);
-  });
-}
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   // When the long-task LABELS tier is armed, attribute any synchronous event-loop

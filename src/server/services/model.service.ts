@@ -5963,7 +5963,7 @@ export async function getHeldGalleryLevel({
  * owner, who sees them whole. A post on no held model, or not yet on the replica, is absent.
  */
 export async function getHeldLevelsByPost(postIds: number[]) {
-  const held = new Map<number, { level: number; ownerId: number }>();
+  const held = new Map<number, { level: number; ownerId?: number }>();
   const ids = uniq(postIds);
   if (!ids.length) return held;
   const posts = await postVersionCache().fetch(ids);
@@ -5992,8 +5992,7 @@ export async function getHeldLevelsByPost(postIds: number[]) {
     const versionId = posts[id]?.modelVersionId;
     const modelId = versionId ? versions[versionId]?.modelId : undefined;
     const level = modelId ? levels.get(modelId) : undefined;
-    const ownerId = modelId ? ownerOf.get(modelId) : undefined;
-    if (level !== undefined && ownerId !== undefined) held.set(id, { level, ownerId });
+    if (modelId && level !== undefined) held.set(id, { level, ownerId: ownerOf.get(modelId) });
   }
   return held;
 }

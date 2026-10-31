@@ -60,6 +60,7 @@ function urlFor(
 }
 
 beforeEach(() => {
+  image.mockReset();
   heldLevels.mockReset();
   heldLevels.mockResolvedValue(
     new Map([[HELD_POST, { level: NsfwLevel.PG | NsfwLevel.PG13, ownerId: MODEL_OWNER }]])
@@ -67,11 +68,27 @@ beforeEach(() => {
 });
 
 describe("getImageHandler on a minor or SFW-only model's post", () => {
-  it('serves no media above the held level to anyone else', async () => {
+  it('serves no media above the held level to another user or a signed-out viewer', async () => {
     expect(await urlFor(NsfwLevel.R, { user: { id: 99 } })).toBeNull();
-    expect(await urlFor(NsfwLevel.R, { user: { id: UPLOADER } })).toBeNull();
     expect(await urlFor(NsfwLevel.R)).toBeNull();
-    expect(heldLevels).toHaveBeenCalledWith([HELD_POST]);
+  });
+
+  it("holds the image's uploader too: only the model's owner is exempt", async () => {
+    expect(await urlFor(NsfwLevel.R, { user: { id: UPLOADER } })).toBeNull();
+  });
+
+  it('serves no media for an image not yet rated, until it is rated within the level', async () => {
+    expect(await urlFor(0, { user: { id: 99 } })).toBeNull();
+  });
+
+  it("holds a signed-out viewer when the model's owner is not known", async () => {
+    heldLevels.mockResolvedValue(new Map([[HELD_POST, { level: NsfwLevel.PG }]]));
+    expect(await urlFor(NsfwLevel.R)).toBeNull();
+  });
+
+  it('serves the image without media when the hold cannot be looked up', async () => {
+    heldLevels.mockRejectedValue(new Error('lookup failed'));
+    expect(await urlFor(NsfwLevel.PG13, { user: { id: 99 } })).toBeNull();
   });
 
   it('serves media within the held level', async () => {
@@ -82,9 +99,8 @@ describe("getImageHandler on a minor or SFW-only model's post", () => {
     expect(await urlFor(NsfwLevel.R, { user: { id: MODEL_OWNER } })).toBe('media-key');
   });
 
-  it('serves a moderator the image whole, without looking up the hold', async () => {
+  it('serves a moderator the image whole', async () => {
     expect(await urlFor(NsfwLevel.R, { user: { id: 5, isModerator: true } })).toBe('media-key');
-    expect(heldLevels).not.toHaveBeenCalled();
   });
 
   it('holds a moderator who comes through an app they authorised', async () => {

@@ -218,9 +218,20 @@ describe('getHeldLevelsByPost', () => {
       100: { level: 1, ownerId: 11 },
       200: { level: 2, ownerId: 22 },
     });
-    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: expect.arrayContaining([1, 2]) } } })
-    );
+  });
+
+  it('leaves out a post not yet on the replica', async () => {
+    dbMock.dbRead.post.findMany.mockResolvedValueOnce([{ id: 100, modelVersionId: 10 }] as never);
+
+    expect([...(await getHeldLevelsByPost([100, 200])).keys()]).toEqual([100]);
+  });
+
+  it("still holds a post when its model's owner cannot be found", async () => {
+    dbMock.dbRead.model.findMany.mockResolvedValueOnce([] as never);
+
+    expect(Object.fromEntries(await getHeldLevelsByPost([100]))).toEqual({
+      100: { level: 1, ownerId: undefined },
+    });
   });
 
   it('asks nothing for no posts, or for posts on no held model', async () => {

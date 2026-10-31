@@ -288,6 +288,18 @@ describe('/api/v1/images?ids= — batch by id', () => {
       expect(mockHeldLevelsByPost).toHaveBeenCalledWith([HELD_POST, HELD_POST, OTHER_POST]);
     });
 
+    it('leaves out an image on a held post that is not yet rated', async () => {
+      mockGetAllImages.mockResolvedValue({
+        items: [rated(1, 0), rated(2, 1)],
+        nextCursor: undefined,
+      });
+      const { req, res } = createMocks({ query: { ids: '1,2' } });
+
+      await handler(req, res);
+
+      expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([2]);
+    });
+
     it("serves no image above its post's held level by ?imageId=", async () => {
       mockGetAllImages.mockResolvedValue({ items: [rated(2, 4)], nextCursor: undefined });
       const { req, res } = createMocks({ query: { imageId: '2' } });

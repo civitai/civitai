@@ -350,13 +350,21 @@ export const setTosViolationHandler = async ({
 const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
 
 /**
- * An image on a minor or SFW-only model's post, above that model's held level, is served whole only to
- * the model's owner and moderators.
+ * The images a viewer may see whole: one on a minor or SFW-only model's post, above that model's held
+ * level, only the model's owner and moderators may.
  */
-async function heldFromViewer(ctx: Context, image: { postId?: number | null; nsfwLevel: number }) {
-  if (!image.postId || moderatorView(ctx)) return false;
-  const held = (await getHeldLevelsByPost([image.postId])).get(image.postId);
-  return !!held && held.ownerId !== ctx.user?.id && !Flags.intersects(held.level, image.nsfwLevel);
+async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLevel: number }>(
+  ctx: Context,
+  images: T[]
+) {
+  const postIds = images.map((image) => image.postId).filter(isDefined);
+  if (!postIds.length || moderatorView(ctx)) return images;
+  const held = await getHeldLevelsByPost(postIds);
+  return images.filter((image) => {
+    const hold = image.postId ? held.get(image.postId) : undefined;
+    const owner = !!ctx.user && hold?.ownerId === ctx.user.id;
+    return !hold || owner || Flags.intersects(hold.level, image.nsfwLevel);
+  });
 }
 
 export const getInfiniteImagesHandler = async ({
@@ -419,9 +427,11 @@ export const getInfiniteImagesHandler = async ({
       if (!browsingLevel) return { items: [], nextCursor: undefined };
       scopedInput = { ...scopedInput, browsingLevel };
     }
+    // Images picked by id name no model, so each is held by its own post's model.
+    const byId = !!scopedInput.imageId || !!scopedInput.ids?.length;
 
     if (useIndex) {
-      return await getAllImagesIndex({
+      const result = await getAllImagesIndex({
         ...scopedInput,
         user,
         holdExempt: moderatorView(ctx),
@@ -438,6 +448,7 @@ export const getInfiniteImagesHandler = async ({
           userAgent: ctx.req.headers['user-agent'],
         }),
       });
+      return byId ? { ...result, items: await withoutHeldFromViewer(ctx, result.items) } : result;
     } else {
       const result = await getAllImages({
         ...scopedInput,
@@ -453,7 +464,11 @@ export const getInfiniteImagesHandler = async ({
       // than inside getAllImages because the index result type is derived from its
       // return. No client reads it today — it is the wire contract, and the routing
       // tests assert on it to tell a DB page from an index page that returned nothing.
-      return { ...result, source: 'db' as const };
+      return {
+        ...result,
+        items: byId ? await withoutHeldFromViewer(ctx, result.items) : result.items,
+        source: 'db' as const,
+      };
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -952,9 +967,10 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: result.user.id,
       postId: result.postId ?? null,
     });
-    return canSeeMedia && !(await heldFromViewer(ctx, result))
-      ? result
-      : withoutMedia({ ...result, eventDecoration: null });
+    // A failed hold lookup serves the image without media rather than failing the page.
+    const servable =
+      canSeeMedia && !!(await withoutHeldFromViewer(ctx, [result]).catch(() => [])).length;
+    return servable ? result : withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
