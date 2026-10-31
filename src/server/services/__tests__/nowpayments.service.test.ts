@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import type * as ManualCredit from '~/server/services/nowpayments-manual-credit';
+import type * as DbHelpers from '~/server/db/db-helpers';
 
 // Use vi.hoisted so mocks are available inside vi.mock factories
 const {
@@ -12,8 +13,10 @@ const {
   mockGetMultipliersForUser,
   mockSignalClient,
   mockWithDistributedLock,
+  mockKvGet,
 } = vi.hoisted(() => {
   return {
+    mockKvGet: vi.fn(async (_key: string, defaultValue?: unknown) => defaultValue),
     mockNowpaymentsCaller: {
       createPayment: vi.fn(),
       getPaymentStatus: vi.fn(),
@@ -41,6 +44,10 @@ vi.mock('~/server/services/notification.service', () => ({
   createNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof DbHelpers>()),
+  dbKV: { get: mockKvGet },
+}));
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
   default: mockNowpaymentsCaller,
 }));
@@ -1408,6 +1415,130 @@ describe('watchOpenDeposits', () => {
 
     expect(result).toMatchObject({ closed: 0, lookupFailed: 1 });
     expect(result.digest.map((i) => i.paymentId)).toEqual(['808']);
+  });
+
+  describe('listed payment ids with no row (lost IPN)', () => {
+    /** Serves the two KeyValue lists; anything else reads as unset. */
+    const listIds = (watchIds: unknown, creditOk: unknown = undefined) =>
+      mockKvGet.mockImplementation(async (key: string, defaultValue?: unknown) => {
+        if (key === 'nowpayments:watch-payment-ids') return watchIds;
+        if (key === 'nowpayments:watch-payment-ids-credit-ok') return creditOk ?? defaultValue;
+        return defaultValue;
+      });
+    const lookedUp = () =>
+      mockNowpaymentsCaller.getPaymentStatus.mock.calls.map(([id]) => Number(id));
+
+    beforeEach(() => {
+      mockKvGet.mockReset().mockImplementation(async (_k: string, d?: unknown) => d);
+    });
+
+    it('(a) credits a listed, confirmed id that finished with no row', async () => {
+      listIds([901], [901]);
+
+      const result = await watch([], { 901: 'finished' });
+
+      expect(lookedUp()).toEqual([901]);
+      expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+      expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
+        expect.objectContaining({ externalTransactionId: 'np-deposit-901', userId: 42 })
+      );
+      expect(rowStatus[901]).toBe('finished');
+      expect(result.listed).toEqual([{ paymentId: '901', state: 'recorded', status: 'finished' }]);
+    });
+
+    it('(b) never reads or credits a listed id whose row is held', async () => {
+      listIds([902], [902]);
+
+      const result = await watch([openRow(902, 'held', 5)], { 902: 'finished' });
+
+      expect(mockNowpaymentsCaller.getPaymentStatus).not.toHaveBeenCalled();
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(rowStatus[902]).toBe('held');
+      expect(result.listed).toEqual([{ paymentId: '902', state: 'held', status: 'held' }]);
+    });
+
+    it('(c) holds a listed id with no row that a staff hand grant cites', async () => {
+      listIds([903], [903]);
+      vi.mocked(findHandGrantsForDeposit).mockResolvedValueOnce(staffTipCitingPayment);
+
+      const result = await watch([], { 903: 'finished' });
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(rowStatus[903]).toBe('held');
+      expect(result.listed[0]).toMatchObject({ paymentId: '903', state: 'recorded' });
+    });
+
+    it('(d) looks up a listed id that also has an open row only once', async () => {
+      listIds([904], [904]);
+
+      const result = await watch([openRow(904, 'confirming', 5)], { 904: 'finished' });
+
+      expect(lookedUp()).toEqual([904]);
+      expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+      expect(result.listed).toEqual([{ paymentId: '904', state: 'has_row', status: 'finished' }]);
+    });
+
+    it.each([
+      ['unset', undefined],
+      ['not an array', { ids: [905] }],
+      ['a string', '905'],
+    ])('(e) runs the row watch unchanged when the list is %s', async (_label, value) => {
+      listIds(value);
+
+      const result = await watch([openRow(801, 'confirming', 5)], {
+        801: 'finished',
+        905: 'finished',
+      });
+
+      expect(lookedUp()).toEqual([801]);
+      expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+      expect(result.listed).toEqual([]);
+    });
+
+    it('(e) skips entries that are not payment ids and checks the rest', async () => {
+      listIds(['abc', -1, 1.5, 906, 906], [906]);
+
+      const result = await watch([], { 906: 'confirming' });
+
+      expect(lookedUp()).toEqual([906]);
+      expect(result.listed).toEqual([
+        { paymentId: '906', state: 'recorded', status: 'confirming' },
+      ]);
+    });
+
+    it.each(['finished', 'partially_paid'])(
+      '(f) does not credit a listed id already %s until it is on the credit-ok list',
+      async (npStatus) => {
+        listIds([907, 908], [908]);
+
+        const result = await watch([], { 907: npStatus, 908: npStatus });
+
+        expect(mockGrantBuzzPurchase).toHaveBeenCalledTimes(1);
+        expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
+          expect.objectContaining({ externalTransactionId: 'np-deposit-908' })
+        );
+        expect(rowStatus[907]).toBeUndefined();
+        expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalledWith(
+          expect.objectContaining({ where: { paymentId: BigInt(907) } })
+        );
+        expect(result.listed).toEqual([
+          { paymentId: '907', state: 'awaiting_ok', status: npStatus },
+          { paymentId: '908', state: 'recorded', status: npStatus },
+        ]);
+      }
+    );
+
+    it('names a listed id NowPayments still has waiting, and one it cannot read', async () => {
+      listIds([909, 910]);
+
+      const result = await watch([], { 909: 'waiting' });
+
+      expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
+      expect(result.listed).toEqual([
+        { paymentId: '909', state: 'no_row', status: 'waiting' },
+        { paymentId: '910', state: 'lookup_failed', status: null },
+      ]);
+    });
   });
 });
 
