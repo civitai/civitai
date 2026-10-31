@@ -6,6 +6,8 @@ import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
+import { familyId } from '@civitai/auth';
+import { markFamilyLive } from '$lib/server/auth/lineage';
 import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import {
@@ -330,11 +332,23 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // /session re-touches the same id; that's idempotent.
   const deviceId = isFirstParty ? getOrCreateDeviceId(cookies) : undefined;
   if (deviceId) await touchAccount(deviceId, user.id);
+  // The child session joins the hub session's family only when it is minted for the hub session's own user.
+  const hubSession =
+    isFirstParty && locals.session && Number(locals.session.sub) === user.id
+      ? locals.session
+      : undefined;
+  const family = hubSession ? familyId(hubSession) : undefined;
+  await markFamilyLive(family);
   await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
     openid: scopeRequest.openid || undefined,
     authTime: Math.floor(Date.now() / 1000),
     deviceId,
+    family,
+    iat0: hubSession?.iat0,
+    impersonatedBy: hubSession?.impersonatedBy,
+    impExp: hubSession?.impExp,
+    proofFamily: isFirstParty && locals.session ? familyId(locals.session) : undefined,
   });
 
   logOAuthEvent({

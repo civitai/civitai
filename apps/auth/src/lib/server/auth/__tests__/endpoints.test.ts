@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   produce: vi.fn(),
   mintSessionToken: vi.fn(),
   mintUserSession: vi.fn(),
+  mintSession: vi.fn(),
   invalidateAll: vi.fn(),
 }));
 vi.mock('$lib/server/auth/verifier', () => ({ verifier: { verifyToken: h.verifyToken } }));
@@ -22,6 +23,7 @@ vi.mock('$lib/server/auth/session', () => ({
   SESSION_COOKIE: 'civ-token',
   getSigner: () => ({ mintSessionToken: h.mintSessionToken }),
   mintUserSession: h.mintUserSession,
+  mintSession: h.mintSession,
   refuseModerationAccount: () => undefined,
 }));
 
@@ -62,6 +64,7 @@ beforeEach(() => {
   h.invalidate.mockResolvedValue(undefined);
   h.mintSessionToken.mockResolvedValue('minted.jwt.token');
   h.mintUserSession.mockResolvedValue('civ.minted.jwt');
+  h.mintSession.mockResolvedValue({ token: 'civ.minted.jwt', family: 'f' });
 });
 
 describe('GET /api/auth/identity', () => {
@@ -173,7 +176,7 @@ describe('POST /api/auth/oauth/legacy-exchange (upgrade-on-read)', () => {
     );
     expect(res.status).toBe(401);
     expect(h.verifyToken).not.toHaveBeenCalled();
-    expect(h.mintUserSession).not.toHaveBeenCalled();
+    expect(h.mintSession).not.toHaveBeenCalled();
   });
 
   it('400 when no legacyToken is supplied', async () => {
@@ -191,7 +194,7 @@ describe('POST /api/auth/oauth/legacy-exchange (upgrade-on-read)', () => {
     expect(await res.json()).toEqual({ token: 'civ.minted.jwt', deviceId: expect.any(String) });
     expect(h.verifyToken).toHaveBeenCalledWith(LEGACY_JWE);
     expect(h.getOrProduce).toHaveBeenCalledWith(5);
-    expect(h.mintUserSession).toHaveBeenCalledWith({ id: 5, username: 'alice' });
+    expect(h.mintSession).toHaveBeenCalledWith({ id: 5, username: 'alice' });
   });
 
   it('NEVER trusts a caller-supplied userId — only the decoded cookie identity', async () => {
@@ -209,7 +212,7 @@ describe('POST /api/auth/oauth/legacy-exchange (upgrade-on-read)', () => {
       ev({ auth: 'Bearer secret-123', body: { legacyToken: 'bad' } })
     );
     expect(res.status).toBe(401);
-    expect(h.mintUserSession).not.toHaveBeenCalled();
+    expect(h.mintSession).not.toHaveBeenCalled();
   });
 
   it('404 when the decoded user no longer exists', async () => {
@@ -218,7 +221,7 @@ describe('POST /api/auth/oauth/legacy-exchange (upgrade-on-read)', () => {
       ev({ auth: 'Bearer secret-123', body: { legacyToken: LEGACY_JWE } })
     );
     expect(res.status).toBe(404);
-    expect(h.mintUserSession).not.toHaveBeenCalled();
+    expect(h.mintSession).not.toHaveBeenCalled();
   });
 });
 
@@ -226,8 +229,8 @@ describe('POST /api/auth/dev/login (dev-gated)', () => {
   it('mints a session token for the userId with a valid internal token', async () => {
     const res = await DEV_LOGIN(ev({ auth: 'Bearer secret-123', body: { userId: 5 } }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ token: 'minted.jwt.token', userId: 5 });
-    expect(h.mintSessionToken).toHaveBeenCalled();
+    expect(await res.json()).toEqual({ token: 'civ.minted.jwt', userId: 5 });
+    expect(h.mintUserSession).toHaveBeenCalledWith({ id: 5 });
   });
 
   it('404 (throws) without a valid internal token', async () => {

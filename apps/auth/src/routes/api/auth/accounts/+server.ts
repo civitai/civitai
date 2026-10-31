@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { isLinkedAndFresh, listAccounts, removeAccount } from '$lib/server/auth/device';
+import { canSwitch, isLinkedAndFresh, listAccounts, removeAccount } from '$lib/server/auth/device';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 
 // GET /api/auth/accounts — the browser's linked-account list for the switcher menu. DISPLAY ONLY (no
@@ -33,16 +33,20 @@ export const GET: RequestHandler = async ({ locals }) => {
   return json({ accounts });
 };
 
-// DELETE /api/auth/accounts?userId=N — drop one account from THIS browser's device set ("remove from this
-// browser"). Requires an active session; only affects the device cookie's own set. See cutover doc (E).
 // POST lists too: it is the form a service caller uses, since the session travels in the body and a GET has none.
 export const POST: RequestHandler = GET;
+
+// DELETE /api/auth/accounts?userId=N — drop one account from THIS browser's device set ("remove from this
+// browser"), under the same membership rule as /api/auth/switch; removing yourself needs only your own
+// membership. See cutover doc (E).
 
 export const DELETE: RequestHandler = async ({ url, locals }) => {
   if (!locals.user) error(401, 'active session required');
   const deviceId = locals.deviceId;
   const userId = Number(url.searchParams.get('userId'));
   if (!deviceId || !Number.isFinite(userId)) error(400, 'bad request');
+  const principal = locals.impersonatedBy ?? locals.user.id;
+  if (!(await canSwitch(deviceId, principal, userId))) error(403, 'account not linked or expired');
   await removeAccount(deviceId, userId);
   return json({ ok: true });
 };

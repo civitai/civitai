@@ -2,18 +2,24 @@ import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
 import { error } from '@sveltejs/kit';
 import {
+  familyClaims,
+  familyId,
   isSecureCookie,
   maybeCreateSessionSigner,
+  SESSION_LINEAGE_MAX_AGE_MS,
   SESSION_COOKIE_BASE,
   sessionCookieName,
   SPOKE_AUTHORIZE_PATH,
+  type FamilyClaims,
+  type SessionClaims,
   type SessionSigner,
   type SessionUser,
 } from '@civitai/auth';
 import { sessions } from './registry';
-import { getOrCreateDeviceId, linkAccount } from './device';
+import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
+import { addDeviceFamily } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
 import { isRefusedModerationAccount } from './moderation-account';
@@ -80,30 +86,53 @@ export function refuseModerationAccount(
   if (isRefusedModerationAccount(user, source)) error(403, 'This account cannot sign in.');
 }
 
+/** Seconds a session minted now may live: the normal lifetime, cut short by the 90-day limit and `impExp`. */
+export function sessionExpiresIn(lineage: FamilyClaims, now = Date.now()): number {
+  let until = now + getSigner().maxAge * 1000;
+  if (lineage.iat0 != null) until = Math.min(until, lineage.iat0 + SESSION_LINEAGE_MAX_AGE_MS);
+  if (lineage.impExp != null) until = Math.min(until, lineage.impExp);
+  return Math.max(1, Math.floor((until - now) / 1000));
+}
+
+export interface MintOptions {
+  /** The session this one descends from (refreshed, switched or impersonated from, or the browser's prior
+   *  session on an add-account login). Null or absent: a new sign-in. */
+  parent?: SessionClaims | null;
+  /** A fresh interactive sign-in restarts the 90-day clock. */
+  iat0?: number;
+  clearImpersonation?: boolean;
+  impersonatedBy?: number;
+}
+
 /**
  * Mint the THIN ES256 session token (identity only — `sub`/`jti`/`signedAt`, NO embedded user; the rich user is
- * resolved per-request from the shared cache) + track it for invalidation. Returns the token; does NOT touch
- * any cookie — callers that own the HTTP response set it themselves. `establishSession` is the cookie-setting
- * wrapper for the login path.
+ * resolved per-request from the shared cache) + track it for invalidation. Returns the token and its family; does
+ * NOT touch any cookie — callers that own the HTTP response set it themselves.
  */
-export async function mintUserSession(
+export async function mintSession(
   user: SessionUser,
-  opts?: { impersonatedBy?: number }
-): Promise<string> {
-  refuseModerationAccount(user, opts?.impersonatedBy ? 'impersonate' : 'mint');
+  opts: MintOptions = {}
+): Promise<{ token: string; family: string }> {
+  refuseModerationAccount(user, opts.impersonatedBy ? 'impersonate' : 'mint');
+  const now = Date.now();
   const tokenId = randomUUID();
+  const lineage = familyClaims(opts.parent ?? null, {
+    iat0: opts.iat0,
+    clearImpersonation: opts.clearImpersonation || opts.impersonatedBy != null,
+    now,
+  });
+  if (opts.impersonatedBy) lineage.impersonatedBy = opts.impersonatedBy;
   const token = await getSigner().mintSessionToken(
-    {
-      signedAt: Date.now(),
-      sub: String(user.id),
-      // Moderator impersonation (F): stamp the moderator's id so the exit path can re-mint their session.
-      ...(opts?.impersonatedBy ? { impersonatedBy: opts.impersonatedBy } : {}),
-    },
-    { jti: tokenId } // the session/token id is the standard `jti` claim — no duplicate `id`
+    { signedAt: now, sub: String(user.id), ...lineage },
+    { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }
   );
   // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
   await sessions.trackToken(tokenId, user.id).catch(() => {});
-  return token;
+  return { token, family: familyId({ sid: lineage.sid, jti: tokenId }) ?? tokenId };
+}
+
+export async function mintUserSession(user: SessionUser, opts?: MintOptions): Promise<string> {
+  return (await mintSession(user, opts)).token;
 }
 
 /**
@@ -141,7 +170,8 @@ export async function establishSession(
   // up front because setSessionCookie below queues the new cookie; reading `cookies.get` after that could echo
   // the just-set value. Verification failures (no/expired/invalid prior session) → undefined → no materialize.
   refuseModerationAccount(user, 'login');
-  const priorUserId = await resolvePriorSessionUserId(cookies);
+  const prior = await resolvePriorSession(cookies);
+  const priorUserId = prior ? Number(prior.sub) : undefined;
 
   // A login bound for a spoke on another registrable domain must not re-point THIS domain's session — the hub
   // cookie is civitai.com's session too. Hand the identity to /authorize out-of-band instead, leaving whoever
@@ -158,20 +188,37 @@ export async function establishSession(
     : undefined;
   const handedOff = !!foreignDomain && (await issuePendingAuthz(cookies, user.id, foreignDomain));
 
+  // A sign-in on a browser that already holds a hub session (adding an account, or signing in again) joins that
+  // session's family, so one sign-out ends both.
+  let family: string | undefined;
   if (!handedOff) {
-    const token = await mintUserSession(user);
-    setSessionCookie(cookies, token);
+    const minted = await mintSession(user, {
+      parent: prior,
+      iat0: Date.now(),
+      clearImpersonation: true,
+    });
+    family = minted.family;
+    setSessionCookie(cookies, minted.token);
   }
 
-  // Link this account to the browser's device set (the account-switch list — see
-  // docs/auth/auth-hub-spoke-overview.md). LAZY: only writes a
-  // `device:accounts:*` key when this is a genuine 2nd distinct account (priorUserId set + != user.id), or when
-  // the set already exists. An ordinary single-account login writes nothing. Best-effort.
-  // Resolve the device id on its own line FIRST: getOrCreateDeviceId is SYNCHRONOUS and (re)sets the device
-  // cookie — keeping it outside the `.catch(...)` chain ensures the cookie-roll always lands and can't be
-  // swallowed as if it were part of linkAccount's best-effort redis write.
-  const deviceId = getOrCreateDeviceId(cookies);
-  await linkAccount(deviceId, user.id, priorUserId).catch(() => {});
+  // Link this account and family to the browser's records (docs/auth/auth-hub-spoke-overview.md). Records this
+  // browser can't show it is signed in to stay with the old device id; the sign-in starts on a new one.
+  const proofFamily = prior ? familyId(prior) : undefined;
+  // The prior session proves the browser is signed in to its principal: the moderator, when impersonating.
+  const priorPrincipal = prior ? prior.impersonatedBy ?? priorUserId : undefined;
+  const link = (id: string) =>
+    linkAccount(id, user.id, priorPrincipal).catch(() => 'none' as const);
+  let deviceId = getOrCreateDeviceId(cookies);
+  const listed = await link(deviceId);
+  const recorded =
+    listed === 'rotate'
+      ? 'rotate'
+      : await addDeviceFamily(deviceId, family, { proofFamily, proven: listed === 'joined' });
+  if (recorded === 'rotate') {
+    deviceId = rotateDeviceId(cookies);
+    await link(deviceId);
+    await addDeviceFamily(deviceId, family);
+  }
 }
 
 /**
@@ -227,14 +274,13 @@ async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | und
   return (await isFirstPartyOrigin(origin)) ? domain : undefined;
 }
 
-/** The userId of the valid session already on this request's civ-token cookie, or undefined. Best-effort. */
-async function resolvePriorSessionUserId(cookies: Cookies): Promise<number | undefined> {
+/** The valid session already on this request's civ-token cookie, or undefined. Best-effort. */
+async function resolvePriorSession(cookies: Cookies): Promise<SessionClaims | undefined> {
   const token = cookies.get(SESSION_COOKIE);
   if (!token) return undefined;
   try {
     const claims = await verifier.verifyToken(token);
-    const userId = Number(claims?.sub);
-    return Number.isFinite(userId) ? userId : undefined;
+    return claims && Number.isFinite(Number(claims.sub)) ? claims : undefined;
   } catch {
     return undefined; // no / expired / invalid prior session ⇒ not a 2nd-account login
   }
