@@ -1,3 +1,4 @@
+import { imageKeptReasonLabel } from '$lib/image-kept-reasons';
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
@@ -32,7 +33,12 @@ async function runAction(action: 'restore' | 'delete', request: Request, userId:
 
   const result = await moderateArticle({ action, articleId, userId });
   if (!result.ok) return fail(502, { error: result.error });
-  return { success: true, kept: result.kept ?? [] };
+  // Only the label reaches the browser; the reason would say which hold applies.
+  const kept = (result.kept ?? []).map(({ id, reason }) => ({
+    id,
+    label: imageKeptReasonLabel[reason],
+  }));
+  return { success: true, kept };
 }
 
 export const actions: Actions = {

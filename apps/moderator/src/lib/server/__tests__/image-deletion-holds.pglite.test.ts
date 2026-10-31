@@ -327,8 +327,10 @@ describe('deleteImageRows on an owner with a hold marker', () => {
   ])('blocks %s instead of leaving it live, and keeps its file', async (_label, state) => {
     await image(2, state);
     await db.query(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 2`);
+    await db.query(`INSERT INTO "CollectionItem" VALUES ($1), (2)`, [PLAIN]);
     const rows = await deleteImages([PLAIN, 2]);
     expect(await remaining()).toEqual([2]);
+    expect(await collectionItems()).toEqual([2]);
     expect(await imageRow(2)).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
     expect(deletedKeys).toEqual([`key-${PLAIN}`]);
     expect(await cdnQueued()).toEqual([PLAIN]);

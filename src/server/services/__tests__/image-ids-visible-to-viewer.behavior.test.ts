@@ -168,7 +168,7 @@ describe('an image a moderator article delete keeps for a CSAM review or block',
     const seed = `
       INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "nsfwLevelLocked") VALUES
         (201, ${OWNER}, 1, ${NsfwLevel.Blocked}, 'Blocked', NULL, false),
-        -- A block whose rescan errored: only the Blocked level still hides it.
+        -- A block left on an errored rescan.
         (202, ${OWNER}, 1, ${NsfwLevel.Blocked}, 'Error', NULL, true),
         (203, ${OWNER}, 1, 1, 'Scanned', 'csam', false),
         (204, ${OWNER}, NULL, 1, 'Scanned', 'csam', false),

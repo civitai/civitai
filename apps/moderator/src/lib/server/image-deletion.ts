@@ -79,20 +79,19 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
   // No row came back: already gone, kept by a hold marker's trigger, or held since the check.
   const notReturned: number[] = [];
   for (const id of toDelete) {
-    // Each guard is re-checked here, so a hold placed after the check above still keeps the image.
-    await trx
-      .deleteFrom('CollectionItem')
-      .where('imageId', '=', id)
-      .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = ${id} AND ${imageHeld})`
-      )
-      .execute();
+    // The guard is re-checked here, so a hold placed after the check above still keeps the image.
     const image = await trx
       .deleteFrom('Image')
       .where('id', '=', id)
       .where(deletable)
       .returning(['url', 'userId', 'postId', 'needsReview', thumbnailParentId.as('parentId')])
       .executeTakeFirst();
+    // Only once the row is gone (no foreign key cascades these), so a kept image keeps its collections.
+    await trx
+      .deleteFrom('CollectionItem')
+      .where('imageId', '=', id)
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = ${id})`)
+      .execute();
     if (!image) {
       notReturned.push(id);
       continue;

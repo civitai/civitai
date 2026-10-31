@@ -27,7 +27,6 @@
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { Alert, AlertDescription, AlertTitle } from '@civitai/ui/components/ui/alert/index.js';
-  import { imageKeptReasonLabel } from '$lib/image-kept-reasons';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -70,7 +69,7 @@
     <AlertDescription>
       <ul>
         {#each form.kept as image (image.id)}
-          <li>Image {image.id}: {imageKeptReasonLabel[image.reason]}</li>
+          <li>Image {image.id}: {image.label}</li>
         {/each}
       </ul>
     </AlertDescription>
