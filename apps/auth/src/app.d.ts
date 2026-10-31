@@ -1,4 +1,4 @@
-import type { SessionClaims, SessionUser } from '@civitai/auth';
+import type { CookieSlot, SessionClaims, SessionUser } from '@civitai/auth';
 
 // See https://svelte.dev/docs/kit/types#app.d.ts
 declare global {
@@ -14,6 +14,8 @@ declare global {
       impersonatedBy?: number;
       /** This browser's device id: the device cookie, or the `deviceId` an `internal`-shape caller sent. */
       deviceId?: string;
+      /** Which cookie slot the hub's own session was read from, when it came from a cookie. */
+      sessionSlot?: CookieSlot;
     }
     // interface PageData {}
     // interface PageState {}

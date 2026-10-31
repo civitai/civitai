@@ -1,6 +1,13 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
-import type { SessionClaims, SessionUser } from '@civitai/auth';
-import { reissueSession, SESSION_COOKIE, setSessionCookie } from '$lib/server/auth/session';
+import {
+  rollSlot,
+  sessionCookieMode,
+  sessionCookieNameForSlot,
+  type SessionClaims,
+  type SessionUser,
+} from '@civitai/auth';
+import { readHubSession, reissueSession, setSessionCookie } from '$lib/server/auth/session';
+import { upgradeHubSession } from '$lib/server/auth/legacy-upgrade';
 import { acceptHubSession } from '$lib/server/auth/lineage';
 import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
@@ -102,11 +109,18 @@ export const handle: Handle = async ({ event, resolve }) => {
   // by userId from the shared cache (produce on miss) rather than trusting an embedded user. The verifier handles
   // both ES256 and legacy NextAuth JWE; verification / resolve failures are non-fatal.
   const routeId = event.route?.id ?? '';
-  const cookieToken = event.cookies.get(SESSION_COOKIE);
+  const cookieRead = readHubSession(event.cookies);
+  const cookieToken = cookieRead?.value;
   const internal = BODY_SESSION_ROUTES.has(routeId)
     ? await readInternalCaller(event.request)
     : null;
-  const token = internal ? internal.token : cookieToken;
+  let token = internal ? internal.token : cookieToken;
+  let slot = cookieRead?.slot;
+  const sharedToken = event.cookies.get(sessionCookieNameForSlot('shared'));
+  if (!internal && sessionCookieMode() === 'host' && sharedToken) {
+    const upgraded = await upgradeHubSession(event.cookies, sharedToken);
+    if (upgraded) [token, slot] = [upgraded, 'host'];
+  }
   event.locals.deviceId = internal ? internal.deviceId : getDeviceId(event.cookies);
   if (token) {
     const claims = await verifier.verifyToken(token).catch(() => null);
@@ -117,9 +131,11 @@ export const handle: Handle = async ({ event, resolve }) => {
       event.locals.tokenId = claims.jti;
       // Impersonation (F): the moderator's id, if this is an impersonation session — read by the exit route.
       event.locals.impersonatedBy = claims.impersonatedBy;
-      if (!internal && shouldRoll(event.request, claims, event.locals.user)) {
+      if (!internal) event.locals.sessionSlot = slot;
+      const writeSlot = slot && rollSlot({ slot });
+      if (!internal && writeSlot && shouldRoll(event.request, claims, event.locals.user)) {
         const fresh = await reissueSession(claims, userId, claims.jti!).catch(() => null);
-        if (fresh) setSessionCookie(event.cookies, fresh);
+        if (fresh) setSessionCookie(event.cookies, fresh, writeSlot);
         if (fresh && event.locals.deviceId) await touchAccount(event.locals.deviceId, userId);
       }
     }

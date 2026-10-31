@@ -1,9 +1,18 @@
 import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
-import { DEVICE_COOKIE_BASE, deviceCookieName, isSecureCookie } from '@civitai/auth';
+import {
+  DEVICE_COOKIE_BASE,
+  deviceCookieName,
+  deviceCookieNameForSlot,
+  isSecureCookie,
+  readDeviceId,
+  sessionCookieMode,
+  type CookieSlot,
+} from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { evalSys, getSysRedis } from '../redis';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
+import { cookieJar } from './cookie-jar';
 import { DEVICE_FAMILIES_TTL_S, deviceFamiliesKey } from './lineage';
 
 // DEVICE-LEVEL account linking (docs/main-app-auth-cutover.md, section E). A browser is identified by an
@@ -37,29 +46,42 @@ const cookieOpts = {
   sameSite: 'lax' as const,
 };
 
+/** Write the device cookie (30-day rolling) into `slot`; the host-only slot carries no Domain. */
+export function setDeviceCookie(
+  cookies: Cookies,
+  deviceId: string,
+  slot: CookieSlot = sessionCookieMode()
+): void {
+  cookies.set(deviceCookieNameForSlot(slot), deviceId, {
+    ...cookieOpts,
+    domain: slot === 'host' ? undefined : cookieOpts.domain,
+    maxAge: DEVICE_TTL_S,
+  });
+}
+
 /** Read the device id (or mint one) and ALWAYS (re)set the cookie so its 30-day TTL rolls. Call on login. */
 export function getOrCreateDeviceId(cookies: Cookies): string {
-  const id = cookies.get(DEVICE_COOKIE) ?? randomUUID();
-  cookies.set(DEVICE_COOKIE, id, { ...cookieOpts, maxAge: DEVICE_TTL_S }); // re-set → rolling
+  const id = getDeviceId(cookies) ?? randomUUID();
+  setDeviceCookie(cookies, id);
   return id;
 }
 
 /** Give this browser a new device id, leaving whatever list the old one had behind. */
 export function rotateDeviceId(cookies: Cookies): string {
   const id = randomUUID();
-  cookies.set(DEVICE_COOKIE, id, { ...cookieOpts, maxAge: DEVICE_TTL_S });
+  setDeviceCookie(cookies, id);
   return id;
 }
 
 /** Read the device id without creating one (switch / list paths — no device cookie ⇒ no linked accounts). */
-export function getDeviceId(cookies: Cookies): string | undefined {
-  return cookies.get(DEVICE_COOKIE);
+export function getDeviceId(cookies: Pick<Cookies, 'get'>): string | undefined {
+  return readDeviceId(cookieJar(cookies))?.value;
 }
 
 /** Re-set the (existing) device cookie to roll its 30-day TTL — pairs with touchAccount on a direct browser
  *  switch, so the device cookie doesn't expire while its redis set is still being refreshed. */
 export function rollDeviceCookie(cookies: Cookies, deviceId: string): void {
-  cookies.set(DEVICE_COOKIE, deviceId, { ...cookieOpts, maxAge: DEVICE_TTL_S });
+  setDeviceCookie(cookies, deviceId);
 }
 
 /** Clear the device cookie on logout — like clearSession, the seamless-switch account set must not survive a

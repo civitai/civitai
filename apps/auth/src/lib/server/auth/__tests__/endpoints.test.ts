@@ -21,6 +21,10 @@ vi.mock('$lib/server/auth/session-producer', () => ({
 vi.mock('$lib/server/auth/registry', () => ({ sessions: { invalidateAll: h.invalidateAll } }));
 vi.mock('$lib/server/auth/session', () => ({
   SESSION_COOKIE: 'civ-token',
+  readHubSession: (cookies: { get: (n: string) => string | undefined }) => {
+    const value = cookies.get('civ-token');
+    return value ? { value, name: 'civ-token', slot: 'shared' } : null;
+  },
   getSigner: () => ({ mintSessionToken: h.mintSessionToken }),
   mintUserSession: h.mintUserSession,
   mintSession: h.mintSession,

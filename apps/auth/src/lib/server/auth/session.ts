@@ -6,10 +6,15 @@ import {
   familyId,
   isSecureCookie,
   maybeCreateSessionSigner,
+  readSessionToken,
   SESSION_LINEAGE_MAX_AGE_MS,
   SESSION_COOKIE_BASE,
+  sessionCookieMode,
   sessionCookieName,
+  sessionCookieNameForSlot,
   SPOKE_AUTHORIZE_PATH,
+  type CookieRead,
+  type CookieSlot,
   type FamilyClaims,
   type SessionClaims,
   type SessionSigner,
@@ -18,6 +23,7 @@ import {
 import { sessions } from './registry';
 import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
+import { cookieJar } from './cookie-jar';
 import { verifier } from './verifier';
 import { acceptHubSession } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
@@ -151,16 +157,26 @@ export async function mintUserSession(user: SessionUser, opts?: MintOptions): Pr
   return (await mintSession(user, opts)).token;
 }
 
+/** The hub session token this request carries, and which slot it was read from. */
+export function readHubSession(cookies: Pick<Cookies, 'get'>): CookieRead | null {
+  return readSessionToken(cookieJar(cookies));
+}
+
 /**
  * Set the thin-session cookie from an ALREADY-MINTED token — no mint, no device-set touch. Used by endpoints
  * that serve the browser client DIRECTLY (switch / impersonate / exit), so the hub itself lands the
  * `.civitai.com` cookie on a credentialed CORS response. (The main app's proxies don't use this — they read the
- * returned token and set their own cookie, because they also deploy cross-site as `.red`.)
+ * returned token and set their own cookie, because they also deploy cross-site as `.red`.) The host-only slot
+ * is this hub's alone and carries no Domain.
  */
-export function setSessionCookie(cookies: Cookies, token: string): void {
-  cookies.set(SESSION_COOKIE, token, {
+export function setSessionCookie(
+  cookies: Cookies,
+  token: string,
+  slot: CookieSlot = sessionCookieMode()
+): void {
+  cookies.set(sessionCookieNameForSlot(slot), token, {
     path: '/',
-    domain: cookieDomain(),
+    domain: slot === 'host' ? undefined : cookieDomain(),
     httpOnly: true,
     secure: isSecureCookie(),
     sameSite: 'lax',
@@ -289,7 +305,7 @@ async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | und
 
 /** The valid session already on this request's civ-token cookie, or undefined. Best-effort. */
 async function resolvePriorSession(cookies: Cookies): Promise<SessionClaims | undefined> {
-  const token = cookies.get(SESSION_COOKIE);
+  const token = readHubSession(cookies)?.value;
   if (!token) return undefined;
   try {
     const claims = await verifier.verifyToken(token);
