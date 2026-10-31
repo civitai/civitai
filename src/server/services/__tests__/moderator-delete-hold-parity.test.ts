@@ -11,12 +11,17 @@ describe("the moderator app's copy of ownerHeldSql", () => {
   let ownerHeldSqlText: (id: string) => string;
 
   beforeAll(async () => {
-    const file = path.resolve(__dirname, '../../../..', 'apps/moderator/src/lib/server/delete-hold-sql.ts');
+    const file = path.resolve(
+      __dirname,
+      '../../../..',
+      'apps/moderator/src/lib/server/delete-hold-sql.ts'
+    );
     ({ ownerHeldSqlText } = await import(/* @vite-ignore */ file));
     expect(typeof ownerHeldSqlText).toBe('function');
   });
 
-  const squash = (sql: string) => sql.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
+  const squash = (sql: string) =>
+    sql.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
 
   it.each(['"Image"."userId"', 'i."userId"'])('is the main app SQL over %s', (owner) => {
     const main = ownerHeldSql(Prisma.raw(owner));
