@@ -152,6 +152,57 @@ describe('ReviewActionBar — approve', () => {
   });
 });
 
+/**
+ * 🔴 PUBLISH FLOOR. The server refuses an approve whose store listing has no icon or no cover
+ * (`approveRequest`), and says which via `approveFloorMissing`. The bar must not offer an
+ * Approve the server will refuse: it is disabled and the reason shown. Reject stays usable.
+ */
+describe('ReviewActionBar — publish floor (icon + cover)', () => {
+  test('🔴 a listing missing its cover: Approve disabled, the reason shown, Reject still offered', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: { ...PENDING, approveFloorMissing: ['cover'] }, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+    await expect
+      .element(page.getByTestId('apps-review-approve-floor'))
+      .toHaveTextContent(
+        "Cannot approve yet: the store listing this approve publishes has no cover. Every listing needs an icon and a cover before it goes live — the developer adds them on the listing's Media tab, then you can approve."
+      );
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeEnabled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  test('🔴 both missing: the reason names both', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{
+          request: { ...PENDING, approveFloorMissing: ['icon', 'cover'] },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+    await expect
+      .element(page.getByTestId('apps-review-approve-floor'))
+      .toHaveTextContent(/has no icon or cover\./);
+  });
+
+  test('nothing missing: Approve enabled, no floor notice', async () => {
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: { ...PENDING, approveFloorMissing: [] }, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    expect(page.getByTestId('apps-review-approve-floor').elements()).toHaveLength(0);
+  });
+});
+
 describe('ReviewActionBar — reject reason gate', () => {
   test('the reject confirm is gated under the 3-char floor, then fires with the trimmed reason', async () => {
     renderWithProviders(

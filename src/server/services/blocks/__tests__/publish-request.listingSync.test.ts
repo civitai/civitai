@@ -529,10 +529,15 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
 describe('approveRequest (3b-transition) — draft-at-submit transitions the pending draft → approved', () => {
   // Return the pre-approval draft for the slug-scoped resolve, null for the
   // (3b-reset) appBlockId+pending probe (so the unrelated reset branch stays inert).
-  function draftFor(id: string) {
+  // `media` defaults to an icon AND a cover — the publish floor every go-live needs; the
+  // floor tests below pass a draft missing one.
+  function draftFor(
+    id: string,
+    media: { iconId: number | null; coverId: number | null } = { iconId: 11, coverId: 22 }
+  ) {
     return async (args: { where?: Record<string, unknown> }) => {
       const w = args?.where ?? {};
-      if (w.status === 'draft' && w.appBlockId === null) return { id };
+      if (w.status === 'draft' && w.appBlockId === null) return { id, ...media };
       return null;
     };
   }
@@ -557,7 +562,13 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
       where: Record<string, unknown>;
       data: Record<string, unknown>;
     };
-    expect(arg.where).toEqual({ id: 'apl_draft', status: 'draft' });
+    // Status-guarded AND media-guarded: the write itself cannot publish an art-less draft.
+    expect(arg.where).toEqual({
+      id: 'apl_draft',
+      status: 'draft',
+      iconId: { not: null },
+      coverId: { not: null },
+    });
     expect(arg.data).toEqual({
       appBlockId: 'apb_1',
       status: 'approved',
@@ -573,10 +584,10 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     expect(arg.data).not.toHaveProperty('coverId');
   });
 
-  it('FLOOR STAYS ADVISORY: approve is NOT blocked when the draft has no icon/cover (transition still runs)', async () => {
-    // No `assertListingMeetsFloor` on the onsite approve path — a media-less draft still
-    // transitions to approved (the floor gates PUBLISH visibility, not approve — D2).
-    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+  it('the floor ALLOWS an approve whose draft has an icon AND a cover (transition runs)', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      draftFor('apl_draft', { iconId: 11, coverId: 22 })
+    );
     db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
 
     await expect(
@@ -697,5 +708,183 @@ describe('approveRequest — its re-rate lookups are the shared where-builders',
     db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
     await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
     expect(whereArgs()).toContainEqual(resetRestoreWhere('apb_1'));
+  });
+});
+
+/**
+ * 🔴 PUBLISH FLOOR ON THE ON-SITE APPROVE (operator ruling 2026-10-30, "enforce + warn at
+ * submit"). Every store listing needs an icon AND a cover before it goes live — on-site apps
+ * too. Before this, `approveRequest` checked only that the listing's images had passed
+ * scanning, so a media-less draft transitioned to `approved` and went live with placeholder
+ * art. The refusal must land BEFORE anything is written or committed: the listing writes are
+ * log-and-continue, so a refusal there would deploy the app and leave a log line.
+ *
+ * Fixture ids are pairwise distinct and distinct from every constant asserted.
+ */
+describe('approveRequest — on-site publish floor (icon + cover)', () => {
+  /** A findFirst that answers ONE of approve's two go-live lookups with `row`. */
+  function answer(which: 'draft' | 'reset', row: Record<string, unknown>) {
+    return async (args: { where?: Record<string, unknown> }) => {
+      const w = args?.where ?? {};
+      if (which === 'draft' && w.status === 'draft' && w.appBlockId === null) return row;
+      if (which === 'reset' && w.status === 'pending' && w.appBlockId === 'apb_1') return row;
+      return null;
+    };
+  }
+
+  async function expectRefusedBeforeAnyWrite(missing: string) {
+    const forgejo = await import('~/server/services/blocks/forgejo.service');
+    await expect(approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })).rejects.toThrow(
+      `Cannot approve yet: the store listing this approve publishes has no ${missing}. Every listing needs an icon and a cover before it goes live — the developer adds them on the listing's Media tab, then you can approve.`
+    );
+    // Nothing written, committed or built.
+    expect(db.write.appBlock.update).not.toHaveBeenCalled();
+    expect(db.write.appBlock.create).not.toHaveBeenCalled();
+    expect(db.write.oauthClient.update).not.toHaveBeenCalled();
+    expect(db.write.appListing.updateMany).not.toHaveBeenCalled();
+    expect(db.write.appBlockPublishRequest.update).not.toHaveBeenCalled();
+    expect(forgejo.commitFiles).not.toHaveBeenCalled();
+  }
+
+  it('🔴 REFUSES a first approve whose draft has NO icon and NO cover', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('draft', { id: 'apl_draft_bare', iconId: null, coverId: null })
+    );
+    await expectRefusedBeforeAnyWrite('icon or cover');
+  });
+
+  it('🔴 REFUSES when the draft has an icon but no cover', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('draft', { id: 'apl_draft_icon', iconId: 31, coverId: null })
+    );
+    await expectRefusedBeforeAnyWrite('cover');
+  });
+
+  it('🔴 REFUSES when the draft has a cover but no icon', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('draft', { id: 'apl_draft_cover', iconId: null, coverId: 47 })
+    );
+    await expectRefusedBeforeAnyWrite('icon');
+  });
+
+  it('🔴 a moderator RESET re-approve of an art-less listing is EXEMPT: it restores the listing AND un-suspends the app', async () => {
+    // Operator decision 2026-10-31: the floor gates a listing's FIRST go-live (a draft that was
+    // never live). A mod reset (`resetOnsiteListingToPending`) bounces a listing that already
+    // went live and suspends its app; its re-approve must restore both even without art —
+    // otherwise a pre-rule art-less listing reset by a moderator stays pending and its app
+    // stays suspended until the developer adds art.
+    db.write.appListing.findFirst.mockImplementation(
+      answer('reset', { id: 'apl_reset_bare', iconId: 53, coverId: null, contentRating: 'pg' })
+    );
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+    // The restore (pending → approved) ran…
+    const restore = db.write.appListing.updateMany.mock.calls.find((c) => {
+      const a = c[0] as { where?: Record<string, unknown>; data?: Record<string, unknown> };
+      return a?.where?.status === 'pending' && a?.data?.status === 'approved';
+    });
+    expect(restore).toBeDefined();
+    // …and the app was un-suspended.
+    expect(db.write.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apb_1', status: 'suspended' },
+      data: { status: 'approved' },
+    });
+  });
+
+  it('a reset re-approve with NO icon and NO cover is exempt too', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('reset', { id: 'apl_reset_none', iconId: null, coverId: null, contentRating: 'g' })
+    );
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1' });
+  });
+
+  it('ALLOWS the reset restore when the listing has both', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('reset', { id: 'apl_reset_ok', iconId: 53, coverId: 59, contentRating: 'pg' })
+    );
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+  });
+
+  it('an UPDATE to an app whose listing is already live is NOT gated (no listing goes live), even art-less', async () => {
+    // Neither go-live lookup matches: the listing is `approved` and keyed by appBlockId, so
+    // the version approve only re-syncs its manifest copy. Refusing it would stall the app's
+    // code fixes without taking anything off the store.
+    db.write.appListing.findFirst.mockResolvedValue(null);
+    db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_live_bare', kind: 'onsite' });
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+    expect(scalarSyncCalls()).toHaveLength(1);
+  });
+});
+
+/**
+ * 🔴 THE CHECK-THEN-PUBLISH WINDOW. The floor is checked up front, but the owner can edit the
+ * draft until the transition writes. The transition's `where` requires both media columns, so
+ * an icon removed in between makes it match 0 rows — and that 0-count must refuse the approve
+ * exactly like the up-front check, not log-and-continue into a deploy with a stranded draft.
+ */
+describe('approveRequest — media removed between the floor check and the transition', () => {
+  it('🔴 refuses with the floor message when the guarded transition matches 0 rows because the icon is gone', async () => {
+    const forgejo = await import('~/server/services/blocks/forgejo.service');
+    // Call 1 (up-front publishTarget): both present. Every later read: icon gone.
+    const before = { id: 'apl_race', iconId: 91, coverId: 97 };
+    const afterEdit = { id: 'apl_race', iconId: null, coverId: 97 };
+    let draftReads = 0;
+    db.write.appListing.findFirst.mockImplementation(
+      async (args: { where?: Record<string, unknown> }) => {
+        const w = args?.where ?? {};
+        const isDraft = w.status === 'draft' && (w.appBlockId === null || w.id === 'apl_race');
+        if (!isDraft) return null;
+        draftReads += 1;
+        return draftReads === 1 ? before : afterEdit;
+      }
+    );
+    // The guarded write matches nothing: the row no longer has an icon.
+    db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })).rejects.toThrow(
+      "Cannot approve yet: the store listing this approve publishes has no icon. Every listing needs an icon and a cover before it goes live — the developer adds them on the listing's Media tab, then you can approve."
+    );
+    // Refused before the commit/build and before the request is finalised.
+    expect(forgejo.commitFiles).not.toHaveBeenCalled();
+    expect(db.write.appBlockPublishRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('a 0-row transition whose draft still has both (already approved / cleaned) stays a warning, not a refusal', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      async (args: { where?: Record<string, unknown> }) => {
+        const w = args?.where ?? {};
+        if (w.status === 'draft' && w.appBlockId === null)
+          return { id: 'apl_gone', iconId: 91, coverId: 97 };
+        // The re-read by id: the row is no longer a draft.
+        return null;
+      }
+    );
+    db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
+      expect(
+        warn.mock.calls.some((c) =>
+          String(c[0]).includes('draft→approved transition matched 0 rows')
+        )
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

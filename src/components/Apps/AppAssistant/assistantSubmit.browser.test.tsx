@@ -6,6 +6,7 @@ import type { PreparedSubmit, SubmitReceipt } from '~/components/Apps/AppAssista
 import { SAMPLE_NOT_AGREED, SUBMIT_NEEDS_READY, submitNotChosen } from '@civitai/app-assistant';
 import {
   SubmitError,
+  listingNoticeOf,
   sendForReview,
   submitBundleFromExport,
 } from '~/components/Apps/AppAssistant/assistantSubmit';
@@ -212,6 +213,193 @@ describe('Submit for review', () => {
       ).toEqual(['block.manifest.json', 'package.json', 'src/main.ts']);
       expect(JSON.parse(await sent.file('block.manifest.json')!.async('string'))).toEqual(MANIFEST);
       expect(submitButton(card)).toBeNull();
+    } finally {
+      card.remove();
+    }
+  });
+
+  /**
+   * 🔴 WARN AT SUBMIT. The submit still goes through (the developer can add art while it
+   * waits), but when the route says a moderator cannot approve it until the listing has an
+   * icon and a cover, the sent card says so in plain words — and lists what else is
+   * recommended, without repeating the icon/cover items the next step already names.
+   */
+  test('🔴 a submit whose listing has no icon or cover goes through, and the card says what approval waits on', async () => {
+    const nextStep =
+      "Add an icon and a cover on your listing's Media tab before a moderator can approve it.";
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            publishRequestId: 'pubreq_1',
+            slug: APP,
+            version: '0.1.0',
+            status: 'pending',
+            listing: {
+              approvalBlocked: true,
+              missing: ['icon', 'cover'],
+              nextStep,
+              problems: [
+                {
+                  code: 'missing-icon',
+                  label: 'Missing icon (required before publishing)',
+                  severity: 'blocking',
+                },
+                {
+                  code: 'missing-cover',
+                  label: 'Missing cover image (required before publishing)',
+                  severity: 'blocking',
+                },
+                {
+                  code: 'no-screenshots',
+                  label: 'No screenshots (recommended, optional)',
+                  severity: 'advisory',
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    const { gate } = setup({
+      send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+    });
+    await passChecks(gate);
+    const { output } = await offer(gate);
+    const card = render(gate, output)!;
+    document.body.append(card);
+    try {
+      await expect.poll(() => submitButton(card)).not.toBeNull();
+      submitButton(card)!.click();
+      await expect
+        .poll(() => card.querySelector('[role="status"]')?.textContent)
+        .toBe(
+          'Submitted Prompt Randomizer 0.1.0 for review. A moderator reviews it before it goes live in the App Store.'
+        );
+      const next = card.querySelector('[data-testid="app-assistant-submit-listing-next-step"]');
+      expect(next?.textContent).toBe(nextStep);
+      expect(next?.getAttribute('role')).toBe('alert');
+      const recommended = card.querySelector(
+        '[data-testid="app-assistant-submit-listing-recommended"]'
+      );
+      expect(recommended?.textContent).toContain('No screenshots (recommended, optional)');
+      // The icon/cover items are what the next step already says; not repeated.
+      expect(card.textContent).not.toContain('Missing icon (required before publishing)');
+      expect(submitButton(card)).toBeNull();
+    } finally {
+      card.remove();
+    }
+  });
+
+  /**
+   * 🔴 An update to a listing that went live WITHOUT art: approval is not blocked (the version
+   * approve does not publish it), so there is no next step — and the missing icon must still
+   * be said, as a required item. Dropping the floor problems unconditionally said nothing.
+   */
+  test('🔴 not blocked but missing art (a grandfathered live listing): the missing icon is still listed', async () => {
+    const icon = {
+      code: 'missing-icon',
+      label: 'Missing icon (required before publishing)',
+      severity: 'blocking',
+    };
+    const notBlocked = listingNoticeOf({
+      approvalBlocked: false,
+      missing: ['icon'],
+      nextStep: null,
+      problems: [icon],
+    });
+    expect(notBlocked).toEqual({
+      approvalBlocked: false,
+      nextStep: null,
+      required: ['Missing icon (required before publishing)'],
+      recommended: [],
+    });
+    // Control: when the next step IS shown, the same problem is not repeated under it.
+    expect(
+      listingNoticeOf({
+        approvalBlocked: true,
+        missing: ['icon'],
+        nextStep: "Add an icon on your listing's Media tab before a moderator can approve it.",
+        problems: [icon],
+      })?.required
+    ).toEqual([]);
+  });
+
+  test('🔴 the sent card for a not-blocked, art-less listing shows the missing icon as an alert', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            publishRequestId: 'pubreq_1',
+            slug: APP,
+            version: '0.1.0',
+            listing: {
+              approvalBlocked: false,
+              missing: ['icon'],
+              nextStep: null,
+              problems: [
+                {
+                  code: 'missing-icon',
+                  label: 'Missing icon (required before publishing)',
+                  severity: 'blocking',
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    const { gate } = setup({
+      send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+    });
+    await passChecks(gate);
+    const { output } = await offer(gate);
+    const card = render(gate, output)!;
+    document.body.append(card);
+    try {
+      await expect.poll(() => submitButton(card)).not.toBeNull();
+      submitButton(card)!.click();
+      await expect.poll(() => card.querySelector('[role="status"]')).not.toBeNull();
+      expect(
+        card.querySelector('[data-testid="app-assistant-submit-listing-next-step"]')
+      ).toBeNull();
+      const alerts = [...card.querySelectorAll('[role="alert"]')].map((e) => e.textContent);
+      expect(alerts).toContain('Missing icon (required before publishing)');
+    } finally {
+      card.remove();
+    }
+  });
+
+  test('a listing ready for approval adds nothing to the sent card', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            publishRequestId: 'pubreq_1',
+            slug: APP,
+            version: '0.1.0',
+            listing: { approvalBlocked: false, missing: [], nextStep: null, problems: [] },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    const { gate } = setup({
+      send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+    });
+    await passChecks(gate);
+    const { output } = await offer(gate);
+    const card = render(gate, output)!;
+    document.body.append(card);
+    try {
+      await expect.poll(() => submitButton(card)).not.toBeNull();
+      submitButton(card)!.click();
+      await expect.poll(() => card.querySelector('[role="status"]')).not.toBeNull();
+      expect(
+        card.querySelector('[data-testid="app-assistant-submit-listing-next-step"]')
+      ).toBeNull();
+      expect(
+        card.querySelector('[data-testid="app-assistant-submit-listing-recommended"]')
+      ).toBeNull();
     } finally {
       card.remove();
     }
