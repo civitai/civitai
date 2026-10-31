@@ -71,8 +71,10 @@ permissions:
   contents: read
   packages: read
 
+# A dispatch is keyed on its image too: one for another commit's image (even one that only skips)
+# must not cancel a run that is testing this one. A PR event has no image input.
 concurrency:
-  group: trpc-server-parity-${{ github.ref }}
+  group: trpc-server-parity-${{ github.ref }}-${{ inputs.image }}
   cancel-in-progress: true
 
 jobs:
