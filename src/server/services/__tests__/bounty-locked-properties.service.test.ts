@@ -491,10 +491,13 @@ describe('addBenefactorUnitAmount — bounty schedule', () => {
       nsfwLevel: 1,
       startsAt,
     });
-    mockDbRead.bountyBenefactor.findUnique.mockResolvedValue({
+    mockDbWrite.$queryRaw.mockResolvedValue([{ complete: false, refunded: false }]);
+    mockDbWrite.bountyBenefactor.findUnique.mockResolvedValue({
       unitAmount: 100,
       currency: 'BUZZ',
       buzzTransactionId: [],
+      awardedToId: null,
+      awardedAt: null,
     });
     return addBenefactorUnitAmount({
       bountyId: BOUNTY_ID,
@@ -509,7 +512,7 @@ describe('addBenefactorUnitAmount — bounty schedule', () => {
       code: 'BAD_REQUEST',
     });
     expect(mockBuzzTransaction).not.toHaveBeenCalled();
-    expect(mockDbWrite.bountyBenefactor.upsert).not.toHaveBeenCalled();
+    expect(mockDbWrite.bountyBenefactor.update).not.toHaveBeenCalled();
   });
 
   it('takes added support once the bounty has started', async () => {

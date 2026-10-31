@@ -17,6 +17,7 @@ const { buzz, events, fileCheck } = vi.hoisted(() => ({
     refundTransaction: vi.fn(),
     createBuzzTransaction: vi.fn(),
     createBuzzTransactionMany: vi.fn(),
+    createMultiAccountBuzzTransaction: vi.fn(),
     getMultiAccountTransactionsByPrefix: vi.fn(),
     getTransactionByExternalId: vi.fn(),
   },
@@ -31,7 +32,6 @@ vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   ...buzz,
-  createMultiAccountBuzzTransaction: vi.fn(),
   getUserBuzzAccount: vi.fn(async () => [{ balance: 1_000_000 }]),
 }));
 // Hand-listed, as in bounty-locked-properties.service.test.ts: each pulls a large graph at load.
@@ -72,6 +72,7 @@ const { awardBountyEntry, deleteBountyEntry } = await import(
   '~/server/services/bountyEntry.service'
 );
 const {
+  addBenefactorUnitAmount,
   deleteBountyById,
   refundBounty,
   refundBountyBenefactorFunds,
@@ -352,6 +353,7 @@ beforeEach(() => {
   });
   buzz.refundTransaction.mockImplementation(moved('refund'));
   buzz.createBuzzTransaction.mockImplementation(moved('buzz'));
+  buzz.createMultiAccountBuzzTransaction.mockImplementation(moved('charge'));
   buzz.createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => {
     events.push('award');
     return { transactions: transactions.map((_, i) => `t${i}`), conflicts: [] };
@@ -1337,5 +1339,76 @@ describe('deleting an open bounty with an award not yet paid', () => {
     await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('kept arriving');
     expect(bounty).not.toBeNull();
     expect(bounty?.refunded).toBe(false);
+  });
+});
+
+describe('addBenefactorUnitAmount', () => {
+  const topUp = (userId: number, unitAmount = 30) =>
+    addBenefactorUnitAmount({ bountyId: 4, unitAmount, userId, buzzType: 'yellow' });
+
+  it('adds support to an open bounty', async () => {
+    await topUp(6);
+    expect(moved('charge')).toBe(1);
+    expect(find(6)!.unitAmount).toBe(80);
+    expect(find(6)!.buzzTransactionId).toHaveLength(2);
+  });
+
+  it('refuses support from a supporter whose award has been paid, and moves no Buzz', async () => {
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(moved('award')).toBe(1);
+    events.length = 0;
+
+    await expect(topUp(5)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(events.filter((e) => e !== 'commit')).toEqual([]);
+    expect(find(5)!.unitAmount).toBe(100);
+    // The bounty is still open to the supporter who has not awarded.
+    await topUp(6);
+    expect(find(6)!.unitAmount).toBe(80);
+  });
+
+  it('refuses support from a supporter whose awarded entry was deleted', async () => {
+    Object.assign(find(5)!, { awardedToId: null, awardedAt: new Date() });
+    await expect(topUp(5)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(moved('charge')).toBe(0);
+  });
+
+  it.each([
+    ['complete', { complete: true }],
+    ['refunded', { complete: true, refunded: true }],
+  ])('refuses support on a %s bounty, and moves no Buzz', async (_, state) => {
+    Object.assign(bounty!, state);
+    await expect(topUp(6)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(moved('charge')).toBe(0);
+    expect(find(6)!.unitAmount).toBe(50);
+  });
+
+  it('refunds the charge when the supporter awards while it is in flight', async () => {
+    let releaseCharge!: () => void;
+    const chargeHeld = new Promise<void>((resolve) => (releaseCharge = resolve));
+    let charging!: () => void;
+    const chargeStarted = new Promise<void>((resolve) => (charging = resolve));
+    buzz.createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+      events.push('charge');
+      charging();
+      await chargeHeld;
+      return {};
+    });
+
+    const pending = topUp(5);
+    await chargeStarted;
+    await awardBountyEntry({ id: 10, userId: 5 });
+    releaseCharge();
+
+    await expect(pending).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(moved('charge')).toBe(1);
+    expect(moved('refund')).toBe(1);
+    expect(find(5)!.unitAmount).toBe(100);
+  });
+
+  it('counts two top-ups made at once', async () => {
+    await Promise.all([topUp(6, 30), topUp(6, 20)]);
+    expect(moved('charge')).toBe(2);
+    expect(find(6)!.unitAmount).toBe(100);
+    expect(find(6)!.buzzTransactionId).toHaveLength(3);
   });
 });
