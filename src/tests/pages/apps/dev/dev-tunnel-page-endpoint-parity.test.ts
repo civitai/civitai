@@ -7,9 +7,12 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
  * gate chain; only its data sources are stubbed.
  */
 
+type PageAnswer = { notFound?: true; props?: { iframeSrc: string | null } };
+type PageResolver = (c: unknown) => Promise<PageAnswer>;
+
 const m = vi.hoisted(() => ({
   author: { id: 555, username: 'dev', isModerator: false },
-  pageResolver: null as null | ((c: any) => Promise<any>),
+  pageResolver: null as null | PageResolver,
   features: { current: {} as Record<string, boolean> },
   devTunnelEnabled: vi.fn<(...a: unknown[]) => Promise<boolean>>(),
   resolveDev: vi.fn<(...a: unknown[]) => Promise<unknown>>(),
@@ -18,7 +21,7 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
-  createServerSideProps: (opts: { resolver: (c: any) => Promise<any> }) => {
+  createServerSideProps: (opts: { resolver: PageResolver }) => {
     m.pageResolver = opts.resolver;
     return async () => ({ props: {} });
   },
@@ -143,8 +146,8 @@ async function both(features: Record<string, boolean>) {
 
 describe('/apps/dev/[blockId] and its Retry endpoint apply the same gates', () => {
   const refusals: [string, Record<string, boolean>, () => void][] = [
-    ['App Blocks off', { appBlocksAuthor: true }, () => {}],
-    ['the author capability off', { appBlocks: true }, () => {}],
+    ['App Blocks off', { appBlocksAuthor: true }, () => undefined],
+    ['the author capability off', { appBlocks: true }, () => undefined],
     ['the kill switch off', ON, () => void m.devTunnelEnabled.mockResolvedValue(false)],
     ['a block the caller does not own', ON, () => void m.resolveDev.mockResolvedValue(null)],
   ];
@@ -165,7 +168,7 @@ describe('/apps/dev/[blockId] and its Retry endpoint apply the same gates', () =
   it.each(noUrl)('%s: neither signs an entry URL', async (_n, arrange) => {
     arrange();
     const { page, endpoint: answer } = await both(ON);
-    expect(page.props.iframeSrc).toBeNull();
+    expect(page.props?.iframeSrc).toBeNull();
     expect(answer.status).toBe(409);
     expect(JSON.stringify(answer.body)).not.toContain('?dev=');
   });
@@ -173,7 +176,7 @@ describe('/apps/dev/[blockId] and its Retry endpoint apply the same gates', () =
   it('POSITIVE CONTROL: with every gate open, both sign a URL on the same tunnel host', async () => {
     const { page, endpoint: answer } = await both(ON);
     const shape = new RegExp(`^https://${HOST.replace(/\./g, '\\.')}/\\?dev=[^&]+$`);
-    expect(page.props.iframeSrc).toMatch(shape);
+    expect(page.props?.iframeSrc).toMatch(shape);
     expect(answer).toEqual({
       status: 200,
       body: { iframeSrc: expect.stringMatching(shape), host: HOST },
