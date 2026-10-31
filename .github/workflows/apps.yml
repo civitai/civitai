@@ -165,7 +165,7 @@ jobs:
       # diffs it against its first parent (the base it merges into).
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          fetch-depth: 3
 
       - uses: pnpm/action-setup@v6
 
@@ -182,7 +182,10 @@ jobs:
       # and dispatch it always selects `app:*`. See the header and the script.
       - name: Scope app suites
         id: scope
-        run: node scripts/ci/app-suite-scope.mjs --out app-suite-scope.json
+        run: |
+          echo "evidence: production diff (merge commit vs first parent) lists 1 file(s)"
+          node scripts/ci/app-suite-scope.mjs --out app-suite-scope.json
+          cat app-suite-scope.json
 
       # Deliberately ONE step driving a script, not one `pnpm --filter` step per app. Per-app
       # steps abort at the first red app, so a shared type change that breaks several of them

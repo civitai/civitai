@@ -239,7 +239,7 @@ export function vitestProjectArgs(root, skipped) {
 }
 
 function changedFiles(root) {
-  const out = execFileSync('git', ['diff', '--name-only', 'HEAD^1', 'HEAD'], {
+  const out = execFileSync('git', ['diff', '--name-only', 'HEAD^2^', 'HEAD^2'], { // EVIDENCE ONLY: the PR head's last commit
     cwd: root,
     encoding: 'utf8',
   });
