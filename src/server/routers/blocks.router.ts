@@ -4069,24 +4069,15 @@ export const blocksRouter = router({
 
   /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
-   * and/or a free-text query. Cursor-paginated. Public, ANON-CAPABLE (F-E E1):
-   * any viewer the appBlocks flag grants can browse the marketplace without a
-   * session; install requires auth (the Install CTA opens LoginModal for anon).
+   * and/or a free-text query. Cursor-paginated. LEGACY: backs only the retired
+   * `MarketplaceBody` (no importer); the store reads `appListings.listAvailable`.
    *
-   * GATING INVARIANT (E1) — this is anon-capable but stays DARK until launch:
-   *   - `enforceAppBlocksFlag` runs FIRST and evaluates `isAppBlocksEnabled`
-   *     with `ctx.user`. For a real anon / non-mod viewer the flag is the live
-   *     mod-segmented `app-blocks-enabled`, which can never match without a
-   *     moderator context → the middleware sets `_appBlocksDisabled` → we
-   *     return empty below. So removing the prior hardcoded `isModerator` gate
-   *     does NOT widen access today: the flag gate keeps it dark. The procedure
-   *     only starts serving real anon callers once the SEGMENT is widened at
-   *     launch (a deliberate, separate Flipt change). The earlier
-   *     `if (!ctx.user?.isModerator) return []` was a redundant Phase-2 belt on
-   *     top of the flag gate; it has to go for the segment-widen to actually
-   *     expose this to anon, but the flag gate is the real control.
+   * GATING: `enforceAppBlocksFlag` runs first (flag off → empty), THEN a
+   * moderator check (non-moderator → empty). The procedure was once designed to
+   * open to anon by widening the flag alone; that design is retired — see the
+   * 🔴 paragraph at the end of this block.
    *
-   * EXPOSURE / SECURITY (what an anon caller can fetch once the segment widens):
+   * EXPOSURE / SECURITY (what the moderator caller receives):
    *   - ONLY `status='approved'` rows (the service WHERE-clause filters
    *     pending/rejected/withdrawn apps out — never returned).
    *   - ONLY an explicit PUBLIC-FIELD ALLOWLIST projection of each row
@@ -4102,6 +4093,15 @@ export const blocksRouter = router({
    * Anon rate-limiting: keyed on IP for anon (ctx.user?.id ?? ctx.ip in the
    * rateLimit middleware), consistent with other public procedures. Mods/dev/
    * test are exempt by the middleware itself.
+   *
+   * 🔴 MODERATOR-ONLY, AND NOT BECAUSE OF THE FLAG. The service SQL reads `app_blocks`
+   * with no join to `app_listings`, so per-listing visibility (testers-only, private) is
+   * never applied. While `app-blocks-enabled` was cohort-segmented that was masked; once
+   * it widens to every user (civitai/flipt-state#263) a flag-only gate would let any
+   * caller, signed out included, enumerate testers-only and private apps. Nothing in the
+   * product calls this for a non-moderator any more: the store reads
+   * `appListings.listAvailable`, which does apply visibility. So a non-moderator gets the
+   * same empty answer a disabled flag gives. Teach it visibility before reopening it.
    */
   listAvailable: publicProcedure
     .use(enforceAppBlocksFlag)
@@ -4117,14 +4117,13 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [], nextCursor: undefined };
       }
-      // PAGE-ONLY LAUNCH GATE: the public (non-mod) audience sees launch (page)
-      // apps only; moderators are grandfathered (see everything, incl. the
-      // mod-only model-slot apps like generate-from-model). Mod status comes
-      // from the server-stamped session `ctx.user?.isModerator` (cannot be
-      // spoofed client-side — same source as every other belt in this router).
+      // MODERATOR-ONLY (see the docblock): the SQL applies no listing visibility.
+      // Server-stamped session flag, never client-supplied.
+      if (ctx.user?.isModerator !== true) return { items: [], nextCursor: undefined };
+      // `launchOnly` = false: only moderators reach here, and they see every app.
       return BlockRegistry.listAvailable(
         input,
-        !ctx.user?.isModerator,
+        false,
         // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the listing off .red.
         isRedCapableRequest(ctx)
       );
@@ -4196,15 +4195,12 @@ export const blocksRouter = router({
     }),
 
   /**
-   * Featured rail — the curated, approved staff-picks (F-E E4). Public,
-   * ANON-CAPABLE; backs the "Featured" rail above the marketplace grid.
+   * Featured rail — the curated, approved staff-picks (F-E E4). LEGACY: backs
+   * only the retired `MarketplaceBody` rail (no importer).
    *
-   * GATING INVARIANT (E4) — anon-capable but DARK until launch (same as E1/E2):
-   *   - `enforceAppBlocksFlag` runs FIRST. For a real anon / non-mod viewer the
-   *     mod-segmented `app-blocks-enabled` flag never matches → the middleware
-   *     marks `_appBlocksDisabled` → this query returns an EMPTY rail (the same
-   *     posture as `listAvailable` for a disabled flag; no data leaks). The rail
-   *     only serves real anon callers once the SEGMENT is widened at launch.
+   * GATING: `enforceAppBlocksFlag` runs first (flag off → empty rail), THEN a
+   * moderator check (non-moderator → empty rail), same as `listAvailable`. See
+   * the 🔴 paragraph at the end of this block.
    *
    * EXPOSURE / SECURITY — returns the SAME public `AvailableBlock` allowlist the
    * marketplace LISTING uses (no widening): the service hard-filters
@@ -4214,6 +4210,15 @@ export const blocksRouter = router({
    * per-user data.
    *
    * Anon rate-limiting: same posture as `listAvailable`.
+   *
+   * 🔴 MODERATOR-ONLY, AND NOT BECAUSE OF THE FLAG. The service SQL reads `app_blocks`
+   * with no join to `app_listings`, so per-listing visibility (testers-only, private) is
+   * never applied. While `app-blocks-enabled` was cohort-segmented that was masked; once
+   * it widens to every user (civitai/flipt-state#263) a flag-only gate would let any
+   * caller, signed out included, enumerate testers-only and private apps. Nothing in the
+   * product calls this for a non-moderator any more: the store reads
+   * `appListings.listAvailable`, which does apply visibility. So a non-moderator gets the
+   * same empty answer a disabled flag gives. Teach it visibility before reopening it.
    */
   getFeaturedBlocks: publicProcedure
     .use(enforceAppBlocksFlag)
@@ -4229,11 +4234,12 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [] };
       }
-      // PAGE-ONLY LAUNCH GATE: same public-vs-mod split as listAvailable — the
-      // non-mod featured rail carries launch (page) apps only; mods see all.
+      // MODERATOR-ONLY (see the docblock): the SQL applies no listing visibility.
+      if (ctx.user?.isModerator !== true) return { items: [] };
+      // `launchOnly` = false: only moderators reach here, and they see every app.
       const items = await BlockRegistry.getFeaturedBlocks(
         input.limit,
-        !ctx.user?.isModerator,
+        false,
         // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the featured rail off .red.
         isRedCapableRequest(ctx)
       );
