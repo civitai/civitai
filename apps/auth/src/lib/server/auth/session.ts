@@ -19,6 +19,7 @@ import { sessions } from './registry';
 import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
+import { acceptHubSession } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
 import { isRefusedModerationAccount } from './moderation-account';
@@ -292,7 +293,9 @@ async function resolvePriorSession(cookies: Cookies): Promise<SessionClaims | un
   if (!token) return undefined;
   try {
     const claims = await verifier.verifyToken(token);
-    return claims && Number.isFinite(Number(claims.sub)) ? claims : undefined;
+    return claims && Number.isFinite(Number(claims.sub)) && (await acceptHubSession(claims))
+      ? claims
+      : undefined;
   } catch {
     return undefined; // no / expired / invalid prior session ⇒ not a 2nd-account login
   }

@@ -6,6 +6,8 @@ import { makeSysRedis, type SysRedisFake } from '../test/sys-redis.fake';
 // hooks and liveness records over an in-memory sys redis.
 
 const h = vi.hoisted(() => ({
+  internal: (process.env.AUTH_INTERNAL_TOKEN = 'internal-secret'),
+  users: new Map<number, Record<string, unknown>>(),
   sys: undefined as unknown as SysRedisFake,
   tokens: new Map<string, Record<string, unknown>>(),
   minted: [] as { payload: Record<string, unknown>; jti: string }[],
@@ -30,7 +32,7 @@ vi.mock('$lib/server/redis', () => ({
 vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn(), logToAxiom: vi.fn() }));
 vi.mock('$lib/server/db/db', () => ({ db: {} }));
 vi.mock('$lib/server/auth/session-producer', () => ({
-  getOrProduceSessionUser: async (id: number) => ({ id }),
+  getOrProduceSessionUser: async (id: number) => h.users.get(id) ?? { id },
 }));
 vi.mock('$lib/server/auth/verifier', () => ({
   verifier: { verifyToken: async (token: string) => h.tokens.get(token) ?? null },
@@ -41,6 +43,8 @@ import type * as CivitaiAuth from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { handle } from '../hooks.server';
 import { SESSION_COOKIE } from '$lib/server/auth/session';
+import { POST as refreshPost } from '../routes/api/auth/refresh/+server';
+import { GET as identityGet } from '../routes/api/auth/identity/+server';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LIVE = REDIS_SYS_KEYS.SESSION.FAMILY_LIVE;
@@ -74,10 +78,54 @@ const hubToken = (signedAgoMs: number, extra: Record<string, unknown> = {}) =>
     ...extra,
   });
 
+const cookieJar = { get: (name: string) => (name === SESSION_COOKIE ? 'hub-token' : undefined) };
+
+async function status(run: () => Response | Promise<Response>) {
+  try {
+    return (await run()).status;
+  } catch (e) {
+    return (e as { status: number }).status;
+  }
+}
+
+const refreshByCookie = () =>
+  status(() =>
+    refreshPost({
+      request: new Request('https://auth.civitai.com/api/auth/refresh', { method: 'POST' }),
+      cookies: cookieJar,
+    } as never)
+  );
+
+const refreshInternal = () =>
+  status(() =>
+    refreshPost({
+      request: new Request('https://auth.civitai.com/api/auth/refresh', {
+        method: 'POST',
+        headers: { authorization: 'Bearer internal-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ token: 'hub-token' }),
+      }),
+      cookies: { get: () => undefined },
+    } as never)
+  );
+
+const identity = (bearer?: string) =>
+  status(() =>
+    identityGet({
+      url: new URL('https://auth.civitai.com/api/auth/identity'),
+      request: new Request('https://auth.civitai.com/api/auth/identity', {
+        headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
+      }),
+      cookies: cookieJar,
+    } as never)
+  );
+
+const tracked = (jti: string) => [...h.sys.hashes.values()].some((fields) => fields.has(jti));
+
 beforeEach(() => {
   h.sys ??= makeSysRedis();
   h.sys.reset();
   h.tokens.clear();
+  h.users.clear();
   h.minted = [];
 });
 
@@ -109,7 +157,65 @@ describe("the hub's own session cookie", () => {
   });
 });
 
+describe('liveness that cannot be read', () => {
+  it('honours the cookie when the liveness lookup fails', async () => {
+    hubToken(40 * DAY_MS);
+    const real = h.sys.hGet;
+    h.sys.hGet = async () => {
+      throw new Error('redis blip');
+    };
+    try {
+      expect((await visit()).locals.session).toBeDefined();
+    } finally {
+      h.sys.hGet = real;
+    }
+  });
+});
+
+describe('refresh and identity', () => {
+  it('a cookie the hub no longer honours is not refreshed and records no use', async () => {
+    hubToken(40 * DAY_MS);
+
+    expect(await refreshByCookie()).toBe(401);
+    expect(h.minted).toHaveLength(0);
+    expect(h.sys.hashes.get(LIVE)?.has('fam-a')).toBeFalsy();
+  });
+
+  it('the same session sent by a service is refreshed and re-tracked', async () => {
+    hubToken(40 * DAY_MS);
+
+    expect(await refreshInternal()).toBe(200);
+    expect(h.minted[0].jti).toBe('hub-jti');
+    expect(tracked('hub-jti')).toBe(true);
+  });
+
+  it('identity refuses a cookie the hub no longer honours, and answers for a bearer token', async () => {
+    hubToken(40 * DAY_MS);
+
+    expect(await identity()).toBe(401);
+    expect(await identity('hub-token')).toBe(200);
+  });
+});
+
 describe("re-signing the hub's own session cookie", () => {
+  it('re-tracks the re-signed session', async () => {
+    hubToken(2 * DAY_MS);
+
+    await visit({ navigate: true });
+
+    expect(tracked('hub-jti')).toBe(true);
+  });
+
+  it("leaves a banned or deleted account's cookie alone", async () => {
+    hubToken(2 * DAY_MS);
+    h.users.set(100, { id: 100, bannedAt: new Date() });
+    await visit({ navigate: true });
+    h.users.set(100, { id: 100, deletedAt: new Date() });
+    await visit({ navigate: true });
+
+    expect(h.minted).toHaveLength(0);
+  });
+
   it('re-signs it under the same jti and sign-in time on a page navigation past the update age', async () => {
     hubToken(2 * DAY_MS);
 

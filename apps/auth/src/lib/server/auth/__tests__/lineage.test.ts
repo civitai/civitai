@@ -84,6 +84,7 @@ beforeEach(() => {
 describe('session families', () => {
   it('an account added on a signed-in browser joins its family, and one sign-out there ends both', async () => {
     h.verified.set('prior-token', {
+      signedAt: Date.now(),
       sub: '100',
       jti: 'child-of-a',
       sid: 'family-a',
@@ -162,7 +163,7 @@ describe("a browser's family record", () => {
 
   it("a sign-in while the browser's recorded session is signed in joins its record", async () => {
     await h.sys.sAdd(deviceFamilies('device-1'), ['family-a', 'earlier']);
-    h.verified.set('prior-token', { sub: '100', jti: 'j', sid: 'family-a' });
+    h.verified.set('prior-token', { signedAt: Date.now(), sub: '100', jti: 'j', sid: 'family-a' });
     const jar = makeCookies({ 'civ-token': 'prior-token', 'civ-device': 'device-1' });
 
     await establishSession(jar, user(100));
@@ -196,6 +197,26 @@ describe("a browser's family record", () => {
 
     await endDeviceSessions({ jti: 'j', sid: 'hub-fam' }, 'device-1');
     expect(await revoked({ jti: 'x', sid: 'family-b' })).toBe(true);
+  });
+
+  it('a hub session the hub no longer honours does not count as signed in at a new sign-in', async () => {
+    const now = String(Date.now());
+    await h.sys.hSet(deviceAccounts('device-1'), '100', now);
+    h.verified.set('prior-token', {
+      sub: '100',
+      jti: 'j',
+      sid: 'fam-old',
+      signedAt: Date.now() - 40 * DAY_MS,
+    });
+    const jar = makeCookies({ 'civ-token': 'prior-token', 'civ-device': 'device-1' });
+
+    await establishSession(jar, user(200));
+
+    expect(h.minted[0].payload.sid).not.toBe('fam-old');
+    expect(jar.get('civ-device')).not.toBe('device-1');
+    expect(Object.fromEntries(h.sys.hashes.get(deviceAccounts('device-1'))!)).toEqual({
+      '100': now,
+    });
   });
 
   it('a site session on a browser with an account list but no record gets no record', async () => {
