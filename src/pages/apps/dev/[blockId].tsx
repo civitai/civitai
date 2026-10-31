@@ -186,6 +186,10 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
             // The app reloaded itself (Vite live reload): re-run the server props in place,
             // as the DNS gate does, for a freshly signed entry URL.
             onGuestReloaded={() => void router.replace(router.asPath, undefined, { scroll: false })}
+            // No `refreshEntryUrl` yet: this page's only source of a signed entry URL is its
+            // server props, and re-running them remounts the host (resetting its auto-retry
+            // budget). So the frame's Retry here reloads the URL this page was served, which the
+            // edge refuses once its entry token has expired; reloading the page recovers.
             tokenErrorFallback={
               // Owner-specific copy: the public host's generic "Couldn't authenticate
               // this app" would mislead here.
