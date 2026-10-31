@@ -126,6 +126,7 @@ import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.se
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   bustMvCache,
+  bustPublicModelResponseCache,
   getLinkedVaeIds,
   withPairedStrength,
 } from '~/server/services/model-version.service';
@@ -665,6 +666,8 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
+  // Read before any await, as the request's other calls share `ctx`.
+  const heldViewer = heldGalleryViewer(ctx);
   try {
     // The input schema leaves `browsingLevel` optional with no default, so a signed-in
     // caller who omits it where the domain caps nothing would otherwise reach the query
@@ -693,7 +696,7 @@ export const getModelsInfiniteHandler = async ({
       // model.getAll never edge-caches a signed-in response (skipEdgeCache).
       eventDecorationViewer: ctx.user,
       coverage: await coverageAudience(ctx.user ?? undefined),
-      heldViewer: heldGalleryViewer(ctx),
+      heldViewer,
     };
 
     // Hot with a base-model filter leads with the official checkpoints for that base. They are
@@ -2337,6 +2340,7 @@ export const updateGallerySettingsHandler = async ({
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
 
+    let held = false;
     const updatedModel = await updateModelById({
       id,
       // Decided on the row locked for the write, so a flag set since the request began holds.
@@ -2346,7 +2350,8 @@ export const updateGallerySettingsHandler = async ({
 
         // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
         // gallery back above SFW from here. Moderators keep full control.
-        const sfwLocked = !sessionUser.isModerator && (model.minor || model.sfwOnly);
+        held = model.minor || model.sfwOnly;
+        const sfwLocked = !sessionUser.isModerator && held;
 
         const updatedSettings = gallerySettings
           ? {
@@ -2363,6 +2368,11 @@ export const updateGallerySettingsHandler = async ({
       },
     });
     await bustModelGallerySettings([id]);
+    // A held model's showcase is served at its gallery level, in its search document and REST body.
+    if (held) {
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+      await bustPublicModelResponseCache(id);
+    }
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {

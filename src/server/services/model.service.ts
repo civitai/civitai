@@ -6017,7 +6017,7 @@ export async function getHeldLevelsByModel(modelIds: number[]) {
   const levels = new Map<number, number>();
   const ids = uniq(modelIds);
   if (!ids.length) return levels;
-  // One round trip for the cached entries: a feed page names up to a hundred models.
+  // One batched read for the cached entries: a feed page names up to a hundred models.
   const cached = await redis
     .mGet<string>(ids.map(gallerySettingsKey))
     .catch(() => ids.map(() => null));
