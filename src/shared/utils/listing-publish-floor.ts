@@ -2,13 +2,21 @@
  * The store-listing PUBLISH FLOOR: a listing must have an icon AND a cover before it can go
  * live. Screenshots, description, tagline and category are recommended, never required.
  *
- * 🔴 ONE RULE, ONE PLACE. Every gate that decides "may this listing go live" asks
- * {@link checkListingMeetsFloor}: the off-site submit / approve / apply gates (through
- * `assertListingMeetsFloor` in `app-listing-assets.service`, which re-exports this), the
- * on-site version approve (`approveRequest`), the moderator queue's "Approve is disabled"
- * fact (`listingFactsForRequests`), and the readiness a submit answers with
- * (`submitVersion`). It lives in `shared/` — PURE, no server imports — so the review UI can
- * word the same missing set the server refused on.
+ * 🔴 ONE PREDICATE. The callers that check the floor all ask {@link checkListingMeetsFloor}:
+ * the off-site submit / approve / apply gates and the owner-republish review pre-check
+ * (through `assertListingMeetsFloor` in `app-listing-assets.service`, which re-exports this),
+ * the on-site version approve (`approveRequest`, up front and again in the draft
+ * transition's `where`), the moderator queue's "Approve is disabled" fact
+ * (`listingFactsForRequests`), and the readiness a submit answers with (`submitVersion`).
+ *
+ * ⚠️ NOT EVERY GO-LIVE CHECKS IT. A moderator `relistListing` (removed → approved) and an
+ * owner `republishOwnListing` that restores immediately (no review) re-publish a listing's
+ * existing assets without this check, and the legacy approve-time create (a first version
+ * with no draft) mints an art-less listing. Those paths restore or mint what was there; they
+ * are not gated by this predicate today.
+ *
+ * It lives in `shared/` — PURE, no server imports — so the review UI can word the same
+ * missing set the server refused on.
  */
 
 /** The assets a listing MUST have before it can be published. */

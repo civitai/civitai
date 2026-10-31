@@ -11,9 +11,11 @@ export type ListingProblem = { code: string; label: string; severity?: 'blocking
  * problem's label. The icon is RED when a `blocking` problem is present and YELLOW when
  * only advisory ones remain. Renders NOTHING when `problems` is empty.
  *
- * `blocking` problems ARE enforced: a listing without an icon and a cover cannot be approved
- * or published (the publish floor, `checkListingMeetsFloor`, refused at every approve that
- * makes a listing live), and a blocked image keeps it from going live (the scan-clean gate).
+ * `blocking` problems are enforced at review: approving a listing into the store without an
+ * icon and a cover is refused (the publish floor, `checkListingMeetsFloor`, on the on-site
+ * draft/reset approve and the off-site approve paths — not on a moderator relist or an
+ * owner's immediate republish, which restore existing assets), and a blocked image keeps it
+ * from going live (the scan-clean gate).
  * This component only REPORTS them; the gates are server-side. So the card groups by
  * severity: "Required before publishing" lists ONLY the blocking problems, and everything
  * advisory (screenshots, description, tagline, category, a still-scanning image) sits under

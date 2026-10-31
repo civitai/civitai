@@ -53,7 +53,11 @@ export interface SubmitListingNotice {
   recommended: string[];
 }
 
-/** The floor problems `nextStep` already words; listed again they would say the same thing twice. */
+/**
+ * The floor problems `nextStep` words. Dropped ONLY when a next step is shown: on an update to
+ * a listing that went live without art, approval is not blocked, there is no next step, and
+ * these are the only words saying the icon or cover is missing.
+ */
 const FLOOR_PROBLEM_CODES = new Set(['missing-icon', 'missing-cover']);
 
 /** `value` (the route's `listing`) as a notice, or `undefined` when it is absent or malformed. */
@@ -69,11 +73,12 @@ export function listingNoticeOf(value: unknown): SubmitListingNotice | undefined
       )
     : [];
   const approvalBlocked = v.approvalBlocked === true;
+  const nextStep = approvalBlocked && typeof v.nextStep === 'string' ? v.nextStep : null;
   return {
     approvalBlocked,
-    nextStep: approvalBlocked && typeof v.nextStep === 'string' ? v.nextStep : null,
+    nextStep,
     required: problems
-      .filter((p) => p.severity === 'blocking' && !FLOOR_PROBLEM_CODES.has(p.code))
+      .filter((p) => p.severity === 'blocking' && !(nextStep && FLOOR_PROBLEM_CODES.has(p.code)))
       .map((p) => p.label),
     recommended: problems.filter((p) => p.severity !== 'blocking').map((p) => p.label),
   };

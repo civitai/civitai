@@ -23,7 +23,8 @@ import {
  *
  * This function only REPORTS; the gates are elsewhere. Its `blocking` problems mirror
  * real server gates — missing icon / cover is the publish floor (`checkListingMeetsFloor`,
- * refused by every approve that makes a listing live, on-site included), and a blocked
+ * refused by the on-site draft/reset approve and the off-site approve paths; a moderator
+ * relist and an owner's immediate republish do not check it), and a blocked
  * image is the scan-clean go-live gate — while `advisory` ones never block. It drives the
  * warning icon + popover on the submissions list (grouped by severity) and the listing
  * readiness a submit answers with (`submitVersion`). The on-site

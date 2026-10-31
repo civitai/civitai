@@ -1428,6 +1428,17 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
 }
 
 /**
+ * The approve's publish-floor refusal (icon + cover). A distinct class only so the
+ * log-and-continue listing block in {@link approveRequest} can let it escape.
+ */
+class ListingFloorRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ListingFloorRefusal';
+  }
+}
+
+/**
  * WARN AT SUBMIT (operator ruling 2026-10-30): the store listing's readiness for the
  * submission just queued, so the developer learns NOW — not from a refused approve — that a
  * moderator cannot approve it without an icon and a cover.
@@ -3309,7 +3320,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         const transitioned = await dbWrite.appListing.updateMany({
           // Status-guarded (draft): a re-approve after a mid-flight failure finds the
           // row already `approved` (0-count, benign) → converges without a duplicate.
-          where: { id: draftListing.id, status: 'draft' },
+          // 🔴 MEDIA-guarded too: the publish floor was checked up front (`publishTarget`),
+          // but the owner can still edit this draft until this write. Requiring both
+          // columns HERE makes the write itself refuse to publish an art-less listing;
+          // a 0-count is then told apart below.
+          where: {
+            id: draftListing.id,
+            status: 'draft',
+            iconId: { not: null },
+            coverId: { not: null },
+          },
           data: {
             // Link the now-existing AppBlock (was NULL) — first writer satisfies @unique.
             appBlockId,
@@ -3337,6 +3357,21 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
             actorUserId: params.reviewerUserId,
           });
         } else {
+          // Did the media guard refuse it (art removed after the up-front check), or was
+          // the row already approved / cleaned (the benign re-approve case)?
+          const after = await dbWrite.appListing.findFirst({
+            where: { id: draftListing.id, status: 'draft' },
+            select: { iconId: true, coverId: true },
+          });
+          const floorAfter = after ? checkListingMeetsFloor(after) : null;
+          if (floorAfter && !floorAfter.ok) {
+            // Same outcome as the up-front floor refusal: the approve fails with the same
+            // message, escaping this log-and-continue block (see the catch). Nothing has
+            // been committed or built yet and the request is still `pending`, so the
+            // moderator re-approves once the art is back; the block writes above are
+            // idempotent and converge, as for any mid-flight failure.
+            throw new ListingFloorRefusal(listingFloorApproveRefusal(floorAfter.missing));
+          }
           // eslint-disable-next-line no-console
           console.warn(
             `[approveRequest] draft→approved transition matched 0 rows (slug=${request.slug}, appBlockId=${appBlockId}); ` +
@@ -3461,6 +3496,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       }
     }
   } catch (err) {
+    // The one deliberate exception: the publish floor, re-checked by the transition's
+    // media guard. It refuses the approve exactly as the up-front check does.
+    if (err instanceof ListingFloorRefusal) throw err;
     // The store listing is a CONVENIENCE — it must NEVER gate the approve/deploy.
     //   - P2002 = unique violation on appBlockId: a concurrent approve/backfill
     //     created the listing first. The invariant (one listing per app) still
