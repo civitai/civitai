@@ -187,6 +187,31 @@ describe('the head the runner saves, read by the chat package', () => {
     expect(titled).toMatchObject({ title: 'Plants', titleSource: 'user', model: 'm1' });
     expect(withPatch(titled, { v: 1, model: null }, later)).not.toHaveProperty('model');
   });
+
+  it('a new head keeps the model the chat picked before its first message; a saved head keeps its own', () => {
+    // A chat picks its model before anything is saved and sends it only with its first start.
+    const head = startTurn(null, {
+      conversationId: 'c1',
+      seq: 1,
+      user,
+      now,
+      model: 'anthropic/claude-haiku-5.5',
+    });
+    expect(read(head)?.model).toBe('anthropic/claude-haiku-5.5');
+    // No model of its own: the chat follows the default, and the head names none.
+    expect(startTurn(null, { conversationId: 'c1', seq: 1, user, now })).not.toHaveProperty(
+      'model'
+    );
+    // Once saved, the chat's model changes by patch only: a later start's model never overwrites it.
+    const next = startTurn(withEnd(head, 1, { messages: stepOne, status: 'done' }, later), {
+      conversationId: 'c1',
+      seq: 2,
+      user,
+      now: later,
+      model: 'z-ai/glm-5.3-flash',
+    });
+    expect(next.model).toBe('anthropic/claude-haiku-5.5');
+  });
 });
 
 describe('acceptsTurn', () => {

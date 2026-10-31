@@ -168,6 +168,12 @@ export interface RunnerDeps {
    * not set up): every start is refused with these words, rather than answered with no tools.
    */
   startRefusal?: string;
+  /**
+   * The model a chat with no model of its own replies with (the page's default). A first start naming
+   * it is not kept as the chat's own, so that chat goes on following the default, as in the browser;
+   * a first start naming any other model keeps it in the new head. Unset: every first start's model is kept.
+   */
+  defaultModel?: string;
 }
 
 export interface LaunchOptions {
@@ -712,6 +718,8 @@ export class Runner implements RunService {
         // This run owns the turn now: an older run of it writes to it no more.
         runId: input.runId,
         ...(input.edit ? { edit: true } : {}),
+        // A model picked before the chat's first message reaches the runner only with this start.
+        ...(input.model !== this.#deps.defaultModel ? { model: input.model } : {}),
       })
     );
     const deadline = Math.min(

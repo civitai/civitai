@@ -1,4 +1,4 @@
-import { isAppAssistantModel } from '@civitai/app-assistant';
+import { APP_ASSISTANT_DEFAULT_MODEL, isAppAssistantModel } from '@civitai/app-assistant';
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
@@ -129,6 +129,8 @@ const runner = new Runner({
   stopGraceMs: config.stopGraceMs,
   // Serving viewers without the sandbox service would answer App Assistant with no tools at all.
   ...(civitai && !civitai.sandboxUrl ? { startRefusal: TOOLS_NOT_SET_UP } : {}),
+  // A chat that follows the page's default is not saved as having picked it.
+  defaultModel: APP_ASSISTANT_DEFAULT_MODEL,
 });
 
 // Without civitai's public key every run-API request is refused (401), so nothing reaches the
