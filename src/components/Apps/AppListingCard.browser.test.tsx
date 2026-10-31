@@ -85,6 +85,26 @@ const mocks = vi.hoisted(() => ({
   setVisibilityAsModMutate: vi.fn(),
 }));
 
+// The embedded card's creator is the shared `UserAvatar`, which needs a ContentSettingsProvider the
+// component setup does not mount. Stubbed to what this suite reads: the username, the id and that it
+// links to the profile, as the real one does with `linkToProfile`.
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: (props: {
+    user?: { id?: number; username?: string | null };
+    withUsername?: boolean;
+    linkToProfile?: boolean;
+  }) => (
+    <a
+      data-testid="mock-user-avatar"
+      data-user-id={props.user?.id}
+      data-link-to-profile={String(!!props.linkToProfile)}
+      href={`/user/${props.user?.username}`}
+    >
+      {props.user?.username}
+    </a>
+  ),
+}));
+
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.currentUser,
 }));
@@ -1555,5 +1575,80 @@ describe('AppListingCard — the restricted-visibility badge', () => {
     expect(taglines, 'expected one tagline per card').toHaveLength(2);
     const [a, b] = taglines.map((el) => el.getBoundingClientRect().top);
     expect(Math.abs(a - b), 'the visibility badge pushed the tagline down').toBeLessThan(1);
+  });
+
+  // 🔴 The embedded (sidebar) card. Every assertion below has its grid-card counterpart, so a
+  // test that read "the divider is wider" off a card that never changed could not pass.
+  describe('embedded', () => {
+    const dividerAndFooter = () => ({
+      divider: page.getByTestId('apps-listing-card-divider').element().getBoundingClientRect(),
+      footer: page.getByTestId('apps-listing-card-footer').element().getBoundingClientRect(),
+    });
+
+    test('the divider runs edge to edge, past the footer on both sides; the grid card keeps it inside', async () => {
+      renderWithProviders(
+        <div style={{ width: 340 }}>
+          <AppListingCard card={base({ slug: 'embedded' })} canOpenPage embedded />
+        </div>
+      );
+      await expect.element(page.getByTestId('apps-listing-card-divider')).toBeInTheDocument();
+      const e = dividerAndFooter();
+      expect(e.divider.left, 'embedded divider starts inside the padding').toBeLessThan(
+        e.footer.left - 1
+      );
+      expect(e.divider.right, 'embedded divider ends inside the padding').toBeGreaterThan(
+        e.footer.right + 1
+      );
+    });
+
+    test('the grid card divider stays inside the padding (control for the bleed test)', async () => {
+      renderWithProviders(
+        <div style={{ width: 340 }}>
+          <AppListingCard card={base({ slug: 'grid' })} canOpenPage />
+        </div>
+      );
+      await expect.element(page.getByTestId('apps-listing-card-divider')).toBeInTheDocument();
+      const g = dividerAndFooter();
+      expect(Math.abs(g.divider.left - g.footer.left)).toBeLessThan(1);
+      expect(Math.abs(g.divider.right - g.footer.right)).toBeLessThan(1);
+    });
+
+    test('a cover badge is pinned over the cover, and only when one is given', async () => {
+      renderWithProviders(
+        <AppListingCard
+          card={base({})}
+          canOpenPage
+          embedded
+          coverBadge={<span data-testid="the-badge">Made with</span>}
+        />
+      );
+      await expect.element(page.getByTestId('the-badge')).toBeInTheDocument();
+      expect(
+        page
+          .getByTestId('apps-listing-card-cover-badge')
+          .element()
+          .contains(page.getByTestId('the-badge').element())
+      ).toBe(true);
+    });
+
+    test('no cover badge slot without a badge', async () => {
+      renderWithProviders(<AppListingCard card={base({})} canOpenPage embedded />);
+      await expect.element(page.getByTestId('apps-listing-card-footer')).toBeInTheDocument();
+      expect(page.getByTestId('apps-listing-card-cover-badge').elements()).toHaveLength(0);
+    });
+
+    test('the creator is the shared avatar with the name, not the grid anchor', async () => {
+      renderWithProviders(<AppListingCard card={base({})} canOpenPage embedded />);
+      const creator = page.getByTestId('apps-listing-card-creator');
+      await expect.element(creator).toBeInTheDocument();
+      expect(creator.element().textContent).toContain('alice');
+      // The grid's creator IS the anchor (data-testid on it); the embedded one is a wrapper around
+      // the shared avatar, whose own link goes to the profile.
+      expect(creator.element().tagName).toBe('DIV');
+      const avatar = page.getByTestId('mock-user-avatar').element();
+      expect(creator.element().contains(avatar)).toBe(true);
+      expect(avatar.getAttribute('data-user-id')).toBe('5');
+      expect(avatar.getAttribute('data-link-to-profile')).toBe('true');
+    });
   });
 });
