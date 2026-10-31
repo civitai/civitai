@@ -263,7 +263,7 @@ export function vitestProjectArgs(root, skipped) {
  * are listed (`--no-renames`); see the header.
  */
 export function changedFiles(root, base = 'HEAD^1', head = 'HEAD') {
-  const out = execFileSync('git', ['diff', '--name-only', base, head], {
+  const out = execFileSync('git', ['diff', '--no-renames', '--name-only', base, head], {
     cwd: root,
     encoding: 'utf8',
   });
