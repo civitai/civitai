@@ -101,7 +101,7 @@ beforeEach(() => {
 const expectChecked = (entry: string, isApiCaller: boolean) => {
   expect(mocks.assertInputs).toHaveBeenCalledTimes(1);
   const [{ urls, userId, ...gate }] = mocks.assertInputs.mock.calls[0] as [
-    { urls: string[]; userId: number; entry: string; isApiCaller: boolean },
+    { urls: string[]; userId: number; entry: string; isApiCaller: boolean }
   ];
   expect(userId).toBe(USER_ID);
   expect(gate).toEqual({ entry, isApiCaller });

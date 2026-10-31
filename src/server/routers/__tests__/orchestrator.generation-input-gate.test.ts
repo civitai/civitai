@@ -76,7 +76,7 @@ beforeEach(() => {
 const checked = () => {
   expect(h.assertInputs).toHaveBeenCalledTimes(1);
   const [arg] = h.assertInputs.mock.calls[0] as [
-    { urls: unknown[]; userId: number; entry: string; isApiCaller: boolean },
+    { urls: unknown[]; userId: number; entry: string; isApiCaller: boolean }
   ];
   expect(arg.userId).toBe(USER_ID);
   return arg;
@@ -133,19 +133,22 @@ describe('orchestrator generation inputs', () => {
   it.each([
     ['a session', null, false],
     ['an API key', 42, true],
-  ])('generateFromGraph and whatIfFromGraph name their entry and %s caller', async (_, key, api) => {
-    await caller(key)
-      .generateFromGraph({ input: { prompt: 'x' } })
-      .catch(() => undefined);
-    await caller(key)
-      .whatIfFromGraph({ prompt: 'x' })
-      .catch(() => undefined);
-    const gates = [h.generateFromGraph, h.whatIfFromGraph].map(
-      (fn) => (fn.mock.calls[0] as unknown as [{ inputGate: unknown }])[0].inputGate
-    );
-    expect(gates).toEqual([
-      { entry: 'generateFromGraph', isApiCaller: api },
-      { entry: 'whatIfFromGraph', isApiCaller: api },
-    ]);
-  });
+  ])(
+    'generateFromGraph and whatIfFromGraph name their entry and %s caller',
+    async (_, key, api) => {
+      await caller(key)
+        .generateFromGraph({ input: { prompt: 'x' } })
+        .catch(() => undefined);
+      await caller(key)
+        .whatIfFromGraph({ prompt: 'x' })
+        .catch(() => undefined);
+      const gates = [h.generateFromGraph, h.whatIfFromGraph].map(
+        (fn) => (fn.mock.calls[0] as unknown as [{ inputGate: unknown }])[0].inputGate
+      );
+      expect(gates).toEqual([
+        { entry: 'generateFromGraph', isApiCaller: api },
+        { entry: 'whatIfFromGraph', isApiCaller: api },
+      ]);
+    }
+  );
 });
