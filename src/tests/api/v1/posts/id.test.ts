@@ -179,9 +179,7 @@ describe('GET /api/v1/posts/[id]', () => {
 
     await call({ id: '55288' });
 
-    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(
-      sfwBrowsingLevelsFlag & (NsfwLevel.PG | NsfwLevel.R)
-    );
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(NsfwLevel.PG);
   });
 
   it('serves the post with no images when its held level allows none', async () => {
@@ -193,6 +191,19 @@ describe('GET /api/v1/posts/[id]', () => {
     expect(statusCode).toBe(200);
     expect(body).toMatchObject({ id: 55288, images: [] });
     expect(mockRunImageSearch).not.toHaveBeenCalled();
+    expect(mockAcquire).not.toHaveBeenCalled();
+  });
+
+  it('serves no images, uncached, when the held level cannot be looked up', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockHeldLevel.mockRejectedValue(new Error('lookup failed'));
+
+    const { statusCode, body, header } = await call({ id: '55288' });
+
+    expect(statusCode).toBeGreaterThanOrEqual(500);
+    expect(body?.images).toBeUndefined();
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+    expect(header('Cache-Control')).toMatch(/^no-store/);
   });
 
   it('does not search for images of a post it will not serve', async () => {

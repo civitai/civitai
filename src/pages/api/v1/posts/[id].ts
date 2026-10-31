@@ -75,6 +75,20 @@ export default MixedAuthEndpoint(async function handler(
     const { getHeldGalleryLevel } = await import('~/server/services/model.service');
     const heldLevel = await getHeldGalleryLevel({ postId: post.id });
     if (heldLevel !== undefined) browsingLevel = Flags.intersection(browsingLevel, heldLevel);
+    const respond = (images: unknown[]) =>
+      res.status(200).json({
+        id: post.id,
+        title: post.title,
+        detail: post.detail,
+        nsfwLevel: post.nsfwLevel,
+        publishedAt: post.publishedAt,
+        modelVersionId: post.modelVersion?.id ?? null,
+        user: { id: post.user.id, username: post.user.username },
+        tags: post.tags.map((tag) => ({ id: tag.id, name: tag.name })),
+        images,
+      });
+    // The search reads 0 as its default level, not as none, so an empty intersection has no images.
+    if (!browsingLevel) return respond([]);
 
     try {
       releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
@@ -87,35 +101,22 @@ export default MixedAuthEndpoint(async function handler(
       throw e;
     }
 
-    // The search reads 0 as its default level, not as none, so an empty intersection has no images.
-    const { items: images } = !browsingLevel
-      ? { items: [] }
-      : await runImageSearch(
-          {
-            limit: 100,
-            withMeta: false,
-            withTags: false,
-            postOrder: true,
-            data: {
-              postId: post.id,
-              period: constants.galleryFilterDefaults.period,
-              sort: constants.galleryFilterDefaults.sort,
-            },
-          },
-          { browsingLevel, user: undefined, req }
-        );
+    const { items: images } = await runImageSearch(
+      {
+        limit: 100,
+        withMeta: false,
+        withTags: false,
+        postOrder: true,
+        data: {
+          postId: post.id,
+          period: constants.galleryFilterDefaults.period,
+          sort: constants.galleryFilterDefaults.sort,
+        },
+      },
+      { browsingLevel, user: undefined, req }
+    );
 
-    return res.status(200).json({
-      id: post.id,
-      title: post.title,
-      detail: post.detail,
-      nsfwLevel: post.nsfwLevel,
-      publishedAt: post.publishedAt,
-      modelVersionId: post.modelVersion?.id ?? null,
-      user: { id: post.user.id, username: post.user.username },
-      tags: post.tags.map((tag) => ({ id: tag.id, name: tag.name })),
-      images,
-    });
+    return respond(images);
   } catch (e) {
     if (e instanceof TRPCError && e.code === 'NOT_FOUND') return notFound();
     return handleEndpointError(res, e);
