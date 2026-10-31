@@ -5,14 +5,9 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 
 /**
- * The `/apps/dev/<blockId>` gates, in the one place both of its entry points read them:
- *   - the page's `getServerSideProps` (`src/pages/apps/dev/[blockId].tsx`);
- *   - its Retry's fresh-URL endpoint (`src/pages/api/apps/dev/entry-url.ts`).
- *
- * In order: the App Blocks flag and the author capability, the `app-blocks-dev-tunnel` kill switch,
- * then ownership (`resolveDevTunnelFrame` → `resolveDevPageBlockForAuthor`). Every refusal is the
- * same `null`, so a foreign, missing or gated app cannot be told apart. The signed-in session is the
- * caller's to require first.
+ * The `/apps/dev/<blockId>` gates, shared by the page and `/api/apps/dev/entry-url`: App Blocks,
+ * the author capability, the dev-tunnel kill switch, then ownership. Every refusal is the same
+ * `null`. The caller requires the session.
  */
 export async function resolveDevTunnelPageFrame(
   user: SessionUser,

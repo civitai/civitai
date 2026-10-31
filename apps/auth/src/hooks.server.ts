@@ -94,6 +94,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     const userId = Number(claims?.sub);
     if (claims && Number.isFinite(userId)) {
       event.locals.user = (await getOrProduceSessionUser(userId).catch(() => null)) ?? undefined;
+      event.locals.session = claims;
       event.locals.tokenId = claims.jti;
       // Impersonation (F): the moderator's id, if this is an impersonation session — read by the exit route.
       event.locals.impersonatedBy = claims.impersonatedBy;

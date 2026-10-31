@@ -22,6 +22,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import dayjs from '~/shared/utils/dayjs';
 import {
   getChainConfig,
@@ -94,7 +95,20 @@ const resolvePayinHash = async (paymentId: number, event: NOWPayments.WebhookEve
 /** Max number of concurrent requests when fetching min amounts for currencies */
 const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
 
+/**
+ * Chains a deposit address may be created for: the static configs, plus every chain the supported
+ * currency list maps a NowPayments network to (so a newly enabled currency still works without a
+ * code change). Anything else is refused before it can take a lock or create a payment.
+ */
+export const isSupportedDepositChain = async (chain: string) => {
+  if (getChainConfig(chain)) return true;
+  const groups = await getSupportedCurrencies();
+  return groups.some((group) => group.networks.some((network) => network.chain === chain));
+};
+
 export const getDepositAddress = async (userId: number, chain = 'evm') => {
+  if (!(await isSupportedDepositChain(chain))) throwBadRequestError('Unsupported deposit chain');
+
   // Use explicit config if available, otherwise fall back to chain name as targetCurrency
   const config = getChainConfig(chain) ?? {
     chain,
@@ -1343,6 +1357,8 @@ const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(async
 
   return result;
 }, SUPPORTED_CURRENCIES_INPROC_TTL_MS, undefined, { freeze: true });
+
+export const clearSupportedCurrenciesMemo = () => getSupportedCurrenciesMemo.clear();
 
 export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]> => {
   try {

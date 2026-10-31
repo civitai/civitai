@@ -82,13 +82,18 @@ CREATE TABLE "Image" (
   "metadata" JSONB,
   "pHash" BIGINT,
   "postId" INTEGER,
-  "userId" INTEGER,
+  "userId" INTEGER NOT NULL DEFAULT 1,
   "scannedAt" TIMESTAMP(3),
   "updatedAt" TIMESTAMP(3),
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
+CREATE TABLE "CsamReport" (
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
+  "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
+);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
@@ -250,10 +255,7 @@ describe('an image delete on an image a hold marker keeps', () => {
         "createdAt" TIMESTAMP(3), "publishedAt" TIMESTAMP(3), "modelVersionId" INTEGER,
         "collectionId" INTEGER, "metadata" JSONB
       );
-      CREATE TABLE "CsamReport" (
-        "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3),
-        "details" JSONB NOT NULL DEFAULT '{}'
-      );
+      DROP TABLE "EvidenceHeldUser";
       CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
       CREATE FUNCTION update_post_nsfw_levels(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
     `);

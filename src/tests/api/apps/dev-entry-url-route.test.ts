@@ -1,7 +1,8 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as DevTunnelSession from '~/server/services/blocks/dev-tunnel-session';
 
 /**
  * GET /api/apps/dev/entry-url?blockId= — a freshly signed dev-tunnel entry URL for the
@@ -22,6 +23,7 @@ const m = vi.hoisted(() => ({
   resolveDev: vi.fn<(...a: unknown[]) => Promise<unknown>>(),
   activeTunnel: vi.fn<(...a: unknown[]) => Promise<unknown>>(),
   hostPublished: vi.fn<(host: string) => Promise<boolean>>(),
+  sign: vi.fn(),
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
@@ -46,6 +48,12 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
 vi.mock('~/server/services/blocks/dev-tunnel-dns.service', () => ({
   isDevTunnelHostPublished: (host: string) => m.hostPublished(host),
 }));
+// The real signer, observed: a spy that delegates, so a signature can be asserted absent.
+vi.mock('~/server/services/blocks/dev-tunnel-session', async (importOriginal) => {
+  const real = await importOriginal<typeof DevTunnelSession>();
+  m.sign.mockImplementation(real.signDevTunnelAccessToken);
+  return { ...real, signDevTunnelAccessToken: m.sign };
+});
 
 const { env } = await import('~/env/server');
 const handler = (await import('~/pages/api/apps/dev/entry-url')).default as unknown as (
@@ -120,13 +128,13 @@ async function call(
   return { status, body: body as Record<string, unknown> | undefined, headers };
 }
 
-const prevSecret = process.env.NEXTAUTH_SECRET;
-afterAll(() => {
-  process.env.NEXTAUTH_SECRET = prevSecret;
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 beforeEach(() => {
-  process.env.NEXTAUTH_SECRET = SECRET;
+  vi.stubEnv('NEXTAUTH_SECRET', SECRET);
+  m.sign.mockClear();
   m.session.current = { user: AUTHOR };
   m.features.mockReset().mockResolvedValue({ appBlocks: true, appBlocksAuthor: true });
   m.devTunnelEnabled.mockReset().mockResolvedValue(true);
@@ -147,6 +155,8 @@ describe('GET /api/apps/dev/entry-url', () => {
       new RegExp(`^https://${HOST.replace(/\./g, '\\.')}/\\?dev=[^&]+$`)
     );
     expect(res.headers.get('cache-control')).toBe('no-store');
+    // Positive control for the `not.toHaveBeenCalled` assertions on the refusals below.
+    expect(m.sign).toHaveBeenCalledExactlyOnceWith({ userId: AUTHOR.id, host: HOST });
     expect(m.resolveDev).toHaveBeenCalledWith('my-app', AUTHOR.id, expect.anything());
     expect(m.activeTunnel).toHaveBeenCalledWith(AUTHOR.id, 'my-app');
   });
@@ -172,17 +182,33 @@ describe('GET /api/apps/dev/entry-url', () => {
     expect(m.resolveDev).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['App Blocks off', () => m.features.mockResolvedValue({ appBlocksAuthor: true })],
-    ['the author capability off', () => m.features.mockResolvedValue({ appBlocks: true })],
-    ['the dev-tunnel kill switch off', () => m.devTunnelEnabled.mockResolvedValue(false)],
-    ['a block the caller does not own', () => m.resolveDev.mockResolvedValue(null)],
-  ])('%s → the same bare 404, and nothing is signed', async (_name, arrange) => {
-    arrange();
-    const res = await call({ blockId: 'my-app' });
-    expect({ status: res.status, body: res.body }).toEqual(NOT_FOUND);
-    expect(JSON.stringify(res.body)).not.toContain('?dev=');
-  });
+  // `tunnelRead`: the ownership case reads the tunnel record (`resolveDevTunnelFrame` looks it up
+  // before resolving the app); the gates ahead of it never reach it.
+  const refusals: [string, () => void, boolean][] = [
+    ['App Blocks off', () => void m.features.mockResolvedValue({ appBlocksAuthor: true }), false],
+    [
+      'the author capability off',
+      () => void m.features.mockResolvedValue({ appBlocks: true }),
+      false,
+    ],
+    [
+      'the dev-tunnel kill switch off',
+      () => void m.devTunnelEnabled.mockResolvedValue(false),
+      false,
+    ],
+    ['a block the caller does not own', () => void m.resolveDev.mockResolvedValue(null), true],
+  ];
+  it.each(refusals)(
+    '%s → the same bare 404, and nothing is signed',
+    async (_name, arrange, tunnelRead) => {
+      arrange();
+      const res = await call({ blockId: 'my-app' });
+      expect({ status: res.status, body: res.body }).toEqual(NOT_FOUND);
+      expect(m.sign).not.toHaveBeenCalled();
+      expect(m.hostPublished).not.toHaveBeenCalled();
+      expect(m.activeTunnel).toHaveBeenCalledTimes(tunnelRead ? 1 : 0);
+    }
+  );
 
   it('a block that does not exist answers exactly like a foreign one', async () => {
     m.resolveDev.mockResolvedValue(null);

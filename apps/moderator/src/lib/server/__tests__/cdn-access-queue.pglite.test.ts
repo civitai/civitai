@@ -95,6 +95,11 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
+CREATE TABLE "CsamReport" (
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
+  "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
+);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER);
 CREATE TABLE "Appeal" (
@@ -168,9 +173,11 @@ const queueRow = async (type: string, id: number) =>
   ).rows[0];
 
 describe('a moderator delete', () => {
-  it('queues the url, its owner and whether it was flagged for CSAM review', async () => {
+  it('queues the url and owner of a deleted image, and nothing for one a CSAM review keeps', async () => {
     await blockedImage(1, 'csam');
     await blockedImage(2);
+    // Another owner's: image 1 puts its own owner's account on hold.
+    await db.query(`UPDATE "Image" SET "userId" = $1 WHERE id = 2`, [OWNER + 1]);
 
     await (dbHandle.current as Kysely<never>)
       .transaction()
@@ -180,15 +187,10 @@ describe('a moderator delete', () => {
       const { seq: _seq, ...rest } = (await queueRow('CdnAccessSync', id))?.data ?? {};
       return rest;
     };
-    expect(await payload(1)).toEqual({
-      url: uuid(1),
-      userId: OWNER,
-      csamReview: true,
-      moderatorDelete: true,
-    });
+    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
     expect(await payload(2)).toEqual({
       url: uuid(2),
-      userId: OWNER,
+      userId: OWNER + 1,
       csamReview: false,
       moderatorDelete: true,
     });
@@ -338,7 +340,7 @@ describe('an article delete in one transaction', () => {
 
     expect(await imageExists(2)).toBe(false);
     expect(await imageExists(3)).toBe(true);
-    const { transaction, matching } = connectionsOf(/from "Image".*not exists/is);
+    const { transaction, matching } = connectionsOf(/not exists \(select "ImageConnection"/i);
     expect(matching).toHaveLength(1);
     expect(matching[0]).toBe(transaction);
   });

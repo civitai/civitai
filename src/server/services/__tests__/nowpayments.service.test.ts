@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import type * as ManualCredit from '~/server/services/nowpayments-manual-credit';
 import type * as DbHelpers from '~/server/db/db-helpers';
@@ -87,6 +88,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 
 // Import after mocks
 import {
+  clearSupportedCurrenciesMemo,
   getDepositAddress,
   processDeposit,
   getDepositHistory,
@@ -639,6 +641,72 @@ describe('getDepositAddress', () => {
     // wallet exists but smartAccount is null — still returns the address
     const result = await getDepositAddress(42);
     expect(result).toEqual({ address: '0xExistingAddress', paymentId: null, chain: 'evm' });
+  });
+});
+
+describe('getDepositAddress chain guard', () => {
+  const supportedList = (chains: string[]) =>
+    chains.map((chain) => ({
+      ticker: chain,
+      name: chain,
+      networks: [{ code: chain, name: chain, network: chain, chain }],
+    }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearSupportedCurrenciesMemo();
+    mockDbRead.cryptoWallet.findUnique.mockResolvedValue(null);
+    mockNowpaymentsCaller.createPayment.mockResolvedValue({
+      pay_address: 'addr',
+      payment_id: 555,
+    });
+  });
+
+  it('refuses an unconfigured chain when the supported list is unavailable', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(null);
+    mockNowpaymentsCaller.getMerchantCoins.mockResolvedValue(null);
+    mockNowpaymentsCaller.getFullCurrencies.mockResolvedValue(null);
+
+    await expect(getDepositAddress(42, 'xmr')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockNowpaymentsCaller.createPayment).not.toHaveBeenCalled();
+  });
+
+  it('refuses a chain that is neither configured nor in the supported list', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(supportedList(['xmr']));
+
+    await expect(getDepositAddress(42, 'notachain')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockDbRead.cryptoWallet.findUnique).not.toHaveBeenCalled();
+    expect(mockWithDistributedLock).not.toHaveBeenCalled();
+    expect(mockNowpaymentsCaller.createPayment).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unconfigured chain when the supported list cannot be read', async () => {
+    redisMock.redis.packed.get.mockRejectedValue(new Error('redis down'));
+
+    await expect(getDepositAddress(42, 'xmr')).rejects.toThrow('redis down');
+    expect(mockWithDistributedLock).not.toHaveBeenCalled();
+    expect(mockNowpaymentsCaller.createPayment).not.toHaveBeenCalled();
+  });
+
+  it('allows a chain the supported list maps a network to', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(supportedList(['xmr']));
+
+    const result = await getDepositAddress(42, 'xmr');
+
+    expect(result).toEqual({ address: 'addr', paymentId: 555, chain: 'xmr' });
+    expect(mockNowpaymentsCaller.createPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ pay_currency: 'xmr', order_id: 'user:42' })
+    );
+  });
+
+  it('allows a configured chain without reading the supported list', async () => {
+    const result = await getDepositAddress(42, 'sol');
+
+    expect(result.chain).toBe('sol');
+    expect(mockNowpaymentsCaller.getMerchantCoins).not.toHaveBeenCalled();
+    expect(redisMock.redis.packed.get).not.toHaveBeenCalled();
   });
 });
 
