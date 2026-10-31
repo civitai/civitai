@@ -513,6 +513,14 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const pinned: Record<number, ResultType[]> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
+    // Only the model's owner and moderators may list the images it hides from its gallery.
+    if (hidden && input.modelId && !moderatorView(ctx)) {
+      const model = await dbRead.model.findUnique({
+        where: { id: input.modelId },
+        select: { userId: true },
+      });
+      if (!user || model?.userId !== user.id) return { nextCursor: undefined, items: [] };
+    }
     // A minor or SFW-only model's gallery serves only its held level, whatever level is asked for:
     // the page, the pinned posts and the sponsored post alike. Moderators see it whole.
     const [modelGallerySettings, heldLevel] = await Promise.all([
