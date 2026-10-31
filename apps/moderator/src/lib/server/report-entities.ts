@@ -144,30 +144,24 @@ export const reportEntity = (type: ReportEntity): ReportEntityMeta => BY_TYPE.ge
  * names a *conversation*, not a person, and every answer here is an inference. Two obvious ones are
  * both wrong:
  *
- * - **The chat owner** (what this used to do). `Chat.ownerId` is whoever opened the thread. Usually
- *   that is the sender of an unsolicited DM, which is why it looks right — but on 122 of the 2,241
- *   human-filed chat reports the owner IS the reporter, so the screen credited the person who
- *   complained and showed nothing against the account they complained about.
- * - **Anyone who sent a message** (what Retool's `query152` did). That always includes the reporter,
- *   so every harassment report also marks the victim as having reported content.
+ * - **The chat owner.** `Chat.ownerId` is whoever opened the thread. Usually that is the sender of an
+ *   unsolicited DM, which is why it looks right — but sometimes the owner IS the reporter, which
+ *   credits the person who complained and shows nothing against the account they complained about.
+ * - **Anyone who sent a message.** That always includes the reporter, so every harassment report
+ *   also marks the victim as having reported content.
  *
  * The sound reading is the participant who is NOT a reporter, and it is only unambiguous when there
- * is exactly one of them: a two-party chat whose reporter is the other member.
+ * is exactly one of them: a two-party chat whose reporter is the other member. Group chats match
+ * nobody — the report cannot be pinned on one of N members.
  *
  * 🔴 **The reporter-is-a-member clause is load-bearing, not belt-and-braces.** `Automated` reports are
  * filed by user `-1`, who is in no chat — so without it BOTH parties satisfy every other clause, and
- * since automated reports are 96% of this table the predicate attributed **121,148** reports across
- * **20,452** accounts instead of 2,226 across 1,186. Every account that had ever *received* an
- * auto-flagged DM read as having reported content. Do not drop it as redundant.
+ * every account that had ever *received* an auto-flagged DM reads as having reported content. Do not
+ * drop it as redundant.
  *
- * Yields exactly one account per report: 2,226 attributions from 2,226 distinct reports. Group chats
- * match nobody — the report cannot be pinned on one of N members.
- *
- * ⚠️ **Membership counts at every `ChatMember.status`, deliberately.** Narrowing to `Joined` looks
- * tidier and drops the result to 751: the recipient of an unsolicited DM is usually `Invited`,
- * `Ignored` or `Left`, which is precisely the harassment case this exists to find.
- *
- * Measured against production 2026-08-20.
+ * ⚠️ **Membership counts at every `ChatMember.status`, deliberately.** Narrowing to `Joined` misses the
+ * recipient of an unsolicited DM, who is usually `Invited`, `Ignored` or `Left` — precisely the
+ * harassment case this exists to find.
  */
 export const chatReportSubject = (
   chatIdCol: string,
