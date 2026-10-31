@@ -329,6 +329,21 @@ export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: K
 }
 
 /**
+ * The keys a client save at `now` refuses on their issue records: those issued to another user,
+ * and the unrecorded ones when `refuseUnrecorded`. A save refuses if any key is refused.
+ */
+export function issuerRefusals(issuers: Awaited<ReturnType<typeof keyIssuers>>, now: Date) {
+  // With neither store read, no key's issuee is known.
+  const refuseUnrecorded =
+    now >= UNRECORDED_KEYS_ACCEPTED_UNTIL ||
+    (issuers.recordReadFailed && issuers.requestLogReadFailed);
+  return {
+    refuseUnrecorded,
+    refused: [...issuers.issuedToOthers, ...(refuseUnrecorded ? issuers.unrecorded : [])],
+  };
+}
+
+/**
  * Every upload key in a client-supplied url must have been issued to the caller (or to
  * `alsoIssuedTo`); a key issued to another user is refused with the generic refusal.
  */
@@ -338,18 +353,12 @@ export async function assertClientKeysIssuedToCaller({
 }: KeyIssuerArgs & { now?: Date }) {
   const { userId } = args;
   assertNoUnfinishedUploads(args.urls);
-  const {
-    tooMany,
-    issuedToOthers,
-    unrecorded: remaining,
-    recordReadFailed,
-    requestLogReadFailed,
-  } = await keyIssuers(args);
+  const issuers = await keyIssuers(args);
+  const { tooMany, issuedToOthers, unrecorded: remaining, requestLogReadFailed } = issuers;
   if (tooMany || issuedToOthers.length) throw imageUrlUnavailableError();
   if (!remaining.length) return;
 
-  // With neither store read, no key's issuee is known.
-  if (now >= UNRECORDED_KEYS_ACCEPTED_UNTIL || (recordReadFailed && requestLogReadFailed)) {
+  if (issuerRefusals(issuers, now).refuseUnrecorded) {
     uploadKeyOwnerCounter.inc({
       outcome: requestLogReadFailed ? 'request_log_unavailable' : 'unrecorded_refused',
     });
@@ -366,6 +375,41 @@ export async function assertClientKeysIssuedToCaller({
     keys: remaining.join(','),
     ...(requestLogReadFailed && { reason: 'request_log_unavailable' }),
   }).catch(() => undefined);
+}
+
+/**
+ * The upload keys among `keys` (bare keys, as a draft stores them) that a client save by `userId`
+ * would refuse once unrecorded keys are refused, whatever the date. A lookup that fails marks
+ * nothing; the save still decides. Writes nothing.
+ */
+export async function clientKeysToReupload({
+  keys,
+  userId,
+  now = new Date(),
+}: {
+  keys: string[];
+  userId: number;
+  now?: Date;
+}) {
+  uploadKeyOwnerCounter.inc({ outcome: 'draft_check' });
+  const at = now < UNRECORDED_KEYS_ACCEPTED_UNTIL ? UNRECORDED_KEYS_ACCEPTED_UNTIL : now;
+  const issuers = await keyIssuers({ urls: keys, userId });
+  if (issuers.tooMany) return keys;
+  const degraded = issuers.recordReadFailed || issuers.requestLogReadFailed;
+  const refused = new Set(
+    issuerRefusals(degraded ? { ...issuers, unrecorded: [] } : issuers, at).refused
+  );
+  await Promise.all(
+    keys
+      .filter((key) => !refused.has(key.toLowerCase()))
+      .map((key) =>
+        assertClientImageUrlsUsable({ urls: [key], userId }).catch((e: unknown) => {
+          if (e instanceof TRPCError && e.code === 'BAD_REQUEST') refused.add(key.toLowerCase());
+          else throw e;
+        })
+      )
+  );
+  return keys.filter((key) => refused.has(key.toLowerCase()));
 }
 
 async function ownersFromShopArtwork(keys: string[], db: Db) {

@@ -458,3 +458,29 @@ export function isEmptyDraft(draft: ComposerDraft): boolean {
     !draft.shared.tags.length
   );
 }
+
+const UPLOAD_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The draft without the uploads the server says must be uploaded again, and how many those were.
+ * `check` takes at most `perCheck` keys; if any check fails the draft is kept whole, since the
+ * save decides again anyway.
+ */
+export async function withoutReuploads(
+  draft: ComposerDraft,
+  check: (keys: string[]) => Promise<string[]>,
+  perCheck: number
+): Promise<{ draft: ComposerDraft; dropped: number }> {
+  const keys = draft.media.map((item) => item.url).filter((url) => UPLOAD_KEY.test(url));
+  const chunks = Array.from({ length: Math.ceil(keys.length / perCheck) }, (_, i) =>
+    keys.slice(i * perCheck, (i + 1) * perCheck)
+  );
+  let reupload: Set<string>;
+  try {
+    reupload = new Set((await Promise.all(chunks.map((chunk) => check(chunk)))).flat());
+  } catch {
+    return { draft, dropped: 0 };
+  }
+  const media = draft.media.filter((item) => !reupload.has(item.url));
+  return { draft: { ...draft, media }, dropped: draft.media.length - media.length };
+}

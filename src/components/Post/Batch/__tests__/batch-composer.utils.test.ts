@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   POST_BATCH_CHUNK_MAX_IMAGES,
   POST_BATCH_CHUNK_POSTS,
@@ -22,6 +22,7 @@ import {
   serializeDraft,
   shuffle,
   toBatchImage,
+  withoutReuploads,
 } from '~/components/Post/Batch/batch-composer.utils';
 import type { ComposerDraft, UploadedMedia } from '~/components/Post/Batch/batch-composer.utils';
 
@@ -380,5 +381,36 @@ describe('draft serialisation', () => {
         shared: { ...draft().shared, tools: [], tags: [] },
       })
     ).toBe(true);
+  });
+});
+
+describe('withoutReuploads', () => {
+  const key = (n: number) => `${String(n).padStart(8, '0')}-ef56-4a7b-8c9d-0e1f2a3b4c5d`;
+  const draftOf = (urls: string[]) =>
+    ({ media: urls.map((url) => ({ url, status: 'added' })) } as unknown as ComposerDraft);
+
+  it('drops the uploads the check marks, and counts them', async () => {
+    const draft = draftOf([key(1), key(2), key(3)]);
+    const result = await withoutReuploads(draft, async () => [key(2)], 64);
+    expect(result.draft.media.map((m) => m.url)).toEqual([key(1), key(3)]);
+    expect(result.dropped).toBe(1);
+  });
+
+  it('keeps the whole draft when a check fails', async () => {
+    const draft = draftOf([key(1), key(2)]);
+    const result = await withoutReuploads(
+      draft,
+      async () => {
+        throw new Error('offline');
+      },
+      64
+    );
+    expect(result).toEqual({ draft, dropped: 0 });
+  });
+
+  it('checks upload keys only, at most perCheck at a time', async () => {
+    const check = vi.fn<(keys: string[]) => Promise<string[]>>(async () => []);
+    await withoutReuploads(draftOf([key(1), 'blob:https://x/y', key(2), key(3)]), check, 2);
+    expect(check.mock.calls).toEqual([[[key(1), key(2)]], [[key(3)]]]);
   });
 });

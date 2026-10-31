@@ -1,8 +1,11 @@
 import { del, get, set } from 'idb-keyval';
+import { showNotification } from '@mantine/notifications';
 import { useEffect } from 'react';
+import { BATCH_DRAFT_KEYS_PER_CHECK } from '~/server/schema/post.schema';
+import { trpcVanilla } from '~/utils/trpc';
 import type { BatchComposerState, BatchComposerStore } from './batch-composer.store';
 import type { ComposerDraft } from './batch-composer.utils';
-import { isEmptyDraft, parseDraft, serializeDraft } from './batch-composer.utils';
+import { isEmptyDraft, parseDraft, serializeDraft, withoutReuploads } from './batch-composer.utils';
 
 const DRAFT_KEY = 'batch-composer:draft';
 const SAVE_DELAY_MS = 400;
@@ -62,6 +65,9 @@ function draftChanged(state: BatchComposerState, previous: BatchComposerState): 
   );
 }
 
+const checkDraftKeys = async (keys: string[]) =>
+  (await trpcVanilla.post.checkBatchDraftKeys.mutate({ keys })).reupload;
+
 export function useDraftPersistence(store: BatchComposerStore, userId: number | undefined) {
   useEffect(() => {
     if (!userId) return;
@@ -79,9 +85,23 @@ export function useDraftPersistence(store: BatchComposerStore, userId: number | 
       void saveDraft(userId, draft);
     };
 
-    void loadDraft(userId).then((draft) => {
+    void loadDraft(userId).then(async (saved) => {
+      const { draft, dropped } = saved
+        ? await withoutReuploads(saved, checkDraftKeys, BATCH_DRAFT_KEYS_PER_CHECK)
+        : { draft: saved, dropped: 0 };
       if (cancelled) return;
       store.getState().hydrate(draft);
+      if (dropped)
+        showNotification({
+          color: 'yellow',
+          title: 'Some images need to be uploaded again',
+          message: `${dropped} image${
+            dropped === 1 ? '' : 's'
+          } from your saved draft could not be kept. Add ${
+            dropped === 1 ? 'it' : 'them'
+          } again to include ${dropped === 1 ? 'it' : 'them'}.`,
+          autoClose: false,
+        });
       unsubscribe = store.subscribe((state, previous) => {
         if (state.submitted || !draftChanged(state, previous)) return;
         pending = toDraft(state);
