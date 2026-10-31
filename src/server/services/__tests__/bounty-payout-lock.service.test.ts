@@ -1353,6 +1353,12 @@ describe('addBenefactorUnitAmount', () => {
     expect(find(6)!.buzzTransactionId).toHaveLength(2);
   });
 
+  it('refuses support beyond the balance, and moves no Buzz', async () => {
+    await expect(topUp(6, 2_000_000)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(moved('charge')).toBe(0);
+    expect(find(6)!.unitAmount).toBe(50);
+  });
+
   it('refuses support from a supporter whose award has been paid, and moves no Buzz', async () => {
     await awardBountyEntry({ id: 10, userId: 5 });
     expect(moved('award')).toBe(1);
@@ -1361,13 +1367,15 @@ describe('addBenefactorUnitAmount', () => {
     await expect(topUp(5)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(events.filter((e) => e !== 'commit')).toEqual([]);
     expect(find(5)!.unitAmount).toBe(100);
-    // The bounty is still open to the supporter who has not awarded.
     await topUp(6);
     expect(find(6)!.unitAmount).toBe(80);
   });
 
-  it('refuses support from a supporter whose awarded entry was deleted', async () => {
-    Object.assign(find(5)!, { awardedToId: null, awardedAt: new Date() });
+  it.each([
+    ['whose awarded entry was deleted', { awardedToId: null, awardedAt: new Date() }],
+    ['with an award not yet stamped', { awardedToId: 10, awardedAt: null }],
+  ])('refuses support from a supporter %s', async (_, award) => {
+    Object.assign(find(5)!, award);
     await expect(topUp(5)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(moved('charge')).toBe(0);
   });
@@ -1375,6 +1383,7 @@ describe('addBenefactorUnitAmount', () => {
   it.each([
     ['complete', { complete: true }],
     ['refunded', { complete: true, refunded: true }],
+    ['refunded past an unpayable award', { refunded: true }],
   ])('refuses support on a %s bounty, and moves no Buzz', async (_, state) => {
     Object.assign(bounty!, state);
     await expect(topUp(6)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -1403,6 +1412,26 @@ describe('addBenefactorUnitAmount', () => {
     expect(moved('charge')).toBe(1);
     expect(moved('refund')).toBe(1);
     expect(find(5)!.unitAmount).toBe(100);
+  });
+
+  it('logs a charge it could not refund, and still refuses the support', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+      events.push('charge');
+      Object.assign(bounty!, { complete: true });
+      return {};
+    });
+    buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
+
+    await expect(topUp(6)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: expect.stringMatching(/^bounty-4-6-/),
+      })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', message: expect.stringContaining('refund failed') })
+    );
+    expect(find(6)!.unitAmount).toBe(50);
   });
 
   it('counts two top-ups made at once', async () => {

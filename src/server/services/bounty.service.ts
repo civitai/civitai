@@ -923,7 +923,6 @@ export const getBountyFiles = async ({ id }: GetByIdInput) => {
   return files;
 };
 
-/** Locks the bounty and reads the supporter's row; support is added only to an open bounty, by a supporter who has not awarded. */
 async function lockBenefactorForSupport(
   tx: Prisma.TransactionClient,
   bountyId: number,
@@ -944,7 +943,7 @@ async function lockBenefactorForSupport(
     },
   });
   if (!benefactor) throw throwNotFoundError('You are not a benefactor of this bounty');
-  // `awardedAt` outlives the awarded entry.
+  // `awardedAt` outlives the awarded entry: an award stands after its entry is deleted.
   if (benefactor.awardedToId || benefactor.awardedAt)
     throw throwBadRequestError('You have already awarded an entry on this bounty');
   return benefactor;
@@ -1001,7 +1000,7 @@ export const addBenefactorUnitAmount = async ({
   try {
     return await addSupport(prefix);
   } catch (error) {
-    // The bounty closed, or the supporter awarded, while the charge ran: the charge goes back.
+    // The charge is already taken; any failure to record support must refund it.
     await refundBountyPrefix(prefix, 'Refund reason: bounty support was not added', {
       bountyId,
       userId,
