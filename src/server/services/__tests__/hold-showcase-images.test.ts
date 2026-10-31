@@ -85,6 +85,20 @@ describe('holdShowcaseImages', () => {
     expect(ids(held[OPEN_VERSION])).toEqual([4, 5]);
   });
 
+  it('reads no settings for a model its caller read as unflagged', async () => {
+    const held = await holdShowcaseImages(byVersion(), {
+      models: new Map([
+        [HELD_VERSION, { modelId: HELD_MODEL, ownerId: OWNER, flagged: true }],
+        [OPEN_VERSION, { modelId: OPEN_MODEL, ownerId: 60, flagged: false }],
+      ]),
+    });
+    expect(ids(held[HELD_VERSION])).toEqual([2]);
+    expect(ids(held[OPEN_VERSION])).toEqual([4, 5]);
+    expect(redisMock.redis.get.mock.calls.map(([key]) => key)).toEqual([
+      `model:gallery-settings:${HELD_MODEL}`,
+    ]);
+  });
+
   it('never changes the entries it was given: they can be the shared cache', async () => {
     const input = byVersion();
     await holdShowcaseImages(input, { models });

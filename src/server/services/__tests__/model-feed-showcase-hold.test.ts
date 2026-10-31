@@ -120,6 +120,8 @@ function primeHeldModel() {
         id: MODEL_ID,
         userId: OWNER,
         name: 'Held',
+        minor: false,
+        sfwOnly: true,
         cursorId: null,
         meta: null,
         rank: {},
@@ -226,6 +228,28 @@ describe('the model feed on a held model', () => {
     return items[0]?.images.map((i) => i.id);
   };
 
+  it('reads no gallery settings for a page of models without the flags', async () => {
+    mockCancellableQuery.mockResolvedValue({
+      result: async () => [
+        {
+          id: MODEL_ID,
+          userId: OWNER,
+          name: 'Open',
+          minor: false,
+          sfwOnly: false,
+          cursorId: null,
+          meta: null,
+          rank: {},
+        },
+      ],
+    });
+    expect(await imageIds()).toEqual([ABOVE, WITHIN]);
+    const galleryReads = redisMock.redis.get.mock.calls.filter(([key]) =>
+      String(key).startsWith(GALLERY)
+    );
+    expect(galleryReads).toEqual([]);
+  });
+
   it('shows every viewer the whole showcase of a model without the flags', async () => {
     galleryReads(() => JSON.stringify({ none: true }));
     expect(await imageIds()).toEqual([ABOVE, WITHIN]);
@@ -286,6 +310,8 @@ describe('the model feed on a held model', () => {
           id: MODEL_ID,
           userId: OWNER,
           name: 'Held',
+          minor: false,
+          sfwOnly: true,
           cursorId: null,
           meta: null,
           rank: {},

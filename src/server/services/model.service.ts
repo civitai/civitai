@@ -1883,20 +1883,25 @@ export const getModelsWithImagesAndModelVersions = async ({
   }
 
   const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
-  const heldLevels = heldViewer?.isModerator
-    ? new Map<number, number>()
-    : await getHeldLevelsByModel(items.map((model) => model.id));
-  const coverImages = await getCoverImages({
-    covers: items.map((model) => ({
-      modelId: model.id,
-      ownerId: model.user.id,
-      shownVersionId: model.modelVersions[0]?.id,
-      coverId: pickCoverImageId(model, showSfwFace),
-    })),
-    modelVersionImages,
-    // Under a base-model filter the card shows that version, so a cover from another stays put.
-    sameVersionOnly: !!input.baseModels?.length,
-  });
+  // Only a minor or SFW-only row can be held; the feed query reads both flags.
+  const [heldLevels, coverImages] = await Promise.all([
+    heldViewer?.isModerator
+      ? new Map<number, number>()
+      : getHeldLevelsByModel(
+          items.filter((model) => model.minor || model.sfwOnly).map((model) => model.id)
+        ),
+    getCoverImages({
+      covers: items.map((model) => ({
+        modelId: model.id,
+        ownerId: model.user.id,
+        shownVersionId: model.modelVersions[0]?.id,
+        coverId: pickCoverImageId(model, showSfwFace),
+      })),
+      modelVersionImages,
+      // Under a base-model filter the card shows that version, so a cover from another stays put.
+      sameVersionOnly: !!input.baseModels?.length,
+    }),
+  ]);
 
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
@@ -6028,6 +6033,8 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   return held;
 }
 
+const HELD_LEVEL_READ_CONCURRENCY = 20;
+
 /**
  * For each minor or SFW-only model, the level its gallery is held at. A model not held is absent.
  * When a model's settings cannot be read, `floor` serves it at PG for this call; `throw` is for
@@ -6041,8 +6048,19 @@ export async function getHeldLevelsByModel(
   const ids = uniq(modelIds);
   if (!ids.length) return levels;
   // One read per key, kept per key: on the cluster a batched read is a read per key, and one
-  // failing key must not discard the others.
-  const reads = await Promise.allSettled(ids.map((id) => redis.get(gallerySettingsKey(id))));
+  // failing key must not discard the others. Capped, so a long list cannot flood the cache.
+  const reads: PromiseSettledResult<string | null>[] = new Array(ids.length);
+  await limitConcurrency(
+    ids.map((id, i) => async () => {
+      reads[i] = await Promise.resolve()
+        .then(() => redis.get(gallerySettingsKey(id)))
+        .then(
+          (value) => ({ status: 'fulfilled' as const, value }),
+          (reason: unknown) => ({ status: 'rejected' as const, reason })
+        );
+    }),
+    HELD_LEVEL_READ_CONCURRENCY
+  );
   const misses: number[] = [];
   const failed: number[] = [];
   let failure: unknown;
@@ -6132,14 +6150,18 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
     onReadFailure,
   }: {
     viewer?: HeldGalleryViewer;
-    models?: Map<number, { modelId: number; ownerId?: number }>;
+    /**
+     * `flagged: false` (from a row the caller just read) skips the settings read for that model:
+     * only a minor or SFW-only model can be held.
+     */
+    models?: Map<number, { modelId: number; ownerId?: number; flagged?: boolean }>;
     onReadFailure?: 'floor' | 'throw';
   } = {}
 ): Promise<Record<number, E>> {
   const versionIds = Object.keys(byVersion).map(Number);
   if (!versionIds.length || viewer?.isModerator) return byVersion;
 
-  const modelOf = new Map<number, { modelId: number; ownerId?: number }>();
+  const modelOf = new Map<number, { modelId: number; ownerId?: number; flagged?: boolean }>();
   const unmapped = versionIds.filter((id) => {
     const model = models?.get(id);
     if (model) modelOf.set(id, model);
@@ -6152,7 +6174,7 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
   }
 
   const levels = await getHeldLevelsByModel(
-    [...modelOf.values()].map((m) => m.modelId),
+    [...modelOf.values()].filter((m) => m.flagged !== false).map((m) => m.modelId),
     { onReadFailure }
   );
   const owners = new Map<number, number>();
@@ -6335,7 +6357,10 @@ export async function getModelsWithVersions({
   const images = await holdShowcaseImages(await getImagesForModelVersionCache(modelVersionIds), {
     models: new Map(
       items.flatMap((model) =>
-        model.modelVersions.map((version) => [version.id, { modelId: model.id }] as const)
+        model.modelVersions.map(
+          (version) =>
+            [version.id, { modelId: model.id, flagged: model.minor || model.sfwOnly }] as const
+        )
       )
     ),
   });
