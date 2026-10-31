@@ -141,7 +141,8 @@ export async function establishSession(
   // up front because setSessionCookie below queues the new cookie; reading `cookies.get` after that could echo
   // the just-set value. Verification failures (no/expired/invalid prior session) → undefined → no materialize.
   refuseModerationAccount(user, 'login');
-  const priorUserId = await resolvePriorSessionUserId(cookies);
+  const prior = await resolvePriorSession(cookies);
+  const priorUserId = prior?.userId;
 
   // A login bound for a spoke on another registrable domain must not re-point THIS domain's session — the hub
   // cookie is civitai.com's session too. Hand the identity to /authorize out-of-band instead, leaving whoever
@@ -166,7 +167,9 @@ export async function establishSession(
   // Link this account to the browser's account list (docs/auth/auth-hub-spoke-overview.md). A list this browser
   // can't show it is signed in to stays with the old device id; the sign-in starts on a new one.
   const deviceId = getOrCreateDeviceId(cookies);
-  const link = (id: string) => linkAccount(id, user.id, priorUserId).catch(() => 'none' as const);
+  // The prior session proves the browser is signed in to its principal: the moderator, when impersonating.
+  const link = (id: string) =>
+    linkAccount(id, user.id, prior?.principal).catch(() => 'none' as const);
   if ((await link(deviceId)) === 'rotate') await link(rotateDeviceId(cookies));
 }
 
@@ -223,14 +226,17 @@ async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | und
   return (await isFirstPartyOrigin(origin)) ? domain : undefined;
 }
 
-/** The userId of the valid session already on this request's civ-token cookie, or undefined. Best-effort. */
-async function resolvePriorSessionUserId(cookies: Cookies): Promise<number | undefined> {
+/** The valid session already on this request's civ-token cookie: its user and principal. Best-effort. */
+async function resolvePriorSession(
+  cookies: Cookies
+): Promise<{ userId: number; principal: number } | undefined> {
   const token = cookies.get(SESSION_COOKIE);
   if (!token) return undefined;
   try {
     const claims = await verifier.verifyToken(token);
     const userId = Number(claims?.sub);
-    return Number.isFinite(userId) ? userId : undefined;
+    if (!Number.isFinite(userId)) return undefined;
+    return { userId, principal: claims?.impersonatedBy ?? userId };
   } catch {
     return undefined; // no / expired / invalid prior session ⇒ not a 2nd-account login
   }

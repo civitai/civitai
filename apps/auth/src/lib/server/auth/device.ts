@@ -85,8 +85,8 @@ const TOUCH_SCRIPT = `
 
 /**
  * Slide an account's `lastSwitchedAt` and the list's TTL, only when the account is already in a list of ≥2.
- * Never adds an account (only `linkAccount` does, with proof). Lists with <2 fields are left to expire: ~7.9M
- * legacy single-account keys still exist, and refreshing them would stop that keyspace draining. Best-effort.
+ * Never adds an account (only `linkAccount` does, with proof). Lists with <2 fields are left to expire: existing
+ * single-account keys must drain, and refreshing them would stop that. Best-effort.
  */
 export async function touchAccount(deviceId: string, userId: number): Promise<void> {
   try {

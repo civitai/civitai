@@ -25,7 +25,7 @@ vi.mock('@civitai/redis', () => ({
 }));
 vi.mock('../cookie', () => ({ cookieDomain: () => undefined }));
 
-import { createLuaRedis } from '../../../../../../../src/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis } from '../../../../test/lua-sys-redis';
 import {
   touchAccount,
   linkAccount,
@@ -207,7 +207,7 @@ describe('touchAccount — refresh-only', () => {
   });
 
   // THE DRAIN FIX (core of this PR): an EXISTING single-account (hlen=1) set must NOT be refreshed. The old
-  // `exists`-gated code WOULD have re-`expire`d it, re-rolling the 30d TTL on every login → the ~7.9M legacy
+  // `exists`-gated code WOULD have re-`expire`d it, re-rolling the 30d TTL on every login → existing legacy
   // single-account keys never drained. Gating on hLen<2 lets those keys (and any 2→1 remnant) expire naturally.
   it('does NOT refresh an EXISTING single-account (hlen=1) set — lets legacy singletons drain', async () => {
     const sys = makeSys();
