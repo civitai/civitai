@@ -111,6 +111,8 @@ export const getUserDownloads = async ({
           name: true,
           type: true,
           userId: true,
+          minor: true,
+          sfwOnly: true,
         },
       },
       files: {
@@ -151,7 +153,14 @@ export const getUserDownloads = async ({
     {
       viewer,
       models: new Map(
-        modelVersions.map((mv) => [mv.id, { modelId: mv.model.id, ownerId: mv.model.userId }])
+        modelVersions.map((mv) => [
+          mv.id,
+          {
+            modelId: mv.model.id,
+            ownerId: mv.model.userId,
+            flagged: mv.model.minor || mv.model.sfwOnly,
+          },
+        ])
       ),
     }
   );

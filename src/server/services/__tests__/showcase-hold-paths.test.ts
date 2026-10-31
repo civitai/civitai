@@ -88,7 +88,14 @@ beforeEach(() => {
       modelId: HELD_MODEL,
       name: 'v1',
       baseModel: 'SDXL 1.0',
-      model: { id: HELD_MODEL, name: 'held', type: 'LORA', userId: OWNER },
+      model: {
+        id: HELD_MODEL,
+        name: 'held',
+        type: 'LORA',
+        userId: OWNER,
+        minor: true,
+        sfwOnly: false,
+      },
       files: [],
     },
   ]);
@@ -113,6 +120,31 @@ describe("a held model's showcase on paths that read it from the shared cache", 
       viewer: { id: OWNER, isModerator: false },
     });
     expect(owner.items[0].image?.id).toBe(ABOVE);
+  });
+
+  it.each([
+    { row: 'SFW-only', minor: false, sfwOnly: true, image: WITHIN, reads: true },
+    { row: 'unflagged', minor: false, sfwOnly: false, image: ABOVE, reads: false },
+  ])('download history of a $row model', async ({ minor, sfwOnly, image, reads }) => {
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      {
+        id: VERSION,
+        modelId: HELD_MODEL,
+        name: 'v1',
+        baseModel: 'SDXL 1.0',
+        model: { id: HELD_MODEL, name: 'model', type: 'LORA', userId: OWNER, minor, sfwOnly },
+        files: [],
+      },
+    ]);
+    fetchDownloads.mockResolvedValue({
+      [99]: { downloads: [{ modelVersionId: VERSION, fileId: 0, lastDownloaded: 1 }] },
+    });
+    const history = await getUserDownloads({ userId: 99, viewer: { id: 99, isModerator: false } });
+    expect(history.items[0].image?.id).toBe(image);
+    const settingsReads = redisMock.redis.get.mock.calls.filter(([key]) =>
+      String(key).startsWith(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:`)
+    );
+    expect(settingsReads.length > 0).toBe(reads);
   });
 
   it('the version showcase procedure holds an app acting for the owner, not the owner signed in', async () => {
