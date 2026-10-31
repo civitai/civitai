@@ -17,6 +17,8 @@ import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 
 const m = vi.hoisted(() => ({
   session: { current: null as null | { user: Record<string, unknown> } },
+  /** What the real session lookup writes to `req.context` for each `Authorization` header. */
+  bearerContexts: {} as Record<string, Record<string, unknown>>,
   features: vi.fn<(...a: unknown[]) => Promise<Record<string, boolean>>>(),
   devTunnelEnabled: vi.fn<(...a: unknown[]) => Promise<boolean>>(),
   resolveDev: vi.fn<(...a: unknown[]) => Promise<unknown>>(),
@@ -26,7 +28,11 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => m.session.current),
+  getServerAuthSession: vi.fn(async ({ req }: { req: NextApiRequest }) => {
+    const credential = m.bearerContexts[req.headers.authorization ?? ''];
+    if (credential) Object.assign(req, { context: { ...credential } });
+    return m.session.current;
+  }),
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
@@ -76,6 +82,17 @@ const tunnel = (host: string) => ({
   hardExpiresAt: 9e9,
   spendCapBuzz: 5000,
 });
+const { TokenScope } = await import('~/shared/constants/token-scope.constants');
+const personalKey = (tokenScope: number) => ({
+  apiKeyId: 1,
+  apiKeyType: 'User',
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope,
+});
+const SCOPED_BEARER = 'Bearer scoped-key';
+const FULL_BEARER = 'Bearer full-key';
+m.bearerContexts[SCOPED_BEARER] = personalKey(TokenScope.Full & ~TokenScope.UserRead);
+m.bearerContexts[FULL_BEARER] = personalKey(TokenScope.Full);
 
 async function call(
   query: Record<string, unknown>,
@@ -165,8 +182,19 @@ describe('GET /api/apps/dev/entry-url', () => {
     expect(m.resolveDev).not.toHaveBeenCalled();
   });
 
-  it('a scoped bearer credential is refused before anything is resolved', async () => {
-    // A query `?token=` is never a session (`requireFullScopeSession`).
+  it('a scoped Authorization: Bearer credential → 403, and nothing is resolved', async () => {
+    const res = await call({ blockId: 'my-app' }, { authorization: SCOPED_BEARER });
+    expect(res.status).toBe(403);
+    expect(m.resolveDev).not.toHaveBeenCalled();
+  });
+
+  it('a full-scope personal key in Authorization: Bearer is served (control for the 403 above)', async () => {
+    const res = await call({ blockId: 'my-app' }, { authorization: FULL_BEARER });
+    expect(res.status).toBe(200);
+    expect(res.body?.host).toBe(HOST);
+  });
+
+  it('a ?token= query credential is refused before anything is resolved', async () => {
     const res = await call({ blockId: 'my-app', token: 'abc' });
     expect(res.status).toBe(403);
     expect(m.resolveDev).not.toHaveBeenCalled();
