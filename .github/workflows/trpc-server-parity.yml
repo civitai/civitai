@@ -101,7 +101,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-          AUTO_DEPLOY_USERS: "" # TEMP: exercise the red label gate; reverted in the next commit
+          AUTO_DEPLOY_USERS: ${{ vars.PREVIEW_AUTO_DEPLOY_USERS }}
         run: |
           pr=$(gh api "repos/${{ github.repository }}/pulls/$PR")
           login=$(jq -r '.user.login | ascii_downcase' <<< "$pr")
