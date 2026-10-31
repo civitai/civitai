@@ -85,6 +85,8 @@ const mockModel = (userId: number, extra: object = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reset, not just cleared: an implementation set by one test must not reach the next.
+  redisMock.redis.get.mockReset();
   fetchImageAsDataUri.mockResolvedValue(null);
   dbMock.dbRead.modelMetric.findUnique.mockResolvedValue(null);
   mockModel(OWNER_ID);
@@ -92,9 +94,11 @@ beforeEach(() => {
 
 describe('/api/og?type=model cover image', () => {
   it("picks a minor or SFW-only model's first image within its gallery level", async () => {
-    redisMock.redis.mGet.mockResolvedValueOnce([
-      JSON.stringify({ level: NsfwLevel.PG, hiddenTags: [], hiddenUsers: [], sfwHeld: true }),
-    ]);
+    redisMock.redis.get.mockImplementation(async (key: string) =>
+      key.startsWith('model:gallery-settings:')
+        ? JSON.stringify({ level: NsfwLevel.PG, hiddenTags: [], hiddenUsers: [], sfwHeld: true })
+        : null
+    );
     const rows = (nsfwLevel: number) => [
       {
         id: 1,
@@ -139,9 +143,11 @@ describe('/api/og?type=model cover image', () => {
 
   it("passes over a chosen cover above a minor or SFW-only model's gallery level", async () => {
     mockModel(OWNER_ID, { coverImageId: 3 });
-    redisMock.redis.mGet.mockResolvedValueOnce([
-      JSON.stringify({ level: NsfwLevel.PG, hiddenTags: [], hiddenUsers: [], sfwHeld: true }),
-    ]);
+    redisMock.redis.get.mockImplementation(async (key: string) =>
+      key.startsWith('model:gallery-settings:')
+        ? JSON.stringify({ level: NsfwLevel.PG, hiddenTags: [], hiddenUsers: [], sfwHeld: true })
+        : null
+    );
     dbMock.dbRead.image.findFirst.mockImplementation(fakeFindFirst(coverRows));
     await render();
     expect(pickedUrl()).toBe('owner-second');
@@ -155,7 +161,10 @@ describe('/api/og?type=model cover image', () => {
   });
 
   it('serves the short-lived fallback card when the gallery settings cannot be read', async () => {
-    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.get.mockImplementation(async (key: string) => {
+      if (key.startsWith('model:gallery-settings:')) throw new Error('redis down');
+      return null;
+    });
     dbMock.dbRead.image.findFirst.mockImplementation(fakeFindFirst(coverRows));
     const res = await render();
     expect(fetchImageAsDataUri).not.toHaveBeenCalled();

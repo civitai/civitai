@@ -98,6 +98,20 @@ const image = (id: number, nsfwLevel: number) => ({
   tags: [],
 });
 
+const GALLERY = 'model:gallery-settings:';
+/** Gallery settings reads answer from `entry`; other keys miss. */
+function galleryReads(entry: () => string) {
+  redisMock.redis.get.mockImplementation(async (key: string) =>
+    key.startsWith(GALLERY) ? entry() : null
+  );
+}
+function failGalleryReads() {
+  redisMock.redis.get.mockImplementation(async (key: string) => {
+    if (key.startsWith(GALLERY)) throw new Error('redis down');
+    return null;
+  });
+}
+
 /** One published model held at PG/PG13 whose showcase leads with an X image. */
 function primeHeldModel() {
   mockCancellableQuery.mockResolvedValue({
@@ -131,14 +145,14 @@ function primeHeldModel() {
       ],
     },
   } as never);
-  redisMock.redis.mGet.mockResolvedValue([
+  galleryReads(() =>
     JSON.stringify({
       level: NsfwLevel.PG | NsfwLevel.PG13,
       hiddenTags: [],
       hiddenUsers: [],
       sfwHeld: true,
-    }),
-  ]);
+    })
+  );
   mockShowcase.mockResolvedValue({
     [VERSION_ID]: {
       modelVersionId: VERSION_ID,
@@ -172,6 +186,8 @@ const input = { browsingLevel: 31, take: 10, limit: 10, period: 'AllTime' } as n
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reset, not just cleared: a failing implementation must not reach the next test.
+  redisMock.redis.get.mockReset();
   redisMock.redis.packed.get.mockResolvedValue(null);
   primeHeldModel();
 });
@@ -188,14 +204,13 @@ describe('the public model API on a held model', () => {
   });
 
   it('serves PG images only, without failing, when the gallery settings cannot be read', async () => {
-    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
-    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    failGalleryReads();
     const { items } = await getModelsWithVersions({ input });
     expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
   });
 
   it('serves a model without the flags whole', async () => {
-    redisMock.redis.mGet.mockResolvedValue([JSON.stringify({ none: true })]);
+    galleryReads(() => JSON.stringify({ none: true }));
     const { items } = await getModelsWithVersions({ input });
     expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([ABOVE, WITHIN]);
   });
@@ -212,7 +227,7 @@ describe('the model feed on a held model', () => {
   };
 
   it('shows every viewer the whole showcase of a model without the flags', async () => {
-    redisMock.redis.mGet.mockResolvedValue([JSON.stringify({ none: true })]);
+    galleryReads(() => JSON.stringify({ none: true }));
     expect(await imageIds()).toEqual([ABOVE, WITHIN]);
   });
 
@@ -222,8 +237,7 @@ describe('the model feed on a held model', () => {
   });
 
   it('serves the page with PG images only when the gallery settings cannot be read', async () => {
-    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
-    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    failGalleryReads();
     mockShowcase.mockResolvedValue({
       [VERSION_ID]: {
         modelVersionId: VERSION_ID,

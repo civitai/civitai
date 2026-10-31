@@ -5818,11 +5818,14 @@ function readCachedGallerySettings(cachedSettings: string | null | undefined) {
 }
 
 export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
-  const cacheKey = gallerySettingsKey(id);
-
-  const cached = readCachedGallerySettings(await redis.get(cacheKey));
+  const cached = readCachedGallerySettings(await redis.get(gallerySettingsKey(id)));
   if (cached !== undefined) return cached;
+  return rebuildGallerySettings(id);
+};
 
+/** Builds a model's gallery settings from the database and caches them. */
+async function rebuildGallerySettings(id: number, { cacheFailure = 'throw' } = {}) {
+  const cacheKey = gallerySettingsKey(id);
   const model = await getModel({
     id: id,
     select: { id: true, userId: true, gallerySettings: true, minor: true, sfwOnly: true },
@@ -5843,10 +5846,22 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   }
   // A build without the hold serves this marker as settings, so it carries their empty lists.
   const none = { none: true, hiddenTags: [], hiddenUsers: [], hiddenImages: {}, pinnedPosts: {} };
-  await redis.set(cacheKey, toJson(settings ?? none), { EX: CacheTTL.week });
+  try {
+    await redis.set(cacheKey, toJson(settings ?? none), { EX: CacheTTL.week });
+  } catch (error) {
+    // The settings were read from the database, so they stand even when they cannot be cached.
+    if (cacheFailure === 'throw') throw error;
+    logToAxiom({
+      type: 'warning',
+      name: 'gallery-settings-cache-write',
+      message: 'gallery settings read but not cached',
+      modelId: id,
+      error: safeError(error),
+    }).catch(() => undefined);
+  }
 
   return settings;
-};
+}
 
 function createVersionModelCache() {
   return createCachedObject<{ id: number; modelId: number }>({
@@ -6025,33 +6040,40 @@ export async function getHeldLevelsByModel(
   const levels = new Map<number, number>();
   const ids = uniq(modelIds);
   if (!ids.length) return levels;
-  // One batched read for the cached entries: a feed page names up to a hundred models.
-  let cached: (string | null)[];
-  try {
-    cached = await redis.mGet<string>(ids.map(gallerySettingsKey));
-  } catch (error) {
-    if (onReadFailure === 'throw') throw error;
-    // No per-model re-read: against a slow Redis that would cost a timeout per model.
-    for (const id of ids) levels.set(id, NsfwLevel.PG);
-    logToAxiom({
-      type: 'warning',
-      name: 'held-gallery-level-batch-read',
-      message: 'batched gallery settings read failed; serving PG only',
-      count: ids.length,
-      error: safeError(error),
-    }).catch(() => undefined);
-    return levels;
-  }
+  // One read per key, kept per key: on the cluster a batched read is a read per key, and one
+  // failing key must not discard the others.
+  const reads = await Promise.allSettled(ids.map((id) => redis.get(gallerySettingsKey(id))));
   const misses: number[] = [];
-  ids.forEach((id, i) => {
-    const gallery = readCachedGallerySettings(cached[i]);
+  const failed: number[] = [];
+  let failure: unknown;
+  reads.forEach((read, i) => {
+    const id = ids[i];
+    if (read.status === 'rejected') {
+      failed.push(id);
+      failure ??= read.reason;
+      return;
+    }
+    const gallery = readCachedGallerySettings(read.value);
     if (gallery === undefined) misses.push(id);
     else if (gallery?.sfwHeld) levels.set(id, gallery.level);
   });
+  if (failed.length) {
+    if (onReadFailure === 'throw') throw failure;
+    // No re-read: against a slow cache that costs another timeout per model.
+    for (const id of failed) levels.set(id, NsfwLevel.PG);
+    logToAxiom({
+      type: 'warning',
+      name: 'held-gallery-level-fallback',
+      message: 'gallery settings unavailable; serving PG only',
+      count: failed.length,
+      error: safeError(failure),
+    }).catch(() => undefined);
+  }
   await limitConcurrency(
     misses.map((id) => async () => {
       try {
-        const gallery = await getGallerySettingsByModelId({ id });
+        // Known to be a miss: rebuild without reading the key again.
+        const gallery = await rebuildGallerySettings(id, { cacheFailure: 'log' });
         if (gallery?.sfwHeld) levels.set(id, gallery.level);
       } catch (error) {
         if (onReadFailure === 'throw') throw error;

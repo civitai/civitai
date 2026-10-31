@@ -28,14 +28,24 @@ const SFW = NsfwLevel.PG | NsfwLevel.PG13;
 
 /** Gallery settings as cached: the held model serves PG and PG13; the other is not held. */
 function cacheGalleries() {
-  redisMock.redis.mGet.mockImplementation(async (keys: string[]) =>
-    keys.map((key) => {
-      const id = Number(key.slice(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:`.length));
-      return id === HELD_MODEL
-        ? JSON.stringify({ level: SFW, hiddenTags: [], hiddenUsers: [], sfwHeld: true })
-        : JSON.stringify({ none: true });
-    })
-  );
+  const prefix = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:`;
+  redisMock.redis.get.mockImplementation(async (key: string) => {
+    if (!key.startsWith(prefix)) return null;
+    return Number(key.slice(prefix.length)) === HELD_MODEL
+      ? JSON.stringify({ level: SFW, hiddenTags: [], hiddenUsers: [], sfwHeld: true })
+      : JSON.stringify({ none: true });
+  });
+}
+const settingsKey = /^model:gallery-settings:\d+$/;
+/** The gallery settings read fails for these models (all of them when none are named). */
+function failSettingsReads(modelIds?: number[]) {
+  const fallback = redisMock.redis.get.getMockImplementation();
+  redisMock.redis.get.mockImplementation(async (key: string) => {
+    const id = Number(key.split(':').pop());
+    if (settingsKey.test(key) && (!modelIds || modelIds.includes(id)))
+      throw new Error('redis down');
+    return fallback ? fallback(key) : null;
+  });
 }
 
 const image = (id: number, nsfwLevel: number) => ({ id, nsfwLevel });
@@ -57,6 +67,14 @@ const ids = (entry: { images: { id: number }[] } | undefined) => entry?.images.m
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reset, not just cleared: a failing implementation must not reach the next test.
+  for (const mock of [
+    redisMock.redis.get,
+    redisMock.redis.set,
+    dbMock.dbRead.model.findFirst,
+    dbMock.dbWrite.model.findFirst,
+  ])
+    mock.mockReset();
   cacheGalleries();
 });
 
@@ -120,23 +138,33 @@ describe('holdShowcaseImages', () => {
     ['minor', { minor: true, sfwOnly: false }],
     ['SFW-only', { minor: false, sfwOnly: true }],
   ])('holds a %s model whose gallery settings are not cached yet', async (_, flags) => {
-    redisMock.redis.mGet.mockResolvedValue([null]);
+    redisMock.redis.get.mockResolvedValue(null);
     expect(await uncached(flags)).toEqual([2]);
   });
 
   it('leaves an unflagged model whole when its settings are not cached yet', async () => {
-    redisMock.redis.mGet.mockResolvedValue([null]);
+    redisMock.redis.get.mockResolvedValue(null);
     expect(await uncached({ minor: false, sfwOnly: false })).toEqual([1, 2, 3]);
+    // A miss is rebuilt from the database without reading the key a second time.
+    expect(redisMock.redis.get).toHaveBeenCalledTimes(1);
   });
 
-  it('still holds the model when the batched settings read fails', async () => {
-    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
+  it('still holds the model when its settings read fails', async () => {
+    failSettingsReads();
     expect(await uncached({ minor: true, sfwOnly: false })).toEqual([2]);
   });
 
+  it('keeps the settings it read from the database when they cannot be cached', async () => {
+    redisMock.redis.get.mockResolvedValue(null);
+    redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+    expect(await uncached({ minor: false, sfwOnly: false })).toEqual([1, 2, 3]);
+  });
+
+  // A cache miss, then the rebuild from the database fails.
   const missThenFail = () => {
-    redisMock.redis.mGet.mockResolvedValue([null]);
-    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockResolvedValue(null);
+    dbMock.dbRead.model.findFirst.mockRejectedValue(new Error('db down'));
+    dbMock.dbWrite.model.findFirst.mockRejectedValue(new Error('db down'));
   };
   const openShowcase = () => ({
     [OPEN_VERSION]: {
@@ -156,27 +184,38 @@ describe('holdShowcaseImages', () => {
     missThenFail();
     await expect(
       holdShowcaseImages(openShowcase(), { models: openModels, onReadFailure: 'throw' })
-    ).rejects.toThrow('redis down');
+    ).rejects.toThrow('db down');
   });
 
-  it('serves PG only for the whole batch without reading each model again when the batched read fails', async () => {
-    redisMock.redis.mGet.mockRejectedValue(new Error('redis slow'));
+  it('serves PG only for each model whose read fails, without reading it again', async () => {
+    failSettingsReads();
+    const held = await holdShowcaseImages(byVersion(), { models });
+    expect(ids(held[HELD_VERSION])).toEqual([2]);
+    expect(ids(held[OPEN_VERSION])).toEqual([5]);
+    expect(redisMock.redis.get).toHaveBeenCalledTimes(2);
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('keeps the reads that succeed when one model fails', async () => {
+    failSettingsReads([OPEN_MODEL]);
     const held = await holdShowcaseImages(
       {
-        [OPEN_VERSION]: {
-          modelVersionId: OPEN_VERSION,
+        ...byVersion(),
+        [HELD_VERSION]: {
+          modelVersionId: HELD_VERSION,
           images: [image(1, NsfwLevel.X), image(2, NsfwLevel.PG), image(3, NsfwLevel.PG13)],
         },
       },
-      { models: new Map([[OPEN_VERSION, { modelId: OPEN_MODEL }]]) }
+      { models }
     );
-    expect(ids(held[OPEN_VERSION])).toEqual([2]);
-    expect(redisMock.redis.get).not.toHaveBeenCalled();
+    // The held model keeps its cached PG|PG13 level; only the failed one drops to PG.
+    expect(ids(held[HELD_VERSION])).toEqual([2, 3]);
+    expect(ids(held[OPEN_VERSION])).toEqual([5]);
   });
 
   it('serves only PG images, without failing, when no settings read succeeds', async () => {
-    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
-    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    failSettingsReads();
     const held = await holdShowcaseImages(
       {
         [OPEN_VERSION]: {
@@ -192,8 +231,7 @@ describe('holdShowcaseImages', () => {
 
 describe('holdShowcaseImages for a caller that stores its result', () => {
   it('fails rather than serve PG only when no settings read succeeds', async () => {
-    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
-    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    failSettingsReads();
     await expect(
       holdShowcaseImages(
         { [OPEN_VERSION]: byVersion()[OPEN_VERSION] },
@@ -206,15 +244,7 @@ describe('holdShowcaseImages for a caller that stores its result', () => {
 describe('getHeldLevelsByPost', () => {
   it('fails rather than guess a level when the gallery settings cannot be read', async () => {
     // Only the gallery settings reads fail; the post and version lookups still resolve.
-    const settingsKey = /^model:gallery-settings:\d+$/;
-    redisMock.redis.mGet.mockImplementation(async (keys: string[]) => {
-      if (keys.some((key) => settingsKey.test(key))) throw new Error('redis down');
-      return keys.map(() => null);
-    });
-    redisMock.redis.get.mockImplementation(async (key: string) => {
-      if (settingsKey.test(key)) throw new Error('redis down');
-      return null;
-    });
+    failSettingsReads();
     dbMock.dbRead.post.findMany.mockResolvedValue([{ id: 1, modelVersionId: HELD_VERSION }]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
       { id: HELD_VERSION, modelId: HELD_MODEL },

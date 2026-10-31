@@ -50,14 +50,27 @@ const SFW = NsfwLevel.PG | NsfwLevel.PG13;
 const ABOVE = 1;
 const WITHIN = 2;
 
+/** Gallery settings reads answer from `entry` (null: a miss); other keys miss. */
+function galleryReads(entry: (key: string) => string | null) {
+  redisMock.redis.get.mockImplementation(async (key: string) =>
+    key.startsWith(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:`) ? entry(key) : null
+  );
+}
+function failGalleryReads() {
+  redisMock.redis.get.mockImplementation(async (key: string) => {
+    if (key.startsWith(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:`)) throw new Error('redis down');
+    return null;
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  redisMock.redis.mGet.mockImplementation(async (keys: string[]) =>
-    keys.map((key) =>
-      key === `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${HELD_MODEL}`
-        ? JSON.stringify({ level: SFW, hiddenTags: [], hiddenUsers: [], sfwHeld: true })
-        : null
-    )
+  // Reset, not just cleared: a failing implementation must not reach the next test.
+  redisMock.redis.get.mockReset();
+  galleryReads((key) =>
+    key === `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${HELD_MODEL}`
+      ? JSON.stringify({ level: SFW, hiddenTags: [], hiddenUsers: [], sfwHeld: true })
+      : null
   );
   // The showcase leads with an image above the held level, as a creator's often does.
   fetchShowcase.mockResolvedValue({
@@ -150,9 +163,7 @@ describe("a held model's showcase on paths that read it from the shared cache", 
   });
 
   it('serves an unflagged model whole on the same paths', async () => {
-    redisMock.redis.mGet.mockImplementation(async (keys: string[]) =>
-      keys.map(() => JSON.stringify({ none: true }))
-    );
+    galleryReads(() => JSON.stringify({ none: true }));
     const [model] = await getEligibleModels([VERSION]);
     expect(model.image?.id).toBe(ABOVE);
     const result = await imageRouter
@@ -216,8 +227,7 @@ describe("a held model's showcase on paths that read it from the shared cache", 
   });
 
   it('the models search document fails its batch, to be retried, when the gallery settings cannot be read', async () => {
-    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
-    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    failGalleryReads();
     const db = {
       model: { findMany: async () => [{ id: HELD_MODEL, modelVersions: [{ id: VERSION }] }] },
     };
@@ -233,8 +243,7 @@ describe("a held model's showcase on paths that read it from the shared cache", 
   });
 
   it('a live read of the search records serves PG images only when the gallery settings cannot be read', async () => {
-    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
-    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    failGalleryReads();
     dbMock.dbRead.model.findMany.mockResolvedValue([
       {
         id: HELD_MODEL,
@@ -255,7 +264,7 @@ describe("a held model's showcase on paths that read it from the shared cache", 
 
   it('reads gallery settings from the existing cache keys', async () => {
     await getEligibleModels([VERSION]);
-    expect(redisMock.redis.mGet).toHaveBeenCalledWith([`model:gallery-settings:${HELD_MODEL}`]);
+    expect(redisMock.redis.get).toHaveBeenCalledWith(`model:gallery-settings:${HELD_MODEL}`);
   });
 
   it('an auction card shows the first image within the held level, for every viewer', async () => {
