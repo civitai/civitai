@@ -82,6 +82,27 @@ describe("a collection review's image read", () => {
     expect(text).toMatch(/i\."needsReview" IS NULL OR i\."userId" = \$\d+/);
     expect(text).toMatch(/i\."blockedFor" IS NULL OR i\."userId" = \$\d+/);
     expect(text).toMatch(/i\."ingestion" != 'Blocked'/);
+    expect(text).toMatch(/p\."availability" != \$\d+/);
+  });
+
+  it('opens unrated images only inside the rating check, not past the other filters', async () => {
+    const { text } = await statementFor(
+      { id: REVIEWER },
+      { pending: true, reviewCollectionId: COLLECTION }
+    );
+    // The arm is the last OR inside the clause that starts with the rating check, so every other
+    // AND-ed filter still applies to the images it lets through.
+    const start = text.indexOf('((i."nsfwLevel" & $');
+    expect(start, 'no rating clause in the read').toBeGreaterThan(-1);
+    let depth = 0;
+    let end = start;
+    for (; end < text.length; end++) {
+      if (text[end] === '(') depth++;
+      else if (text[end] === ')' && --depth === 0) break;
+    }
+    const arm = text.indexOf('rci."collectionId"', start);
+    expect(arm, 'no review arm after the rating check').toBeGreaterThan(start);
+    expect(arm, 'the review arm sits outside the rating clause').toBeLessThan(end);
   });
 
   it('adds nothing for a read that names no collection under review', async () => {

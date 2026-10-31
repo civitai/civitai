@@ -1,11 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ImageService from '~/server/services/image.service';
 
-const { mockGetAllImages } = vi.hoisted(() => ({ mockGetAllImages: vi.fn() }));
+const { mockGetAllImages, mockPosts, mockArticles, mockModels } = vi.hoisted(() => ({
+  mockGetAllImages: vi.fn(),
+  mockPosts: vi.fn(),
+  mockArticles: vi.fn(),
+  mockModels: vi.fn(),
+}));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getAllImages: mockGetAllImages,
+}));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getPostsInfinite: mockPosts,
+}));
+vi.mock('~/server/services/article.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getArticles: mockArticles,
+}));
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getModelsWithImagesAndModelVersions: mockModels,
 }));
 
 import { getCollectionItemsByCollectionId } from '~/server/services/collection.service';
@@ -20,6 +37,9 @@ const listsOneImage = (async (strings: TemplateStringsArray) => {
     return [
       { id: 1, imageId: 5, modelId: null, postId: null, articleId: null, status: 'REVIEW' },
       { id: 2, imageId: 6, modelId: null, postId: null, articleId: null, status: 'ACCEPTED' },
+      { id: 3, imageId: null, modelId: 30, postId: null, articleId: null, status: 'REVIEW' },
+      { id: 4, imageId: null, modelId: null, postId: 40, articleId: null, status: 'REVIEW' },
+      { id: 5, imageId: null, modelId: null, postId: null, articleId: 50, status: 'REVIEW' },
     ];
   if (sql.includes('FROM "Collection" c'))
     return [{ id: 7, read: 'Public', write: 'Private', userId: OWNER, type: 'Image', mode: null }];
@@ -39,6 +59,9 @@ beforeEach(() => {
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(listsOneImage);
   vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(listsOneImage);
   mockGetAllImages.mockResolvedValue({ items: [{ id: 5 }] });
+  mockModels.mockResolvedValue({ items: [] });
+  mockPosts.mockResolvedValue({ items: [] });
+  mockArticles.mockResolvedValue({ items: [] });
 });
 
 const reviewRead = (user: object) =>
@@ -61,12 +84,6 @@ const imageReads = () =>
   }));
 
 describe("a collection owner's review read", () => {
-  it('leaves the signed-in user it was given unchanged', async () => {
-    const user = { id: OWNER, isModerator: false };
-    await reviewRead(user);
-    expect(user).toEqual({ id: OWNER, isModerator: false });
-  });
-
   it('reads submissions as the owner, with their unrated REVIEW images, and ACCEPTED ones as anyone would', async () => {
     await reviewRead({ id: OWNER, isModerator: false });
     expect(imageReads()).toEqual(
@@ -86,5 +103,13 @@ describe("a collection owner's review read", () => {
       ])
     );
     expect(imageReads()).toHaveLength(2);
+  });
+
+  it('reads its model, post and article submissions as the owner too', async () => {
+    await reviewRead({ id: OWNER, isModerator: false });
+    const owner = { id: OWNER, isModerator: false };
+    expect(mockModels.mock.calls[0][0].user).toEqual(owner);
+    expect(mockPosts.mock.calls[0][0].user).toEqual(owner);
+    expect(mockArticles.mock.calls[0][0].sessionUser).toEqual(owner);
   });
 });

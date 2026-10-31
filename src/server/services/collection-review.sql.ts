@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { imageReviewedSql } from '~/server/common/image-visibility';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 
@@ -19,7 +20,9 @@ import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma
  * - Article: `getArticles` requires Published with a publish date, and a finished scan.
  * - Model3D: no branch. The queue never selects `model3dId`, so it shows none of them.
  *
- * No browsing level has the Blocked bit: a Blocked-only target never hydrates, so it must not be counted either. Only images keep nsfwLevel 0 (`pending`).
+ * No browsing level includes the top level bit, so a target rated only at it never hydrates and is not
+ * counted either. Only images keep nsfwLevel 0 (`pending`); a rated image must also have passed the
+ * same ingestion check (`imageReviewedSql`) as any read of it.
  * The CASE order is hydration's: a row with two target columns is judged by the first one only.
  *
  * NOT mirrored: drops made after the SQL in hydration (a model with no published version or no
@@ -36,10 +39,7 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
       AND (rv_mm."mode" IS NULL OR rv_mm."mode" NOT IN (
         ${ModelModifier.Archived}::"ModelModifier", ${ModelModifier.TakenDown}::"ModelModifier"
       ))
-      AND EXISTS (
-        SELECT 1 FROM "Model" rv_m
-        WHERE rv_m.id = ci."modelId" AND rv_m."availability" != 'Private'::"Availability"
-      )
+      AND rv_mm."availability" != 'Private'::"Availability"
   )
   WHEN ci."postId" IS NOT NULL THEN EXISTS (
     SELECT 1 FROM "Post" rv_p
@@ -54,6 +54,7 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
     WHERE rv_i.id = ci."imageId"
       AND ((rv_i."nsfwLevel" & ${levels}) != 0 OR rv_i."nsfwLevel" = 0)
       AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
+      AND (rv_i."nsfwLevel" = 0 OR ${imageReviewedSql('rv_i')})
       AND rv_i."needsReview" IS NULL
       AND rv_i."ingestion" != 'Blocked'::"ImageIngestionStatus"
       AND rv_i."blockedFor" IS NULL
