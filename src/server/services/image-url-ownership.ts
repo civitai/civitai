@@ -342,12 +342,14 @@ export async function assertClientKeysIssuedToCaller({
     tooMany,
     issuedToOthers,
     unrecorded: remaining,
+    recordReadFailed,
     requestLogReadFailed,
   } = await keyIssuers(args);
   if (tooMany || issuedToOthers.length) throw imageUrlUnavailableError();
   if (!remaining.length) return;
 
-  if (now >= UNRECORDED_KEYS_ACCEPTED_UNTIL) {
+  // With neither store read, no key's issuee is known.
+  if (now >= UNRECORDED_KEYS_ACCEPTED_UNTIL || (recordReadFailed && requestLogReadFailed)) {
     uploadKeyOwnerCounter.inc({
       outcome: requestLogReadFailed ? 'request_log_unavailable' : 'unrecorded_refused',
     });

@@ -212,8 +212,33 @@ describe('assertClientKeysIssuedToCaller', () => {
         reason: 'request_log_unavailable',
       })
     );
+  });
+
+  it('refuses a key before the cutoff when neither the issue record nor the request log can be read', async () => {
+    holder.logDown = true;
     redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
-    expect(await outcome(KEY, BEFORE)).toBe('accepted');
+    const accepted = outcomeCount('request_log_unavailable_accepted');
+    const refused = outcomeCount('request_log_unavailable');
+
+    expect(await outcome(KEY, BEFORE)).toBe('refused');
+
+    expect(outcomeCount('request_log_unavailable_accepted')).toBe(accepted);
+    expect(outcomeCount('request_log_unavailable')).toBe(refused + 1);
+  });
+
+  it('refuses a key recorded to another user while the request log is down, beside an unrecorded one', async () => {
+    holder.logDown = true;
+    const OTHER_KEY = 'ff12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+    await recordUploadKeyOwner(OTHER_KEY, OTHER);
+    const refusal = await assertClientKeysIssuedToCaller({
+      urls: [KEY, OTHER_KEY],
+      userId: CALLER,
+      now: BEFORE,
+    }).then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(refusal).toBeInstanceOf(TRPCError);
   });
 
   it('refuses a key with no record after the cutoff when the upload request log cannot be read', async () => {
@@ -225,12 +250,24 @@ describe('assertClientKeysIssuedToCaller', () => {
     expect(await outcome(KEY, AFTER)).toBe('refused');
   });
 
-  it('tags no reason on a key accepted while the upload request log answered', async () => {
+  it('counts and logs an unrecorded key as such while the upload request log answers', async () => {
+    const counts = () =>
+      [
+        'unrecorded_accepted',
+        'unrecorded_refused',
+        'request_log_unavailable_accepted',
+        'request_log_unavailable',
+      ].map(outcomeCount);
+    const [accepted, refused, logAccepted, logRefused] = counts();
     loggingMock.logToAxiom.mockClear();
+
     expect(await outcome(KEY, BEFORE)).toBe('accepted');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
       expect.not.objectContaining({ reason: expect.anything() })
     );
+    expect(await outcome(KEY, AFTER)).toBe('refused');
+
+    expect(counts()).toEqual([accepted + 1, refused + 1, logAccepted, logRefused]);
   });
 
   it('logs why the upload request log could not be read', async () => {
