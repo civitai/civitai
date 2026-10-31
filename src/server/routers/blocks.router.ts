@@ -150,7 +150,9 @@ import {
   isAppBlocksAppReactionsEnabled,
   isAppBlocksEnabled,
   isAppBlocksPostCreationEnabled,
+  resolveViewerAudienceFloor,
 } from '~/server/services/app-blocks-flag';
+import { listingVisibleInStore } from '~/shared/utils/app-listing-visibility';
 import { rateLimit } from '~/server/middleware.trpc';
 // The SITE's reaction limits, imported rather than restated: the app wrapper shares them.
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
@@ -2020,6 +2022,56 @@ function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: n
       message: 'this app session belongs to a different account; reload the page to continue',
     });
   }
+}
+
+/**
+ * May this viewer read `blocks.getAppDetail` for this app block, as far as the backing
+ * LISTING's visibility level is concerned?
+ *
+ * 🔴 WHY IT EXISTS: `getAppDetail` reads `app_blocks` by id and never consulted the
+ * listing's level. Its only audience gate was `app-blocks-enabled`, which stood in for
+ * "the tester cohort" only while that flag was cohort-segmented; civitai/flipt-state#263
+ * widens it to everyone, after which any id-holder could read a testers-only or private
+ * app's detail.
+ *
+ * THE RULE, in order:
+ *   1. A MODERATOR is admitted (unchanged; server-stamped session flag).
+ *   2. The app's OWNER or an accepted COLLABORATOR is admitted, whatever the level — they
+ *      must be able to inspect their own app. ⚠️ This is WIDER than the store's own detail
+ *      read (`appListings.getAppDetail`), which applies the level to owners too. Deliberate:
+ *      this procedure backs `AppDetailsModal`, which an owner opens on their own app.
+ *   3. Everyone else: the block's canonical listing must be visible to their audience floor
+ *      under EXACTLY the predicate the store detail uses (`listingVisibleInStore`, the
+ *      app-layer twin of `listingLevelVisibilityFilter`). So `private` is refused to every
+ *      non-owner: "anyone with the link can still open it" is a promise about the RUN route,
+ *      which never reads the level — the store detail 404s a private listing too.
+ *   4. No listing at all → refused (fail closed: there is no level to admit anyone by).
+ *
+ * A refusal is surfaced by the caller as the SAME `NOT_FOUND` a missing app produces.
+ */
+async function appBlockDetailVisibleTo(
+  appBlockId: string,
+  user: SessionUser | undefined
+): Promise<boolean> {
+  if (user?.isModerator === true) return true;
+  if (user) {
+    const { resolveAppAccess } = await import('~/server/services/blocks/app-access.service');
+    const access = await resolveAppAccess(appBlockId, user.id);
+    if (access?.role) return true;
+  }
+  const listing = await dbRead.appListing.findFirst({
+    where: { appBlockId, revisionOfId: null },
+    select: { id: true, status: true },
+  });
+  if (!listing) return false;
+  const { readListingVisibility } = await import(
+    '~/server/services/blocks/app-listing-visibility.service'
+  );
+  const [level, floor] = await Promise.all([
+    readListingVisibility(listing.id, dbRead),
+    resolveViewerAudienceFloor({ user }),
+  ]);
+  return listingVisibleInStore({ status: listing.status, visibility: level.visibility, floor });
 }
 
 export const blocksRouter = router({
@@ -4249,6 +4301,11 @@ export const blocksRouter = router({
         isRedCapableRequest(ctx)
       );
       if (!detail) throw throwNotFoundError('App block not found');
+      // LISTING-VISIBILITY GATE: a testers-only / private app the viewer may not see is
+      // indistinguishable from a missing one. See `appBlockDetailVisibleTo`.
+      if (!(await appBlockDetailVisibleTo(input.appBlockId, ctx.user))) {
+        throw throwNotFoundError('App block not found');
+      }
       return detail;
     }),
 
