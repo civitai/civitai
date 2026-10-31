@@ -388,6 +388,15 @@ describe('assertGenerationInputsUsable', () => {
       'an orchestrator url carrying another url',
       `https://orchestration.civitai.com/v2/consumer/blobs/x?redirect=${encodeURIComponent(CDN())}`,
     ],
+    [
+      'an orchestrator url carrying a twice-encoded url',
+      `https://orchestration.civitai.com/v2/consumer/blobs/x?redirect=${encodeURIComponent(
+        encodeURIComponent(CDN())
+      )}`,
+    ],
+    ['a url with credentials', `https://u:p@image.civitai.com/x/${OWN_KEY}/original=true`],
+    ['a url with a tab', `https://image.civitai.com/x/\t${OWN_KEY}/original=true`],
+    ['a url with a backslash', `https://image.civitai.com\\x/${OWN_KEY}/original=true`],
   ])('refuses %s on every entry point', async (_, url) => {
     await givenImage({ userId: CALLER, url: OWN_KEY });
     for (const entry of [
@@ -409,6 +418,26 @@ describe('assertGenerationInputsUsable', () => {
       expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
   });
 
+  it('accepts an orchestrator blob whose signature is percent-encoded', async () => {
+    const signed =
+      'https://orchestration.civitai.com/v2/consumer/blobs/ABC.jpeg?sig=a%2Bb%2Fc%3D&exp=2026-11-01T00%3A00%3A00Z';
+    expect(await gate([signed])).toBe('accepted');
+  });
+
+  it('treats a host that only ends in a civitai name as external, not ours', async () => {
+    expect(await gate(['https://notcivitai.com/a.png'], 'generateFromGraph')).toBe('accepted');
+    expect(await gate(['https://evil.civitai.com/a.png'], 'generateFromGraph')).toBe('refused');
+  });
+
+  it('refuses an image stored under its full url, given as that url', async () => {
+    await givenImage({ url: CDN() });
+    expect(await gate([CDN()])).toBe('accepted');
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'moderated'`);
+    expect(await gate([CDN()])).toBe('refused');
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = NULL; UPDATE "Post" SET availability = 'Private'`);
+    expect(await gate([CDN()])).toBe('refused');
+  });
+
   it('allows an external host on the graph paths until the flag is on', async () => {
     for (const entry of ['generateFromGraph', 'whatIfFromGraph'] as const) {
       holder.refuseExternal = false;
@@ -423,6 +452,7 @@ describe('generationInputUrlsIn', () => {
   it('collects whole urls and keys at any depth, and not text that only contains one', () => {
     const input = {
       prompt: 'a cat, see https://example.com/cat.png for style',
+      negativePrompt: 'https://example.com is not the style',
       resources: [{ air: 'urn:air:sdxl:checkpoint:civitai:1@2' }],
       images: [{ url: `https://image.civitai.com/x/${KEY}/original=true`, width: 1 }],
       controlNets: [{ image: { url: KEY } }],
