@@ -150,6 +150,7 @@ import {
   restoreModelById,
   setModelMinor,
   setModelSfwOnly,
+  heldGalleryViewer,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
   toggleLockModel,
@@ -692,6 +693,7 @@ export const getModelsInfiniteHandler = async ({
       // model.getAll never edge-caches a signed-in response (skipEdgeCache).
       eventDecorationViewer: ctx.user,
       coverage: await coverageAudience(ctx.user ?? undefined),
+      heldViewer: heldGalleryViewer(ctx),
     };
 
     // Hot with a base-model filter leads with the official checkpoints for that base. They are

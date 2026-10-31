@@ -212,6 +212,7 @@ import {
   fetchThroughCache,
 } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
@@ -1799,9 +1800,12 @@ export const getModelsWithImagesAndModelVersions = async ({
   onlyModelIds,
   excludeModelIds,
   coverage,
+  heldViewer,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  /** Who sees a held model's showcase whole if they own it or moderate; see `holdShowcaseImages`. */
+  heldViewer?: HeldGalleryViewer;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
   // routes whose response is never cached for another viewer.
   eventDecorationViewer?: EventViewer;
@@ -1879,6 +1883,9 @@ export const getModelsWithImagesAndModelVersions = async ({
   }
 
   const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
+  const heldLevels = heldViewer?.isModerator
+    ? new Map<number, number>()
+    : await getHeldLevelsByModel(items.map((model) => model.id));
   const coverImages = await getCoverImages({
     covers: items.map((model) => ({
       modelId: model.id,
@@ -1940,10 +1947,17 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!version) {
           return null;
         }
-        const versionImages = imagesForFace(
-          hoistCoverImage(modelVersionImages[version.id]?.images ?? [], coverImages.get(model.id)),
-          model,
-          showSfwFace
+        // After the hoist: a chosen cover above the held level is held like any other image.
+        const versionImages = withinHeldLevel(
+          imagesForFace(
+            hoistCoverImage(
+              modelVersionImages[version.id]?.images ?? [],
+              coverImages.get(model.id)
+            ),
+            model,
+            showSfwFace
+          ),
+          model.user.id === heldViewer?.id ? undefined : heldLevels.get(model.id)
         );
         const filteredImages = excludedTagIds
           ? versionImages.filter(
@@ -5785,24 +5799,31 @@ const addReciprocalAssociations = async ({
 };
 // #endregion
 
-export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
-  const cacheKey = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
+const gallerySettingsKey = (id: number) => `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
 
-  const cachedSettings = await redis.get(cacheKey);
-  if (cachedSettings) {
-    type Cached =
-      | (Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
-          creatorHiddenUserIds?: number[];
-          sfwHeld?: boolean;
-        })
-      | { none: true };
-    // A build before the hold cached a bare null.
-    const cached = fromJson<Cached>(cachedSettings) as Cached | null;
-    // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
-    // unflagged model with no settings from a flagged one.
-    if (cached && 'none' in cached) return null;
-    if (cached?.sfwHeld !== undefined) return cached;
-  }
+/** A cached gallery settings entry; undefined when there is none or it must be rebuilt. */
+function readCachedGallerySettings(cachedSettings: string | null | undefined) {
+  if (!cachedSettings) return undefined;
+  type Cached =
+    | (Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
+        creatorHiddenUserIds?: number[];
+        sfwHeld?: boolean;
+      })
+    | { none: true };
+  // A build before the hold cached a bare null.
+  const cached = fromJson<Cached>(cachedSettings) as Cached | null;
+  // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
+  // unflagged model with no settings from a flagged one.
+  if (cached && 'none' in cached) return null;
+  if (cached?.sfwHeld !== undefined) return cached;
+  return undefined;
+}
+
+export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
+  const cacheKey = gallerySettingsKey(id);
+
+  const cached = readCachedGallerySettings(await redis.get(cacheKey));
+  if (cached !== undefined) return cached;
 
   const model = await getModel({
     id: id,
@@ -5974,14 +5995,7 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   if (!versionIds.length) return held;
   const versions = await versionModelCache().fetch(versionIds);
 
-  const levels = new Map<number, number>();
-  await limitConcurrency(
-    uniq(Object.values(versions).map((version) => version.modelId)).map((id) => async () => {
-      const gallery = await getGallerySettingsByModelId({ id });
-      if (gallery?.sfwHeld) levels.set(id, gallery.level);
-    }),
-    5
-  );
+  const levels = await getHeldLevelsByModel(Object.values(versions).map((v) => v.modelId));
   if (!levels.size) return held;
   const owners = await dbRead.model.findMany({
     where: { id: { in: [...levels.keys()] } },
@@ -5996,6 +6010,119 @@ export async function getHeldLevelsByPost(postIds: number[]) {
     if (modelId && level !== undefined) held.set(id, { level, ownerId: ownerOf.get(modelId) });
   }
   return held;
+}
+
+/** For each minor or SFW-only model, the level its gallery is held at. A model not held is absent. */
+export async function getHeldLevelsByModel(modelIds: number[]) {
+  const levels = new Map<number, number>();
+  const ids = uniq(modelIds);
+  if (!ids.length) return levels;
+  // One round trip for the cached entries: a feed page names up to a hundred models.
+  const cached = await redis
+    .mGet<string>(ids.map(gallerySettingsKey))
+    .catch(() => ids.map(() => null));
+  const misses: number[] = [];
+  ids.forEach((id, i) => {
+    const gallery = readCachedGallerySettings(cached[i]);
+    if (gallery === undefined) misses.push(id);
+    else if (gallery?.sfwHeld) levels.set(id, gallery.level);
+  });
+  await limitConcurrency(
+    misses.map((id) => async () => {
+      const gallery = await getGallerySettingsByModelId({ id });
+      if (gallery?.sfwHeld) levels.set(id, gallery.level);
+    }),
+    5
+  );
+  return levels;
+}
+
+/**
+ * Who sees a held model's showcase whole, when they own it or moderate: the signed-in user on a
+ * session or a full-access key. An app or scoped key acting for them is held like anyone else.
+ */
+export function heldGalleryViewer(
+  ctx: Parameters<typeof isSessionOrFullUserKey>[0] & {
+    user?: { id: number; isModerator?: boolean | null } | null;
+  }
+): HeldGalleryViewer | undefined {
+  if (!ctx.user || !isSessionOrFullUserKey(ctx)) return undefined;
+  return { id: ctx.user.id, isModerator: !!ctx.user.isModerator };
+}
+export type HeldGalleryViewer = { id: number; isModerator: boolean };
+
+/** The images a held gallery level allows; all of them when nothing holds the model. */
+export function withinHeldLevel<T extends { nsfwLevel: number }>(
+  images: T[],
+  level: number | undefined
+) {
+  return level === undefined
+    ? images
+    : images.filter((image) => Flags.intersects(level, image.nsfwLevel));
+}
+
+/**
+ * Showcase images by model version, leaving out those above the held level of each version's minor
+ * or SFW-only model. The viewer sees a model whole when they moderate or own it; pass none where no
+ * one is exempt (public REST, the search index, results shared between viewers). `models` maps a
+ * version to its model and owner where the caller already has them. Never mutates `byVersion`: its
+ * entries can be the shared cache's.
+ */
+export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  {
+    viewer,
+    models,
+  }: {
+    viewer?: HeldGalleryViewer;
+    models?: Map<number, { modelId: number; ownerId?: number }>;
+  } = {}
+): Promise<Record<number, E>> {
+  const versionIds = Object.keys(byVersion).map(Number);
+  if (!versionIds.length || viewer?.isModerator) return byVersion;
+
+  const modelOf = new Map<number, { modelId: number; ownerId?: number }>();
+  const unmapped = versionIds.filter((id) => {
+    const model = models?.get(id);
+    if (model) modelOf.set(id, model);
+    return !model;
+  });
+  if (unmapped.length) {
+    const versions = await versionModelCache().fetch(unmapped);
+    for (const version of Object.values(versions))
+      modelOf.set(version.id, { modelId: version.modelId });
+  }
+
+  const levels = await getHeldLevelsByModel([...modelOf.values()].map((m) => m.modelId));
+  const owners = new Map<number, number>();
+  if (viewer && levels.size) {
+    const unknown = [...modelOf.values()].filter(
+      (m) => levels.has(m.modelId) && m.ownerId === undefined
+    );
+    if (unknown.length) {
+      const rows = await dbRead.model.findMany({
+        where: { id: { in: uniq(unknown.map((m) => m.modelId)) } },
+        select: { id: true, userId: true },
+      });
+      for (const row of rows) owners.set(row.id, row.userId);
+    }
+  }
+
+  const result: Record<number, E> = {};
+  for (const versionId of versionIds) {
+    const entry = byVersion[versionId];
+    const model = modelOf.get(versionId);
+    // A version not yet on the replica has no model to clear it: none of its images is served.
+    if (!model) {
+      result[versionId] = { ...entry, images: [] };
+      continue;
+    }
+    const ownerId = model.ownerId ?? owners.get(model.modelId);
+    const level = viewer && ownerId === viewer.id ? undefined : levels.get(model.modelId);
+    result[versionId] =
+      level === undefined ? entry : { ...entry, images: withinHeldLevel(entry.images, level) };
+  }
+  return result;
 }
 
 /**
@@ -6143,8 +6270,14 @@ export async function getModelsWithVersions({
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
-  // Let's swap to the new cache based method for now...
-  const images = await getImagesForModelVersionCache(modelVersionIds);
+  // Held for everyone: only the public REST API reads this, and its responses are cached by URL.
+  const images = await holdShowcaseImages(await getImagesForModelVersionCache(modelVersionIds), {
+    models: new Map(
+      items.flatMap((model) =>
+        model.modelVersions.map((version) => [version.id, { modelId: model.id }] as const)
+      )
+    ),
+  });
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,
