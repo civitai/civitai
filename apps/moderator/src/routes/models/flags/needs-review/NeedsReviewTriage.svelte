@@ -163,7 +163,7 @@
       : result.data?.resolved === 'closed'
       ? 'Already flagged'
       : result.data?.resolved === 'keptMinor'
-      ? 'Flag undone; stays minor (minor before the flag)'
+      ? 'Resolved; the model stays minor'
       : outcome}
   pageNumber={data.page}
   hasMore={data.hasMore}

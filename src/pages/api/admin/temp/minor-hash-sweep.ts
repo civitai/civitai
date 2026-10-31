@@ -14,8 +14,9 @@
  *             'rollback' undoes prior flags using the snapshot setModelMinor records,
  *                        restoring nsfw/sfwOnly/gallery level/lockedProperties and
  *                        previously-minor images. A model that was minor before the
- *                        flag stays minor (counted in `keptMinor`); only the flag's
- *                        own locks are undone. Without `modelIds` it covers only
+ *                        flag stays minor (counted in `keptMinor`), with its earlier
+ *                        state; one kept on an earlier minor lock also keeps the
+ *                        flag's locks. Without `modelIds` it covers only
  *                        AUTOMATED flags, and skips any a moderator has since
  *                        confirmed by hand (see rollbackMinorHashAutoFlags).
  *   modelIds - rollback only. Comma-separated model ids for a targeted undo, e.g.
