@@ -889,12 +889,14 @@ describe('submitVersion', () => {
       _count: { screenshots: 0 },
       ...over,
     });
-    const answer = (which: 'draft' | 'live', row: Record<string, unknown>) =>
+    const answer = (which: 'draft' | 'live' | 'reset', row: Record<string, unknown>) =>
       mockDbWrite.appListing.findFirst.mockImplementation(
         async (args: { where?: Record<string, unknown> }) => {
           const w = args?.where ?? {};
           if (which === 'draft' && w.status === 'draft' && w.appBlockId === null) return row;
           if (which === 'live' && w.appBlockId === 'apb_existing' && w.status === undefined)
+            return row;
+          if (which === 'reset' && w.appBlockId === 'apb_existing' && w.status === 'pending')
             return row;
           return null;
         }
@@ -990,6 +992,21 @@ describe('submitVersion', () => {
         nextStep: null,
       });
       expect(result.listing!.problems.map((p) => p.code)).toContain('missing-icon');
+    });
+
+    it('🔴 an UPDATE whose listing a moderator RESET (pending, art-less) is NOT blocked — resets are exempt', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(42);
+      answer('reset', listingRow({ status: 'pending', coverId: 83 }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle({ version: '0.2.0' }),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toMatchObject({
+        approvalBlocked: false,
+        missing: ['icon'],
+        nextStep: null,
+      });
     });
 
     it('a failing readiness read never fails the submit (listing: null)', async () => {

@@ -322,7 +322,9 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
       ).toEqual(['icon', 'cover']);
     });
 
-    it('🔴 a reset listing with an icon but no cover: Approve waits on the cover', async () => {
+    it('🔴 a moderator-RESET listing with no cover is exempt: Approve is NOT disabled', async () => {
+      // Only a first version's draft (never live) is gated; a reset restores a listing that
+      // already went live (operator decision 2026-10-31).
       expect(
         await floorMissingFor({
           resets: [
@@ -335,7 +337,7 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
             },
           ],
         })
-      ).toEqual(['cover']);
+      ).toEqual([]);
     });
 
     it('a draft with both: nothing missing', async () => {

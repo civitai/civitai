@@ -767,12 +767,41 @@ describe('approveRequest — on-site publish floor (icon + cover)', () => {
     await expectRefusedBeforeAnyWrite('icon');
   });
 
-  it('🔴 REFUSES a reset re-approve (pending → approved restore) whose listing lost its cover', async () => {
-    // The restore is a PUBLISH too: a mod-reset listing is owner-editable while pending.
+  it('🔴 a moderator RESET re-approve of an art-less listing is EXEMPT: it restores the listing AND un-suspends the app', async () => {
+    // Operator decision 2026-10-31: the floor gates a listing's FIRST go-live (a draft that was
+    // never live). A mod reset (`resetOnsiteListingToPending`) bounces a listing that already
+    // went live and suspends its app; its re-approve must restore both even without art —
+    // otherwise a pre-rule art-less listing reset by a moderator stays pending and its app
+    // stays suspended until the developer adds art.
     db.write.appListing.findFirst.mockImplementation(
-      answer('reset', { id: 'apl_reset_bare', iconId: 53, coverId: null })
+      answer('reset', { id: 'apl_reset_bare', iconId: 53, coverId: null, contentRating: 'pg' })
     );
-    await expectRefusedBeforeAnyWrite('cover');
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+    // The restore (pending → approved) ran…
+    const restore = db.write.appListing.updateMany.mock.calls.find((c) => {
+      const a = c[0] as { where?: Record<string, unknown>; data?: Record<string, unknown> };
+      return a?.where?.status === 'pending' && a?.data?.status === 'approved';
+    });
+    expect(restore).toBeDefined();
+    // …and the app was un-suspended.
+    expect(db.write.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apb_1', status: 'suspended' },
+      data: { status: 'approved' },
+    });
+  });
+
+  it('a reset re-approve with NO icon and NO cover is exempt too', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('reset', { id: 'apl_reset_none', iconId: null, coverId: null, contentRating: 'g' })
+    );
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1' });
   });
 
   it('ALLOWS the reset restore when the listing has both', async () => {
