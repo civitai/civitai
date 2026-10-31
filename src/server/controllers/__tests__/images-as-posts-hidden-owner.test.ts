@@ -59,6 +59,9 @@ describe('getImagesAsPostsInfiniteHandler with hidden images', () => {
   it("lists a model's hidden images for its owner", async () => {
     await run({ user: { id: OWNER } });
 
+    expect(dbMock.dbRead.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1 } })
+    );
     expect(fetchedIds()[0]).toEqual([7, 8]);
   });
 
@@ -79,7 +82,16 @@ describe('getImagesAsPostsInfiniteHandler with hidden images', () => {
   ])('lists nothing for %s', async (_, user, subject) => {
     const result = await run({ user, subject });
 
-    expect(result.items).toEqual([]);
+    expect(result).toEqual({ nextCursor: undefined, items: [] });
+    expect(fetches).not.toHaveBeenCalled();
+  });
+
+  it('lists nothing when the model cannot be found', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(null as never);
+
+    const result = await run({ user: { id: 99 } });
+
+    expect(result).toEqual({ nextCursor: undefined, items: [] });
     expect(fetches).not.toHaveBeenCalled();
   });
 
@@ -88,5 +100,6 @@ describe('getImagesAsPostsInfiniteHandler with hidden images', () => {
 
     expect(fetches).toHaveBeenCalled();
     expect(fetchedIds()[0]).toBeUndefined();
+    expect(dbMock.dbRead.model.findUnique).not.toHaveBeenCalled();
   });
 });
