@@ -1749,6 +1749,25 @@ describe('resolveMinorFlagAppeal', () => {
     );
   });
 
+  it('logs a rollback that failed partway, and still unsets minor for the moderator', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { minorFlagSnapshot: { at: 'x', source: 'auto' } },
+    });
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      { ...rollbackRow(), prevMinor: false, ownerDeclaredMinor: false },
+    ]);
+    mockSetModelMinor.mockRejectedValueOnce(new Error('boom'));
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'minor-hash-rollback', modelId: 42, type: 'error' })
+    );
+    expect(mockSetModelMinor).toHaveBeenLastCalledWith({ id: 42, minor: false, userId: 7 });
+  });
+
   // Resolving last leaves a half-applied decision visible: the appeal stays open
   // rather than closing against a model nothing happened to.
   it('leaves the appeal open when the confirm write fails', async () => {
