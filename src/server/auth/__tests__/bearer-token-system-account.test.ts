@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as KeyGenerator from '~/server/utils/key-generator';
 
 vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
@@ -14,29 +14,13 @@ vi.mock('~/server/auth/session-client', () => ({ sessionClient: { getSessionUser
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
 
 const USER_ID = 5;
+const MODERATION = 900;
 const SYSTEM_META = { systemAccount: true };
 
-/** The primary's view of the key owner; the session copy below is clean unless a test says otherwise. */
-let owner: { isModerator: boolean; roles: string[] } | null;
-let access: { app: string; roles: string[] }[];
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  installFakeCacheRedis();
-  owner = { isModerator: false, roles: [] };
-  access = [
-    { app: 'moderator', roles: ['dispute-agent'] },
-    { app: 'creator-studio', roles: ['partner'] },
-  ];
-  getSessionUserById.mockResolvedValue({
-    id: USER_ID,
-    isModerator: false,
-    roles: [],
-    meta: SYSTEM_META,
-  });
+function keyOwnedBy(userId: number) {
   dbMock.dbWrite.apiKey.findFirst.mockResolvedValue({
     id: 77,
-    userId: USER_ID,
+    userId,
     tokenScope: 1,
     lastUsedAt: new Date(),
     buzzLimit: null,
@@ -44,71 +28,58 @@ beforeEach(() => {
     type: 'User',
     expiresAt: null,
   } as never);
-  dbMock.dbWrite.user.findUnique.mockImplementation(
-    (async () =>
-      owner && {
-        isModerator: owner.isModerator,
-        roles: owner.roles.map((role) => ({ role })),
-      }) as never
-  );
-  dbMock.dbWrite.appPageAccess.findFirst.mockImplementation(
-    (async ({ where }: { where: { app: string; roles: { hasSome: string[] } } }) =>
-      access.find(
-        (a) => a.app === where.app && a.roles.some((r) => where.roles.hasSome.includes(r))
-      ) ?? null) as never
-  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  installFakeCacheRedis();
+  setEnv({ CIVITAI_MODERATION_USER_ID: MODERATION });
+  getSessionUserById.mockResolvedValue({
+    id: USER_ID,
+    isModerator: false,
+    roles: [],
+    meta: SYSTEM_META,
+  });
+  keyOwnedBy(USER_ID);
 });
 
+const MODERATOR_ACCESS = [
+  ['the moderator flag', { isModerator: true, roles: [] }],
+  ['the moderator:admin role', { isModerator: false, roles: ['moderator:admin'] }],
+  ['a role a moderator-app page grants', { isModerator: false, roles: ['dispute-agent'] }],
+] as const;
+
 describe('a bearer key owned by a system account', () => {
-  it('authenticates while the account holds no moderator access', async () => {
+  it('resolves to the account while it holds no moderator access', async () => {
     const session = await getSessionFromBearerToken('k');
     expect(session?.user.id).toBe(USER_ID);
   });
 
-  it('authenticates with a role that only another app grants', async () => {
-    owner = { isModerator: false, roles: ['partner'] };
-    await expect(getSessionFromBearerToken('k')).resolves.not.toBeNull();
-  });
-
-  it.each([
-    ['the moderator flag', { isModerator: true, roles: [] }],
-    ['the moderator:admin role', { isModerator: false, roles: ['moderator:admin'] }],
-    ['a role a moderator-app page grants', { isModerator: false, roles: ['dispute-agent'] }],
-  ])('is refused once the account holds %s', async (_, held) => {
-    owner = held;
-    await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'system-account-bearer-refused', userId: USER_ID }),
-      'auth'
-    );
-  });
-
-  it.each([
-    ['the moderator flag', { isModerator: true, roles: [] }],
-    ['the moderator:admin role', { isModerator: false, roles: ['moderator:admin'] }],
-    ['a role a moderator-app page grants', { isModerator: false, roles: ['dispute-agent'] }],
-  ])('is refused while only the session copy still holds %s', async (_, held) => {
+  it.each(MODERATOR_ACCESS)('resolves to the account while it holds %s', async (_, held) => {
     getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
+    const session = await getSessionFromBearerToken('k');
+    expect(session?.user.id).toBe(USER_ID);
+  });
+
+  it('is refused once the account is banned', async () => {
+    getSessionUserById.mockResolvedValue({
+      id: USER_ID,
+      meta: SYSTEM_META,
+      isModerator: true,
+      roles: [],
+      bannedAt: new Date(),
+    });
     await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
   });
 
-  it('is refused when the account row is gone', async () => {
-    owner = null;
+  it('is refused when it is the shared moderation account', async () => {
+    keyOwnedBy(MODERATION);
+    getSessionUserById.mockResolvedValue({
+      id: MODERATION,
+      meta: SYSTEM_META,
+      isModerator: true,
+      roles: [],
+    });
     await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
-  });
-
-  it('is refused on a cached key row once access is granted', async () => {
-    await expect(getSessionFromBearerToken('k')).resolves.not.toBeNull();
-    owner = { isModerator: false, roles: ['dispute-agent'] };
-    await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
-    expect(dbMock.dbWrite.apiKey.findFirst).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('a bearer key owned by an ordinary account', () => {
-  it('authenticates a moderator without reading the account row', async () => {
-    getSessionUserById.mockResolvedValue({ id: USER_ID, isModerator: true, roles: [], meta: {} });
-    await expect(getSessionFromBearerToken('k')).resolves.not.toBeNull();
-    expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
 });
