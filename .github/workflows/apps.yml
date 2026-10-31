@@ -22,9 +22,10 @@ name: App suites
 #   scripts/ci/component-quarantine.mjs
 #       `vitest --project 'app:*'` loads the ROOT config (which imports these) before any app
 #       config, and its root-level sequencer applies to the whole run.
-#   scripts/queued-check*.mjs, scripts/ci/assert-workspace-suites-ran.mjs,
-#   scripts/ci/typecheck-apps.mjs, scripts/ci/assert-apps-paths-filter.mjs
-#       what the steps below run (`test:apps:run` is `node scripts/queued-check.mjs apps`).
+#   scripts/ci/assert-workspace-suites-ran.mjs, scripts/ci/typecheck-apps.mjs,
+#   scripts/ci/assert-apps-paths-filter.mjs, scripts/ci/app-suite-scope.mjs
+#       what the steps below run. (The test step calls vitest itself rather than
+#       `test:apps:run`/queued-check; see it.)
 #   scripts/generate-slim-schema.js, scripts/prisma-*-generator.mjs
 #       the root `postinstall` (`db:generate`) runs them during `pnpm install`, and they write
 #       the generated `@civitai/db-schema` sources most apps import.
@@ -40,9 +41,6 @@ name: App suites
 #
 # Not listed: `event-engine-common` and `.gitmodules`. Nothing under `apps/` imports the
 # submodule and the job's checkout does not fetch it, so a pin change cannot affect this job.
-#
-# Not listed on purpose: `scripts/test-unit-run.mjs`. queued-check only imports it when it
-# queues a run, and it never queues when `CI` is set.
 #
 # Nothing hangs when this skips: `main` and `release` have no required_status_checks (verified
 # 2026-10-29 via the branch-protection and rulesets APIs). If this check ever becomes required,
@@ -67,6 +65,16 @@ name: App suites
 #
 # Every commit on `main` gets a verdict whatever it touched. That is the backstop for a filter
 # entry that is missing: the break shows red on `main` right after the merge, instead of never.
+#
+# ── ON A PR, THE MODERATOR SUITE RUNS ONLY WHEN SOMETHING IT READS CHANGED ───────────────────
+#
+# It is most of this job's test time (937 s of ~1,110 s summed per-file time, 2026-10-31). The
+# `Scope app suites` step leaves it out of a pull_request run when every changed file sits in an
+# app or package it does not read, derived from the code each run (scripts/ci/app-suite-scope.mjs:
+# workspace dependencies and `@scope/name` imports, transitively). Every other app
+# always runs; any file outside `apps/` and `packages/` runs everything; push and dispatch runs
+# are never scoped. The suites ledger excuses a left-out suite only after listing the changed
+# files from git itself and re-deriving the skip, and fails if the suite ran anyway.
 on:
   pull_request:
     branches: [main, release]
@@ -87,11 +95,10 @@ on:
       - 'scripts/test-cache/sequencer.mjs'
       - 'scripts/test-cache/load-core.mjs'
       - 'scripts/ci/component-quarantine.mjs'
-      - 'scripts/queued-check.mjs'
-      - 'scripts/queued-check-rules.mjs'
       - 'scripts/ci/assert-workspace-suites-ran.mjs'
       - 'scripts/ci/typecheck-apps.mjs'
       - 'scripts/ci/assert-apps-paths-filter.mjs'
+      - 'scripts/ci/app-suite-scope.mjs'
       - 'scripts/generate-slim-schema.js'
       - 'scripts/prisma-enum-generator.mjs'
       - 'scripts/prisma-updated-at-generator.mjs'
@@ -157,7 +164,11 @@ jobs:
       # No `submodules: true`: nothing under `apps/` imports event-engine-common (the
       # out-of-tree scan in scripts/ci/assert-apps-paths-filter.mjs would list it if one did),
       # and it is not a pnpm workspace member, so neither the install nor the suites read it.
+      # Depth 2: on a pull_request the checkout is the PR's merge commit, and the scope step
+      # diffs it against its first parent (the base it merges into).
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
 
       - uses: pnpm/action-setup@v6
 
@@ -169,6 +180,12 @@ jobs:
       - name: Install
         id: install
         run: pnpm install --frozen-lockfile
+
+      # Which app suites this run selects. On a pull_request it may leave moderator out; on push
+      # and dispatch it always selects `app:*`. See the header and the script.
+      - name: Scope app suites
+        id: scope
+        run: node scripts/ci/app-suite-scope.mjs --out app-suite-scope.json
 
       # Deliberately ONE step driving a script, not one `pnpm --filter` step per app. Per-app
       # steps abort at the first red app, so a shared type change that breaks several of them
@@ -183,9 +200,20 @@ jobs:
       # `!cancelled()` so a red typecheck does not hide this verdict; gated on the install
       # rather than on the step above, because tests without `node_modules` would only restate
       # the install failure.
+      #
+      # `pnpm exec vitest run` rather than `pnpm run test:apps:run` (queued-check), which in CI is
+      # the same command with `--project app:*` fixed in front: vitest keeps a project when ANY
+      # `--project` pattern matches it, so that fixed pattern would make leaving one out
+      # impossible. The scope step's output is `--project=app:*` when nothing is left out. If the
+      # scope step fails, this does not run and the ledger below fails on the missing report.
+      # `set -f`: the arguments carry a `*` that must reach vitest, not the shell's globbing.
       - name: App unit tests
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: pnpm run test:apps:run --reporter=default --reporter=json --outputFile=apps-report.json
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
+        env:
+          VITEST_PROJECT_ARGS: ${{ steps.scope.outputs.vitest_args }}
+        run: |
+          set -f
+          pnpm exec vitest run $VITEST_PROJECT_ARGS --reporter=default --reporter=json --outputFile=apps-report.json
 
       # A green vitest run is a claim, not evidence, and this positive control earns its keep
       # harder here than for packages: the projects are named by hand (`app:auth`, ...), so an
@@ -194,7 +222,7 @@ jobs:
       # a red suite, which is the case it exists for.
       - name: Assert every app suite actually ran
         if: always()
-        run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
+        run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json
 
       # Re-derives what the `paths:` filter above must contain and fails on a missing or stale
       # entry. See the header and the script.
