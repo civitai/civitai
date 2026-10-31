@@ -621,7 +621,16 @@ describe('a url spelled so the input walk once missed it', () => {
       now: AFTER,
     }).then(
       () => 'accepted',
-      () => 'refused'
+      (e: unknown) => {
+        // Only the gate's own refusal counts; a crash is not a refusal.
+        if (
+          e instanceof TRPCError &&
+          e.code === 'BAD_REQUEST' &&
+          e.message === GENERATION_IMAGE_UNAVAILABLE_MESSAGE
+        )
+          return 'refused';
+        throw e;
+      }
     );
 
   it.each([
