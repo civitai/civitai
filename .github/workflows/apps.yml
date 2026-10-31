@@ -29,8 +29,10 @@ name: App suites
 #       the root `postinstall` (`db:generate`) runs them during `pnpm install`, and they write
 #       the generated `@civitai/db-schema` sources most apps import.
 #   src/components/Account/creator-score-copy.ts
-#       read by apps/creator-studio's creator-score-tips test (the one root `src/` file any app
-#       touches; it pins the app's copy against the main app's).
+#       read by apps/creator-studio's creator-score-tips test (it pins the app's copy against the
+#       main app's).
+#   src/server/utils/__tests__/redis-lua-harness.ts
+#       the real-Lua redis harness apps/auth's device tests run their scripts through.
 #   containers/notification-db/docker-init/**
 #       the DDL apps/notifications' behavioural test builds its database from.
 #   package.json
@@ -94,6 +96,7 @@ on:
       - 'scripts/prisma-enum-generator.mjs'
       - 'scripts/prisma-updated-at-generator.mjs'
       - 'src/components/Account/creator-score-copy.ts'
+      - 'src/server/utils/__tests__/redis-lua-harness.ts'
       - 'containers/notification-db/docker-init/**'
   push:
     branches: [main]
