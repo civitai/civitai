@@ -562,7 +562,13 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
       where: Record<string, unknown>;
       data: Record<string, unknown>;
     };
-    expect(arg.where).toEqual({ id: 'apl_draft', status: 'draft' });
+    // Status-guarded AND media-guarded: the write itself cannot publish an art-less draft.
+    expect(arg.where).toEqual({
+      id: 'apl_draft',
+      status: 'draft',
+      iconId: { not: null },
+      coverId: { not: null },
+    });
     expect(arg.data).toEqual({
       appBlockId: 'apb_1',
       status: 'approved',
@@ -791,5 +797,65 @@ describe('approveRequest — on-site publish floor (icon + cover)', () => {
       approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
     ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
     expect(scalarSyncCalls()).toHaveLength(1);
+  });
+});
+
+/**
+ * 🔴 THE CHECK-THEN-PUBLISH WINDOW. The floor is checked up front, but the owner can edit the
+ * draft until the transition writes. The transition's `where` requires both media columns, so
+ * an icon removed in between makes it match 0 rows — and that 0-count must refuse the approve
+ * exactly like the up-front check, not log-and-continue into a deploy with a stranded draft.
+ */
+describe('approveRequest — media removed between the floor check and the transition', () => {
+  it('🔴 refuses with the floor message when the guarded transition matches 0 rows because the icon is gone', async () => {
+    const forgejo = await import('~/server/services/blocks/forgejo.service');
+    // Call 1 (up-front publishTarget): both present. Every later read: icon gone.
+    const before = { id: 'apl_race', iconId: 91, coverId: 97 };
+    const afterEdit = { id: 'apl_race', iconId: null, coverId: 97 };
+    let draftReads = 0;
+    db.write.appListing.findFirst.mockImplementation(
+      async (args: { where?: Record<string, unknown> }) => {
+        const w = args?.where ?? {};
+        const isDraft = w.status === 'draft' && (w.appBlockId === null || w.id === 'apl_race');
+        if (!isDraft) return null;
+        draftReads += 1;
+        return draftReads === 1 ? before : afterEdit;
+      }
+    );
+    // The guarded write matches nothing: the row no longer has an icon.
+    db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })).rejects.toThrow(
+      "Cannot approve yet: the store listing this approve publishes has no icon. Every listing needs an icon and a cover before it goes live — the developer adds them on the listing's Media tab, then you can approve."
+    );
+    // Refused before the commit/build and before the request is finalised.
+    expect(forgejo.commitFiles).not.toHaveBeenCalled();
+    expect(db.write.appBlockPublishRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('a 0-row transition whose draft still has both (already approved / cleaned) stays a warning, not a refusal', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      async (args: { where?: Record<string, unknown> }) => {
+        const w = args?.where ?? {};
+        if (w.status === 'draft' && w.appBlockId === null)
+          return { id: 'apl_gone', iconId: 91, coverId: 97 };
+        // The re-read by id: the row is no longer a draft.
+        return null;
+      }
+    );
+    db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
+      expect(
+        warn.mock.calls.some((c) =>
+          String(c[0]).includes('draft→approved transition matched 0 rows')
+        )
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
