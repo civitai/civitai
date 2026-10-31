@@ -73,9 +73,29 @@ describe('queue-held-models-reindex', () => {
     expect(payload).toMatchObject({ landed: 2 });
   });
 
+  it('queues the ids in chunks of chunkSize, each id once', async () => {
+    dbMock.dbRead.model.findMany.mockResolvedValue([1, 2, 3, 4, 5, 6, 7].map((id) => ({ id })));
+    await call({ dryRun: 'false', chunkSize: '3' });
+    expect(
+      queueUpdate.mock.calls.map(([items]) => (items as { id: number }[]).map((x) => x.id))
+    ).toEqual([[1, 2, 3], [4, 5, 6], [7]]);
+  });
+
+  it('reads the queue without taking work from the scheduled sync', async () => {
+    await call({ dryRun: 'false' });
+    expect(getQueue).toHaveBeenCalledTimes(2);
+    for (const args of getQueue.mock.calls as unknown[][]) expect(args[2]).toBe(true);
+  });
+
   it('refuses a call without the token, and queues nothing', async () => {
     const { statusCode } = await call({ dryRun: 'false' }, 'wrong');
     expect(statusCode).toBe(401);
     expect(queueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a dry run with a missing token, and reads nothing', async () => {
+    const { statusCode } = await call({}, '');
+    expect(statusCode).toBe(401);
+    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
   });
 });

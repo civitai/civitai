@@ -1,4 +1,5 @@
 import { Flags } from '~/shared/utils/flags';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { getSponsoredModel } from '~/server/services/promotion.service';
 import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { Prisma } from '@prisma/client';
@@ -2370,8 +2371,19 @@ export const updateGallerySettingsHandler = async ({
     await bustModelGallerySettings([id]);
     // A held model's showcase is served at its gallery level, in its search document and REST body.
     if (held) {
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
       await bustPublicModelResponseCache(id);
+      // The settings are saved: a failed enqueue leaves the document to the next rewrite.
+      try {
+        await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'held-gallery-reindex-enqueue',
+          message: 'gallery settings saved; search reindex not queued',
+          modelId: id,
+          error: safeError(error),
+        }).catch(() => undefined);
+      }
     }
 
     return { ...updatedModel, gallerySettings };

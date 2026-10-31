@@ -124,6 +124,53 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     expect(await ids({ user: { id: OWNER } })).toEqual([ABOVE, WITHIN]);
   });
 
+  it("the version showcase procedure holds the owner's scoped key, and not their full-access key", async () => {
+    const ids = async (key: object) =>
+      (
+        await imageRouter
+          .createCaller({
+            user: { id: OWNER },
+            acceptableOrigin: true,
+            apiKeyId: 1,
+            apiKeyType: 'User',
+            req: { headers: {} },
+            res: { setHeader: () => undefined },
+            cache: { edgeTTL: 0 },
+            features: {},
+            track: { action: vi.fn(() => Promise.resolve(true)) },
+            ...key,
+          } as never)
+          .getImagesForModelVersion({ id: VERSION })
+      )[VERSION].images.map((image) => image.id);
+    expect(await ids({ tokenScope: TokenScope.MediaRead })).toEqual([WITHIN]);
+    expect(await ids({ tokenScope: TokenScope.Full, subject: { type: 'apiKey' } })).toEqual([
+      ABOVE,
+      WITHIN,
+    ]);
+  });
+
+  it('serves an unflagged model whole on the same paths', async () => {
+    redisMock.redis.mGet.mockImplementation(async (keys: string[]) =>
+      keys.map(() => JSON.stringify({ none: true }))
+    );
+    const [model] = await getEligibleModels([VERSION]);
+    expect(model.image?.id).toBe(ABOVE);
+    const result = await imageRouter
+      .createCaller({
+        user: undefined,
+        acceptableOrigin: true,
+        tokenScope: TokenScope.Full,
+        apiKeyId: null,
+        req: { headers: {} },
+        res: { setHeader: () => undefined },
+        cache: { edgeTTL: 0 },
+        features: {},
+        track: { action: vi.fn(() => Promise.resolve(true)) },
+      } as never)
+      .getImagesForModelVersion({ id: VERSION });
+    expect(result[VERSION].images.map((image) => image.id)).toEqual([ABOVE, WITHIN]);
+  });
+
   it("holds a viewer whose role changes while the request's showcase is being read", async () => {
     const user = { id: 99, isModerator: false };
     fetchShowcase.mockImplementationOnce(async () => {

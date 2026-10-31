@@ -44,7 +44,7 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
-import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { ModelSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -6029,8 +6029,20 @@ export async function getHeldLevelsByModel(modelIds: number[]) {
   });
   await limitConcurrency(
     misses.map((id) => async () => {
-      const gallery = await getGallerySettingsByModelId({ id });
-      if (gallery?.sfwHeld) levels.set(id, gallery.level);
+      try {
+        const gallery = await getGallerySettingsByModelId({ id });
+        if (gallery?.sfwHeld) levels.set(id, gallery.level);
+      } catch (error) {
+        // Unknown flags serve the narrowest level rather than fail the whole page.
+        levels.set(id, NsfwLevel.PG);
+        logToAxiom({
+          type: 'warning',
+          name: 'held-gallery-level-fallback',
+          message: 'gallery settings unavailable; serving PG only',
+          modelId: id,
+          error: safeError(error),
+        }).catch(() => undefined);
+      }
     }),
     5
   );

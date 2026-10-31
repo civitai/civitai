@@ -5,6 +5,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { getImageMetricsObject } from '~/server/services/image.service';
+import { getHeldLevelsByModel } from '~/server/services/model.service';
+import { Flags } from '~/shared/utils/flags';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { getChallengeDetail } from '~/server/services/challenge.service';
@@ -217,6 +219,8 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     needsReview: null,
     ingestion: 'Scanned' as const,
   };
+  // A minor or SFW-only model's showcase is served only within its gallery level.
+  const heldLevel = (await getHeldLevelsByModel([id])).get(id);
   const [metric, defaultImage, coverImage] = await Promise.all([
     dbRead.modelMetric
       .findUnique({
@@ -242,6 +246,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
         tosViolation: false,
         needsReview: null,
         ingestion: 'Scanned',
+        ...(heldLevel !== undefined ? { nsfwLevel: { in: Flags.instanceToArray(heldLevel) } } : {}),
       },
       select: ogImageSelect,
       orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],

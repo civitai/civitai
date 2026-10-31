@@ -129,6 +129,21 @@ describe('holdShowcaseImages', () => {
     redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
     expect(await uncached({ minor: true, sfwOnly: false })).toEqual([2]);
   });
+
+  it('serves only PG images, without failing, when no settings read succeeds', async () => {
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    const held = await holdShowcaseImages(
+      {
+        [OPEN_VERSION]: {
+          modelVersionId: OPEN_VERSION,
+          images: [image(1, NsfwLevel.X), image(2, NsfwLevel.PG), image(3, NsfwLevel.PG13)],
+        },
+      },
+      { models: new Map([[OPEN_VERSION, { modelId: OPEN_MODEL }]]) }
+    );
+    expect(ids(held[OPEN_VERSION])).toEqual([2]);
+  });
 });
 
 describe('holdShowcaseImages on a version it cannot place', () => {

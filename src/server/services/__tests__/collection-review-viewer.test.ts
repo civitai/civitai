@@ -109,6 +109,8 @@ describe("a collection owner's review read", () => {
     await reviewRead({ id: OWNER, isModerator: false });
     const owner = { id: OWNER, isModerator: false };
     expect(mockModels.mock.calls[0][0].user).toEqual(owner);
+    // A collection's models are shared between viewers, so their showcase is held for everyone.
+    expect(mockModels.mock.calls[0][0].heldViewer).toBeUndefined();
     expect(mockPosts.mock.calls[0][0].user).toEqual(owner);
     expect(mockArticles.mock.calls[0][0].sessionUser).toEqual(owner);
   });

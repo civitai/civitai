@@ -107,14 +107,20 @@ describe("a held model's gallery level change", () => {
 
   it('rebuilds its search document and drops its cached REST body', async () => {
     await change({ minor: false, sfwOnly: true });
-    expect(reindex).toHaveBeenCalledWith([expect.objectContaining({ id: 7 })]);
-    expect(bustRest).toHaveBeenCalledWith(7);
+    expect(reindex.mock.calls).toEqual([[[{ id: 7, action: 'Update' }]]]);
+    expect(bustRest.mock.calls).toEqual([[7]]);
   });
 
   it("does the same when a moderator changes it, the one change that can widen a held model's level", async () => {
     await change({ minor: true, sfwOnly: true }, true);
-    expect(reindex).toHaveBeenCalledWith([expect.objectContaining({ id: 7 })]);
-    expect(bustRest).toHaveBeenCalledWith(7);
+    expect(reindex.mock.calls).toEqual([[[{ id: 7, action: 'Update' }]]]);
+    expect(bustRest.mock.calls).toEqual([[7]]);
+  });
+
+  it('still saves and drops the REST body when the reindex cannot be queued', async () => {
+    reindex.mockRejectedValueOnce(new Error('queue down'));
+    await expect(change({ minor: true, sfwOnly: false })).resolves.toMatchObject({ id: 7 });
+    expect(bustRest.mock.calls).toEqual([[7]]);
   });
 
   it('leaves an unheld model to the caches that already follow its gallery', async () => {

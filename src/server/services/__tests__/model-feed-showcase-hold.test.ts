@@ -7,10 +7,16 @@ const VERSION_ID = 42;
 const MODEL_ID = 7;
 const OWNER = 5;
 
-const { mockGetFilesForModelVersionCache, mockCancellableQuery, mockShowcase } = vi.hoisted(() => ({
+const {
+  mockGetFilesForModelVersionCache,
+  mockCancellableQuery,
+  mockShowcase,
+  mockPendingShowcase,
+} = vi.hoisted(() => ({
   mockGetFilesForModelVersionCache: vi.fn(),
   mockCancellableQuery: vi.fn(),
   mockShowcase: vi.fn(),
+  mockPendingShowcase: vi.fn(),
 }));
 
 vi.mock('~/server/db/pgDb', () => ({
@@ -25,7 +31,7 @@ vi.mock('~/server/services/model-file.service', () => ({
 }));
 
 vi.mock('~/server/services/image.service', () => ({
-  getImagesForModelVersion: vi.fn(),
+  getImagesForModelVersion: mockPendingShowcase,
   getImagesForModelVersionCache: mockShowcase,
   queueImageSearchIndexUpdate: vi.fn(),
 }));
@@ -195,6 +201,24 @@ describe('the model feed on a held model', () => {
   it('shows the owner and moderators the whole showcase', async () => {
     expect(await imageIds({ id: OWNER, isModerator: false })).toEqual([ABOVE, WITHIN]);
     expect(await imageIds({ id: 99, isModerator: true })).toEqual([ABOVE, WITHIN]);
+  });
+
+  it('holds a pending feed read, which reads images outside the shared cache', async () => {
+    mockPendingShowcase.mockResolvedValue([image(ABOVE, NsfwLevel.X), image(WITHIN, NsfwLevel.PG)]);
+    const { items } = await getModelsWithImagesAndModelVersions({
+      input: { ...(input as object), pending: true } as never,
+      heldViewer: { id: 99, isModerator: false },
+      coverage: { next: false, member: true } as never,
+    });
+    expect(mockPendingShowcase).toHaveBeenCalled();
+    expect(mockShowcase).not.toHaveBeenCalled();
+    expect(items[0]?.images.map((i) => i.id)).toEqual([WITHIN]);
+  });
+
+  it('reads the shared showcase cache for the shown versions only, whoever is viewing', async () => {
+    await imageIds();
+    await imageIds({ id: OWNER, isModerator: false });
+    expect(mockShowcase.mock.calls).toEqual([[[VERSION_ID]], [[VERSION_ID]]]);
   });
 
   it('drops the model for another viewer when its whole showcase is above the held level', async () => {
