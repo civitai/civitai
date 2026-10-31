@@ -39,7 +39,7 @@ const COLLECTION = 7;
 
 async function statementFor(
   viewer: { id: number; isModerator?: boolean },
-  extra: { pending?: boolean; reviewCollectionId?: number }
+  extra: { pending?: boolean; reviewCollectionId?: number; userId?: number }
 ) {
   await getAllImages({
     limit: 20,
@@ -123,5 +123,25 @@ describe("a collection review's image read", () => {
     queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
     const accepted = await statementFor({ id: REVIEWER }, { pending: false });
     expect(accepted.text).toMatch(/i\."acceptableMinor" = FALSE/);
+  });
+
+  it("checks the collection's ownership and MANAGE against the viewer, not a profile being browsed", async () => {
+    const PROFILE = 999;
+    const ownerIds = async (viewer: number) => {
+      vi.clearAllMocks();
+      queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
+      const { text, values } = await statementFor(
+        { id: viewer },
+        { pending: true, reviewCollectionId: COLLECTION, userId: PROFILE }
+      );
+      const bound = (re: RegExp) => {
+        const m = text.match(re);
+        expect(m, `no ${re} in the review arm`).not.toBeNull();
+        return values[Number(m![1]) - 1];
+      };
+      return [bound(/rc\."userId" = \$(\d+)/), bound(/rcc\."userId" = \$(\d+)/)];
+    };
+    expect(await ownerIds(REVIEWER)).toEqual([REVIEWER, REVIEWER]);
+    expect(await ownerIds(REVIEWER + 1)).toEqual([REVIEWER + 1, REVIEWER + 1]);
   });
 });
