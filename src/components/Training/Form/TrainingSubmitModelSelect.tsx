@@ -32,6 +32,7 @@ import {
   trainingDetailsBaseModelsAcestep15Xl,
   trainingDetailsBaseModelsMing,
   trainingDetailsBaseModelsQwen21,
+  trainingDetailsBaseModelsFibo2,
   trainingDetailsBaseModelsYue2,
   trainingDetailsBaseModelsAnima,
   trainingDetailsBaseModelsBoogu,
@@ -522,6 +523,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsQwen21 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelFibo2 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsFibo2 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelYue2 =
     !!formBaseModel &&
     (trainingDetailsBaseModelsYue2 as ReadonlyArray<string>).includes(formBaseModel)
@@ -775,6 +781,17 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
+                  {features.fibo2Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="indigo"
+                      name="Fibo 2.0"
+                      value={baseModelFibo2}
+                      baseType="fibo2"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                   {features.ideogram4Training && (
                     <ModelSelector
                       selectedRun={selectedRun}
@@ -951,6 +968,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'hidream-o1' ||
                   selectedRun.baseType === 'ming' ||
                   selectedRun.baseType === 'qwen21' ||
+                  selectedRun.baseType === 'fibo2' ||
                   selectedRun.baseType === 'yue2' ||
                   selectedRun.baseType === 'anima' ||
                   selectedRun.baseType === 'boogu' ||

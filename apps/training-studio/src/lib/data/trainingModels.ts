@@ -1,4 +1,5 @@
 import type {
+  Fibo2AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
   MossImageBaseAiToolkitTrainingInput,
   MossImageSftAiToolkitTrainingInput,
@@ -37,6 +38,7 @@ import type {
  * (`disabled: true`) are intentionally omitted; the Flux.2 Edit entry is
  * commented out upstream. AIRs for AI-Toolkit-only ecosystems that upstream
  * flags as placeholders (boogu, ideogram4, ltx25, minimaxh3) are copied as-is.
+ * `fibo2` was added 2026-10-30.
  * `flux3klein` (2026-10-15) and `mossimage` (2026-10-16) train in the Training Studio
  * only: their source entries are `disabled: true`, there so the main app can publish
  * their runs, so a re-mirror must keep them here.
@@ -719,6 +721,25 @@ export const MODEL_CARDS: ModelCard[] = [
     ],
   },
   {
+    type: 'fibo2',
+    name: 'Fibo 2.0',
+    code: 'FB',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with Bria Fibo 2.0 Dev.',
+    flagKey: 'fibo2-training',
+    versions: [
+      {
+        key: 'fibo2',
+        label: 'Dev',
+        air: 'urn:air:fibo2:diffusion_model:huggingface:Comfy-Org/Fibo-2.0@main/diffusion_models/fibo2_dev_int8_convrot.safetensors',
+        baseModel: 'Fibo 2.0',
+        ecosystem: 'fibo2' satisfies Fibo2AiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
+  {
     type: 'yue2',
     name: 'YuE2',
     code: 'YE',
@@ -1294,6 +1315,18 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
+  fibo2: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
   yue2: {
     epochs: 5,
     unetLr: 1e-4,
@@ -1529,7 +1562,7 @@ export function paramsForVersion(card: ModelCard, versionKey: string): RunParamD
  * change. Callers resolve a "Custom…" run to a catalog version before asking, so the only unknown
  * keys are future unmirrored ones — those take the source's `otherwise` arm (2000).
  */
-const STEP_DEFAULT_3000 = new Set(['ltx2', 'ltx23', 'ltx25', 'boogu', 'minimaxh3']);
+const STEP_DEFAULT_3000 = new Set(['ltx2', 'ltx23', 'ltx25', 'boogu', 'minimaxh3', 'fibo2']);
 export function versionStepDefault(versionKey: string): number {
   return STEP_DEFAULT_3000.has(versionKey) ? 3000 : versionKey === 'anima' ? 1500 : 2000;
 }

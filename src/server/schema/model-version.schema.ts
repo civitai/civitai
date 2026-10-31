@@ -84,6 +84,7 @@ export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsQwen21 = ['qwen21'] as const;
+export const trainingDetailsBaseModelsFibo2 = ['fibo2'] as const;
 export const trainingDetailsBaseModelsMing = ['ming'] as const;
 export const trainingDetailsBaseModelsYue2 = ['yue2'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
@@ -114,6 +115,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsAnima,
   ...trainingDetailsBaseModelsMing,
   ...trainingDetailsBaseModelsQwen21,
+  ...trainingDetailsBaseModelsFibo2,
   ...trainingDetailsBaseModelsBoogu,
   ...trainingDetailsBaseModelsKrea2,
   ...trainingDetailsBaseModelsMageFlow,
