@@ -44,13 +44,15 @@ import {
 import { scriptedModel, toolResults } from '../core/test-support/scripted-model';
 import { readEvents, type ReadEntry } from '../core/test-support/sse';
 
-// Runs against a real Postgres (CI's `App unit tests` job provides one). Without
+// Runs against a real Postgres (CI's `App suites` workflow provides one). Without
 // ASSISTANT_RUNNER_TEST_DATABASE_URL the whole file skips.
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
 // In CI a lost URL must fail, not skip: the other suites would keep the app's job green.
 if (process.env.CI && !TEST_DATABASE_URL)
   throw new Error('ASSISTANT_RUNNER_TEST_DATABASE_URL is not set in CI');
 
+/** A step choosing the open app for the chat: a chat changes no app it neither made nor chose. */
+const CHOOSE_MY_APP = { calls: [{ toolName: 'use_open_app', input: { app: 'my-app' } }] };
 const LONG_TEXT = 'The quick brown fox jumps over the lazy dog, again and again. '.repeat(10);
 // TEST-ONLY keys standing in for civitai's: every start carries a grant signed with them.
 const keys = testKeys();
@@ -68,6 +70,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       calls.record++;
       return 'recorded';
     },
+    // Changes what the reply's tools are: the reply carries on with them built again.
+    reopen: async () => ({ reopenTools: true }),
     wait: async (_input, { abortSignal }) => {
       calls.wait++;
       const how = await untilAborted(abortSignal);
@@ -75,6 +79,16 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       return how;
     },
   });
+  const rebuildGate: {
+    hold?: Promise<void>;
+    waiting?: () => void;
+    /** While set, closing a reply's first set of tools (opened as it starts) waits on it. */
+    firstClose?: Promise<void>;
+    /** While set, each set closed, in order: `<conversation>:first` or `<conversation>:rebuilt`. */
+    closed?: string[];
+    /** Called as a reply's first set starts closing (the Stop reached the run). */
+    firstClosing?: () => void;
+  } = {};
   /** What `echo` was asked with: every user message's words, per request. */
   const echoed: string[][] = [];
   const scripts: Record<string, () => ReturnType<typeof scriptedModel>> = {
@@ -92,6 +106,14 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         return { text: `Heard: ${users.at(-1)!.split('\n\n').at(-1)}` };
       }),
     long: () => scriptedModel(() => ({ text: LONG_TEXT }), { chunkDelayMs: 1 }),
+    reopen: () =>
+      scriptedModel((prompt) =>
+        toolResults(prompt) === 0
+          ? { text: 'Making it. ', calls: [{ toolName: 'reopen', input: {} }] }
+          : toolResults(prompt) === 1
+          ? { text: 'Building. ', calls: [{ toolName: 'record', input: {} }] }
+          : { text: 'Built.' }
+      ),
     tools: () =>
       scriptedModel((prompt) =>
         toolResults(prompt) === 0
@@ -113,10 +135,13 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         }
         return { text: 'Recovered.' };
       }),
-    // App Assistant on the runner: a command that runs until the reply stops.
+    // App Assistant on the runner: a command that runs until the reply stops. Each sandbox model
+    // first chooses the open app, as a new chat must before it may change it (`use_open_app`).
     'sandbox-hang': () =>
       scriptedModel((prompt) =>
         toolResults(prompt) === 0
+          ? CHOOSE_MY_APP
+          : toolResults(prompt) === 1
           ? {
               text: 'Installing. ',
               calls: [{ toolName: 'sandbox__run_command', input: { command: 'hang' } }],
@@ -126,9 +151,10 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     // A read (meanwhile the user opens another app), then a write the paused app refuses.
     'sandbox-pause': () =>
       scriptedModel((prompt) => {
-        if (toolResults(prompt) === 0)
-          return { calls: [{ toolName: 'sandbox__read_file', input: { path: 'my-app/a.ts' } }] };
+        if (toolResults(prompt) === 0) return CHOOSE_MY_APP;
         if (toolResults(prompt) === 1)
+          return { calls: [{ toolName: 'sandbox__read_file', input: { path: 'my-app/a.ts' } }] };
+        if (toolResults(prompt) === 2)
           return {
             calls: [
               { toolName: 'sandbox__write_file', input: { path: 'my-app/a.ts', content: 'y' } },
@@ -139,7 +165,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     // A file written, then the model fails once: the retry carries on after the write.
     'sandbox-flaky': () =>
       scriptedModel((prompt) => {
-        if (toolResults(prompt) === 0)
+        if (toolResults(prompt) === 0) return CHOOSE_MY_APP;
+        if (toolResults(prompt) === 1)
           return {
             calls: [
               { toolName: 'sandbox__write_file', input: { path: 'my-app/a.ts', content: 'x' } },
@@ -248,7 +275,30 @@ describePg('assistant-runner on DBOS + Postgres', () => {
   };
   const deps: RunnerDeps = {
     models,
-    tools: tools.provider,
+    // A rebuild (`reopenTools`, with the reply's progress) waits on `rebuildGate.hold` while one is set.
+    tools: {
+      open: async (context) => {
+        const rebuilds = (context.history?.current.length ?? 0) > 0;
+        if (rebuildGate.hold && rebuilds) {
+          rebuildGate.waiting?.();
+          await rebuildGate.hold;
+        }
+        const opened = await tools.provider.open(context);
+        const held = rebuilds ? undefined : rebuildGate.firstClose;
+        const closed = rebuildGate.closed;
+        if (!held && !closed) return opened;
+        const which = `${context.conversationId}:${rebuilds ? 'rebuilt' : 'first'}`;
+        return {
+          ...opened,
+          close: async () => {
+            if (!rebuilds) rebuildGate.firstClosing?.();
+            await held;
+            await opened.close();
+            closed?.push(which);
+          },
+        };
+      },
+    },
     store,
     // Set in beforeAll, before the runner is made: it needs the test database.
     grants: undefined as unknown as RunGrants,
@@ -280,6 +330,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       service: runner,
       authenticator: bearerAuthenticator,
       grants: createTokenVerifier(keys.publicPem),
+      // The scripted models are named by what they do, not App Assistant's ids.
+      acceptsModel: () => true,
     });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address();
@@ -548,6 +600,75 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       startBody({ conversationId: 'c-stale', model: 'tools', seq: 3 })
     );
     expect(stale).toMatchObject({ status: 409, body: { error: 'stale-turn' } });
+  });
+
+  it('a reply whose tool says reopenTools carries on with its tools built again, and closes both sets', async () => {
+    const user = 'u-reopen';
+    const before = { ...tools.stats, record: calls.record };
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-reopen', model: 'reopen' })
+    );
+    const all = await events(start.body!.runId as string, user);
+    expect(ended(all).status).toBe('done');
+    expect(calls.record).toBe(before.record + 1);
+    // Opened at the start and again for the rebuild; each set closed once.
+    expect(tools.stats.opened).toBe(before.opened + 2);
+    expect(tools.stats.closed).toBe(before.closed + 2);
+  });
+
+  it('a Stop while the tools are being rebuilt closes the new set too', async () => {
+    const user = 'u-reopen-stop';
+    const before = { ...tools.stats };
+    let release!: () => void;
+    let releaseFirstClose!: () => void;
+    rebuildGate.hold = new Promise<void>((resolve) => (release = resolve));
+    // The first set's close (begun by the Stop) does not finish until the end: the new set must be
+    // closed by the rebuild itself, not left to the pass's end-of-run cleanup after it.
+    rebuildGate.firstClose = new Promise<void>((resolve) => (releaseFirstClose = resolve));
+    const closed: string[] = [];
+    rebuildGate.closed = closed;
+    const waiting = new Promise<void>((resolve) => (rebuildGate.waiting = resolve));
+    try {
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-reopen-stop', model: 'reopen' })
+      );
+      const runId = start.body!.runId as string;
+      await waiting;
+      const stopReached = new Promise<void>((resolve) => (rebuildGate.firstClosing = resolve));
+      expect((await post(`/runs/${runId}/stop`, as(user), { v: 1 })).status).toBe(202);
+      // Only once the Stop has reached the run (it began closing the first set) does the rebuild's
+      // open finish: the set it opens arrives after the Stop, and only the rebuild can close it.
+      await stopReached;
+      release();
+      // The set opened during the Stop is closed while the first set's close is still under way.
+      const closedBy = Date.now() + 5_000;
+      while (closed.length === 0 && Date.now() < closedBy)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(closed, 'the new set, closed by the rebuild itself').toEqual([
+        'c-reopen-stop:rebuilt',
+      ]);
+      releaseFirstClose();
+      expect(ended(await events(runId, user)).status).toBe('stopped');
+      expect(closed).toEqual(['c-reopen-stop:rebuilt', 'c-reopen-stop:first']);
+    } finally {
+      rebuildGate.hold = undefined;
+      rebuildGate.waiting = undefined;
+      rebuildGate.firstClose = undefined;
+      rebuildGate.closed = undefined;
+      rebuildGate.firstClosing = undefined;
+      release();
+      releaseFirstClose();
+    }
+    // Every set opened, the one opened during the Stop included, is closed.
+    expect(tools.stats.opened).toBe(before.opened + 2);
+    const deadline = Date.now() + 5_000;
+    while (tools.stats.closed < before.closed + 2 && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(tools.stats.closed).toBe(before.closed + 2);
   });
 
   it('stops a running reply gracefully: run-ended stopped, the tool aborted and closed, the head saved stopped', async () => {
@@ -1661,6 +1782,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         event.type === 'tool-reported' ? [event.result] : []
       );
       expect(reported).toMatchObject([
+        { name: 'use_open_app', output: { app: 'my-app' }, isError: false },
         { name: 'sandbox__write_file', output: 'wrote 1 bytes', isError: false },
       ]);
 

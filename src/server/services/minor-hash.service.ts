@@ -27,8 +27,10 @@ import {
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlags,
 } from '~/server/services/text-scan/flag-snapshot';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -883,7 +885,7 @@ export async function resolveMinorFlagAppeal({
   // Call-site import: poi-hash.service imports this module.
   const loadPoiHash = () => import('~/server/services/poi-hash.service');
   if (upheld.includes('poi') && poiHash)
-    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId });
+    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId, fromAppeal: true });
   const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
   if (upheldVerdicts.length)
     await stampModelTextScanAppeal({
@@ -1117,12 +1119,14 @@ export async function rollbackMinorHashAutoFlags({
             "lockedProperties" = ${row.prevLockedProperties}::text[],
             -- The snapshot goes, so the clear stamp is the only surviving record
             -- that a human said "not minor" — see notMinorHashClearedPredicate.
-            meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY})
+            meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY} - ${SYSTEM_NSFW_LOCK_META_KEY}::text)
               || jsonb_build_object(
                    ${MINOR_HASH_CLEARED_KEY}, jsonb_build_object('at', now())
                  )
         WHERE id = ${row.modelId}
       `;
+      // The restore above moves sfwOnly and the gallery level after setModelMinor's own bust.
+      await bustModelGallerySettings([row.modelId]);
       // Before the image re-mark: the reassert's side effects rewrite every image's minor flag.
       await reassertModelPoiRestrictions(row.modelId);
 

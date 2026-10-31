@@ -1,6 +1,5 @@
 import type { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import { v4 as uuid } from 'uuid';
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -80,7 +79,7 @@ async function notifyAnnouncementTargets(
       userIds: batch,
       category: NotificationCategory.System,
       type: 'system-announcement',
-      key: `system-announcement:targeted:${announcement.id}:${uuid()}`,
+      key: `system-announcement:targeted:${announcement.id}:${crypto.randomUUID()}`,
       details: { message: announcement.title, url },
     });
   }
@@ -321,8 +320,6 @@ export async function getDismissedAnnouncementIds({
   domain?: DomainColor;
 }) {
   const now = new Date();
-  // `kysely-hot-reads-5` on: the same ids through Kysely, on the same replica, with the same live
-  // window (`activeAnnouncementWhere(now)`: enabled, `now` inside the open-ended start/end window).
   if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
     return readDismissedAnnouncementIdsViaKysely((await loadKyselyDb()).kyselyRead, {
       userId,

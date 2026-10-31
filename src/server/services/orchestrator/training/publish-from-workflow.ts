@@ -20,6 +20,7 @@ import { dbWrite } from '~/server/db/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
+import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/training/studio-draft-filter';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -276,8 +277,10 @@ async function stampTrainingModerationApproved(modelId: number): Promise<void> {
  * publish; the from-orchestrator page finalizes those client-side off the returned `selectedEpoch`.
  *
  * Idempotent per workflow: the first call stamps `meta.trainingStudioWorkflowId`, and later calls for the
- * same workflow return the existing ids instead of creating a duplicate. `selectedEpoch` is null only on
- * that path — once the blobs expire the draft still resolves, but there is nothing left to finalize.
+ * same workflow return the newest existing ids instead of creating a duplicate, unless the owner
+ * deleted that draft (see `studioModelNotOwnerDeleted`), which starts a fresh one. `selectedEpoch` is
+ * null only on the reuse path — once the blobs expire the draft still resolves, but there is nothing
+ * left to finalize.
  *
  * Refuses (BAD_REQUEST) unless the run's training data is approved — on first entry and on re-entry.
  */
@@ -310,7 +313,11 @@ export async function createDraftModelFromWorkflow({
       userId: user.id,
       uploadType: ModelUploadType.Trained,
       meta: { path: ['trainingStudioWorkflowId'], equals: workflow.id },
+      // A fresh draft made past the owner's delete is re-stamped onto the run by from-orchestrator.
+      ...studioModelNotOwnerDeleted(user.id),
     },
+    // A restored draft and its replacement can both match; the run follows the newest.
+    orderBy: { id: 'desc' },
     select: {
       id: true,
       meta: true,

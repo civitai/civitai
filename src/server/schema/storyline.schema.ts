@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
+import { imageInputSchema } from '~/server/schema/image.schema';
 import {
   STORYLINE_CAPTION_MAX_LENGTH,
   STORYLINE_CEILING_LEVELS,
@@ -34,6 +35,11 @@ export const createStorylineSchema = z.object({
 });
 export type CreateStorylineInput = z.infer<typeof createStorylineSchema>;
 
+// Must not accept an image id: an upload is always a new image.
+const storylineUploadSchema = imageInputSchema.extend({
+  type: z.literal('image').default('image'),
+});
+
 export const updateStorylineSchema = z.object({
   id: z.number().int().positive(),
   title: titleSchema.optional(),
@@ -41,6 +47,9 @@ export const updateStorylineSchema = z.object({
   maxNsfwLevel: ceilingSchema.optional(),
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
   ...picksSchema,
+  /** A still image the caller just uploaded, to make theirs and pick as the cover or banner. */
+  coverUpload: storylineUploadSchema.optional(),
+  heroUpload: storylineUploadSchema.optional(),
 });
 export type UpdateStorylineInput = z.infer<typeof updateStorylineSchema>;
 
@@ -101,6 +110,10 @@ export const moveStorylineChapterSchema = z.object({
   afterChapterId: z.number().int().positive(),
 });
 
+export const removeStorylineChapterSchema = z.object({
+  chapterId: z.number().int().positive(),
+});
+
 export const linkStorylineChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
   chapterId: z.number().int().positive(),
@@ -119,8 +132,10 @@ export const getStorylineSchema = z.object({
   browsingLevel: z.number().int().min(0).optional(),
 });
 
+export const STORYLINE_FOR_POSTS_MAX = 100;
+
 export const getStorylinesForPostsSchema = z.object({
-  postIds: z.array(z.number().int().positive()).max(100),
+  postIds: z.array(z.number().int().positive()).max(STORYLINE_FOR_POSTS_MAX),
   browsingLevel: z.number().int().min(0).optional(),
 });
 
@@ -135,7 +150,7 @@ export const joinStorylineEarlyAccessSchema = z
   .default({});
 
 export const getStorylinesInfiniteSchema = z.object({
-  filter: z.enum(['all', 'ongoing', 'complete', 'open']).default('all'),
+  filter: z.enum(['all', 'ongoing', 'complete', 'open', 'mine']).default('all'),
   sort: z.enum(['newest', 'mostChapters']).default('newest'),
   cursor: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).default(20),

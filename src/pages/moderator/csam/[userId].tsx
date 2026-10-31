@@ -26,6 +26,13 @@ function ReportCsamUserPage() {
   const features = useFeatureFlags();
   const userId = userIds[0];
   const { imageId: imageIdParam, imageIds: imageIdsParam } = router.query;
+  const supplementalOf = z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .catch(undefined)
+    .parse(router.query.supplementalOf);
   const imageIds = useMemo(
     () => parseLinkedImageIds({ imageId: imageIdParam, imageIds: imageIdsParam }),
     [imageIdParam, imageIdsParam]
@@ -80,6 +87,7 @@ function ReportCsamUserPage() {
           onSuccess={handleStepperComplete}
           userId={user.id}
           type="Image"
+          supplementalOf={supplementalOf}
         />
       )}
     </CsamProvider>

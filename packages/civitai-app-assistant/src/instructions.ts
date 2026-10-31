@@ -55,16 +55,38 @@ export function assistantRules(runner: AssistantRunner = 'browser'): string {
   ].join('\n');
 }
 
+/**
+ * How an app reaches the App Store from here. The user has no CLI and cannot reach the sandbox's files,
+ * so the only way is the page's Submit for review button, which `submit_for_review` offers.
+ */
+export const SUBMIT_RULE =
+  '- When the user asks to submit or publish the app (for review, or for the App Store), call submit_for_review on its own in its step, once the app is ready; it is refused until it is, so do what a refusal says, then call it again. The user then sees the app’s name and version with a Submit for review button, and pressing it sends the app to moderator review as them; a moderator approves it before it goes live. Never submit it any other way: do not run civitai app submit, app package or any other CLI submit or sign-in, and never tell the user to use the Civitai CLI, to sign in to it, to download or upload a zip, or to go to /apps/submit.';
+
+/** Where real Civitai data comes from, and what to do when the app needs data Civitai cannot give. */
+export const DATA_RULE =
+  "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
+
+/**
+ * The viewer's own Buzz history. @civitai/sdk's BREAKING.md lists it under "No v1 route", which an
+ * assistant read as "no transaction history"; the host still answers it over the bridge.
+ */
+export const BUZZ_TRANSACTIONS_RULE =
+  "- The viewer's own Buzz transactions (a spending history, a daily spending chart) are available: import { getTransport } from '@civitai/sdk' and call getTransport().request('GET_BUZZ_TRANSACTIONS', { params: { accountType, type, start, end, cursor, limit } }), which resolves to { transactions, cursor } (each transaction has date, a Date or an ISO string, so read it with new Date(date); type; amount, always positive, spent or received as its fromAccountId and toAccountId say; and description. limit is 1-200, 50 by default; pass the returned cursor to get the next page). It needs the buzz:read:self scope in block.manifest.json. Each call reads one Buzz pool: accountType is 'yellow' unless you pass another ('blue', 'green'), so request every pool the app shows and combine them. BREAKING.md's \"No v1 route\" for GET_BUZZ_TRANSACTIONS means only that app.site has no route for it; this host request works.";
+
 const RULES_AFTER_SETUP = [
-  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
+  '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. It is your plan, not a question: go straight on to building it. Ask the user only when their request is ambiguous or needs a decision from them.',
   '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
   '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
   '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
   '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
   // A model left to guess required status 'succeeded' and read every priced estimate as unpriced.
   // Spelled out as well as named, so it holds on an @civitai/sdk without the helper.
-  "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.",
+  "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'. The price is a bare number of Buzz: write the word Buzz once beside it (`${price} Buzz`), never also inside a helper that formats it, or the app shows \"104 Buzz Buzz\".",
+  // A run grepped the SDK README for "models(", found nothing, and shipped invented models as real ones.
+  DATA_RULE,
+  BUZZ_TRANSACTIONS_RULE,
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+  SUBMIT_RULE,
 ];
 
 /** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */
@@ -188,7 +210,9 @@ export function buildAssistantInstructions({
     lines.push(
       `The open sandbox is ${sandbox.name}, for the app "${sandbox.app}". ${
         STATE_NOTE[sandbox.state]
-      } When the user asks for a different, new app, call create_app; the open one is paused and kept.${yourApps}`,
+      } When the user asks for a different, new app, call create_app; the open one is paused and kept. A chat changes only an app it made or chose with use_open_app (other changes are refused): choose the open app only when the user clearly asks to change it, and when unsure, ask "Make a new app, or replace ${
+        sandbox.app
+      }?" first.${yourApps}`,
       'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.',
       `Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). Always start it with sandbox__dev_server_start and exactly this command (the tool starts in /workspace, not in the project directory): cd <blockId> && ${DEV_SERVER_COMMAND}. Never start it with a plain npm run dev, or any command without CIVITAI_DEV_TUNNEL_HMR=1: that flag is what makes the dev server send the headers the preview needs to load (without it the preview is blank), and it also makes live reload work over the tunnel. Keep --host 0.0.0.0 --port ${DEV_SERVER_PORT} in any command you give it.`
     );

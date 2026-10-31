@@ -1,7 +1,8 @@
 import { env } from '$env/dynamic/private';
 import { convertHtml } from './html-to-text';
 
-// Support context for User Lookup (Retool's GetFreshdesk, ticket §1.2 "support context").
+// Freshdesk reads, GET-only: the User Lookup support context (Retool's GetFreshdesk, ticket §1.2) and the
+// /tickets search and detail reads. Writes live in `freshdesk-write.service.ts` with their own key.
 //
 // Retool called civitai.freshdesk.com/api/v2/search/contacts directly with a hardcoded key. Here the key
 // is FRESHDESK_API_KEY and the domain FRESHDESK_DOMAIN, matching the names the main app already uses.
@@ -45,9 +46,28 @@ export const freshdeskTicketUrl = (
 export const isFreshdeskId = (v: unknown): v is string =>
   typeof v === 'string' && /^\d{1,20}$/.test(v);
 
-type Unavailable = { status: 'unavailable'; reason: string };
+export type Unavailable = { status: 'unavailable'; reason: string };
 const unavailable = (reason: string): Unavailable => ({ status: 'unavailable', reason });
 const NOT_CONFIGURED = unavailable('Freshdesk is not configured.');
+
+/** The v2 API URL of `path` (starting with `/`) on the configured Freshdesk host. */
+export const freshdeskApiUrl = (path: string): string => `https://${freshdeskHost()}/api/v2${path}`;
+
+/** Freshdesk authenticates with the API key as the basic-auth username and any password. */
+export const basicAuthHeader = (key: string): string =>
+  `Basic ${Buffer.from(`${key}:X`).toString('base64')}`;
+
+/** Seconds a 429 asks the caller to wait, or null when it names none. */
+export function retryAfterSeconds(res: Response): number | null {
+  const wait = Number(res.headers.get('retry-after'));
+  return Number.isFinite(wait) && wait > 0 ? wait : null;
+}
+
+/** One sentence for a 429, shared by reads and writes. */
+export const rateLimitMessage = (res: Response): string => {
+  const wait = retryAfterSeconds(res);
+  return `Freshdesk's rate limit is reached${wait ? ` — retry in ${wait}s` : ' — retry shortly'}.`;
+};
 
 /**
  * One authenticated, READ-ONLY GET against the v2 API: the parsed body, or why it could not be had.
@@ -65,22 +85,13 @@ async function freshdeskGet(
 ): Promise<{ status: 'ok'; body: unknown } | Unavailable> {
   const key = env.FRESHDESK_API_KEY;
   if (!key) return NOT_CONFIGURED;
-  // Freshdesk authenticates with the API key as the basic-auth username and any password.
-  const auth = Buffer.from(`${key}:X`).toString('base64');
   try {
-    const res = await fetch(`https://${freshdeskHost()}/api/v2${path}`, {
-      headers: { authorization: `Basic ${auth}` },
+    const res = await fetch(freshdeskApiUrl(path), {
+      headers: { authorization: basicAuthHeader(key) },
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 404 && notFound !== null) return unavailable(notFound);
-    if (res.status === 429) {
-      const wait = Number(res.headers.get('retry-after'));
-      return unavailable(
-        `Freshdesk's rate limit is reached${
-          Number.isFinite(wait) && wait > 0 ? ` — try again in ${wait}s` : ''
-        }.`
-      );
-    }
+    if (res.status === 429) return unavailable(rateLimitMessage(res));
     if (!res.ok) {
       console.error(`[freshdesk] ${label} failed`, res.status);
       return unavailable(`Freshdesk returned ${res.status}.`);
@@ -109,26 +120,15 @@ type RawConversation = {
   id?: number | string;
   incoming?: boolean;
   private?: boolean;
+  body?: string | null;
   body_text?: string | null;
   created_at?: string | null;
 };
 
-/**
- * The public replies an AGENT sent on one ticket, newest first — what `/decisions` offers to pre-fill
- * a canonical answer from. READ-ONLY: this module never writes to Freshdesk.
- *
- * 🔴 `incoming === false && private === false`, BOTH STRICTLY. `incoming` true is the customer's own
- * message and `private` true is an internal note; a missing field is neither proven false, so it is
- * dropped — offering a customer's message or a note as "the agent's answer" is the failure to avoid.
- *
- * 🔴 `unavailable` IS NOT `none`. An unset key, a 404 (deleted or merged ticket), a 429 or a timeout
- * mean "could not ask"; reporting any of them as "no reply" tells the moderator the ticket was never
- * answered. Never throws. Runs on a moderator's click only.
- */
-export async function getPublicAgentReplies(ticketId: string): Promise<AgentRepliesResult> {
-  if (!env.FRESHDESK_API_KEY) return NOT_CONFIGURED;
-  if (!isFreshdeskId(ticketId)) return unavailable('Not a Freshdesk ticket id.');
+type ConversationsRead = { status: 'ok'; all: RawConversation[]; truncated: boolean } | Unavailable;
 
+/** Every conversation on a ticket up to the page cap. READ-ONLY; `truncated` when the cap stopped it. */
+async function readConversations(ticketId: string): Promise<ConversationsRead> {
   const all: RawConversation[] = [];
   let truncated = false;
   for (let page = 1; page <= CONVERSATION_PAGE_CAP; page++) {
@@ -146,6 +146,28 @@ export async function getPublicAgentReplies(ticketId: string): Promise<AgentRepl
     if (res.body.length < CONVERSATIONS_PER_PAGE) break;
     truncated = page === CONVERSATION_PAGE_CAP;
   }
+  return { status: 'ok', all, truncated };
+}
+
+/**
+ * The public replies an AGENT sent on one ticket, newest first — what `/decisions` offers to pre-fill
+ * a canonical answer from. READ-ONLY: this module never writes to Freshdesk.
+ *
+ * 🔴 `incoming === false && private === false`, BOTH STRICTLY. `incoming` true is the customer's own
+ * message and `private` true is an internal note; a missing field is neither proven false, so it is
+ * dropped — offering a customer's message or a note as "the agent's answer" is the failure to avoid.
+ *
+ * 🔴 `unavailable` IS NOT `none`. An unset key, a 404 (deleted or merged ticket), a 429 or a timeout
+ * mean "could not ask"; reporting any of them as "no reply" tells the moderator the ticket was never
+ * answered. Never throws. Runs on a moderator's click only.
+ */
+export async function getPublicAgentReplies(ticketId: string): Promise<AgentRepliesResult> {
+  if (!env.FRESHDESK_API_KEY) return NOT_CONFIGURED;
+  if (!isFreshdeskId(ticketId)) return unavailable('Not a Freshdesk ticket id.');
+
+  const read = await readConversations(ticketId);
+  if (read.status !== 'ok') return read;
+  const { all, truncated } = read;
 
   const replies = all
     .filter((c) => c.incoming === false && c.private === false)
@@ -206,6 +228,19 @@ export const DESCRIPTION_MAX_CHARS = 20_000;
 /** Shorter than the default: a page is waiting on it, and the stored excerpt is a fine fallback. */
 export const DESCRIPTION_TIMEOUT_MS = 4000;
 
+/** A ticket description as text, with the "empty because unread is not empty" distinction kept. */
+function describeHtml(html: string): TicketDescriptionResult {
+  const { text, complete } = convertHtml(html);
+  // 🔴 Empty because the converter stopped reading is NOT "no description" — say why instead.
+  if (!text)
+    return complete
+      ? { status: 'none' }
+      : unavailable("Freshdesk's formatted copy could not be read in full; open it in Freshdesk.");
+  return text.length > DESCRIPTION_MAX_CHARS
+    ? { status: 'found', text: text.slice(0, DESCRIPTION_MAX_CHARS), truncated: true }
+    : { status: 'found', text, truncated: !complete };
+}
+
 /**
  * A ticket's first message as Freshdesk formats it — its HTML `description`, converted to text here
  * because the router's stored excerpt comes from `description_text`, which Freshdesk flattens to one
@@ -229,13 +264,199 @@ export async function getTicketDescription(ticketId: string): Promise<TicketDesc
     console.error('[freshdesk] ticket: unexpected body');
     return unavailable('Freshdesk returned an unexpected response.');
   }
-  const { text, complete } = convertHtml(description);
-  // 🔴 Empty because the converter stopped reading is NOT "no description" — say why instead.
-  if (!text)
-    return complete
-      ? { status: 'none' }
-      : unavailable("Freshdesk's formatted copy could not be read in full; open it in Freshdesk.");
-  return text.length > DESCRIPTION_MAX_CHARS
-    ? { status: 'found', text: text.slice(0, DESCRIPTION_MAX_CHARS), truncated: true }
-    : { status: 'found', text, truncated: !complete };
+  return describeHtml(description);
+}
+
+/** Freshdesk's search page size and page ceiling: one expression yields at most 300 tickets. */
+export const SEARCH_PAGE_SIZE = 30;
+export const SEARCH_MAX_PAGES = 10;
+
+export type TicketSummary = {
+  id: string;
+  subject: string;
+  status: number;
+  cfFeature: string | null;
+  tags: string[];
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+type RawTicket = {
+  id?: number | string;
+  subject?: string | null;
+  status?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  custom_fields?: { cf_feature?: string | null } | null;
+  tags?: unknown;
+  description?: string | null;
+  requester?: { name?: string | null; email?: string | null } | null;
+  deleted?: boolean;
+  spam?: boolean;
+};
+
+function summarise(t: RawTicket): TicketSummary | null {
+  const id = t.id == null ? '' : String(t.id);
+  if (!isFreshdeskId(id) || typeof t.status !== 'number') return null;
+  const feature = t.custom_fields?.cf_feature;
+  return {
+    id,
+    subject: t.subject ?? '',
+    status: t.status,
+    cfFeature: typeof feature === 'string' && feature.trim() ? feature.trim() : null,
+    tags: Array.isArray(t.tags) ? t.tags.filter((x): x is string => typeof x === 'string') : [],
+    createdAt: t.created_at ?? null,
+    updatedAt: t.updated_at ?? null,
+  };
+}
+
+export type TicketSearchPage =
+  | { status: 'ok'; tickets: TicketSummary[]; total: number }
+  | Unavailable;
+
+/**
+ * One page (1-10) of `GET /search/tickets`. `expression` is Freshdesk's query language WITHOUT the
+ * wrapping double quotes, which are added here. Callers build it from constants, never from input.
+ */
+export async function searchTickets(expression: string, page: number): Promise<TicketSearchPage> {
+  const query = encodeURIComponent(`"${expression}"`);
+  const res = await freshdeskGet(`/search/tickets?query=${query}&page=${page}`, 'ticket search');
+  if (res.status !== 'ok') return res;
+  const body = res.body as { results?: unknown; total?: unknown } | null;
+  if (!body || !Array.isArray(body.results) || typeof body.total !== 'number') {
+    console.error('[freshdesk] ticket search: unexpected body');
+    return unavailable('Freshdesk returned an unexpected response.');
+  }
+  return {
+    status: 'ok',
+    tickets: (body.results as RawTicket[]).flatMap((t) => summarise(t) ?? []),
+    total: body.total,
+  };
+}
+
+/** Freshdesk's maximum page size for the changed-since list. */
+export const CHANGED_PAGE_SIZE = 100;
+
+/** A ticket of any status from the changed-since list. `gone`: deleted or spam. */
+export type ChangedTicket = TicketSummary & {
+  requesterName: string | null;
+  requesterEmail: string | null;
+  gone: boolean;
+};
+
+export type ChangedPage =
+  | { status: 'ok'; tickets: ChangedTicket[]; hasMore: boolean }
+  | Unavailable;
+
+/** One page of `GET /tickets?updated_since=`, newest change first, every status, with requester. Includes closed tickets, so it follows changes but cannot list live ones. */
+export async function listTicketsUpdatedSince(
+  sinceIso: string,
+  page: number
+): Promise<ChangedPage> {
+  const params = new URLSearchParams({
+    updated_since: sinceIso,
+    per_page: String(CHANGED_PAGE_SIZE),
+    page: String(page),
+    order_by: 'updated_at',
+    order_type: 'desc',
+    include: 'requester',
+  });
+  const res = await freshdeskGet(`/tickets?${params}`, 'ticket list');
+  if (res.status !== 'ok') return res;
+  if (!Array.isArray(res.body)) {
+    console.error('[freshdesk] ticket list: unexpected body');
+    return unavailable('Freshdesk returned an unexpected response.');
+  }
+  const raw = res.body as RawTicket[];
+  return {
+    status: 'ok',
+    tickets: raw.flatMap((t) => {
+      const summary = summarise(t);
+      return summary
+        ? [
+            {
+              ...summary,
+              requesterName: t.requester?.name ?? null,
+              requesterEmail: t.requester?.email ?? null,
+              gone: t.deleted === true || t.spam === true,
+            },
+          ]
+        : [];
+    }),
+    hasMore: raw.length >= CHANGED_PAGE_SIZE,
+  };
+}
+
+export type TicketDetail = TicketSummary & {
+  description: TicketDescriptionResult;
+  requesterName: string | null;
+  requesterEmail: string | null;
+};
+
+export type TicketDetailResult = { status: 'found'; ticket: TicketDetail } | Unavailable;
+
+/**
+ * One ticket with its requester. 🔴 `requesterEmail` is the customer's address: the caller decides
+ * whether it may leave the server.
+ */
+export async function getTicketDetail(ticketId: string): Promise<TicketDetailResult> {
+  if (!isFreshdeskId(ticketId)) return unavailable('Not a Freshdesk ticket id.');
+  const res = await freshdeskGet(
+    `/tickets/${ticketId}?include=requester`,
+    'ticket detail',
+    `Freshdesk has no ticket ${ticketId} — it may have been deleted or merged.`
+  );
+  if (res.status !== 'ok') return res;
+  const raw = res.body as RawTicket | null;
+  const summary = raw ? summarise(raw) : null;
+  if (!raw || !summary || typeof raw.description !== 'string') {
+    console.error('[freshdesk] ticket detail: unexpected body');
+    return unavailable('Freshdesk returned an unexpected response.');
+  }
+  return {
+    status: 'found',
+    ticket: {
+      ...summary,
+      description: describeHtml(raw.description),
+      requesterName: raw.requester?.name ?? null,
+      requesterEmail: raw.requester?.email ?? null,
+    },
+  };
+}
+
+/** One visible message on a ticket: the customer's, or an agent's public reply. */
+export type TicketMessage = {
+  conversationId: string;
+  from: 'customer' | 'agent';
+  createdAt: string | null;
+  text: string;
+};
+
+export type TicketConversationResult =
+  /** `truncated`: the page cap was reached, so later messages may be missing. */
+  { status: 'found'; messages: TicketMessage[]; truncated: boolean } | Unavailable;
+
+/**
+ * The customer's messages and the agents' PUBLIC replies, oldest first. Private notes are dropped,
+ * and so is any message whose `private` flag is missing: only a strict `false` proves it was public.
+ * 🔴 `text` is customer-written plain text: render it as text only.
+ */
+export async function getTicketConversation(ticketId: string): Promise<TicketConversationResult> {
+  if (!isFreshdeskId(ticketId)) return unavailable('Not a Freshdesk ticket id.');
+  const read = await readConversations(ticketId);
+  if (read.status !== 'ok') return read;
+  const messages = read.all
+    .filter((c) => c.private === false && typeof c.incoming === 'boolean')
+    .map((c) => ({
+      conversationId: c.id == null ? '' : String(c.id),
+      from: c.incoming ? ('customer' as const) : ('agent' as const),
+      createdAt: c.created_at ?? null,
+      text: (typeof c.body === 'string' && c.body
+        ? convertHtml(c.body).text
+        : c.body_text ?? ''
+      ).trim(),
+    }))
+    .filter((m) => isFreshdeskId(m.conversationId) && m.text !== '')
+    .sort((x, y) => (x.createdAt ?? '').localeCompare(y.createdAt ?? ''));
+  return { status: 'found', messages, truncated: read.truncated };
 }

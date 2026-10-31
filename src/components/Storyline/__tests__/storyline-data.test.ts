@@ -65,6 +65,16 @@ const mutation = (proc: string) => ({
   }),
 });
 
+// The continued chapter is a chapter of storyline 3; so are `chapterPostIds`.
+const forPosts = (input: { postIds: number[] }) => ({
+  data: Object.fromEntries(
+    input.postIds
+      .filter((id) => id === 200 || server.chapterPostIds.includes(id))
+      .map((id) => [id, { chapterId: id, depth: 4, storylineId: 3, title: 'The Patch' }])
+  ),
+  isLoading: false,
+});
+
 const utilsLeaf = (path: string) => ({
   invalidate: async (input?: unknown) => {
     spies.invalidate.push({ path, input });
@@ -98,17 +108,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       'placement.submitStorylineContinuation': mutation('submitStorylineContinuation'),
       'placement.actOnStorylineContinuation': mutation('actOnStorylineContinuation'),
       'storyline.addCollaborator': mutation('addCollaborator'),
-      // The continued chapter is a chapter of storyline 3; so are `chapterPostIds`.
-      'storyline.getForPosts': {
-        useQuery: (input: { postIds: number[] }) => ({
-          data: Object.fromEntries(
-            input.postIds
-              .filter((id) => id === 200 || server.chapterPostIds.includes(id))
-              .map((id) => [id, { chapterId: id, depth: 4, storylineId: 3, title: 'The Patch' }])
-          ),
-          isLoading: false,
-        }),
-      },
+      'storyline.getForPosts': { useQuery: forPosts },
       // The server's sort filters, from post-sort.ts: a "most" sort lists only posts with at least
       // one of what it counts, and no sort means the default (most reactions).
       'post.getInfinite': {
@@ -149,6 +149,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       },
     },
     {
+      useQueries: (build: (t: unknown) => unknown[]) =>
+        build({ storyline: { getForPosts: forPosts } }),
       useUtils: () => ({
         placement: {
           invalidate: spies.broadInvalidate,

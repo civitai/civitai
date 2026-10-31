@@ -117,8 +117,10 @@ anything committed counts as disclosed and must be fixed and rotated.
 ## Before committing
 1. `pnpm run prettier:write`
 2. Lint what you changed: `pnpm exec eslint <changed .ts/.tsx files>`. Skip the full `pnpm run typecheck`
-   and `pnpm run lint` locally — PR CI runs both on every PR to `main`. (Typecheck can't be scoped to files.)
-3. The unit suite (`pnpm run test:unit:run`); `pnpm run db:check-generated` if you touched the schema
+   and `pnpm run lint` locally — PR CI runs both on every PR to `main` (on a draft, ESLint only). (Typecheck can't be scoped to files.)
+3. The unit suite (`pnpm run test:unit:run`; PR CI does not run it unless the PR has the `full-ci` label: adding it starts the full
+   suite at once, every later push runs it too, and it lifts the draft gate (same-repo PRs only). Want it on every PR? Always add it: `gh pr create ... --label full-ci` or
+   `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
 5. Before merging, check the PR's CI — `main` has no required checks, so a red run doesn't block.
 6. Run `comment-review` over the diff and `docs-drift-review` over the commits — the two lanes with no

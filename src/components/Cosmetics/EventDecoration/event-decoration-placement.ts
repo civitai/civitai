@@ -207,10 +207,14 @@ export function getHatLayout(
 
 /**
  * How far a container with less room moves a corner hat in, as CSS: only CSS can read the
- * container's `--event-decoration-allowance`. `reach` is the hat's edge with no room limit.
+ * container's `--event-decoration-allowance`. `reach` is the hat's edge with no room limit. A
+ * container with more room above than beside the card also sets `--event-decoration-allowance-top`.
  */
-export const hatShiftCss = (reach: number) =>
-  `max(0px, -1 * var(--event-decoration-allowance, ${HAT_ALLOWANCE.corner}px) - ${reach}px)`;
+export const hatShiftCss = (reach: number, edge: 'left' | 'top' = 'left') => {
+  const allowance = `var(--event-decoration-allowance, ${HAT_ALLOWANCE.corner}px)`;
+  const room = edge === 'top' ? `var(--event-decoration-allowance-top, ${allowance})` : allowance;
+  return `max(0px, -1 * ${room} - ${reach}px)`;
+};
 
 /**
  * How much of the card's top-left a decoration covers, for corner content (the moderator's

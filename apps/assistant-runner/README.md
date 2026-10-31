@@ -122,8 +122,10 @@ makes, which `WORKFLOW_VERSION` protects.
   - **The gate is App Assistant's own** (`@civitai/app-assistant`, the same code the page runs): 150
     parent calls per reply (a subagent's are not counted), then the reply ends with Continue;
     `report_ready` refused until, since the last file change or other command, the parent's
-    `sandbox__preview_check`, test run and typecheck passed and every checklist item is done;
-    `set_checklist` and `create_app` as on the page. What is verified, and the checklist, belong to the
+    `sandbox__preview_check`, test run and typecheck passed and every checklist item is done, and
+    until it declares the app's `data` (`civitai`, `sample` or `none`): `sample` only under a checklist
+    the user was shown with `data: 'sample'` and a preview check whose visible text shows "Sample
+    data", and `none` never under a checklist that promised `civitai`; `set_checklist` and `create_app` as on the page. What is verified, and the checklist, belong to the
     app: `create_app` opening another app starts both over, as the page does, and each checklist the
     runner shows records its app, so a later reply carries over only the open app's. A reply carried on
     from saved steps starts its count and checks from those steps; a new reply keeps the app's checklist
@@ -354,7 +356,7 @@ pnpm --filter @civitai/assistant-runner-app test
 ```
 
 The `*.pg.test.ts` suites need `ASSISTANT_RUNNER_TEST_DATABASE_URL`, a Postgres server they may
-create and drop databases on; without it they skip. CI's `App unit tests` job provides one.
+create and drop databases on; without it they skip. CI's `App suites` workflow provides one.
 
 ## Not built yet
 

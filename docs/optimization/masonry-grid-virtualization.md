@@ -33,7 +33,6 @@ Remaining non-virtual `MasonryColumns` usages are moderator/admin pages and out 
 ### Uniform-cell grid (square cards) — target of this work
 
 - [MasonryGrid.tsx](../../src/components/MasonryColumns/MasonryGrid.tsx) — non-virtualized CSS grid; every card is `columnWidth` square.
-- [UniformGrid.tsx](../../src/components/MasonryColumns/UniformGrid.tsx) — similar layout, finite-size (used by home blocks with `maxRows`).
 - **No `MasonryGridVirtual` exists yet.**
 
 The following 8 main card feeds use `MasonryGrid` and are not virtualized:
@@ -96,7 +95,6 @@ Key considerations:
 ### Non-goals for v1
 
 - Variable-height cards (those belong on `MasonryColumnsVirtual`).
-- Replacing `UniformGrid` (finite lists, lower memory impact).
 - Built-in `content-visibility` or `loading="lazy"` wrapping (separate follow-up).
 
 ## Migration plan

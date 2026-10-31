@@ -795,7 +795,13 @@ export class Tracker {
     return this.track('bugReports', values);
   }
 
-  public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
+  /** `userId` names the actor when the request has none, as a moderator's transfer. */
+  public modelEvent(values: {
+    type: ModelActivty;
+    modelId: number;
+    nsfw: boolean;
+    userId?: number;
+  }) {
     return this.track('modelEvents', { ...values, ...this.provenance });
   }
 
@@ -1017,6 +1023,18 @@ export class Tracker {
       { ...values, time: new Date() },
       { skipActorMeta: true, ...options }
     );
+  }
+
+  // Exactly these four columns, in their own table with a 12-month TTL (not `actions`, which has
+  // none): migrations/2026-10-28-image-upload-requests.sql.
+  /** `userId` names who the key was issued to when the request has no session, as in a job. */
+  public imageUploadRequest(key: string, userId?: number) {
+    return this.send('imageUploadRequests', ({ actor }) => ({
+      userId: userId ?? actor.userId,
+      ip: actor.ip,
+      key,
+      time: new Date(),
+    }));
   }
 
   public search(values: { query: string; index: string; filters?: any }) {

@@ -40,13 +40,20 @@ import {
 const VERSION_ID = 100;
 const OWNER_ID = 7;
 
-const call = (versionStatus: string, modelStatus: string, isModerator = false) => {
+const KEPT = { removedWithOwner: true, statusBeforeRemoval: 'Draft' };
+
+const call = (
+  versionStatus: string,
+  modelStatus: string,
+  isModerator = false,
+  modelMeta: unknown = null
+) => {
   mockGetVersionById.mockResolvedValue({
     id: VERSION_ID,
     status: versionStatus,
     meta: null,
     baseModel: 'SDXL 1.0',
-    model: { userId: OWNER_ID, nsfw: false, status: modelStatus },
+    model: { userId: OWNER_ID, nsfw: false, status: modelStatus, meta: modelMeta },
   });
 
   return publishModelVersionHandler({
@@ -88,6 +95,17 @@ describe('publishModelVersionHandler — publishable state', () => {
   it('lets an owner publish an ordinary unpublished version of a published model', async () => {
     await call('Unpublished', 'Published');
 
+    expect(mockPublishModelVersionById).toHaveBeenCalledTimes(1);
+  });
+
+  // A content wipe kept a draft model as it was, with only its record: the record is the guard.
+  it('refuses an owner a version of a draft model a content wipe kept', async () => {
+    await expect(call('Draft', 'Draft', false, KEPT)).rejects.toThrowError(/not authorized/);
+    expect(mockPublishModelVersionById).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator publish a version of a model a content wipe kept', async () => {
+    await call('Draft', 'Draft', true, KEPT);
     expect(mockPublishModelVersionById).toHaveBeenCalledTimes(1);
   });
 
@@ -136,7 +154,12 @@ describe('publishModelVersionHandler — unpublish stamp', () => {
 });
 
 describe('publishPrivateModelVersionHandler — the same publishable state', () => {
-  const callPrivate = (versionStatus: string, modelStatus: string, isModerator = false) => {
+  const callPrivate = (
+    versionStatus: string,
+    modelStatus: string,
+    isModerator = false,
+    modelMeta: unknown = null
+  ) => {
     mockGetVersionById.mockResolvedValue({
       id: VERSION_ID,
       status: versionStatus,
@@ -147,6 +170,7 @@ describe('publishPrivateModelVersionHandler — the same publishable state', () 
         availability: 'Private',
         userId: OWNER_ID,
         status: modelStatus,
+        meta: modelMeta,
       },
       files: [{ id: 1, metadata: {} }],
       posts: [{ id: 5 }],
@@ -191,6 +215,11 @@ describe('publishPrivateModelVersionHandler — the same publishable state', () 
   // Negative control. This handler does a great deal after the guard, so rather than mocking all of
   // it, the assertion is that the call gets PAST the guard — it reads the version's files, and
   // whatever it fails on afterwards is not an authorization refusal.
+  it('refuses an owner a version of a private draft model a content wipe kept', async () => {
+    await expect(callPrivate('Draft', 'Draft', false, KEPT)).rejects.toThrowError(/not authorized/);
+    expect(dbMock.dbWrite.modelFile.findMany).not.toHaveBeenCalled();
+  });
+
   it('lets an ordinary publish through the guard', async () => {
     dbMock.dbWrite.modelFile.findMany.mockResolvedValue([]);
 

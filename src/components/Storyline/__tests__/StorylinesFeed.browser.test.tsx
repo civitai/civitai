@@ -255,6 +255,28 @@ describe('StorylinesFeed', () => {
       .toEqual(expect.objectContaining({ filter, sort: 'newest' }));
   });
 
+  test('My storylines is offered to a signed-in reader and sent to the server as mine', async () => {
+    mocks.user = { id: 11 };
+    renderWithProviders(<FeedWithControls />);
+    await expect.element(page.getByRole('link').first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'Filters' }).click();
+    await page.getByRole('dialog').getByText('My storylines', { exact: true }).click();
+    await page.getByRole('button', { name: 'Apply filters' }).click();
+    await expect
+      .poll(() => mocks.feedInput.mock.lastCall?.[0])
+      .toEqual(expect.objectContaining({ filter: 'mine' }));
+  });
+
+  test('My storylines is not offered to a signed-out reader', async () => {
+    renderWithProviders(<FeedWithControls />);
+    await page.getByRole('button', { name: 'Filters' }).click();
+    await expect
+      .element(page.getByRole('dialog').getByText('Complete', { exact: true }))
+      .toBeVisible();
+    expect(page.getByRole('dialog').getByText('My storylines').elements()).toHaveLength(0);
+  });
+
   test('on a phone the filters open in a drawer and apply the same way', async () => {
     mocks.mobile = true;
     renderWithProviders(<FeedWithControls />);

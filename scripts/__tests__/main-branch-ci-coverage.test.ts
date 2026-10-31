@@ -91,6 +91,22 @@ function reachableOnPush(job: Job): boolean {
   );
 }
 
+/**
+ * Is a `continue-on-error` value one that cannot differ between a PR and a push?
+ * A string that is not an expression is YAML-truthy in spirit and opaque in
+ * fact — treat it as unconditional rather than guess.
+ */
+function unconditionallyTrue(coe: unknown): boolean {
+  if (coe === undefined || coe === false) return false;
+  if (coe === true) return true;
+  return !(typeof coe === 'string' && coe.includes('${{'));
+}
+
+/** An `actions/cache` restore or save step. */
+function isCacheStep(step: Record<string, unknown>): boolean {
+  return typeof step.uses === 'string' && /^actions\/cache(\/(save|restore))?@/.test(step.uses);
+}
+
 /** Every `run:` script in a job, concatenated. */
 function runScripts(job: Job): string {
   return (job.steps ?? []).map((s) => (typeof s.run === 'string' ? s.run : '')).join('\n');
@@ -103,6 +119,17 @@ function stepsBlob(job: Job): string {
 }
 
 const workflows = loadWorkflows();
+
+/** Every job reachable on a push to main, with its workflow and its `run:` scripts. */
+function pushReachable() {
+  return workflows
+    .filter((w) => triggersOnPushToMain(w.doc))
+    .flatMap((w) =>
+      Object.entries(w.doc.jobs ?? {})
+        .filter(([, job]) => reachableOnPush(job))
+        .map(([id, job]) => ({ where: `${w.file}:${id}`, doc: w.doc, script: runScripts(job) }))
+    );
+}
 
 describe('CI coverage for commits on main', () => {
   it('has at least one workflow that fires on a push to main', () => {
@@ -120,23 +147,49 @@ describe('CI coverage for commits on main', () => {
   // rather than a bare "typecheck" on purpose: `typecheck-apps.mjs` is a
   // different, narrower thing and would satisfy a looser match while the
   // whole-repo typecheck was gone.
+  //
+  // The app suites and the app typecheck are here because pull requests reach them through a
+  // `paths:` filter (apps.yml): a PR that touches nothing they read never runs them, so the push
+  // run is the backstop for a filter entry that is missing.
   it.each([
     ['the whole-repo typecheck', 'pnpm run typecheck'],
     ['the unit suite', 'test:unit:run'],
+    ['the app suites', 'test:apps:run'],
+    ['the app typecheck', 'scripts/ci/typecheck-apps.mjs'],
   ])('runs %s on a push to main', (_label, needle) => {
-    const reached = workflows
-      .filter((w) => triggersOnPushToMain(w.doc))
-      .flatMap((w) =>
-        Object.entries(w.doc.jobs ?? {})
-          .filter(([, job]) => reachableOnPush(job))
-          .map(([id, job]) => ({ where: `${w.file}:${id}`, script: runScripts(job) }))
-      );
-    const hit = reached.filter((j) => j.script.includes(needle)).map((j) => j.where);
+    const hit = pushReachable()
+      .filter((j) => j.script.includes(needle))
+      .map((j) => j.where);
     expect(
       hit,
       `Nothing reachable on a push to main runs \`${needle}\`. Push-reachable jobs: ${
-        reached.map((j) => j.where).join(', ') || '(none)'
+        pushReachable()
+          .map((j) => j.where)
+          .join(', ') || '(none)'
       }`
+    ).not.toHaveLength(0);
+  });
+
+  // A backstop only works if it fires whatever the commit touched. The PR trigger's `paths:`
+  // list is the obvious thing to copy onto `push:`, and doing so would make a missing entry
+  // invisible on `main` too.
+  it.each([
+    ['the app suites', 'test:apps:run'],
+    ['the app typecheck', 'scripts/ci/typecheck-apps.mjs'],
+  ])('runs %s on EVERY push to main, with no path filter', (_label, needle) => {
+    const hit = pushReachable()
+      .filter((j) => j.script.includes(needle))
+      .filter((j) => {
+        const push = (j.doc.on as Record<string, unknown> | undefined)?.push as
+          | Record<string, unknown>
+          | null
+          | undefined;
+        return !push || (!('paths' in push) && !('paths-ignore' in push));
+      })
+      .map((j) => j.where);
+    expect(
+      hit,
+      `\`${needle}\` runs on a push to main only behind a path filter. Remove the filter from push:`
     ).not.toHaveLength(0);
   });
 
@@ -145,29 +198,35 @@ describe('CI coverage for commits on main', () => {
   // is the same stale-TRUE shape as the outage this file guards — so on the push
   // path no job may be unconditionally report-only.
   //
-  // A conditional value is allowed (that is how the unit tier stays report-only
-  // on PRs, a separate and deliberately-unmade decision) but it must be an
+  // A conditional value is allowed (lint.yml's geometry steps use one to stay
+  // report-only on PRs and render a real verdict on push) but it must be an
   // expression, i.e. it must be able to differ between a PR and a push. Literal
   // `true` cannot.
+  //
+  // STEPS TOO, not just jobs. A suite folded into a shared job carries its
+  // report-only flag on the step, and a step-level `continue-on-error: true` is
+  // the same stale TRUE one level down: the step's own conclusion reads
+  // `success` and the job stays green. Checking jobs alone would wave it through.
+  // The one exemption is structural, not a name list: an `actions/cache` save is
+  // best-effort infrastructure, not a verdict about the code.
   it('has no unconditionally report-only job on the push path', () => {
     const offenders = workflows
       .filter((w) => triggersOnPushToMain(w.doc))
       .flatMap((w) =>
         Object.entries(w.doc.jobs ?? {})
           .filter(([, job]) => reachableOnPush(job))
-          .filter(([, job]) => {
-            const coe = job['continue-on-error'];
-            if (coe === undefined || coe === false) return false;
-            if (coe === true) return true;
-            // A string that is not an expression is YAML-truthy in spirit and
-            // opaque in fact — treat it as an offender rather than guess.
-            return !(typeof coe === 'string' && coe.includes('${{'));
-          })
-          .map(([id]) => `${w.file}:${id}`)
+          .flatMap(([id, job]) => [
+            ...(unconditionallyTrue(job['continue-on-error']) ? [`${w.file}:${id}`] : []),
+            ...(job.steps ?? [])
+              .filter((step) => reachableOnPush(step as Job))
+              .filter((step) => !isCacheStep(step))
+              .filter((step) => unconditionallyTrue(step['continue-on-error']))
+              .map((step, i) => `${w.file}:${id} step "${String(step.name ?? step.uses ?? i)}"`),
+          ])
       );
     expect(
       offenders,
-      `These jobs run on a push to main with \`continue-on-error: true\`, so the run reports success while the step underneath fails: ${offenders.join(
+      `These run on a push to main with \`continue-on-error: true\`, so the run reports success while the step underneath fails: ${offenders.join(
         ', '
       )}`
     ).toEqual([]);

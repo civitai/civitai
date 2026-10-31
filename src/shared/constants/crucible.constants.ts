@@ -202,3 +202,11 @@ export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
 
 // Candidate pool for getJudgingSuggestions; the caught-up filter runs after the SQL LIMIT, so keep it above the open-crucible count.
 export const CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES = 50;
+
+/**
+ * What a moderator takedown does with the creator's setup fee and seeded prize pool. Entrants are
+ * always refunded. 'hold' moves nothing until a moderator re-runs the takedown with
+ * `releaseCreatorFunds`.
+ */
+export const CRUCIBLE_TAKEDOWN_CREATOR_FUNDS: 'forfeit' | 'refund' | 'hold' = 'forfeit';
+export const CRUCIBLE_TAKEDOWN_REASON_LENGTH = { min: 10, max: 1_000 } as const;

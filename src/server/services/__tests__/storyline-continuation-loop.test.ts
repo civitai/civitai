@@ -190,7 +190,11 @@ beforeEach(() => {
   publishedPost(STRANGER_POST, STRANGER, PG);
   publishedPost(COLLABORATOR_POST, COLLABORATOR, PG);
   publishedPost(STRANGER_X_POST, STRANGER, X);
-  db.insert('storylineCollaborator', { storylineId: STORYLINE, userId: COLLABORATOR });
+  db.insert('storylineCollaborator', {
+    storylineId: STORYLINE,
+    userId: COLLABORATOR,
+    acceptedAt: new Date(),
+  });
 });
 
 describe('the storyline continuation loop', () => {
@@ -516,7 +520,9 @@ describe('the storyline continuation loop', () => {
     it('refuses at approval an R continuation sent before the title was flagged', async () => {
       const { id } = await submit(STRANGER, R_POST);
       holdAsMinor(true);
-      await expect(approve(id)).rejects.toThrow(/above the storyline's maximum rating/);
+      await expect(approve(id)).rejects.toThrow(
+        'This storyline allows up to PG-13; this post is R'
+      );
       expect(chapterFor(id)).toBeUndefined();
       expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
     });

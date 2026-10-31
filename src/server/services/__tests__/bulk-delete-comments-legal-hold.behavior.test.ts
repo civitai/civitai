@@ -16,7 +16,8 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { holder, metrics, notify, reward } = vi.hoisted(() => ({
+const { holder, metrics, notify, reward, pointsRemoved } = vi.hoisted(() => ({
+  pointsRemoved: vi.fn(async (_comments: { userId: number; threadId: number }[]) => undefined),
   holder: { db: null as unknown as PGlite },
   metrics: {
     model: { queueUpdate: vi.fn<(id: unknown) => Promise<undefined>>() },
@@ -40,13 +41,29 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   createNotification: notify,
 }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  onCommentsRemoved: pointsRemoved,
+}));
 vi.mock('~/server/rewards', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   reportAcceptedReward: { apply: reward },
 }));
 
-import { bulkDeleteComments } from '~/server/services/comment.service';
-import { isLegalHoldAbort, logHoldRetained } from '~/server/services/legal-hold.service';
+import {
+  bulkClearCommentTosViolation,
+  bulkDeleteComments,
+  deleteCommentById,
+} from '~/server/services/comment.service';
+import {
+  bulkClearCommentV2TosViolation,
+  deleteComment,
+} from '~/server/services/commentsv2.service';
+import {
+  isLegalHoldAbort,
+  logHoldRetained,
+  OWNER_CONTENT_KEPT,
+} from '~/server/services/legal-hold.service';
 
 const CLEAN = 1;
 const HELD = 2; // named on a pending report
@@ -74,17 +91,25 @@ const SCHEMA = `
     CREATE TABLE "Comment" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelId" int NOT NULL, content text NOT NULL,
       "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
-      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+      "removedByAuthor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "CommentV2" (
       id int PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL, content text NOT NULL,
-      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+      metadata jsonb
     );
     -- A comment's reply thread; deleting the comment only unlinks it, as in production.
     CREATE TABLE "Thread" (
-      id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL
+      id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL,
+      "parentThreadId" int, "rootThreadId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Dismissed');
+    CREATE TYPE "ReportReason" AS ENUM ('TOSViolation', 'NSFW', 'Other');
+    CREATE TABLE "Report" (id int PRIMARY KEY, status "ReportStatus" NOT NULL, reason "ReportReason" NOT NULL);
+    CREATE TABLE "CommentReport" ("commentId" int NOT NULL, "reportId" int NOT NULL);
+    CREATE TABLE "CommentV2Report" ("commentV2Id" int NOT NULL, "reportId" int NOT NULL);
 `;
 
 // Comments on a surface that writes CommentV3 directly, which have no CommentV2 row. Kept out of
@@ -95,7 +120,8 @@ const V3_SCHEMA = `
       id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL,
       "parentId" int REFERENCES "CommentV3"(id), "replyToId" int, path ltree NOT NULL, "rootId" int GENERATED ALWAYS AS (ltree2text(subpath(path, 0, 1))::int) STORED,
       "userId" int NOT NULL, content text NOT NULL, "tosViolation" boolean NOT NULL DEFAULT false,
-      "deletedAt" timestamptz, "updatedAt" timestamptz NOT NULL DEFAULT now()
+      "deletedAt" timestamptz, "updatedAt" timestamptz NOT NULL DEFAULT now(),
+      "removedByAuthor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "CommentV3Report" (
       "reportId" int PRIMARY KEY, "commentId" int NOT NULL REFERENCES "CommentV3"(id) ON DELETE CASCADE
@@ -119,7 +145,8 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", "Comment", "CommentV2", "Thread", "Model", "CommentV3", "CommentV3Report";
+    TRUNCATE "CsamReport", "Image", "Comment", "CommentV2", "Thread", "Model", "Report",
+      "CommentReport", "CommentV2Report", "CommentV3", "CommentV3Report";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "Comment" (id, "userId", "modelId", content) VALUES ${rows()};
     INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES ${rows()};
@@ -136,7 +163,8 @@ beforeEach(async () => {
     return (await holder.db.query(sql.text, sql.values)).rows;
   };
   // The stand-in has one connection, so a statement sent outside the transaction would still land
-  // inside it. In production it would not: any write on the shared client while one is open fails.
+  // inside it. In production it would run on another connection, outside the transaction and its
+  // rollback, so one sent there is an error here.
   let inTransaction = false;
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     first: TemplateStringsArray | Prisma.Sql,
@@ -463,6 +491,176 @@ describe('a legacy comment with replies', () => {
   });
 });
 
+describe('a member deleting their own legacy comment', () => {
+  beforeEach(async () => {
+    vi.mocked(dbMock.dbWrite.comment.findUnique).mockResolvedValue({
+      modelId: 100,
+      model: { userId: CLEAN + 50 },
+    } as never);
+    // What the delete was before it learned about holds: a plain row delete, cascading its replies.
+    vi.mocked(dbMock.dbWrite.comment.delete).mockImplementation(
+      (async (args: { where: { id: number } }) =>
+        (await holder.db.query(`DELETE FROM "Comment" WHERE id = $1 RETURNING *`, [args.where.id]))
+          .rows[0]) as never
+    );
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId") VALUES
+        (41, ${HELD}, 100, 'zzfixture', 11);
+    `);
+  });
+
+  it('is kept, hidden, with the held reply under it', async () => {
+    await expect(deleteCommentById({ id: 11 })).resolves.toEqual({ id: 11 });
+    expect(await state('Comment')).toMatchObject({ 11: 'hidden', 41: 'public' });
+  });
+
+  it('is kept, hidden, when its author is held', async () => {
+    await expect(deleteCommentById({ id: 21 })).resolves.toEqual({ id: 21 });
+    expect(await state('Comment')).toMatchObject({ 21: 'hidden' });
+  });
+
+  it('goes when nothing under it is held (control)', async () => {
+    await expect(deleteCommentById({ id: 12 })).resolves.toEqual({ id: 12 });
+    expect(await state('Comment')).not.toHaveProperty('12');
+  });
+
+  it('is not found when it does not exist', async () => {
+    await expect(deleteCommentById({ id: 999 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  // Once the held reply goes, nothing holds the comment any more: only its author's delete keeps it
+  // down.
+  describe("and a moderator's ToS restore after the hold no longer covers it", () => {
+    const liftHold = () => holder.db.exec(`DELETE FROM "Comment" WHERE id = 41`);
+
+    it('leaves the comment its author deleted hidden', async () => {
+      await deleteCommentById({ id: 11, byAuthor: true });
+      await liftHold();
+      await expect(bulkClearCommentTosViolation({ ids: [11] })).resolves.toMatchObject({
+        count: 0,
+      });
+      expect(await state('Comment')).toMatchObject({ 11: 'hidden' });
+    });
+
+    it('restores one a moderator deleted (control)', async () => {
+      await deleteCommentById({ id: 11 });
+      await liftHold();
+      await expect(bulkClearCommentTosViolation({ ids: [11] })).resolves.toMatchObject({
+        count: 1,
+      });
+      expect(await state('Comment')).toMatchObject({ 11: 'public' });
+    });
+  });
+});
+
+describe('a member deleting their own CommentV2', () => {
+  beforeEach(() => {
+    vi.mocked(dbMock.dbWrite.commentV2.findUnique).mockImplementation(
+      (async (args: { where: { id: number } }) =>
+        (await holder.db.query(`SELECT * FROM "CommentV2" WHERE id = $1`, [args.where.id]))
+          .rows[0]) as never
+    );
+  });
+
+  // The author sees the same either way: the comment gone from every read they get (the reads
+  // filter ToS-hidden comments for non-moderators), the same row back, and its points taken back.
+  it.each([
+    ['is deleted', 11, CLEAN, 'gone'],
+    ['is kept, hidden, when its author is held', 21, HELD, 'hidden'],
+  ])('%s, and takes its points back as a delete does', async (_, id, author, after) => {
+    await expect(deleteComment({ id })).resolves.toMatchObject({ id, userId: author });
+    expect((await state('CommentV2'))[id] ?? 'gone').toBe(after);
+    expect(pointsRemoved).toHaveBeenCalledTimes(1);
+    expect(pointsRemoved).toHaveBeenCalledWith([
+      expect.objectContaining({ userId: author, threadId: author * 100 }),
+    ]);
+  });
+
+  it('marks a comment it keeps as removed by its author, which a moderator bulk delete does not', async () => {
+    await deleteComment({ id: 21, byAuthor: true });
+    await bulkDeleteComments({ commentIds: [], commentV2Ids: [22] });
+    const { rows } = await holder.db.query<{ id: number; metadata: unknown }>(
+      `SELECT id, metadata FROM "CommentV2" WHERE id IN (21, 22) ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 21, metadata: { removedByAuthor: true } },
+      { id: 22, metadata: null },
+    ]);
+  });
+
+  it("does not mark a comment it keeps on a delete that is not its author's", async () => {
+    await deleteComment({ id: 21 });
+    const { rows } = await holder.db.query<{ metadata: unknown }>(
+      `SELECT metadata FROM "CommentV2" WHERE id = 21`
+    );
+    expect(await state('CommentV2')).toMatchObject({ 21: 'hidden' });
+    expect(rows).toEqual([{ metadata: null }]);
+  });
+
+  it('keeps a comment whose author only the hold marker covers', async () => {
+    await createMarker();
+    await deleteComment({ id: 31 });
+    expect(await state('CommentV2')).toMatchObject({ 31: 'hidden' });
+  });
+
+  it('refuses, deleting nothing, when the view goes after the read', async () => {
+    await createMarker();
+    hook = { on: 'DELETE FROM', run: () => holder.db.query(`DROP VIEW "EvidenceHeldUser"`) };
+    await expect(deleteComment({ id: 11 })).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(await state('CommentV2')).toMatchObject({ 11: 'public' });
+  });
+
+  it('is kept, hidden, while a held author replied under it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "commentId") VALUES (500, 11);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (51, ${HELD}, 500, 'zzfixture');
+    `);
+    await deleteComment({ id: 11 });
+    expect(await state('CommentV2')).toMatchObject({ 11: 'hidden', 51: 'public' });
+  });
+
+  // Once the held reply goes, only its author's delete keeps the comment down.
+  // A moderator's delete leaves `metadata` as it found it: null, or without the key. A mark that
+  // does not read as a boolean fails the statement, which keeps the comment hidden.
+  it.each([
+    ['leaves the one its author deleted hidden', true, null, 0, 0, 'hidden'],
+    ['restores one a moderator deleted (control)', false, null, 1, 0, 'public'],
+    ['restores one a moderator deleted, with other metadata', false, '{"x": 1}', 1, 0, 'public'],
+    [
+      'keeps one with an unreadable mark hidden',
+      false,
+      '{"removedByAuthor": "abc"}',
+      0,
+      1,
+      'hidden',
+    ],
+  ])(
+    'and a ToS restore after the hold no longer covers it %s',
+    async (_, byAuthor, metadata, count, failed, after) => {
+      await holder.db.exec(`
+        INSERT INTO "Thread" (id, "commentId") VALUES (500, 11);
+        INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (51, ${HELD}, 500, 'zzfixture');
+      `);
+      await holder.db.query(`UPDATE "CommentV2" SET metadata = $1::jsonb WHERE id = 11`, [
+        metadata,
+      ]);
+      await deleteComment({ id: 11, byAuthor });
+      await holder.db.exec(`DELETE FROM "CommentV2" WHERE id = 51`);
+      await expect(bulkClearCommentV2TosViolation({ ids: [11] })).resolves.toMatchObject({
+        count,
+        retainedHidden: 0,
+        failed,
+      });
+      expect(await state('CommentV2')).toMatchObject({ 11: after });
+    }
+  );
+
+  it('is not found when it does not exist', async () => {
+    await expect(deleteComment({ id: 999 })).resolves.toBeNull();
+    expect(pointsRemoved).not.toHaveBeenCalled();
+  });
+});
+
 describe('a CommentV2 with replies', () => {
   // Comment 11's reply thread is 900. A reply in it, or in the reply thread of one of its comments,
   // is below 11.
@@ -497,6 +695,21 @@ describe('a CommentV2 with replies', () => {
       retainedHidden: 1,
     });
     expect(await state('CommentV2')).toMatchObject({ 11: 'hidden', 72: 'public', 73: 'public' });
+  });
+
+  // A reply thread whose comment is gone hangs off 900 by `parentThreadId` alone.
+  it('stays hidden through a ToS restore while a held reply sits in a thread only its parent edge reaches', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "parentThreadId") VALUES (902, 900);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (75, ${HELD}, 902, 'zzfixture');
+    `);
+    await bulkDeleteComments({ commentIds: [], commentV2Ids: [11] });
+
+    await expect(bulkClearCommentV2TosViolation({ ids: [11] })).resolves.toMatchObject({
+      count: 0,
+      retainedHidden: 1,
+    });
+    expect(await state('CommentV2')).toMatchObject({ 11: 'hidden' });
   });
 
   it('is kept while a reply below is held only by the marker', async () => {
@@ -748,5 +961,139 @@ describe('both tables in one batch', () => {
 
     expect(metrics.model.queueUpdate.mock.calls).toEqual([[CLEAN * 100]]);
     expect(metrics.user.queueUpdate.mock.calls).toEqual([[CLEAN + 50]]);
+  });
+});
+
+const CLEARS = [
+  ['Comment', bulkClearCommentTosViolation, 'CommentReport', 'commentId'],
+  ['CommentV2', bulkClearCommentV2TosViolation, 'CommentV2Report', 'commentV2Id'],
+] as const;
+
+describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable, reportKey) => {
+  beforeEach(async () => {
+    // Every comment flagged, each with the ToS report the flag actioned.
+    await holder.db.exec(`
+      UPDATE "${table}" SET "tosViolation" = true;
+      INSERT INTO "Report" (id, status, reason) SELECT id, 'Actioned', 'TOSViolation' FROM "${table}";
+      INSERT INTO "${reportTable}" ("${reportKey}", "reportId") SELECT id, id FROM "${table}";
+    `);
+  });
+  const reports = async () =>
+    Object.fromEntries(
+      (
+        await holder.db.query<{ id: number; status: string }>(`SELECT id, status FROM "Report"`)
+      ).rows.map((r) => [r.id, r.status])
+    );
+
+  it('puts an unheld author’s comment back and reopens its report (control)', async () => {
+    await expect(clear({ ids: ids(CLEAN) })).resolves.toEqual({
+      count: 2,
+      reopenedReports: 2,
+      retainedHidden: 0,
+      failed: 0,
+    });
+    expect(await state(table)).toMatchObject({ 11: 'public', 12: 'public' });
+    expect(await reports()).toMatchObject({ 11: 'Pending', 12: 'Pending' });
+  });
+
+  it('leaves a held author’s comment hidden, its report as it was, and says how many', async () => {
+    await createMarker();
+
+    await expect(clear({ ids: ids(CLEAN, HELD, MARKED) })).resolves.toEqual({
+      count: 2,
+      reopenedReports: 2,
+      retainedHidden: 4,
+      failed: 0,
+    });
+    expect(await state(table)).toEqual({
+      11: 'public',
+      12: 'public',
+      21: 'hidden',
+      22: 'hidden',
+      31: 'hidden',
+      32: 'hidden',
+    });
+    expect(await reports()).toMatchObject({ 21: 'Actioned', 31: 'Actioned' });
+    expect(retainedLogs().sort()).toEqual([HELD, MARKED]);
+  });
+
+  it('clears nothing while the marker table stands without its view', async () => {
+    await createMarker(false);
+
+    await expect(clear({ ids: ids(CLEAN) })).resolves.toMatchObject({
+      count: 0,
+      retainedHidden: 2,
+    });
+    expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'hidden' });
+  });
+
+  it('leaves hidden a comment a held author replied below, as the delete keeps it', async () => {
+    await holder.db.exec(
+      table === 'Comment'
+        ? `INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId") VALUES (61, ${HELD}, 100, 'zzfixture', 11)`
+        : `INSERT INTO "Thread" (id, "commentId") VALUES (900, 11);
+           INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (61, ${HELD}, 900, 'zzfixture');`
+    );
+
+    await expect(clear({ ids: ids(CLEAN) })).resolves.toMatchObject({
+      count: 1,
+      retainedHidden: 1,
+    });
+    expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'public' });
+  });
+
+  it('counts a comment that is not flagged as neither cleared nor kept', async () => {
+    await holder.db.exec(`UPDATE "${table}" SET "tosViolation" = false WHERE id IN (11, 21)`);
+
+    await expect(clear({ ids: [11, 21] })).resolves.toEqual({
+      count: 0,
+      reopenedReports: 0,
+      retainedHidden: 0,
+      failed: 0,
+    });
+    expect(await reports()).toMatchObject({ 11: 'Actioned', 21: 'Actioned' });
+  });
+
+  it('keeps a comment hidden when its statement fails, reports it failed, and clears the rest', async () => {
+    hook = {
+      on: 'WITH target AS',
+      run: async () => {
+        throw new Error('canceling statement due to statement timeout');
+      },
+    };
+
+    await expect(clear({ ids: ids(CLEAN) })).resolves.toMatchObject({
+      count: 1,
+      retainedHidden: 0,
+      failed: 1,
+    });
+    expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'public' });
+  });
+
+  it('leaves the comment hidden and its report as it was, reporting it failed, when the reopen fails', async () => {
+    await holder.db.exec(
+      `ALTER TABLE "Report" ADD CONSTRAINT no_reopen CHECK (status <> 'Pending') NOT VALID`
+    );
+    try {
+      await expect(clear({ ids: [11] })).resolves.toEqual({
+        count: 0,
+        reopenedReports: 0,
+        retainedHidden: 0,
+        failed: 1,
+      });
+      expect(await state(table)).toMatchObject({ 11: 'hidden' });
+      expect(await reports()).toMatchObject({ 11: 'Actioned' });
+    } finally {
+      await holder.db.exec(`ALTER TABLE "Report" DROP CONSTRAINT no_reopen`);
+    }
+  });
+
+  it('counts a missing comment as neither cleared nor kept', async () => {
+    await expect(clear({ ids: [999] })).resolves.toEqual({
+      count: 0,
+      reopenedReports: 0,
+      retainedHidden: 0,
+      failed: 0,
+    });
   });
 });

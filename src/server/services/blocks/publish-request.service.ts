@@ -113,9 +113,18 @@ export type ManifestDiffSummary =
       changed: Array<{ field: string; from: unknown; to: unknown }>;
     };
 
+/** `submitVersion`'s refusal of a version of an existing app the submitter may not ship. */
+export const appOwnedByAnotherUser = (slug: string) =>
+  `app ${slug} is owned by another user; choose a different blockId`;
+
 export type SubmitVersionParams = {
   bundleBuffer: Buffer;
   submittedByUserId: number;
+  /**
+   * The submitter is a moderator: may queue a version of any existing app. Everyone else may
+   * only queue one of an app they own or are an accepted editor of (`resolveAppAccess`).
+   */
+  submitterIsModerator: boolean;
   /**
    * #4059 build provenance — an UNTRUSTED CLIENT CLAIM about the tree the bundle
    * was built from. Shape-validated by `submitVersionSchema` (lowercase 40-hex)
@@ -981,7 +990,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       import('~/server/utils/app-block-ids'),
       import('~/server/schema/blocks/publish-request.schema'),
     ]);
-  const { bundleBuffer, submittedByUserId, sourceCommit, sourceDirty } = params;
+  const { bundleBuffer, submittedByUserId, submitterIsModerator, sourceCommit, sourceDirty } =
+    params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
@@ -1060,6 +1070,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const { env } = await import('~/env/server');
   stampCanonicalIframeSrc(manifest, slug, env.APPS_DOMAIN);
 
+  // 🔴 Before the pending-conflict check, so a non-owner learns nothing about pending state. One
+  // read: the row gated here is the row the request links to below (`appBlockId`).
+  const existingApp = await dbRead.appBlock.findFirst({
+    where: { blockId: slug },
+    select: { id: true, appId: true },
+  });
+  if (existingApp && !submitterIsModerator) {
+    const { mayShipAppVersion } = await import('./app-access.service');
+    if (!(await mayShipAppVersion(existingApp.id, submittedByUserId)))
+      throw new Error(appOwnedByAnotherUser(slug));
+  }
+
   // Block double-submit on the same slug — only one pending request per
   // slug at a time. The /apps/submit UI calls getMyPendingForSlug on
   // preview to surface a "withdraw and resubmit" affordance before the
@@ -1126,11 +1148,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     );
   }
 
-  // For subsequent versions, link to the existing app row.
-  const existingApp = await dbRead.appBlock.findFirst({
-    where: { blockId: slug },
-    select: { id: true, appId: true },
-  });
+  // For subsequent versions, the request links to the existing app row read (and gated) above.
 
   // (submit-draft pre-check) W13 draft-at-submit — a FIRST-version submit now also
   // mints the on-site store `AppListing` as a pre-approval DRAFT (kind='onsite',

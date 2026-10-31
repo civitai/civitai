@@ -565,6 +565,16 @@ With the first write flip (the moderation items moved here from Phases 1 and 2):
       (`CommentV3Report` keys on `commentId`, so `findReportToFoldInto` has a case like
       `User`'s). `CommentV3` follows `CommentV2`'s rollout until given its own. Built 2026-10-29,
       awaiting the stage B deploy
+- [ ] Legal holds on CommentV3 follow the CommentV2 rules (decided 2026-10-30): deletes keep a held
+      comment as a ToS violation, marked `removedByAuthor` when its author removed it
+      (`20261217120000_comment_v3_removed_by_author`, to apply before the deploy); a ToS restore
+      leaves those hidden; an article with a held author's CommentV3-only comment is kept (delete
+      refused, a wipe takes it down as a violation). Built for article 2026-10-30, awaiting the
+      stage B deploy
+- [ ] Per surface, at its write flip: the parent's delete refuses, and the account wipe keeps the
+      parent, while a held author has a live CommentV3-only comment under it, as
+      `heldCommentV3OnArticleSql` does for articles (generalise it by `entityType` rather than
+      copying it)
 - [ ] Clavata path, so `CommentV3` is moderated exactly as `CommentV2` is (decided 2026-10-30):
       `EntityType` value `CommentV3` + `trg_moderation_commentv3`, firing only on direct writes
       (`20261211120000_comment_v3_moderation_trigger`, applied in prod 2026-10-30 in the same
@@ -758,7 +768,11 @@ With the old tables (before the drops below):
       `getThreadMuted`, `toggleThreadMute` and `toggleSectionMute`;
       `events/points/hooks.ts` `onCommentCreated`'s `threadId` arm; `hasV3SurfaceTwinSql` and its
       exclusions (ban, wipe, scam cleanup, block-hide); the `CommentTopic` delete ahead of the
-      article in `article.service.ts` `deleteArticleById` (the entity cascade covers it)
+      article in `article.service.ts` `deleteArticleById` and in the account wipe (the entity
+      cascade covers it), and the `detachHeldThreadsSql` calls there; `heldCommentV3OnArticleSql`
+      (`commentv3/moderation.service.ts`) loses its `CommentV2` twin clause and stays as the
+      refusal; `bulkClearCommentV3TosViolation` loses its `CommentV2` `metadata.removedByAuthor`
+      check, and `deleteCommentsV3UnlessHeld` its `CommentV2` mark
 - [ ] Text-scan: `comment.profile.ts` and `comment-v2.profile.ts`, the `Comment`/`CommentV2` cases in
       `csam-hold-decision.ts` and the Clavata cutover set, `scam.adapter.ts`'s
       `CommentV3: 'commentsV2'` cleanup kind, and `mode.ts`'s fallback from `CommentV3` to the

@@ -87,6 +87,7 @@ import type {
   BountyEntryMode,
   BountyEngagementType,
   CsamReportType,
+  CsamQueueSetAsideOutcome,
   Availability,
   PaidAccessEntityType,
   SaleDiscountType,
@@ -814,6 +815,24 @@ export type Article = {
   lockedProperties: Generated<string[]>;
   isOfficial: Generated<boolean>;
   status: Generated<ArticleStatus>;
+};
+export type ArticleContentLinkHold = {
+  articleId: number;
+  deferred: Generated<string[]>;
+  refused: Generated<string[]>;
+  /**
+   * Who saved the content; their own keys count as the owner's.
+   */
+  editorId: number;
+  /**
+   * When a url was first deferred, kept while any stays deferred.
+   */
+  deferredSince: Timestamp | null;
+  /**
+   * Set once a deferral outlives the backstop and a moderator report is filed.
+   */
+  reportedAt: Timestamp | null;
+  checkedAt: Generated<Timestamp>;
 };
 export type ArticleEngagement = {
   userId: number;
@@ -2578,6 +2597,10 @@ export type Comment = {
   locked: Generated<boolean | null>;
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
+  /**
+   * Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+   */
+  removedByAuthor: Generated<boolean>;
 };
 export type CommentMute = {
   userId: number;
@@ -2653,6 +2676,7 @@ export type CommentV3 = {
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
   legacyV1Id: number | null;
+  removedByAuthor: Generated<boolean>;
 };
 export type CommentV3Reaction = {
   id: Generated<number>;
@@ -2844,6 +2868,7 @@ export type Crucible = {
   seededPrizePool: Generated<number>;
   prizePool: Generated<number>;
   entryLimit: Generated<number>;
+  ownerRemovalCount: Generated<number>;
   freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;
   entryWarningPercent: Generated<number>;
@@ -2866,6 +2891,10 @@ export type Crucible = {
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
   eventTags: Generated<string[]>;
+  takenDownAt: Timestamp | null;
+  takenDownById: number | null;
+  takedownReason: string | null;
+  takedownRefundsCreator: Generated<boolean>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -2937,6 +2966,17 @@ export type CsamFlagRelease = {
    */
   overriddenLegs: unknown;
   imageCount: number;
+  createdAt: Generated<Timestamp>;
+};
+export type CsamQueueSetAside = {
+  imageId: number;
+  userId: number;
+  outcome: CsamQueueSetAsideOutcome;
+  /**
+   * The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
+   */
+  csamReportId: number | null;
+  moderatorId: number;
   createdAt: Generated<Timestamp>;
 };
 export type CsamReport = {
@@ -3457,6 +3497,13 @@ export type ImageCdnModeratorDelete = {
   userId: number | null;
   csamReview: Generated<boolean>;
   deletedAt: Generated<Timestamp>;
+};
+export type ImageCdnShopTakedown = {
+  id: Generated<number>;
+  url: string;
+  shopItemId: number;
+  userId: number | null;
+  takenDownAt: Generated<Timestamp>;
 };
 export type ImageConnection = {
   imageId: number;
@@ -4058,6 +4105,17 @@ export type ModelMetricDaily = {
   date: Timestamp;
   count: number;
 };
+export type ModelOwnership = {
+  id: Generated<number>;
+  modelId: number;
+  userId: number;
+  /**
+   * 'create' | 'transfer' | 'account-delete' | 'restore' | 'baseline' (a CHECK in SQL)
+   */
+  reason: string;
+  actorId: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ModelPermissionSnapshot = {
   id: Generated<number>;
   modelId: number;
@@ -4349,7 +4407,7 @@ export type Placement = {
   data: Generated<unknown>;
   status: string;
   /**
-   * 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+   * 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
    * removals refund different amounts, so the status alone cannot settle the
    * money. Constrained by "Placement_removedBy_check" — a new value needs a
    * migration even though the column is TEXT.
@@ -5357,6 +5415,11 @@ export type ShadowTagsOnImage = {
   tagId: number;
   confidence: number;
 };
+export type ShopArtworkKeyOwner = {
+  key: string;
+  userId: number;
+  recordedAt: Generated<Timestamp>;
+};
 export type ShopifyCustomerLink = {
   id: Generated<number>;
   shopifyCustomerId: string;
@@ -5491,9 +5554,46 @@ export type StorylineChapterEdge = {
   canon: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineChapterRemovalHold = {
+  id: Generated<number>;
+  storylineId: number;
+  /**
+   * The storyline's title at removal: the hold outlives the storyline.
+   */
+  storylineTitle: string;
+  /**
+   * The removed chapter's id, its post and its author, as they were.
+   */
+  chapterId: number;
+  postId: number | null;
+  chapterUserId: number;
+  depth: number;
+  placementId: number | null;
+  parentChapterIds: number[];
+  chapterCreatedAt: Timestamp;
+  removedById: number;
+  /**
+   * 'owner' or 'author'.
+   */
+  removedByRole: string;
+  /**
+   * The reports open when it was removed.
+   */
+  reportIds: number[];
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineCollaborator = {
   storylineId: number;
   userId: number;
+  createdAt: Generated<Timestamp>;
+  /**
+   * When the user accepted the invitation; null while it is pending. Declining deletes the row.
+   */
+  acceptedAt: Timestamp | null;
+};
+export type StorylineCoverUpload = {
+  storylineId: number;
+  imageId: number;
   createdAt: Generated<Timestamp>;
 };
 export type StorylineCreateClick = {
@@ -6282,6 +6382,7 @@ export type DB = {
   AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
   AppPageAccess: AppPageAccess;
   Article: Article;
+  ArticleContentLinkHold: ArticleContentLinkHold;
   ArticleEngagement: ArticleEngagement;
   ArticleMetric: ArticleMetric;
   ArticleRank: ArticleRank;
@@ -6412,6 +6513,7 @@ export type DB = {
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
   CsamFlagRelease: CsamFlagRelease;
+  CsamQueueSetAside: CsamQueueSetAside;
   CsamReport: CsamReport;
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;
@@ -6450,6 +6552,7 @@ export type DB = {
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
+  ImageCdnShopTakedown: ImageCdnShopTakedown;
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
@@ -6497,6 +6600,7 @@ export type DB = {
   ModelInterest: ModelInterest;
   ModelMetric: ModelMetric;
   ModelMetricDaily: ModelMetricDaily;
+  ModelOwnership: ModelOwnership;
   ModelPermissionSnapshot: ModelPermissionSnapshot;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
@@ -6592,13 +6696,16 @@ export type DB = {
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;
+  ShopArtworkKeyOwner: ShopArtworkKeyOwner;
   ShopifyCustomerLink: ShopifyCustomerLink;
   ShopifyMerchOrder: ShopifyMerchOrder;
   Storyline: Storyline;
   StorylineBranchChoice: StorylineBranchChoice;
   StorylineChapter: StorylineChapter;
   StorylineChapterEdge: StorylineChapterEdge;
+  StorylineChapterRemovalHold: StorylineChapterRemovalHold;
   StorylineCollaborator: StorylineCollaborator;
+  StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
   StorylinePendingChapter: StorylinePendingChapter;

@@ -1,6 +1,7 @@
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { PLACEMENT_SURFACES, placementPriceCaption } from '~/shared/utils/placement';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
+import { isStorylineVerdictLevel } from '~/shared/utils/storyline-placement';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 /**
@@ -167,7 +168,13 @@ export type StorylineSubmitVerdict =
   | { allowed: true; awaitingScan: boolean }
   | {
       allowed: false;
-      reason: 'ownStoryline' | 'complete' | StorylineClosedReason | 'aboveRating' | 'notRated';
+      reason:
+        | 'ownStoryline'
+        | 'complete'
+        | StorylineClosedReason
+        | 'aboveRating'
+        | 'notRated'
+        | 'cannotSubmit';
     };
 
 /**
@@ -197,6 +204,7 @@ export function storylineSubmitVerdict({
     if (storyline.userId !== viewerId) return { allowed: false, reason: 'ownStoryline' };
     if (storyline.status === 'Complete') return { allowed: false, reason: 'complete' };
     if (!postLevel) return { allowed: false, reason: 'notRated' };
+    if (isStorylineVerdictLevel(postLevel)) return { allowed: false, reason: 'cannotSubmit' };
     if (!storylineLevelAllowed({ postLevel, maxNsfwLevel: storyline.maxNsfwLevel }))
       return { allowed: false, reason: 'aboveRating' };
     return { allowed: true, awaitingScan: false };
@@ -205,6 +213,7 @@ export function storylineSubmitVerdict({
   if (storyline.status === 'Complete') return { allowed: false, reason: 'complete' };
   if (closedReason) return { allowed: false, reason: closedReason };
   if (!postLevel) return { allowed: true, awaitingScan: true };
+  if (isStorylineVerdictLevel(postLevel)) return { allowed: false, reason: 'cannotSubmit' };
   if (!storylineLevelAllowed({ postLevel, maxNsfwLevel: storyline.maxNsfwLevel }))
     return { allowed: false, reason: 'aboveRating' };
   return { allowed: true, awaitingScan: false };

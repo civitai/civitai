@@ -193,10 +193,13 @@ export async function reverseComments(
      ) SELECT count(*)::int AS threads FROM ins`,
     p
   );
-  const columns = `(id, content, "userId", "threadId", "tosViolation", hidden, "pinnedAt", "createdAt", "updatedAt")`;
+  // An author's removal a hold kept is marked as the old ToS restore reads it, so it is not republished.
+  const columns = `(id, content, "userId", "threadId", "tosViolation", hidden, "pinnedAt", "createdAt", "updatedAt", metadata)`;
   const values = `v.id, v.content, v."userId", t.id, v."tosViolation", v.hidden, ${ms(
     'v."pinnedAt"'
-  )}, ${ms('v."createdAt"')}, ${ms('v."updatedAt"')}`;
+  )}, ${ms('v."createdAt"')}, ${ms(
+    'v."updatedAt"'
+  )}, CASE WHEN v."removedByAuthor" THEN '{"removedByAuthor": true}'::jsonb END`;
   let copied = 0;
   const { replies } = await one<{ replies: number }>(
     db,
@@ -286,9 +289,11 @@ export async function reverseComments(
     const { v1 } = await one<{ v1: number }>(
       db,
       `WITH ins AS (
-         INSERT INTO "Comment" (id, content, "userId", "modelId", "parentId", "tosViolation", hidden, locked, "pinnedAt", "createdAt", "updatedAt")
+         INSERT INTO "Comment" (id, content, "userId", "modelId", "parentId", "tosViolation", hidden, locked, "pinnedAt", "createdAt", "updatedAt", "removedByAuthor")
          SELECT v.id, v.content, v."userId", v."entityId", p.id, v."tosViolation", v.hidden, v.locked,
-                ${ms('v."pinnedAt"')}, ${ms('v."createdAt"')}, ${ms('v."updatedAt"')}
+                ${ms('v."pinnedAt"')}, ${ms('v."createdAt"')}, ${ms(
+        'v."updatedAt"'
+      )}, v."removedByAuthor"
            FROM "CommentV3" v
            LEFT JOIN "CommentV3" pv ON pv.id = COALESCE(v."replyToId", v."parentId")
            LEFT JOIN "Comment" p ON p.id = pv."legacyV1Id"
@@ -323,11 +328,14 @@ export async function reverseUpdates(db: SqlRunner, r: IdRange): Promise<Reverse
     `WITH upd AS (
        UPDATE "CommentV2" c
           SET content = v.content, "tosViolation" = v."tosViolation", hidden = v.hidden,
-              "pinnedAt" = ${ms('v."pinnedAt"')}, "updatedAt" = ${ms('v."updatedAt"')}
+              "pinnedAt" = ${ms('v."pinnedAt"')}, "updatedAt" = ${ms('v."updatedAt"')},
+              metadata = CASE WHEN v."removedByAuthor"
+                THEN COALESCE(c.metadata, '{}'::jsonb) || '{"removedByAuthor": true}'::jsonb ELSE c.metadata END
          FROM "CommentV3" v
         WHERE v.id = c.id AND v.id BETWEEN $1 AND $2 AND v."legacyV1Id" IS NULL AND v."deletedAt" IS NULL
           AND c."updatedAt" <= ${ms('v."updatedAt"')}
           AND (c.content <> v.content OR c."tosViolation" <> v."tosViolation" OR COALESCE(c.hidden, false) <> v.hidden
+            OR (v."removedByAuthor" AND (c.metadata ->> 'removedByAuthor')::boolean IS NOT TRUE)
             OR c."pinnedAt" IS DISTINCT FROM ${ms('v."pinnedAt"')} OR c."updatedAt" <> ${ms(
       'v."updatedAt"'
     )})
@@ -340,12 +348,14 @@ export async function reverseUpdates(db: SqlRunner, r: IdRange): Promise<Reverse
     `WITH upd AS (
        UPDATE "Comment" c
           SET content = v.content, "tosViolation" = v."tosViolation", hidden = v.hidden, locked = v.locked,
-              "pinnedAt" = ${ms('v."pinnedAt"')}, "updatedAt" = ${ms('v."updatedAt"')}
+              "pinnedAt" = ${ms('v."pinnedAt"')}, "updatedAt" = ${ms('v."updatedAt"')},
+              "removedByAuthor" = c."removedByAuthor" OR v."removedByAuthor"
          FROM "CommentV3" v
         WHERE v."legacyV1Id" = c.id AND v.id BETWEEN $1 AND $2 AND v."deletedAt" IS NULL
           AND c."updatedAt" <= ${ms('v."updatedAt"')}
           AND (c.content <> v.content OR c."tosViolation" <> v."tosViolation" OR COALESCE(c.hidden, false) <> v.hidden
             OR COALESCE(c.locked, false) <> v.locked
+            OR (v."removedByAuthor" AND NOT c."removedByAuthor")
             OR c."pinnedAt" IS DISTINCT FROM ${ms('v."pinnedAt"')} OR c."updatedAt" <> ${ms(
       'v."updatedAt"'
     )})

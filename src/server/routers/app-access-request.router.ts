@@ -4,6 +4,7 @@ import {
   submitAppAccessRequestSchema,
 } from '~/server/schema/app-access-request.schema';
 import {
+  countPendingAppAccessRequests,
   decideAppAccessRequest,
   getMyAppAccessRequest,
   listAppAccessRequests,
@@ -22,6 +23,9 @@ export const appAccessRequestRouter = router({
   list: moderatorProcedure
     .input(listAppAccessRequestsSchema)
     .query(({ input }) => listAppAccessRequests(input)),
+
+  /** The pending count for the `/apps/review` tab badge, so the badge's poll fetches no rows. */
+  countPending: moderatorProcedure.query(() => countPendingAppAccessRequests()),
 
   /** Approving grants builder access; declining an approved request revokes it. */
   decide: moderatorProcedure

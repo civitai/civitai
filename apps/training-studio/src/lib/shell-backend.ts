@@ -4,6 +4,8 @@
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
 import type {
   AutoLabelResult,
+  EditGenerationItem,
+  EditImageOption,
   StudioBackend,
   SubmittedBatch,
   TrainingRunPayload,
@@ -24,19 +26,44 @@ async function messageOf(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
+/** GET `path` as JSON; a failure throws the route's message, else `fallback (status)`. */
+async function getFor<T>(path: string, fallback: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, { signal });
+  if (!res.ok) throw new Error(await messageOf(res, `${fallback} (${res.status})`));
+  return (await res.json()) as T;
+}
+
+async function quoteFrom(path: string): Promise<number | null> {
+  const res = await fetch(path);
+  if (!res.ok) return null;
+  return ((await res.json()) as { cost: number | null }).cost;
+}
+
+async function postFor(path: string, body: unknown, fallback: string) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await messageOf(res, fallback));
+  return (await res.json()) as { workflowId: string };
+}
+
 export const shellBackend: StudioBackend = {
-  listTrainings: async () => {
-    const res = await fetch('/api/trainings');
-    if (!res.ok) throw new Error(await messageOf(res, `Failed to load trainings (${res.status})`));
-    return (await res.json()) as TrainingRow[];
-  },
+  listTrainings: () => getFor<TrainingRow[]>('/api/trainings', 'Failed to load trainings'),
 
   // The /[id] page's own detail still comes from its server load (refresh() re-runs it); this seam
   // read serves RunDetail's ancestor-chain fetches (combined epochs).
-  getRunDetail: async (workflowId) => {
-    const res = await fetch(`/api/run-detail?id=${encodeURIComponent(workflowId)}`);
-    if (!res.ok) throw new Error(await messageOf(res, `Failed to load training (${res.status})`));
-    return (await res.json()) as TrainingDetail;
+  getRunDetail: (workflowId) =>
+    getFor<TrainingDetail>(
+      `/api/run-detail?id=${encodeURIComponent(workflowId)}`,
+      'Failed to load training'
+    ),
+
+  modelLive: async (modelId) => {
+    const res = await fetch(`/api/model-status?id=${modelId}`);
+    if (!res.ok) throw new Error(await messageOf(res, `Model check failed (${res.status})`));
+    return ((await res.json()) as { live: boolean }).live;
   },
 
   getRunDataset: async (workflowId) => {
@@ -100,6 +127,37 @@ export const shellBackend: StudioBackend = {
     const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
     return { workflowIds, failure };
   },
+
+  listEditGenerations: async () =>
+    (
+      await getFor<{ items: EditGenerationItem[] }>(
+        '/api/generations?media=image&kind=edit',
+        'Failed to load your edits'
+      )
+    ).items,
+
+  editImageQuote: () => quoteFrom('/api/edit-image'),
+
+  editImageSubmit: (req) => postFor('/api/edit-image', req, "Couldn't create the image."),
+
+  editImagePoll: (workflowId, signal) =>
+    getFor<{ done: boolean; options: EditImageOption[] }>(
+      `/api/edit-image/${encodeURIComponent(workflowId)}`,
+      'Image progress unavailable',
+      signal
+    ),
+
+  suggestQuote: () => quoteFrom('/api/suggest-instruction'),
+
+  suggestSubmit: (req) =>
+    postFor('/api/suggest-instruction', req, "Couldn't suggest an instruction."),
+
+  suggestPoll: (workflowId, signal) =>
+    getFor<{ done: boolean; text?: string }>(
+      `/api/suggest-instruction/${encodeURIComponent(workflowId)}`,
+      'Suggestion unavailable',
+      signal
+    ),
 
   rename: async (workflowId, name) => {
     const res = await fetch('/api/rename', {

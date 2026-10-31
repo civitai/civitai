@@ -16,6 +16,7 @@ import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
@@ -148,6 +149,7 @@ import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
+import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
@@ -254,6 +256,7 @@ export const jobs: Job[] = [
   settleBlockAuthorFeesJob,
   confirmMutes,
   botAccountDetection,
+  linkedAccountReview,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
   creatorProgramCounterpartyReview,
@@ -304,6 +307,7 @@ export const jobs: Job[] = [
   textScanChatWindowsJob,
   textScanNewUsersJob,
   articleIngestionReconcile,
+  articleContentLinkHold,
   expireStrikesJob,
   processTimedUnmutesJob,
   reconcileNowpaymentsJob,

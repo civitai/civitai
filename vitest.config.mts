@@ -244,7 +244,6 @@ const prebundledDeps = [
   'zustand',
   'immer',
   'clsx',
-  'uuid',
   'prom-client',
   '@tanstack/react-query',
   '@paddle/paddle-node-sdk',
@@ -644,8 +643,8 @@ export default defineConfig({
         },
       },
       {
-        // Exactly the files `component` excludes, same setup, run by the non-blocking
-        // `component-quarantine` CI job. `provide.quarantineRun` lets those files un-skip
+        // Exactly the files `component` excludes, same setup, run by the quarantine step of
+        // the `component` CI job (push to `main` and dispatch only). `provide.quarantineRun` lets those files un-skip
         // the groups that are skipped for the blocking run. Disjoint from `component` by
         // construction: the same list is its `include` and `component`'s `exclude`.
         ...browserProjectShell(),

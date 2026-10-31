@@ -4,6 +4,7 @@ import {
   CIVITAI_SDK_FLOOR,
   checkSdkPin,
   installedSdkBelowFloor,
+  type AssistantTool,
   type Sandbox,
 } from '@civitai/app-assistant';
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
@@ -45,6 +46,47 @@ const TARGET_RANGE = `^${CIVITAI_SDK_FLOOR}`;
 const FLOOR_MINOR = CIVITAI_SDK_FLOOR.split('.').slice(0, 2).join('.');
 /** The one line a reply starts with after the runner upgraded its app. */
 export const SDK_UPGRADED_LINE = `Updated this app's Civitai SDK to ${FLOOR_MINOR} so the preview stays awake while you use it.`;
+
+/** What `submit_for_review` answers when the runner upgraded the app's SDK as it was offered. */
+export const SDK_UPGRADED_BEFORE_SUBMIT = `Not submitted yet: the runner just updated this app's Civitai SDK to ${TARGET_RANGE} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: ${SDK_UPGRADED_LINE} Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`;
+
+/** What `submit_for_review` answers when the upgrade it ran first failed after changing the app. */
+export const SDK_UPGRADE_FAILED_BEFORE_SUBMIT = `Not submitted yet: the runner tried to update this app's Civitai SDK to ${TARGET_RANGE} and it failed, so it put the app's packages back; the app changed after its checks all the same. Do not tell the user about the SDK. Run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`;
+
+/**
+ * What an upgrade did: changed nothing (`unchanged`: current, not tried, or stopped before its
+ * first change), upgraded the app (`instructions`, the reply's line to tell the user), or `failed`
+ * after it changed something (a rewrite, an install, a restart), whatever its rollback did.
+ */
+export type SdkUpgradeOutcome =
+  | { kind: 'unchanged' }
+  | { kind: 'upgraded'; instructions: string }
+  | { kind: 'failed' };
+
+const UNCHANGED: SdkUpgradeOutcome = { kind: 'unchanged' };
+
+/**
+ * `submit_for_review` that first upgrades a stale `@civitai/sdk` (`upgrade`, `SdkUpgrades`): the
+ * upgrade as a reply opens cannot see an app scaffolded later in that reply (the scaffold pins an
+ * older SDK), and the page packages the app as the sandbox holds it when the offer reaches it. An
+ * upgrade that changed anything here, or failed after changing something, withholds the offer, so
+ * the app is checked again as it now is.
+ */
+export function upgradeBeforeSubmit(
+  tool: AssistantTool,
+  upgrade: () => Promise<SdkUpgradeOutcome>
+): AssistantTool {
+  return {
+    ...tool,
+    async execute(input) {
+      const offer = await tool.execute(input);
+      const outcome = await upgrade();
+      if (outcome.kind === 'upgraded') throw new Error(SDK_UPGRADED_BEFORE_SUBMIT);
+      if (outcome.kind === 'failed') throw new Error(SDK_UPGRADE_FAILED_BEFORE_SUBMIT);
+      return offer;
+    },
+  };
+}
 
 export interface SdkPinSandbox {
   readonly active: Pick<Sandbox, 'name' | 'app' | 'state'> | null;
@@ -150,13 +192,10 @@ export class SdkUpgrades {
     this.#upgradeTimeoutMs = options.upgradeTimeoutMs ?? SDK_UPGRADE_TIMEOUT_MS;
   }
 
-  /**
-   * Upgrades the open app when its SDK is stale; resolves with what the reply's instructions get
-   * after an upgrade (the line to tell the user), else `null`.
-   */
-  async upgrade(input: SdkUpgradeInput): Promise<string | null> {
+  /** Upgrades the open app when its SDK is stale, and says what it did (`SdkUpgradeOutcome`). */
+  async upgrade(input: SdkUpgradeInput): Promise<SdkUpgradeOutcome> {
     const app = input.sandbox.active;
-    if (!app || app.state !== 'running' || !input.hasTool('read_file')) return null;
+    if (!app || app.state !== 'running' || !input.hasTool('read_file')) return UNCHANGED;
     // Another reply's upgrade in this sandbox finishes first (it never throws).
     for (let earlier = this.#working.get(app.name); earlier; earlier = this.#working.get(app.name))
       await earlier;
@@ -169,22 +208,22 @@ export class SdkUpgrades {
     }
   }
 
-  async #upgrade(input: SdkUpgradeInput, dir: string): Promise<string | null> {
+  async #upgrade(input: SdkUpgradeInput, dir: string): Promise<SdkUpgradeOutcome> {
     const { conversationId, runId, log } = input;
-    if (input.signal?.aborted) return null;
+    if (input.signal?.aborted) return UNCHANGED;
     // The project directory goes into a shell command: an app key only.
     if (!BLOCK_SLUG.test(dir)) {
       log.info({ runId, reason: 'app_key' }, `${CIVITAI_SDK} pin not checked: unusual app key`);
-      return null;
+      return UNCHANGED;
     }
     const found = await this.#check(input, dir);
-    if (!found) return null;
+    if (!found) return UNCHANGED;
 
     const key = `${conversationId}\n${dir}`;
     const pair = `${found.declared}\n${found.installedStale ?? ''}`;
     const tried = this.#tried.get(key);
     const attempts = tried?.pair === pair ? tried.attempts : 0;
-    if (attempts >= ATTEMPTS) return null;
+    if (attempts >= ATTEMPTS) return UNCHANGED;
     const notUpgraded = (reason: string) => {
       // Nothing can change while the pair does not: not looked at again for it.
       this.#remember(key, pair, ATTEMPTS);
@@ -192,13 +231,13 @@ export class SdkUpgrades {
         { runId, reason, declared: found.declared.slice(0, 100) },
         `${CIVITAI_SDK} not upgraded: ${reason}`
       );
-      return null;
+      return UNCHANGED;
     };
     if (!input.hasTool('run_command') || !input.hasTool('write_file'))
       return notUpgraded('no_exec_tool');
     const rewritten = found.declaredStale ? rewriteSdkRange(found.text, found.pkg) : found.text;
     if (rewritten === null) return notUpgraded('layout');
-    if (input.signal?.aborted) return null;
+    if (input.signal?.aborted) return UNCHANGED;
     this.#remember(key, pair, attempts + 1);
     return this.#run(input, dir, found, rewritten);
   }
@@ -297,7 +336,7 @@ export class SdkUpgrades {
     dir: string,
     found: StalePin,
     rewritten: string
-  ): Promise<string | null> {
+  ): Promise<SdkUpgradeOutcome> {
     const { sandbox, runId, log } = input;
     const started = Date.now();
     const deadline = started + this.#upgradeTimeoutMs;
@@ -347,13 +386,14 @@ export class SdkUpgrades {
         },
         `${CIVITAI_SDK} upgraded`
       );
-      return [
+      const instructions = [
         `Before this reply the runner updated ${dir}'s Civitai SDK to ${TARGET_RANGE} itself and reinstalled the app's packages${
           devServer !== 'none' ? ', then restarted its dev server' : ''
         }: do not do that again.`,
         `Start your reply with this one line for the user, then go on with what they asked: ${SDK_UPGRADED_LINE}`,
         'Change no code for this upgrade unless the user asks. If the typecheck or tests fail because of the newer SDK, tell the user what broke instead of rewriting the app.',
       ].join(' ');
+      return { kind: 'upgraded', instructions };
     } catch (error) {
       const failure =
         error instanceof UpgradeFailed
@@ -374,7 +414,8 @@ export class SdkUpgrades {
         },
         `${CIVITAI_SDK} upgrade failed`
       );
-      return null;
+      // A failure before the first change (keeping the lockfile) left the app as it was.
+      return done.wrote || done.installed ? { kind: 'failed' } : UNCHANGED;
     }
   }
 

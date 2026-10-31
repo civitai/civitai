@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,10 @@ import type * as TextScanRoute from '~/server/services/text-scan/route';
 // The Redis-backed post-commit helpers never settle without a live Redis, so they are stubbed.
 const { deleteImageById } = vi.hoisted(() => ({ deleteImageById: vi.fn(async () => undefined) }));
 
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  holdMarkerViewExists: async () => true,
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   deleteImageById,
@@ -153,7 +158,7 @@ beforeEach(() => {
   deletedArticleCover = null;
   hold.rows = [{ held: false }];
   dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
-    if (!strings.join('?').includes(' AS held')) return undefined;
+    if (!strings.join('?').includes(' AS held')) return [];
     if (!hold.rows) throw new Error('relation "EvidenceHeldUser" does not exist');
     return hold.rows;
   }) as never);
@@ -274,6 +279,30 @@ describe('deleteArticleById', () => {
     expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[topicDelete]).toBeLessThan(
       dbMock.dbWrite.article.delete.mock.invocationCallOrder[0]
     );
+  });
+
+  // An article saved before shop keys were refused can hold one as the author's own image row.
+  it('keeps an unused image of the author whose key shop artwork uses', async () => {
+    const shopKey = '0a0b0c0d-0000-4000-8000-0000000000aa';
+    dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
+      [...UNLINKED, ...COVERS]
+        .filter((row) => matches(row, where))
+        .map((row) => ({
+          id: row.id,
+          url: row.id === UNUSED_OWN.id ? shopKey : `key-${row.id}`,
+        }))) as never);
+    const heldRead = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('unnest(')
+        ? Promise.resolve([{ key: shopKey }])
+        : heldRead?.(strings, ...values)) as never);
+
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    expect(deletedIds()).toEqual([]);
   });
 
   const deleteWithCover = async (cover: Row) => {

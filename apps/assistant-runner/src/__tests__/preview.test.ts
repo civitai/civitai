@@ -17,6 +17,7 @@ import {
   autoPreviewFailed,
 } from '../app-assistant/provider';
 import type { OpenTools } from '../core/interfaces';
+import { chosenApp } from '../test-support/chosen-app';
 import { FAKE_TUNNEL_PUBLIC_KEY, FakeSandboxService } from '../test-support/fake-sandbox';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
@@ -88,6 +89,8 @@ async function open() {
     runId: 'run-1',
     conversationId: 'conv-1',
     page: { app: 'my-app' },
+    // A chat that chose the open app: its dev server starts are not refused.
+    history: chosenApp('my-app'),
     signal: new AbortController().signal,
     report: (result) => reported.push(result),
   });
@@ -744,6 +747,7 @@ describe('the preview opens by itself once the dev server starts', () => {
       runId: 'run-1',
       conversationId: 'conv-1',
       page: { app: 'my-app' },
+      history: chosenApp('my-app'),
       signal: new AbortController().signal,
     });
     opened.push(tools);

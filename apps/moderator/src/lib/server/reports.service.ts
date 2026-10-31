@@ -8,6 +8,7 @@ import { recordModActivity } from './mod-activity';
 import { REPORT_ENTITIES, reportEntity, reportLinkFilter } from './report-entities';
 import { SYSTEM_USER_ID, usersByIds } from './users.service';
 import { rewardReportReporters } from './rewards';
+import { ENQUEUE_SOURCE } from './unpublished-version-posts';
 import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
@@ -213,6 +214,8 @@ export type GetReportsParams = {
   /** Every report about one item — the account or model a queue page has open, which lists them all
    *  rather than the ones that happen to sit on the current page of the queue. */
   entityId?: number;
+  /** Only the reports `unpublished-version-posts` filed for this unpublish reason. */
+  unpublishedReason?: string;
 };
 
 /**
@@ -227,6 +230,7 @@ function reportQueueBase({
   to,
   reportId,
   entityId,
+  unpublishedReason,
 }: Omit<GetReportsParams, 'statuses' | 'page' | 'limit'>) {
   const join = reportEntity(type);
   const entityExists =
@@ -252,7 +256,25 @@ function reportQueueBase({
   if (from) base = base.where('Report.createdAt', '>=', from);
   if (to) base = base.where('Report.createdAt', '<', to);
   if (reportId) base = base.where('Report.id', '=', reportId);
+  if (unpublishedReason)
+    base = base
+      .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
+      .where(sql<string>`"Report".details ->> 'unpublishedReason'`, '=', unpublishedReason);
   return base;
+}
+
+/** Open reports `unpublished-version-posts` filed, per unpublish reason, for the post queue's chips. */
+export async function getUnpublishedSourceCounts(): Promise<Record<string, number>> {
+  const reason = sql<string>`"Report".details ->> 'unpublishedReason'`;
+  const rows = await dbRead
+    .selectFrom('Report')
+    .where('Report.status', 'in', DEFAULT_REPORT_STATUSES)
+    .where('Report.userId', '=', SYSTEM_USER_ID)
+    .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
+    .select([reason.as('reason'), (eb) => eb.fn.countAll<number>().as('count')])
+    .groupBy(reason)
+    .execute();
+  return Object.fromEntries(rows.filter((r) => r.reason).map((r) => [r.reason, Number(r.count)]));
 }
 
 /**
@@ -287,6 +309,7 @@ export async function getReports({
   to,
   reportId,
   entityId: forEntity,
+  unpublishedReason,
 }: GetReportsParams): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
@@ -309,6 +332,7 @@ export async function getReports({
     to,
     reportId,
     entityId: forEntity,
+    unpublishedReason,
   });
   if (statuses !== 'all') base = base.where('Report.status', 'in', statuses);
 
@@ -945,6 +969,8 @@ export type ReportedModelState = {
   unpublishedReason: string | null;
   unpublishedAt: string | null;
   takenDownAt: string | null;
+  /** Kept when its owner's content was removed, in the violation status without a take-down. */
+  removedWithOwner: boolean;
 };
 
 const metaString = (meta: unknown, key: string): string | null => {
@@ -976,6 +1002,10 @@ export async function getReportedModelStates(ids: number[]): Promise<ReportedMod
     unpublishedReason: metaString(meta, 'unpublishedReason'),
     unpublishedAt: metaString(meta, 'unpublishedAt'),
     takenDownAt: metaString(meta, 'takenDownAt'),
+    removedWithOwner:
+      !!meta &&
+      typeof meta === 'object' &&
+      (meta as Record<string, unknown>).removedWithOwner === true,
   }));
 }
 

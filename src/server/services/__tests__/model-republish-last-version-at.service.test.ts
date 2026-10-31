@@ -7,7 +7,12 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {
-    model: { update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+    model: {
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      findUnique: vi.fn(async () => ({ status: 'Published', availability: 'Public', meta: {} })),
+    },
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),

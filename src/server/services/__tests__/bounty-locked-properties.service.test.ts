@@ -14,6 +14,7 @@ import { getTextScanMode } from '~/server/services/text-scan/mode';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
+const { CHECKED_URLS } = vi.hoisted(() => ({ CHECKED_URLS: ['checked-before-tx'] }));
 const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockBuzzTransaction } = vi.hoisted(
   () => ({
     mockEvaluateContent: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
+  checkEntityImageKeys: vi.fn(async () => CHECKED_URLS),
   createEntityImages: vi.fn(async () => []),
   updateEntityImages: vi.fn(async () => []),
   enqueueImageIngestion: vi.fn(),
@@ -55,6 +57,11 @@ import {
   upsertBounty,
 } from '~/server/services/bounty.service';
 import { constants } from '~/server/common/constants';
+import {
+  checkEntityImageKeys,
+  createEntityImages,
+  updateEntityImages,
+} from '~/server/services/image.service';
 
 const BOUNTY_ID = 55;
 const OWNER_ID = 7;
@@ -109,6 +116,22 @@ beforeEach(() => {
   mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false });
   mockDbWrite.bounty.update.mockResolvedValue({ id: BOUNTY_ID, userId: OWNER_ID });
   mockDbWrite.bounty.create.mockResolvedValue({ id: BOUNTY_ID, userId: OWNER_ID });
+});
+
+describe('updateBountyById — images', () => {
+  it('checks the image upload keys before opening the transaction', async () => {
+    const images = [{ url: '00000000-0000-4000-8000-000000000000' }];
+    await updateBountyById({ ...baseUpdate, images, userId: MODERATOR_ID } as never);
+
+    expect(checkEntityImageKeys).toHaveBeenCalledWith({ images, userId: MODERATOR_ID });
+    expect(vi.mocked(checkEntityImageKeys).mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.$transaction.mock.invocationCallOrder[0]
+    );
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({
+      userId: MODERATOR_ID,
+      keysCheckedFor: CHECKED_URLS,
+    });
+  });
 });
 
 describe('updateBountyById — lock enforcement', () => {
@@ -287,6 +310,21 @@ describe('upsertBounty — create path', () => {
   const chargedAccountTypes = () =>
     mockBuzzTransaction.mock.calls.at(-1)?.[0]?.fromAccountTypes ?? [];
 
+  it('checks the image upload keys before opening the transaction', async () => {
+    await create();
+
+    expect(checkEntityImageKeys).toHaveBeenCalledWith({
+      images: [{ url: '00000000-0000-4000-8000-000000000000', type: 'image' }],
+      userId: OWNER_ID,
+    });
+    expect(vi.mocked(checkEntityImageKeys).mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.$transaction.mock.invocationCallOrder[0]
+    );
+    expect(vi.mocked(createEntityImages).mock.calls[0][0]).toMatchObject({
+      keysCheckedFor: CHECKED_URLS,
+    });
+  });
+
   it('charges green buzz when the caller asked for green', async () => {
     await create({ buzzType: 'green' });
 
@@ -424,6 +462,14 @@ describe('updateBountyById — a moderator clearing a text-scan poi flag', () =>
       workflowId: 'wf-1',
       appealGranted: { by: MODERATOR_ID, textHash: 'h-flagged', via: 'moderator' },
     });
+  });
+
+  it('refuses, writing nothing, on a bounty a content wipe kept until its payout settles', async () => {
+    mockStored({ poi: true, meta: { ...flagged, removedWithOwner: true } });
+    await expect(updateBountyById(moderatorEdit as never)).rejects.toMatchObject({
+      message: 'This bounty is kept hidden until its payout settles',
+    });
+    expect(mockDbWrite.bounty.update).not.toHaveBeenCalled();
   });
 
   it('touches neither availability nor meta for a poi the text scan did not set', async () => {

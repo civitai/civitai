@@ -21,9 +21,17 @@ import {
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import { getCommentExcludedUserIds } from '~/server/services/comment-exclusions.service';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { bulkSetCommentV3TosViolation } from '~/server/services/commentv3/moderation.service';
 import {
-  deleteComments,
+  afterCommentsV3Deleted,
+  bulkSetCommentV3TosViolation,
+  deleteCommentsV3UnlessHeld,
+} from '~/server/services/commentv3/moderation.service';
+import {
+  contentKeptError,
+  holdMarkerViewExists,
+  isLegalHoldAbort,
+} from '~/server/services/legal-hold.service';
+import {
   getStoredComment,
   getV3WriteComment,
   insertComment,
@@ -346,10 +354,20 @@ export async function deleteCommentV3Handler({
 }) {
   const comment = await writableComment(ctx, input.id);
   assertAuthorOrModerator(ctx, comment);
-  const removed = await dbWrite.$transaction((tx) =>
-    deleteComments(prismaRunner(tx), [comment.id])
-  );
-  void onTopicCommentsRemoved(removed);
+  // A comment kept for a hold is hidden for ToS instead, which its author cannot tell from a delete:
+  // it goes from every read they get, and its points with it.
+  const markerView = await holdMarkerViewExists();
+  const result = await dbWrite
+    .$transaction((tx) =>
+      deleteCommentsV3UnlessHeld(tx, [comment.id], markerView, {
+        byAuthor: comment.userId === ctx.user.id,
+      })
+    )
+    .catch((e: unknown) => {
+      throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
+    });
+  await afterCommentsV3Deleted(result);
+  if (result.retained.length) void onTopicCommentsRemoved([comment]);
   ctx.track.commentEvent({ type: 'Delete', commentId: comment.id }).catch(handleLogError);
   return { id: comment.id };
 }

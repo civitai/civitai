@@ -224,7 +224,9 @@ comment's surface. What it covers, beyond the SQL itself:
 - **Moderator app.** Bulk delete, remove-as-ToS and restore accept v3 ids; the hold triage gains a
   `CommentV3` type.
 - **Rollback.** The reverse copy, rehearsed on the dev database with real stage B writes before
-  the deploy.
+  the deploy. It carries `removedByAuthor` to the old tables (`metadata.removedByAuthor` on
+  CommentV2, the column on Comment); the dev rehearsal predates that, so rerun it with a held
+  author's deleted comment.
 
 ### Stage B as built (2026-10-29, not yet deployed)
 
@@ -235,6 +237,17 @@ comment's surface. What it covers, beyond the SQL itself:
   row locks rather than skipping them as the mirror's `commentv3_mirror_delete` does.
   Tombstoning deletes the comment's `CommentV3Report` links, as a hard delete's cascade does, so
   its reports leave the queue; the `Report` row stays.
+- Legal holds follow the CommentV2 rules (2026-10-30, Briant). Every delete, single or bulk, keeps
+  a comment whose author or anyone below it is held, as a ToS violation; one its author deleted is
+  marked `removedByAuthor` (migration `20261217120000_comment_v3_removed_by_author`), as is one a
+  content wipe keeps. A ToS restore leaves both hidden, and reports them as kept. A ToS removal
+  counts a comment already hidden and actions its reports without telling its author again. An
+  article with a held author's comment that exists only in CommentV3 is not deleted, since its
+  comments cannot be detached as a CommentV2 thread is: the owner's delete is refused, and a
+  content wipe keeps it, taken down as a violation (`UnpublishedViolation` with a
+  `removedWithOwner` record), so neither its owner nor a pending scan or schedule republishes it.
+  The `removedByAuthor` mark is also set on a comment's CommentV2 twin and carried by the reverse
+  copy, so the old ToS restore leaves it hidden after a rollback or an article delete.
 - The `commentv3` router gains create, update, delete, hide, pin and ToS removal; the suite's
   adapter calls them on a write surface. Lock, comment mute and section mute keep their
   `commentv2` procedures, whose services branch on the surface. The other `commentv2` writes
@@ -274,7 +287,9 @@ Before the deploy, in this order:
    `trg_moderation_commentv3` in the same enabled state as `trg_moderation_commentv2`. Still
    pending, after the deploy: cut `CommentV3` over wherever `CommentV2` is cut over, with
    `POST /api/admin/temp/text-scan-clavata-cutover` (`{action:'disable', entityType:'CommentV3'}`).
-5. ~~The reverse-copy rerun on the dev database~~: done 2026-10-29, every reverse step's dry count
+5. Apply `20261217120000_comment_v3_removed_by_author`. The code that reads the column ships with
+   the deploy, so the column goes first.
+6. ~~The reverse-copy rerun on the dev database~~: done 2026-10-29, every reverse step's dry count
    at zero. A reply under a tombstone with no old row now goes on a reply thread with no parent
    comment; `reverseRootThreads` no longer creates threads for v1-shaped model comments.
 

@@ -24,15 +24,20 @@ import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service
  * search service is mocked so no Prisma/Meili/Flipt is loaded.
  */
 
-const { mockRunImageSearch, mockCheckRateLimit } = vi.hoisted(() => ({
+const { mockRunImageSearch, mockCheckRateLimit, mockGetHeldGalleryLevel } = vi.hoisted(() => ({
   mockRunImageSearch: vi.fn(),
   mockCheckRateLimit: vi.fn(),
+  mockGetHeldGalleryLevel: vi.fn(),
 }));
 
 const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined };
 
 vi.mock('~/server/services/image-search.service', () => ({
   runImageSearch: mockRunImageSearch,
+}));
+
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: mockGetHeldGalleryLevel,
 }));
 
 // Per-token catalog rate limiter — mocked so the existing maturity-clamp tests
@@ -72,7 +77,7 @@ vi.mock('~/server/utils/pagination-helpers', () => ({
 
 // Bulkhead: always grant a slot.
 vi.mock('~/server/utils/request-bulkhead', () => ({
-  acquireBulkheadSlot: () => () => {},
+  acquireBulkheadSlot: () => () => undefined,
   BulkheadFullError: class extends Error {},
   HEAVY_REQUEST_CONCURRENCY: 10,
 }));
@@ -347,6 +352,50 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.body).toEqual({ error: 'Invalid cursor: out of range "-5"', code: 'BAD_REQUEST' });
+  });
+});
+
+describe('/api/v1/blocks/images — a held model or version', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, domain: 'red' });
+  });
+  afterEach(() => mockGetHeldGalleryLevel.mockReset());
+
+  it.each([
+    ['modelId', { modelId: '5' }, { modelId: 5 }],
+    ['modelVersionId', { modelVersionId: '50' }, { modelVersionId: 50 }],
+    ['postId', { postId: '500' }, { postId: 500 }],
+  ])('serves ?%s= only at the held level', async (_name, query, selector) => {
+    mockGetHeldGalleryLevel.mockResolvedValue(1);
+
+    const res = await invoke(query);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockGetHeldGalleryLevel).toHaveBeenCalledWith(expect.objectContaining(selector));
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(1);
+  });
+
+  it('returns an empty page, searching nothing, when the token allows no held level', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: 28, domain: 'red' });
+    mockGetHeldGalleryLevel.mockResolvedValue(1);
+
+    const res = await invoke({ modelVersionId: '50' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  it('leaves an unheld model at the token level', async () => {
+    mockGetHeldGalleryLevel.mockResolvedValue(undefined);
+
+    await invoke({ modelId: '5' });
+
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(allBrowsingLevelsFlag);
   });
 });
 

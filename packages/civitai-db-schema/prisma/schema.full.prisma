@@ -1147,6 +1147,22 @@ model Model {
   @@index([status, nsfw])
 }
 
+/// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
+/// move data out of it. Append-only (a trigger refuses UPDATE and DELETE); no foreign keys, so rows
+/// outlive the model and user.
+model ModelOwnership {
+  id        Int      @id @default(autoincrement())
+  modelId   Int
+  userId    Int
+  /// 'create' | 'transfer' | 'account-delete' | 'restore' | 'baseline' (a CHECK in SQL)
+  reason    String
+  actorId   Int?
+  createdAt DateTime @default(now())
+
+  @@index([modelId])
+  @@index([userId])
+}
+
 /// A model's licensing permissions as they stood from `effectiveAt` until its next row, so a merge can
 /// be judged by the permission in effect when it was made rather than by today's. Before a model's
 /// first row nothing is known; a model with no rows has held its current permissions since
@@ -2213,6 +2229,7 @@ model Image {
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
+  storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
 
   @@index([featuredAt])
@@ -4950,6 +4967,8 @@ model Comment {
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
   pinnedAt     DateTime?
+  /// Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+  removedByAuthor Boolean @default(false)
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]
@@ -5277,6 +5296,8 @@ model CommentV3 {
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
   legacyV1Id    Int?
+  // Deleted by its author while a legal hold kept it: a ToS restore must not republish it.
+  removedByAuthor Boolean @default(false)
 
   reactions CommentV3Reaction[]
   reports   CommentV3Report[]
@@ -6166,8 +6187,28 @@ model Article {
   collectionItems    CollectionItem[]
   rewardsBonusEvents RewardsBonusEvent[]
   ratingReviews      ArticleRatingReview[]
+  contentLinkHold    ArticleContentLinkHold?
 
   @@index([status, ingestion, nsfwLevel])
+}
+
+/// Content urls of an article that linking created no Image row for yet: deferred until the
+/// upload key's issuer can be read, refused while it is someone other than the owner or editor.
+/// The article stays off public while any is held.
+model ArticleContentLinkHold {
+  articleId     Int       @id
+  article       Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  deferred      String[]  @default([])
+  refused       String[]  @default([])
+  /// Who saved the content; their own keys count as the owner's.
+  editorId      Int
+  /// When a url was first deferred, kept while any stays deferred.
+  deferredSince DateTime?
+  /// Set once a deferral outlives the backstop and a moderator report is filed.
+  reportedAt    DateTime?
+  checkedAt     DateTime  @default(now())
+
+  @@index([checkedAt])
 }
 
 model PressMention {
@@ -6726,6 +6767,25 @@ model CsamReport {
   sendClaimId      String?        @db.Uuid
   sendClaimedAt    DateTime?
   // modelVersionIds  Int[]     @default([])
+}
+
+enum CsamQueueSetAsideOutcome {
+  AfterReport
+  Dismissed
+}
+
+/// An image a moderator took out of the CSAM review queue without changing the image. Whether the row
+/// still counts is decided when the queue is read; a changed flag or a new report deletes it.
+model CsamQueueSetAside {
+  imageId      Int                      @id
+  userId       Int
+  outcome      CsamQueueSetAsideOutcome
+  /// The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
+  csamReportId Int?
+  moderatorId  Int
+  createdAt    DateTime                 @default(now())
+
+  @@index([userId])
 }
 
 /// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
@@ -7348,6 +7408,26 @@ model ImageCdnModeratorDelete {
   deletedAt  DateTime @default(now())
 
   @@index([url])
+}
+
+/// The user an upload key's issue record named, kept when the key is saved as shop artwork so the
+/// proof outlives the record. Written only by `assertShopArtworkKeysIssued`.
+model ShopArtworkKeyOwner {
+  key        String   @id
+  userId     Int
+  recordedAt DateTime @default(now())
+}
+
+/// A Creator Shop takedown's artwork key, kept after the listing is deleted so the url stays taken
+/// down. Written only by `recordShopTakedownArtwork`.
+model ImageCdnShopTakedown {
+  id          Int      @unique @default(autoincrement())
+  url         String
+  shopItemId  Int
+  userId      Int?
+  takenDownAt DateTime @default(now())
+
+  @@id([url, shopItemId])
 }
 
 /// A short lease on one url while a cdn-access-sync run calls the image server about it.
@@ -10142,7 +10222,7 @@ model Placement {
   placer                User      @relation("PlacementPlacer", fields: [placerId], references: [id], onDelete: Cascade)
   data                  Json      @default("{}")
   status                String
-  /// 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+  /// 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
   /// removals refund different amounts, so the status alone cannot settle the
   /// money. Constrained by "Placement_removedBy_check" — a new value needs a
   /// migration even though the column is TEXT.
@@ -10350,6 +10430,7 @@ model Storyline {
   pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
+  coverUploads  StorylineCoverUpload[]
   /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
   thread        Thread?
 
@@ -10451,6 +10532,34 @@ model StorylineChapterEdge {
   @@index([parentChapterId, createdAt])
 }
 
+/// A record kept when a storyline's owner or a chapter's author removes a chapter while a report
+/// on it (its post or the storyline) is open: the removal itself is the ordinary one, and this row
+/// is what moderators see of it in the report's context. It changes nothing for anyone else.
+/// Not related to its storyline or post, so it outlives them.
+model StorylineChapterRemovalHold {
+  id               Int      @id @default(autoincrement())
+  storylineId      Int
+  /// The storyline's title at removal: the hold outlives the storyline.
+  storylineTitle   String
+  /// The removed chapter's id, its post and its author, as they were.
+  chapterId        Int
+  postId           Int?
+  chapterUserId    Int
+  depth            Int
+  placementId      Int?
+  parentChapterIds Int[]
+  chapterCreatedAt DateTime
+  removedById      Int
+  /// 'owner' or 'author'.
+  removedByRole    String
+  /// The reports open when it was removed.
+  reportIds        Int[]
+  createdAt        DateTime @default(now())
+
+  @@index([postId])
+  @@index([storylineId])
+}
+
 /// The post author's note on one image of a storyline chapter, shown to readers under the
 /// image. No row means no caption: an empty caption deletes it.
 model ImageCaption {
@@ -10468,13 +10577,16 @@ model ImageCaption {
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
-/// are listed before everyone else's.
+/// are listed before everyone else's. A row is an invitation until the user accepts it: until
+/// then they are not shown on the storyline and have no collaborator rights.
 model StorylineCollaborator {
   storylineId Int
   storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
   userId      Int
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
+  /// When the user accepted the invitation; null while it is pending. Declining deletes the row.
+  acceptedAt  DateTime?
 
   @@id([storylineId, userId])
   @@index([userId])
@@ -10495,6 +10607,7 @@ model StorylineBranchChoice {
 
   @@id([userId, parentChapterId])
   @@index([parentChapterId, chapterId])
+  @@index([chapterId])
 }
 
 /// A signed-in reader asking for the "Create next section" tool at the end of a chapter. One row
@@ -10520,6 +10633,19 @@ model StorylineEarlyAccessSignup {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/// An image uploaded through a storyline's Manage as its card cover or banner. A no-chapter cover
+/// must be listed here as uploaded for its storyline.
+model StorylineCoverUpload {
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([storylineId, imageId])
+  @@index([imageId])
 }
 
 model StorylineReport {
@@ -11032,6 +11158,8 @@ model Crucible {
   // derive from the entries instead (getCrucibleTotalPrizePool).
   prizePool         Int            @default(0)
   entryLimit        Int            @default(1)
+  // Entries the owner removed from their own crucible, capped (CRUCIBLE_OWNER_REMOVAL_CAP). Moderator removals don't count.
+  ownerRemovalCount Int            @default(0)
   // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
   freeEntriesPerUser Int           @default(0)
   maxTotalEntries   Int?
@@ -11064,6 +11192,12 @@ model Crucible {
   // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
   // shown to non-moderators.
   eventTags         String[]       @default([])
+  // A moderator takedown: the page is gone for everyone but moderators. Null on an owner's cancel.
+  takenDownAt       DateTime?
+  takenDownById     Int?
+  takedownReason    String?
+  // Decided when it is taken down, so every re-run (and a re-cancel) pays the creator the same way.
+  takedownRefundsCreator Boolean @default(false)
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]

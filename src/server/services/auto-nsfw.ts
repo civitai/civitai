@@ -1,5 +1,7 @@
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 /**
  * The exact keys the interactive upsert paths already write into `Model.meta` / `Bounty.details`.
@@ -56,4 +58,36 @@ export function evaluateAutoNsfw({
     },
     lock: !lockedProperties.includes('nsfw'),
   };
+}
+
+/**
+ * Writes an {@link evaluateAutoNsfw} result: jsonb merges, never a meta read earlier and written
+ * back, which would drop whatever a moderator or a scan set since. The lock and its
+ * `systemNsfwLock` marker land only where no nsfw lock exists yet; otherwise (nothing to lock, or a
+ * moderator's lock landed since the read) only the detection is recorded. `updatedAt` is bumped:
+ * the model's rating changed.
+ */
+export async function writeAutoNsfw(
+  db: { $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<number> },
+  { id, metaPatch, lock }: { id: number } & AutoNsfwResult
+) {
+  const patch = JSON.stringify(metaPatch);
+  const locked = lock
+    ? await db.$executeRaw`
+        UPDATE "Model" m
+        SET nsfw = TRUE,
+            "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw'),
+            meta = ${asJsonbObjectSql('m.meta')} || ${patch}::jsonb || jsonb_build_object(
+              ${SYSTEM_NSFW_LOCK_META_KEY}::text,
+              jsonb_build_object('source', 'profanity-filter', 'at', now())
+            ),
+            "updatedAt" = now()
+        WHERE m.id = ${id}
+          AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))`
+    : 0;
+  if (!locked)
+    await db.$executeRaw`
+      UPDATE "Model" m
+      SET meta = ${asJsonbObjectSql('m.meta')} || ${patch}::jsonb, "updatedAt" = now()
+      WHERE m.id = ${id}`;
 }

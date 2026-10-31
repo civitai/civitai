@@ -67,6 +67,7 @@ vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch:
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { updateUserHandler } from '~/server/controllers/user.controller';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
@@ -101,6 +102,7 @@ const replacePicture = (pictureId = NEW_PICTURE_ID) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
   mockGetUserById.mockResolvedValue({
     profilePictureId: OLD_PICTURE_ID,
     profilePicture: { userId: USER_ID },

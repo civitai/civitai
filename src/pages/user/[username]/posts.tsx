@@ -22,14 +22,14 @@ import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { jumpToEmptyMessage } from '~/shared/utils/jump-to-month';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const username = ctx.query.username as string;
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
 
     if (user?.bannedAt)
       return {

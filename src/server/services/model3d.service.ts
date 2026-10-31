@@ -1253,7 +1253,6 @@ export const getVisibleModel3DIdForPost = async ({
   userId?: number;
   isModerator?: boolean;
 }): Promise<number | null> => {
-  // `kysely-hot-reads-5` on: the post and its Model3D in one statement, on the same replica.
   const post = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
     ? await readPostModel3dViaKysely((await loadKyselyDb()).kyselyRead, postId)
     : await readPostModel3dViaPrisma(dbRead, postId);

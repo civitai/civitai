@@ -1,3 +1,10 @@
+import { uniqBy } from 'lodash-es';
+import type { ImageInput } from '~/server/schema/image.schema';
+import { TRPCError } from '@trpc/server';
+import {
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  resolveCoverImageId,
+} from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
@@ -72,7 +79,11 @@ import {
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { AppealStatus, EntityType, ReportStatus } from '~/shared/utils/prisma/enums';
-import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import {
+  isAnswerableParentChapter,
+  STORYLINE_REFUSALS,
+  storylineAboveRatingRefusal,
+} from '~/shared/utils/storyline-placement';
 import { createStorylineLinkJudge, STORYLINE_LINK_REFUSALS } from '~/shared/utils/storyline-graph';
 import {
   allBrowsingLevelsFlag,
@@ -150,6 +161,13 @@ const storylineReadSelect = {
     select: { id: true, postId: true, post: { select: { nsfwLevel: true } } },
   },
 } satisfies Prisma.StorylineSelect;
+
+/** An invited collaborator has no say until they accept. */
+const acceptedCollaboratorWhere = {
+  acceptedAt: { not: null },
+} satisfies Prisma.StorylineCollaboratorWhereInput;
+const acceptedCollaboratorSql = (alias: string) =>
+  Prisma.sql`${Prisma.raw(alias)}."acceptedAt" IS NOT NULL`;
 
 /**
  * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
@@ -362,14 +380,16 @@ export async function assertPostCanBeChapter(
   });
   if (!post) throw throwNotFoundError('Post not found');
   if (post.userId !== authorId) throw throwAuthorizationError('You can only add your own posts');
-  if (post.tosViolation) throw throwBadRequestError('This post cannot be added to a storyline');
+  if (post.tosViolation) throw throwBadRequestError(STORYLINE_REFUSALS.cannotSubmit);
   if (!post.publishedAt || post.publishedAt > new Date())
     throw throwBadRequestError('Publish the post before adding it to a storyline');
   if (post.storylineChapter) throw throwBadRequestError('This post is already in a storyline');
   if (!post.nsfwLevel)
     throw throwBadRequestError('This post has not been rated yet. Try again once it has been');
   if (!storylineLevelAllowed({ postLevel: post.nsfwLevel, maxNsfwLevel }))
-    throw throwBadRequestError("This post is rated above the storyline's maximum rating");
+    throw throwBadRequestError(
+      storylineAboveRatingRefusal({ postLevel: post.nsfwLevel, maxNsfwLevel })
+    );
 }
 
 /**
@@ -551,14 +571,14 @@ export async function assertCanContinueStoryline(
     isBlockedPair(db, parent.userId, placerId),
     db.storylineCollaborator.findUnique({
       where: { storylineId_userId: { storylineId: parent.storylineId, userId: placerId } },
-      select: { userId: true },
+      select: { acceptedAt: true },
     }),
   ]);
   if (ownerBlocked || authorBlocked)
     throw throwBadRequestError('Continuations are not available on this chapter');
 
   const isOwner = placerId === ownerId;
-  const isCollaborator = !isOwner && !!collaborator;
+  const isCollaborator = !isOwner && !!collaborator?.acceptedAt;
   if (parent.storyline.whoCanContinue === 'Collaborators' && !isOwner && !isCollaborator)
     throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
 
@@ -759,6 +779,7 @@ export async function createStoryline({
         await assertStorylinePicks(tx, {
           storylineId: storyline.id,
           ownerId: userId,
+          callerId: userId,
           maxNsfwLevel,
           imageIds: [coverImageId, heroImageId],
         });
@@ -784,6 +805,8 @@ export async function updateStoryline({
   coverImageId,
   heroImageId,
   heroImagePosition,
+  coverUpload,
+  heroUpload,
   userId,
   isModerator,
 }: {
@@ -796,10 +819,25 @@ export async function updateStoryline({
   coverImageId?: number | null;
   heroImageId?: number | null;
   heroImagePosition?: number;
+  /** A file the caller just uploaded, made an image of theirs and picked. */
+  coverUpload?: ImageInput;
+  heroUpload?: ImageInput;
   userId: number;
   isModerator?: boolean;
 }) {
   const current = await getOwnedStoryline({ storylineId: id, userId, isModerator });
+  // An upload is a file the caller just put up, so its key is behind no image yet.
+  for (const upload of [coverUpload, heroUpload])
+    if (
+      upload &&
+      (await dbWrite.image.findFirst({ where: { url: upload.url }, select: { id: true } }))
+    )
+      throw new TRPCError({ code: 'BAD_REQUEST', message: COVER_IMAGE_UNAVAILABLE_MESSAGE });
+  if (coverUpload) coverImageId = await resolveCoverImageId({ coverImage: coverUpload, userId });
+  if (heroUpload) heroImageId = await resolveCoverImageId({ coverImage: heroUpload, userId });
+  const uploadedIds = [coverUpload && coverImageId, heroUpload && heroImageId].filter(
+    (imageId): imageId is number => !!imageId
+  );
   if (maxNsfwLevel !== undefined) {
     if (!isStorylineCeilingLevel(maxNsfwLevel))
       throw throwBadRequestError('Invalid maximum rating');
@@ -807,12 +845,14 @@ export async function updateStoryline({
   }
   if (title !== undefined)
     await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
-  // A moderator editing is held to the owner's rule: the picks are the owner's chapters'. A pick
-  // sent back unchanged is not judged again, so the picker can resend the whole form after a
+  // A chapter image is held to the owner's rule, whoever picks it; an upload must be the picker's
+  // own. A pick sent back unchanged is not judged again, so the picker can resend the whole form after a
   // collaborator whose image it is has been removed.
   await assertStorylinePicks(dbWrite, {
     storylineId: id,
     ownerId: current.userId,
+    callerId: userId,
+    uploadedIds,
     maxNsfwLevel: storylineCeiling({
       maxNsfwLevel: maxNsfwLevel ?? current.maxNsfwLevel,
       minorByScan: current.minorByScan,
@@ -827,19 +867,26 @@ export async function updateStoryline({
   // raising it again brings them back.
   // Closing a Complete storyline to continuations is left to the placement layer reading the
   // status, so there is no second switch here to disagree with it.
-  const updated = await dbWrite.storyline.update({
-    where: { id },
-    data: {
-      title,
-      status,
-      maxNsfwLevel,
-      whoCanContinue,
-      coverImageId,
-      heroImageId,
-      heroImagePosition,
-    },
-    select: { ...storylineSelect, ...storylinePicksSelect },
-  });
+  const [, updated] = await dbWrite.$transaction([
+    // What lets the read path use an image in no post as this storyline's pick.
+    dbWrite.storylineCoverUpload.createMany({
+      data: uploadedIds.map((imageId) => ({ storylineId: id, imageId })),
+      skipDuplicates: true,
+    }),
+    dbWrite.storyline.update({
+      where: { id },
+      data: {
+        title,
+        status,
+        maxNsfwLevel,
+        whoCanContinue,
+        coverImageId,
+        heroImageId,
+        heroImagePosition,
+      },
+      select: { ...storylineSelect, ...storylinePicksSelect },
+    }),
+  ]);
   // An edited title is how an owner has a title verdict looked at again.
   if (title !== undefined && title !== current.title)
     scanEntityInBackground({ entityType: 'Storyline', entityId: id });
@@ -1019,6 +1066,219 @@ export async function deleteStoryline({
   return { id };
 }
 
+export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
+  firstChapter: "Chapter 1 can't be removed. Delete the storyline instead",
+  hasChildren: 'Other chapters continue from this one, so it cannot be removed',
+  waiting: 'This chapter has a continuation waiting for review; answer it first',
+  paidContinuation: "This chapter's payment hasn't settled yet. Try again once it has",
+  /** A taken-down storyline, and (for its owner) a chapter someone paid to add. */
+  moderatorOnly:
+    "You can't remove this chapter yourself. A moderator can remove it for you; contact support",
+  removed: 'This chapter was already removed',
+} as const;
+
+/**
+ * Takes a chapter out of its storyline for the storyline's owner, the chapter's author or a
+ * moderator. The post is not touched. Only a chapter nothing continues from can go, so no other
+ * chapter loses its way in. The owner's or author's removal deletes the row, with its edges and
+ * reader choices; a moderator's tombstones it, as a placement takedown does, so the row keeps
+ * holding its post and it cannot be submitted again. The placement that added it, if any, is
+ * marked removed; no Buzz moves, as with a moderator's takedown.
+ */
+export async function removeStorylineChapter({
+  chapterId,
+  userId,
+  isModerator,
+}: {
+  chapterId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const result = await dbWrite.$transaction(async (tx) => {
+    const [found] = await tx.$queryRaw<
+      { storylineId: number; ownerId: number; authorId: number }[]
+    >`
+      SELECT c."storylineId", s."userId" AS "ownerId", c."userId" AS "authorId"
+      FROM "StorylineChapter" c JOIN "Storyline" s ON s.id = c."storylineId"
+      WHERE c.id = ${chapterId}
+    `;
+    if (!found) throw throwNotFoundError('Chapter not found');
+    const { storylineId, ownerId } = found;
+    // Before any lock, so a stranger cannot hold up the storyline; checked again under the locks.
+    if (userId !== ownerId && userId !== found.authorId && !isModerator)
+      throw throwAuthorizationError();
+    // Exclusive against adds, submits, links and moves (`moveStorylineChapter`'s lock). A submit
+    // blocked here still lands on a moderator's tombstone, as on a takedown's, and is refunded by
+    // the orphaned-continuation job.
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean; title: string }[]>`
+      SELECT "tosViolation", title FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    `;
+    if (!storyline) throw throwNotFoundError('Chapter not found');
+    // The placement before the chapter, the order a placement takedown (`takeDownApproved`) locks
+    // them in. `placementId` never changes once written.
+    const [unlocked] = await tx.$queryRaw<{ placementId: number | null }[]>`
+      SELECT "placementId" FROM "StorylineChapter" WHERE id = ${chapterId}
+    `;
+    const [placement] =
+      unlocked?.placementId != null
+        ? await tx.$queryRaw<{ status: string; paid: boolean; inFlight: boolean }[]>`
+            SELECT p.status, (NOT p.free AND p.amount > 0) AS paid,
+              ${placementMoneyInFlightSql(Prisma.raw('p'))} AS "inFlight"
+            FROM "Placement" p WHERE p.id = ${unlocked.placementId} FOR UPDATE
+          `
+        : [];
+    const [chapter] = await tx.$queryRaw<
+      {
+        userId: number;
+        depth: number;
+        postId: number | null;
+        placementId: number | null;
+        removedAt: Date | null;
+        createdAt: Date;
+      }[]
+    >`
+      SELECT "userId", depth, "postId", "placementId", "removedAt", "createdAt" FROM "StorylineChapter"
+      WHERE id = ${chapterId} AND "storylineId" = ${storylineId} FOR UPDATE
+    `;
+    if (!chapter) throw throwNotFoundError('Chapter not found');
+
+    const role =
+      userId === ownerId
+        ? 'owner'
+        : userId === chapter.userId
+        ? 'author'
+        : isModerator
+        ? 'moderator'
+        : null;
+    if (!role) throw throwAuthorizationError();
+    if (storyline.tosViolation && role !== 'moderator')
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
+    if (chapter.depth === 0)
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.firstChapter);
+    // Deleting a tombstone would free its post to be submitted again.
+    if (chapter.removedAt) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.removed);
+
+    const [{ hasChildren, waiting }] = await tx.$queryRaw<
+      { hasChildren: boolean; waiting: boolean }[]
+    >`
+      SELECT
+        EXISTS (SELECT 1 FROM "StorylineChapterEdge" WHERE "parentChapterId" = ${chapterId})
+          AS "hasChildren",
+        (
+          EXISTS (
+            SELECT 1 FROM "Placement" pl
+            WHERE pl.surface = 'storyline' AND pl."targetType" = 'post'
+              AND pl."targetId" = ${chapter.postId} AND pl.status = 'pending'
+          )
+          OR EXISTS (SELECT 1 FROM "StorylinePendingChapter" WHERE "parentChapterId" = ${chapterId})
+        ) AS waiting
+    `;
+    if (hasChildren) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.hasChildren);
+    if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
+    if (placement?.inFlight)
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
+    // An owner's or author's removal during an open report is recorded for moderators.
+    const openReportIds =
+      role === 'moderator'
+        ? []
+        : (
+            await tx.$queryRaw<{ id: number }[]>`
+              SELECT r.id FROM "PostReport" pr JOIN "Report" r ON r.id = pr."reportId"
+              WHERE pr."postId" = ${chapter.postId}
+                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+              UNION
+              SELECT r.id FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+              WHERE sr."storylineId" = ${storylineId}
+                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+            `
+          ).map((r) => r.id);
+
+    if (chapter.placementId != null) {
+      // The contributor paid the owner to add it; the owner cannot take it back out for free.
+      if (placement?.paid && role === 'owner')
+        throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
+      if (placement?.status === 'approved')
+        await tx.$executeRaw`
+          UPDATE "Placement"
+          SET status = 'removed', "removedBy" = ${role === 'author' ? 'placer' : role},
+            "takenDownAt" = now(), "takenDownById" = ${userId}
+          WHERE id = ${chapter.placementId} AND status = 'approved'
+        `;
+    }
+
+    const parents = await tx.$queryRaw<{ parentChapterId: number }[]>`
+      SELECT "parentChapterId" FROM "StorylineChapterEdge" WHERE "chapterId" = ${chapterId}
+    `;
+    if (role === 'moderator')
+      await tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
+    else {
+      // Every owner's or author's removal is the same hard delete. When either must be kept for
+      // records, this same statement copies the chapter and the rows its delete cascades to, so the
+      // decision is made at the write. The row is locked, so no child row can join it meanwhile.
+      const kept = Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR ${ownerHeldSql(
+        Prisma.sql`${chapter.userId}::int`
+      )})`;
+      const ids = Prisma.sql`${ownerId}::int, ${chapter.userId}::int`;
+      await tx.$executeRaw`
+        WITH kept AS (SELECT ${kept} AS kept),
+        chapter AS (
+          INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,
+            "placementId", "createdAt", "removedAt", "ownerId", "authorId")
+          SELECT id, "storylineId", "postId", "userId", depth, "placementId", "createdAt",
+            "removedAt", ${ids}
+          FROM "StorylineChapter" WHERE id = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        edges AS (
+          INSERT INTO "HeldStorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId",
+            canon, "createdAt", "ownerId", "authorId")
+          SELECT "storylineId", "chapterId", "parentChapterId", canon, "createdAt", ${ids}
+          FROM "StorylineChapterEdge"
+          WHERE "chapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        choices AS (
+          INSERT INTO "HeldStorylineBranchChoice" ("userId", "parentChapterId", "chapterId",
+            "createdAt", "updatedAt", "ownerId", "authorId")
+          SELECT "userId", "parentChapterId", "chapterId", "createdAt", "updatedAt", ${ids}
+          FROM "StorylineBranchChoice"
+          WHERE ("chapterId" = ${chapterId} OR "parentChapterId" = ${chapterId}) AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        clicks AS (
+          INSERT INTO "HeldStorylineCreateClick" ("userId", "parentChapterId", "createdAt",
+            "ownerId", "authorId")
+          SELECT "userId", "parentChapterId", "createdAt", ${ids}
+          FROM "StorylineCreateClick"
+          WHERE "parentChapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        )
+        DELETE FROM "StorylineChapter" WHERE id = ${chapterId}
+      `;
+    }
+    if (openReportIds.length)
+      await tx.$executeRaw`
+        INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "storylineTitle", "chapterId",
+          "postId", "chapterUserId", depth, "placementId", "parentChapterIds", "chapterCreatedAt",
+          "removedById", "removedByRole", "reportIds")
+        VALUES (${storylineId}, ${storyline.title}, ${chapterId}, ${chapter.postId}, ${
+        chapter.userId
+      }, ${chapter.depth},
+          ${chapter.placementId}, ${parents.map((p) => p.parentChapterId)}::int[],
+          ${chapter.createdAt}, ${userId}, ${role}, ${openReportIds}::int[])
+      `;
+    if (role === 'moderator')
+      await trackModActivity(
+        userId,
+        { entityType: 'storyline', entityId: storylineId, activity: 'removeChapter' },
+        tx
+      );
+    return { storylineId, parentIds: parents.map((p) => p.parentChapterId) };
+  });
+
+  // Committed; stale counts until the entries expire beat reporting the removal as failed.
+  await Promise.all(
+    result.parentIds.map((id) => bustFetchThroughCache(forkCountsKey(id)).catch(() => undefined))
+  );
+  return { storylineId: result.storylineId, chapterId };
+}
+
 /**
  * Makes a post its owner has already published chapter 1 of their empty storyline. The post is
  * held to `createStoryline`'s rules and, like a chapter-1 draft going live (`promotePendingChapter`),
@@ -1085,8 +1345,7 @@ export async function setFirstChapter({
       });
       // Its rating may still change while an image is scanning or in review.
       const readiness = post ? continuationReadiness(post) : 'doomed';
-      if (readiness === 'doomed')
-        throw throwBadRequestError('This post cannot be added to a storyline');
+      if (readiness === 'doomed') throw throwBadRequestError(STORYLINE_REFUSALS.cannotSubmit);
       if (readiness !== 'ready')
         throw throwBadRequestError(
           "This post's images are still being checked. Try again once they are"
@@ -1297,10 +1556,18 @@ export async function resolveStorylineTitleAppeal({
   return { granted: grant };
 }
 
+export const STORYLINE_PICK_REFUSALS = {
+  notAllowed:
+    "Choose an image from your own chapters, an endorsed collaborator's, or one you upload",
+  cannotUse: 'This image cannot be used as a cover or banner',
+  unrated: 'This image has not been rated yet. Try again once it has been',
+} as const;
+
 /**
- * The cover and banner may only be images from this storyline's chapters written by its owner or
- * by an endorsed collaborator (the endorsement is their consent), not from removed chapters, and
- * rated within the ceiling. Anything else is refused, whatever the client offered.
+ * The cover and banner may only be an image from this storyline's chapters, written by its owner
+ * or an endorsed collaborator (the endorsement is their consent) and not removed, or one the caller
+ * uploaded. A chapter image must also be rated within the ceiling; an upload is taken whatever its
+ * scan says and judged when read. Anything else is refused, whatever the client offered.
  *
  * Checked when chosen only. A collaborator removed later leaves their image as the cover until
  * the owner changes it, unless the image itself is deleted. An image that later becomes hidden or
@@ -1311,11 +1578,17 @@ async function assertStorylinePicks(
   {
     storylineId,
     ownerId,
+    callerId,
+    uploadedIds = [],
     maxNsfwLevel,
     imageIds,
   }: {
     storylineId: number;
     ownerId: number;
+    /** Who is picking: an image they uploaded (in no post) is theirs to use. */
+    callerId: number;
+    /** Images this request uploaded. The only images in no post a pick may be. */
+    uploadedIds?: number[];
     maxNsfwLevel: number;
     /** undefined is no change and null clears: neither is checked. */
     imageIds: (number | null | undefined)[];
@@ -1328,6 +1601,10 @@ async function assertStorylinePicks(
       where: { id: { in: ids } },
       select: {
         id: true,
+        userId: true,
+        postId: true,
+        ingestion: true,
+        tosViolation: true,
         nsfwLevel: true,
         minor: true,
         poi: true,
@@ -1338,28 +1615,43 @@ async function assertStorylinePicks(
         },
       },
     }),
-    db.storylineCollaborator.findMany({ where: { storylineId }, select: { userId: true } }),
+    db.storylineCollaborator.findMany({
+      where: { storylineId, ...acceptedCollaboratorWhere },
+      select: { userId: true },
+    }),
   ]);
   const allowedAuthors = new Set([ownerId, ...collaborators.map((c) => c.userId)]);
   const byId = new Map(images.map((image) => [image.id, image]));
   for (const imageId of ids) {
     const image = byId.get(imageId);
     const chapter = image?.post?.storylineChapter;
-    if (
-      !image ||
-      !chapter ||
-      chapter.storylineId !== storylineId ||
-      chapter.removedAt ||
-      !allowedAuthors.has(chapter.userId)
-    )
-      throw throwBadRequestError(
-        "Choose an image from your own chapters or an endorsed collaborator's"
-      );
+    const fromChapter =
+      !!chapter &&
+      chapter.storylineId === storylineId &&
+      !chapter.removedAt &&
+      allowedAuthors.has(chapter.userId);
+    const uploaded =
+      !!image &&
+      image.postId == null &&
+      image.userId === callerId &&
+      uploadedIds.includes(image.id);
+    if (!image || (!fromChapter && !uploaded))
+      throw throwBadRequestError(STORYLINE_PICK_REFUSALS.notAllowed);
+    // The caller's own upload is taken whatever its scan says: a refusal here would tell them the
+    // verdict. The read gate shows it only once the scan has cleared and rated it, within the
+    // ceiling, and the owner sees the same note for any pick that is not showing.
+    if (uploaded) continue;
     // Never shown as a cover or banner (see storylineImageVisible), so refused rather than kept.
-    if (image.minor || image.poi)
-      throw throwBadRequestError('This image cannot be used as a cover or banner');
-    if (!image.nsfwLevel)
-      throw throwBadRequestError('This image has not been rated yet. Try again once it has been');
+    if (
+      image.minor ||
+      image.poi ||
+      image.tosViolation ||
+      image.ingestion === 'Blocked' ||
+      image.ingestion === 'Error' ||
+      image.ingestion === 'NotFound'
+    )
+      throw throwBadRequestError(STORYLINE_PICK_REFUSALS.cannotUse);
+    if (!image.nsfwLevel) throw throwBadRequestError(STORYLINE_PICK_REFUSALS.unrated);
     if (!storylineLevelAllowed({ postLevel: image.nsfwLevel, maxNsfwLevel }))
       throw throwBadRequestError("This image is rated above the storyline's maximum rating");
   }
@@ -1425,6 +1717,51 @@ export async function addOwnerChapter(input: {
   userId: number;
 }) {
   return dbWrite.$transaction((tx) => writeOwnerChapter(tx, input));
+}
+
+/**
+ * The owner adds a post at the end of the main path: chapter 1 of an empty storyline, else the
+ * canon child of the main path's last chapter. Found here, under the storyline's lock and with no
+ * path cap, not by the client: a stale or capped read would add it as a side branch instead.
+ */
+export async function addOwnerChapterAtEnd({
+  storylineId,
+  postId,
+  userId,
+}: {
+  storylineId: number;
+  postId: number;
+  userId: number;
+}) {
+  const [root] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "StorylineChapter" WHERE "storylineId" = ${storylineId} AND depth = 0
+  `;
+  if (!root) return setFirstChapter({ storylineId, postId, userId });
+
+  return dbWrite.$transaction(async (tx) => {
+    await lockStorylineForAdd(tx, storylineId);
+    // One canon child per parent; the step cap only guards against a cycle.
+    const [end] = await tx.$queryRaw<{ id: number }[]>`
+      WITH RECURSIVE main AS (
+        SELECT ${root.id}::int AS id, 1 AS step
+        UNION ALL
+        SELECT e."chapterId", main.step + 1 FROM main
+        JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+        WHERE main.step < 100000
+      )
+      SELECT id FROM main ORDER BY step DESC LIMIT 1
+    `;
+    const { chapterId } = await writeOwnerChapter(tx, {
+      parentChapterId: end.id,
+      postId,
+      userId,
+    });
+    const [canon] = await tx.$queryRaw<{ canon: boolean }[]>`
+      SELECT canon FROM "StorylineChapterEdge" WHERE "chapterId" = ${chapterId}
+    `;
+    if (!canon?.canon) throw throwBadRequestError('The storyline changed while adding. Try again');
+    return { storylineId, chapterId };
+  });
 }
 
 /** `addOwnerChapter` inside the caller's transaction. */
@@ -1808,17 +2145,17 @@ export async function moveStorylineChapter({
   const result = await dbWrite.$transaction(async (tx) => {
     // Exclusive against links, inserts and other moves, and against adds (`lockStorylineForAdd`):
     // nothing else changes which chapter follows which until the commit.
-    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
-      SELECT "tosViolation" FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean; title: string }[]>`
+      SELECT "tosViolation", title FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
     if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
 
     const chapters = await tx.$queryRaw<
-      { id: number; depth: number; userId: number; placementId: number | null }[]
+      { id: number; depth: number; userId: number; placementId: number | null; removed: boolean }[]
     >`
-      SELECT id, depth, "userId", "placementId" FROM "StorylineChapter"
-      WHERE "storylineId" = ${storylineId}
+      SELECT id, depth, "userId", "placementId", "removedAt" IS NOT NULL AS removed
+      FROM "StorylineChapter" WHERE "storylineId" = ${storylineId}
     `;
     const edgeRows = await tx.$queryRaw<{ chapterId: number; parentChapterId: number }[]>`
       SELECT "chapterId", "parentChapterId" FROM "StorylineChapterEdge"
@@ -1842,7 +2179,8 @@ export async function moveStorylineChapter({
     const children = (id: number) => childrenOf.get(id) ?? [];
     const isOwners = (id: number) => {
       const c = byId.get(id);
-      return !!c && c.userId === ownerId && c.placementId == null;
+      // A removed chapter is neither moved nor moved past.
+      return !!c && c.userId === ownerId && c.placementId == null && !c.removed;
     };
     // `next` is in the same run as `id`: the only way on from it, reached by no other way in.
     const linked = (id: number, next: number) =>
@@ -2053,7 +2391,8 @@ export async function getStorylineLinkTargets({
 
 /**
  * The owner only, never a moderator: an endorsed collaborator's priced continuations are approved
- * without review, so endorsing is approving them in advance.
+ * without review, so endorsing is approving them in advance. It invites them: nothing changes for
+ * them, and nobody sees them on the storyline, until they accept (`acceptStorylineInvite`).
  */
 export async function addStorylineCollaborator({
   storylineId,
@@ -2084,9 +2423,40 @@ export async function addStorylineCollaborator({
 
   await dbWrite.storylineCollaborator.upsert({
     where: { storylineId_userId: { storylineId, userId: targetUserId } },
-    create: { storylineId, userId: targetUserId },
+    create: { storylineId, userId: targetUserId, acceptedAt: null },
     update: {},
   });
+}
+
+const INVITE_CLOSED = 'That invitation is no longer open';
+
+/**
+ * The invitee accepts. Declining is `leave` (`removeStorylineCollaborator`), which a muted account
+ * can still reach. A block between the two since the invitation, or a takedown, closes it.
+ */
+export async function acceptStorylineInvite({
+  storylineId,
+  userId,
+}: {
+  storylineId: number;
+  userId: number;
+}) {
+  const storyline = await dbWrite.storyline.findUnique({
+    where: { id: storylineId },
+    select: { userId: true, tosViolation: true },
+  });
+  if (!storyline || storyline.tosViolation) throw throwNotFoundError(INVITE_CLOSED);
+  if (await isBlockedPair(dbWrite, storyline.userId, userId)) {
+    await dbWrite.storylineCollaborator.deleteMany({
+      where: { storylineId, userId, acceptedAt: null },
+    });
+    throw throwNotFoundError(INVITE_CLOSED);
+  }
+  const { count } = await dbWrite.storylineCollaborator.updateMany({
+    where: { storylineId, userId, acceptedAt: null },
+    data: { acceptedAt: new Date() },
+  });
+  if (!count) throw throwNotFoundError(INVITE_CLOSED);
 }
 
 export async function removeStorylineCollaborator({
@@ -2138,7 +2508,7 @@ export async function getStoryline({
       tosViolationByModerator: true,
       user: { select: castUserSelect },
       collaborators: {
-        select: { user: { select: castUserSelect } },
+        select: { acceptedAt: true, user: { select: castUserSelect } },
         orderBy: { createdAt: 'asc' },
       },
     },
@@ -2154,11 +2524,15 @@ export async function getStoryline({
   const root = storyline.chapters[0];
   const shownUser = (u: { id: number; bannedAt: Date | null; deletedAt: Date | null }) =>
     !u.bannedAt && !u.deletedAt && !blockedUserIds.has(u.id);
-  const collaborators = storyline.collaborators
+  const accepted = storyline.collaborators.filter((c) => c.acceptedAt);
+  const collaborators = accepted
     .map((c) => c.user)
     .filter(shownUser)
     .map(toCastUser);
-  const collaboratorIds = new Set(storyline.collaborators.map((c) => c.user.id));
+  const collaboratorIds = new Set(accepted.map((c) => c.user.id));
+  const invitedIds = new Set(
+    storyline.collaborators.filter((c) => !c.acceptedAt).map((c) => c.user.id)
+  );
   const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
 
   // A contributor is credited only through a chapter this reader would be shown: published,
@@ -2261,6 +2635,9 @@ export async function getStoryline({
     coverImage: chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
     coverImageId: isOwnerView ? coverImageId : null,
     heroImageId: isOwnerView ? heroImageId : null,
+    // A pick that is not showing, usually an upload whose scan has not cleared it yet.
+    coverPickHidden: isOwnerView && coverImageId != null && !chosen(id, coverImageId),
+    heroPickHidden: isOwnerView && heroImageId != null && !banner,
     titleAppealable,
     titleAppeal,
     rootChapterId: root?.id ?? null,
@@ -2277,6 +2654,15 @@ export async function getStoryline({
       ? ('collaborator' as const)
       : null,
     collaborators,
+    // Invitations not yet accepted: the owner's to see, and the invitee's to answer.
+    pendingCollaborators: isOwnerView
+      ? storyline.collaborators
+          .filter((c) => !c.acceptedAt)
+          .map((c) => c.user)
+          .filter(shownUser)
+          .map(toCastUser)
+      : [],
+    viewerInvited: !!viewer && invitedIds.has(viewer.id),
     contributors: [
       { user: ownerUser, role: 'creator' as const, chapterCount: chaptersBy(ownerUser.id) },
       ...collaborators.map((u) => ({
@@ -2926,7 +3312,7 @@ export async function getStorylineChildren({
 
   const [collaborators, readers] = await Promise.all([
     dbRead.storylineCollaborator.findMany({
-      where: { storylineId: storyline.id },
+      where: { storylineId: storyline.id, ...acceptedCollaboratorWhere },
       select: { userId: true },
     }),
     readersByChapterId ?? getStorylineReaderCounts(chapterId),
@@ -3217,8 +3603,9 @@ function getStorylineImageGate(
 }
 
 /**
- * An image this reader may be shown from a storyline chapter. Expects `i` (Image), `p` (its Post)
- * and `st` (the Storyline its chapter is in).
+ * An image this reader may be shown for a storyline: a chapter image, or an image in no chapter
+ * that is listed as uploaded for this storyline. Expects `i` (Image), `p` (its Post, if any) and
+ * `st` (the Storyline).
  */
 function storylineImageVisible(gate: StorylineImageGate) {
   const viewerId = gate.viewer?.id ?? -1;
@@ -3226,7 +3613,7 @@ function storylineImageVisible(gate: StorylineImageGate) {
       AND i."acceptableMinor" = false
       -- Shown to everyone who sees the card or page, so no minor or real-person image.
       AND i.minor = false AND i.poi = false
-      AND (p.availability <> 'Private' OR p."userId" = ${viewerId})
+      AND (p.id IS NULL OR p.availability <> 'Private' OR p."userId" = ${viewerId})
       AND i."nsfwLevel" <> 0
       AND (i."nsfwLevel" & ${gate.browsingLevel}::int) <> 0
       AND (i."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0
@@ -3304,14 +3691,23 @@ async function getChosenStorylineImages(
   picks: { storylineId: number; imageId: number | null }[]
 ) {
   const key = (storylineId: number, imageId: number) => `${storylineId}:${imageId}`;
-  const imageIds = [...new Set(picks.flatMap((pick) => (pick.imageId ? [pick.imageId] : [])))];
+  const pairs = uniqBy(
+    picks.flatMap((pick) => (pick.imageId ? [{ ...pick, imageId: pick.imageId }] : [])),
+    (pick) => key(pick.storylineId, pick.imageId)
+  );
   const found = new Map<string, StorylineFeedCover>();
-  if (imageIds.length) {
+  if (pairs.length) {
     const resolved = await gate();
     const rows = await dbRead.$queryRaw<
       (StorylineFeedCover & {
         storylineId: number;
-        postId: number;
+        postId: number | null;
+        chapterId: number | null;
+        storylineUserId: number;
+        uploaderIsModerator: boolean | null;
+        uploaderBannedAt: Date | null;
+        uploaderDeletedAt: Date | null;
+        uploadedHere: boolean;
         postUserId: number;
         postNsfwLevel: number;
         publishedAt: Date | null;
@@ -3323,22 +3719,42 @@ async function getChosenStorylineImages(
         minorByScan: boolean;
       })[]
     >`
-      SELECT ${storylineImageColumns}, c."storylineId", i."postId",
+      SELECT ${storylineImageColumns}, st.id AS "storylineId", i."postId", c.id AS "chapterId",
         p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt",
         p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt",
-        st."maxNsfwLevel", st."minorByScan"
-      FROM "Image" i
-      JOIN "StorylineChapter" c ON c."postId" = i."postId"
-      JOIN "Storyline" st ON st.id = c."storylineId"
-      JOIN "Post" p ON p.id = i."postId"
-      JOIN "User" pu ON pu.id = p."userId"
-      WHERE i.id = ANY(${imageIds}::int[])
-        AND ${storylineImageVisible(resolved)}
+        st."maxNsfwLevel", st."minorByScan", st."userId" AS "storylineUserId",
+        iu."isModerator" AS "uploaderIsModerator", iu."bannedAt" AS "uploaderBannedAt",
+        iu."deletedAt" AS "uploaderDeletedAt", cu."imageId" IS NOT NULL AS "uploadedHere"
+      FROM unnest(${pairs.map((pair) => pair.storylineId)}::int[], ${pairs.map(
+      (pair) => pair.imageId
+    )}::int[]) AS pick("storylineId", "imageId")
+      JOIN "Image" i ON i.id = pick."imageId"
+      JOIN "Storyline" st ON st.id = pick."storylineId"
+      LEFT JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c."storylineId" = st.id
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN "User" pu ON pu.id = p."userId"
+      JOIN "User" iu ON iu.id = i."userId"
+      LEFT JOIN "StorylineCoverUpload" cu ON cu."storylineId" = st.id AND cu."imageId" = i.id
+      WHERE ${storylineImageVisible(resolved)}
     `;
     for (const row of rows) {
+      // A no-chapter cover must be listed as uploaded for this storyline, by its owner or a
+      // moderator whose account still stands and whom this reader has not blocked.
+      if (row.chapterId == null) {
+        if (
+          !row.postId &&
+          row.uploadedHere &&
+          (row.userId === row.storylineUserId || row.uploaderIsModerator) &&
+          !row.uploaderBannedAt &&
+          !row.uploaderDeletedAt &&
+          !resolved.blockedUserIds.has(row.userId)
+        )
+          found.set(key(row.storylineId, row.id), toStorylineImage(row));
+        continue;
+      }
       const tombstone = getStorylineChapterTombstone({
         post: {
-          id: row.postId,
+          id: row.postId!,
           userId: row.postUserId,
           nsfwLevel: row.postNsfwLevel,
           publishedAt: row.publishedAt,
@@ -3363,7 +3779,7 @@ async function getChosenStorylineImages(
 /** Deepest offset the most-chapters order pages to. */
 const STORYLINE_FEED_MAX_OFFSET = 1000;
 
-export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open';
+export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open' | 'mine';
 export type StorylineFeedSort = 'newest' | 'mostChapters';
 
 /**
@@ -3406,6 +3822,7 @@ export async function getStorylinesInfinite({
   if (excluded.length) where.push(Prisma.sql`st."userId" <> ALL(${excluded}::int[])`);
   if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
   if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
+  if (filter === 'mine') where.push(Prisma.sql`st."userId" = ${viewerId}`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
     where.push(Prisma.sql`st.status <> 'Complete'`);
@@ -3413,7 +3830,9 @@ export async function getStorylinesInfinite({
     // Open to this reader: collaborators-only storylines are open only to their collaborators.
     where.push(Prisma.sql`(st."whoCanContinue" = 'Anyone' OR st."userId" = ${viewerId} OR EXISTS (
       SELECT 1 FROM "StorylineCollaborator" sc
-      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId}
+      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+      'sc'
+    )}
     ))`);
   }
   // Newest pages by id (stable while storylines are added); most-chapters by offset, capped,
@@ -3455,7 +3874,9 @@ export async function getStorylinesInfinite({
       st."maxNsfwLevel", st."minorByScan", st."whoCanContinue",
       EXISTS (
         SELECT 1 FROM "StorylineCollaborator" vc
-        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId}
+        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+    'vc'
+  )}
       ) AS "isCollaborator",
       rc."postId" AS "rootPostId", rp."nsfwLevel" AS "rootNsfwLevel",
       rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation",

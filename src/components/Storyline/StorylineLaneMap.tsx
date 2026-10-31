@@ -45,6 +45,11 @@ import {
 import { StorylineRoleChip, StorylineShareChip } from '~/components/Storyline/StorylineChips';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
+import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
+import {
+  canRemoveStorylineChapter,
+  RemoveChapterMenuItem,
+} from '~/components/Storyline/RemoveChapterMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -69,8 +74,26 @@ type LaneNode = {
 
 /** Rows are fixed-height so branch lanes line up with the canon rows. */
 const SIZES = {
-  compact: { canon: 84, branch: 52, laneWidth: 64, row: 121, band: 30, visibleLanes: 2 },
-  wide: { canon: 112, branch: 72, laneWidth: 124, row: 156, band: 30, visibleLanes: 2 },
+  compact: {
+    canon: 84,
+    branch: 52,
+    laneWidth: 64,
+    row: 121,
+    band: 30,
+    minLanes: 2,
+    maxLanes: 2,
+    minPath: 0,
+  },
+  wide: {
+    canon: 112,
+    branch: 72,
+    laneWidth: 124,
+    row: 156,
+    band: 30,
+    minLanes: 2,
+    maxLanes: 99,
+    minPath: 280,
+  },
 };
 const RATIO = 5 / 4;
 
@@ -209,13 +232,13 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
         !graph?.truncated &&
         !rows.some((row) => row.canon && reorderOf(row.canon.chapterId)) && (
           <Text size="xs" c="dimmed" mb="xs" data-testid="storyline-reorder-hint">
-            You can reorder chapters on the main path once three or more of your own run in a row at
-            its end, or four or more anywhere else on it, with no branches or other people&apos;s
-            chapters between them.
+            The main path can be any length. Its chapters can be put in a new order once three or
+            more by the storyline&apos;s creator run in a row at its end, or four or more anywhere
+            else on it, with no branches or other people&apos;s chapters between them.
           </Text>
         )}
       <div className="flex">
-        <div className="relative min-w-0 flex-1" style={{ height }}>
+        <div className="relative min-w-0 flex-1" style={{ height, flex: `1 1 ${size.minPath}px` }}>
           {canonRows.length > 1 && (
             <span
               aria-hidden
@@ -260,6 +283,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
                     top={tops[i].top}
                     reorder={reorderOf(row.canon.chapterId)}
                     onMove={moveAfter}
+                    ownerId={storyline.userId}
                   />
                 ) : null
               )}
@@ -275,9 +299,15 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
         </div>
 
         {branchLanes > 0 && (
+          // On a wider screen, as many lanes as fit beside the main path rather than two.
           <div
-            className="shrink-0 overflow-x-auto"
-            style={{ width: Math.min(branchLanes, size.visibleLanes) * size.laneWidth }}
+            className="overflow-x-auto"
+            data-testid="storyline-lanes-scroller"
+            style={{
+              // Gives way first, to its minimum, before the main path shrinks.
+              flex: `0 1000 ${Math.min(branchLanes, size.maxLanes) * size.laneWidth}px`,
+              minWidth: Math.min(branchLanes, size.minLanes) * size.laneWidth,
+            }}
           >
             <div className="relative" style={{ width: branchLanes * size.laneWidth, height }}>
               {rows.map((row, i) =>
@@ -422,8 +452,10 @@ function CanonStop({
   top,
   reorder,
   onMove,
+  ownerId,
 }: {
   node: LaneNode;
+  ownerId: number;
   /** Where the owner may move it by one place, set only inside a straight run of their own. */
   reorder?: { up: number | null; down: number | null };
   onMove: (chapterId: number, afterChapterId: number) => void;
@@ -439,56 +471,82 @@ function CanonStop({
   const link = node.href ? { href: node.href, read: node.read } : null;
   const share = useForkShare(forkId, node.chapterId);
   const drag = useDraggable({ id: node.chapterId, disabled: !reorder });
+  const currentUser = useCurrentUser();
+  const reportPostId = post && post.userId !== currentUser?.id ? post.id : null;
+  const canRemove =
+    !!post &&
+    canRemoveStorylineChapter({
+      depth: node.chapter.depth,
+      authorId: post.userId,
+      ownerId,
+      viewer: currentUser,
+    });
+  const hasMenu = !!reorder || reportPostId !== null || canRemove;
   return (
     <li
       ref={drag.setNodeRef}
       className={clsx(
         'absolute inset-x-0 flex gap-3.5 pl-9',
-        reorder && 'pr-14',
+        reorder ? 'pr-14' : hasMenu && 'pr-8',
         drag.isDragging && 'z-20 opacity-70'
       )}
       style={{ top, height: size.row, transform: CSS.Translate.toString(drag.transform) }}
       data-testid="storyline-chapter"
     >
-      {reorder && (
+      {hasMenu && (
         <div className="absolute right-0 top-0 flex">
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
               <ActionIcon
                 variant="subtle"
                 color="gray"
-                aria-label={`Reorder chapter ${node.number}`}
+                aria-label={`Chapter ${node.number} options`}
               >
                 <IconDotsVertical size={18} />
               </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item
-                disabled={reorder.up === null}
-                onClick={() => reorder.up !== null && onMove(node.chapterId, reorder.up)}
-              >
-                Move up
-              </Menu.Item>
-              <Menu.Item
-                disabled={reorder.down === null}
-                onClick={() => reorder.down !== null && onMove(node.chapterId, reorder.down)}
-              >
-                Move down
-              </Menu.Item>
+              {reorder && (
+                <>
+                  <Menu.Item
+                    disabled={reorder.up === null}
+                    onClick={() => reorder.up !== null && onMove(node.chapterId, reorder.up)}
+                  >
+                    Move up
+                  </Menu.Item>
+                  <Menu.Item
+                    disabled={reorder.down === null}
+                    onClick={() => reorder.down !== null && onMove(node.chapterId, reorder.down)}
+                  >
+                    Move down
+                  </Menu.Item>
+                </>
+              )}
+              {reportPostId !== null && <ReportChapterMenuItem postId={reportPostId} />}
+              {canRemove && post && (
+                <RemoveChapterMenuItem
+                  chapterId={node.chapterId}
+                  title={node.title}
+                  hasChildren={(canon?.childCount ?? 0) > 0}
+                  byAuthor={post.userId === currentUser?.id}
+                />
+              )}
             </Menu.Dropdown>
           </Menu>
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            aria-label={`Drag chapter ${node.number} to reorder`}
-            ref={drag.setActivatorNodeRef}
-            {...drag.listeners}
-            {...drag.attributes}
-            tabIndex={-1}
-            style={{ touchAction: 'none', cursor: 'grab' }}
-          >
-            <IconGripVertical size={18} />
-          </ActionIcon>
+          {reorder && (
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              aria-label={`Drag chapter ${node.number} to reorder`}
+              ref={drag.setActivatorNodeRef}
+              {...drag.listeners}
+              {...drag.attributes}
+              tabIndex={-1}
+              style={{ touchAction: 'none', cursor: 'grab' }}
+            >
+              <IconGripVertical size={18} />
+            </ActionIcon>
+          )}
         </div>
       )}
       <span

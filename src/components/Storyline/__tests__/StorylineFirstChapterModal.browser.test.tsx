@@ -18,8 +18,14 @@ const DAY = 86_400_000;
 
 const mocks = vi.hoisted(() => ({
   items: [] as Record<string, unknown>[],
+  olderItems: null as Record<string, unknown>[] | null,
+  hasNextPage: false,
+  fetchNextPage: vi.fn(),
+  queries: [] as (string | undefined)[],
+  chapterLookups: [] as number[][],
   ownerMaxNsfwLevel: 0,
   chapters: {} as Record<number, unknown>,
+  chaptersError: false,
   mutate: vi.fn(),
   error: null as { message: string } | null,
   options: {} as {
@@ -48,14 +54,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           }),
         },
         'post.getInfinite': {
-          useInfiniteQuery: () => ({
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-            isLoading: false,
-            isError: false,
-          }),
-        },
-        'storyline.getForPosts': {
-          useQuery: () => ({ data: mocks.chapters, isLoading: false }),
+          useInfiniteQuery: (input: { query?: string }) => {
+            mocks.queries.push(input.query);
+            const pages = [{ items: mocks.items, nextCursor: undefined }];
+            if (mocks.olderItems) pages.push({ items: mocks.olderItems, nextCursor: undefined });
+            return {
+              data: { pages },
+              isLoading: false,
+              isError: false,
+              hasNextPage: mocks.hasNextPage,
+              fetchNextPage: mocks.fetchNextPage,
+              isFetchingNextPage: false,
+            };
+          },
         },
         'storyline.setFirstChapter': {
           useMutation: (options: typeof mocks.options) => {
@@ -64,7 +75,20 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           },
         },
       },
-      { useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }) }
+      {
+        useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }),
+        useQueries: (build: (t: unknown) => unknown[]) =>
+          build({
+            storyline: {
+              getForPosts: (input: { postIds: number[] }) => {
+                mocks.chapterLookups.push(input.postIds);
+                return mocks.chaptersError
+                  ? { data: undefined, isLoading: false, isError: true }
+                  : { data: mocks.chapters, isLoading: false, isError: false };
+              },
+            },
+          }),
+      }
     ),
   };
 });
@@ -98,8 +122,14 @@ const submit = () => page.getByRole('button', { name: 'Make it chapter 1' });
 
 beforeEach(() => {
   mocks.items = [];
+  mocks.olderItems = null;
+  mocks.hasNextPage = false;
+  mocks.fetchNextPage.mockReset();
+  mocks.queries = [];
+  mocks.chapterLookups = [];
   mocks.ownerMaxNsfwLevel = NsfwLevel.PG13;
   mocks.chapters = {};
+  mocks.chaptersError = false;
   mocks.error = null;
   mocks.mutate.mockReset();
   mocks.onClose.mockReset();
@@ -157,6 +187,73 @@ describe('StorylineFirstChapterModal', () => {
     await expect.element(page.getByText(/rated above this storyline's maximum/)).toBeVisible();
     expect(page.getByText(/raises the maximum/).elements()).toHaveLength(0);
     await expect.element(submit()).toBeDisabled();
+  });
+
+  // Blocked is a moderation verdict: never shown as the post's rating, nor promised a raise.
+  test('a post with a Blocked image is refused as unusable, without naming Blocked', async () => {
+    mocks.items = [postItem(10, { nsfwLevel: NsfwLevel.R | NsfwLevel.Blocked })];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await tile(10).click();
+    await expect.element(page.getByText(/can't be used in a storyline/)).toBeVisible();
+    expect(page.getByText(/Blocked/).elements()).toHaveLength(0);
+    expect(page.getByText(/raises the maximum/).elements()).toHaveLength(0);
+    await expect.element(submit()).toBeDisabled();
+  });
+
+  test('shows older posts a page at a time, and lists them once loaded', async () => {
+    mocks.items = [postItem(10)];
+    mocks.hasNextPage = true;
+    const { rerender } = await renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await page.getByRole('button', { name: 'Show older posts' }).click();
+    expect(mocks.fetchNextPage).toHaveBeenCalledTimes(1);
+
+    mocks.olderItems = [postItem(9)];
+    mocks.hasNextPage = false;
+    rerender(<StorylineFirstChapterModal storylineId={3} />);
+    await expect.element(tile(9)).toBeVisible();
+    expect(page.getByRole('button', { name: 'Show older posts' }).elements()).toHaveLength(0);
+  });
+
+  // Without the chapter answer, a post that is already a chapter would look pickable.
+  test('offers no post when it cannot tell which are already chapters', async () => {
+    mocks.items = [postItem(10)];
+    mocks.chaptersError = true;
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    const failed = () => page.getByText("Couldn't load your posts.");
+    // Settle on either outcome, so a regression fails on the tile, not on a timeout.
+    await expect.poll(() => failed().elements().length + tile(10).elements().length).toBe(1);
+    expect(tile(10).elements()).toHaveLength(0);
+    expect(failed().elements()).toHaveLength(1);
+  });
+
+  // getForPosts refuses more than STORYLINE_FOR_POSTS_MAX ids.
+  test('asks which posts are chapters at most 100 at a time', async () => {
+    mocks.items = Array.from({ length: 150 }, (_, i) => postItem(1000 + i));
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await expect.element(tile(1149)).toBeVisible();
+    expect(mocks.chapterLookups.at(-1)?.length).toBe(50);
+    expect(Math.max(...mocks.chapterLookups.map((ids) => ids.length))).toBe(100);
+  });
+
+  test('searches your posts by title', async () => {
+    mocks.items = [postItem(10)];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await page.getByRole('textbox', { name: 'Search by the start of a title' }).fill('  Cat ');
+    await expect.poll(() => mocks.queries.at(-1)).toBe('Cat');
+  });
+
+  test('says when no title matches the search', async () => {
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await page.getByRole('textbox', { name: 'Search by the start of a title' }).fill('Zebra');
+    await expect
+      .element(page.getByText('None of your posts has a title starting with “Zebra”.'))
+      .toBeVisible();
   });
 
   test('an unrated post cannot be picked yet', async () => {

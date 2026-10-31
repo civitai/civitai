@@ -413,40 +413,46 @@ describe('getCrucibleManageActions', () => {
       canEdit: false,
       canCancel: false,
       canRemoveEntries: false,
+      canTakeDown: false,
     });
     expect(actions(CrucibleStatus.Active, past, { isCreator: true })).toEqual({
       canEdit: false,
       canCancel: false,
       canRemoveEntries: false,
+      canTakeDown: false,
     });
   });
 
-  it('offers nothing on a completed crucible, moderators included', () => {
+  it('offers a moderator only a takedown on a completed crucible', () => {
     expect(actions(CrucibleStatus.Completed, past, { isModerator: true })).toEqual({
       canEdit: false,
       canCancel: false,
       canRemoveEntries: false,
+      canTakeDown: true,
     });
   });
 
-  it('lets a moderator edit, cancel and remove entries from a running crucible', () => {
+  it('lets a moderator edit, cancel, remove entries from and take down a running crucible', () => {
     expect(actions(CrucibleStatus.Active, future, { isModerator: true })).toEqual({
       canEdit: true,
       canCancel: true,
       canRemoveEntries: true,
+      canTakeDown: true,
     });
   });
 
-  it('lets the creator edit a running crucible but cancel only before it starts', () => {
+  it('lets the creator edit and remove entries from a running crucible but cancel only before it starts', () => {
     expect(actions(CrucibleStatus.Active, future, { isCreator: true })).toEqual({
       canEdit: true,
       canCancel: false,
-      canRemoveEntries: false,
+      canRemoveEntries: true,
+      canTakeDown: false,
     });
     expect(actions(CrucibleStatus.Pending, future, { isCreator: true })).toEqual({
       canEdit: true,
       canCancel: true,
       canRemoveEntries: false,
+      canTakeDown: false,
     });
   });
 
@@ -455,7 +461,24 @@ describe('getCrucibleManageActions', () => {
       canEdit: false,
       canCancel: false,
       canRemoveEntries: false,
+      canTakeDown: false,
     });
+  });
+
+  it('offers the takedown to moderators only, and only once', () => {
+    const takenDownAt = new Date();
+    for (const status of [CrucibleStatus.Pending, CrucibleStatus.Active, CrucibleStatus.Cancelled])
+      expect(actions(status, future, { isCreator: true }).canTakeDown).toBe(false);
+    expect(
+      getCrucibleManageActions({
+        status: CrucibleStatus.Cancelled,
+        endAt: future,
+        isCreator: false,
+        isModerator: true,
+        takenDownAt,
+      }).canTakeDown
+    ).toBe(false);
+    expect(actions(CrucibleStatus.Cancelled, future, { isModerator: true }).canTakeDown).toBe(true);
   });
 
   it('offers removing entries only while it runs, since an upcoming one has none', () => {

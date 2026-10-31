@@ -55,16 +55,24 @@ describe('removing comments as ToS violations', () => {
 
 describe('restoring comments removed as ToS violations', () => {
   it('restores the CommentV3 ids there and the others on CommentV2, and sums the counts', async () => {
-    m.clearV3.mockResolvedValue({ count: 1, reopenedReports: 2 });
+    m.clearV3.mockResolvedValue({ count: 1, reopenedReports: 2, retainedHidden: 1, failed: 0 });
+    // The CommentV2 clear: one comment cleared, one report reopened.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { userId: 70, held: false, cleared: true, reopened: 1 },
+    ]);
 
     await expect(bulkClearCommentV2TosViolation({ ids: [V3_ID, V2_ID] })).resolves.toEqual({
       count: 2,
       reopenedReports: 3,
+      retainedHidden: 1,
+      failed: 0,
     });
     expect(m.clearV3).toHaveBeenCalledWith({ ids: [V3_ID] });
-    expect(dbMock.dbWrite.commentV2.update).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.commentV2.update.mock.calls[0][0]).toMatchObject({
-      where: { id: V2_ID },
-    });
+    const clears = dbMock.dbWrite.$queryRaw.mock.calls.filter(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('"tosViolation" = false')
+    );
+    expect(clears).toHaveLength(1);
+    expect(clears[0].slice(1)).toContain(V2_ID);
+    expect(clears[0].slice(1)).not.toContain(V3_ID);
   });
 });

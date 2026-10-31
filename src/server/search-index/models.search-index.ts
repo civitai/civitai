@@ -1,5 +1,5 @@
-import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { isGeneratorReady } from '~/shared/generation/generator-readiness';
+import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
@@ -13,7 +13,14 @@ import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
-import type { SearchIndexContext } from '~/server/search-index/base.search-index';
+import type {
+  SearchIndexContext,
+  SearchIndexPullBatch,
+} from '~/server/search-index/base.search-index';
+import {
+  MODEL_SEARCH_INDEX_ELIGIBILITY,
+  modelSearchIndexEligibilitySql,
+} from '~/server/search-index/model-index-eligibility';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import {
   MODELS_WITHHELD_ATTRIBUTES,
@@ -279,22 +286,12 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const { files, ...restVersion } = version;
 
-      const eligible = (x: (typeof modelVersions)[number], covered: boolean | undefined) =>
-        isGenerationEligible({
-          covered,
-          coveredLive: x.generationCoverage?.covered,
-          baseModel: x.baseModel,
-          modelType: model.type,
-          flags: x.flags,
-        });
-
-      const canGenerate = modelVersions.some((x) => eligible(x, x.generationCoverage?.covered));
+      const eligibility = modelVersions.map((x) => indexedVersionEligibility(x, model.type));
+      const canGenerate = eligibility.some((x) => x.canGenerate);
       // What `canGenerate` becomes when the staged rule takes over — the same composition over the
       // view's other column. Transitional: delete it, and its filterable entries, at the cutover,
       // when `covered` answers this on its own.
-      const canGenerateNext = modelVersions.some((x) =>
-        eligible(x, x.generationCoverage?.coveredNext)
-      );
+      const canGenerateNext = eligibility.some((x) => x.canGenerateNext);
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
       const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
@@ -504,15 +501,18 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           baseModel: restVersion.baseModel as BaseModel,
         },
         versions: modelVersions.map(
-          ({
-            generationCoverage,
-            files,
-            hashes,
-            settings,
-            metrics: vMetrics,
-            usageControl,
-            ...x
-          }) => ({
+          (
+            {
+              generationCoverage: _coverage,
+              files,
+              hashes,
+              settings,
+              metrics: vMetrics,
+              usageControl,
+              ...x
+            },
+            i
+          ) => ({
             ...x,
             // Keeps the column's name but holds readiness — the loaded-only filter reads this.
             generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
@@ -522,20 +522,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-            canGenerate: isGenerationEligible({
-              covered: generationCoverage?.covered,
-              coveredLive: generationCoverage?.covered,
-              baseModel: x.baseModel,
-              modelType: model.type,
-              flags: x.flags,
-            }),
-            canGenerateNext: isGenerationEligible({
-              covered: generationCoverage?.coveredNext,
-              coveredLive: generationCoverage?.covered,
-              baseModel: x.baseModel,
-              modelType: model.type,
-              flags: x.flags,
-            }),
+            ...eligibility[i],
             settings: settings as RecommendedSettingsSchema,
             baseModel: x.baseModel as BaseModel,
           })
@@ -740,13 +727,12 @@ export const prepareModelsBatches = async (
   lastUpdatedAt?: Date
 ) => {
   const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
-      SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model"
-      WHERE status = ${ModelStatus.Published}::"ModelStatus"
-          AND availability != ${Availability.Unsearchable}::"Availability"
+      SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model" m
+      WHERE ${modelSearchIndexEligibilitySql()}
       ${
         lastUpdatedAt
           ? Prisma.sql`
-        AND "createdAt" >= ${lastUpdatedAt}
+        AND m."createdAt" >= ${lastUpdatedAt}
       `
           : Prisma.sql``
       };
@@ -764,11 +750,10 @@ export const prepareModelsBatches = async (
 
     while (true) {
       const ids = await db.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "Model"
-        WHERE status = ${ModelStatus.Published}::"ModelStatus"
-            AND availability != ${Availability.Unsearchable}::"Availability"
-            AND "updatedAt" >= ${lastUpdatedAt}
-            AND id > ${lastId}
+        SELECT id FROM "Model" m
+        WHERE ${modelSearchIndexEligibilitySql()}
+            AND m."updatedAt" >= ${lastUpdatedAt}
+            AND m.id > ${lastId}
         ORDER BY id
         LIMIT ${READ_BATCH_SIZE};
         `;
@@ -794,87 +779,90 @@ export const prepareModelsBatches = async (
   };
 };
 
+/** Hoisted and exported, like `prepareModelsBatches`, so a test can read the query it issues. */
+export const pullModelsData = async (
+  { db, logger }: SearchIndexContext,
+  batch: SearchIndexPullBatch
+) => {
+  const batchLogKey =
+    batch.type === 'update'
+      ? `Update ${batch.ids.length} items`
+      : `${batch.startId} - ${batch.endId}`;
+  logger(`PullData :: Pulling data for batch`, batchLogKey);
+  const models = await db.model.findMany({
+    select: modelSearchIndexSelect,
+    where: {
+      ...MODEL_SEARCH_INDEX_ELIGIBILITY,
+      id:
+        batch.type === 'update'
+          ? {
+              in: batch.ids,
+            }
+          : {
+              gte: batch.startId,
+              lte: batch.endId,
+            },
+    },
+  });
+
+  logger(`PullData :: Pulled models`, batchLogKey);
+
+  const results: PullDataResult = {
+    models,
+    tags: {},
+    cosmetics: {},
+    images: [],
+  };
+
+  if (models.length === 0) return results;
+
+  const pullBatches = chunk(models, 500);
+  const tasks: Task[] = [];
+  for (const batch of pullBatches) {
+    const batchIds = batch.map((m) => m.id);
+    tasks.push(async () => {
+      logger(`PullData :: Pull cosmetics`, batchLogKey);
+      const cosmetics = await getCosmeticsForEntity({
+        ids: batchIds,
+        entity: 'Model',
+      });
+      logger(`PullData :: Pulled cosmetics`, batchLogKey);
+      Object.assign(results.cosmetics, cosmetics);
+    });
+
+    tasks.push(async () => {
+      logger(`PullData :: Pull tags`, batchLogKey);
+      const tags = await modelTagCache.fetch(batchIds);
+      logger(`PullData :: Pulled tags`, batchLogKey);
+      Object.assign(results.tags, tags);
+    });
+
+    const modelVersionIds = batch.flatMap((m) => m.modelVersions.map((m) => m.id));
+    const versionBatches = chunk(modelVersionIds, 500);
+    for (const versionBatch of versionBatches) {
+      tasks.push(async () => {
+        logger(`PullData :: Pull images`, batchLogKey);
+        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
+        const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
+        logger(`PullData :: Pulled images`, batchLogKey);
+
+        results.images.push(...images);
+      });
+    }
+  }
+  await limitConcurrency(tasks, 2);
+
+  logger(`PullData :: Finished pulling data for batch`, batchLogKey);
+
+  return results;
+};
+
 export const modelsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 25, // Avoids hoggging too much memory.
   prepareBatches: prepareModelsBatches,
-  pullData: async ({ db, logger }, batch) => {
-    const batchLogKey =
-      batch.type === 'update'
-        ? `Update ${batch.ids.length} items`
-        : `${batch.startId} - ${batch.endId}`;
-    logger(`PullData :: Pulling data for batch`, batchLogKey);
-    const models = await db.model.findMany({
-      select: modelSearchIndexSelect,
-      where: {
-        status: ModelStatus.Published,
-        availability: {
-          not: Availability.Unsearchable,
-        },
-        id:
-          batch.type === 'update'
-            ? {
-                in: batch.ids,
-              }
-            : {
-                gte: batch.startId,
-                lte: batch.endId,
-              },
-      },
-    });
-
-    logger(`PullData :: Pulled models`, batchLogKey);
-
-    const results: PullDataResult = {
-      models,
-      tags: {},
-      cosmetics: {},
-      images: [],
-    };
-
-    if (models.length === 0) return results;
-
-    const pullBatches = chunk(models, 500);
-    const tasks: Task[] = [];
-    for (const batch of pullBatches) {
-      const batchIds = batch.map((m) => m.id);
-      tasks.push(async () => {
-        logger(`PullData :: Pull cosmetics`, batchLogKey);
-        const cosmetics = await getCosmeticsForEntity({
-          ids: batchIds,
-          entity: 'Model',
-        });
-        logger(`PullData :: Pulled cosmetics`, batchLogKey);
-        Object.assign(results.cosmetics, cosmetics);
-      });
-
-      tasks.push(async () => {
-        logger(`PullData :: Pull tags`, batchLogKey);
-        const tags = await modelTagCache.fetch(batchIds);
-        logger(`PullData :: Pulled tags`, batchLogKey);
-        Object.assign(results.tags, tags);
-      });
-
-      const modelVersionIds = batch.flatMap((m) => m.modelVersions.map((m) => m.id));
-      const versionBatches = chunk(modelVersionIds, 500);
-      for (const versionBatch of versionBatches) {
-        tasks.push(async () => {
-          logger(`PullData :: Pull images`, batchLogKey);
-          const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
-          const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
-          logger(`PullData :: Pulled images`, batchLogKey);
-
-          results.images.push(...images);
-        });
-      }
-    }
-    await limitConcurrency(tasks, 2);
-
-    logger(`PullData :: Finished pulling data for batch`, batchLogKey);
-
-    return results;
-  },
+  pullData: pullModelsData,
   transformData,
   pushData: async ({ indexName }, data) => {
     const { indexReadyRecords, indexRecordsWithImages } = data as {

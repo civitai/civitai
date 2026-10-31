@@ -112,6 +112,7 @@ beforeAll(async () => {
   await db.pg.exec(PRE_EXISTING);
   await db.pg.exec(migration('20261110120000_comment_v3_schema'));
   await db.pg.exec(migration('20261120120000_comment_v3_mirror'));
+  await db.pg.exec(migration('20261217120000_comment_v3_removed_by_author'));
   await copyTopics(db.pg, ALL);
   await copyV2Comments(db.pg, ALL);
   await copyV1Comments(db.pg, ALL);
@@ -507,5 +508,25 @@ describe('comment v3 reverse copy', () => {
     expect(orphan).toEqual({ commentId: null, root: root.id });
     expect(await old(92)).toMatchObject({ content: 'under that' });
     expect(await count('FROM "CommentV2" WHERE id = 90')).toBe(0);
+  });
+  // The old ToS restore skips only marked rows: unmarked, it would republish the author's removal.
+  it('an author removal a hold kept goes back marked, as a new row and on an existing one', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('image', 16);
+      INSERT INTO "Thread"("imageId") VALUES (16);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation", "removedByAuthor", "createdAt")
+        VALUES (95, 'image', 16, 5, 'kept for a hold', true, true, '2025-02-01');
+    `);
+    for (let pass = 0; pass < 2; pass++) await reverseComments(db.pg, ALL, SCOPE);
+    const marked = () =>
+      one(`SELECT metadata ->> 'removedByAuthor' AS marked FROM "CommentV2" WHERE id = 95`);
+    expect(await marked()).toEqual({ marked: 'true' });
+
+    await db.pg.exec(`ALTER TABLE "CommentV2" DISABLE TRIGGER commentv3_mirror`);
+    await db.pg.exec(`UPDATE "CommentV2" SET metadata = NULL WHERE id = 95`);
+    await db.pg.exec(`ALTER TABLE "CommentV2" ENABLE TRIGGER commentv3_mirror`);
+    await db.pg.exec(`UPDATE "CommentV3" SET "updatedAt" = now() WHERE id = 95`);
+    await reverseUpdates(db.pg, ALL);
+    expect(await marked()).toEqual({ marked: 'true' });
   });
 });

@@ -4,6 +4,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import { StorylineEditorBanner } from '~/components/Storyline/editor/StorylineEditorBanner';
 import { StorylineEditorHeader } from '~/components/Storyline/editor/StorylineEditorHeader';
+import { NsfwLevel } from '~/server/common/enums';
 
 /**
  * The post editor knows about a storyline only when the post belongs to one: a draft started from
@@ -63,7 +64,7 @@ const draft = { id: 41, user: { id: 1 }, publishedAt: null };
 const published = { ...draft, publishedAt: new Date('2026-01-01') };
 const pendingLink = (parentChapter: unknown = null) => ({
   postId: 41,
-  storyline: { id: 2, title: 'The Patch' },
+  storyline: { id: 2, title: 'The Patch', maxNsfwLevel: NsfwLevel.PG13 },
   parentChapter,
 });
 
@@ -137,6 +138,14 @@ describe('StorylineEditorHeader', () => {
       .element(page.getByRole('link', { name: 'The Patch' }))
       .toHaveAttribute('href', '/storylines/2');
     expect(page.getByText('Chapter 1', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  // A contributor had no way to see the ceiling before publishing and being refused.
+  test("a draft continuing a chapter shows the storyline's maximum rating", async () => {
+    mocks.pending = pendingLink({ id: 5, depth: 2, postId: 7 });
+    renderWithProviders(<StorylineEditorHeader post={draft} />);
+
+    await expect.element(page.getByText('Up to PG-13')).toBeVisible();
   });
 
   test.each([

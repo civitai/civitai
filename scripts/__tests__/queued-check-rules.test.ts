@@ -171,7 +171,7 @@ describe('a flag is not a target', () => {
 /**
  * 🔴 The vitest lanes are pinned WHOLE, not by substring. Dropping `run` from any of them turns
  * a CI step into a watch-mode process that never exits (`.github/workflows/lint.yml` invokes
- * `test:packages:run` and `test:apps:run` directly), and dropping `--project` widens the run
+ * `test:packages:run` and `.github/workflows/apps.yml` invokes `test:apps:run` directly), and dropping `--project` widens the run
  * instead of narrowing it. Neither shows up as a failure — one hangs, the other passes too much.
  */
 describe('the vitest lanes run what they say', () => {

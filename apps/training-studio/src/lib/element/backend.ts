@@ -16,6 +16,8 @@ import { computeFromPrices } from '$lib/pricing-core';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 import * as train from '$lib/train-core';
+import * as edit from '$lib/edit-helpers-core';
+import type { TrainingTextCheckInput } from '$lib/training-text';
 import { parseServiceStatus } from '$lib/service-status-core';
 
 /** What an embedding page must inject into <civitai-training-studio> (as a JS property, never an
@@ -23,12 +25,17 @@ import { parseServiceStatus } from '$lib/service-status-core';
 export interface StudioElementHost {
   /** Called per request and again after a 401 — the host mints server-side and returns the raw token. */
   getOrchestratorToken(): Promise<string>;
-  /** The main app's trigger word check for one run, called before anything is submitted. Resolves
-   *  `{ ok: false, error }` on a refusal; rejects when the check could not run. A host without it
-   *  cannot start training: the element refuses rather than submit unchecked. */
-  checkTrainingText?(input: {
-    triggerWord: string;
-  }): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** The main app's check, called before anything is submitted: a run's trigger word, or the
+   *  prompt of an edit the element is about to generate. Resolves `{ ok: false, error }` on a
+   *  refusal; rejects when the check could not run. A host without it cannot start training or
+   *  generate an edit: the element refuses rather than submit unchecked. */
+  checkTrainingText?(
+    input: TrainingTextCheckInput
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
+   *  answered by the host's server; it should settle (time out) on its own. Omit and a run links
+   *  its stored modelId unchecked. */
+  modelLive?(modelId: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
@@ -144,6 +151,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         return detail;
       }),
 
+    // No hook: the stored link stands unchecked.
+    modelLive: (modelId) => (host.modelLive ? host.modelLive(modelId) : Promise.resolve(true)),
+
     getRunDataset: (workflowId) => call((client) => orch.getRunDataset(client, workflowId)),
 
     datasetBlob: (air, workflowId) =>
@@ -185,6 +195,25 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       call((client) =>
         train.submitTrainingBatch(client, runs, { ...submitOpts(), checkText: hostTextCheck })
       ),
+
+    listEditGenerations: () => call((client) => edit.listEditGenerations(client)),
+
+    editImageQuote: () => call((client) => edit.editImageQuote(client)),
+
+    editImageSubmit: async (req) => {
+      await hostTextCheck({ editPrompt: req.prompt, inputImages: [req.imageUrl] });
+      return { workflowId: await call((client) => edit.submitEditImage(client, req)) };
+    },
+
+    editImagePoll: (workflowId) => call((client) => edit.pollEditImage(client, workflowId)),
+
+    suggestQuote: () => call((client) => edit.suggestQuote(client)),
+
+    suggestSubmit: async (req) => ({
+      workflowId: await call((client) => edit.submitSuggest(client, req)),
+    }),
+
+    suggestPoll: (workflowId) => call((client) => edit.pollSuggest(client, workflowId)),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 

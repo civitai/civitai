@@ -396,6 +396,10 @@ export type ModelMeta = Partial<{
   archivedBy: number;
   takenDownAt: string;
   takenDownBy: number;
+  /** Written by a content wipe on a model it kept and hid; see model-removed-with-owner.service. */
+  removedWithOwner: boolean;
+  statusBeforeRemoval: string;
+  versionsUnpublishedByRemoval: { id: number; status: string }[];
   bountyId: number;
   unpublishedBy: number;
   declinedReason: string;
@@ -425,6 +429,14 @@ export type ModelMeta = Partial<{
     scannedAt: string;
   };
   minorFlagSnapshot: MinorFlagSnapshot;
+  /** What an owner's minor/POI declaration replaced when it cleared a locked nsfw. */
+  ownerFlagOverride: {
+    at: string;
+    flags: ('minor' | 'poi')[];
+    prevNsfw: boolean;
+    prevSfwOnly: boolean;
+    prevLockedProperties: string[];
+  };
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
@@ -433,6 +445,8 @@ export type ModelMeta = Partial<{
   poiHashMatch: { at: string; hash: string };
   /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
   poiHashCleared: { at: string };
+  /** A system check (not a moderator) added the nsfw lock. Server-owned. */
+  systemNsfwLock: { source: string; at: string };
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {

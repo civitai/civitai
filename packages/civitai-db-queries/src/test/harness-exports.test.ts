@@ -60,6 +60,7 @@ const PACKAGE_EXPORTS = {
   './hot-reads-3': './src/hot-reads-3.db.ts',
   './hot-reads-4': './src/hot-reads-4.db.ts',
   './hot-reads-5': './src/hot-reads-5.db.ts',
+  './hot-reads-6': './src/hot-reads-6.db.ts',
   './image': './src/image.db.ts',
   './model': './src/model.db.ts',
   './page-access': './src/page-access.db.ts',
@@ -67,6 +68,7 @@ const PACKAGE_EXPORTS = {
   './tag': './src/tag.db.ts',
   './image-removal-confirmation': './src/image-removal-confirmation.db.ts',
   './evidence-hold': './src/evidence-hold.db.ts',
+  './csam-queue': './src/csam-queue.db.ts',
   './test-harness': './src/test/compile-harness.ts',
 };
 

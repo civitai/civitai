@@ -1,6 +1,7 @@
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
+import { REMOVED_WITH_OWNER_META_KEYS } from '~/server/utils/legal-hold';
 
 export function isMinorAutoFlagged(meta: ModelMeta | null | undefined): boolean {
   const snapshot = meta?.minorFlagSnapshot;
@@ -49,7 +50,7 @@ export function resolveMinorAppeal<T>({
 
 // Written by the minor-hash service and never safe to expose: the snapshot carries
 // prevMinorImageIds, the dismissal/clear stamps describe moderator decisions, and
-// textModeration forensics are for moderator review only.
+// textModeration forensics and the systemNsfwLock source are for moderator review only.
 // The single definition of which meta keys are secret — everything that hands a
 // Model.meta back to a client must go through this.
 export function stripMinorHashMeta(meta: ModelMeta): ModelMeta;
@@ -59,6 +60,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
 
   const {
     minorFlagSnapshot: _snapshot,
+    ownerFlagOverride: _ownerFlagOverride,
     minorHashDismissed: _dismissed,
     minorHashCleared: _cleared,
     minorHashAccepted: _accepted,
@@ -69,6 +71,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     textScanFlags: _textScanFlags,
     modelRules: _modelRules,
     modelRulesCleared: _modelRulesCleared,
+    systemNsfwLock: _systemNsfwLock,
     ...rest
   } = meta;
 
@@ -88,6 +91,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
  */
 const MODERATION_OWNED_META_KEYS = [
   'minorFlagSnapshot',
+  'ownerFlagOverride',
   'minorHashDismissed',
   'minorHashCleared',
   'minorHashAccepted',
@@ -170,17 +174,34 @@ export function withPrivateCannotPromote<T extends object>(meta: T, banned: bool
  * Meta keys only server code may write, for everyone including moderators: no moderator flow writes
  * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
- * paths read both. Client meta that carries them is ignored, so on update the stored values survive
- * the `{ ...prevMeta, ...meta }` merge.
+ * paths read both. `systemNsfwLock` marks an nsfw lock a system check added, which the owner may
+ * dispute. Client meta that carries them is ignored, so on update the stored values survive the
+ * `{ ...prevMeta, ...meta }` merge.
  */
 export const SERVER_OWNED_META_KEYS = [
   'trainingStudioWorkflowId',
   'trainingStudioModerationApproved',
+  'systemNsfwLock',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
+export function systemNsfwLockMarker(source: string): ModelMeta['systemNsfwLock'] {
+  return { source, at: new Date().toISOString() };
+}
+
+/** When a system check added the nsfw lock, or null when the stored marker is missing or malformed. */
+export function readSystemNsfwLockAt(meta: unknown): Date | null {
+  const marker = (meta as ModelMeta | null)?.systemNsfwLock;
+  if (!marker || typeof marker.at !== 'string') return null;
+  const at = new Date(marker.at);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
+// A content wipe's removal record is written and cleared by server code only: a moderator's edit
+// form sends stored meta back, and must not put a stale record onto a live model.
 const SERVER_ONLY_META_KEYS: readonly string[] = [
   ...SERVER_OWNED_META_KEYS,
   RESTORE_CANNOT_PROMOTE_KEY,
+  ...REMOVED_WITH_OWNER_META_KEYS,
 ];
 
 export function stripServerOwnedMeta<T extends ModelMeta | null | undefined>(meta: T): T {
@@ -201,6 +222,20 @@ function pickKeys(meta: ModelMeta | null | undefined, keys: readonly string[]): 
 /** The server-owned keys of a stored meta, to carry across a write that replaces meta wholesale. */
 export function pickServerOwnedMeta(meta: ModelMeta | null | undefined): ModelMeta {
   return pickKeys(meta, SERVER_ONLY_META_KEYS);
+}
+
+const PUBLISH_KEPT_META_KEYS: readonly string[] = [
+  ...SERVER_ONLY_META_KEYS,
+  ...MODERATION_OWNED_META_KEYS,
+  'cannotPublish',
+  'cannotPromote',
+];
+
+/** `meta` with the keys no publish may set or clear taken from `stored`, the row it overwrites. */
+export function withStoredPublishKeys(meta: ModelMeta, stored: ModelMeta | null): ModelMeta {
+  const rest = { ...meta } as Record<string, unknown>;
+  for (const key of PUBLISH_KEPT_META_KEYS) delete rest[key];
+  return { ...rest, ...pickKeys(stored, PUBLISH_KEPT_META_KEYS) } as ModelMeta;
 }
 
 /** The moderation-owned and moderation-flow keys of a stored meta, for a wholesale meta write by a non-moderator. */

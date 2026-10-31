@@ -5,7 +5,6 @@ import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-fe
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import type { CoverageAudience } from '~/server/services/generation/coverage-source';
-import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
   ArticleSort,
@@ -69,6 +68,11 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+  imageUrlUnavailableError,
+} from '~/server/services/image-url-ownership';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -954,7 +958,7 @@ async function notifyCollectionSubmissionReceived({
           userIds: recipients,
           type: 'collection-submission-received',
           category: NotificationCategory.Update,
-          key: `collection-submission-received:${collection.id}:${uuid()}`,
+          key: `collection-submission-received:${collection.id}:${crypto.randomUUID()}`,
           details: { collectionId: collection.id, collectionName: collection.name },
         });
       })
@@ -1452,7 +1456,33 @@ export const upsertCollection = async ({
     //   }
     // }
 
+    const newCoverUrl = !imageId && image && image.id == null ? image.url : undefined;
+    if (newCoverUrl) await assertClientKeysIssuedToCaller({ urls: [newCoverUrl], userId });
+
     const updated = await dbWrite.$transaction(async (tx) => {
+      // Decided in the transaction: a cover row deleted after this read fails the `connect`
+      // rather than turning it into an unchecked create.
+      const coverId = imageId ?? image?.id;
+      const existingCover =
+        coverId != null
+          ? await tx.image.findUnique({
+              where: { id: coverId },
+              select: { id: true, userId: true },
+            })
+          : null;
+      if (
+        existingCover &&
+        existingCover.userId !== userId &&
+        existingCover.id !== currentCollection.image?.id &&
+        !isModerator
+      )
+        throw imageUrlUnavailableError();
+      if (!imageId && image && !existingCover) {
+        await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
+        if (image.url !== newCoverUrl)
+          await assertClientKeysIssuedToCaller({ urls: [image.url], userId, db: tx });
+      }
+
       if (tags) {
         // Attempt to run this first, collides with create/connect
         await tx.tagsOnCollection.deleteMany({
@@ -1494,20 +1524,19 @@ export const upsertCollection = async ({
             : image !== undefined
             ? image === null
               ? { disconnect: true }
+              : existingCover
+              ? { connect: { id: existingCover.id } }
               : {
-                  connectOrCreate: {
-                    where: { id: image.id ?? -1 },
-                    create: {
-                      ...pickClientImageColumns(image),
-                      meta:
-                        (sanitizeProvenance(
-                          image?.meta as Record<string, unknown> | null | undefined
-                        ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
-                      metadata: stripBlockProvenanceMetadata(image.metadata),
-                      userId,
-                      resources: undefined,
-                      id: undefined,
-                    },
+                  create: {
+                    ...pickClientImageColumns(image),
+                    meta:
+                      (sanitizeProvenance(
+                        image?.meta as Record<string, unknown> | null | undefined
+                      ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
+                    metadata: stripBlockProvenanceMetadata(image.metadata),
+                    userId,
+                    resources: undefined,
+                    id: undefined,
                   },
                 }
             : undefined,
@@ -2773,7 +2802,7 @@ export const updateCollectionItemsStatus = async ({
           type: notificationType,
           userId: item.addedById,
           category: NotificationCategory.Update,
-          key: `${notificationType}:${item.id}:${uuid()}`,
+          key: `${notificationType}:${item.id}:${crypto.randomUUID()}`,
           details: {
             status,
             reason,

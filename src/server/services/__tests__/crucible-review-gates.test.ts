@@ -188,6 +188,33 @@ describe('voidUnscannedCrucibles', () => {
     );
   });
 
+  it('leaves the creator to the takedown notice when a moderator took it down meanwhile', async () => {
+    findMany.mockResolvedValue([unscanned(1, { text: CrucibleIngestionStatus.Blocked })]);
+    // The void's claim lost to a takedown, which keeps the creator's Buzz under forfeit.
+    claim.mockResolvedValue({ count: 0 });
+    findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => ({
+      id: where.id,
+      userId: CREATOR,
+      status: CrucibleStatus.Cancelled,
+      entryFee: 10,
+      buzzTransactionId: `crucible-setup-${where.id}`,
+      seededPrizePool: 0,
+      seedTransactionId: null,
+      takenDownAt: new Date(),
+      takedownRefundsCreator: false,
+      entries: [],
+    }));
+
+    await voidUnscannedCrucibles(now);
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'crucible-setup-1' })
+    );
+    expect(createNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'crucible-unscanned-cancelled-1' })
+    );
+  });
+
   it("records a refund it couldn't make, and doesn't claim it was made", async () => {
     findMany.mockResolvedValue([unscanned(1, { text: CrucibleIngestionStatus.Blocked })]);
     refundMultiAccountTransaction.mockRejectedValue(new Error('buzz 500'));

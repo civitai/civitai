@@ -148,7 +148,7 @@ TypeScript **5.9.2** satisfies tRPC v11's **≥5.7.2** requirement. No React or 
 
 ### Phase 0 — De-risk cycles up front (do before touching versions)
 Independent of the upgrade; pure win and required before Phase 3.
-- Run dev/build with `CIRCULAR_DEPENDENCY_PLUGIN=true` (already wired in `next.config.mjs`).
+- Map cycles with a standalone tool such as `npx madge --circular --extensions ts,tsx src`; the `circular-dependency-plugin` block is gone from `next.config.mjs`.
 - Catalog every reported cycle. Fix by extracting shared leaf values (constants/enums/schemas)
   into zero-import leaf modules and importing leaf schemas from source, not via big-module
   re-exports — the exact patterns in the notes doc §1.
@@ -223,6 +223,12 @@ Converted all **92 routers** in [src/server/routers/index.ts](../src/server/rout
 their named exports (the `lazy()` overload accepts `() => Promise<TRouter>`). **Typecheck stays
 clean**: `lazy()` preserves the `AppRouter` type inference via `DecorateCreateRouterOptions`'
 `Lazy<Router<…>>` branch, so the client types don't collapse.
+
+**Since then:** each entry is a bare `() => import('<path>').then((m) => m.<router>)` loader in a
+`routers` map that `lazyRouters()` wraps in `lazy()`, and `AppRouter` is **declared** from that map
+rather than inferred from `router({...})`: inferring it built every router's types at once, so any
+`trpc.x` call or `RouterOutput` alias cost the editor all of them. Adding a router is one line in
+`routers`.
 
 ### Cycle audit (the documented hazard)
 Lazy loading reorders module evaluation and can surface latent circular deps as runtime

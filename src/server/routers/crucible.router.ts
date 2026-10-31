@@ -1,6 +1,8 @@
 import {
   cancelCrucibleHandler,
   removeCrucibleEntryHandler,
+  ownerRemoveCrucibleEntryHandler,
+  takeDownCrucibleHandler,
   withdrawCrucibleEntryHandler,
   updateCrucibleHandler,
   checkEntryEligibilityHandler,
@@ -33,6 +35,8 @@ import {
   getCrucibleEntriesSchema,
   cancelCrucibleSchema,
   removeCrucibleEntrySchema,
+  ownerRemoveCrucibleEntrySchema,
+  takeDownCrucibleSchema,
   withdrawCrucibleEntrySchema,
   updateCrucibleSchema,
   createCrucibleInputSchema,
@@ -148,10 +152,20 @@ export const crucibleRouter = router({
     .input(cancelCrucibleSchema)
     .mutation(cancelCrucibleHandler),
 
+  takeDown: moderatorProcedure
+    .use(isFlagProtected('crucible'))
+    .input(takeDownCrucibleSchema)
+    .mutation(takeDownCrucibleHandler),
+
   removeEntry: moderatorProcedure
     .use(isFlagProtected('crucible'))
     .input(removeCrucibleEntrySchema)
     .mutation(removeCrucibleEntryHandler),
+
+  ownerRemoveEntry: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(ownerRemoveCrucibleEntrySchema)
+    .mutation(ownerRemoveCrucibleEntryHandler),
 
   withdrawEntry: guardedProcedure
     .use(isFlagProtected('crucible'))

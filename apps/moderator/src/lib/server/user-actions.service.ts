@@ -259,6 +259,7 @@ export type ModEndpoint =
   | 'model/unpublish'
   | 'poi-flag/confirm'
   | 'poi-flag/dismiss'
+  | 'poi-flag/flag-match'
   | 'poi-flag/revert'
   | 'restriction/resolve'
   | 'review/delete'
@@ -448,10 +449,10 @@ export async function bulkCommentAction(input: {
   if (!result.ok) return result;
 
   // `removeAsTos` nests its counts per table; `bulkDelete` returns them flat.
-  const nested = (key: string) => {
+  const nested = (key: string, field = 'count') => {
     const section = result.body[key];
     return section && typeof section === 'object'
-      ? countOf(section as Record<string, unknown>, ['count'])
+      ? countOf(section as Record<string, unknown>, [field])
       : 0;
   };
   // `restoreFromTos` nests per table exactly like `removeAsTos`; only `bulkDelete` is flat.
@@ -460,12 +461,21 @@ export async function bulkCommentAction(input: {
       ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
       : nested('comment') + nested('commentV2');
 
-  // A delete keeps some comments hidden instead; the endpoint never says why, and neither does this.
+  // A delete or a restore keeps some comments hidden; the endpoint never says why, and neither does this.
   const retainedHidden =
-    input.action === 'bulkDelete' ? countOf(result.body, ['retainedHidden']) : 0;
+    input.action === 'bulkDelete'
+      ? countOf(result.body, ['retainedHidden'])
+      : input.action === 'restoreFromTos'
+      ? nested('comment', 'retainedHidden') + nested('commentV2', 'retainedHidden')
+      : 0;
+
+  const failed =
+    input.action === 'restoreFromTos'
+      ? nested('comment', 'failed') + nested('commentV2', 'failed')
+      : 0;
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
-  if (affected === 0 && retainedHidden === 0)
+  if (affected === 0 && retainedHidden === 0 && failed === 0)
     return {
       ok: false,
       error:
@@ -482,6 +492,11 @@ export async function bulkCommentAction(input: {
       input.userId,
       input.moderatorId
     );
+  if (failed)
+    return {
+      ok: false,
+      error: `${failed} could not be restored and stay hidden. Restored ${affected}, kept hidden ${retainedHidden}.`,
+    };
   // Both endpoints count rows they actually wrote, so a short count is real.
   return { ok: true, affected, retainedHidden };
 }

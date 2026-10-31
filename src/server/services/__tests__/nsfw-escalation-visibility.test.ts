@@ -107,6 +107,7 @@ describe('crucible escalated by a text scan', () => {
       textNsfw: data.textNsfw,
       nsfwLevel: data.nsfwLevel as number,
       image: { ingestion: 'Scanned', nsfwLevel: coverLevel },
+      takenDownAt: null,
     };
   }
 

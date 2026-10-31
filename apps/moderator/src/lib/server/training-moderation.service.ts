@@ -258,8 +258,12 @@ export async function getModelOwner(modelId: number): Promise<{ userId: number }
   return row ?? null;
 }
 
-/** Toggles `meta.cannotPublish`, which the main app's publish path reads. The merge is a jsonb `||` so
- *  the rest of `meta` — minor-flag snapshots, scan state — survives the write. */
+/** The jsonb `||` merge that sets `meta.cannotPublish` and leaves the rest of `meta` — minor-flag
+ *  snapshots, scan state — as it was. */
+const withCannotPublish = (value: boolean) =>
+  sql`COALESCE("meta", '{}'::jsonb) || jsonb_build_object('cannotPublish', ${value}::boolean)`;
+
+/** Toggles `meta.cannotPublish`, which the main app's publish path reads. */
 export async function toggleCannotPublish(
   modelId: number
 ): Promise<{ ok: true; cannotPublish: boolean } | { ok: false; error: string }> {
@@ -276,9 +280,7 @@ export async function toggleCannotPublish(
   const next = !model.cannotPublish;
   const result = await dbWrite
     .updateTable('Model')
-    .set({
-      meta: sql`COALESCE("meta", '{}'::jsonb) || jsonb_build_object('cannotPublish', ${next}::boolean)`,
-    })
+    .set({ meta: withCannotPublish(next) })
     .where('id', '=', modelId)
     .executeTakeFirst();
 
@@ -286,6 +288,28 @@ export async function toggleCannotPublish(
 
   await syncSearchIndex({ entityType: 'model', entityId: modelId, action: 'update' });
   return { ok: true, cannotPublish: next };
+}
+
+/**
+ * Sets `meta.cannotPublish` to `value`, in one UPDATE that matches only when the stored state differs,
+ * so two writers asking for the same state cannot both think they made the change. Returns whether a
+ * write happened: false when the model is deleted or missing, or already in that state.
+ */
+export async function setCannotPublish(modelId: number, value: boolean): Promise<boolean> {
+  const result = await dbWrite
+    .updateTable('Model')
+    .set({ meta: withCannotPublish(value) })
+    .where('id', '=', modelId)
+    .where('deletedAt', 'is', null)
+    .where(
+      sql<boolean>`COALESCE("meta"->'cannotPublish' = 'true'::jsonb, false) <> ${value}::boolean`
+    )
+    .executeTakeFirst();
+
+  if (Number(result.numUpdatedRows) === 0) return false;
+
+  await syncSearchIndex({ entityType: 'model', entityId: modelId, action: 'update' });
+  return true;
 }
 
 // ---------------------------------------------------------------------------------------------

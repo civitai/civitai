@@ -109,6 +109,7 @@ import {
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { Availability, ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -140,8 +141,24 @@ const storedModel = {
   status: 'Draft' as string,
 };
 
+// The row the flow's transaction locks: the same as the first read unless a test says otherwise.
+let lockedRow: Partial<typeof storedModel> | null = null;
+let lockHeld = false;
+const isModelLock = (strings: TemplateStringsArray, values: unknown[]) =>
+  Array.isArray(strings) &&
+  /FROM "Model"\s+WHERE id = \?\s+FOR NO KEY UPDATE/.test(strings.join('?')) &&
+  values[0] === MODEL_ID;
+
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
-  mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
+  const firstRow = { ...storedModel, ...overrides };
+  lockedRow = firstRow;
+  mockDbWrite.model.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) =>
+    where.id === MODEL_ID ? (lockHeld ? lockedRow : firstRow) : null) as never);
+}
+
+/** What a write that landed after the flow's first read left in the row it then locks. */
+function mockLocked(overrides: Partial<typeof storedModel>) {
+  lockedRow = { ...lockedRow, ...overrides };
 }
 
 const baseInput = {
@@ -169,6 +186,7 @@ function updateData() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lockHeld = false;
   // clearAllMocks keeps a one-shot transaction a test queued but never reached; drop it.
   mockDbWrite.$transaction.mockReset();
   mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
@@ -179,7 +197,13 @@ beforeEach(() => {
   mockDbRead.model.count.mockResolvedValue(0);
   mockGetHighestTierSubscription.mockResolvedValue({ tier: 'gold' });
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
-  mockDbWrite.$queryRaw.mockResolvedValue([]);
+  mockDbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    if (isModelLock(strings, values)) lockHeld = true;
+    return [];
+  }) as never);
   mockDbWrite.model.create.mockResolvedValue({
     id: MODEL_ID,
     nsfwLevel: 1,
@@ -229,6 +253,19 @@ const STORED_MODERATION_META = {
 function writtenMeta() {
   return updateData().meta as Record<string, unknown>;
 }
+
+// A private model is SFW-only, which holds the level its gallery serves.
+describe('privateModelFromTraining — gallery settings cache', () => {
+  it("drops the model's cached gallery settings once it is published private", async () => {
+    mockStored({});
+    redisMock.redis.del.mockClear();
+
+    await privateFromTraining({ user: owner });
+
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(redisMock.redis.del).toHaveBeenCalledWith([`model:gallery-settings:${MODEL_ID}`]);
+  });
+});
 
 describe('privateModelFromTraining — moderation-owned meta', () => {
   it('keeps every stored moderation-owned and flow key when a non-moderator sends none', async () => {
@@ -315,6 +352,37 @@ describe('privateModelFromTraining — publish gates', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
+  // A content wipe kept the model in training as it was; its record alone stops the owner.
+  it('refuses a non-moderator a model in training a content wipe kept', async () => {
+    mockStored({
+      status: 'Training',
+      meta: { removedWithOwner: true, statusBeforeRemoval: 'Training' },
+    });
+
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow(/not authorized/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('ends a content wipe’s record when a moderator runs it', async () => {
+    mockStored({
+      status: 'Training',
+      meta: {
+        note: 1,
+        ...{
+          removedWithOwner: true,
+          statusBeforeRemoval: 'Draft',
+          versionsUnpublishedByRemoval: [],
+        },
+      },
+    });
+
+    await privateFromTraining({ user: moderator });
+
+    expect(updateData().meta).not.toHaveProperty('removedWithOwner');
+    expect(updateData().meta).not.toHaveProperty('statusBeforeRemoval');
+    expect(updateData().meta).not.toHaveProperty('versionsUnpublishedByRemoval');
+  });
+
   it('lets a moderator through the cannotPublish gate', async () => {
     mockStored({ meta: { cannotPublish: true } });
 
@@ -374,6 +442,61 @@ describe('cannotPromote across a private cycle', () => {
     await privateFromTraining({ user: owner, meta: { restoreCannotPromote: true } as never });
 
     expect(writtenMeta()).not.toHaveProperty('restoreCannotPromote');
+  });
+});
+
+describe('privateModelFromTraining — the locked row', () => {
+  it('refuses the owner a model a content wipe kept after it was read, writing nothing', async () => {
+    mockStored({ status: 'Training' });
+    mockLocked({ meta: { removedWithOwner: true, statusBeforeRemoval: 'Training' } });
+
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow(/not authorized/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses the owner when publishing was blocked after it was read, writing nothing', async () => {
+    mockStored({});
+    mockLocked({ meta: { cannotPublish: true } });
+
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow(/cannot be published/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps a moderation-owned key written after it was read', async () => {
+    mockStored({ meta: { trainingStudioWorkflowId: 'wf-1' } });
+    mockLocked({
+      meta: { trainingStudioWorkflowId: 'wf-1', minorFlagSnapshot: { source: 'auto' } },
+    });
+
+    await privateFromTraining({ user: owner });
+
+    expect(writtenMeta()).toMatchObject({
+      trainingStudioWorkflowId: 'wf-1',
+      minorFlagSnapshot: { source: 'auto' },
+    });
+  });
+
+  it("records a moderator's cannotPromote set after it was read", async () => {
+    mockStored({});
+    mockLocked({ meta: { cannotPromote: true } });
+
+    await privateFromTraining({ user: owner });
+
+    expect(writtenMeta()).toMatchObject({ cannotPromote: true, restoreCannotPromote: true });
+  });
+
+  it('writes the meta it was sent when the locked row is the one it read (control)', async () => {
+    mockStored({ meta: { trainingStudioWorkflowId: 'wf-1' } });
+
+    await privateFromTraining({ user: owner, meta: { commentsLocked: true } });
+
+    expect(writtenMeta()).toEqual({
+      commentsLocked: true,
+      trainingStudioWorkflowId: 'wf-1',
+      cannotPromote: true,
+    });
   });
 });
 
@@ -663,6 +786,55 @@ describe('publishPrivateModel', () => {
 
     await expect(publish(false)).rejects.toThrow();
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  // The first read alone carries the record, so this fails if that gate goes.
+  it('refuses the owner a model a content wipe kept, and writes nothing', async () => {
+    mockPrivateModel({
+      meta: {
+        removedWithOwner: true,
+        statusBeforeRemoval: 'Draft',
+        versionsUnpublishedByRemoval: [],
+      },
+    });
+    lockedRow({});
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expectNothingWritten();
+  });
+
+  it('refuses the owner when a content wipe kept the model after it was read, and writes nothing', async () => {
+    mockPrivateModel({});
+    lockedRow({
+      meta: {
+        removedWithOwner: true,
+        statusBeforeRemoval: 'Draft',
+        versionsUnpublishedByRemoval: [],
+      },
+    });
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expectNothingWritten();
+  });
+
+  it('ends a content wipe’s record when a moderator publishes', async () => {
+    mockPrivateModel({
+      meta: {
+        note: 1,
+        ...{
+          removedWithOwner: true,
+          statusBeforeRemoval: 'Draft',
+          versionsUnpublishedByRemoval: [],
+        },
+      },
+    });
+
+    await publish(true);
+
+    expect(updateData().meta).toMatchObject({ note: 1 });
+    expect(updateData().meta).not.toHaveProperty('removedWithOwner');
+    expect(updateData().meta).not.toHaveProperty('statusBeforeRemoval');
+    expect(updateData().meta).not.toHaveProperty('versionsUnpublishedByRemoval');
   });
 
   it('lets a moderator through both gates', async () => {

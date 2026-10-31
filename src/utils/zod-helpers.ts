@@ -57,6 +57,21 @@ export function stringToDate<I extends z.ZodDate>(schema?: I) {
   }, schema ?? z.date());
 }
 
+// ClickHouse and the buzz service emit some timestamps with no UTC offset. They are UTC, but
+// `new Date()` reads an offset-less date-time as host-local, shifting it by the host's offset.
+const OFFSETLESS_DATE_TIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+/** `z.coerce.date()` that reads an offset-less date-time string as UTC */
+export function coerceUtcDate() {
+  return z.preprocess(
+    (value) =>
+      typeof value === 'string' && OFFSETLESS_DATE_TIME.test(value)
+        ? `${value.replace(' ', 'T')}Z`
+        : value,
+    z.coerce.date()
+  );
+}
+
 /** Converts a string to a number */
 export function numericString<I extends z.ZodNumber>(schema?: I) {
   return stringToNumber(schema);

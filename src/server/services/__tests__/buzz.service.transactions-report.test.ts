@@ -215,13 +215,7 @@ describe('getTransactionsReport', () => {
     // Both fields the chart keys on, not just the value: it looks the bucket up by a formatted `date`
     // and picks the account by `accountType`, so a fallback returning either in an unexpected shape
     // draws every bar at zero while an assertion on `gained` alone stays green.
-    //
-    // The format, not the instant. This path runs the buzz service's payload through
-    // `getTransactionsReportResultSchema`, whose `z.coerce.date()` reads a bare timestamp as LOCAL and
-    // then formats it as UTC — so the value shifts by the host's offset (nothing on a UTC server, six
-    // hours on the box this was written on). Pre-existing on this path; pinning the literal would make
-    // the test fail by timezone rather than by defect.
-    expect(report[0].date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+    expect(report[0].date).toBe('2026-08-31T00:00:00');
     expect(report[0].accounts[0]).toEqual({ accountType: 'yellow', spent: 10, gained: 20 });
   });
 

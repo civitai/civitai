@@ -16,8 +16,7 @@
 -- TO ROLL BACK: re-run the statement below with 'commentV3' = 22 removed, having first confirmed
 -- `SELECT count() FROM default.reports WHERE entityType = 'commentV3'` is 0.
 --
--- POST-APPLY: the tracker must pick up the new enum (ask an infra owner to restart it), then
--- confirm with a real event.
+-- POST-APPLY: restart civitai-clickhouse-tracker by pod delete, then confirm with a real event.
 
 ALTER TABLE default.reports
   MODIFY COLUMN `entityType` Enum8(

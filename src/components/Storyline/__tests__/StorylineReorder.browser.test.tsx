@@ -19,6 +19,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
 }));
 vi.mock('~/components/Storyline/storyline.data', () => ({
   useMoveStorylineChapter: () => ({ isPending: false, error: mocks.error, mutate: mocks.move }),
+  useRemoveStorylineChapter: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => <div /> }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
@@ -71,9 +72,8 @@ const graphOf = (viaPlacement: number[] = []) => ({
   truncated: false,
 });
 
-const menuOf = (n: number) => page.getByRole('button', { name: `Reorder chapter ${n}` });
-const reorderButtons = () =>
-  document.querySelectorAll('button[aria-label^="Reorder chapter"]').length;
+const menuOf = (n: number) => page.getByRole('button', { name: `Chapter ${n} options` });
+const reorderButtons = () => document.querySelectorAll('button[aria-label^="Drag chapter"]').length;
 
 beforeEach(() => {
   mocks.move.mockReset();
@@ -124,7 +124,9 @@ describe('reordering chapters on the map', () => {
   test("a moderator has the owner's controls", async () => {
     mocks.currentUser = { id: 99, isModerator: true };
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
-    await expect.element(page.getByRole('button', { name: 'Reorder chapter 2' })).toBeVisible();
+    await expect
+      .element(page.getByRole('button', { name: 'Drag chapter 2 to reorder' }))
+      .toBeVisible();
   });
 
   test("a contributor's chapter in the middle ends the run, so nothing is movable", async () => {
@@ -141,7 +143,12 @@ describe('reordering chapters on the map', () => {
     test('tells the owner when reordering opens up while nothing is movable', async () => {
       mocks.graph = graphOf([121]);
       renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
-      await expect.element(hint()).toHaveTextContent('three or more of your own run in a row');
+      // Read as "no main path under three chapters" before; it is only about reordering.
+      await expect
+        .element(hint())
+        .toHaveTextContent(
+          'The main path can be any length. Its chapters can be put in a new order once three or more'
+        );
     });
 
     // Three in a row with someone else's chapter after them: the last cannot move, and the
@@ -175,6 +182,8 @@ describe('reordering chapters on the map', () => {
       .toHaveTextContent('This chapter has a continuation waiting for review; answer it first');
   });
 
+  // Keep this test last: dnd-kit's document click blocker outlives it by 50ms and eats the next
+  // test's first click.
   test('dragging a chapter shows the drop targets and drops it after the nearest target', async () => {
     renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
     const handle = page.getByRole('button', { name: 'Drag chapter 2 to reorder' });

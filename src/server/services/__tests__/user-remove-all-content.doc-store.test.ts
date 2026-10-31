@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserStoragePurge from '~/server/services/apps/user-storage-purge.service';
 import type { DocStoreDb, DocStoreMaintenance } from '~/server/services/apps/doc-store';
@@ -75,6 +76,12 @@ vi.mock('~/server/metrics', async (importOriginal) => {
   const m = { queueUpdate: vi.fn(async () => undefined) };
   return { ...actual, userMetrics: m, articleMetrics: m };
 });
+// The mocked raw reads answer every query, so the wipe finds models to soft-delete; that path is
+// not this suite's.
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  deleteModelById: vi.fn(async () => null),
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteImages: vi.fn(async () => []),
@@ -173,11 +180,11 @@ async function state(app: string) {
 /** The evidence tables the wipe deletes with raw SQL, so each statement carries the legal hold. */
 const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article', 'Comment'];
 const rawDeleted = (table: string) =>
-  dbMock.dbWrite.$executeRaw.mock.calls.some(
-    ([strings, ...values]) =>
-      (strings as unknown as string[]).join('?').includes(`DELETE FROM "${table}"`) &&
-      values.includes(TARGET)
-  );
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .map(([strings, ...values]) =>
+      Prisma.sql(strings as unknown as TemplateStringsArray, ...(values as never[]))
+    )
+    .some((sql) => sql.text.includes(`DELETE FROM "${table}"`) && sql.values.includes(TARGET));
 
 describe('removeAllContent → document store', () => {
   it('wipes the target account from the store and leaves the bystander alone', async () => {
@@ -243,6 +250,7 @@ describe('removeAllContent → document store', () => {
 
     await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toEqual({
       incomplete: ['doc-store'],
+      keptModelIds: [],
     });
 
     // The main-database wipe ran in full regardless.
@@ -280,7 +288,10 @@ describe('removeAllContent → document store', () => {
         failures: [{ appId: app, ns: NS_PROD, error: 'lock timeout' }],
       }),
     };
-    await expect(removeAllContent({ id: TARGET })).resolves.toEqual({ incomplete: ['doc-store'] });
+    await expect(removeAllContent({ id: TARGET })).resolves.toEqual({
+      incomplete: ['doc-store'],
+      keptModelIds: [],
+    });
     expect(recorded).toEqual(['partial']);
     const line = warn.mock.calls
       .map((c) => String(c[0]))

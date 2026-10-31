@@ -10,6 +10,7 @@ import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/
 import { isApprovedAndServing } from '~/shared/constants/app-block-deploy.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -237,11 +238,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // (parity with submit-version + withdraw + dev-token). AUTHZ; the
   // isAppBlocksEnabled kill-switch below is separate.
   if (user.bannedAt) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
 

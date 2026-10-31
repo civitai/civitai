@@ -97,7 +97,7 @@ describe('the shared gate and subagents’ calls', () => {
     core.beforeToolCall('sandbox__list_dir', {}, ctx);
     await core.tools.set_checklist.execute({ items: [{ label: 'Tips', done: true }] });
     for (const result of results) core.onToolResult(result);
-    return core.beforeToolCall(shared.REPORT_READY, {}, ctx);
+    return core.beforeToolCall(shared.REPORT_READY, { data: 'civitai' }, ctx);
   }
 
   it('the parent’s checks make report_ready pass (the control)', async () => {
@@ -120,25 +120,86 @@ describe('the shared gate and subagents’ calls', () => {
       refuse: expect.any(String),
     });
   });
+});
 
-  it('takes the checklist a server runner showed as the one waiting for Build it', () => {
-    const core = shared.createGateCore({ currentApp: () => 'sb-1' });
-    core.onToolResult({
-      name: shared.SET_CHECKLIST,
-      input: { items: [{ label: 'Tips' }] },
-      output: { shown: true, awaitsUser: true, checklist: 'runner-1' },
-      isError: false,
+/**
+ * The checklist is the plan the user watches being built, not a question: no list waits for the user,
+ * the first one included, so the reply goes on building. The one exception is a list that newly says
+ * the app will show sample data: the user must agree to that, so it ends the reply for their answer.
+ */
+describe('which checklists end the reply', () => {
+  const conv = 'c-1';
+  const ctx = { conversationId: conv, reply: 2 };
+  const SHOWN = ['Split the bill', 'Round up the tip'];
+  const items = (done: boolean[]) => SHOWN.map((label, i) => ({ label, done: done[i] }));
+  /** The `set_checklist` call an earlier reply made, as the runner showed it for `tip-calc`. */
+  const shownEarlier: shared.ToolResult = {
+    name: shared.SET_CHECKLIST,
+    input: { items: items([false, false]) },
+    output: { shown: true, note: 'shown', app: 'tip-calc' },
+    isError: false,
+  };
+
+  /** A runner gate on `tip-calc`, started from what the conversation already did. */
+  function runnerGate(earlier: shared.ToolResult[]) {
+    const core = shared.createGateCore({ checklistApp: () => 'tip-calc' });
+    core.restore({ conversationId: conv, earlier, current: [], app: 'tip-calc' });
+    core.beforeToolCall(shared.SET_CHECKLIST, {}, ctx);
+    return core;
+  }
+
+  it('a first list is the plan: the reply goes straight on to build it', async () => {
+    const core = runnerGate([]);
+    const shown = await core.tools.set_checklist.execute({ items: items([false, false]) });
+    expect(shown).not.toHaveProperty('awaitsUser');
+    expect(shown).toEqual({
+      shown: true,
+      note: 'The user now sees this list as your plan. Go straight on to building it, and tick each item off as it works.',
+      app: 'tip-calc',
     });
-    expect(core.awaiting()).toEqual({ id: 'runner-1', app: 'sb-1' });
-    // A subagent cannot show one, and a refused call showed nothing.
-    const other = shared.createGateCore();
-    other.onToolResult({
-      name: shared.SET_CHECKLIST,
-      input: {},
-      output: { awaitsUser: true, checklist: 'x' },
-      isError: false,
-      subagent: child,
+  });
+
+  it('a changed list, with other labels and an item open, does not end the reply', async () => {
+    const core = runnerGate([shownEarlier]);
+    expect(
+      await core.tools.set_checklist.execute({
+        items: [{ label: 'Split the bill' }, { label: 'Pick a currency' }],
+      })
+    ).toEqual({ updated: true, open: 2, app: 'tip-calc' });
+  });
+
+  it('a later reply ticking off the shown list’s items is progress', async () => {
+    const core = runnerGate([shownEarlier]);
+    expect(await core.tools.set_checklist.execute({ items: items([true, false]) })).toEqual({
+      updated: true,
+      open: 1,
+      app: 'tip-calc',
     });
-    expect(other.awaiting()).toBeNull();
+  });
+
+  // INVARIANT GUARD (not a regression test: base behaves the same): sample data still needs the
+  // user's agreement, so a list that newly says it ends the reply for their answer (#7156).
+  it('a list that newly says sample data still ends the reply for the user to agree', async () => {
+    for (const earlier of [[], [shownEarlier]]) {
+      const core = runnerGate(earlier);
+      expect(
+        await core.tools.set_checklist.execute({ items: items([true, true]), data: 'sample' })
+      ).toMatchObject({ shown: true, awaitsUser: true, app: 'tip-calc' });
+      // Once it says sample data, ticking the same list again does not.
+      expect(
+        await core.tools.set_checklist.execute({ items: items([true, true]), data: 'sample' })
+      ).toEqual({ updated: true, open: 0, app: 'tip-calc' });
+    }
+  });
+
+  it('NEGATIVE CONTROL: a list that newly says civitai or none does not end the reply', async () => {
+    for (const data of ['civitai', 'none']) {
+      const core = runnerGate([shownEarlier]);
+      expect(await core.tools.set_checklist.execute({ items: items([true, true]), data })).toEqual({
+        updated: true,
+        open: 0,
+        app: 'tip-calc',
+      });
+    }
   });
 });

@@ -31,6 +31,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
 
 const {
   addOwnerChapter,
+  addOwnerChapterAtEnd,
   canonRouteWalk,
   getStorylinePath,
   insertStorylineChapter,
@@ -597,6 +598,65 @@ describe('a chapter add whose parent changes after its first read', () => {
       message: 'A removed chapter cannot be continued',
     });
   });
+
+  // "Add to a storyline" from a post's menu. The client once picked the end from its own read,
+  // capped and possibly stale, and a wrong guess quietly made a side branch.
+  describe('at the end of the main path', () => {
+    const edgeOf = async (chapterId: number) =>
+      (
+        await rows<{ parentChapterId: number; canon: boolean }>(
+          `SELECT "parentChapterId", canon FROM "StorylineChapterEdge" WHERE "chapterId" = $1`,
+          [chapterId]
+        )
+      )[0];
+
+    it("adds the post as the canon child of the main path's last chapter", async () => {
+      const { chapterId } = await addOwnerChapterAtEnd({
+        storylineId: STORY,
+        postId: await post(),
+        userId: OWNER,
+      });
+
+      // The trunk ends at 60, a contributor's canon chapter after 6.
+      expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 60, canon: true });
+      expect(await depthOf(chapterId)).toBe(7);
+    });
+
+    // The reading path stops at STORYLINE_PATH_LIMIT (200) chapters; the end is past that.
+    it('finds the end of a main path longer than the reading cap', async () => {
+      await db.pg.exec(`
+        INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt")
+          VALUES (2, 1, 'Very Long', 1, now());
+        INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth)
+          SELECT 5000 + n, 2, 1, n FROM generate_series(0, 204) n;
+        INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
+          SELECT 2, 5000 + n, 4999 + n, true FROM generate_series(1, 204) n;
+      `);
+
+      const { chapterId } = await addOwnerChapterAtEnd({
+        storylineId: 2,
+        postId: await post(),
+        userId: OWNER,
+      });
+
+      expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5204, canon: true });
+    });
+
+    it('refuses rather than branch when the end moves while it adds', async () => {
+      const [addedPost, otherPost] = [await post(), await post()];
+      const { pausedAt, release } = holdAddAtItsPost(addedPost);
+
+      const adding = addOwnerChapterAtEnd({ storylineId: STORY, postId: addedPost, userId: OWNER });
+      await pausedAt;
+      await addOwnerChapter({ parentChapterId: 60, postId: otherPost, userId: OWNER });
+      release();
+
+      await expect(adding).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'The storyline changed while adding. Try again',
+      });
+    });
+  });
 });
 
 describe('around the insert', () => {
@@ -752,7 +812,7 @@ describe('insertStorylineChapter refusals', () => {
     it('refuses a post taken down for a violation', async () => {
       await refuses(
         async () => insert(await post({ tosViolation: true })),
-        badRequest('This post cannot be added to a storyline')
+        badRequest("This post or one of its images can't be used in a storyline")
       );
     });
 
@@ -783,7 +843,9 @@ describe('insertStorylineChapter refusals', () => {
     it("refuses a post rated above the storyline's ceiling", async () => {
       await refuses(
         async () => insert(await post({ nsfwLevel: NsfwLevel.R })),
-        badRequest("This post is rated above the storyline's maximum rating")
+        badRequest(
+          "This post is rated above this storyline's maximum. This storyline allows up to PG; this post is R"
+        )
       );
     });
   });

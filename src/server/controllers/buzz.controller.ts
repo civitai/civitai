@@ -1,6 +1,5 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
@@ -130,11 +129,11 @@ export async function createBuzzTipTransactionHandler({
    * OPTIONAL client idempotency key (App Blocks tip endpoint, audit 🟡-1). When
    * present, the tip's `externalTransactionId` is DERIVED from it deterministically
    * (`block-tip:${fromUserId}:${idempotencyKey}-${toAccountId}`) instead of a fresh
-   * `uuid()`, so the Buzz ledger's own idempotency (a duplicate
+   * `crypto.randomUUID()`, so the Buzz ledger's own idempotency (a duplicate
    * `externalTransactionId` is a benign "money already moved" conflict) becomes the
    * AUTHORITATIVE dedup: a retry after the Redis sentinel has expired (a crash
    * between charge and `finalizeTipIdempotency`) collides on the ledger = money
-   * moves once. Absent → today's per-call `uuid()` behavior (no ledger dedup),
+   * moves once. Absent → today's per-call `crypto.randomUUID()` behavior (no ledger dedup),
    * byte-identical for the on-site tip path which never passes this.
    */
   idempotencyKey?: string;
@@ -241,10 +240,10 @@ export async function createBuzzTipTransactionHandler({
     // key is charset-restricted (`^[A-Za-z0-9_-]{1,64}$`) at the endpoint, and both
     // `fromUserId` and `toAccountId` are numeric, so `block-tip:${fromUserId}:${key}`
     // is delimiter-injective — no two distinct (user, key, target) triples collide.
-    // Absent key → the original per-call `uuid()` (no dedup), byte-identical to today.
+    // Absent key → the original per-call `crypto.randomUUID()` (no dedup), byte-identical to today.
     const sharedId = idempotencyKey
       ? `block-tip:${ctx.user.id}:${idempotencyKey}`
-      : `tip-${uuid()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
+      : `tip-${crypto.randomUUID()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
     const transactions = targetUserIds.map((toAccountId) => ({
       ...input,
       fromAccountId: ctx.user.id,
@@ -290,7 +289,7 @@ export async function createBuzzTipTransactionHandler({
     //
     // 🔴 This state is only REACHABLE because of the deterministic
     // `externalTransactionId` introduced alongside `idempotencyKey` — with the
-    // legacy per-call `uuid()` id `conflicts` was always empty here, which is why
+    // legacy per-call `crypto.randomUUID()` id `conflicts` was always empty here, which is why
     // ignoring it was previously (accidentally) safe. Concretely: tip N to X on
     // image A with key K → wait past the 10-min Redis sentinel → same K, same
     // recipient, DIFFERENT entityId (the derivation deliberately ignores the entity)
@@ -337,7 +336,7 @@ export async function createBuzzTipTransactionHandler({
             type: 'tip-received',
             userId: toAccountId,
             category: NotificationCategory.Buzz,
-            key: `tip-received:${uuid()}`,
+            key: `tip-received:${crypto.randomUUID()}`,
             details: {
               amount: amount,
               user: fromUser?.username,

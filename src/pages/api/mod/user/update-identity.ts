@@ -3,11 +3,12 @@ import { dbWrite } from '~/server/db/client';
 import {
   isModerationAccountRow,
   isReservedModerationUsername,
+  resemblesReservedModerationUsername,
 } from '~/server/auth/moderation-account';
 import { forceUpdateUserIdentity } from '~/server/services/user.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
-import { userId } from '~/server/schema/moderator/user';
+import { displayName, userId } from '~/server/schema/moderator/user';
 
 export default defineModeratorEndpoint('user.updateIdentity', {
   summary: "Change an account's username, email or display name.",
@@ -21,7 +22,7 @@ export default defineModeratorEndpoint('user.updateIdentity', {
     userId,
     username: z.string().trim().min(1).max(64).optional().describe('New username.'),
     email: z.string().email().optional().describe('New email address.'),
-    name: z.string().trim().max(128).optional().describe('New display name.'),
+    name: displayName.optional().describe('New display name.'),
   }),
   async handler(input) {
     if (input.username === undefined && input.email === undefined && input.name === undefined) {
@@ -33,10 +34,11 @@ export default defineModeratorEndpoint('user.updateIdentity', {
         select: { id: true, username: true },
       });
       const isShared = !!current && isModerationAccountRow(current);
-      const reserved = isReservedModerationUsername(input.username);
-      if (isShared && !reserved)
+      if (isShared && !isReservedModerationUsername(input.username))
         throw throwBadRequestError("The shared moderation account's username cannot be changed.");
-      if (!isShared && reserved) throw throwBadRequestError('This username is reserved.');
+      const unchanged = current?.username?.toLowerCase() === input.username.toLowerCase();
+      if (!isShared && !unchanged && resemblesReservedModerationUsername(input.username))
+        throw throwBadRequestError('This username is reserved.');
     }
     const result = await forceUpdateUserIdentity({
       userId: input.userId,

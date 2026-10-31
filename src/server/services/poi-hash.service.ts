@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
+import type { Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { queryWithTimeout } from '~/server/db/db-helpers';
@@ -17,8 +18,9 @@ import { bustPublicModelResponseCache } from '~/server/services/model-version.se
 import { trackModActivity } from '~/server/services/moderator.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { asJsonbObjectSql, withoutSystemNsfwLockSql } from '~/server/utils/jsonb-object';
 import { TEXT_SCAN_FLAGS_KEY } from '~/server/services/text-scan/flag-snapshot';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 
 const SYSTEM_USER_ID = constants.system.user.id;
 
@@ -344,13 +346,51 @@ export async function sweepPoiHashMatches({
   return report;
 }
 
+/** The moderator queue's Auto-flagged rule: the flag as applied, with no moderator set since. An
+ *  appeal also rules one a moderator confirmed. Needs `m`. */
+const asQueuedSql = (fromAppeal?: boolean) =>
+  !fromAppeal
+    ? Prisma.sql`
+      AND m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
+      AND NOT EXISTS (
+        SELECT 1 FROM "ModActivity" ma
+        WHERE ma."entityType" = 'model' AND ma."entityId" = m.id AND ma.activity = 'setPoi'
+          AND ma."createdAt" > (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz
+      )`
+    : Prisma.empty;
+
+/** Flags a model still waiting on its match, re-checked under the row lock: another moderator may have
+ *  flagged or dismissed it since the queue was read. */
+export async function flagPoiHashMatch({
+  modelId,
+  userId,
+  tracker,
+}: {
+  modelId: number;
+  userId: number;
+  tracker?: Tracker;
+}) {
+  const result = await setModelPoi({
+    id: modelId,
+    poi: true,
+    userId,
+    tracker,
+    isModerator: true,
+    onlyIf: (row) =>
+      !row.poi && row.status !== 'Deleted' && Object.hasOwn(row.meta ?? {}, POI_HASH_MATCH_KEY),
+  });
+  return { flagged: result ? 1 : 0 };
+}
+
 /** A moderator signs off the hash flag: its weights now seed, and the snapshot keeps its origin. */
 export async function confirmPoiHashAutoFlag({
   modelId,
   userId,
+  fromAppeal,
 }: {
   modelId: number;
   userId: number;
+  fromAppeal?: boolean;
 }) {
   const confirmed = await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -361,10 +401,12 @@ export async function confirmPoiHashAutoFlag({
         'source', 'manual',
         'confirmedFrom', 'auto',
         'confirmedAt', now(),
-        'confirmedBy', ${userId}
+        'confirmedBy', ${userId}::int
       )
     )
-    WHERE m.id = ${modelId} AND m.poi AND m.meta ? ${POI_FLAG_SNAPSHOT_KEY}
+    WHERE m.id = ${modelId} AND m.poi AND m.meta ? ${POI_FLAG_SNAPSHOT_KEY}${asQueuedSql(
+    fromAppeal
+  )}
   `;
   if (!confirmed) return { confirmed: 0 };
   await trackModActivity(userId, { entityType: 'model', entityId: modelId, activity: 'setPoi' });
@@ -372,7 +414,6 @@ export async function confirmPoiHashAutoFlag({
 }
 
 type PoiSnapshotRow = {
-  minor: boolean;
   prevNsfw: boolean | null;
   prevSfwOnly: boolean | null;
   prevGalleryLevel: number | null;
@@ -393,50 +434,60 @@ export async function revertPoiHashAutoFlag({
   fromAppeal?: boolean;
 }) {
   const [snapshot] = await dbWrite.$queryRaw<PoiSnapshotRow[]>`
-    SELECT m.minor,
-           (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
+    SELECT (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
            (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'prevSfwOnly')::boolean AS "prevSfwOnly",
            (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel",
            ARRAY(
              SELECT jsonb_array_elements_text(m.meta->${POI_FLAG_SNAPSHOT_KEY}->'prevLockedProperties')
            ) AS "prevLockedProperties"
     FROM "Model" m
-    WHERE m.id = ${modelId} AND m.poi AND m.meta ? ${POI_FLAG_SNAPSHOT_KEY}
+    WHERE m.id = ${modelId} AND m.poi AND m.meta ? ${POI_FLAG_SNAPSHOT_KEY}${asQueuedSql(
+    fromAppeal
+  )}
   `;
   if (!snapshot) return { reverted: 0 };
 
-  await setModelPoi({
+  // Re-checked under the lock: a confirm or another revert may have landed since the read above.
+  const lifted = await setModelPoi({
     id: modelId,
     poi: false,
     userId,
     activity: 'revertPoiAutoHash',
     fromAppeal,
+    onlyIf: (row) =>
+      row.poi &&
+      !!row.meta?.poiFlagSnapshot &&
+      (!!fromAppeal || row.meta.poiFlagSnapshot.source === 'auto'),
   });
+  if (!lifted) return { reverted: 0 };
 
-  const lockedProperties = uniq([
-    ...(snapshot.prevLockedProperties ?? []),
-    ...(snapshot.minor ? MINOR_LOCKED_PROPERTIES : []),
-  ]);
-  if (snapshot.minor)
-    await dbWrite.$executeRaw`
-      UPDATE "Model" SET "lockedProperties" = ${lockedProperties}::text[] WHERE id = ${modelId}
-    `;
-  else
-    await dbWrite.$executeRaw`
-      UPDATE "Model"
-      SET nsfw = COALESCE(${snapshot.prevNsfw}::boolean, nsfw),
-          "sfwOnly" = COALESCE(${snapshot.prevSfwOnly}::boolean, "sfwOnly"),
-          "gallerySettings" = CASE
-            WHEN ${snapshot.prevGalleryLevel}::int IS NULL
-              THEN COALESCE("gallerySettings", '{}'::jsonb) - 'level'
-            ELSE COALESCE("gallerySettings", '{}'::jsonb)
-              || jsonb_build_object('level', ${snapshot.prevGalleryLevel}::int)
-          END,
-          "lockedProperties" = ${lockedProperties}::text[]
-      WHERE id = ${modelId}
-    `;
+  // The lift has released the lock, so each restore reads the flags as they are now: a model flagged
+  // again since keeps its restrictions, and one flagged minor since keeps what minor needs.
+  const prevLockedProperties = snapshot.prevLockedProperties ?? [];
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET "lockedProperties" = ${uniq([...prevLockedProperties, ...MINOR_LOCKED_PROPERTIES])}::text[],
+        meta = ${withoutSystemNsfwLockSql('meta')}
+    WHERE id = ${modelId} AND NOT poi AND minor
+  `;
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET nsfw = COALESCE(${snapshot.prevNsfw}::boolean, nsfw),
+        "sfwOnly" = COALESCE(${snapshot.prevSfwOnly}::boolean, "sfwOnly"),
+        "gallerySettings" = CASE
+          WHEN ${snapshot.prevGalleryLevel}::int IS NULL
+            THEN COALESCE("gallerySettings", '{}'::jsonb) - 'level'
+          ELSE COALESCE("gallerySettings", '{}'::jsonb)
+            || jsonb_build_object('level', ${snapshot.prevGalleryLevel}::int)
+        END,
+        "lockedProperties" = ${prevLockedProperties}::text[],
+        meta = ${withoutSystemNsfwLockSql('meta')}
+    WHERE id = ${modelId} AND NOT poi AND NOT minor
+  `;
   await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);
+  // The restore moves sfwOnly and the gallery level after setModelPoi's own cache bust.
+  await bustModelGallerySettings([modelId]);
   return { reverted: 1 };
 }
 
@@ -452,7 +503,7 @@ export async function dismissPoiHashMatch({
     UPDATE "Model" m
     SET meta = (${asJsonbObjectSql('m.meta')} - ${POI_HASH_MATCH_KEY}::text)
       || jsonb_build_object(${POI_HASH_CLEARED_KEY}::text, jsonb_build_object('at', now()))
-    WHERE m.id = ${modelId} AND m.meta ? ${POI_HASH_MATCH_KEY}
+    WHERE m.id = ${modelId} AND m.meta ? ${POI_HASH_MATCH_KEY} AND NOT m.poi
   `;
   if (!dismissed) return { dismissed: 0 };
   await trackModActivity(userId, {

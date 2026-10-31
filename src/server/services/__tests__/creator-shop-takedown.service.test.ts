@@ -82,6 +82,10 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mocks.createNotification,
 }));
+const recordShopTakedownArtwork = vi.hoisted(() =>
+  vi.fn(async (_id: number) => ({ queued: 1, unproven: 0, otherOwner: 0, inUse: 0 }))
+);
+vi.mock('~/server/services/cdn-access.service', () => ({ recordShopTakedownArtwork }));
 vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorShopLabels>()),
   recordShopTakedownLabel: vi.fn(async () => undefined),
@@ -433,6 +437,61 @@ describe('takedownCosmeticShopItem', () => {
     );
   });
 
+  it('records the artwork for the CDN once the archive is written, before any refund', async () => {
+    const order: string[] = [];
+    const update = mocks.shopItemUpdate.getMockImplementation();
+    mocks.shopItemUpdate.mockImplementationOnce(async (...args: unknown[]) => {
+      order.push('archive');
+      return update?.(...args);
+    });
+    const refund = mocks.refundTransaction.getMockImplementation();
+    mocks.refundTransaction.mockImplementation(async (...args: unknown[]) => {
+      order.push('refund');
+      return refund?.(...args);
+    });
+    recordShopTakedownArtwork.mockClear().mockImplementationOnce(async () => {
+      order.push('cdn');
+      return { queued: 1, unproven: 0, otherOwner: 0, inUse: 0 };
+    });
+
+    await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
+
+    expect(recordShopTakedownArtwork).toHaveBeenCalledExactlyOnceWith(42);
+    expect(order.slice(0, 3)).toEqual(['archive', 'cdn', 'refund']);
+  });
+
+  it('reports the artwork keys it left for a moderator', async () => {
+    recordShopTakedownArtwork
+      .mockClear()
+      .mockResolvedValueOnce({ queued: 1, unproven: 1, otherOwner: 1, inUse: 1 });
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(result.artworkLeftServing).toBe(3);
+    expect(result.failures).toEqual([]);
+  });
+
+  it('finishes the takedown, and reports it as a failure, when its artwork cannot be recorded', async () => {
+    recordShopTakedownArtwork.mockClear().mockRejectedValueOnce(new Error('table missing'));
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.refundTransaction).toHaveBeenCalled();
+    expect(result.failures).toEqual([{ stage: 'cdn', userId: 0, error: 'table missing' }]);
+    expect(mocks.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'error',
+        name: 'cosmetic-takedown',
+        message: 'Takedown finished',
+        data: expect.objectContaining({ shopItemId: 42 }),
+      })
+    );
+  });
+
   it('finishes the takedown when its label cannot be recorded', async () => {
     const labels = await import('~/server/services/creator-shop-labels.service');
     const actual = await vi.importActual<typeof CreatorShopLabels>(
@@ -651,6 +710,40 @@ describe('takedownCosmeticShopItem', () => {
       undefined
     );
     expect(result).toMatchObject({ owedBack: 700, clawedBack: 700, clawedBackPct: 70 });
+  });
+
+  // Official-shop sales of a resellable item paid the creator 500 before the full-pool change and
+  // 700 after, with no backfill, so one item's history holds both. Each sale comes back at what it
+  // actually paid, never re-derived from the item's current terms.
+  it('reverses an old split sale and a full-pool sale of the same item at what each paid', async () => {
+    ledger = {
+      'purchase-1': [
+        sale('purchase-1', 101)[0],
+        {
+          transactionId: 'old-split-payout',
+          externalTransactionId: 'purchase-1:sell:11:yellow',
+          accountId: 0,
+          amount: 500,
+        },
+      ],
+      'purchase-2': sale('purchase-2', 102),
+    };
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(refundedIds()).toEqual([
+      'purchase-1-debit',
+      'old-split-payout',
+      'purchase-2-debit',
+      'purchase-2-payout',
+    ]);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      refundedValue: 2000,
+      owedBack: 1200,
+      clawedBack: 1200,
+      failures: [],
+    });
   });
 
   // Run twice (a retry after a crash): a leg already refunded is not refunded again.
