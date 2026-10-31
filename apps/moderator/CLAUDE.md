@@ -136,3 +136,4 @@ standard is one link away**. Each of these has cost real time when broken. Full 
 - **Before calling a segment done**, run `svelte-correctness-review`, `svelte-idiom-review` and
   `svelte-abstraction-review` (or the `/svelte-review` skill) — then **look at the page**. Typecheck
   passes on plenty of pages that render blank.
+
