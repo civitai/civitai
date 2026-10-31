@@ -5810,11 +5810,9 @@ function readCachedGallerySettings(cachedSettings: string | null | undefined) {
         sfwHeld?: boolean;
       })
     | { none: true };
-  // A build before the hold cached a bare null.
   const cached = fromJson<Cached>(cachedSettings) as Cached | null;
-  // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
-  // unflagged model with no settings from a flagged one.
   if (cached && 'none' in cached) return null;
+  // An entry without `sfwHeld` (or a bare null) cannot tell an unflagged model from a flagged one.
   if (cached?.sfwHeld !== undefined) return cached;
   return undefined;
 }
@@ -6028,16 +6026,22 @@ export async function getHeldLevelsByModel(
   const ids = uniq(modelIds);
   if (!ids.length) return levels;
   // One batched read for the cached entries: a feed page names up to a hundred models.
-  const cached = await redis.mGet<string>(ids.map(gallerySettingsKey)).catch((error) => {
+  let cached: (string | null)[];
+  try {
+    cached = await redis.mGet<string>(ids.map(gallerySettingsKey));
+  } catch (error) {
+    if (onReadFailure === 'throw') throw error;
+    // No per-model re-read: against a slow Redis that would cost a timeout per model.
+    for (const id of ids) levels.set(id, NsfwLevel.PG);
     logToAxiom({
       type: 'warning',
       name: 'held-gallery-level-batch-read',
-      message: 'batched gallery settings read failed; reading each model',
+      message: 'batched gallery settings read failed; serving PG only',
       count: ids.length,
       error: safeError(error),
     }).catch(() => undefined);
-    return ids.map(() => null);
-  });
+    return levels;
+  }
   const misses: number[] = [];
   ids.forEach((id, i) => {
     const gallery = readCachedGallerySettings(cached[i]);

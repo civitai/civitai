@@ -11,7 +11,7 @@ import { booleanString } from '~/utils/zod-helpers';
 /**
  * Queue every published minor or SFW-only model for a models-index rewrite.
  *
- * Hidden admin route. Guarded by WEBHOOK_TOKEN via `?token=` query param.
+ * Admin route, deliberately temporary: delete it once the post-deploy run is done.
  *
  * Purpose: the models search document now carries a minor or SFW-only model's showcase images only
  * within its gallery level. A flag change rewrites the model's document; documents written before

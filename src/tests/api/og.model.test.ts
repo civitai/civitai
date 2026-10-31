@@ -156,7 +156,6 @@ describe('/api/og?type=model cover image', () => {
 
   it('serves the short-lived fallback card when the gallery settings cannot be read', async () => {
     redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
-    redisMock.redis.get.mockRejectedValueOnce(new Error('redis down'));
     dbMock.dbRead.image.findFirst.mockImplementation(fakeFindFirst(coverRows));
     const res = await render();
     expect(fetchImageAsDataUri).not.toHaveBeenCalled();
