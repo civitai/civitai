@@ -73,6 +73,7 @@ import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { getRefundSummary } from '~/components/ImageGeneration/refund-summary';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import {
@@ -165,6 +166,7 @@ export function QueueItem({
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
   const canceled = status === 'canceled';
+  const refund = getRefundSummary(status, request.transactions);
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(request.status);
 
@@ -318,6 +320,11 @@ export function QueueItem({
                   readOnly
                   variant="badge"
                 />
+              )}
+              {refund && (
+                <Badge color="green" variant="light" radius="sm" data-testid="refund-badge">
+                  {refund.text}
+                </Badge>
               )}
               {request.transactions.length > 0 && (
                 <TransactionsPopover data={request.transactions} />
@@ -1211,6 +1218,7 @@ function Model3DQueueCardOutputs({
       ? 'Generation canceled'
       : 'Generation failed';
   const isComplete = !pending && !processing && !isFailed;
+  const refund = getRefundSummary(status, request.transactions);
 
   // Open the model full-screen. Local (non-routed) dialog, same pattern as
   // the image lightbox; the heavy three.js viewer lives inside the dialog
@@ -1337,9 +1345,11 @@ function Model3DQueueCardOutputs({
               <Text size="sm" fw={600} c="red.4">
                 {failureLabel}
               </Text>
-              <Text size="xs" c="dimmed">
-                Your Buzz has been refunded.
-              </Text>
+              {refund && (
+                <Text size="xs" c="dimmed">
+                  {refund.text}
+                </Text>
+              )}
             </div>
           ) : (
             <Text c="dimmed" size="xs" align="center">
