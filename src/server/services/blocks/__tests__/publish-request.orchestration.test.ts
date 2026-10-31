@@ -69,7 +69,11 @@ const {
       // userId via dbRead.appBlock.findUnique({ app: { userId } }).
       appBlock: { findFirst: vi.fn(), findUnique: vi.fn() },
       // submitVersion's owner gate: resolveAppAccess looks an editor's seat up here.
-      appCollaborator: { findFirst: vi.fn() },
+      // `findMany`: /apps/mine (`listMyAppListings`) reads a user's accepted seats here.
+      appCollaborator: { findFirst: vi.fn(), findMany: vi.fn<DelegateMock>(async () => []) },
+      // /apps/mine's batched asset-scan read (`loadListingAssetScansBatch`).
+      appListingScreenshot: { findMany: vi.fn<DelegateMock>(async () => []) },
+      image: { findMany: vi.fn<DelegateMock>(async () => []) },
       // Added 2026-05-28 for C-2 fix: approveRequest now reads the
       // OauthClient row after a P2002 collision to recover the existing
       // client on retry.
@@ -1007,6 +1011,73 @@ describe('submitVersion', () => {
         missing: ['icon'],
         nextStep: null,
       });
+    });
+
+    it('🔴 no listing row at all: icon and cover reported missing with a next step, not null', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      // Every listing lookup answers nothing: a draft create that failed, or an app whose
+      // listing was never minted. The approve's legacy create then mints one with no art.
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toEqual({
+        approvalBlocked: false,
+        missing: ['icon', 'cover'],
+        nextStep:
+          "Your app has no store listing yet. Once it is approved, add an icon and a cover on its listing's Media tab.",
+        problems: [
+          {
+            code: 'missing-icon',
+            label: 'Missing icon (required before publishing)',
+            severity: 'blocking',
+          },
+          {
+            code: 'missing-cover',
+            label: 'Missing cover image (required before publishing)',
+            severity: 'blocking',
+          },
+        ],
+      });
+    });
+
+    it('🔴 reports the same problems /apps/mine shows for the same listing, blocked and scanning media included', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      const { listMyAppListings } = await import('../app-access.service');
+      const row = listingRow({ iconId: 7, coverId: 9, _count: { screenshots: 1 } });
+      answer('draft', row);
+      const shots = async () => [{ appListingId: 'apl_ready_1', imageId: 31 }];
+      const images = async (args: { where?: { id?: { in?: number[] } } }) =>
+        [
+          { id: 7, ingestion: 'Blocked', nsfwLevel: null },
+          { id: 9, ingestion: 'Pending', nsfwLevel: null },
+          { id: 31, ingestion: 'Scanned', nsfwLevel: null },
+        ].filter((i) => args?.where?.id?.in?.includes(i.id) ?? true);
+      for (const db of [mockDbRead, mockDbWrite]) {
+        db.appListingScreenshot.findMany.mockImplementation(shots);
+        db.image.findMany.mockImplementation(images);
+      }
+
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+      // The same row as /apps/mine reads it: its access probe and its hydrate.
+      mockDbRead.appListing.findMany.mockResolvedValue([
+        { ...row, slug: 'hello', name: 'Hello World', appBlockId: null, appBlock: null },
+      ]);
+      const mine = await listMyAppListings({ userId: 42 });
+
+      expect(mine.map((m) => m.appListingId)).toEqual(['apl_ready_1']);
+      expect(mine[0].problems).toEqual([
+        {
+          code: 'blocked-media',
+          label: 'Replace the blocked icon before it can publish',
+          severity: 'blocking',
+        },
+        { code: 'scanning-media', label: 'Cover is still being scanned', severity: 'advisory' },
+      ]);
+      expect(result.listing!.problems).toEqual(mine[0].problems);
     });
 
     it('a failing readiness read never fails the submit (listing: null)', async () => {

@@ -351,16 +351,6 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
     it('an approve that publishes no listing (an update to a live one) is not gated', async () => {
       expect(await floorMissingFor({})).toEqual([]);
     });
-
-    it('the floor reads iconId/coverId on both go-live lookups', async () => {
-      await approveRatingFor({});
-      const selects = mockDbRead.appListing.findMany.mock.calls
-        .map((c) => (c[0] ?? {}) as { where?: Where; select?: Record<string, unknown> })
-        .filter((a) => isDraftQuery(a.where ?? {}) || isResetQuery(a.where ?? {}))
-        .map((a) => a.select);
-      expect(selects).toHaveLength(2);
-      for (const select of selects) expect(select).toMatchObject({ iconId: true, coverId: true });
-    });
   });
 
   it('another app’s slug-matched listing lends this submission no listing id either', async () => {

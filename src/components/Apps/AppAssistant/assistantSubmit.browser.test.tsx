@@ -325,6 +325,34 @@ describe('Submit for review', () => {
     ).toEqual([]);
   });
 
+  /**
+   * 🔴 No listing row yet: approval is not blocked, but the route still sends the step to
+   * take. It is shown, and the icon/cover items it words are not repeated under it.
+   */
+  test('🔴 a next step without a blocked approval (no listing yet) is still shown', () => {
+    const nextStep =
+      "Your app has no store listing yet. Once it is approved, add an icon and a cover on its listing's Media tab.";
+    expect(
+      listingNoticeOf({
+        approvalBlocked: false,
+        missing: ['icon', 'cover'],
+        nextStep,
+        problems: [
+          {
+            code: 'missing-icon',
+            label: 'Missing icon (required before publishing)',
+            severity: 'blocking',
+          },
+          {
+            code: 'missing-cover',
+            label: 'Missing cover image (required before publishing)',
+            severity: 'blocking',
+          },
+        ],
+      })
+    ).toEqual({ approvalBlocked: false, nextStep, required: [], recommended: [] });
+  });
+
   test('🔴 the sent card for a not-blocked, art-less listing shows the missing icon as an alert', async () => {
     const fetchImpl = vi.fn<typeof fetch>(
       async () =>

@@ -878,11 +878,8 @@ describe('approveRequest — media removed between the floor check and the trans
       await expect(
         approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
       ).resolves.toMatchObject({ publishRequestId: 'req_1' });
-      expect(
-        warn.mock.calls.some((c) =>
-          String(c[0]).includes('draft→approved transition matched 0 rows')
-        )
-      ).toBe(true);
+      // The approve went through to its end: the request is finalised, once.
+      expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledOnce();
     } finally {
       warn.mockRestore();
     }
