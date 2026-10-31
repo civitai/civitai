@@ -8,7 +8,7 @@ import { allowedCorsOrigin } from '$lib/server/cors';
 import { isAdminRequest, isHubAdmin } from '$lib/server/auth/admin';
 import { isHubPageRequest, isTrustedSessionCaller } from '$lib/server/auth/same-origin';
 import { authS2sRequestsTotal, unhandledErrorsTotal } from '$lib/server/metrics';
-import { getDeviceId } from '$lib/server/auth/device';
+import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { callerShape, readInternalCaller } from '$lib/server/auth/s2s';
 import { logAxiomError } from '$lib/server/axiom';
 
@@ -120,6 +120,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       if (!internal && shouldRoll(event.request, claims, event.locals.user)) {
         const fresh = await reissueSession(claims, userId, claims.jti!).catch(() => null);
         if (fresh) setSessionCookie(event.cookies, fresh);
+        if (fresh && event.locals.deviceId) await touchAccount(event.locals.deviceId, userId);
       }
     }
   }

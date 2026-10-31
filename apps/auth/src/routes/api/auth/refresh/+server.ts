@@ -18,15 +18,15 @@ import { readInternalCaller } from '$lib/server/auth/s2s';
 // See docs/main-app-auth-cutover.md (section C). An expired token fails verification → 401 → re-login.
 export const POST: RequestHandler = async ({ request, cookies }) => {
   const internal = await readInternalCaller(request);
-  const header = internal ? internal.token : bearerToken(request);
-  const token = header || cookies.get(SESSION_COOKIE);
+  const bearer = internal ? undefined : bearerToken(request);
+  const token = internal ? internal.token : bearer || cookies.get(SESSION_COOKIE);
   if (!token) error(401, 'unauthorized');
 
   const claims = await verifier.verifyToken(token).catch(() => null);
   const userId = Number(claims?.sub);
   const jti = claims?.jti;
   if (!claims || !Number.isFinite(userId) || !jti) error(401, 'unauthorized');
-  if (!header && !(await acceptHubSession(claims))) error(401, 'unauthorized');
+  if (!internal && !bearer && !(await acceptHubSession(claims))) error(401, 'unauthorized');
   refuseModerationAccount({ id: userId }, 'refresh');
   // Checked against the current account, not the token: a session that rolls must not outlive a ban.
   if (!(await isActiveAccount(userId))) error(403, 'account_disabled');

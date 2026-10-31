@@ -42,6 +42,7 @@ vi.mock('$lib/server/auth/verifier', () => ({
 import type * as CivitaiAuth from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { handle } from '../hooks.server';
+import { deviceCookieName } from '@civitai/auth';
 import { SESSION_COOKIE } from '$lib/server/auth/session';
 import { POST as refreshPost } from '../routes/api/auth/refresh/+server';
 import { GET as identityGet } from '../routes/api/auth/identity/+server';
@@ -58,7 +59,8 @@ async function visit(opts: { navigate?: boolean } = {}) {
       headers: opts.navigate ? { 'sec-fetch-mode': 'navigate' } : {},
     }),
     cookies: {
-      get: (name: string) => (name === SESSION_COOKIE ? 'hub-token' : undefined),
+      get: (name: string) =>
+        name === SESSION_COOKIE ? 'hub-token' : name === deviceCookieName() ? 'dev-d' : undefined,
       set,
       delete: vi.fn(),
     },
@@ -96,15 +98,18 @@ const refreshByCookie = () =>
     } as never)
   );
 
-const refreshInternal = () =>
+const refreshInternal = (
+  bodyToken = 'hub-token',
+  cookies: { get: (name: string) => string | undefined } = { get: () => undefined }
+) =>
   status(() =>
     refreshPost({
       request: new Request('https://auth.civitai.com/api/auth/refresh', {
         method: 'POST',
         headers: { authorization: 'Bearer internal-secret', 'content-type': 'application/json' },
-        body: JSON.stringify({ token: 'hub-token' }),
+        body: JSON.stringify({ token: bodyToken }),
       }),
-      cookies: { get: () => undefined },
+      cookies,
     } as never)
   );
 
@@ -189,6 +194,13 @@ describe('refresh and identity', () => {
     expect(tracked('hub-jti')).toBe(true);
   });
 
+  it('a service call with no session in its body is refused, whatever cookie it forwards', async () => {
+    hubToken(10 * DAY_MS);
+
+    expect(await refreshInternal('', cookieJar)).toBe(401);
+    expect(h.minted).toHaveLength(0);
+  });
+
   it('identity refuses a cookie the hub no longer honours, and answers for a bearer token', async () => {
     hubToken(40 * DAY_MS);
 
@@ -204,6 +216,19 @@ describe("re-signing the hub's own session cookie", () => {
     await visit({ navigate: true });
 
     expect(tracked('hub-jti')).toBe(true);
+  });
+
+  it("keeps the account fresh in this browser's account list", async () => {
+    hubToken(2 * DAY_MS);
+    const accounts = `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:dev-d`;
+    const old = String(Date.now() - 20 * DAY_MS);
+    await h.sys.hSet(accounts, '100', old);
+    await h.sys.hSet(accounts, '200', old);
+
+    await visit({ navigate: true });
+
+    expect(Number(h.sys.hashes.get(accounts)?.get('100'))).toBeGreaterThan(Number(old));
+    expect(h.sys.hashes.get(accounts)?.get('200')).toBe(old);
   });
 
   it("leaves a banned or deleted account's cookie alone", async () => {
