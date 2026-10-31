@@ -86,6 +86,24 @@ vi.mock('~/components/AppBlocks/useBlockToken', () => ({ useBlockToken: () => ({
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
+// The Retry endpoint (`/api/apps/dev/entry-url`), for the parity cases at the end: its wrapper
+// hands it the session user, and its feature flags are the ones each case gives the page.
+const { endpointFeatures } = vi.hoisted(() => ({
+  endpointFeatures: { current: {} as Record<string, boolean> },
+}));
+vi.mock('~/server/utils/endpoint-helpers', () => ({
+  AuthedEndpoint:
+    (handler: (req: unknown, res: unknown, user: unknown) => Promise<unknown>) =>
+    (req: unknown, res: unknown) =>
+      handler(req, res, { id: 555, username: 'dev', isModerator: false }),
+}));
+vi.mock('~/server/utils/require-full-scope-session', () => ({
+  requireFullScopeSession: () => true,
+}));
+vi.mock('~/server/services/feature-flags.service', () => ({
+  getFeatureFlagsAsync: async () => endpointFeatures.current,
+}));
+
 const SECRET = 'test-nextauth-secret-dddddddddddddddddddd';
 const DEV_APP = {
   appBlockId: 'apb_dev',
@@ -443,5 +461,95 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     // The dev route sets a frame-src CSP; the run route must NOT — proving the
     // dev route's CSP is route-scoped and never widens the global CSP.
     expect(headers['Content-Security-Policy']).toBeUndefined();
+  });
+});
+
+/**
+ * The page and its Retry endpoint (`/api/apps/dev/entry-url`) answer the SAME request the same way:
+ * whatever the page refuses with `notFound`, the endpoint refuses with its one bare 404, and the
+ * endpoint signs a URL only when the page would. A gate added to one and not the other fails here.
+ * Both run the real gate chain; only its data sources are stubbed.
+ */
+describe('/apps/dev/[blockId] and its Retry endpoint apply the same gates', () => {
+  const HOST = 'dev-0f1e2d3c4b5a6978.civit.ai';
+  const prev = process.env.NEXTAUTH_SECRET;
+  afterAll(() => {
+    process.env.NEXTAUTH_SECRET = prev;
+  });
+  beforeEach(() => {
+    process.env.NEXTAUTH_SECRET = SECRET;
+    mockDevTunnelEnabled.mockReset().mockResolvedValue(true);
+    mockResolveDev.mockReset().mockResolvedValue(DEV_APP);
+    mockGetActiveTunnel.mockReset().mockResolvedValue(activeTunnel(HOST));
+    mockHostPublished.mockReset().mockResolvedValue(true);
+    mockUnsubmittedSpend.mockReset().mockResolvedValue(true);
+  });
+
+  async function both(features: Record<string, boolean>) {
+    const resolver = await loadDevResolver();
+    const page = await resolver({
+      ...makeCtx({ user: AUTHOR, setHeader: () => undefined }),
+      features,
+    });
+    endpointFeatures.current = features;
+    const endpoint = (await import('~/pages/api/apps/dev/entry-url')).default as unknown as (
+      req: unknown,
+      res: unknown
+    ) => Promise<void>;
+    let status = 200;
+    let body: any;
+    const res = {
+      status(code: number) {
+        status = code;
+        return res;
+      },
+      json(value: unknown) {
+        body = value;
+        return res;
+      },
+      setHeader: () => res,
+    };
+    await endpoint(
+      { method: 'GET', url: '/api/apps/dev/entry-url', query: { blockId: 'my-app' } },
+      res
+    );
+    return { page, endpoint: { status, body } };
+  }
+
+  const ON = { appBlocks: true, appBlocksAuthor: true };
+
+  const refusals: [string, Record<string, boolean>, () => void][] = [
+    ['App Blocks off', { appBlocksAuthor: true }, () => {}],
+    ['the author capability off', { appBlocks: true }, () => {}],
+    ['the kill switch off', ON, () => void mockDevTunnelEnabled.mockResolvedValue(false)],
+    ['a block the caller does not own', ON, () => void mockResolveDev.mockResolvedValue(null)],
+  ];
+  it.each(refusals)(
+    '%s: the page is notFound and the endpoint the same bare 404',
+    async (_n, features, arrange) => {
+      arrange();
+      const { page, endpoint } = await both(features);
+      expect(page).toEqual({ notFound: true });
+      expect(endpoint).toEqual({ status: 404, body: { error: 'App not found' } });
+    }
+  );
+
+  it.each([
+    ['no live tunnel', () => mockGetActiveTunnel.mockResolvedValue(null)],
+    ['the host not published yet', () => mockHostPublished.mockResolvedValue(false)],
+  ])('%s: neither signs an entry URL', async (_n, arrange) => {
+    arrange();
+    const { page, endpoint } = await both(ON);
+    expect(page.props.iframeSrc).toBeNull();
+    expect(endpoint.status).toBe(409);
+    expect(JSON.stringify(endpoint.body)).not.toContain('?dev=');
+  });
+
+  it('POSITIVE CONTROL: with every gate open, both sign a URL on the same tunnel host', async () => {
+    const { page, endpoint } = await both(ON);
+    const shape = new RegExp(`^https://${HOST.replace(/\./g, '\\.')}/\\?dev=[^&]+$`);
+    expect(page.props.iframeSrc).toMatch(shape);
+    expect(endpoint.status).toBe(200);
+    expect(endpoint.body).toEqual({ iframeSrc: expect.stringMatching(shape), host: HOST });
   });
 });
