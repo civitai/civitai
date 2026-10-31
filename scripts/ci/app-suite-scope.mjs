@@ -47,6 +47,7 @@ export const SCOPED_APPS = ['moderator'];
 const WORKSPACE_ROOTS = ['apps', 'packages'];
 const SKIP_DIR = new Set(['node_modules', '.svelte-kit', 'dist', 'build', '.turbo']);
 const SCANNED_FILE = /\.((c|m)?(t|j)sx?|svelte|json)$/;
+const SCOPED_NAME = /['"`](@[\w.-]+\/[\w.-]+)(?:\/[^'"`]*)?['"`]/g;
 
 /** Every workspace member under apps/ and packages/: name -> repo-relative dir. */
 export function workspaceMembers(root) {
@@ -104,7 +105,11 @@ function directInputs(root, dir, byName) {
 
   for (const file of walk(root, dir)) {
     const text = readFileSync(join(root, file), 'utf8');
-    for (const m of text.matchAll(/['"`](@[\w.-]+\/[\w.-]+)(?:\/[^'"`]*)?['"`]/g)) {
+    // The member's own package.json names its dependencies by key, workspace or not; the fields
+    // above already decided which of those are members, so a registry dependency that shares a
+    // member's name is not one.
+    const names = file === `${dir}/package.json` ? [] : text.matchAll(SCOPED_NAME);
+    for (const m of names) {
       if (byName.has(m[1])) add(byName.get(m[1]), `${file} names ${m[1]}`);
     }
     for (const m of text.matchAll(/['"`]((?:\.\.\/)+[^'"`$\s]*)/g)) {
