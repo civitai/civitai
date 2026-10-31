@@ -2,14 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ModelService from '~/server/services/model.service';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
 
-const { feed, downloads, audience, updateModel, reindex, bustRest } = vi.hoisted(() => ({
-  feed: vi.fn(),
-  downloads: vi.fn(),
-  audience: vi.fn(),
-  updateModel: vi.fn(),
-  reindex: vi.fn(),
-  bustRest: vi.fn(),
-}));
+const { feed, downloads, audience, updateModel, reindex, bustRest, bustGallery } = vi.hoisted(
+  () => ({
+    bustGallery: vi.fn(),
+    feed: vi.fn(),
+    downloads: vi.fn(),
+    audience: vi.fn(),
+    updateModel: vi.fn(),
+    reindex: vi.fn(),
+    bustRest: vi.fn(),
+  })
+);
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   getModelsWithImagesAndModelVersions: feed,
@@ -25,7 +28,7 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/creator-gallery-hidden-users.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  bustModelGallerySettings: vi.fn(),
+  bustModelGallerySettings: bustGallery,
 }));
 vi.mock('~/server/services/download.service', () => ({
   getUserDownloads: downloads,
@@ -121,6 +124,13 @@ describe("a held model's gallery level change", () => {
     reindex.mockRejectedValueOnce(new Error('queue down'));
     await expect(change({ minor: true, sfwOnly: false })).resolves.toMatchObject({ id: 7 });
     expect(bustRest.mock.calls).toEqual([[7]]);
+  });
+
+  it('still drops the REST body and queues the rewrite when the settings cache cannot be dropped', async () => {
+    bustGallery.mockRejectedValueOnce(new Error('redis down'));
+    await expect(change({ minor: true, sfwOnly: false })).resolves.toMatchObject({ id: 7 });
+    expect(bustRest.mock.calls).toEqual([[7]]);
+    expect(reindex.mock.calls).toEqual([[[{ id: 7, action: 'Update' }]]]);
   });
 
   it('leaves an unheld model to the caches that already follow its gallery', async () => {

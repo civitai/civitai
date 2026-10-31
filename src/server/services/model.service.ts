@@ -5995,7 +5995,10 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   if (!versionIds.length) return held;
   const versions = await versionModelCache().fetch(versionIds);
 
-  const levels = await getHeldLevelsByModel(Object.values(versions).map((v) => v.modelId));
+  const levels = await getHeldLevelsByModel(
+    Object.values(versions).map((v) => v.modelId),
+    { onReadFailure: 'throw' }
+  );
   if (!levels.size) return held;
   const owners = await dbRead.model.findMany({
     where: { id: { in: [...levels.keys()] } },
@@ -6012,15 +6015,29 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   return held;
 }
 
-/** For each minor or SFW-only model, the level its gallery is held at. A model not held is absent. */
-export async function getHeldLevelsByModel(modelIds: number[]) {
+/**
+ * For each minor or SFW-only model, the level its gallery is held at. A model not held is absent.
+ * When a model's settings cannot be read, `floor` serves it at PG for this call; `throw` is for
+ * callers whose result is stored (the search index) or that already fail closed.
+ */
+export async function getHeldLevelsByModel(
+  modelIds: number[],
+  { onReadFailure = 'floor' }: { onReadFailure?: 'floor' | 'throw' } = {}
+) {
   const levels = new Map<number, number>();
   const ids = uniq(modelIds);
   if (!ids.length) return levels;
   // One batched read for the cached entries: a feed page names up to a hundred models.
-  const cached = await redis
-    .mGet<string>(ids.map(gallerySettingsKey))
-    .catch(() => ids.map(() => null));
+  const cached = await redis.mGet<string>(ids.map(gallerySettingsKey)).catch((error) => {
+    logToAxiom({
+      type: 'warning',
+      name: 'held-gallery-level-batch-read',
+      message: 'batched gallery settings read failed; reading each model',
+      count: ids.length,
+      error: safeError(error),
+    }).catch(() => undefined);
+    return ids.map(() => null);
+  });
   const misses: number[] = [];
   ids.forEach((id, i) => {
     const gallery = readCachedGallerySettings(cached[i]);
@@ -6033,6 +6050,7 @@ export async function getHeldLevelsByModel(modelIds: number[]) {
         const gallery = await getGallerySettingsByModelId({ id });
         if (gallery?.sfwHeld) levels.set(id, gallery.level);
       } catch (error) {
+        if (onReadFailure === 'throw') throw error;
         // Unknown flags serve the narrowest level rather than fail the whole page.
         levels.set(id, NsfwLevel.PG);
         logToAxiom({
@@ -6085,9 +6103,11 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
   {
     viewer,
     models,
+    onReadFailure,
   }: {
     viewer?: HeldGalleryViewer;
     models?: Map<number, { modelId: number; ownerId?: number }>;
+    onReadFailure?: 'floor' | 'throw';
   } = {}
 ): Promise<Record<number, E>> {
   const versionIds = Object.keys(byVersion).map(Number);
@@ -6105,7 +6125,10 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
       modelOf.set(version.id, { modelId: version.modelId });
   }
 
-  const levels = await getHeldLevelsByModel([...modelOf.values()].map((m) => m.modelId));
+  const levels = await getHeldLevelsByModel(
+    [...modelOf.values()].map((m) => m.modelId),
+    { onReadFailure }
+  );
   const owners = new Map<number, number>();
   if (viewer && levels.size) {
     const unknown = [...modelOf.values()].filter(

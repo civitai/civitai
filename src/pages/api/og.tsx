@@ -220,7 +220,10 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     ingestion: 'Scanned' as const,
   };
   // A minor or SFW-only model's showcase is served only within its gallery level.
-  const heldLevel = (await getHeldLevelsByModel([id])).get(id);
+  // `throw`: a failed read renders the short-cached fallback card, not a week-long degraded one.
+  const heldLevel = (await getHeldLevelsByModel([id], { onReadFailure: 'throw' })).get(id);
+  const withinHeldLevel =
+    heldLevel !== undefined ? { nsfwLevel: { in: Flags.instanceToArray(heldLevel) } } : {};
   const [metric, defaultImage, coverImage] = await Promise.all([
     dbRead.modelMetric
       .findUnique({
@@ -246,7 +249,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
         tosViolation: false,
         needsReview: null,
         ingestion: 'Scanned',
-        ...(heldLevel !== undefined ? { nsfwLevel: { in: Flags.instanceToArray(heldLevel) } } : {}),
+        ...withinHeldLevel,
       },
       select: ogImageSelect,
       orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
@@ -262,6 +265,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
               ...ownPosts,
             },
             ...previewableImage,
+            ...withinHeldLevel,
           },
           select: ogImageSelect,
         })

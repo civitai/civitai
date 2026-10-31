@@ -215,6 +215,28 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     expect(data.images.map((image) => image.id)).toEqual([WITHIN]);
   });
 
+  it('the models search document fails its batch, to be retried, when the gallery settings cannot be read', async () => {
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    const db = {
+      model: { findMany: async () => [{ id: HELD_MODEL, modelVersions: [{ id: VERSION }] }] },
+    };
+    await expect(
+      pullModelsData(
+        { db, logger: () => undefined } as never,
+        {
+          type: 'update',
+          ids: [HELD_MODEL],
+        } as never
+      )
+    ).rejects.toThrow('redis down');
+  });
+
+  it('reads gallery settings from the existing cache keys', async () => {
+    await getEligibleModels([VERSION]);
+    expect(redisMock.redis.mGet).toHaveBeenCalledWith([`model:gallery-settings:${HELD_MODEL}`]);
+  });
+
   it('an auction card shows the first image within the held level, for every viewer', async () => {
     dbMock.dbWrite.auction.findFirst.mockResolvedValue({
       id: 1,

@@ -2368,11 +2368,22 @@ export const updateGallerySettingsHandler = async ({
         return { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull };
       },
     });
-    await bustModelGallerySettings([id]);
+    // The settings are saved: a failed bust must not skip the steps below or fail the save.
+    try {
+      await bustModelGallerySettings([id]);
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'gallery-settings-bust',
+        message: 'gallery settings saved; settings cache not dropped',
+        modelId: id,
+        error: safeError(error),
+      }).catch(() => undefined);
+    }
     // A held model's showcase is served at its gallery level, in its search document and REST body.
     if (held) {
       await bustPublicModelResponseCache(id);
-      // The settings are saved: a failed enqueue leaves the document to the next rewrite.
+      // A failed enqueue leaves the document to the next rewrite.
       try {
         await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
       } catch (error) {

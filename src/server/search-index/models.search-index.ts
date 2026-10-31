@@ -75,6 +75,8 @@ async function heldShowcaseImages(
         model.modelVersions.map((version) => [version.id, { modelId: model.id }] as const)
       )
     ),
+    // A document written now is kept: fail the batch so it retries, rather than store PG only.
+    onReadFailure: 'throw',
   });
 }
 

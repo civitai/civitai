@@ -181,6 +181,17 @@ describe('the public model API on a held model', () => {
     const { items } = await getModelsWithVersions({ input, user: { id: OWNER } });
     expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
   });
+
+  it('serves only images within the held level to a moderator too', async () => {
+    const { items } = await getModelsWithVersions({ input, user: { id: 99, isModerator: true } });
+    expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
+  });
+
+  it('serves a model without the flags whole', async () => {
+    redisMock.redis.mGet.mockResolvedValue([JSON.stringify({ none: true })]);
+    const { items } = await getModelsWithVersions({ input });
+    expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([ABOVE, WITHIN]);
+  });
 });
 
 describe('the model feed on a held model', () => {
@@ -192,6 +203,11 @@ describe('the model feed on a held model', () => {
     });
     return items[0]?.images.map((i) => i.id);
   };
+
+  it('shows every viewer the whole showcase of a model without the flags', async () => {
+    redisMock.redis.mGet.mockResolvedValue([JSON.stringify({ none: true })]);
+    expect(await imageIds()).toEqual([ABOVE, WITHIN]);
+  });
 
   it('shows another viewer only images within the held level', async () => {
     expect(await imageIds()).toEqual([WITHIN]);

@@ -3,7 +3,11 @@ import { NsfwLevel } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // Static, so the large module graph loads at collection rather than inside one test's timeout.
-import { heldGalleryViewer, holdShowcaseImages } from '~/server/services/model.service';
+import {
+  getHeldLevelsByPost,
+  heldGalleryViewer,
+  holdShowcaseImages,
+} from '~/server/services/model.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -143,6 +147,39 @@ describe('holdShowcaseImages', () => {
       { models: new Map([[OPEN_VERSION, { modelId: OPEN_MODEL }]]) }
     );
     expect(ids(held[OPEN_VERSION])).toEqual([2]);
+  });
+});
+
+describe('holdShowcaseImages for a caller that stores its result', () => {
+  it('fails rather than serve PG only when no settings read succeeds', async () => {
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    await expect(
+      holdShowcaseImages(
+        { [OPEN_VERSION]: byVersion()[OPEN_VERSION] },
+        { models: new Map([[OPEN_VERSION, { modelId: OPEN_MODEL }]]), onReadFailure: 'throw' }
+      )
+    ).rejects.toThrow('redis down');
+  });
+});
+
+describe('getHeldLevelsByPost', () => {
+  it('fails rather than guess a level when the gallery settings cannot be read', async () => {
+    // Only the gallery settings reads fail; the post and version lookups still resolve.
+    const settingsKey = /^model:gallery-settings:\d+$/;
+    redisMock.redis.mGet.mockImplementation(async (keys: string[]) => {
+      if (keys.some((key) => settingsKey.test(key))) throw new Error('redis down');
+      return keys.map(() => null);
+    });
+    redisMock.redis.get.mockImplementation(async (key: string) => {
+      if (settingsKey.test(key)) throw new Error('redis down');
+      return null;
+    });
+    dbMock.dbRead.post.findMany.mockResolvedValue([{ id: 1, modelVersionId: HELD_VERSION }]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { id: HELD_VERSION, modelId: HELD_MODEL },
+    ]);
+    await expect(getHeldLevelsByPost([1])).rejects.toThrow('redis down');
   });
 });
 
