@@ -267,6 +267,7 @@ beforeEach(async () => {
   purged.length = 0;
   purgeFails = 0;
   combinedOk.clear();
+  heldDenyOk.clear();
   issuedTo.clear();
   issuersFail = false;
   unreadKeys.clear();
@@ -280,7 +281,7 @@ beforeEach(async () => {
   loggingMock.logToAxiom.mockClear();
   fetchFake.mockClear();
   s3Send.mockClear();
-  isFlipt.mockClear();
+  isFlipt.mockReset().mockImplementation(async () => true);
   vi.stubGlobal('fetch', fetchFake);
   setEnv({
     IMAGE_CACHER_URL: CACHER,
@@ -399,6 +400,8 @@ const callsFor = (url: string) =>
 const persistsFor = (url: string) => calls.filter(onUrl(url)).filter(isPersist);
 /** Urls a test sends a retraction-carrying persist for on purpose: a hard-deleted takedown's retry. */
 const combinedOk = new Set<string>();
+/** Urls a test sends a deny-carrying persist for on purpose: a takedown held at a deny. */
+const heldDenyOk = new Set<string>();
 const retryRows = async () =>
   (
     await sql`SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageCdnPersistRetry'
@@ -434,9 +437,10 @@ afterEach(() => {
       ).toBe(true);
       continue;
     }
-    expect(retracted.has(key), `persist sent for ${c.path} without a standing retraction`).toBe(
-      true
-    );
+    expect(
+      retracted.has(key) || heldDenyOk.has(decodeURIComponent(key)),
+      `persist sent for ${c.path} without a standing retraction`
+    ).toBe(true);
   }
 });
 const queued = async () =>
@@ -2846,6 +2850,130 @@ describe('retractions per run', () => {
     await sql`UPDATE "JobQueue" SET data = data - 'nextAttemptAt' WHERE type = 'ImageCdnPersistRetry'`;
     expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 1 });
     expect(purged).toHaveLength(1);
+    expect(await retryRows()).toEqual([]);
+  });
+});
+
+describe('retractions turned off', () => {
+  /** The `cdn-access-retract` flag; every other flag stays on. */
+  const retractFlag = (on: boolean) =>
+    isFlipt.mockImplementation(
+      async (...args: unknown[]) => on || args[0] !== 'cdn-access-retract'
+    );
+  const persistPaths = (url: string) => persistsFor(url).map((c) => c.path);
+
+  describe.each([
+    { on: false, expected: 'deny' },
+    { on: true, expected: 'retract' },
+  ])('flag on: $on', ({ on, expected }) => {
+    beforeEach(() => {
+      retractFlag(on);
+      if (!on) heldDenyOk.add(u(1));
+    });
+
+    it('sync: a takedown stops at the call the flag allows, persisted and purged, and settles', async () => {
+      await image(1);
+      await sql`UPDATE "Image" SET name = 'cat.png' WHERE id = 1`;
+      await moderatorBlock(1);
+      expect(await syncCdnAccess()).toMatchObject({
+        retracts: on ? 1 : 0,
+        deferred: 0,
+        removed: 1,
+      });
+
+      expect(callsFor(u(1))).toEqual([expected]);
+      expect(await stateOf(u(1))).toBe(on ? 'Retracted' : 'Denied');
+      expect((await queued()).n).toBe(0);
+      // Either way: persisted (no 31-day lapse) and the same edge copies purged.
+      expect(persistPaths(u(1))).toEqual([`/admin/invalidate?imageKey=${u(1)}&persist=true`]);
+      expect(purged).toHaveLength(1);
+      expect(purged[0][0]).toBe(`${u(1)}/original=true/${u(1)}.jpeg`);
+      expect(purged[0]).toHaveLength(102);
+      expect(await retryRows()).toEqual([]);
+    });
+
+    it('sync: a url already denied whose rows ask for a retraction', async () => {
+      await image(1);
+      await moderatorBlock(1);
+      // Denied before (a deferral past the per-run cap, or a hold since released).
+      await sql`INSERT INTO "ImageCdnAccess" (url, state) VALUES (${u(1)}, 'Denied')`;
+      await syncCdnAccess();
+
+      expect(callsFor(u(1))).toEqual([expected]);
+      expect(persistPaths(u(1))).toHaveLength(1);
+      expect(purged).toHaveLength(1);
+      expect(await stateOf(u(1))).toBe(on ? 'Retracted' : 'Denied');
+      expect((await queued()).n).toBe(0);
+
+      // Nothing queued: the next run sends nothing more.
+      calls.length = 0;
+      await syncCdnAccess();
+      expect(calls).toEqual([]);
+    });
+
+    it('reconciler: upgrades a deny to a retraction only while the flag is on', async () => {
+      await image(1);
+      await moderatorBlock(1);
+      await sql`DELETE FROM "JobQueue" WHERE type = 'CdnAccessSync'`;
+      await sql`INSERT INTO "ImageCdnAccess" (url, state) VALUES (${u(1)}, 'Denied')`;
+
+      expect(await reconcileCdnAccess()).toMatchObject({ upgraded: on ? 1 : 0, leftToSync: 0 });
+      expect(callsFor(u(1))).toEqual(on ? ['retract'] : []);
+      expect(await stateOf(u(1))).toBe(on ? 'Retracted' : 'Denied');
+    });
+
+    it('retry: a row that resends a retraction is sent only while the flag is on', async () => {
+      // A hard-deleted takedown whose persist did not land: no image row is left on the url.
+      const data = { url: u(1), retract: true, purgeEdge: false };
+      await sql`INSERT INTO "JobQueue" (type, "entityType", "entityId", data)
+                VALUES ('ImageCdnPersistRetry', 'Image', 1, ${JSON.stringify(data)}::jsonb)`;
+      if (on) combinedOk.add(u(1));
+
+      expect(await retryTakedownPersists()).toMatchObject({ queued: on ? 1 : 0, sent: on ? 1 : 0 });
+      expect(calls.map(kind)).toEqual(on ? ['retract'] : []);
+      // Off: left queued exactly as it was, not dropped and not charged an attempt.
+      expect(await retryRows()).toEqual(on ? [] : [{ entityId: 1, data }]);
+    });
+  });
+
+  it('retry: a held takedown whose persist failed is retried, persisted and purged', async () => {
+    retractFlag(false);
+    heldDenyOk.add(u(1));
+    await image(1);
+    await moderatorBlock(1);
+    // The deny lands; its persist fails every attempt.
+    scripted = [202, 500, 500, 500];
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(purged).toEqual([]);
+    expect(await retryRows()).toEqual([
+      expect.objectContaining({
+        entityId: 1,
+        data: expect.objectContaining({ url: u(1), retract: false, purgeEdge: true }),
+      }),
+    ]);
+
+    calls.length = 0;
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, sent: 1, skipped: 0 });
+    expect(calls.map((c) => c.path)).toEqual([`/admin/invalidate?imageKey=${u(1)}&persist=true`]);
+    expect(purged).toHaveLength(1);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('retry: a held takedown restored since is still dropped', async () => {
+    retractFlag(false);
+    heldDenyOk.add(u(1));
+    await image(1);
+    await moderatorBlock(1);
+    scripted = [202, 500, 500, 500];
+    await syncCdnAccess();
+    await acceptImage(1);
+    await syncCdnAccess();
+    expect(await retryRows()).toHaveLength(1);
+
+    calls.length = 0;
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, skipped: 1 });
+    expect(calls).toEqual([]);
     expect(await retryRows()).toEqual([]);
   });
 });

@@ -232,6 +232,8 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
   CDN_ACCESS_SYNC = 'cdn-access-sync',
+  // Lets that sync go past a deny to a retraction. Off (or unreadable): deny-only.
+  CDN_ACCESS_RETRACT = 'cdn-access-retract',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.

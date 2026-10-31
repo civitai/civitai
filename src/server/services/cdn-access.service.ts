@@ -5,6 +5,7 @@ import { BlockedReason } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { uniq } from 'lodash-es';
 import { CloudflarePurgeBusyError, purgeUrlsOrThrow } from '~/server/cloudflare/client';
@@ -636,17 +637,48 @@ export function plannedCall(
 }
 
 /**
+ * Whether retractions may be sent, read once per run. Off, or unreadable: every change stops at a
+ * deny.
+ */
+const retractEnabled = () => isFlipt(FLIPT_FEATURE_FLAGS.CDN_ACCESS_RETRACT);
+
+/** A url that would be retracted, held at a deny because retractions are off. */
+function heldAtDeny(facts: UrlAccessFacts | undefined, retractOn: boolean) {
+  return !retractOn && !!facts && desiredUrlAccess(facts) === 'retract';
+}
+
+/**
  * The call a url needs, or null. A url with no image rows and no moderator delete was deleted
  * through the normal path, which invalidates on its own; whatever was asserted earlier stays until
  * the reconciler drops it.
+ *
+ * With retractions off a url that would be retracted gets a deny instead. `redeny` sends that deny
+ * again to a url already denied, so it goes out persistent and purged like any held takedown.
  */
-function callFor(url: string, facts: UrlAccessFacts | undefined, current: StateRow | undefined) {
+function callFor(
+  url: string,
+  facts: UrlAccessFacts | undefined,
+  current: StateRow | undefined,
+  { retractOn, redeny = false }: { retractOn: boolean; redeny?: boolean }
+) {
   if (!cdnImageKey(url)) return null;
   if (!facts || (!facts.images.length && !facts.deletes.length)) return null;
-  return plannedCall(desiredUrlAccess(facts), current?.state);
+  if (!heldAtDeny(facts, retractOn)) return plannedCall(desiredUrlAccess(facts), current?.state);
+  if (redeny && current?.state === 'Denied') return 'deny';
+  return plannedCall('deny', current?.state);
 }
 
-async function applyCall(url: string, call: CdnCall, gate: RetractionGate, claim: UrlClaim) {
+/**
+ * `heldTakedown`: a deny standing in for a retraction. It gets the persist and edge purge the
+ * retraction would have had.
+ */
+async function applyCall(
+  url: string,
+  call: CdnCall,
+  gate: RetractionGate,
+  claim: UrlClaim,
+  heldTakedown = false
+) {
   await callCdnAccess(url, call, { gate, beforeSend: claim.renew });
   if (call === 'allow') {
     await dbWrite.$executeRaw`DELETE FROM "ImageCdnAccess" WHERE url = ${url}`;
@@ -662,7 +694,7 @@ async function applyCall(url: string, call: CdnCall, gate: RetractionGate, claim
       "lastAssertedAt" = now()
   `;
   // After the state is recorded: the takedown stands whether or not this lands.
-  if (call === 'retract')
+  if (call === 'retract' || (call === 'deny' && heldTakedown))
     await sendTakedownPersistOrRetry(url, { retract: false, purgeEdge: true });
 }
 
@@ -1012,8 +1044,10 @@ export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}
   };
   const gate = newRetractionGate();
   const purges: PurgeBudget = { left: env.CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN, busy: false };
+  const retractOn = await retractEnabled();
+  // With retractions off, rows that resend one are not selected: they stay queued as they are.
   await Promise.all(
-    [false, true].map(async (retract) => {
+    (retractOn ? [false, true] : [false]).map(async (retract) => {
       // Compared as text: casting a label the database does not know yet throws.
       const rows = await dbWrite.$queryRaw<{ entityId: number; data: PersistRetryRow | null }[]>`
         SELECT "entityId", data FROM "JobQueue"
@@ -1026,7 +1060,7 @@ export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}
       `;
       totals.queued += rows.length;
       await limitConcurrency(
-        rows.map((row) => () => retryTakedownPersist(row, gate, purges, totals)),
+        rows.map((row) => () => retryTakedownPersist(row, gate, purges, totals, retractOn)),
         CALL_CONCURRENCY
       );
     })
@@ -1041,9 +1075,17 @@ async function retryTakedownPersist(
   row: { entityId: number; data: PersistRetryRow | null },
   gate: RetractionGate,
   purges: PurgeBudget,
-  totals: RetryTotals
+  totals: RetryTotals,
+  retractOn: boolean
 ) {
   const data = row.data;
+  // With retractions off, a takedown held at a deny records `Denied`, so its persist still stands
+  // while the url is denied and its rows still ask for a retraction.
+  const heldDenyStands = async (url: string) => {
+    if (retractOn) return false;
+    const [state, facts] = await Promise.all([loadState([url]), loadFacts([url])]);
+    return state.get(url)?.state === 'Denied' && heldAtDeny(facts.get(url), retractOn);
+  };
   const matchRow = Prisma.sql`
     type::text = ${JobQueueType.ImageCdnPersistRetry}
     AND "entityType" = ${EntityType.Image}::"EntityType"
@@ -1069,7 +1111,8 @@ async function retryTakedownPersist(
         // belongs to went through, and that delete refuses a held image. An image the delete kept is
         // still there, so it never gets one here, whatever the row says; at most its deny persists.
         const retract = data.retract === true && !!facts?.gone;
-        if (!data.purgeOnly && !retract && !facts?.denyStands) return 'skipped' as const;
+        if (!data.purgeOnly && !retract && !facts?.denyStands && !(await heldDenyStands(url)))
+          return 'skipped' as const;
         if (data.purgeEdge) {
           if (purges.busy || purges.left <= 0) return 'held' as const;
           purges.left--;
@@ -1316,14 +1359,18 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   // After a 429 or a timeout the rest of the run's retractions wait for the next run; denies and
   // lifts still go.
   const gate = newRetractionGate();
-  const planned = urls.filter((url) => callFor(url, facts.get(url), state.get(url)));
+  const retractOn = await retractEnabled();
+  // A url held at a deny is denied again once from here, so it is persisted and purged even when an
+  // earlier plain deny already stands.
+  const plan = { retractOn, redeny: true };
+  const planned = urls.filter((url) => callFor(url, facts.get(url), state.get(url), plan));
   await limitConcurrency(
     planned.map((url) => async () => {
       let call: CdnCall | null = null;
       try {
         const result = await withUrlClaim(url, async (claim) => {
           const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
-          call = callFor(url, fresh.get(url), freshState.get(url));
+          call = callFor(url, fresh.get(url), freshState.get(url), plan);
           if (!call) return;
           if (call === 'retract' && retractsLeft-- <= 0) {
             deferred.add(url);
@@ -1332,7 +1379,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           }
           calls++;
           if (call === 'retract') retracts++;
-          await applyCall(url, call, gate, claim);
+          await applyCall(url, call, gate, claim, heldAtDeny(fresh.get(url), retractOn));
         });
         if (!result.claimed) pending.add(url);
       } catch (error) {
@@ -1488,12 +1535,14 @@ export async function reconcileCdnAccess({
     leftToSync: 0,
   };
   const gate = newRetractionGate();
+  // Off: a deny is never upgraded here.
+  const retractOn = await retractEnabled();
   const stepFor = (
     row: StateRow,
     facts: UrlAccessFacts | undefined,
     canReassert: boolean
   ): ReconcileStep | null =>
-    callFor(row.url, facts, row) ??
+    callFor(row.url, facts, row, { retractOn }) ??
     (row.lastAssertedAt < reassertBefore && canReassert ? 'reassert' : null);
 
   let after = '';
