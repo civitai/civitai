@@ -1,17 +1,12 @@
 import {
-  APP_COVER_MODEL,
   COVER_LISTING_UNREADABLE,
-  COVER_NO_APP,
   COVER_NO_LISTING,
-  COVER_NOT_GENERATED,
-  COVER_ON_DRAFT,
-  COVER_ON_LISTING_IN_REVIEW,
-  COVER_SCAN_PENDING,
+  COVER_PRICE_UNREADABLE,
   GENERATE_APP_COVER,
-  coverNotAttached,
+  appCoverWorkflow,
   createCoverArt,
   type CoverListing,
-  type CoverOrchestration,
+  type CoverOffer,
 } from '@civitai/app-assistant';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -19,218 +14,65 @@ import {
   COVER_PATH,
   CivitaiCovers,
   CoverRefusedError,
-  CoverWorkflows,
-  coverMaybeNotAttached,
-  runnerCoverOrchestration,
+  runnerCoverEstimator,
   runnerCoverTools,
   type CoverListings,
 } from '../app-assistant/cover';
-import { OrchestrationClient, OrchestrationError } from '../orchestration';
+import { OrchestrationClient } from '../orchestration';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
 // TEST-ONLY placeholders: never real credentials or hosts.
 const CIVITAI = 'https://civitai.example';
 const SECRET = 'test-only-runner-secret-cover';
 const GRANT = 'test-only-grant-cover';
-const IMAGE_URL = 'https://orchestration.example/blobs/cover-unit.jpeg';
-// Pairwise distinct: no app key, listing id or status equals another.
+const ORCHESTRATION = 'https://orchestration.example';
+// Pairwise distinct: no app key, listing id, price or seed equals another.
 const APP = 'tip-calculator';
 const LISTING: CoverListing = { listingId: 'apl_31', blockedReason: null, status: 'approved' };
+const PRICE = 29;
 
-/** Each one a mock, overridden or not, so a test reads its calls. */
-function listings(overrides: Partial<Record<keyof CoverListings, ReturnType<typeof vi.fn>>> = {}) {
-  return {
-    listing: vi.fn(
-      async (_app: string, _signal?: AbortSignal): Promise<CoverListing | null> => LISTING
-    ),
-    attach: vi.fn(async (_input: { app: string; listingId: string; url: string }) => ({
-      scanPending: true,
-    })),
-    ...overrides,
-  };
-}
-
-function orchestration(
-  overrides: Partial<{
-    submitWorkflow: ReturnType<typeof vi.fn>;
-    waitForWorkflow: ReturnType<typeof vi.fn>;
-    cancelWorkflow: ReturnType<typeof vi.fn>;
-  }> = {}
-) {
-  return {
-    submitWorkflow: vi.fn(async () => ({ id: 'wf_31', status: 'submitted' })),
-    waitForWorkflow: vi.fn(async () => ({
-      id: 'wf_31',
-      status: 'succeeded',
-      steps: [{ output: { images: [{ url: IMAGE_URL, available: true }] } }],
-    })),
-    cancelWorkflow: vi.fn(async () => undefined),
-    ...overrides,
-  };
-}
-
-function setup({
-  app = APP as string | null,
-  listing = listings(),
-  client = orchestration(),
-}: {
-  app?: string | null;
-  listing?: ReturnType<typeof listings>;
-  client?: ReturnType<typeof orchestration>;
-} = {}) {
+function setup(listing: CoverListing | null = LISTING) {
+  const listings = { listing: vi.fn(async (_app: string, _signal?: AbortSignal) => listing) };
+  const estimator = { estimateWorkflow: vi.fn(async () => ({ cost: { total: PRICE } })) };
   const tool = runnerCoverTools({
-    currentApp: () => app,
-    // Untyped mocks (so a test can swap any of them): their shapes are the tests' own.
-    listings: listing as unknown as CoverListings,
-    orchestration: client as unknown as CoverOrchestration,
-    newId: () => 'n31',
+    currentApp: () => APP,
+    listings: listings as CoverListings,
+    estimator,
+    nextId: () => 'run-1-cover-1',
     seed: () => 31,
   })[GENERATE_APP_COVER]!;
-  const call = (input: Record<string, unknown>, signal?: AbortSignal) =>
-    Promise.resolve(
-      (tool.execute as (i: Record<string, unknown>, c?: { signal?: AbortSignal }) => unknown)(
-        input,
-        signal ? { signal } : undefined
-      )
-    );
-  return { tool, call, listing, client };
+  return {
+    tool,
+    listings,
+    estimator,
+    call: (input: Record<string, unknown>) => Promise.resolve(tool.execute(input)),
+  };
 }
 
-describe('generate_app_cover on the runner: the page’s own tool', () => {
+describe('generate_app_cover on the runner: the page’s own tool, offering only', () => {
   it('is the shared tool, with the same description and input', () => {
     const { tool } = setup();
     const shared = createCoverArt({
       currentApp: () => null,
       listing: async () => null,
-      generate: async () => '',
-      attach: async () => ({ scanPending: false }),
+      price: async () => 0,
+      nextId: () => '',
     })[GENERATE_APP_COVER]!;
     expect(tool.description).toBe(shared.description);
     expect(tool.inputSchema).toEqual(shared.inputSchema);
-    expect(tool.activity).toBe(shared.activity);
   });
 
-  it('reads the listing, generates the fixed recipe, and attaches it to that listing', async () => {
-    const { call, listing, client } = setup();
-    const result = await call({ prompt: 'a calculator on a desk', model: 'urn:air:other' });
-    expect(listing.listing.mock.calls[0]![0]).toBe(APP);
-    const workflow = client.submitWorkflow.mock.calls[0]![0] as {
-      steps: { input: { model: string; prompt: string; seed: number } }[];
-      externalId: string;
-    };
-    expect(workflow.steps[0]!.input).toMatchObject({
-      model: APP_COVER_MODEL,
-      prompt: 'a calculator on a desk',
-      seed: 31,
-    });
-    expect(workflow.externalId).toBe('app-cover-n31');
-    expect(listing.attach.mock.calls[0]![0]).toEqual({
-      app: APP,
-      listingId: LISTING.listingId,
-      url: IMAGE_URL,
-    });
-    expect(result).toEqual({ attached: true, note: `${COVER_ON_DRAFT} ${COVER_SCAN_PENDING}` });
+  it('offers the cover with orchestration’s price for the fixed recipe', async () => {
+    const { call, estimator } = setup();
+    const offer = (await call({ prompt: 'a calculator' })) as CoverOffer;
+    expect(estimator.estimateWorkflow).toHaveBeenCalledWith(appCoverWorkflow('a calculator', 31));
+    expect(offer).toMatchObject({ coverOffer: 'run-1-cover-1', buzz: PRICE, seed: 31 });
   });
 
-  it('says a listing under review shows it once approved', async () => {
-    const { call } = setup({
-      listing: listings({
-        listing: vi.fn(async () => ({ ...LISTING, status: 'pending' })),
-        attach: vi.fn(async () => ({ scanPending: false })),
-      }),
-    });
-    expect(await call({ prompt: 'a' })).toEqual({
-      attached: true,
-      note: COVER_ON_LISTING_IN_REVIEW,
-    });
-  });
-});
-
-describe('generate_app_cover on the runner: nothing is spent when there is nothing to put it on', () => {
-  it('generates nothing for an app with no listing, and says so', async () => {
-    const { call, client, listing } = setup({
-      listing: listings({ listing: vi.fn(async () => null) }),
-    });
+  it('prices nothing, and offers nothing, for an app with no listing', async () => {
+    const { call, estimator } = setup(null);
     await expect(call({ prompt: 'a' })).rejects.toThrow(COVER_NO_LISTING);
-    expect(client.submitWorkflow).not.toHaveBeenCalled();
-    expect(listing.attach).not.toHaveBeenCalled();
-  });
-
-  it('generates nothing for a listing whose media cannot be edited, saying why', async () => {
-    const reason = 'This listing is locked while a moderator reviews it.';
-    const { call, client } = setup({
-      listing: listings({ listing: vi.fn(async () => ({ ...LISTING, blockedReason: reason })) }),
-    });
-    await expect(call({ prompt: 'a' })).rejects.toThrow(reason);
-    expect(client.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('generates nothing with no app open, or an app key that is no listing slug', async () => {
-    for (const app of [null, 'Not A Slug']) {
-      const { call, client, listing } = setup({ app });
-      await expect(call({ prompt: 'a' })).rejects.toThrow(COVER_NO_APP);
-      expect(listing.listing).not.toHaveBeenCalled();
-      expect(client.submitWorkflow).not.toHaveBeenCalled();
-    }
-  });
-
-  it('generates nothing when the listing cannot be read', async () => {
-    const { call, client } = setup({
-      listing: listings({
-        listing: vi.fn(async () => {
-          throw new CoverRefusedError(COVER_LISTING_UNREADABLE, 503, 'unavailable');
-        }),
-      }),
-    });
-    await expect(call({ prompt: 'a' })).rejects.toThrow(COVER_LISTING_UNREADABLE);
-    expect(client.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('stops the run, and attaches nothing, when the user stops the reply while it generates', async () => {
-    const stop = new AbortController();
-    const stopped = new DOMException('Aborted', 'AbortError');
-    const client = orchestration({
-      waitForWorkflow: vi.fn(async () => {
-        stop.abort();
-        throw stopped;
-      }),
-    });
-    const { call, listing } = setup({ client });
-    await expect(call({ prompt: 'a' }, stop.signal)).rejects.toBe(stopped);
-    expect(client.cancelWorkflow).toHaveBeenCalledWith('wf_31');
-    expect(listing.attach).not.toHaveBeenCalled();
-  });
-
-  it('names the paid-for image when civitai refuses to attach it', async () => {
-    const reason = 'cover must be landscape';
-    const { call } = setup({
-      listing: listings({
-        attach: vi.fn(async () => {
-          throw new CoverRefusedError(reason, 422, 'not_attached');
-        }),
-      }),
-    });
-    await expect(call({ prompt: 'a' })).rejects.toThrow(coverNotAttached(reason, IMAGE_URL));
-  });
-
-  // No answer from civitai (a timeout, unreachable, a 5xx): it may have attached, so the user is
-  // told to look before making another, not that it failed.
-  it('says the cover may be on the listing when civitai did not confirm the attach', async () => {
-    for (const error of [
-      new CoverRefusedError('Civitai could not be reached just now.', 503, 'unavailable'),
-      new DOMException('The operation timed out.', 'TimeoutError'),
-    ]) {
-      const { call } = setup({
-        listing: listings({
-          attach: vi.fn(async () => {
-            throw error;
-          }),
-        }),
-      });
-      const attempt = call({ prompt: 'a' });
-      await expect(attempt).rejects.toThrow(coverMaybeNotAttached(IMAGE_URL));
-      await expect(attempt).rejects.not.toThrow('could not be put on your listing');
-    }
+    expect(estimator.estimateWorkflow).not.toHaveBeenCalled();
   });
 });
 
@@ -247,7 +89,7 @@ function answering(status: number, body: unknown) {
   return { doFetch, sent };
 }
 
-describe('civitai’s cover endpoints, as the run’s user', () => {
+describe('civitai’s cover listing read, as the run’s user', () => {
   const covers = (doFetch: typeof fetch, grant: string | null = GRANT) =>
     new CivitaiCovers({
       civitaiUrl: `${CIVITAI}/`,
@@ -273,23 +115,11 @@ describe('civitai’s cover endpoints, as the run’s user', () => {
     ).rejects.toThrow(COVER_LISTING_UNREADABLE);
   });
 
-  it('attaches to the listing it names for the app, and reports the scan', async () => {
-    const { doFetch, sent } = answering(200, { scanPending: true });
-    const input = { app: APP, listingId: LISTING.listingId, url: IMAGE_URL };
-    expect(await covers(doFetch).attach(input)).toEqual({ scanPending: true });
-    expect(sent[0]!.url).toBe(`${CIVITAI}/${COVER_PATH}/attach`);
-    expect(JSON.parse(String(sent[0]!.init.body))).toEqual({ grant: GRANT, ...input });
-  });
-
   it('passes on civitai’s refusal in its own words', async () => {
-    const { doFetch } = answering(404, { error: COVER_NO_LISTING, code: 'NOT_FOUND' });
-    const attempt = covers(doFetch).attach({ app: APP, listingId: 'apl_other', url: IMAGE_URL });
+    const { doFetch } = answering(403, { error: 'Apps authoring is off.', code: 'FORBIDDEN' });
+    const attempt = covers(doFetch).listing(APP);
     await expect(attempt).rejects.toBeInstanceOf(CoverRefusedError);
-    await expect(attempt).rejects.toMatchObject({
-      message: COVER_NO_LISTING,
-      status: 404,
-      code: 'NOT_FOUND',
-    });
+    await expect(attempt).rejects.toMatchObject({ message: 'Apps authoring is off.', status: 403 });
   });
 
   it('asks nothing without a live grant', async () => {
@@ -301,198 +131,52 @@ describe('civitai’s cover endpoints, as the run’s user', () => {
   });
 });
 
-describe('the cover’s orchestration on the run’s chat token', () => {
-  it('submits on the chat token and says what orchestration refused it with', async () => {
-    const seen: { url: string; auth: string | null }[] = [];
+describe('the cover’s price on the run’s chat token', () => {
+  it('asks orchestration’s what-if on the chat token, and submits nothing', async () => {
+    const seen: { url: string; method?: string; auth: string | null }[] = [];
     const doFetch = (async (url: string | URL | Request, init?: RequestInit) => {
-      seen.push({ url: String(url), auth: new Headers(init?.headers).get('authorization') });
-      return new Response(JSON.stringify({ detail: 'Not enough Buzz for this.' }), { status: 400 });
+      seen.push({
+        url: String(url),
+        ...(init?.method ? { method: init.method } : {}),
+        auth: new Headers(init?.headers).get('authorization'),
+      });
+      return new Response(JSON.stringify({ cost: { total: PRICE } }), { status: 200 });
     }) as typeof fetch;
-    const client = runnerCoverOrchestration(
-      new OrchestrationClient('https://orchestration.example', doFetch),
+    const estimator = runnerCoverEstimator(
+      new OrchestrationClient(ORCHESTRATION, doFetch),
       async (purpose) => `test-token-${purpose}`
     );
-    const workflow = { steps: [] as never, externalId: 'app-cover-x' };
-    await expect(client.submitWorkflow(workflow as never)).rejects.toThrow(
-      'Not enough Buzz for this.'
-    );
-    expect(seen[0]!.url).toBe('https://orchestration.example/v2/consumer/workflows');
-    expect(seen[0]!.auth).toBe('Bearer test-token-chat');
-  });
-
-  it('waits until the workflow ends', async () => {
-    const reads = [
-      { status: 'processing' },
-      { status: 'processing' },
-      { status: 'succeeded', steps: [] },
-    ];
-    const getWorkflow = vi.fn(async () => reads.shift()!);
-    const client = runnerCoverOrchestration(
-      { submitWorkflow: vi.fn(), getWorkflow, cancelWorkflow: vi.fn() } as never,
-      async () => 'test-token',
-      { pollMs: 1 }
-    );
-    expect(await client.waitForWorkflow('wf_31')).toMatchObject({ status: 'succeeded' });
-    expect(getWorkflow).toHaveBeenCalledTimes(3);
-  });
-
-  it('gives up, and cancels the run, once it has waited too long', async () => {
-    const cancelWorkflow = vi.fn(async () => undefined);
-    const client = runnerCoverOrchestration(
+    expect(await estimator.estimateWorkflow(appCoverWorkflow('a', 1))).toEqual({
+      cost: { total: PRICE },
+    });
+    expect(seen).toEqual([
       {
-        submitWorkflow: vi.fn(),
-        getWorkflow: vi.fn(async () => ({ status: 'processing' })),
-        cancelWorkflow,
-      } as never,
-      async () => 'test-token',
-      { maxWaitMs: 5, pollMs: 2 }
-    );
-    await expect(client.waitForWorkflow('wf_slow')).rejects.toThrow(COVER_NOT_GENERATED);
-    expect(cancelWorkflow).toHaveBeenCalledWith(expect.any(Function), 'wf_slow');
-  });
-
-  /** The orchestration client with `getWorkflow` answering each of `reads` in turn (an Error throws). */
-  function reading(reads: unknown[]) {
-    const getWorkflow = vi.fn(async () => {
-      const next = reads.shift();
-      if (next instanceof Error) throw next;
-      return next;
-    });
-    const cancelWorkflow = vi.fn(async () => undefined);
-    const client = runnerCoverOrchestration(
-      { submitWorkflow: vi.fn(), getWorkflow, cancelWorkflow } as never,
-      async () => 'test-token',
-      { pollMs: 1, backoffMs: [1, 1, 1] }
-    );
-    return { client, getWorkflow, cancelWorkflow };
-  }
-
-  it('reads again through a passing failure (429, 5xx, no answer) and cancels nothing', async () => {
-    const { client, getWorkflow, cancelWorkflow } = reading([
-      new OrchestrationError(503, 'orchestration answered 503'),
-      new OrchestrationError(429, 'orchestration answered 429'),
-      new TypeError('fetch failed'),
-      { status: 'succeeded', steps: [] },
-    ]);
-    expect(await client.waitForWorkflow('wf_blip')).toMatchObject({ status: 'succeeded' });
-    expect(getWorkflow).toHaveBeenCalledTimes(4);
-    expect(cancelWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('cancels the paid run and says it was not made when a read is refused outright', async () => {
-    for (const status of [401, 404]) {
-      const { client, getWorkflow, cancelWorkflow } = reading([
-        new OrchestrationError(status, `orchestration answered ${status} to GET`),
-        { status: 'succeeded', steps: [] },
-      ]);
-      await expect(client.waitForWorkflow('wf_gone')).rejects.toThrow(COVER_NOT_GENERATED);
-      // Not asked again: a refusal does not pass.
-      expect(getWorkflow).toHaveBeenCalledTimes(1);
-      expect(cancelWorkflow).toHaveBeenCalledWith(expect.any(Function), 'wf_gone');
-    }
-  });
-
-  it('cancels the paid run and says it was not made once passing failures outlast the retries', async () => {
-    const down = () => new OrchestrationError(502, 'orchestration answered 502 to GET');
-    const { client, getWorkflow, cancelWorkflow } = reading([
-      down(),
-      down(),
-      down(),
-      down(),
-      { status: 'succeeded', steps: [] },
-    ]);
-    await expect(client.waitForWorkflow('wf_down')).rejects.toThrow(COVER_NOT_GENERATED);
-    // The first read and one per backoff step, then it gives up.
-    expect(getWorkflow).toHaveBeenCalledTimes(4);
-    expect(cancelWorkflow).toHaveBeenCalledWith(expect.any(Function), 'wf_down');
-  });
-
-  it('leaves a Stop as it is (the shared generate cancels on a Stop)', async () => {
-    const stop = new AbortController();
-    const stopped = new DOMException('Aborted', 'AbortError');
-    const getWorkflow = vi.fn(async () => {
-      stop.abort();
-      throw stopped;
-    });
-    const cancelWorkflow = vi.fn(async () => undefined);
-    const client = runnerCoverOrchestration(
-      { submitWorkflow: vi.fn(), getWorkflow, cancelWorkflow } as never,
-      async () => 'test-token'
-    );
-    await expect(client.waitForWorkflow('wf_stop', { signal: stop.signal })).rejects.toBe(stopped);
-    expect(cancelWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('says the cover was not made, never orchestration’s status line, on a refusal with no detail', async () => {
-    for (const thrown of [
-      new OrchestrationError(400, 'orchestration answered 400 to POST v2/consumer/workflows'),
-      new TypeError('fetch failed'),
-    ]) {
-      const client = runnerCoverOrchestration(
-        {
-          submitWorkflow: vi.fn(async () => {
-            throw thrown;
-          }),
-          getWorkflow: vi.fn(),
-          cancelWorkflow: vi.fn(),
-        } as never,
-        async () => 'test-token'
-      );
-      const attempt = client.submitWorkflow({ steps: [] as never });
-      await expect(attempt).rejects.toThrow(COVER_NOT_GENERATED);
-      await expect(attempt).rejects.not.toThrow('orchestration answered');
-    }
-  });
-});
-
-describe('the cover workflows still running when the process stops', () => {
-  function inner() {
-    let finish: (value: unknown) => void = () => undefined;
-    const done = new Promise((resolve) => (finish = resolve));
-    return {
-      orchestration: {
-        submitWorkflow: vi.fn(async () => ({ id: 'wf_live', status: 'submitted' })),
-        waitForWorkflow: vi.fn(async () => (await done) as never),
-        cancelWorkflow: vi.fn(async () => undefined),
+        url: `${ORCHESTRATION}/v2/consumer/workflows?whatif=true`,
+        method: 'POST',
+        auth: 'Bearer test-token-chat',
       },
-      finish: () => finish({ id: 'wf_live', status: 'succeeded' }),
-    };
-  }
-
-  it('cancels a cover still generating at shutdown', async () => {
-    const workflows = new CoverWorkflows(quiet);
-    const { orchestration } = inner();
-    const tracked = workflows.track(orchestration as unknown as CoverOrchestration);
-    await tracked.submitWorkflow({ steps: [] as never });
-    void tracked.waitForWorkflow('wf_live');
-    expect(workflows.size).toBe(1);
-    expect(await workflows.cancelAll(1_000)).toBe(1);
-    expect(orchestration.cancelWorkflow).toHaveBeenCalledWith('wf_live');
+    ]);
   });
 
-  it('cancels nothing that already finished (the control: the count does move)', async () => {
-    const workflows = new CoverWorkflows(quiet);
-    const { orchestration, finish } = inner();
-    const tracked = workflows.track(orchestration as unknown as CoverOrchestration);
-    await tracked.submitWorkflow({ steps: [] as never });
-    const waiting = tracked.waitForWorkflow('wf_live');
-    expect(workflows.size).toBe(1);
-    finish();
-    await waiting;
-    expect(workflows.size).toBe(0);
-    expect(await workflows.cancelAll(1_000)).toBe(0);
-    expect(orchestration.cancelWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('does not hold the shutdown past its bound on a cancel that never answers', async () => {
-    const workflows = new CoverWorkflows(quiet);
-    const { orchestration } = inner();
-    orchestration.cancelWorkflow.mockImplementation(() => new Promise<undefined>(() => undefined));
-    const tracked = workflows.track(orchestration as unknown as CoverOrchestration);
-    await tracked.submitWorkflow({ steps: [] as never });
-    void tracked.waitForWorkflow('wf_live');
-    const started = Date.now();
-    expect(await workflows.cancelAll(20)).toBe(1);
-    expect(Date.now() - started).toBeLessThan(1_000);
+  it('offers nothing when orchestration will not price it', async () => {
+    const doFetch = (async () =>
+      new Response(JSON.stringify({ detail: 'nope' }), { status: 400 })) as typeof fetch;
+    const { tool } = (() => {
+      const listings = { listing: vi.fn(async () => LISTING) };
+      return {
+        tool: runnerCoverTools({
+          currentApp: () => APP,
+          listings: listings as unknown as CoverListings,
+          estimator: runnerCoverEstimator(
+            new OrchestrationClient(ORCHESTRATION, doFetch),
+            async () => 'test-token'
+          ),
+          nextId: () => 'x',
+        })[GENERATE_APP_COVER]!,
+      };
+    })();
+    await expect(Promise.resolve(tool.execute({ prompt: 'a' }))).rejects.toThrow(
+      COVER_PRICE_UNREADABLE
+    );
   });
 });

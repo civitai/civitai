@@ -4,132 +4,118 @@ import type {
   CoverArtDeps,
   CoverListing,
   CoverListingApi,
-  CoverOrchestration,
+  CoverOffer,
+  CoverPressDeps,
   ListingForCover,
+  PageCoverOrchestration,
 } from '~/components/Apps/AppAssistant/coverArt';
 import {
   APP_COVER_HEIGHT,
   APP_COVER_MODEL,
   APP_COVER_PROMPT_MAX,
   APP_COVER_WIDTH,
+  COVER_LISTING_CHANGED,
   COVER_LISTING_UNREADABLE,
   COVER_NO_APP,
   COVER_NO_LISTING,
   COVER_NO_PROMPT,
   COVER_NOT_GENERATED,
+  COVER_ON_DRAFT,
+  COVER_ON_LISTING_IN_REVIEW,
+  COVER_PRICE_UNREADABLE,
+  COVER_SCAN_PENDING,
   GENERATE_APP_COVER,
   appCoverWorkflow,
+  coverMaybeNotAttached,
   coverNotAttached,
-  createBrowserCoverArtDeps,
+  coverOfferOf,
+  coverWorkflowFor,
+  createBrowserCoverDeps,
   createCoverArt,
+  makeOfferedCover,
 } from '~/components/Apps/AppAssistant/coverArt';
 import { validateListingImage } from '~/server/schema/blocks/app-listing.schema';
 
+/**
+ * `generate_app_cover` OFFERS a cover with its price and spends nothing; only a press on its card
+ * (`makeOfferedCover`) generates and attaches, as the user.
+ */
+
 const LISTING: CoverListing = { listingId: 'apl_1', blockedReason: null, status: 'approved' };
 const IMAGE_URL = 'https://orchestration.example/blobs/cover.jpeg';
+// Pairwise distinct: no price equals a seed, an id or a count used here.
+const PRICE = 37;
+const SEED = 4242;
 
 function setup(overrides: Partial<CoverArtDeps> = {}) {
   let app: string | null = 'tip-calculator';
   let ids = 0;
+  // A generate the tool must never reach: it is not one of its deps, and a call here is a spend.
+  const generate = vi.fn(async (_w: AppCoverWorkflow) => IMAGE_URL);
   const deps = {
     currentApp: () => app,
     listing: vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING),
-    generate: vi.fn(async (_w: AppCoverWorkflow, _s?: AbortSignal) => IMAGE_URL),
-    attach: vi.fn(async (_id: string, _url: string) => ({ scanPending: true })),
-    newId: () => `c${++ids}`,
-    seed: () => 4242,
+    price: vi.fn(async (_w: AppCoverWorkflow) => PRICE),
+    nextId: () => `o${++ids}`,
+    seed: () => SEED,
     ...overrides,
   };
-  const tool = createCoverArt(deps)[GENERATE_APP_COVER]!;
+  const tool = createCoverArt({ ...deps, generate } as CoverArtDeps)[GENERATE_APP_COVER]!;
   const call = (input: Record<string, unknown>) => Promise.resolve(tool.execute(input));
-  return { deps, call, setApp: (next: string | null) => (app = next) };
+  return { deps, call, generate, setApp: (next: string | null) => (app = next) };
 }
 
-describe('generate_app_cover: the one recipe it can run', () => {
-  it('generates the fixed cover recipe, whatever else the call asks for', async () => {
+describe('generate_app_cover: an offer, never a spend', () => {
+  it('generates nothing: it reads the listing, prices the cover and offers it', async () => {
+    const { deps, call, generate } = setup();
+    const offer = (await call({ prompt: '  a calculator on a sunny desk  ' })) as CoverOffer;
+    expect(generate).not.toHaveBeenCalled();
+    expect(deps.listing).toHaveBeenCalledWith('tip-calculator', undefined);
+    expect(deps.price).toHaveBeenCalledTimes(1);
+    expect(offer).toMatchObject({
+      awaitsUser: true,
+      coverOffer: 'o1',
+      app: 'tip-calculator',
+      listingId: 'apl_1',
+      listingStatus: 'approved',
+      prompt: 'a calculator on a sunny desk',
+      seed: SEED,
+      buzz: PRICE,
+    });
+    expect(offer.note).toContain(`about ${PRICE} Buzz`);
+    expect(offer.note).toContain('Nothing is generated or spent until they press it');
+  });
+
+  it('prices the fixed recipe, whatever else the call asks for', async () => {
     const { deps, call } = setup();
     await call({
-      prompt: '  a calculator on a sunny desk  ',
+      prompt: 'a calculator',
       model: 'urn:air:other',
       width: 64,
       steps: [{ $type: 'videoGen' }],
-      externalId: 'model-chosen',
     });
-    expect(deps.generate).toHaveBeenCalledTimes(1);
-    expect(deps.generate.mock.calls[0]![0]).toEqual({
-      steps: [
-        {
-          $type: 'textToImage',
-          input: {
-            model: APP_COVER_MODEL,
-            prompt: 'a calculator on a sunny desk',
-            negativePrompt: expect.any(String),
-            width: APP_COVER_WIDTH,
-            height: APP_COVER_HEIGHT,
-            steps: 25,
-            cfgScale: 7,
-            seed: 4242,
-            quantity: 1,
-            outputFormat: 'jpeg',
-          },
-        },
-      ],
-      externalId: 'app-cover-c1',
-    });
-  });
-
-  it('gives every call its own idempotency key', async () => {
-    const { deps, call } = setup();
-    await call({ prompt: 'a calculator' });
-    await call({ prompt: 'a calculator' });
-    expect(deps.generate.mock.calls.map(([w]) => w.externalId)).toEqual([
-      'app-cover-c1',
-      'app-cover-c2',
-    ]);
-  });
-
-  it('generates, then attaches the result to the listing', async () => {
-    const { deps, call } = setup();
-    const done = await call({ prompt: 'a calculator' });
-    expect(done).toMatchObject({ attached: true });
-    // The app goes too: the server runner's attach re-reads that app's listing to check ownership.
-    expect(deps.attach).toHaveBeenCalledWith('apl_1', IMAGE_URL, 'tip-calculator');
-  });
-
-  // `setCover` puts an approved listing's cover on its draft revision and a draft's in place:
-  // neither is in the store until submitted, so the note must not say it is.
-  it('says the cover is on the draft for a listing not under review', async () => {
-    for (const status of ['approved', 'draft']) {
-      const { call } = setup({
-        listing: vi.fn(async () => ({ ...LISTING, status })),
-        attach: vi.fn(async () => ({ scanPending: false })),
-      });
-      expect(await call({ prompt: 'a calculator' })).toEqual({
-        attached: true,
-        note: 'The cover was added to your listing draft. Submit the listing for review to publish it in the store.',
-      });
-    }
-  });
-
-  it('says a listing under review shows the cover once approved, and when it is still being checked', async () => {
-    const { call } = setup({ listing: vi.fn(async () => ({ ...LISTING, status: 'pending' })) });
-    expect(await call({ prompt: 'a calculator' })).toEqual({
-      attached: true,
-      note: 'The cover is on your listing, which is under review: it shows in the store once the listing is approved. The image is still being checked.',
-    });
+    expect(deps.price.mock.calls[0]![0]).toEqual(appCoverWorkflow('a calculator', SEED));
   });
 
   it('cuts the prompt to its cap', async () => {
-    const { deps, call } = setup();
-    await call({ prompt: 'x'.repeat(APP_COVER_PROMPT_MAX + 50) });
-    expect(deps.generate.mock.calls[0]![0].steps[0].input.prompt).toBe(
-      'x'.repeat(APP_COVER_PROMPT_MAX)
-    );
-    expect(APP_COVER_PROMPT_MAX).toBe(600);
+    const { call } = setup();
+    const offer = (await call({ prompt: 'x'.repeat(APP_COVER_PROMPT_MAX + 50) })) as CoverOffer;
+    expect(offer.prompt).toHaveLength(APP_COVER_PROMPT_MAX);
   });
 
-  // `setCover` runs `validateListingImage` on what was generated, so the recipe must pass it.
+  it('gives every offer its own id', async () => {
+    const { call } = setup();
+    const a = (await call({ prompt: 'a' })) as CoverOffer;
+    const b = (await call({ prompt: 'a' })) as CoverOffer;
+    expect([a.coverOffer, b.coverOffer]).toEqual(['o1', 'o2']);
+  });
+
   it('makes an image the cover check accepts', () => {
+    expect(appCoverWorkflow('a', 1).steps[0].input).toMatchObject({
+      model: APP_COVER_MODEL,
+      width: APP_COVER_WIDTH,
+      height: APP_COVER_HEIGHT,
+    });
     expect(
       validateListingImage(
         { type: 'image', width: APP_COVER_WIDTH, height: APP_COVER_HEIGHT, mimeType: 'image/jpeg' },
@@ -139,156 +125,229 @@ describe('generate_app_cover: the one recipe it can run', () => {
   });
 });
 
-describe('generate_app_cover: nothing is spent when there is nothing to put it on', () => {
-  it('generates nothing with no app open, or no prompt', async () => {
-    const noApp = setup();
-    noApp.setApp(null);
-    await expect(noApp.call({ prompt: 'a calculator' })).rejects.toThrow(COVER_NO_APP);
-    expect(noApp.deps.generate).not.toHaveBeenCalled();
-
-    const noPrompt = setup();
-    await expect(noPrompt.call({ prompt: '   ' })).rejects.toThrow(COVER_NO_PROMPT);
-    expect(noPrompt.deps.generate).not.toHaveBeenCalled();
+describe('generate_app_cover: no offer when there is nothing to put it on, or no price', () => {
+  it('offers nothing with no app open, or no prompt', async () => {
+    const s = setup();
+    s.setApp(null);
+    await expect(s.call({ prompt: 'a' })).rejects.toThrow(COVER_NO_APP);
+    s.setApp('tip-calculator');
+    await expect(s.call({ prompt: '   ' })).rejects.toThrow(COVER_NO_PROMPT);
+    expect(s.deps.listing).not.toHaveBeenCalled();
+    expect(s.deps.price).not.toHaveBeenCalled();
   });
 
-  it('generates nothing for an app with no listing, or one whose media cannot be edited', async () => {
+  it('offers nothing, and prices nothing, for an app with no listing or a locked one', async () => {
     const none = setup({ listing: vi.fn(async () => null) });
-    await expect(none.call({ prompt: 'a calculator' })).rejects.toThrow(COVER_NO_LISTING);
-    expect(none.deps.generate).not.toHaveBeenCalled();
+    await expect(none.call({ prompt: 'a' })).rejects.toThrow(COVER_NO_LISTING);
+    expect(none.deps.price).not.toHaveBeenCalled();
+    const reason = 'This listing is locked while it is reviewed.';
+    const locked = setup({ listing: vi.fn(async () => ({ ...LISTING, blockedReason: reason })) });
+    await expect(locked.call({ prompt: 'a' })).rejects.toThrow(reason);
+    expect(locked.deps.price).not.toHaveBeenCalled();
+  });
 
-    const blocked = setup({
-      listing: vi.fn(async () => ({ ...LISTING, blockedReason: 'This listing was removed.' })),
-    });
-    await expect(blocked.call({ prompt: 'a calculator' })).rejects.toThrow(
-      'This listing was removed.'
-    );
-    expect(blocked.deps.generate).not.toHaveBeenCalled();
+  it('offers nothing when the price cannot be read', async () => {
+    for (const price of [
+      vi.fn(async () => Promise.reject(new Error('orchestration answered 500'))),
+      vi.fn(async () => Number.NaN),
+    ]) {
+      const { call } = setup({ price });
+      await expect(call({ prompt: 'a' })).rejects.toThrow(COVER_PRICE_UNREADABLE);
+    }
   });
 });
 
+const OFFER: CoverOffer = {
+  awaitsUser: true,
+  coverOffer: 'o9',
+  app: 'tip-calculator',
+  listingId: 'apl_1',
+  listingStatus: 'approved',
+  prompt: 'a calculator',
+  seed: SEED,
+  buzz: PRICE,
+  note: 'n',
+};
+
+describe('the offer a call made', () => {
+  const result = (output: unknown, extra: Record<string, unknown> = {}) => ({
+    name: GENERATE_APP_COVER,
+    input: {},
+    output,
+    isError: false,
+    ...extra,
+  });
+
+  it('reads a live offer, and nothing a subagent, a refusal or a failure made', () => {
+    expect(coverOfferOf(result(OFFER))).toEqual(OFFER);
+    expect(coverOfferOf(result(OFFER, { subagent: 'd1' }))).toBeNull();
+    expect(coverOfferOf(result(OFFER, { refused: 'no' }))).toBeNull();
+    expect(coverOfferOf(result(OFFER, { isError: true }))).toBeNull();
+    expect(coverOfferOf({ ...result(OFFER), name: 'other' })).toBeNull();
+  });
+
+  it('reads no offer whose fields are not the tool’s', () => {
+    for (const bad of [
+      { ...OFFER, awaitsUser: false },
+      { ...OFFER, app: 'Not A Slug' },
+      { ...OFFER, prompt: 'x'.repeat(APP_COVER_PROMPT_MAX + 1) },
+      { ...OFFER, seed: -1 },
+      { ...OFFER, buzz: Number.NaN },
+      { ...OFFER, coverOffer: '' },
+    ])
+      expect(coverOfferOf(result(bad))).toBeNull();
+  });
+});
+
+function press(overrides: Partial<CoverPressDeps> = {}) {
+  return {
+    listing: vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING),
+    generate: vi.fn(async (_w: AppCoverWorkflow, _s?: AbortSignal) => IMAGE_URL),
+    attach: vi.fn(async (_id: string, _url: string, _app: string) => ({ scanPending: true })),
+    ...overrides,
+  };
+}
+
+describe('the press: the user makes the offered cover', () => {
+  it('generates exactly the offered recipe, under one id per offer, and attaches it', async () => {
+    const deps = press();
+    const said = await makeOfferedCover(deps, OFFER);
+    expect(deps.generate).toHaveBeenCalledTimes(1);
+    expect(deps.generate.mock.calls[0]![0]).toEqual({
+      ...appCoverWorkflow('a calculator', SEED),
+      externalId: 'app-cover-o9',
+    });
+    expect(coverWorkflowFor(OFFER).externalId).toBe('app-cover-o9');
+    expect(deps.attach).toHaveBeenCalledWith('apl_1', IMAGE_URL, 'tip-calculator');
+    expect(said).toBe(`${COVER_ON_DRAFT} ${COVER_SCAN_PENDING}`);
+  });
+
+  it('says a listing under review shows it once approved', async () => {
+    const deps = press({
+      listing: vi.fn(async () => ({ ...LISTING, status: 'pending' })),
+      attach: vi.fn(async () => ({ scanPending: false })),
+    });
+    expect(await makeOfferedCover(deps, OFFER)).toBe(COVER_ON_LISTING_IN_REVIEW);
+  });
+
+  it('spends nothing when the listing is gone, another one, or locked since the offer', async () => {
+    for (const listing of [null, { ...LISTING, listingId: 'apl_other' }]) {
+      const deps = press({ listing: vi.fn(async () => listing) });
+      await expect(makeOfferedCover(deps, OFFER)).rejects.toThrow(COVER_LISTING_CHANGED);
+      expect(deps.generate).not.toHaveBeenCalled();
+    }
+    const reason = 'Locked for review.';
+    const deps = press({ listing: vi.fn(async () => ({ ...LISTING, blockedReason: reason })) });
+    await expect(makeOfferedCover(deps, OFFER)).rejects.toThrow(reason);
+    expect(deps.generate).not.toHaveBeenCalled();
+  });
+});
+
+const IMAGE_ID = 77;
 function api(overrides: Partial<CoverListingApi> = {}) {
   return {
     getMyListingForApp: vi.fn(
-      async (_: { slug: string }): Promise<ListingForCover> => ({
+      async (): Promise<ListingForCover> => ({
         appListingId: 'apl_1',
         status: 'approved',
         editBlockedReason: null,
       })
     ),
-    ingestAssetFromUrl: vi.fn(async (_: { url: string; kind: 'cover' }) => ({ imageId: 77 })),
-    setCover: vi.fn(
-      async (_: {
-        listingId: string;
-        imageId: number;
-      }): Promise<{ status: 'attached'; scanPending?: boolean }> => ({
-        status: 'attached',
-        scanPending: true,
-      })
-    ),
+    ingestAssetFromUrl: vi.fn(async () => ({ imageId: IMAGE_ID })),
+    setCover: vi.fn(async () => ({ status: 'ok', scanPending: true })),
     ...overrides,
   };
 }
 
-function orchestration(overrides: Partial<CoverOrchestration> = {}): CoverOrchestration {
+function orchestration(overrides: Partial<Record<keyof PageCoverOrchestration, unknown>> = {}) {
   return {
-    submitWorkflow: vi.fn(async () => ({ id: 'wf_1', status: 'scheduled' })),
+    submitWorkflow: vi.fn(async () => ({ id: 'wf_1', status: 'submitted' })),
     waitForWorkflow: vi.fn(async () => ({
       id: 'wf_1',
       status: 'succeeded',
       steps: [{ output: { images: [{ url: IMAGE_URL, available: true }] } }],
     })),
     cancelWorkflow: vi.fn(async () => undefined),
+    estimateWorkflow: vi.fn(async () => ({ cost: { total: 36.2 } })),
     ...overrides,
-  };
+  } as unknown as PageCoverOrchestration & Record<string, ReturnType<typeof vi.fn>>;
 }
 
-const browserDeps = (
-  listingApi: CoverListingApi,
-  client: CoverOrchestration = orchestration(),
-  onAttached = vi.fn()
-) =>
-  createBrowserCoverArtDeps({
+function browserDeps(listingApi = api(), client = orchestration(), onAttached?: () => void) {
+  return createBrowserCoverDeps({
     currentApp: () => 'tip-calculator',
     api: listingApi,
     orchestration: async () => client,
-    onAttached,
+    ...(onAttached ? { onAttached } : {}),
+  });
+}
+
+describe('the page’s cover: priced and made on the user’s own token and procedures', () => {
+  it('prices with the what-if, rounded up, and submits nothing', async () => {
+    const client = orchestration();
+    const workflow = appCoverWorkflow('a', 1);
+    expect(await browserDeps(api(), client).offer.price(workflow)).toBe(37);
+    expect(client.estimateWorkflow).toHaveBeenCalledWith(workflow);
+    expect(client.submitWorkflow).not.toHaveBeenCalled();
   });
 
-describe('the page’s cover: attached through the listing editor’s own procedures', () => {
-  it('ingests the generated image as a cover upload, then sets it as the listing’s cover', async () => {
-    const listingApi = api();
-    const onAttached = vi.fn();
-    const result = await browserDeps(listingApi, orchestration(), onAttached).attach(
-      'apl_1',
-      IMAGE_URL
+  it('reads no price from a quote without one', async () => {
+    const client = orchestration({ estimateWorkflow: vi.fn(async () => ({})) });
+    await expect(browserDeps(api(), client).offer.price(appCoverWorkflow('a', 1))).rejects.toThrow(
+      COVER_PRICE_UNREADABLE
     );
-    expect(listingApi.ingestAssetFromUrl).toHaveBeenCalledWith({ url: IMAGE_URL, kind: 'cover' });
-    expect(listingApi.setCover).toHaveBeenCalledWith({ listingId: 'apl_1', imageId: 77 });
-    expect(result).toEqual({ scanPending: true });
-    expect(onAttached).toHaveBeenCalledTimes(1);
-  });
-
-  it('reports the cover check’s refusal and does not claim it attached', async () => {
-    const reason = 'cover must be landscape (aspect 1.00 outside 1.3–2.4)';
-    const listingApi = api({ setCover: vi.fn(async () => Promise.reject(new Error(reason))) });
-    const onAttached = vi.fn();
-    await expect(
-      browserDeps(listingApi, orchestration(), onAttached).attach('apl_1', IMAGE_URL)
-    ).rejects.toThrow(coverNotAttached(reason, IMAGE_URL));
-    expect(onAttached).not.toHaveBeenCalled();
-  });
-
-  // The image is already paid for: the error carries its URL so the user need not generate again.
-  it('names the generated image when it cannot be ingested', async () => {
-    const listingApi = api({
-      ingestAssetFromUrl: vi.fn(async () => Promise.reject(new Error('upload failed'))),
-    });
-    const attempt = browserDeps(listingApi).attach('apl_1', IMAGE_URL);
-    await expect(attempt).rejects.toThrow(IMAGE_URL);
-    await expect(attempt).rejects.toThrow(
-      `The cover was generated but could not be put on your listing: upload failed. The image is at ${IMAGE_URL}`
-    );
-    expect(listingApi.setCover).not.toHaveBeenCalled();
   });
 
   it('reads the user’s listing, no listing as none, and any other failure as unreadable', async () => {
-    const ok = api({
-      getMyListingForApp: vi.fn(async () => ({
-        appListingId: 'apl_9',
-        status: 'pending',
-        editBlockedReason: 'Under review.',
-      })),
-    });
-    expect(await browserDeps(ok).listing('tip-calculator')).toEqual({
-      listingId: 'apl_9',
-      blockedReason: 'Under review.',
-      status: 'pending',
-    });
-    expect(ok.getMyListingForApp).toHaveBeenCalledWith({ slug: 'tip-calculator' });
-
     const coded = (code: string) => Object.assign(new Error('x'), { data: { code } });
+    expect(await browserDeps().offer.listing('tip-calculator')).toEqual(LISTING);
     for (const code of ['NOT_FOUND', 'FORBIDDEN']) {
       const listingApi = api({
         getMyListingForApp: vi.fn(async () => Promise.reject(coded(code))),
       });
-      expect(await browserDeps(listingApi).listing('tip-calculator')).toBeNull();
+      expect(await browserDeps(listingApi).offer.listing('tip-calculator')).toBeNull();
     }
     const listingApi = api({
       getMyListingForApp: vi.fn(async () => Promise.reject(coded('INTERNAL_SERVER_ERROR'))),
     });
-    await expect(browserDeps(listingApi).listing('tip-calculator')).rejects.toThrow(
+    await expect(browserDeps(listingApi).offer.listing('tip-calculator')).rejects.toThrow(
       COVER_LISTING_UNREADABLE
     );
   });
 
-  it('submits the workflow it was given, and returns the generated image', async () => {
-    const client = orchestration();
-    const workflow = { ...appCoverWorkflow('a', 1), externalId: 'app-cover-x' };
-    expect(await browserDeps(api(), client).generate(workflow)).toBe(IMAGE_URL);
-    expect(client.submitWorkflow).toHaveBeenCalledWith(workflow);
+  it('ingests the generated image as a cover upload, then sets it as the listing’s cover', async () => {
+    const listingApi = api();
+    const onAttached = vi.fn();
+    const result = await browserDeps(listingApi, orchestration(), onAttached).press.attach(
+      'apl_1',
+      IMAGE_URL,
+      'tip-calculator'
+    );
+    expect(listingApi.ingestAssetFromUrl).toHaveBeenCalledWith({ url: IMAGE_URL, kind: 'cover' });
+    expect(listingApi.setCover).toHaveBeenCalledWith({ listingId: 'apl_1', imageId: IMAGE_ID });
+    expect(result).toEqual({ scanPending: true });
+    expect(onAttached).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels the run when the user stops the chat while it is generating', async () => {
+  it('names the paid-for image: refused for sure, or maybe attached when civitai did not answer', async () => {
+    const reason = 'cover must be landscape';
+    const refused = api({
+      setCover: vi.fn(async () =>
+        Promise.reject(Object.assign(new Error(reason), { data: { code: 'BAD_REQUEST' } }))
+      ),
+    });
+    await expect(
+      browserDeps(refused).press.attach('apl_1', IMAGE_URL, 'tip-calculator')
+    ).rejects.toThrow(coverNotAttached(reason, IMAGE_URL));
+    const silent = api({
+      setCover: vi.fn(async () => Promise.reject(new TypeError('fetch failed'))),
+    });
+    await expect(
+      browserDeps(silent).press.attach('apl_1', IMAGE_URL, 'tip-calculator')
+    ).rejects.toThrow(coverMaybeNotAttached(IMAGE_URL));
+  });
+
+  it('cancels the run when the user leaves while it is generating', async () => {
     const controller = new AbortController();
     const stopped = new DOMException('Aborted', 'AbortError');
     const client = orchestration({
@@ -297,31 +356,31 @@ describe('the page’s cover: attached through the listing editor’s own proced
         throw stopped;
       }),
     });
-    const workflow = { ...appCoverWorkflow('a', 1), externalId: 'app-cover-x' };
-    await expect(browserDeps(api(), client).generate(workflow, controller.signal)).rejects.toBe(
-      stopped
-    );
+    const workflow = coverWorkflowFor(OFFER);
+    await expect(
+      browserDeps(api(), client).press.generate(workflow, controller.signal)
+    ).rejects.toBe(stopped);
     expect(client.cancelWorkflow).toHaveBeenCalledWith('wf_1');
   });
 
-  it('does not cancel a run that failed on its own', async () => {
+  // Once submitted it is paid for as it runs: a wait that fails for any reason cancels it.
+  it('cancels the paid run, and says it was not made, when the wait fails on its own', async () => {
     const client = orchestration({
       waitForWorkflow: vi.fn(async () => Promise.reject(new Error('network'))),
     });
-    const workflow = { ...appCoverWorkflow('a', 1), externalId: 'app-cover-x' };
     await expect(
-      browserDeps(api(), client).generate(workflow, new AbortController().signal)
-    ).rejects.toThrow('network');
-    expect(client.cancelWorkflow).not.toHaveBeenCalled();
+      browserDeps(api(), client).press.generate(
+        coverWorkflowFor(OFFER),
+        new AbortController().signal
+      )
+    ).rejects.toThrow(COVER_NOT_GENERATED);
+    expect(client.cancelWorkflow).toHaveBeenCalledWith('wf_1');
   });
 
   it('fails without a generated image, and attaches nothing', async () => {
     for (const done of [
       // Failed, though it reports an image: the status alone must refuse it.
-      {
-        status: 'failed',
-        steps: [{ output: { images: [{ url: IMAGE_URL, available: true }] } }],
-      },
+      { status: 'failed', steps: [{ output: { images: [{ url: IMAGE_URL, available: true }] } }] },
       {
         status: 'succeeded',
         steps: [{ output: { images: [{ url: IMAGE_URL, available: false }] } }],
@@ -333,10 +392,7 @@ describe('the page’s cover: attached through the listing editor’s own proced
         listingApi,
         orchestration({ waitForWorkflow: vi.fn(async () => done) })
       );
-      const tool = createCoverArt(deps)[GENERATE_APP_COVER]!;
-      await expect(Promise.resolve(tool.execute({ prompt: 'a' }))).rejects.toThrow(
-        COVER_NOT_GENERATED
-      );
+      await expect(makeOfferedCover(deps.press, OFFER)).rejects.toThrow(COVER_NOT_GENERATED);
       expect(listingApi.ingestAssetFromUrl).not.toHaveBeenCalled();
       expect(listingApi.setCover).not.toHaveBeenCalled();
     }
