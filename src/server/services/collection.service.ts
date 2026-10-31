@@ -64,6 +64,7 @@ import { applyTagRules, insertTagsOnImageNew } from '~/server/services/tagsOnIma
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
+import { assertImagesVisibleToViewer } from '~/server/services/image-visibility.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -1038,6 +1039,14 @@ export const saveItemInCollections = async ({
       })
       .map((upsert) => upsert.collectionId)
   );
+
+  // Before the contest gates: they can charge an entry fee.
+  if (
+    itemKey === 'imageId' &&
+    upsertCollectionItems.some((upsert) => !unwrittenCollectionIds.has(upsert.collectionId))
+  ) {
+    await assertImagesVisibleToViewer({ ids: [input.imageId as number], userId, isModerator });
+  }
 
   // Check if any contest collections are involved and validate ONCE
   const contestCollections = collections.filter(
@@ -3464,6 +3473,8 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  if (imageIds.length > 0)
+    await assertImagesVisibleToViewer({ ids: imageIds, userId, isModerator });
   const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
 
   if (

@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
 /**
@@ -114,4 +115,57 @@ export async function assertImageVisibleToViewer({
     if (blocked) throw throwNotFoundError();
   }
   return visible;
+}
+
+/**
+ * The subset of `ids` the viewer may open by id: `imageVisibilityConditions`, minus images whose
+ * owner has blocked the viewer. Ids missing from the replica are read again from the primary, so
+ * an image created moments ago (a post published straight into a collection) still counts.
+ */
+export async function getImageIdsVisibleToViewer({
+  ids,
+  userId,
+  isModerator,
+}: {
+  ids: number[];
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<Set<number>> {
+  const wanted = [...new Set(ids)];
+  if (wanted.length === 0) return new Set();
+
+  const read = (db: typeof dbRead, idList: number[]) =>
+    db.$queryRaw<{ id: number; userId: number }[]>`
+      SELECT i.id, i."userId"
+      FROM "Image" i
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      WHERE ${Prisma.join(
+        [
+          Prisma.sql`i.id IN (${Prisma.join(idList)})`,
+          ...imageVisibilityConditions({ userId, isModerator }),
+        ],
+        ' AND '
+      )}
+    `;
+
+  const rows = await read(dbRead, wanted);
+  const found = new Set(rows.map((r) => r.id));
+  const missing = wanted.filter((id) => !found.has(id));
+  if (missing.length > 0) rows.push(...(await read(dbWrite, missing)));
+
+  if (!userId || isModerator) return new Set(rows.map((r) => r.id));
+  const blockedBy = new Set((await BlockedByUsers.getCached({ userId })).map((u) => u.id));
+  return new Set(
+    rows.filter((r) => r.userId === userId || !blockedBy.has(r.userId)).map((r) => r.id)
+  );
+}
+
+/** NOT_FOUND unless the viewer may open every image in `ids` (see getImageIdsVisibleToViewer). */
+export async function assertImagesVisibleToViewer(args: {
+  ids: number[];
+  userId?: number;
+  isModerator?: boolean;
+}) {
+  const visible = await getImageIdsVisibleToViewer(args);
+  if (args.ids.some((id) => !visible.has(id))) throw throwNotFoundError('Image not found');
 }
