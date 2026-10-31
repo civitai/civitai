@@ -125,6 +125,19 @@ describe('getImageIdsVisibleToViewer', () => {
     ).toEqual([107]);
   });
 
+  it('counts an image whose post the replica still shows as a draft', async () => {
+    // Published moments ago: only the primary has the publish.
+    await replica.exec(`UPDATE "Post" SET "publishedAt" = NULL WHERE id = 1;`);
+    expect([...(await getImageIdsVisibleToViewer({ ids: [101], userId: VIEWER }))]).toEqual([101]);
+  });
+
+  it('applies the same rule to an image read from the primary', async () => {
+    await primary.exec(
+      `INSERT INTO "Image" (id, "userId", "postId", ingestion) VALUES (109, ${OWNER}, 2, 'Scanned');`
+    );
+    expect([...(await getImageIdsVisibleToViewer({ ids: [109], userId: VIEWER }))]).toEqual([]);
+  });
+
   it('finds an image the replica has not caught up on, from the primary', async () => {
     await primary.exec(
       `INSERT INTO "Image" (id, "userId", "postId", ingestion) VALUES (108, ${VIEWER}, NULL, 'Pending');`

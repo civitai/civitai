@@ -9,15 +9,27 @@ const mockDbWrite = dbMock.dbWrite;
 
 // Adding an image to a collection refuses an image the caller couldn't open, before anything is
 // written or followed. The visibility rule itself is covered in
-// image-ids-visible-to-viewer.behavior.test.ts; here it answers "hidden" for HIDDEN_IMAGE only.
+// image-ids-visible-to-viewer.behavior.test.ts. Here HIDDEN_IMAGE opens only for its owner and staff.
 
 const HIDDEN_IMAGE = 66;
+const HIDDEN_IMAGE_OWNER = 321;
 const VISIBLE_IMAGE = 42;
 
 const { assertVisible } = vi.hoisted(() => ({
-  assertVisible: vi.fn(async ({ ids }: { ids: number[] }) => {
-    if (ids.includes(66)) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
-  }),
+  assertVisible: vi.fn(
+    async ({
+      ids,
+      userId,
+      isModerator,
+    }: {
+      ids: number[];
+      userId?: number;
+      isModerator?: boolean;
+    }) => {
+      if (ids.includes(66) && userId !== 321 && !isModerator)
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+    }
+  ),
 }));
 vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageVisibility>()),
@@ -33,7 +45,7 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
   homeBlockCacheBust: vi.fn(),
 }));
 
-const { saveItemInCollections, bulkSaveItems } = await import(
+const { saveItemInCollections, bulkSaveItems, upsertCollection } = await import(
   '~/server/services/collection.service'
 );
 
@@ -106,6 +118,30 @@ describe('saveItemInCollections with an image', () => {
     expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['its owner', { userId: HIDDEN_IMAGE_OWNER }],
+    ['staff', { isModerator: true }],
+  ])('lets %s add an image others cannot open', async (_, viewer) => {
+    await expect(
+      save({ imageId: HIDDEN_IMAGE, collections: [{ collectionId: COLLECTION_ID }], ...viewer })
+    ).resolves.toBe('added');
+    expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses before a contest is consulted', async () => {
+    // A closed contest refuses with BAD_REQUEST; reaching it first would surface that instead.
+    mockDbRead.collection.findMany.mockResolvedValue([
+      {
+        ...collectionRow,
+        mode: 'Contest',
+        metadata: { submissionEndDate: new Date(Date.now() - 86_400_000).toISOString() },
+      },
+    ]);
+    await expect(
+      save({ imageId: HIDDEN_IMAGE, collections: [{ collectionId: COLLECTION_ID }] })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('still removes an image that has since become hidden', async () => {
     mockDbRead.collection.findMany.mockResolvedValue([]);
     mockDbRead.collectionItem.findMany.mockResolvedValue([
@@ -143,9 +179,9 @@ describe('saveItemInCollections with an image', () => {
   });
 });
 
-const bulk = (imageIds: number[]) =>
+const bulk = (imageIds: number[], userId = SUBMITTER_ID) =>
   bulkSaveItems({
-    input: { collectionId: COLLECTION_ID, imageIds, userId: SUBMITTER_ID } as never,
+    input: { collectionId: COLLECTION_ID, imageIds, userId } as never,
     permissions: {
       collectionId: COLLECTION_ID,
       read: true,
@@ -170,5 +206,38 @@ describe('bulkSaveItems with images', () => {
 
   it('adds images the caller can open', async () => {
     await expect(bulk([VISIBLE_IMAGE])).resolves.toMatchObject({ imageIds: [VISIBLE_IMAGE] });
+  });
+
+  it("lets the image's owner add it", async () => {
+    await expect(bulk([HIDDEN_IMAGE], HIDDEN_IMAGE_OWNER)).resolves.toMatchObject({
+      imageIds: [HIDDEN_IMAGE],
+    });
+  });
+
+  it('refuses before a contest is consulted', async () => {
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      ...collectionRow,
+      mode: 'Contest',
+      metadata: { submissionEndDate: new Date(Date.now() - 86_400_000).toISOString() },
+    });
+    await expect(bulk([HIDDEN_IMAGE])).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('upsertCollection creating a collection with a first image', () => {
+  const create = (imageId: number) =>
+    upsertCollection({
+      input: { name: 'Mine', type: 'Image', read: 'Public', imageId, userId: SUBMITTER_ID },
+    } as never);
+
+  it('refuses an image the caller cannot open, and creates nothing', async () => {
+    await expect(create(HIDDEN_IMAGE)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockDbWrite.collection.create).not.toHaveBeenCalled();
+  });
+
+  it('creates the collection with an image the caller can open', async () => {
+    mockDbWrite.collection.create.mockResolvedValue({ id: 77, userId: SUBMITTER_ID } as never);
+    await create(VISIBLE_IMAGE).catch(() => undefined);
+    expect(mockDbWrite.collection.create).toHaveBeenCalledTimes(1);
   });
 });

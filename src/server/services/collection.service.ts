@@ -1749,6 +1749,8 @@ export const upsertCollection = async ({
     throw throwBadRequestError('3D model collections cannot be contests');
   }
 
+  if (imageId) await assertImagesVisibleToViewer({ ids: [imageId], userId, isModerator });
+
   // TODO allow cover image
   const collection = await dbWrite.collection.create({
     select: {

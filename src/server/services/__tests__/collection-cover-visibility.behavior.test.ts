@@ -98,7 +98,7 @@ const OWNER_REMOVED = 215; // the collection owner's own removed upload
 const REMOVED_LEVEL = 213; // stranger's image, Scanned with no reason but rated at the removed level
 
 beforeAll(async () => {
-  const seed = `
+  const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       "id"              integer PRIMARY KEY,
@@ -129,6 +129,8 @@ beforeAll(async () => {
     CREATE TABLE "Bounty" ("id" integer PRIMARY KEY, "userId" integer, "availability" text);
     CREATE TABLE "BountyEntry" ("id" integer PRIMARY KEY, "bountyId" integer);
 
+  `;
+  const rows = `
     INSERT INTO "Post" ("id", "userId", "publishedAt", "availability") VALUES
       (1, ${STRANGER}, now() - interval '1 day', 'Public'),
       (2, ${STRANGER}, now() - interval '1 day', 'Private'),
@@ -159,8 +161,8 @@ beforeAll(async () => {
   `;
   holder.db = new PGlite();
   holder.replica = new PGlite();
-  await holder.db.exec(seed);
-  await holder.replica.exec(seed.slice(0, seed.indexOf('INSERT INTO')));
+  await holder.db.exec(schema + rows);
+  await holder.replica.exec(schema);
 });
 
 const servable = async (imageId: number, viewer?: { id?: number; isModerator?: boolean }) =>

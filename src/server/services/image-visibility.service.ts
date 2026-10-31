@@ -119,9 +119,9 @@ export async function assertImageVisibleToViewer({
 
 /**
  * The subset of `ids` the viewer may open by id: `imageVisibilityConditions`, minus images whose
- * owner is on the viewer's `BlockedByUsers` list. Ids missing from the replica are read again
- * from the primary, so an image created moments ago (a post published straight into a
- * collection) still counts.
+ * owner is on the viewer's `BlockedByUsers` list. Any id the replica doesn't return as visible is
+ * read again from the primary, so an image or a publish from moments ago (a post published
+ * straight into a collection) still counts.
  */
 export async function getImageIdsVisibleToViewer({
   ids,
