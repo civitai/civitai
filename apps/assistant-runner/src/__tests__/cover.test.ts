@@ -19,11 +19,13 @@ import {
   COVER_PATH,
   CivitaiCovers,
   CoverRefusedError,
+  CoverWorkflows,
+  coverMaybeNotAttached,
   runnerCoverOrchestration,
   runnerCoverTools,
   type CoverListings,
 } from '../app-assistant/cover';
-import { OrchestrationClient } from '../orchestration';
+import { OrchestrationClient, OrchestrationError } from '../orchestration';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
 // TEST-ONLY placeholders: never real credentials or hosts.
@@ -210,6 +212,26 @@ describe('generate_app_cover on the runner: nothing is spent when there is nothi
     });
     await expect(call({ prompt: 'a' })).rejects.toThrow(coverNotAttached(reason, IMAGE_URL));
   });
+
+  // No answer from civitai (a timeout, unreachable, a 5xx): it may have attached, so the user is
+  // told to look before making another, not that it failed.
+  it('says the cover may be on the listing when civitai did not confirm the attach', async () => {
+    for (const error of [
+      new CoverRefusedError('Civitai could not be reached just now.', 503, 'unavailable'),
+      new DOMException('The operation timed out.', 'TimeoutError'),
+    ]) {
+      const { call } = setup({
+        listing: listings({
+          attach: vi.fn(async () => {
+            throw error;
+          }),
+        }),
+      });
+      const attempt = call({ prompt: 'a' });
+      await expect(attempt).rejects.toThrow(coverMaybeNotAttached(IMAGE_URL));
+      await expect(attempt).rejects.not.toThrow('could not be put on your listing');
+    }
+  });
 });
 
 /** A fetch that answers `status` with `body` and records what it was sent. */
@@ -327,5 +349,150 @@ describe('the cover’s orchestration on the run’s chat token', () => {
     );
     await expect(client.waitForWorkflow('wf_slow')).rejects.toThrow(COVER_NOT_GENERATED);
     expect(cancelWorkflow).toHaveBeenCalledWith(expect.any(Function), 'wf_slow');
+  });
+
+  /** The orchestration client with `getWorkflow` answering each of `reads` in turn (an Error throws). */
+  function reading(reads: unknown[]) {
+    const getWorkflow = vi.fn(async () => {
+      const next = reads.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    });
+    const cancelWorkflow = vi.fn(async () => undefined);
+    const client = runnerCoverOrchestration(
+      { submitWorkflow: vi.fn(), getWorkflow, cancelWorkflow } as never,
+      async () => 'test-token',
+      { pollMs: 1, backoffMs: [1, 1, 1] }
+    );
+    return { client, getWorkflow, cancelWorkflow };
+  }
+
+  it('reads again through a passing failure (429, 5xx, no answer) and cancels nothing', async () => {
+    const { client, getWorkflow, cancelWorkflow } = reading([
+      new OrchestrationError(503, 'orchestration answered 503'),
+      new OrchestrationError(429, 'orchestration answered 429'),
+      new TypeError('fetch failed'),
+      { status: 'succeeded', steps: [] },
+    ]);
+    expect(await client.waitForWorkflow('wf_blip')).toMatchObject({ status: 'succeeded' });
+    expect(getWorkflow).toHaveBeenCalledTimes(4);
+    expect(cancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('cancels the paid run and says it was not made when a read is refused outright', async () => {
+    for (const status of [401, 404]) {
+      const { client, getWorkflow, cancelWorkflow } = reading([
+        new OrchestrationError(status, `orchestration answered ${status} to GET`),
+        { status: 'succeeded', steps: [] },
+      ]);
+      await expect(client.waitForWorkflow('wf_gone')).rejects.toThrow(COVER_NOT_GENERATED);
+      // Not asked again: a refusal does not pass.
+      expect(getWorkflow).toHaveBeenCalledTimes(1);
+      expect(cancelWorkflow).toHaveBeenCalledWith(expect.any(Function), 'wf_gone');
+    }
+  });
+
+  it('cancels the paid run and says it was not made once passing failures outlast the retries', async () => {
+    const down = () => new OrchestrationError(502, 'orchestration answered 502 to GET');
+    const { client, getWorkflow, cancelWorkflow } = reading([
+      down(),
+      down(),
+      down(),
+      down(),
+      { status: 'succeeded', steps: [] },
+    ]);
+    await expect(client.waitForWorkflow('wf_down')).rejects.toThrow(COVER_NOT_GENERATED);
+    // The first read and one per backoff step, then it gives up.
+    expect(getWorkflow).toHaveBeenCalledTimes(4);
+    expect(cancelWorkflow).toHaveBeenCalledWith(expect.any(Function), 'wf_down');
+  });
+
+  it('leaves a Stop as it is (the shared generate cancels on a Stop)', async () => {
+    const stop = new AbortController();
+    const stopped = new DOMException('Aborted', 'AbortError');
+    const getWorkflow = vi.fn(async () => {
+      stop.abort();
+      throw stopped;
+    });
+    const cancelWorkflow = vi.fn(async () => undefined);
+    const client = runnerCoverOrchestration(
+      { submitWorkflow: vi.fn(), getWorkflow, cancelWorkflow } as never,
+      async () => 'test-token'
+    );
+    await expect(client.waitForWorkflow('wf_stop', { signal: stop.signal })).rejects.toBe(stopped);
+    expect(cancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('says the cover was not made, never orchestration’s status line, on a refusal with no detail', async () => {
+    for (const thrown of [
+      new OrchestrationError(400, 'orchestration answered 400 to POST v2/consumer/workflows'),
+      new TypeError('fetch failed'),
+    ]) {
+      const client = runnerCoverOrchestration(
+        {
+          submitWorkflow: vi.fn(async () => {
+            throw thrown;
+          }),
+          getWorkflow: vi.fn(),
+          cancelWorkflow: vi.fn(),
+        } as never,
+        async () => 'test-token'
+      );
+      const attempt = client.submitWorkflow({ steps: [] as never });
+      await expect(attempt).rejects.toThrow(COVER_NOT_GENERATED);
+      await expect(attempt).rejects.not.toThrow('orchestration answered');
+    }
+  });
+});
+
+describe('the cover workflows still running when the process stops', () => {
+  function inner() {
+    let finish: (value: unknown) => void = () => undefined;
+    const done = new Promise((resolve) => (finish = resolve));
+    return {
+      orchestration: {
+        submitWorkflow: vi.fn(async () => ({ id: 'wf_live', status: 'submitted' })),
+        waitForWorkflow: vi.fn(async () => (await done) as never),
+        cancelWorkflow: vi.fn(async () => undefined),
+      },
+      finish: () => finish({ id: 'wf_live', status: 'succeeded' }),
+    };
+  }
+
+  it('cancels a cover still generating at shutdown', async () => {
+    const workflows = new CoverWorkflows(quiet);
+    const { orchestration } = inner();
+    const tracked = workflows.track(orchestration as unknown as CoverOrchestration);
+    await tracked.submitWorkflow({ steps: [] as never });
+    void tracked.waitForWorkflow('wf_live');
+    expect(workflows.size).toBe(1);
+    expect(await workflows.cancelAll(1_000)).toBe(1);
+    expect(orchestration.cancelWorkflow).toHaveBeenCalledWith('wf_live');
+  });
+
+  it('cancels nothing that already finished (the control: the count does move)', async () => {
+    const workflows = new CoverWorkflows(quiet);
+    const { orchestration, finish } = inner();
+    const tracked = workflows.track(orchestration as unknown as CoverOrchestration);
+    await tracked.submitWorkflow({ steps: [] as never });
+    const waiting = tracked.waitForWorkflow('wf_live');
+    expect(workflows.size).toBe(1);
+    finish();
+    await waiting;
+    expect(workflows.size).toBe(0);
+    expect(await workflows.cancelAll(1_000)).toBe(0);
+    expect(orchestration.cancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('does not hold the shutdown past its bound on a cancel that never answers', async () => {
+    const workflows = new CoverWorkflows(quiet);
+    const { orchestration } = inner();
+    orchestration.cancelWorkflow.mockImplementation(() => new Promise<undefined>(() => undefined));
+    const tracked = workflows.track(orchestration as unknown as CoverOrchestration);
+    await tracked.submitWorkflow({ steps: [] as never });
+    void tracked.waitForWorkflow('wf_live');
+    const started = Date.now();
+    expect(await workflows.cancelAll(20)).toBe(1);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });

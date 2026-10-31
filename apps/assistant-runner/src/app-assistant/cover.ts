@@ -20,6 +20,19 @@ import { FINAL_STATUSES, OrchestrationError, type OrchestrationClient } from '..
 /** civitai's endpoints the runner reads and attaches a cover at, relative to `CIVITAI_URL`. */
 export const COVER_PATH = 'api/internal/app-assistant/cover';
 const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * An attach fetches, decodes and scans the image before `setCover`, so it gets longer; past it (or on
+ * any other unknown outcome) the user is told it MAY not have attached (`coverMaybeNotAttached`).
+ */
+const ATTACH_TIMEOUT_MS = 90_000;
+
+/**
+ * The attach's outcome is unknown (civitai did not answer in time, or could not be reached): the
+ * cover may be on the listing already, so the user checks before making another.
+ */
+export const coverMaybeNotAttached = (url: string) =>
+  `The cover was generated but may not have been put on your listing: Civitai did not confirm it. ` +
+  `Check your listing's Media tab before trying again. The image is at ${url}.`;
 
 /** One run's listing calls to civitai, as the user its grant names. */
 export interface CoverListings {
@@ -106,7 +119,9 @@ export class CivitaiCovers {
         'invalid_grant'
       );
     const doFetch = this.#options.fetch ?? fetch;
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const timeout = AbortSignal.timeout(
+      action === 'attach' ? ATTACH_TIMEOUT_MS : REQUEST_TIMEOUT_MS
+    );
     let response: Response;
     try {
       response = await doFetch(`${civitaiUrl.replace(/\/+$/, '')}/${COVER_PATH}/${action}`, {
@@ -142,19 +157,38 @@ export class CivitaiCovers {
 const HELD_READ_SECONDS = 20;
 /** The longest a cover may take before the runner gives up on it (and cancels it). */
 export const COVER_MAX_WAIT_MS = 10 * 60_000;
-/** Reads that may fail in a row (a blip) before the wait gives up. */
-const MAX_READ_FAILURES = 3;
+/** Waits before each retry of a read that failed transiently; past the last, the wait gives up. */
+export const COVER_READ_BACKOFF_MS = [250, 1_000, 4_000] as const;
+
+/** A read worth asking again: orchestration busy or failing (429, 5xx), or no answer at all. */
+function transient(error: unknown): boolean {
+  if (error instanceof OrchestrationError) return error.status === 429 || error.status >= 500;
+  // A network failure, or the request's own timeout: no answer, so worth another try.
+  return true;
+}
 
 /**
  * `generate_app_cover`'s orchestration on the runner: the runner's own client, on the run's `chat`
  * token, the one the page's chat token is (the user's, with `ai:write:budgeted` under the App
- * Assistant's daily Buzz cap). A refusal says what orchestration said (not enough Buzz, the cap).
+ * Assistant's daily Buzz cap). A refusal says what orchestration said (not enough Buzz, the cap), or
+ * that the cover was not made; never orchestration's raw status line.
+ *
+ * Once submitted, the workflow is paid for as it runs: every way the wait can fail other than a Stop
+ * (which `generateCover` cancels) cancels it here, best-effort, and says it was not made.
  */
 export function runnerCoverOrchestration(
   client: Pick<OrchestrationClient, 'submitWorkflow' | 'getWorkflow' | 'cancelWorkflow'>,
   tokens: TokenSource,
-  { maxWaitMs = COVER_MAX_WAIT_MS, pollMs = 1_000 }: { maxWaitMs?: number; pollMs?: number } = {}
+  {
+    maxWaitMs = COVER_MAX_WAIT_MS,
+    pollMs = 1_000,
+    backoffMs = COVER_READ_BACKOFF_MS,
+  }: { maxWaitMs?: number; pollMs?: number; backoffMs?: readonly number[] } = {}
 ): CoverOrchestration {
+  const giveUp = (id: string): never => {
+    void client.cancelWorkflow(tokens, id).catch(() => undefined);
+    throw new Error(COVER_NOT_GENERATED);
+  };
   return {
     async submitWorkflow(template) {
       try {
@@ -162,7 +196,8 @@ export function runnerCoverOrchestration(
         return { id: workflow.id ?? null, status: 'submitted' };
       } catch (error) {
         if (error instanceof OrchestrationError && error.detail) throw new Error(error.detail);
-        throw error;
+        if ((error as Error)?.name === 'AbortError') throw error;
+        throw new Error(COVER_NOT_GENERATED);
       }
     },
     async waitForWorkflow(id, { signal } = {}) {
@@ -170,7 +205,7 @@ export function runnerCoverOrchestration(
       let failures = 0;
       for (;;) {
         signal?.throwIfAborted();
-        let state: CoverWorkflowResult;
+        let state: CoverWorkflowResult | null = null;
         try {
           const read = await client.getWorkflow(tokens, id, {
             waitSeconds: HELD_READ_SECONDS,
@@ -179,20 +214,89 @@ export function runnerCoverOrchestration(
           state = { ...(read as CoverWorkflowResult), status: String(read.status ?? '') };
           failures = 0;
         } catch (error) {
-          if (signal?.aborted || ++failures > MAX_READ_FAILURES) throw error;
-          state = { status: '' };
+          // A Stop: `generateCover` cancels the workflow and the Stop goes on as it is.
+          if (signal?.aborted) throw error;
+          if (!transient(error) || failures >= backoffMs.length) return giveUp(id);
+          await sleep(backoffMs[failures++]!, signal);
+          continue;
         }
         if (FINAL_STATUSES.includes(state.status)) return state;
-        if (Date.now() >= deadline) {
-          // Not billed on past here: the user is told it was not made.
-          void client.cancelWorkflow(tokens, id).catch(() => undefined);
-          throw new Error(COVER_NOT_GENERATED);
-        }
+        // Not billed on past here: the user is told it was not made.
+        if (Date.now() >= deadline) return giveUp(id);
         await sleep(pollMs, signal);
       }
     },
     cancelWorkflow: (id) => client.cancelWorkflow(tokens, id),
   };
+}
+
+/**
+ * The cover workflows this process has running, across every run, so a shutdown can cancel the ones
+ * still going (`cancelAll`). A run still generating when the process stops is recovered by the next
+ * one with that call closed as interrupted: its workflow would otherwise finish and bill a cover no
+ * one ever sees.
+ */
+export class CoverWorkflows {
+  readonly #live = new Map<string, () => Promise<unknown>>();
+  readonly #log: Logger;
+
+  constructor(log: Logger) {
+    this.#log = log;
+  }
+
+  /** How many are running now. */
+  get size(): number {
+    return this.#live.size;
+  }
+
+  /** `orchestration`, with each workflow it submits counted as running until its wait ends. */
+  track(orchestration: CoverOrchestration): CoverOrchestration {
+    return {
+      submitWorkflow: async (template) => {
+        const submitted = await orchestration.submitWorkflow(template);
+        const id = submitted.id;
+        if (id) this.#live.set(id, () => orchestration.cancelWorkflow(id));
+        return submitted;
+      },
+      waitForWorkflow: async (id, opts) => {
+        try {
+          return await orchestration.waitForWorkflow(id, opts);
+        } finally {
+          this.#live.delete(id);
+        }
+      },
+      cancelWorkflow: (id) => orchestration.cancelWorkflow(id),
+    };
+  }
+
+  /** Cancels every one still running, waiting at most `timeoutMs` for the cancels; how many it asked. */
+  async cancelAll(timeoutMs: number): Promise<number> {
+    const live = [...this.#live.entries()];
+    this.#live.clear();
+    if (live.length === 0) return 0;
+    const cancels = Promise.allSettled(
+      live.map(async ([id, cancel]) => {
+        try {
+          await cancel();
+        } catch (error) {
+          this.#log.warn(
+            { workflowId: id, err: (error as Error)?.name },
+            'cancelling a cover workflow at shutdown failed'
+          );
+        }
+      })
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      cancels,
+      new Promise<void>((resolve) => (timer = setTimeout(resolve, timeoutMs))),
+    ]).finally(() => clearTimeout(timer));
+    this.#log.info(
+      { count: live.length },
+      'cancelled the cover workflows still running at shutdown'
+    );
+    return live.length;
+  }
 }
 
 export interface RunnerCoverDeps {
@@ -225,8 +329,11 @@ export function runnerCoverTools(deps: RunnerCoverDeps): Record<string, ChatTool
       try {
         return await deps.listings.attach({ app, listingId, url }, deps.signal);
       } catch (error) {
-        // Already paid for: the user is told where the image is.
-        throw new Error(coverNotAttached(coverErrorMessage(error), url));
+        // Already paid for: the user is told where the image is. Only civitai's own refusal says
+        // for sure it is not on the listing; no answer (a timeout, a Stop, a 5xx) may have attached.
+        if (error instanceof CoverRefusedError && error.status >= 400 && error.status < 500)
+          throw new Error(coverNotAttached(coverErrorMessage(error), url));
+        throw new Error(coverMaybeNotAttached(url));
       }
     },
     ...(deps.newId ? { newId: deps.newId } : {}),
