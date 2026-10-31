@@ -183,7 +183,7 @@ jobs:
       - name: Scope app suites
         id: scope
         run: |
-          echo "evidence: production diff (merge commit vs first parent) lists 1 file(s)"
+          echo "evidence: production diff (merge commit vs first parent):"; git diff --name-only HEAD^1 HEAD
           node scripts/ci/app-suite-scope.mjs --out app-suite-scope.json
           cat app-suite-scope.json
 
