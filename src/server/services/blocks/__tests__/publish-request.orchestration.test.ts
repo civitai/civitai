@@ -893,16 +893,18 @@ describe('submitVersion', () => {
       _count: { screenshots: 0 },
       ...over,
     });
+    /** Answers with only the columns the lookup SELECTS, so a dropped column is seen. */
     const answer = (which: 'draft' | 'live' | 'reset', row: Record<string, unknown>) =>
       mockDbWrite.appListing.findFirst.mockImplementation(
-        async (args: { where?: Record<string, unknown> }) => {
+        async (args: { where?: Record<string, unknown>; select?: Record<string, unknown> }) => {
           const w = args?.where ?? {};
-          if (which === 'draft' && w.status === 'draft' && w.appBlockId === null) return row;
-          if (which === 'live' && w.appBlockId === 'apb_existing' && w.status === undefined)
-            return row;
-          if (which === 'reset' && w.appBlockId === 'apb_existing' && w.status === 'pending')
-            return row;
-          return null;
+          const hit =
+            (which === 'draft' && w.status === 'draft' && w.appBlockId === null) ||
+            (which === 'live' && w.appBlockId === 'apb_existing' && w.status === undefined) ||
+            (which === 'reset' && w.appBlockId === 'apb_existing' && w.status === 'pending');
+          if (!hit) return null;
+          const select = args?.select;
+          return select ? Object.fromEntries(Object.entries(row).filter(([k]) => select[k])) : row;
         }
       );
 

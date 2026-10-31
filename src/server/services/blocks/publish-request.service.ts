@@ -2973,10 +2973,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // decision and a table that role cannot read, nothing is refused and nothing is written to it:
   // the approve goes ahead as it did before the split existed.
   //
-  // 🔴 THE LISTING THIS APPROVE PUBLISHES — read once, up front, and shared by the publish
-  // floor below and the media-split check. The same `where` builders the (3b-transition) and
-  // (3b-reset) writes use, so this gate and those writes cannot disagree about which row goes
-  // live. `null` when the approve makes no listing public.
+  // Same where builders as the (3b-transition)/(3b-reset) writes, so the gate and the writes agree on which row goes live.
   const goLive = await resolvePublishTarget<{
     id: string;
     iconId: number | null;

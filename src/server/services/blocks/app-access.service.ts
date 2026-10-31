@@ -1280,10 +1280,7 @@ async function hydrateMyAppListings(
         // i.e. the pre-scan-dimension behaviour, never to an invented problem.
         problems: computeListingProblems(
           listingProblemInput(r, {
-            // 🔴 The row's OWN kind, not a constant: `listMine` returns BOTH kinds, and the
-            // three empty-text problems give different (opposite) advice per kind. This is
-            // the same `kind` the row already reports, so the advisory and the capabilities
-            // can never disagree about what sort of listing this is.
+            // The row's own kind: listMine returns both kinds and the empty-text advice differs per kind.
             kind,
             appRating: r.appBlock?.contentRating,
             assetScans: scansByListingId.get(r.id) ?? [],

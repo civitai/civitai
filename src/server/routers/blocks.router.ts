@@ -3336,8 +3336,7 @@ export const blocksRouter = router({
         problems: problemsListing
           ? computeListingProblems(
               listingProblemInput(problemsListing, {
-                // A narrow test fake that ignores `select` yields `undefined`; both `where`
-                // clauses admit only on-site rows, so that is the honest fallback.
+                // Both queries admit only on-site rows, so a missing kind is on-site.
                 kind: (problemsListing.kind ?? 'onsite') as ListingProblemKind,
                 appRating: r.appBlock?.contentRating,
                 assetScans: scansByListingId.get(problemsListing.id) ?? [],

@@ -10,7 +10,9 @@
  * (`listingFactsForRequests`), and the readiness a submit answers with (`submitVersion`).
  *
  * Not every go-live checks this: mod-reset re-approve, relistListing and immediate owner
- * republish restore existing assets unchecked.
+ * republish restore existing assets unchecked; an update to an already-live listing does not
+ * re-check it; and the legacy approve-time create (a first version with no draft row) mints a
+ * listing with no art.
  *
  * It lives in `shared/` — PURE, no server imports — so the review UI can word the same
  * missing set the server refused on.

@@ -4625,12 +4625,7 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
     problems: r.appListing
       ? computeListingProblems(
           listingProblemInput(r.appListing, {
-            // 🔴 `listMySubmissions` IS NOT AN OFF-SITE-ONLY READ despite this file's name:
-            // its `where` has an explicit `{ kind: 'onsite' }` OR-branch so on-site MEDIA
-            // REVISIONS appear on /apps/my-submissions. A hardcoded 'offsite' here would
-            // therefore give manifest-governed listings the author-surface advice — exactly
-            // the defect being fixed. A fake that ignores `select` degrades to the original
-            // labels rather than throwing.
+            // Not off-site-only: the where includes on-site media revisions, so use the row's own kind.
             kind: (r.appListing.kind ?? 'offsite') as ListingProblemKind,
             appRating: r.appListing.appBlock?.contentRating,
             assetScans: assetScansFor(r.appListing),
