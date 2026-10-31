@@ -153,25 +153,51 @@ export async function assertClientImageUrlsUsable({
     if (owned.length) throw imageUrlUnavailableError();
     return;
   }
-  // Whatever the other row's state.
-  const owned = await db.$queryRaw<unknown[]>`
-    SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[])
+  if ((await keysOnOtherRows({ keys, userId, shopRow, db, firstOnly: true })).length)
+    throw imageUrlUnavailableError();
+}
+
+/**
+ * The stored values among `keys` that another user's `Image` row, or shop artwork other than
+ * `shopRow`'s own, already has, whatever that row's state. `firstOnly` stops at the first.
+ */
+async function keysOnOtherRows({
+  keys,
+  userId,
+  shopRow,
+  db,
+  firstOnly,
+}: {
+  keys: string[];
+  userId: number;
+  shopRow?: ShopArtworkRow;
+  db: Db;
+  firstOnly: boolean;
+}) {
+  const rows = await db.$queryRaw<{ key: string }[]>`
+    SELECT url AS key FROM "Image" WHERE url = ANY(${keys}::text[])
       AND (${shopRow !== undefined} OR "userId" <> ${userId})
     UNION ALL
-    SELECT 1 FROM "Cosmetic" WHERE ${keyIn(`"data"->>'url'`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"data"->>'url'`)} FROM "Cosmetic" WHERE ${keyIn(
+    `"data"->>'url'`
+  )} = ANY(${keys}::text[])
       AND ${soldInShop}
       AND id IS DISTINCT FROM ${shopRow?.cosmeticId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "CosmeticShopItem" WHERE ${keyIn(`"meta"->>'coverUrl'`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"meta"->>'coverUrl'`)} FROM "CosmeticShopItem" WHERE ${keyIn(
+    `"meta"->>'coverUrl'`
+  )} = ANY(${keys}::text[])
       AND id IS DISTINCT FROM ${shopRow?.shopItemId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "ItemDefinition" WHERE ${keyIn(`"imageUrl"`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"imageUrl"`)} FROM "ItemDefinition" WHERE ${keyIn(
+    `"imageUrl"`
+  )} = ANY(${keys}::text[])
       AND id IS DISTINCT FROM ${shopRow?.itemDefinitionId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "ImageCdnShopTakedown" WHERE url = ANY(${keys}::text[])
-    LIMIT 1
+    SELECT url FROM "ImageCdnShopTakedown" WHERE url = ANY(${keys}::text[])
+    ${firstOnly ? Prisma.sql`LIMIT 1` : Prisma.empty}
   `;
-  if (owned.length) throw imageUrlUnavailableError();
+  return rows.map((row) => row.key);
 }
 
 /** The urls among `urls` that name a key shop artwork uses. */
@@ -282,13 +308,21 @@ type KeyIssuerArgs = {
   userId: number;
   alsoIssuedTo?: number;
   db?: Db;
+  /** Read the request log for every key, not only those the issue record lacks. */
+  readLogForAll?: boolean;
 };
 
 /**
  * The upload keys in `urls` that were issued to someone other than `userId` and `alsoIssuedTo`,
  * and those with no issue record and no `Image` row of theirs.
  */
-export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: KeyIssuerArgs) {
+export async function keyIssuers({
+  urls,
+  userId,
+  alsoIssuedTo,
+  db = dbWrite,
+  readLogForAll = false,
+}: KeyIssuerArgs) {
   const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
   const keys = [...new Set(urls.flatMap(keysIn))];
   const result = {
@@ -306,9 +340,9 @@ export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: K
   const { owners, readFailed } = await ownersFromRedis(keys);
   result.recordReadFailed = readFailed;
   const unrecorded = keys.filter((k) => !owners.has(k));
-  const logged = await ownersFromClickhouse(unrecorded);
+  const logged = await ownersFromClickhouse(readLogForAll ? keys : unrecorded);
   result.requestLogReadFailed = logged.failed;
-  for (const [key, owner] of logged.owners) owners.set(key, owner);
+  for (const [key, owner] of logged.owners) if (!owners.has(key)) owners.set(key, owner);
   result.issuedToOthers = [...owners].filter(([, o]) => !allowed.includes(o)).map(([k]) => k);
 
   const remaining = keys.filter((k) => !owners.has(k));
@@ -329,6 +363,21 @@ export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: K
 }
 
 /**
+ * The keys a client save at `now` refuses on their issue records: those issued to another user,
+ * and the unrecorded ones when `refuseUnrecorded`. A save refuses if any key is refused.
+ */
+export function issuerRefusals(issuers: Awaited<ReturnType<typeof keyIssuers>>, now: Date) {
+  // With neither store read, no key's issuee is known.
+  const refuseUnrecorded =
+    now >= UNRECORDED_KEYS_ACCEPTED_UNTIL ||
+    (issuers.recordReadFailed && issuers.requestLogReadFailed);
+  return {
+    refuseUnrecorded,
+    refused: [...issuers.issuedToOthers, ...(refuseUnrecorded ? issuers.unrecorded : [])],
+  };
+}
+
+/**
  * Every upload key in a client-supplied url must have been issued to the caller (or to
  * `alsoIssuedTo`); a key issued to another user is refused with the generic refusal.
  */
@@ -338,18 +387,12 @@ export async function assertClientKeysIssuedToCaller({
 }: KeyIssuerArgs & { now?: Date }) {
   const { userId } = args;
   assertNoUnfinishedUploads(args.urls);
-  const {
-    tooMany,
-    issuedToOthers,
-    unrecorded: remaining,
-    recordReadFailed,
-    requestLogReadFailed,
-  } = await keyIssuers(args);
+  const issuers = await keyIssuers(args);
+  const { tooMany, issuedToOthers, unrecorded: remaining, requestLogReadFailed } = issuers;
   if (tooMany || issuedToOthers.length) throw imageUrlUnavailableError();
   if (!remaining.length) return;
 
-  // With neither store read, no key's issuee is known.
-  if (now >= UNRECORDED_KEYS_ACCEPTED_UNTIL || (recordReadFailed && requestLogReadFailed)) {
+  if (issuerRefusals(issuers, now).refuseUnrecorded) {
     uploadKeyOwnerCounter.inc({
       outcome: requestLogReadFailed ? 'request_log_unavailable' : 'unrecorded_refused',
     });
@@ -366,6 +409,43 @@ export async function assertClientKeysIssuedToCaller({
     keys: remaining.join(','),
     ...(requestLogReadFailed && { reason: 'request_log_unavailable' }),
   }).catch(() => undefined);
+}
+
+/**
+ * The upload keys among `keys` (bare keys, as a draft stores them) that a client save by `userId`
+ * would refuse once unrecorded keys are refused, whatever the date. A lookup that fails marks
+ * nothing; the save still decides. Writes nothing.
+ */
+export async function clientKeysToReupload({
+  keys,
+  userId,
+  now = new Date(),
+}: {
+  keys: string[];
+  userId: number;
+  now?: Date;
+}) {
+  uploadKeyOwnerCounter.inc({ outcome: 'draft_check' });
+  if (keys.length > MAX_KEYS) return keys;
+  const at = now < UNRECORDED_KEYS_ACCEPTED_UNTIL ? UNRECORDED_KEYS_ACCEPTED_UNTIL : now;
+  // Every key reaches the request log, so whether it failed does not depend on which keys were sent.
+  const issuers = await keyIssuers({ urls: keys, userId, readLogForAll: true });
+  // Marked only from records that were read, or a key of another user's would differ from an absent one.
+  if (issuers.recordReadFailed || issuers.requestLogReadFailed) return [];
+  const refused = new Set(issuerRefusals(issuers, at).refused);
+  // The row check a save runs, once for all the keys.
+  const stored = new Map(keys.map((key) => [key, storedUrlsFor(key)]));
+  const onOtherRows = new Set(
+    await keysOnOtherRows({
+      keys: [...new Set([...stored.values()].flat())],
+      userId,
+      db: dbWrite,
+      firstOnly: false,
+    })
+  );
+  return keys.filter(
+    (key) => refused.has(key.toLowerCase()) || stored.get(key)!.some((v) => onOtherRows.has(v))
+  );
 }
 
 async function ownersFromShopArtwork(keys: string[], db: Db) {
