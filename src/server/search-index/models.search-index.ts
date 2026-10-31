@@ -65,7 +65,8 @@ const INDEX_ID = MODELS_SEARCH_INDEX;
  */
 async function heldShowcaseImages(
   modelVersionIds: number[],
-  models: { id: number; modelVersions: { id: number }[] }[]
+  models: { id: number; modelVersions: { id: number }[] }[],
+  onReadFailure: 'floor' | 'throw'
 ) {
   // Loaded on demand: the model service imports this index.
   const { holdShowcaseImages } = await import('~/server/services/model.service');
@@ -75,8 +76,7 @@ async function heldShowcaseImages(
         model.modelVersions.map((version) => [version.id, { modelId: model.id }] as const)
       )
     ),
-    // A document written now is kept: fail the batch so it retries, rather than store PG only.
-    onReadFailure: 'throw',
+    onReadFailure,
   });
 }
 
@@ -674,7 +674,8 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  const imagesCache = await heldShowcaseImages(modelVersionIds, models);
+  // Served live (the resource picker), not stored: PG only on a failed read, like the feed.
+  const imagesCache = await heldShowcaseImages(modelVersionIds, models, 'floor');
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
@@ -863,7 +864,8 @@ export const pullModelsData = async (
     for (const versionBatch of versionBatches) {
       tasks.push(async () => {
         logger(`PullData :: Pull images`, batchLogKey);
-        const imagesCache = await heldShowcaseImages(versionBatch, batch);
+        // A document written now is kept: fail the batch so it retries, rather than store PG only.
+        const imagesCache = await heldShowcaseImages(versionBatch, batch, 'throw');
         const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
         logger(`PullData :: Pulled images`, batchLogKey);
 

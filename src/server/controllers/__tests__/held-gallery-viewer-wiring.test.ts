@@ -126,11 +126,10 @@ describe("a held model's gallery level change", () => {
     expect(bustRest.mock.calls).toEqual([[7]]);
   });
 
-  it('still drops the REST body and queues the rewrite when the settings cache cannot be dropped', async () => {
+  it('fails the save, to be retried, when the settings cache cannot be dropped', async () => {
     bustGallery.mockRejectedValueOnce(new Error('redis down'));
-    await expect(change({ minor: true, sfwOnly: false })).resolves.toMatchObject({ id: 7 });
-    expect(bustRest.mock.calls).toEqual([[7]]);
-    expect(reindex.mock.calls).toEqual([[[{ id: 7, action: 'Update' }]]]);
+    await expect(change({ minor: true, sfwOnly: false })).rejects.toThrow();
+    expect(reindex).not.toHaveBeenCalled();
   });
 
   it('leaves an unheld model to the caches that already follow its gallery', async () => {

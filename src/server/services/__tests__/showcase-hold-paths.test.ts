@@ -232,6 +232,27 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     ).rejects.toThrow('redis down');
   });
 
+  it('a live read of the search records serves PG images only when the gallery settings cannot be read', async () => {
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    dbMock.dbRead.model.findMany.mockResolvedValue([
+      {
+        id: HELD_MODEL,
+        userId: OWNER,
+        user: { id: OWNER },
+        type: 'LORA',
+        metrics: [],
+        hashes: [],
+        createdAt: new Date(0),
+        nsfwLevel: 1,
+        meta: null,
+        modelVersions: [{ id: VERSION, files: [], metrics: [], hashes: [] }],
+      },
+    ]);
+    const [record] = await getModelSearchIndexRecords([HELD_MODEL]);
+    expect(record?.images.map((image) => image.id)).toEqual([WITHIN]);
+  });
+
   it('reads gallery settings from the existing cache keys', async () => {
     await getEligibleModels([VERSION]);
     expect(redisMock.redis.mGet).toHaveBeenCalledWith([`model:gallery-settings:${HELD_MODEL}`]);

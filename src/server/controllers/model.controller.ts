@@ -2368,18 +2368,9 @@ export const updateGallerySettingsHandler = async ({
         return { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull };
       },
     });
-    // The settings are saved: a failed bust must not skip the steps below or fail the save.
-    try {
-      await bustModelGallerySettings([id]);
-    } catch (error) {
-      logToAxiom({
-        type: 'error',
-        name: 'gallery-settings-bust',
-        message: 'gallery settings saved; settings cache not dropped',
-        modelId: id,
-        error: safeError(error),
-      }).catch(() => undefined);
-    }
+    // Uncaught on purpose: the cached settings outlive a failed drop, so the save must fail and be
+    // retried; the rewrites below would only rebuild from the stale entry.
+    await bustModelGallerySettings([id]);
     // A held model's showcase is served at its gallery level, in its search document and REST body.
     if (held) {
       await bustPublicModelResponseCache(id);

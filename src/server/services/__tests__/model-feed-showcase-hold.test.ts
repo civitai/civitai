@@ -187,6 +187,13 @@ describe('the public model API on a held model', () => {
     expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
   });
 
+  it('serves PG images only, without failing, when the gallery settings cannot be read', async () => {
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    const { items } = await getModelsWithVersions({ input });
+    expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
+  });
+
   it('serves a model without the flags whole', async () => {
     redisMock.redis.mGet.mockResolvedValue([JSON.stringify({ none: true })]);
     const { items } = await getModelsWithVersions({ input });
@@ -212,6 +219,18 @@ describe('the model feed on a held model', () => {
   it('shows another viewer only images within the held level', async () => {
     expect(await imageIds()).toEqual([WITHIN]);
     expect(await imageIds({ id: 99, isModerator: false })).toEqual([WITHIN]);
+  });
+
+  it('serves the page with PG images only when the gallery settings cannot be read', async () => {
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
+    mockShowcase.mockResolvedValue({
+      [VERSION_ID]: {
+        modelVersionId: VERSION_ID,
+        images: [image(ABOVE, NsfwLevel.X), image(3, NsfwLevel.PG13), image(WITHIN, NsfwLevel.PG)],
+      },
+    });
+    expect(await imageIds()).toEqual([WITHIN]);
   });
 
   it('shows the owner and moderators the whole showcase', async () => {
