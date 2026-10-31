@@ -377,10 +377,11 @@ export const getImagesForModelVersionHandler = async ({
 }: {
   input: GetByIdInput;
   ctx: Context;
-}) =>
-  holdShowcaseImages(await getImagesForModelVersionCache([input.id]), {
-    viewer: heldGalleryViewer(ctx),
-  });
+}) => {
+  // Read before any await, as the request's other calls share `ctx`.
+  const viewer = heldGalleryViewer(ctx);
+  return holdShowcaseImages(await getImagesForModelVersionCache([input.id]), { viewer });
+};
 
 export const getInfiniteImagesHandler = async ({
   input,

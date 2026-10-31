@@ -26,14 +26,21 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   getUserSettings: async () => ({}),
 }));
 vi.mock('~/server/services/cosmetic.service', () => ({ getCosmeticsForEntity: async () => ({}) }));
+vi.mock('~/server/services/system-cache', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getCategoryTags: async () => [],
+}));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn().mockResolvedValue(false) }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 
 // Static, so the large module graph loads at collection rather than inside one test's timeout.
 const { getEligibleModels } = await import('~/server/services/eligible-models.service');
 const { getUserDownloads } = await import('~/server/services/download.service');
-const { getImagesForModelVersionHandler } = await import('~/server/controllers/image.controller');
-const { pullModelsData } = await import('~/server/search-index/models.search-index');
+const { imageRouter } = await import('~/server/routers/image.router');
+const { pullModelsData, getModelSearchIndexRecords } = await import(
+  '~/server/search-index/models.search-index'
+);
+const { TokenScope } = await import('~/shared/constants/token-scope.constants');
 const { getAuctionBySlug } = await import('~/server/services/auction.service');
 
 const HELD_MODEL = 5;
@@ -57,8 +64,8 @@ beforeEach(() => {
     [VERSION]: {
       modelVersionId: VERSION,
       images: [
-        { id: ABOVE, nsfwLevel: NsfwLevel.X, url: 'x' },
-        { id: WITHIN, nsfwLevel: NsfwLevel.PG, url: 'pg' },
+        { id: ABOVE, nsfwLevel: NsfwLevel.X, url: 'x', modelVersionId: VERSION },
+        { id: WITHIN, nsfwLevel: NsfwLevel.PG, url: 'pg', modelVersionId: VERSION },
       ],
     },
   });
@@ -97,12 +104,54 @@ describe("a held model's showcase on paths that read it from the shared cache", 
 
   it('the version showcase procedure holds an app acting for the owner, not the owner signed in', async () => {
     const ids = async (ctx: object) =>
-      (await getImagesForModelVersionHandler({ input: { id: VERSION }, ctx: ctx as never }))[
-        VERSION
-      ].images.map((image) => image.id);
+      (
+        await imageRouter
+          .createCaller({
+            acceptableOrigin: true,
+            tokenScope: TokenScope.Full,
+            apiKeyId: null,
+            req: { headers: {} },
+            res: { setHeader: () => undefined },
+            cache: { edgeTTL: 0 },
+            features: {},
+            track: { action: vi.fn(() => Promise.resolve(true)) },
+            ...ctx,
+          } as never)
+          .getImagesForModelVersion({ id: VERSION })
+      )[VERSION].images.map((image) => image.id);
     expect(await ids({ user: undefined })).toEqual([WITHIN]);
     expect(await ids({ user: { id: OWNER }, subject: { type: 'oauth' } })).toEqual([WITHIN]);
     expect(await ids({ user: { id: OWNER } })).toEqual([ABOVE, WITHIN]);
+  });
+
+  it("holds a viewer whose role changes while the request's showcase is being read", async () => {
+    const user = { id: 99, isModerator: false };
+    fetchShowcase.mockImplementationOnce(async () => {
+      user.isModerator = true;
+      return {
+        [VERSION]: {
+          modelVersionId: VERSION,
+          images: [
+            { id: ABOVE, nsfwLevel: NsfwLevel.X, url: 'x', modelVersionId: VERSION },
+            { id: WITHIN, nsfwLevel: NsfwLevel.PG, url: 'pg', modelVersionId: VERSION },
+          ],
+        },
+      };
+    });
+    const result = await imageRouter
+      .createCaller({
+        user,
+        acceptableOrigin: true,
+        tokenScope: TokenScope.Full,
+        apiKeyId: null,
+        req: { headers: {} },
+        res: { setHeader: () => undefined },
+        cache: { edgeTTL: 0 },
+        features: {},
+        track: { action: vi.fn(() => Promise.resolve(true)) },
+      } as never)
+      .getImagesForModelVersion({ id: VERSION });
+    expect(result[VERSION].images.map((image) => image.id)).toEqual([WITHIN]);
   });
 
   it('the models search document carries only images within the held level', async () => {
@@ -139,5 +188,24 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     ]);
     const auction = await getAuctionBySlug({ slug: 'featured' });
     expect(auction.bids[0].entityData?.image?.id).toBe(WITHIN);
+  });
+
+  it("a single model's search document update carries only images within the held level", async () => {
+    dbMock.dbRead.model.findMany.mockResolvedValue([
+      {
+        id: HELD_MODEL,
+        userId: OWNER,
+        user: { id: OWNER },
+        type: 'LORA',
+        metrics: [],
+        hashes: [],
+        createdAt: new Date(0),
+        nsfwLevel: 1,
+        meta: null,
+        modelVersions: [{ id: VERSION, files: [], metrics: [], hashes: [] }],
+      },
+    ]);
+    const [record] = await getModelSearchIndexRecords([HELD_MODEL]);
+    expect(record?.images.map((image) => image.id)).toEqual([WITHIN]);
   });
 });

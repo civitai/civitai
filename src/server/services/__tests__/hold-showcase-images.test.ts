@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 // Static, so the large module graph loads at collection rather than inside one test's timeout.
 import { heldGalleryViewer, holdShowcaseImages } from '~/server/services/model.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -101,27 +102,32 @@ describe('holdShowcaseImages', () => {
     expect(ids(other[HELD_VERSION])).toEqual([2]);
   });
 
-  it('holds a model whose gallery settings are not cached yet, from the model itself', async () => {
-    redisMock.redis.mGet.mockResolvedValue([null]);
-    dbMock.dbRead.model.findUnique.mockResolvedValue({
-      id: HELD_MODEL,
-      userId: OWNER,
-      gallerySettings: null,
-      minor: true,
-      sfwOnly: true,
-    });
-    dbMock.dbRead.model.findFirst.mockResolvedValue({
-      id: HELD_MODEL,
-      userId: OWNER,
-      gallerySettings: null,
-      minor: true,
-      sfwOnly: true,
-    });
-    const held = await holdShowcaseImages(
+  const uncached = (flags: { minor: boolean; sfwOnly: boolean }) => {
+    const row = { id: HELD_MODEL, userId: OWNER, gallerySettings: null, ...flags };
+    dbMock.dbRead.model.findFirst.mockResolvedValue(row);
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(row);
+    return holdShowcaseImages(
       { [HELD_VERSION]: byVersion()[HELD_VERSION] },
       { models: new Map([[HELD_VERSION, { modelId: HELD_MODEL }]]) }
-    );
-    expect(ids(held[HELD_VERSION])).toEqual([2]);
+    ).then((held) => ids(held[HELD_VERSION]));
+  };
+
+  it.each([
+    ['minor', { minor: true, sfwOnly: false }],
+    ['SFW-only', { minor: false, sfwOnly: true }],
+  ])('holds a %s model whose gallery settings are not cached yet', async (_, flags) => {
+    redisMock.redis.mGet.mockResolvedValue([null]);
+    expect(await uncached(flags)).toEqual([2]);
+  });
+
+  it('leaves an unflagged model whole when its settings are not cached yet', async () => {
+    redisMock.redis.mGet.mockResolvedValue([null]);
+    expect(await uncached({ minor: false, sfwOnly: false })).toEqual([1, 2, 3]);
+  });
+
+  it('still holds the model when the batched settings read fails', async () => {
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
+    expect(await uncached({ minor: true, sfwOnly: false })).toEqual([2]);
   });
 });
 
@@ -146,6 +152,18 @@ describe('heldGalleryViewer', () => {
 
   it('exempts a signed-in session', () => {
     expect(heldGalleryViewer({ user })).toEqual({ id: OWNER, isModerator: true });
+  });
+
+  it('exempts a full-access key', () => {
+    expect(
+      heldGalleryViewer({
+        user,
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey' },
+        tokenScope: TokenScope.Full,
+      } as never)
+    ).toEqual({ id: OWNER, isModerator: true });
   });
 
   it('holds an OAuth app or a scoped key acting for the owner or a moderator', () => {
