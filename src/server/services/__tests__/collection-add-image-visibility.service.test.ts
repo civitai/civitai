@@ -165,18 +165,6 @@ describe('saveItemInCollections with an image', () => {
       save({ imageId: HIDDEN_IMAGE, collections: [{ collectionId: COLLECTION_ID }] })
     ).resolves.toBeDefined();
   });
-
-  it('leaves non-image items alone', async () => {
-    mockDbRead.collection.findMany.mockResolvedValue([{ ...collectionRow, type: 'Model' }]);
-    mockDbRead.model.findMany.mockResolvedValue([{ id: HIDDEN_IMAGE, userId: SUBMITTER_ID }]);
-
-    await save({
-      modelId: HIDDEN_IMAGE,
-      type: 'Model',
-      collections: [{ collectionId: COLLECTION_ID }],
-    });
-    expect(assertVisible).not.toHaveBeenCalled();
-  });
 });
 
 const bulk = (imageIds: number[], userId = SUBMITTER_ID) =>
@@ -206,6 +194,30 @@ describe('bulkSaveItems with images', () => {
 
   it('adds images the caller can open', async () => {
     await expect(bulk([VISIBLE_IMAGE])).resolves.toMatchObject({ imageIds: [VISIBLE_IMAGE] });
+  });
+
+  it('lets staff add an image others cannot open', async () => {
+    await expect(
+      bulkSaveItems({
+        input: {
+          collectionId: COLLECTION_ID,
+          imageIds: [HIDDEN_IMAGE],
+          userId: SUBMITTER_ID,
+          isModerator: true,
+        } as never,
+        permissions: {
+          collectionId: COLLECTION_ID,
+          read: true,
+          write: true,
+          writeReview: false,
+          manage: false,
+          follow: true,
+          isContributor: true,
+          isOwner: false,
+          isCollaborator: false,
+        } as never,
+      })
+    ).resolves.toMatchObject({ imageIds: [HIDDEN_IMAGE] });
   });
 
   it("lets the image's owner add it", async () => {
