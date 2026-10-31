@@ -347,22 +347,22 @@ export async function assertClientKeysIssuedToCaller({
   if (tooMany || issuedToOthers.length) throw imageUrlUnavailableError();
   if (!remaining.length) return;
 
-  if (requestLogReadFailed) {
-    uploadKeyOwnerCounter.inc({ outcome: 'request_log_unavailable' });
-    throw imageUrlUnavailableError();
-  }
-
   if (now >= UNRECORDED_KEYS_ACCEPTED_UNTIL) {
-    uploadKeyOwnerCounter.inc({ outcome: 'unrecorded_refused' });
+    uploadKeyOwnerCounter.inc({
+      outcome: requestLogReadFailed ? 'request_log_unavailable' : 'unrecorded_refused',
+    });
     throw imageUrlUnavailableError();
   }
-  uploadKeyOwnerCounter.inc({ outcome: 'unrecorded_accepted' });
+  uploadKeyOwnerCounter.inc({
+    outcome: requestLogReadFailed ? 'request_log_unavailable_accepted' : 'unrecorded_accepted',
+  });
   logToAxiom({
     type: 'info',
     name: 'upload-key-unrecorded',
     message: 'Accepted an upload key with no issue record',
     userId,
     keys: remaining.join(','),
+    ...(requestLogReadFailed && { reason: 'request_log_unavailable' }),
   }).catch(() => undefined);
 }
 

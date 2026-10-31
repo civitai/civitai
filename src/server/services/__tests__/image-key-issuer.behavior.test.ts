@@ -1,6 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
+import type { Mock } from 'vitest';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as prom from '~/server/prom/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -56,6 +58,16 @@ const BEFORE = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() - 60_000);
 const AFTER = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() + 60_000);
 
 const redis = new Map<string, string>();
+
+// The setup file stubs every registered metric; this is the stub the module built for its counter.
+const counterAt = vi
+  .mocked(prom.registerCounterWithLabels)
+  .mock.calls.findIndex(([opts]) => opts.name === 'upload_key_owner_total');
+const ownerCounter = vi.mocked(prom.registerCounterWithLabels).mock.results[counterAt].value as {
+  inc: Mock;
+};
+const outcomeCount = (name: string) =>
+  ownerCounter.inc.mock.calls.filter(([labels]) => labels.outcome === name).length;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -185,31 +197,62 @@ describe('assertClientKeysIssuedToCaller', () => {
     expect(await outcome(KEY, BEFORE)).toBe('accepted');
   });
 
-  it('refuses a key with no record when the upload request log cannot be read', async () => {
+  it('accepts a key with no record before the cutoff when the upload request log cannot be read, and says so', async () => {
     holder.logDown = true;
-    expect(await outcome(KEY, BEFORE)).toBe('refused');
+    const before = outcomeCount('request_log_unavailable_accepted');
+    loggingMock.logToAxiom.mockClear();
+
+    expect(await outcome(KEY, BEFORE)).toBe('accepted');
+
+    expect(outcomeCount('request_log_unavailable_accepted')).toBe(before + 1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'upload-key-unrecorded',
+        keys: KEY,
+        reason: 'request_log_unavailable',
+      })
+    );
     redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
-    expect(await outcome(KEY, BEFORE)).toBe('refused');
+    expect(await outcome(KEY, BEFORE)).toBe('accepted');
+  });
+
+  it('refuses a key with no record after the cutoff when the upload request log cannot be read', async () => {
+    holder.logDown = true;
+    const before = outcomeCount('request_log_unavailable');
+    expect(await outcome(KEY, AFTER)).toBe('refused');
+    expect(outcomeCount('request_log_unavailable')).toBe(before + 1);
+    redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
+    expect(await outcome(KEY, AFTER)).toBe('refused');
+  });
+
+  it('tags no reason on a key accepted while the upload request log answered', async () => {
+    loggingMock.logToAxiom.mockClear();
+    expect(await outcome(KEY, BEFORE)).toBe('accepted');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.not.objectContaining({ reason: expect.anything() })
+    );
   });
 
   it('logs why the upload request log could not be read', async () => {
     holder.logDown = true;
     loggingMock.logToAxiom.mockClear();
 
-    await outcome(KEY, BEFORE);
+    await outcome(KEY, AFTER);
 
     expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ type: 'error', name: 'upload-key-owner', error: 'unavailable' })
     );
   });
 
-  it('refuses a key with no record when the upload request log does not answer in 2s', async () => {
+  it('treats an upload request log that does not answer in 2s as unreadable', async () => {
     holder.logHangs = true;
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      const result = outcome(KEY, BEFORE);
+      const before = outcome(KEY, BEFORE);
+      const after = outcome(KEY, AFTER);
       await vi.advanceTimersByTimeAsync(2_000);
-      expect(await result).toBe('refused');
+      expect(await before).toBe('accepted');
+      expect(await after).toBe('refused');
     } finally {
       vi.useRealTimers();
     }
