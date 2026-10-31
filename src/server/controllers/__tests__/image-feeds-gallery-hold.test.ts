@@ -9,12 +9,15 @@ import {
 import { NsfwLevel } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-const { getAllImages, getAllImagesIndex, getPostsInfinite, heldLevel } = vi.hoisted(() => ({
-  getAllImages: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-  getAllImagesIndex: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-  getPostsInfinite: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-  heldLevel: vi.fn(),
-}));
+const { getAllImages, getAllImagesIndex, getPostsInfinite, heldLevel, heldByPost } = vi.hoisted(
+  () => ({
+    heldByPost: vi.fn(),
+    getAllImages: vi.fn(async () => ({ items: [], nextCursor: undefined })),
+    getAllImagesIndex: vi.fn(async () => ({ items: [], nextCursor: undefined })),
+    getPostsInfinite: vi.fn(async () => ({ items: [], nextCursor: undefined })),
+    heldLevel: vi.fn(),
+  })
+);
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -25,7 +28,10 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   getPostsInfinite,
 }));
-vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: heldLevel }));
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: heldLevel,
+  getHeldLevelsByPost: heldByPost,
+}));
 
 const { getInfiniteImagesHandler } = await import('~/server/controllers/image.controller');
 const { getPostsInfiniteHandler } = await import('~/server/controllers/post.controller');
@@ -55,6 +61,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks keeps a resolved or rejected value, so one test's would reach the next.
   heldLevel.mockReset();
+  heldByPost.mockReset().mockResolvedValue(new Map());
 });
 
 describe('image.getInfinite on a held model', () => {
@@ -286,5 +293,75 @@ describe("post.getInfinite on a held model's version", () => {
     await run(allBrowsingLevelsFlag);
 
     expect(fetchedLevel(getPostsInfinite)).toBe(allBrowsingLevelsFlag);
+  });
+});
+
+describe('image.getInfinite by image id', () => {
+  const HELD_POST = 100;
+  const OWNER = 50;
+  const page = {
+    items: [
+      { id: 1, postId: HELD_POST, nsfwLevel: NsfwLevel.PG },
+      { id: 2, postId: HELD_POST, nsfwLevel: NsfwLevel.X },
+      { id: 3, postId: 200, nsfwLevel: NsfwLevel.X },
+      { id: 4, postId: null, nsfwLevel: NsfwLevel.X },
+    ],
+    nextCursor: undefined,
+  };
+  const idsOf = (result: { items: { id: number }[] }) => result.items.map((image) => image.id);
+  const run = (selector: object, imageIndexFeed: boolean, context = ctx(imageIndexFeed)) =>
+    getInfiniteImagesHandler({
+      input: { limit: 10, include: [], browsingLevel: allBrowsingLevelsFlag, ...selector } as never,
+      ctx: context,
+    });
+
+  beforeEach(() => {
+    heldLevel.mockResolvedValue(undefined);
+    heldByPost.mockResolvedValue(new Map([[HELD_POST, { level: NsfwLevel.PG, ownerId: OWNER }]]));
+    getAllImages.mockResolvedValue(page as never);
+    getAllImagesIndex.mockResolvedValue(page as never);
+  });
+
+  it.each([
+    ['ids, from the database', { ids: [1, 2, 3, 4] }, false],
+    ['ids, from the index', { ids: [1, 2, 3, 4] }, true],
+    ['an image id', { imageId: 2 }, false],
+  ])(
+    "leaves out an image above its post's held level, picked by %s",
+    async (_, selector, index) => {
+      expect(idsOf(await run(selector, index))).toEqual([1, 3, 4]);
+    }
+  );
+
+  it("serves the model's owner and a moderator every image", async () => {
+    const owner = { ...ctx(false), user: { id: OWNER } } as unknown as Context;
+    expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, owner))).toEqual([1, 2, 3, 4]);
+    expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, ctx(false, true)))).toEqual([1, 2, 3, 4]);
+  });
+
+  const key = (tokenScope: number) => ({
+    apiKeyId: 1,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope,
+  });
+  it.each([
+    ['a full-access key', key(TokenScope.Full), [1, 2, 3, 4]],
+    ['a scoped key', key(TokenScope.ModelsRead), [1, 3, 4]],
+    ['an app they authorised', { subject: { type: 'oauth', id: 'app' } }, [1, 3, 4]],
+  ])("serves the model's owner on %s as its scope allows", async (_, credential, served) => {
+    const owner = { ...ctx(false), user: { id: OWNER }, ...credential } as unknown as Context;
+    expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, owner))).toEqual(served);
+  });
+
+  it("holds a signed-out viewer when the model's owner is not known", async () => {
+    heldByPost.mockResolvedValue(new Map([[HELD_POST, { level: NsfwLevel.PG }]]));
+    const signedOut = { ...ctx(false), user: undefined } as unknown as Context;
+    expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, signedOut))).toEqual([1, 3, 4]);
+  });
+
+  it('leaves a feed that does not pick images by id as it was', async () => {
+    expect(idsOf(await run({ username: 'someone' }, false))).toEqual([1, 2, 3, 4]);
+    expect(heldByPost).not.toHaveBeenCalled();
   });
 });

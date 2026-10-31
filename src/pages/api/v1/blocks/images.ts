@@ -8,7 +8,7 @@ import {
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
-import { runImageSearch } from '~/server/services/image-search.service';
+import { runImageSearch, withoutHeldImages } from '~/server/services/image-search.service';
 import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
@@ -225,7 +225,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       }
     }
 
-    const { items, nextCursor } = await runImageSearch(
+    const { items: found, nextCursor } = await runImageSearch(
       { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
       {
         // CLAMPED browsing level — never the client's. The per-image filter is
@@ -239,6 +239,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         req,
       }
     );
+    // Images picked by id name no model, so each is held by its own post's model.
+    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
 
     const metadata: Metadata = { nextCursor };
     if (usingPaging) {

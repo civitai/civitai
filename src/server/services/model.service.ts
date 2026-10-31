@@ -5959,6 +5959,45 @@ export async function getHeldGalleryLevel({
 }
 
 /**
+ * For each post on a minor or SFW-only model, the level its images may be served at and the model's
+ * owner, who sees them whole. A post on no held model, or not yet on the replica, is absent.
+ */
+export async function getHeldLevelsByPost(postIds: number[]) {
+  const held = new Map<number, { level: number; ownerId?: number }>();
+  const ids = uniq(postIds);
+  if (!ids.length) return held;
+  const posts = await postVersionCache().fetch(ids);
+  const versionIds = uniq(Object.values(posts).map((post) => post.modelVersionId)).filter(
+    isDefined
+  );
+  if (!versionIds.length) return held;
+  const versions = await versionModelCache().fetch(versionIds);
+
+  const levels = new Map<number, number>();
+  await limitConcurrency(
+    uniq(Object.values(versions).map((version) => version.modelId)).map((id) => async () => {
+      const gallery = await getGallerySettingsByModelId({ id });
+      if (gallery?.sfwHeld) levels.set(id, gallery.level);
+    }),
+    5
+  );
+  if (!levels.size) return held;
+  const owners = await dbRead.model.findMany({
+    where: { id: { in: [...levels.keys()] } },
+    select: { id: true, userId: true },
+  });
+  const ownerOf = new Map(owners.map((model) => [model.id, model.userId]));
+
+  for (const id of ids) {
+    const versionId = posts[id]?.modelVersionId;
+    const modelId = versionId ? versions[versionId]?.modelId : undefined;
+    const level = modelId ? levels.get(modelId) : undefined;
+    if (modelId && level !== undefined) held.set(id, { level, ownerId: ownerOf.get(modelId) });
+  }
+  return held;
+}
+
+/**
  * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
  * SFW. A setting that allows no SFW level, or none at all, serves SFW: the gallery reads 0 as no cap.
  */
