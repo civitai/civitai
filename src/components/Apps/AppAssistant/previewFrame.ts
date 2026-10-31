@@ -1,4 +1,7 @@
+import { checkedEntryUrl, fetchEntryUrlBody } from '~/components/AppBlocks/devTunnelEntryUrl';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
+
+const PREVIEW_UNAVAILABLE = 'The preview is unavailable';
 
 export type PreviewFrame = DevTunnelFrame & { iframeSrc: string };
 /** The tunnel is live but not resolvable yet, so there is no URL to frame. */
@@ -10,27 +13,26 @@ export class PreviewGoneError extends Error {
 }
 
 /**
- * The preview pane's frame for `blockId`, with a freshly signed, short-lived entry URL — or
- * `{ preparing: true }` until the tunnel's host can be resolved.
+ * The preview pane's frame for `blockId`, with a freshly signed, short-lived entry URL (https, on
+ * the frame's `host`) — or `{ preparing: true }` until the tunnel's host can be resolved.
  */
 export async function fetchPreviewFrame(
   blockId: string,
   fetchImpl: typeof fetch = (...args) => fetch(...args)
 ): Promise<PreviewFrame | PreviewPreparing> {
-  const res = await fetchImpl(
+  const data = await fetchEntryUrlBody(
     `/api/apps/assistant/preview?blockId=${encodeURIComponent(blockId)}`,
+    fetchImpl,
     {
-      credentials: 'same-origin',
+      fallback: PREVIEW_UNAVAILABLE,
+      // 409: the app is the caller's, but no tunnel of it is live (`/api/apps/assistant/preview`).
+      refuse: (status, body) =>
+        status === 409 ? new PreviewGoneError(body?.error ?? PREVIEW_UNAVAILABLE) : undefined,
     }
   );
-  const data = (await res.json().catch(() => null)) as
-    | (Partial<PreviewFrame & PreviewPreparing> & { error?: string })
-    | null;
-  if (res.ok && data?.preparing === true) return { preparing: true };
-  // 409: the app is the caller's, but no tunnel of it is live (`/api/apps/assistant/preview`).
-  if (res.status === 409) throw new PreviewGoneError(data?.error ?? 'The preview is unavailable');
-  if (!res.ok || !data?.iframeSrc) throw new Error(data?.error ?? 'The preview is unavailable');
-  return data as PreviewFrame;
+  if (data.preparing === true) return { preparing: true };
+  checkedEntryUrl(data, PREVIEW_UNAVAILABLE);
+  return data as unknown as PreviewFrame;
 }
 
 /**
