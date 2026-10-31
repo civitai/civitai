@@ -152,13 +152,22 @@ describe('graph entry points check their input urls', () => {
 
   it('skips the check only for input its caller already checked', async () => {
     mocks.assertInputs.mockResolvedValue(undefined);
-    await whatIfFromGraph({
-      input: graphInput(),
-      externalCtx: externalCtx(),
-      token: 'token',
-      userId: USER_ID,
-      inputGate: 'checked-by-caller',
-    }).catch(() => undefined);
+    const run = (inputGate: Parameters<typeof whatIfFromGraph>[0]['inputGate']) =>
+      whatIfFromGraph({
+        input: graphInput(),
+        externalCtx: externalCtx(),
+        token: 'token',
+        userId: USER_ID,
+        inputGate,
+      }).catch(() => undefined);
+
+    // Control: the same input with a checked entry reaches the check, so a skip below is the
+    // marker's doing and not an earlier failure.
+    await run({ entry: 'whatIfFromGraph', isApiCaller: false });
+    expect(mocks.assertInputs).toHaveBeenCalledTimes(1);
+
+    mocks.assertInputs.mockClear();
+    await run('checked-by-caller');
     expect(mocks.assertInputs).not.toHaveBeenCalled();
   });
 });
