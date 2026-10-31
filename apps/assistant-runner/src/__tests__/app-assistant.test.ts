@@ -136,8 +136,11 @@ describe('App Assistant’s tools on the runner', () => {
     );
     expect(tools.hostTools?.sort()).toEqual([
       'create_app',
+      'get_review_feedback',
+      'get_user_feedback',
       'report_ready',
       'set_checklist',
+      'set_feedback_status',
       'start_preview',
       'stop_preview',
       'submit_for_review',
