@@ -25,9 +25,9 @@
  * A suite a PR leaves out ON PURPOSE (`--scope`, apps only): `scripts/ci/app-suite-scope.mjs`
  * may leave an app's suite out of a pull_request run when nothing it reads changed, and writes
  * what it decided to a scope file. Given that file, the ledger excuses those apps, but only after
- * re-checking the decision (`checkDeclaredSkips`): it must be a pull_request run, the file's own
- * changed files must still lead to the same skip, and the app must really be absent from the
- * report. A suite missing for any other reason fails exactly as before; without the file, or with
+ * re-checking the decision (`checkDeclaredSkips`): it must be a pull_request run, the changed
+ * files this script lists again from git (not the file's own list) must match the file's and
+ * still lead to the same skip, and the app must really be absent from the report. A suite missing for any other reason fails exactly as before; without the file, or with
  * an empty skip list, nothing is excused.
  *
  * Usage:  node scripts/ci/assert-workspace-suites-ran.mjs <vitest-json-report> <packages|apps>
@@ -37,7 +37,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 
-import { checkDeclaredSkips } from './app-suite-scope.mjs';
+import { changedFiles, checkDeclaredSkips } from './app-suite-scope.mjs';
 
 /**
  * A floor as well as the ledger: the ledger passes if every workspace contributes one test,
@@ -152,7 +152,21 @@ for (const result of report.testResults ?? []) {
 let leftOut = [];
 if (scopePath && existsSync(scopePath)) {
   const scope = JSON.parse(readFileSync(scopePath, 'utf8'));
-  const problems = checkDeclaredSkips(repoRoot, scope, ran.keys(), process.env.GITHUB_EVENT_NAME);
+  // Listed again here rather than read from the scope file, so a wrong list there cannot excuse
+  // its own skip.
+  let changed = null;
+  try {
+    changed = changedFiles(repoRoot);
+  } catch (error) {
+    console.error(`could not list the changed files from git: ${error.message}`);
+  }
+  const problems = checkDeclaredSkips(
+    repoRoot,
+    scope,
+    ran.keys(),
+    process.env.GITHUB_EVENT_NAME,
+    changed
+  );
   if (problems.length > 0) {
     for (const p of problems) console.error(`FAIL: ${p}`);
     process.exit(1);

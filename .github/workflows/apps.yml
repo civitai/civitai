@@ -69,10 +69,10 @@ name: App suites
 # It is most of this job's test time (937 s of ~1,110 s summed per-file time, 2026-10-31). The
 # `Scope app suites` step leaves it out of a pull_request run when every changed file sits in an
 # app or package it does not read, derived from the code each run (scripts/ci/app-suite-scope.mjs:
-# workspace dependencies, `@scope/name` imports and `../` paths, transitively). Every other app
+# workspace dependencies and `@scope/name` imports, transitively). Every other app
 # always runs; any file outside `apps/` and `packages/` runs everything; push and dispatch runs
-# are never scoped. The suites ledger excuses a left-out suite only after re-deriving the skip
-# from the same changed files, and fails if the suite ran anyway.
+# are never scoped. The suites ledger excuses a left-out suite only after listing the changed
+# files from git itself and re-deriving the skip, and fails if the suite ran anyway.
 on:
   pull_request:
     branches: [main, release]

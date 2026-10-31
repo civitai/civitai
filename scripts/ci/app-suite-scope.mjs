@@ -23,16 +23,23 @@
  *   1. its package.json `workspace:` dependencies (all dependency fields);
  *   2. every `@scope/name` specifier its source imports that names a workspace member, declared
  *      or not;
- *   3. every `../`-style path literal in its files that resolves into another member (a test
- *      that reads `packages/<x>/prisma/migrations/...` by path).
- * and then the same three for every member found, until nothing new turns up.
+ * and then the same two for every member found, until nothing new turns up.
+ *
+ * Not derived: a file another member reads by RELATIVE PATH without depending on it. A `../`
+ * literal scan was tried and dropped: it added no member over the two above on 2026-10-31, and
+ * resolving each literal against its own file's directory misreads paths built from another base
+ * (`join(HERE, ...)` where HERE is not the file's directory). Such a read that is not also a
+ * dependency or an import would be missed.
  *
  * Push and dispatch runs are never scoped: `main` gets the full verdict on every commit.
  * Anything this cannot work out (no git, no parent commit) runs everything.
  *
  * Usage (CI):  node scripts/ci/app-suite-scope.mjs [--out app-suite-scope.json]
- *   Reads GITHUB_EVENT_NAME. On `pull_request` the changed files are `git diff HEAD^1 HEAD`:
- *   the checkout is the PR's merge commit, whose first parent is the base it merges into.
+ *   Reads GITHUB_EVENT_NAME. On `pull_request` the changed files are
+ *   `git diff --no-renames --name-only HEAD^1 HEAD`: the checkout is the PR's merge commit, whose
+ *   first parent is the base it merges into. `--no-renames` because a rename otherwise lists
+ *   only its NEW path, so moving a file out of a member the app reads would look like a change
+ *   to the member it moved into.
  *   Writes `vitest_args` (and `skipped`) to GITHUB_OUTPUT and the decision to `--out`, which
  *   `assert-workspace-suites-ran.mjs --scope` re-checks.
  */
@@ -85,7 +92,6 @@ function memberOf(path, memberDirs) {
 
 /** Member dirs that `dir` reads directly, each with the reason. */
 function directInputs(root, dir, byName) {
-  const memberDirs = [...byName.values()];
   const found = new Map();
   const add = (target, why) => target !== dir && !found.has(target) && found.set(target, why);
 
@@ -111,11 +117,6 @@ function directInputs(root, dir, byName) {
     const names = file === `${dir}/package.json` ? [] : text.matchAll(SCOPED_NAME);
     for (const m of names) {
       if (byName.has(m[1])) add(byName.get(m[1]), `${file} names ${m[1]}`);
-    }
-    for (const m of text.matchAll(/['"`]((?:\.\.\/)+[^'"`$\s]*)/g)) {
-      const target = posix.normalize(posix.join(posix.dirname(file), m[1]));
-      const member = memberOf(target, memberDirs);
-      if (member) add(member, `${file} reads ${m[1]}`);
     }
   }
   return found;
@@ -184,8 +185,11 @@ export function decide(root, changed, apps = SCOPED_APPS) {
  * @param {{ event: string, changed: string[], skipped: string[] }} scope what the scope step wrote
  * @param {Iterable<string>} ranApps app dirs that appear in the run's report
  * @param {string | undefined} eventName the event this job runs for, read independently
+ * @param {string[] | null} changed the PR's changed files, listed again from git by the caller
+ *   (never taken from the scope file: a skip re-derived from the list that produced it cannot
+ *   catch a wrong list). null when git could not list them, which excuses nothing.
  */
-export function checkDeclaredSkips(root, scope, ranApps, eventName) {
+export function checkDeclaredSkips(root, scope, ranApps, eventName, changed) {
   const skipped = scope.skipped ?? [];
   if (skipped.length === 0) return [];
   const problems = [];
@@ -199,15 +203,26 @@ export function checkDeclaredSkips(root, scope, ranApps, eventName) {
         'pull_request runs are scoped'
     );
   }
-  const recomputed = Object.entries(decide(root, scope.changed ?? []))
-    .filter(([, d]) => !d.run)
-    .map(([app]) => app)
-    .sort();
-  if (recomputed.join(',') !== [...skipped].sort().join(',')) {
-    problems.push(
-      `the scope file left out [${skipped.join(', ')}] but its own changed files leave out ` +
-        `[${recomputed.join(', ')}]`
-    );
+  if (!changed) {
+    problems.push('could not list the changed files from git, so no skip can be re-derived');
+  } else {
+    const declared = [...(scope.changed ?? [])].sort().join('\n');
+    if (declared !== [...changed].sort().join('\n')) {
+      problems.push(
+        `the scope file lists ${(scope.changed ?? []).length} changed file(s) but git lists ` +
+          `${changed.length}: the scope step decided from a different change set`
+      );
+    }
+    const recomputed = Object.entries(decide(root, changed))
+      .filter(([, d]) => !d.run)
+      .map(([app]) => app)
+      .sort();
+    if (recomputed.join(',') !== [...skipped].sort().join(',')) {
+      problems.push(
+        `the scope file left out [${skipped.join(', ')}] but the changed files git lists leave ` +
+          `out [${recomputed.join(', ')}]`
+      );
+    }
   }
   for (const app of skipped) {
     if (ran.has(app)) {
@@ -243,8 +258,12 @@ export function vitestProjectArgs(root, skipped) {
     .sort();
 }
 
-function changedFiles(root) {
-  const out = execFileSync('git', ['diff', '--name-only', 'HEAD^1', 'HEAD'], {
+/**
+ * Files a PR changes: its merge commit against the base it merges into. Both sides of a rename
+ * are listed (`--no-renames`); see the header.
+ */
+export function changedFiles(root, base = 'HEAD^1', head = 'HEAD') {
+  const out = execFileSync('git', ['diff', '--name-only', base, head], {
     cwd: root,
     encoding: 'utf8',
   });

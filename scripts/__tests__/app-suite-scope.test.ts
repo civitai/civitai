@@ -3,10 +3,11 @@
  * `.github/workflows/apps.yml` leave the moderator suite out when nothing it reads changed, and for
  * `checkDeclaredSkips`, which the suites ledger runs before it excuses a suite that did not run.
  *
- * Each way the scope derives an input (package.json, an import, a `../` path, transitively) is
- * driven against a throwaway repo where the input is reachable ONLY that way, so a derivation that
- * silently finds nothing leaves the suite out and fails here.
+ * Each way the scope derives an input (package.json, an import, transitively) is driven against a
+ * throwaway repo where the input is reachable ONLY that way, so a derivation that silently finds
+ * nothing leaves the suite out and fails here.
  */
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -16,6 +17,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   appInputs,
+  changedFiles,
   checkDeclaredSkips,
   decide,
   vitestProjectArgs,
@@ -109,21 +111,40 @@ describe('app-suite-scope: decide', () => {
     expect(runs(makeRepo(files), ['packages/schema/s.ts'])).toBe(true);
   });
 
-  it('follows a ../ path into another member', () => {
-    const files = {
-      'apps/moderator/src/t.test.ts':
-        "readFileSync(join(HERE, '../../../packages/schema/migrations/1/migration.sql'))",
-      'packages/schema/package.json': pkg('@x/schema'),
-      'packages/schema/migrations/1/migration.sql': '',
-    };
-    expect(runs(makeRepo(files), ['packages/schema/migrations/1/migration.sql'])).toBe(true);
-  });
-
   it('does not treat a non-workspace dependency as a member', () => {
     const files = {
       'apps/moderator/package.json': pkg('@x/moderator-app', { '@x/unrelated': '^1.0.0' }),
     };
     expect(runs(makeRepo(files), ['packages/unrelated/index.ts'])).toBe(false);
+  });
+});
+
+describe('app-suite-scope: changedFiles', () => {
+  // A rename is listed by its NEW path only unless renames are turned off, so moving a file OUT
+  // of a member the app reads into one it does not would leave the app out.
+  it('lists both sides of a rename, so moving a file out of a read member keeps moderator in', () => {
+    const root = makeRepo({
+      'apps/moderator/package.json': pkg('@x/moderator-app', { '@x/schema': 'workspace:*' }),
+      'packages/schema/package.json': pkg('@x/schema'),
+      'packages/schema/moved.ts': 'export const body = "long enough to be detected as a rename";\n',
+    });
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+    git('init', '-q');
+    git('add', '.');
+    git('commit', '-q', '-m', 'base');
+    git('mv', 'packages/schema/moved.ts', 'packages/unrelated/moved.ts');
+    git('commit', '-q', '-m', 'move out of schema');
+
+    const changed = changedFiles(root);
+    expect([...changed].sort()).toEqual([
+      'packages/schema/moved.ts',
+      'packages/unrelated/moved.ts',
+    ]);
+    expect(runs(root, changed)).toBe(true);
   });
 });
 
@@ -141,41 +162,53 @@ describe('app-suite-scope: checkDeclaredSkips', () => {
   const root = makeRepo();
   const sound = { event: 'pull_request', changed: ['apps/other/src/a.ts'], skipped: ['moderator'] };
 
-  it('accepts a skip that re-derives the same way on a pull_request run', () => {
-    expect(checkDeclaredSkips(root, sound, ['other'], 'pull_request')).toEqual([]);
+  // `fromGit` stands for the list the ledger takes from git itself, never from the scope file.
+  const fromGit = ['apps/other/src/a.ts'];
+
+  it('accepts a skip that the change list from git re-derives on a pull_request run', () => {
+    expect(checkDeclaredSkips(root, sound, ['other'], 'pull_request', fromGit)).toEqual([]);
   });
 
   it('has nothing to check when nothing was left out', () => {
     const scope = { ...sound, skipped: [] };
-    expect(checkDeclaredSkips(root, scope, ['other'], 'push')).toEqual([]);
+    expect(checkDeclaredSkips(root, scope, ['other'], 'push', null)).toEqual([]);
   });
 
   it('rejects a skip on a run that is not a pull_request', () => {
-    expect(checkDeclaredSkips(root, sound, ['other'], 'push')).toEqual([
+    expect(checkDeclaredSkips(root, sound, ['other'], 'push', fromGit)).toEqual([
       expect.stringContaining('only pull_request runs are scoped'),
     ]);
     const scope = { ...sound, event: 'workflow_dispatch' };
-    expect(checkDeclaredSkips(root, scope, ['other'], 'pull_request')).toEqual([
+    expect(checkDeclaredSkips(root, scope, ['other'], 'pull_request', fromGit)).toEqual([
       expect.stringContaining('only pull_request runs are scoped'),
     ]);
   });
 
-  it('rejects a skip its own changed files do not lead to', () => {
-    const scope = { ...sound, changed: ['apps/moderator/src/a.ts'] };
-    expect(checkDeclaredSkips(root, scope, ['other'], 'pull_request')).toEqual([
-      expect.stringContaining('its own changed files leave out []'),
+  // The accidental skip the ledger exists for: the scope step decided from a wrong list. Its
+  // own list is self-consistent, so only git's list can catch it.
+  it('rejects a skip when git lists a change the scope file did not', () => {
+    const gitSays = ['apps/other/src/a.ts', 'apps/moderator/src/a.ts'];
+    expect(checkDeclaredSkips(root, sound, ['other'], 'pull_request', gitSays)).toEqual([
+      expect.stringContaining('the scope file lists 1 changed file(s) but git lists 2'),
+      expect.stringContaining('the changed files git lists leave out []'),
+    ]);
+  });
+
+  it('rejects a skip when git cannot list the changes', () => {
+    expect(checkDeclaredSkips(root, sound, ['other'], 'pull_request', null)).toEqual([
+      expect.stringContaining('could not list the changed files from git'),
     ]);
   });
 
   it('rejects a skip of an app that ran anyway', () => {
-    expect(checkDeclaredSkips(root, sound, ['other', 'moderator'], 'pull_request')).toEqual([
-      expect.stringContaining('moderator was declared left out but ran'),
-    ]);
+    expect(
+      checkDeclaredSkips(root, sound, ['other', 'moderator'], 'pull_request', fromGit)
+    ).toEqual([expect.stringContaining('moderator was declared left out but ran')]);
   });
 
   it('rejects leaving out an app that is not scoped', () => {
     const scope = { ...sound, skipped: ['moderator', 'other'] };
-    expect(checkDeclaredSkips(root, scope, [], 'pull_request')).toContainEqual(
+    expect(checkDeclaredSkips(root, scope, [], 'pull_request', fromGit)).toContainEqual(
       'other is not an app a PR may leave out'
     );
   });
