@@ -398,20 +398,30 @@ describe("a moderator's text-scan lift of a minor flag", () => {
       userId: MODERATOR_ID,
     });
 
-  it('records the ruling and keeps minor when a moderator set it minor after the flag', async () => {
-    await seed({ snapshot: { ...mature, prevMinor: false, source: 'text-scan' } });
-    await holder.db.query(
-      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+  it.each([
+    ['set it minor after the automated flag', 'text-scan', true],
+    ['set the flag itself', 'manual', false],
+  ])('records the ruling and keeps minor when a moderator %s', async (_, source, setSince) => {
+    await seed({ snapshot: { ...mature, prevMinor: false, source } });
+    if (setSince)
+      await holder.db.query(
+        `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
        VALUES ($1, 'setMinor', 'model', $2, '2020-01-02T00:00:00Z')`,
-      [MODERATOR_ID, MODEL_ID]
-    );
+        [MODERATOR_ID, MODEL_ID]
+      );
 
     expect(await lift()).toMatchObject({ ruled: 'keptMinor', modelId: MODEL_ID });
     expect(await row()).toMatchObject({ minor: true, nsfw: false });
     expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(mockStampAppeal).toHaveBeenCalledOnce();
     expect(mockStampAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ decision: 'appealGranted', expectTextHash: SCANNED_HASH })
+      expect.objectContaining({
+        decision: 'appealGranted',
+        grantHashes: { minor: SCANNED_HASH },
+        expectTextHash: SCANNED_HASH,
+      })
     );
+    expect(mockSettle).toHaveBeenCalledOnce();
     expect(mockSettle).toHaveBeenCalledWith(expect.objectContaining({ liftedLabels: ['minor'] }));
   });
 

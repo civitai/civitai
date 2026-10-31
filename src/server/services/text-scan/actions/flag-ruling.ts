@@ -24,7 +24,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 const FLAG_CHANGED = 'The flag changed while you were ruling. Reload and review it again.';
 
-export type FlagRulingOutcome = 'kept' | 'lifted';
+export type FlagRulingOutcome = 'kept' | 'lifted' | 'keptMinor';
 
 /**
  * A moderator's call on a standing text-scan flag outside an appeal: keep it or lift it, recording
@@ -108,6 +108,7 @@ async function rule({
         modelId,
         userId,
         recordTextScanRuling: false,
+        skipRefusal: true,
       });
       keptMinor = report.keptMinor === 1;
       if (report.rolledBack !== 1 && !keptMinor)

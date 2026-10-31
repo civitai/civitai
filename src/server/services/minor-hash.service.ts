@@ -700,7 +700,7 @@ export async function revertMinorHashAutoFlag({
   reason,
   note,
   textHash,
-  fromAppeal,
+  skipRefusal,
 }: {
   modelId: number;
   userId: number;
@@ -710,10 +710,11 @@ export async function revertMinorHashAutoFlag({
   recordTextScanRuling?: boolean;
   /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
   textHash?: string;
-  /** A granted appeal, which has already decided the flag is the automation's. */
-  fromAppeal?: boolean;
+  /** The caller has already decided the flag is the automation's: a granted appeal, or a ruling
+   * that checked minorRevertRefusal itself. */
+  skipRefusal?: boolean;
 }) {
-  const refusal = fromAppeal ? undefined : await minorRevertRefusal(modelId);
+  const refusal = skipRefusal ? undefined : await minorRevertRefusal(modelId);
   if (refusal) throw throwBadRequestError(refusal);
 
   // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
@@ -943,7 +944,7 @@ export async function resolveMinorFlagAppeal({
     // confirmed automated flag is still rolled back: the owner's appeal is against the automation.
     const report =
       origin === 'auto' || origin === 'text-scan'
-        ? await revertMinorHashAutoFlag({ modelId, userId, fromAppeal: true })
+        ? await revertMinorHashAutoFlag({ modelId, userId, skipRefusal: true })
         : undefined;
     if (report?.failed)
       logToAxiom({
