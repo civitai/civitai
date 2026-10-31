@@ -111,8 +111,9 @@ describe("a collection review's image read", () => {
   });
 
   // A choice, not an accident: a judge sees a submission that is acceptable only in a collection,
-  // so they can reject it; once ACCEPTED, the collection's normal read leaves it out.
-  it('keeps collection-only acceptable images in the review read, and out of the ACCEPTED read', async () => {
+  // so they can reject it. Once ACCEPTED, a collection items read loads it by id with no collection,
+  // and that read leaves it out; a read of the collection's own image feed keeps it.
+  it('keeps collection-only acceptable images in the review read, and out of a read by id with no collection', async () => {
     const review = await statementFor(
       { id: REVIEWER },
       { pending: true, reviewCollectionId: COLLECTION }

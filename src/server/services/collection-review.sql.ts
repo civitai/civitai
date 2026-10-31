@@ -23,7 +23,7 @@ import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma
  * No browsing level includes the top level bit, so a target rated only at it never hydrates and is not
  * counted either. Only images keep nsfwLevel 0 (`pending`). A rated image must also pass the ingestion
  * check every non-pending read applies (`imageReviewedSql`): stricter than the reviewer's own
- * `pending` read, which skips it, so a rated image no other read would show stays out of the queue.
+ * `pending` read, which skips it, so a rated image the public reads would not show stays out of the queue.
  * The CASE order is hydration's: a row with two target columns is judged by the first one only.
  *
  * NOT mirrored: drops made after the SQL in hydration (a model with no published version or no
