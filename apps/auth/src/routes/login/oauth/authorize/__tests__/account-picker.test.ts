@@ -53,20 +53,20 @@ const cookies = {
   set: vi.fn(),
 };
 
-function loadAs(userId: number) {
+function loadAs(userId: number, impersonatedBy?: number) {
   const url = new URL('https://auth.civitai.com/login/oauth/authorize');
   url.searchParams.set('client_id', 'game-frame');
   url.searchParams.set('redirect_uri', 'https://games.example.com/cb');
   url.searchParams.set('scope', 'UserRead');
   return load({
     url,
-    locals: { user: { id: userId } },
+    locals: { user: { id: userId }, impersonatedBy },
     cookies,
     setHeaders: vi.fn(),
   } as never) as Promise<Record<string, unknown>>;
 }
 
-async function switchAs(userId: number, target: number) {
+async function switchAs(userId: number, target: number, impersonatedBy?: number) {
   const body = new FormData();
   body.set('userId', String(target));
   body.set('client_id', 'game-frame');
@@ -77,7 +77,7 @@ async function switchAs(userId: number, target: number) {
         body,
       }),
       cookies,
-      locals: { user: { id: userId } },
+      locals: { user: { id: userId }, impersonatedBy },
       url: new URL('https://auth.civitai.com/login/oauth/authorize'),
     } as never);
     return (result as { status?: number }).status;
@@ -99,6 +99,10 @@ describe('consent screen account picker', () => {
     expect((page.accounts as { userId: number }[]).map((a) => a.userId).sort()).toEqual([100, 200]);
   });
 
+  it('shows the list to a moderator in it who is impersonating someone outside it', async () => {
+    expect(((await loadAs(400, 100)).accounts as unknown[]).length).toBe(2);
+  });
+
   it('shows no picker to an account outside the list', async () => {
     expect((await loadAs(300)).accounts).toEqual([]);
   });
@@ -108,6 +112,10 @@ describe('consent screen switch', () => {
   it('switches an account in the list to another in it', async () => {
     expect(await switchAs(100, 200)).toBe(303);
     expect(h.setSessionCookie).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches a moderator in the list who is impersonating someone outside it', async () => {
+    expect(await switchAs(400, 200, 100)).toBe(303);
   });
 
   it('refuses an account outside the list and sets no session', async () => {

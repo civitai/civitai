@@ -1,4 +1,4 @@
-import { createLuaRedis } from '../../../../src/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis } from './lua-sys-redis';
 
 // In-memory stand-in for the sys redis client: the hash, set and string commands the session registry and
 // lineage records use, with per-field and per-key TTLs recorded rather than enforced. `eval` runs the script in

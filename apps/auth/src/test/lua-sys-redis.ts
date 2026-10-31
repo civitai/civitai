@@ -1,4 +1,22 @@
-import { createLuaRedis } from '../../../../src/server/utils/__tests__/redis-lua-harness';
+// The main app's real-Lua redis harness. Loaded by URL with its extension so the apps CI path filter, which
+// matches this literal, lists the exact file.
+type Harness = { createLuaRedis: (startMs: number) => LuaRedis };
+export type LuaRedis = {
+  eval: (script: string, options: { keys: string[]; arguments: string[] }) => Promise<unknown>;
+  hash: (key: string) => Record<string, string> | undefined;
+  setHash: (key: string, fields: Record<string, string>) => void;
+  set: (key: string) => string[] | undefined;
+  setSet: (key: string, members: string[]) => void;
+  pttl: (key: string) => number;
+  hpttl: (key: string, field: string) => number;
+  errors: unknown[];
+};
+export const { createLuaRedis } = (await import(
+  /* @vite-ignore */ new URL(
+    '../../../../src/server/utils/__tests__/redis-lua-harness.ts',
+    import.meta.url
+  ).href
+)) as Harness;
 
 // The sys redis client surface the device account list uses, over the real-Lua harness: scripts run in Lua,
 // and the plain reads go straight to the harness store.

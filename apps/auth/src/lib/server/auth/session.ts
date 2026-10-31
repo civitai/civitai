@@ -204,7 +204,10 @@ export async function establishSession(
   // Link this account and family to the browser's records (docs/auth/auth-hub-spoke-overview.md). Records this
   // browser can't show it is signed in to stay with the old device id; the sign-in starts on a new one.
   const proofFamily = prior ? familyId(prior) : undefined;
-  const link = (id: string) => linkAccount(id, user.id, priorUserId).catch(() => 'none' as const);
+  // The prior session proves the browser is signed in to its principal: the moderator, when impersonating.
+  const priorPrincipal = prior ? prior.impersonatedBy ?? priorUserId : undefined;
+  const link = (id: string) =>
+    linkAccount(id, user.id, priorPrincipal).catch(() => 'none' as const);
   let deviceId = getOrCreateDeviceId(cookies);
   const listed = await link(deviceId);
   const recorded =

@@ -62,7 +62,7 @@ function makeCookies(initial: Record<string, string>) {
     delete: (name: string) => void store.delete(name),
     serialize: (name: string, value: string) => `${name}=${value}`,
   };
-  return { cookies, device: () => store.get('civ-device') };
+  return { cookies, device: () => store.get('civ-device'), token: () => store.get('civ-token') };
 }
 
 async function switchStatus(userId: number, deviceId: string, target: number) {
@@ -82,11 +82,16 @@ async function switchStatus(userId: number, deviceId: string, target: number) {
   }
 }
 
-async function removeStatus(userId: number, deviceId: string, target: number) {
+async function removeStatus(
+  userId: number,
+  deviceId: string,
+  target: number,
+  impersonatedBy?: number
+) {
   try {
     const res = await removePost({
       url: new URL(`https://auth.civitai.com/api/auth/accounts?userId=${target}`),
-      locals: { user: { id: userId }, deviceId },
+      locals: { user: { id: userId }, deviceId, impersonatedBy },
     } as never);
     return res.status;
   } catch (e) {
@@ -136,6 +141,26 @@ describe('signing in on a browser with an account list', () => {
     expect(jar.device()).toBe(DEVICE);
     expect(Object.keys(h.sys.lua.hash(list(DEVICE))!).sort()).toEqual(['100', '200', '300']);
     expect(h.sys.lua.pttl(list(DEVICE))).toBe(TTL_MS);
+  });
+
+  it('a sign-in while a moderator in the list is impersonating someone joins it', async () => {
+    h.verified.set('prior', { sub: '400', jti: 'j', impersonatedBy: 100 });
+    const jar = makeCookies({ 'civ-device': DEVICE, 'civ-token': 'prior' });
+
+    await establishSession(jar.cookies, user(300));
+
+    expect(jar.device()).toBe(DEVICE);
+    expect(Object.keys(h.sys.lua.hash(list(DEVICE))!).sort()).toEqual(['100', '200', '300']);
+  });
+
+  it('a sign-in still completes when the account list cannot be read', async () => {
+    h.sys.eval = async () => {
+      throw new Error('redis blip');
+    };
+    const jar = makeCookies({ 'civ-device': DEVICE });
+
+    await expect(establishSession(jar.cookies, user(300))).resolves.toBeUndefined();
+    expect(jar.token()).toBe('minted');
   });
 
   it('a sign-in while some other account is signed in starts a new list on a new device id', async () => {
@@ -196,6 +221,10 @@ describe('removing an account from the list', () => {
   it('an account outside the list is refused and the list is unchanged', async () => {
     expect(await removeStatus(300, DEVICE, 100)).toBe(403);
     expect(Object.keys(h.sys.lua.hash(list(DEVICE))!).sort()).toEqual(['100', '200']);
+  });
+
+  it('a moderator in the list, impersonating someone outside it, removes an account', async () => {
+    expect(await removeStatus(400, DEVICE, 200, 100)).toBe(200);
   });
 
   it('an account in the list removes another, or itself', async () => {
