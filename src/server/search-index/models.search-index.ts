@@ -59,6 +59,25 @@ const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
 const INDEX_ID = MODELS_SEARCH_INDEX;
 
+/**
+ * Showcase images held at each minor or SFW-only model's level: the document is public, so no one
+ * is exempt. A flag change queues the model's update, which re-runs this.
+ */
+async function heldShowcaseImages(
+  modelVersionIds: number[],
+  models: { id: number; modelVersions: { id: number }[] }[]
+) {
+  // Loaded on demand: the model service imports this index.
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  return holdShowcaseImages(await imagesForModelVersionsCache.fetch(modelVersionIds), {
+    models: new Map(
+      models.flatMap((model) =>
+        model.modelVersions.map((version) => [version.id, { modelId: model.id }] as const)
+      )
+    ),
+  });
+}
+
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -653,7 +672,7 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const imagesCache = await heldShowcaseImages(modelVersionIds, models);
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
@@ -842,7 +861,7 @@ export const pullModelsData = async (
     for (const versionBatch of versionBatches) {
       tasks.push(async () => {
         logger(`PullData :: Pull images`, batchLogKey);
-        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
+        const imagesCache = await heldShowcaseImages(versionBatch, batch);
         const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
         logger(`PullData :: Pulled images`, batchLogKey);
 

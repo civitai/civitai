@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { userDownloadsCache } from '~/server/redis/caches';
 import type { HideDownloadInput } from '~/server/schema/download.schema';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
+import type { HeldGalleryViewer } from '~/server/services/model.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -47,8 +48,11 @@ export type DownloadHistoryItem = {
 
 export const getUserDownloads = async ({
   userId,
+  viewer,
 }: {
   userId: number;
+  /** Sees a held model's thumbnail whole if they own it or moderate; see `holdShowcaseImages`. */
+  viewer?: HeldGalleryViewer;
 }): Promise<{ items: DownloadHistoryItem[] }> => {
   // Fetch cached downloads and user settings in parallel
   const [cached, { hideDownloadsSince }] = await Promise.all([
@@ -106,6 +110,7 @@ export const getUserDownloads = async ({
           id: true,
           name: true,
           type: true,
+          userId: true,
         },
       },
       files: {
@@ -140,7 +145,16 @@ export const getUserDownloads = async ({
   const versionMap = new Map(modelVersions.map((mv) => [mv.id, mv]));
 
   // Fetch images for model versions from cache
-  const imageCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  const imageCache = await holdShowcaseImages(
+    await imagesForModelVersionsCache.fetch(modelVersionIds),
+    {
+      viewer,
+      models: new Map(
+        modelVersions.map((mv) => [mv.id, { modelId: mv.model.id, ownerId: mv.model.userId }])
+      ),
+    }
+  );
 
   // Combine the data, filtering out downloads where the model version no longer exists
   const items: DownloadHistoryItem[] = [];
