@@ -69,7 +69,12 @@ import type { GenerationCtx } from '~/shared/generation/context';
 import { generateFromGraph } from '~/server/services/orchestrator/orchestration-new.service';
 
 const USER_ID = 5;
-const IMG = { url: 'https://image.civitai.com/a.png', width: 1024, height: 1024 };
+// An orchestrator blob: the generation input url check passes it without a database read.
+const IMG = {
+  url: 'https://orchestration.civitai.com/v2/consumer/blobs/source.png',
+  width: 1024,
+  height: 1024,
+};
 
 const externalCtx = (): GenerationCtx => ({
   limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
@@ -100,6 +105,7 @@ const submit = (prompt: string, negativePrompt: string) =>
     token: 'token',
     userId: USER_ID,
     isModerator: false,
+    inputGate: { entry: 'generateFromGraph', isApiCaller: false },
   } as never).catch(() => undefined);
 
 beforeEach(() => {

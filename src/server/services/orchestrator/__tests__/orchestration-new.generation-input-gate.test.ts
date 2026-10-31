@@ -11,6 +11,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   assertInputs: vi.fn(),
   resolveSourceImageIds: vi.fn(async () => [] as number[]),
+  auditPromptServer: vi.fn(async (): Promise<void> => undefined),
+  submitWorkflow: vi.fn(),
+}));
+
+vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  submitWorkflow: mocks.submitWorkflow,
 }));
 
 vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
@@ -23,7 +30,7 @@ vi.mock('~/server/services/orchestrator/remix-provenance', async (importOriginal
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  auditPromptServer: vi.fn(async () => undefined),
+  auditPromptServer: mocks.auditPromptServer,
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(async () => ({ id: 'sub' })),
@@ -122,6 +129,34 @@ describe('graph entry points check their input urls', () => {
       })
     ).rejects.toBe(refused);
     expectChecked('generateFromGraph', true);
+  });
+
+  describe('the prompt audit still sees every submission', () => {
+    const submit = () =>
+      generateFromGraph({
+        input: graphInput(),
+        externalCtx: externalCtx(),
+        token: 'token',
+        userId: USER_ID,
+        isModerator: false,
+        inputGate: { entry: 'generateFromGraph', isApiCaller: false },
+      });
+
+    it('audits the prompt once when the input urls pass', async () => {
+      mocks.assertInputs.mockResolvedValue(undefined);
+      await submit().catch(() => undefined);
+      expect(mocks.assertInputs).toHaveBeenCalledTimes(1);
+      expect(mocks.auditPromptServer).toHaveBeenCalledTimes(1);
+      expect(mocks.auditPromptServer).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: graphInput().prompt, userId: USER_ID })
+      );
+    });
+
+    it('neither audits nor submits when the input urls are refused', async () => {
+      await expect(submit()).rejects.toBe(refused);
+      expect(mocks.auditPromptServer).not.toHaveBeenCalled();
+      expect(mocks.submitWorkflow).not.toHaveBeenCalled();
+    });
   });
 
   it('whatIfFromGraph refuses with the same error', async () => {
