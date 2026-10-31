@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { reviewQueueVisibleTargetSql } from '~/server/services/collection-review.sql';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
@@ -699,63 +700,6 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
     })),
   };
 };
-
-/**
- * Whether a collection item's target would survive the review queue's hydration, as SQL over a
- * `CollectionItem` aliased `ci`. Shared by the queue's `forReview` read and both pending counts, so
- * a badge cannot count items the queue never shows.
- *
- * `getCollectionItemsByCollectionId` hydrates REVIEW rows through the feed services as a moderator
- * at the request's `browsingLevel`, and drops every row whose target does not come back. The review
- * page asks for every level, which the domain cap holds to PG/PG-13 on the SFW site, so `levels` is
- * that ceiling: a badge on civitai.com must not count mature items only civitai.red can show. Each branch mirrors the clauses that decide that:
- * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
- *   Archived); `getModelsWithImagesAndModelVersions` drops TakenDown.
- * - Image: `getAllImages` with `pending` keeps any image on an existing post, unrated ones included,
- *   minus the license-restricted base model clause.
- * - Post: `getPostsInfinite` without a `username` shows a moderator published posts only.
- * - Article: `getArticles` requires Published with a publish date.
- * - Model3D: no branch. The queue never selects `model3dId`, so it shows none of them.
- *
- * No browsing level has the Blocked bit: a Blocked-only target never hydrates, so it must not be counted either. Only images keep nsfwLevel 0 (`pending`).
- * The CASE order is hydration's: a row with two target columns is judged by the first one only.
- *
- * NOT mirrored: drops made after the SQL in hydration (a model with no published version or no
- * images, a post with no images). Those cost a join per row and are rare states; the queue can
- * still show slightly fewer items than the count for them.
- */
-const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
-  WHEN ci."modelId" IS NOT NULL THEN EXISTS (
-    SELECT 1 FROM "ModelMetric" rv_mm
-    WHERE rv_mm."modelId" = ci."modelId"
-      AND rv_mm."status" = ${ModelStatus.Published}::"ModelStatus"
-      AND (rv_mm."nsfwLevel" & ${levels}) != 0
-      AND (rv_mm."mode" IS NULL OR rv_mm."mode" NOT IN (
-        ${ModelModifier.Archived}::"ModelModifier", ${ModelModifier.TakenDown}::"ModelModifier"
-      ))
-  )
-  WHEN ci."postId" IS NOT NULL THEN EXISTS (
-    SELECT 1 FROM "Post" rv_p
-    WHERE rv_p.id = ci."postId"
-      AND rv_p."publishedAt" <= now()
-      AND (rv_p."nsfwLevel" & ${levels}) != 0
-  )
-  WHEN ci."imageId" IS NOT NULL THEN EXISTS (
-    SELECT 1 FROM "Image" rv_i
-    JOIN "Post" rv_ip ON rv_ip.id = rv_i."postId"
-    WHERE rv_i.id = ci."imageId"
-      AND ((rv_i."nsfwLevel" & ${levels}) != 0 OR rv_i."nsfwLevel" = 0)
-      AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
-  )
-  WHEN ci."articleId" IS NOT NULL THEN EXISTS (
-    SELECT 1 FROM "Article" rv_a
-    WHERE rv_a.id = ci."articleId"
-      AND rv_a."status" = ${ArticleStatus.Published}::"ArticleStatus"
-      AND rv_a."publishedAt" IS NOT NULL
-      AND (rv_a."nsfwLevel" & ${levels}) != 0
-  )
-  ELSE false
-END)`;
 
 /** `levels`: what the requesting domain can serve, `domainServableLevels(ctx)`. */
 export async function getPendingReviewCount(collectionId: number, levels: number) {
@@ -2181,9 +2125,6 @@ export const getCollectionItemsByCollectionId = async ({
     return { items: [], nextCursor: undefined };
   }
 
-  // A copy: the session user is not this read's to change.
-  if (user && forReview) user = { ...user, isModerator: true };
-
   const modelIds = collectionItems.map((item) => item.modelId).filter(isDefined);
 
   const models =
@@ -2226,28 +2167,46 @@ export const getCollectionItemsByCollectionId = async ({
         })
       : { items: [] };
 
-  const imageIds = collectionItems.map((item) => item.imageId).filter(isDefined);
-
-  const images =
-    imageIds.length > 0
-      ? await getAllImages({
-          include: ['cosmetics', 'tagIds', 'profilePictures'],
-          limit: imageIds.length,
-          period: MetricTimeframe.AllTime,
-          periodMode: 'stats',
-          sort: ImageSort.Newest,
-          ...userPreferencesInput,
-          browsingLevel: input.browsingLevel,
-          user: imagesAsPublicCatalog ? undefined : user,
-          ...(imagesAsPublicCatalog && { disablePoi: true, disableMinor: true }),
-          ids: imageIds,
-          headers: { src: 'getCollectionItemsByCollectionId' },
-          includeBaseModel: true,
-          pending: forReview,
-          withMeta: false,
-          dbTarget: forReview ? 'write' : 'read',
-        })
-      : { items: [] };
+  // A review read shows REVIEW and REJECTED submissions before they are rated. ACCEPTED ones are
+  // read as the collection shows them to anyone.
+  const isReviewed = (item: (typeof collectionItems)[number]) =>
+    !!forReview && item.status !== CollectionItemStatus.ACCEPTED;
+  const readImages = async (ids: number[], review: boolean) =>
+    ids.length > 0
+      ? (
+          await getAllImages({
+            include: ['cosmetics', 'tagIds', 'profilePictures'],
+            limit: ids.length,
+            period: MetricTimeframe.AllTime,
+            periodMode: 'stats',
+            sort: ImageSort.Newest,
+            ...userPreferencesInput,
+            browsingLevel: input.browsingLevel,
+            user: imagesAsPublicCatalog ? undefined : user,
+            ...(imagesAsPublicCatalog && { disablePoi: true, disableMinor: true }),
+            ids,
+            headers: { src: 'getCollectionItemsByCollectionId' },
+            includeBaseModel: true,
+            pending: review,
+            reviewCollectionId: review ? collectionId : undefined,
+            withMeta: false,
+            dbTarget: forReview ? 'write' : 'read',
+          })
+        ).items
+      : [];
+  const imageIdsWhere = (review: boolean) =>
+    collectionItems
+      .filter((item) => isReviewed(item) === review)
+      .map((item) => item.imageId)
+      .filter(isDefined);
+  const images = {
+    items: (
+      await Promise.all([
+        readImages(imageIdsWhere(true), true),
+        readImages(imageIdsWhere(false), false),
+      ])
+    ).flat(),
+  };
 
   const postIds = collectionItems.map((item) => item.postId).filter(isDefined);
 

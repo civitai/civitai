@@ -17,7 +17,10 @@ const OWNER = 9;
 const listsOneImage = (async (strings: TemplateStringsArray) => {
   const sql = strings.join('?');
   if (sql.includes('FROM "CollectionItem" ci'))
-    return [{ id: 1, imageId: 5, modelId: null, postId: null, articleId: null, createdAt: null }];
+    return [
+      { id: 1, imageId: 5, modelId: null, postId: null, articleId: null, status: 'REVIEW' },
+      { id: 2, imageId: 6, modelId: null, postId: null, articleId: null, status: 'ACCEPTED' },
+    ];
   if (sql.includes('FROM "Collection" c'))
     return [{ id: 7, read: 'Public', write: 'Private', userId: OWNER, type: 'Image', mode: null }];
   return [];
@@ -38,22 +41,50 @@ beforeEach(() => {
   mockGetAllImages.mockResolvedValue({ items: [{ id: 5 }] });
 });
 
+const reviewRead = (user: object) =>
+  getCollectionItemsByCollectionId({
+    input: {
+      collectionId: 7,
+      limit: 10,
+      browsingLevel: 3,
+      statuses: ['REVIEW', 'ACCEPTED'],
+      forReview: true,
+    } as never,
+    user: user as never,
+  });
+const imageReads = () =>
+  mockGetAllImages.mock.calls.map(([args]) => ({
+    ids: args.ids,
+    user: args.user,
+    pending: args.pending,
+    reviewCollectionId: args.reviewCollectionId,
+  }));
+
 describe("a collection owner's review read", () => {
-  it('works on a copy of the signed-in user it was given', async () => {
-    const user = { id: OWNER, isModerator: false } as never as { isModerator: boolean };
-    await getCollectionItemsByCollectionId({
-      input: {
-        collectionId: 7,
-        limit: 10,
-        browsingLevel: 3,
-        statuses: ['REVIEW'],
-        forReview: true,
-      } as never,
-      user: user as never,
-    });
-    expect(mockGetAllImages).toHaveBeenCalledTimes(1);
-    expect(user.isModerator).toBe(false);
-    // The review read itself keeps its review access.
-    expect(mockGetAllImages.mock.calls[0][0].user).toMatchObject({ id: OWNER, isModerator: true });
+  it('leaves the signed-in user it was given unchanged', async () => {
+    const user = { id: OWNER, isModerator: false };
+    await reviewRead(user);
+    expect(user).toEqual({ id: OWNER, isModerator: false });
+  });
+
+  it('reads submissions as the owner, with their unrated REVIEW images, and ACCEPTED ones as anyone would', async () => {
+    await reviewRead({ id: OWNER, isModerator: false });
+    expect(imageReads()).toEqual(
+      expect.arrayContaining([
+        {
+          ids: [5],
+          user: { id: OWNER, isModerator: false },
+          pending: true,
+          reviewCollectionId: 7,
+        },
+        {
+          ids: [6],
+          user: { id: OWNER, isModerator: false },
+          pending: false,
+          reviewCollectionId: undefined,
+        },
+      ])
+    );
+    expect(imageReads()).toHaveLength(2);
   });
 });
