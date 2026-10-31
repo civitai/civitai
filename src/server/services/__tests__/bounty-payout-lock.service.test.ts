@@ -138,6 +138,14 @@ function transactionClient(held: (() => void)[]) {
     $executeRaw: async () => 0,
     $queryRaw: async (strings: TemplateStringsArray) => {
       const sql = strings.join('?');
+      // deleteBountyById deletes or keeps the bounty in one statement.
+      if (sql.includes('DELETE FROM "Bounty"')) {
+        await tick();
+        const gone = !!bounty;
+        bounty = null;
+        if (gone) events.push('delete');
+        return [{ gone }];
+      }
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);
       held.push(await rowLock.acquire());
       return bounty ? [{ meta: null, ...bounty }] : [];
@@ -224,7 +232,7 @@ function transactionClient(held: (() => void)[]) {
       },
     },
     bounty: {
-      findUnique: async () => (bounty ? { type: 'ModelCreation' } : null),
+      findUnique: async () => (bounty ? { type: 'ModelCreation', ...bounty } : null),
       update: async ({ data }: { data: Partial<BountyRow> }) => {
         await tick();
         Object.assign(bounty!, data);

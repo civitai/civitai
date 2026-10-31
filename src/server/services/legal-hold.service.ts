@@ -125,6 +125,16 @@ export function holdMarkerSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
   return markerView ? markerSql(id) : markerAppearedSql;
 }
 
+/** The legs of `accountHoldSql` that hold `id`, as a text[]: what a copy kept for the hold records. */
+export function accountHoldReasonsSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  const legs: [AccountHoldLeg, Prisma.Sql][] = [
+    ...(Object.entries(holdLegsSql(id)) as [AccountHoldLeg, Prisma.Sql][]),
+    ['hold-marker', holdMarkerSql(id, markerView)],
+  ];
+  const cases = legs.map(([leg, sql]) => Prisma.sql`CASE WHEN ${sql} THEN ${leg}::text END`);
+  return Prisma.sql`array_remove(ARRAY[${Prisma.join(cases)}], NULL)`;
+}
+
 /**
  * Every hold on the account `id` (an int SQL expression) as one condition, for a statement that must
  * not touch a held account's rows even when a hold lands after the check. `markerView` is what

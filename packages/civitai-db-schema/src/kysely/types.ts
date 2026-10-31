@@ -3336,6 +3336,45 @@ export type GenerationSizePreset = {
   height: number;
   createdAt: Generated<Timestamp>;
 };
+export type HeldAnswer = {
+  /**
+   * The original Answer id.
+   */
+  id: number;
+  questionId: number;
+  userId: number;
+  content: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  heldAt: Generated<Timestamp>;
+  /**
+   * The holds on the author when it was copied.
+   */
+  holdReasons: string[];
+};
+export type HeldResourceReview = {
+  /**
+   * The original ResourceReview id.
+   */
+  id: number;
+  modelId: number;
+  modelVersionId: number;
+  userId: number;
+  rating: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  nsfw: boolean;
+  tosViolation: boolean;
+  metadata: unknown | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  heldAt: Generated<Timestamp>;
+  /**
+   * The holds on the author when it was copied.
+   */
+  holdReasons: string[];
+};
 export type HomeBlock = {
   id: Generated<number>;
   createdAt: Generated<Timestamp | null>;
@@ -6543,6 +6582,8 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
+  HeldAnswer: HeldAnswer;
+  HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;

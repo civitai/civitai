@@ -1511,6 +1511,35 @@ export interface ComicProjectReport {
   report?: Report;
 }
 
+export interface HeldResourceReview {
+  id: number;
+  modelId: number;
+  modelVersionId: number;
+  userId: number;
+  rating: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  nsfw: boolean;
+  tosViolation: boolean;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  heldAt: Date;
+  holdReasons: string[];
+}
+
+export interface HeldAnswer {
+  id: number;
+  questionId: number;
+  userId: number;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+  heldAt: Date;
+  holdReasons: string[];
+}
+
 export interface ResourceReview {
   id: number;
   modelId: number;

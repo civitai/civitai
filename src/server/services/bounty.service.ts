@@ -1,10 +1,8 @@
-import {
-  bountyThreadParents,
-  detachHeldThreadsCte,
-  detachHeldThreadsSql,
-} from '~/server/services/comment-thread-hold';
+import { bountyThreadParents, detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
-import { isRemovedWithOwner } from '~/server/utils/legal-hold';
+import { isRemovedWithOwner, notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { heldEntryOnBountySql } from '~/server/services/held-review.service';
 import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -846,15 +844,41 @@ export const deleteBountyById = async ({
   }
 
   const markerView = await holdMarkerViewExists();
-  return dbWrite.$transaction(async (tx) => {
+  const result = await dbWrite.$transaction(async (tx) => {
     if (!(await lockBountyForPayout(tx, id))) return null;
-    await tx.$executeRaw(
-      detachHeldThreadsSql(bountyThreadParents(Prisma.sql`SELECT ${id}::int`), markerView)
-    );
-    const deletedBounty = await tx.bounty.delete({ where: { id } });
-    await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
-    return deletedBounty;
+    const stored = await tx.bounty.findUnique({ where: { id } });
+    if (!stored) return null;
+    // A held entrant keeps the bounty: hidden and detached from its owner, deleted later by
+    // `bounty-payout-retry`.
+    const heldEntry = heldEntryOnBountySql(Prisma.raw('b.id'), markerView);
+    const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b WHERE b.id = ${id} AND NOT ${heldEntry}`;
+    const [{ gone }] = await tx.$queryRaw<{ gone: boolean }[]>`
+      WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)},
+      gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
+      files AS (
+        DELETE FROM "File" WHERE "entityType" = 'Bounty' AND "entityId" IN (SELECT id FROM gone)
+      ),
+      hidden AS (
+        UPDATE "Bounty" b
+        SET availability = 'Private'::"Availability",
+            "userId" = NULL,
+            meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
+              'removedWithOwner', true,
+              'availabilityBeforeRemoval', b.availability,
+              'userIdBeforeRemoval', b."userId"
+            )
+        WHERE b.id = ${id} AND ${heldEntry} AND ${notRemovedWithOwnerSql('b.meta')}
+      )
+      SELECT EXISTS (SELECT 1 FROM gone) AS gone`;
+    return { bounty: stored, gone };
   });
+  if (!result) return null;
+  if (!result.gone)
+    await SearchIndexUpdate.queueUpdate({
+      indexName: BOUNTIES_SEARCH_INDEX,
+      items: [{ id, action: SearchIndexUpdateQueueAction.Delete }],
+    });
+  return result.bounty;
 };
 
 export const getBountyImages = async ({
@@ -1464,17 +1488,25 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
   return { settled };
 }
 
+/** A kept bounty is detached from its owner, who is recorded in meta.userIdBeforeRemoval. */
+const keptBountyOwnerSql = Prisma.raw(
+  `COALESCE(b."userId", (b.meta ->> 'userIdBeforeRemoval')::int)`
+);
+
 /**
- * Only a complete bounty settled after its last recorded payout: an open one, or one whose award was
- * recorded again after an earlier one settled, still owes supporters. Held owners' bounties are
- * skipped and picked up on the first run after the hold ends.
+ * Kept bounties that never had a payout or supporters, or whose payout is settled: any other still
+ * owes supporters. One whose owner or an entrant is held waits for the first run after the hold ends.
  */
+
 export async function deleteSettledKeptBounties() {
   const markerView = await holdMarkerViewExists();
   const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
-    WHERE b.meta ->> 'removedWithOwner' = 'true' AND b.complete
-      AND b."payoutSettledAt" >= b."payoutRecordedAt"
-      AND NOT ${ownerHeldSql(Prisma.raw('b."userId"'))}`;
+    WHERE b.meta ->> 'removedWithOwner' = 'true'
+      AND ((b."payoutRecordedAt" IS NULL
+          AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id))
+        OR (b.complete AND b."payoutSettledAt" >= b."payoutRecordedAt"))
+      AND NOT ${ownerHeldSql(keptBountyOwnerSql)}
+      AND NOT ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}`;
   const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
     WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)},
     gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),

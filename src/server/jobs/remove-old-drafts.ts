@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -246,7 +247,8 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
             AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
             AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
         ),
-        ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT id FROM doomed`), true)}
+        ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT id FROM doomed`), true)},
+        ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT id FROM doomed`), true)}
         DELETE FROM "Model" m
         WHERE m.id IN (SELECT id FROM doomed)
         RETURNING m.id
