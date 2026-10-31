@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 const listed = async (
-  filter: { collectionId: number } | { username: string },
+  filter: Record<string, unknown>,
   sessionUser?: { id: number; isModerator?: boolean }
 ) =>
   (await getArticles({ ...base, ...filter, sessionUser } as never)).items.map(
@@ -64,7 +64,9 @@ const listed = async (
 describe.each([
   ['a collection', { collectionId: 5 }],
   ['a profile', { username: 'author' }],
-])('getArticles listing %s', (_, filter) => {
+  ['ids', { ids: [PUBLIC_ARTICLE, PRIVATE_ARTICLE] }],
+  ['user ids', { userIds: [AUTHOR] }],
+] as [string, Record<string, unknown>][])('getArticles listing %s', (_, filter) => {
   it('leaves a private article out for another viewer', async () => {
     expect(await listed(filter, { id: STRANGER })).toEqual([PUBLIC_ARTICLE]);
   });
@@ -81,6 +83,21 @@ describe.each([
     expect(await listed(filter, { id: STAFF, isModerator: true })).toEqual([
       PUBLIC_ARTICLE,
       PRIVATE_ARTICLE,
+    ]);
+  });
+});
+
+describe.each([
+  ['the owner', { id: AUTHOR }],
+  ['staff', { id: STAFF, isModerator: true }],
+])('getArticles leaving a private article out even for %s', (_, viewer) => {
+  it('in an unfiltered list', async () => {
+    expect(await listed({}, viewer)).toEqual([PUBLIC_ARTICLE]);
+  });
+
+  it('when the caller forces private articles out', async () => {
+    expect(await listed({ username: 'author', forceHidePrivate: true }, viewer)).toEqual([
+      PUBLIC_ARTICLE,
     ]);
   });
 });
