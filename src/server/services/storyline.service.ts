@@ -420,21 +420,20 @@ const lockStorylineForAdd = (db: Db, storylineId: number) =>
   db.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR SHARE`;
 
 /**
- * Inserts a chapter under a parent, canon when the storyline's owner wrote it and the parent has
- * no canon child yet. Edges point at the parent CHAPTER, never its post, so a later takedown of
- * the parent's post leaves this chapter attached.
+ * Inserts a chapter under a parent, canon when the parent has no canon child yet. Whoever wrote it:
+ * a chapter gets here only as the owner's own, one the owner approved, or an accepted
+ * collaborator's. Edges point at the parent CHAPTER, never its post, so a later takedown of the
+ * parent's post leaves this chapter attached.
  */
 async function insertChildChapter(
   db: Db,
   {
     parent,
-    ownerId,
     postId,
     authorId,
     placementId,
   }: {
     parent: { id: number; storylineId: number };
-    ownerId: number;
     postId: number;
     authorId: number;
     placementId?: number;
@@ -463,7 +462,7 @@ async function insertChildChapter(
     select: { id: true },
   });
 
-  const canon = authorId === ownerId && (await takesCanonSlot(db, parent.id));
+  const canon = await takesCanonSlot(db, parent.id);
 
   await db.storylineChapterEdge.create({
     data: {
@@ -525,7 +524,6 @@ export async function writeChapterEdgeForPlacement(
 
   const chapterId = await insertChildChapter(db, {
     parent,
-    ownerId: parent.storyline.userId,
     postId,
     authorId: placerId,
     placementId,
@@ -1793,7 +1791,6 @@ export async function writeOwnerChapter(
   });
   const chapterId = await insertChildChapter(tx, {
     parent,
-    ownerId: parent.storyline.userId,
     postId,
     authorId: userId,
   });
