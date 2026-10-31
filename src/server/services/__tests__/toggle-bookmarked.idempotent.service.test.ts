@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // (ON CONFLICT DO NOTHING), #1 catch P2002 + re-fetch (Prisma upsert can't target a partial index).
 
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Every Prisma call on the `toggleBookmarked` path goes through dbWrite — including the two
@@ -22,7 +23,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // aliased dbRead and dbWrite to one object, which could not have told the two apart.
 const mockDb = dbMock.dbWrite;
 
-const { queueUpdate, modelCollectionQueue } = vi.hoisted(() => ({
+const { queueUpdate, modelCollectionQueue, hiddenFor } = vi.hoisted(() => ({
+  hiddenFor: { itemKey: '' },
   queueUpdate: vi.fn(() => undefined),
   modelCollectionQueue: vi.fn(() => undefined),
 }));
@@ -37,16 +39,28 @@ vi.mock('~/server/metrics', () => ({
   postMetrics: { queueUpdate },
   userMetrics: { queueUpdate },
 }));
-// Mirrors the engagement-toggle test: stub the user-preferences module surface user.service
-// reaches at import time so module load doesn't pull in the real cache layer.
-// Entity 66 is one the user may not see; the rule itself has its own test.
+// Entity 66 is one user 42 may not see, under the item type the test names; the rule itself has
+// its own test.
 vi.mock('~/server/services/collection-item-visibility', () => ({
   assertCollectionItemsVisibleToViewer: vi.fn(
-    async ({ ids, isModerator }: { ids: number[]; isModerator?: boolean }) => {
-      if (ids.includes(66) && !isModerator) throw new Error('Item not found');
+    async ({
+      itemKey,
+      ids,
+      userId,
+      isModerator,
+    }: {
+      itemKey: string;
+      ids: number[];
+      userId?: number;
+      isModerator?: boolean;
+    }) => {
+      if (itemKey === hiddenFor.itemKey && userId === 42 && ids.includes(66) && !isModerator)
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Item not found' });
     }
   ),
 }));
+// Mirrors the engagement-toggle test: stub the user-preferences module surface user.service
+// reaches at import time so module load doesn't pull in the real cache layer.
 vi.mock('~/server/services/user-preferences.service', () => ({
   HiddenModels: { refreshCache: vi.fn(async () => undefined) },
   HiddenModels3D: { refreshCache: vi.fn(async () => undefined) },
@@ -188,23 +202,26 @@ describe('toggleBookmarked — race #1: collection.create P2002 is caught and re
 });
 
 describe('toggleBookmarked — only what the user may see', () => {
-  it.each([CollectionType.Model, CollectionType.Article])(
-    'refuses to bookmark a %s the user cannot see, writing nothing',
-    async (type) => {
-      await expect(toggleBookmarked({ ...args, type, entityId: 66 })).rejects.toThrow(
-        'Item not found'
-      );
-      expect(mockDb.collectionItem.createMany).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    [CollectionType.Model, 'modelId'],
+    [CollectionType.Article, 'articleId'],
+  ])('refuses to bookmark a %s the user cannot see, adding no item', async (type, itemKey) => {
+    hiddenFor.itemKey = itemKey;
+    await expect(toggleBookmarked({ ...args, type, entityId: 66 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(mockDb.collectionItem.createMany).not.toHaveBeenCalled();
+  });
 
   it('lets staff bookmark it', async () => {
+    hiddenFor.itemKey = 'modelId';
     await expect(toggleBookmarked({ ...args, entityId: 66, isModerator: true })).resolves.toBe(
       true
     );
   });
 
   it('still removes an existing bookmark of it', async () => {
+    hiddenFor.itemKey = 'modelId';
     mockDb.collectionItem.findFirst.mockResolvedValueOnce({ id: 555 });
     await expect(toggleBookmarked({ ...args, entityId: 66 })).resolves.toBe(false);
     expect(mockDb.collectionItem.deleteMany).toHaveBeenCalledTimes(1);

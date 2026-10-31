@@ -61,6 +61,7 @@ const collectionRow = (type: string) => ({
 });
 
 const TYPES = [
+  ['Image', 'imageId', 'imageIds'],
   ['Post', 'postId', 'postIds'],
   ['Article', 'articleId', 'articleIds'],
   ['Model', 'modelId', 'modelIds'],
@@ -68,6 +69,7 @@ const TYPES = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  hiddenKey.value = '';
   mockDbRead.collectionItem.findMany.mockResolvedValue([]);
   mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
   mockDbRead.challengeJudge.findMany.mockResolvedValue([]);
@@ -199,4 +201,24 @@ it('judges the item that was sent, when other item fields arrive empty', async (
     })
   ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+});
+
+it('does not check an item already in the collection that writes nothing new', async () => {
+  hiddenKey.value = 'postId';
+  arrange('Post');
+  mockDbRead.collectionItem.findMany.mockResolvedValue([
+    { id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: SUBMITTER_ID, note: null },
+  ]);
+  await expect(
+    saveItemInCollections({
+      input: {
+        type: 'Post',
+        postId: HIDDEN,
+        userId: SUBMITTER_ID,
+        collections: [{ collectionId: COLLECTION_ID }],
+        removeFromCollectionIds: [],
+      } as never,
+    })
+  ).resolves.toBeDefined();
+  expect(assertVisible).not.toHaveBeenCalled();
 });

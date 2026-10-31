@@ -217,7 +217,7 @@ describe('across databases', () => {
 describe('models with restricted visibility', () => {
   it('refuses a model the viewer may not see under the model rule', async () => {
     hiddenModels.mockImplementation(async (ids: unknown, viewer: unknown) =>
-      JSON.stringify([ids, viewer]) === JSON.stringify([[1], { id: VIEWER }])
+      (ids as number[]).includes(1) && (viewer as { id?: number })?.id === VIEWER
         ? new Set([1])
         : new Set()
     );

@@ -1,3 +1,4 @@
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
@@ -1101,6 +1102,15 @@ export async function toggleFavoriteHandler({
 }) {
   const { id: userId, muted } = ctx.user;
   if (muted) return false;
+
+  // Before the review and notify writes, so a refused favorite leaves nothing half-saved.
+  if (setTo)
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: 'modelId',
+      ids: [modelId],
+      userId,
+      isModerator: ctx.user.isModerator,
+    });
 
   // Toggle review (on/off)
   const reviewResult = await toggleReview({
