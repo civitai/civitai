@@ -107,6 +107,11 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
+const { mockUpdateModelNsfwLevels } = vi.hoisted(() => ({ mockUpdateModelNsfwLevels: vi.fn() }));
+vi.mock('~/server/services/nsfwLevels.service', () => ({
+  updateModelNsfwLevels: mockUpdateModelNsfwLevels,
+}));
+
 import { MINOR_LOCKED_PROPERTIES, setModelPoi } from '~/server/services/model.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -128,7 +133,7 @@ const baseModelRow = {
   gallerySettings: { level: 31, users: [] as number[], tags: [] as number[] },
   lockedProperties: [] as string[],
 };
-const mockBefore = (overrides: Partial<typeof baseModelRow>) => {
+const mockBefore = (overrides: Partial<typeof baseModelRow> & { meta?: unknown }) => {
   mockDbRead.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
   mockDbWrite.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
 };
@@ -224,6 +229,89 @@ describe('setModelPoi — lift', () => {
       liftedLabels: ['poi'],
       recordRulings: false,
     });
+  });
+
+  const ownerFlagOverride = {
+    at: '2026-10-01T00:00:00.000Z',
+    flags: ['poi'],
+    prevNsfw: true,
+    prevSfwOnly: false,
+    prevLockedProperties: ['nsfw'],
+  };
+  const overrideWrites = () =>
+    rawWriteValues().filter((values) => values.includes('ownerFlagOverride'));
+
+  it('after an owner override, puts back the rating, the SFW-only setting and the locks it replaced', async () => {
+    mockBefore({
+      poi: true,
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
+      meta: { ownerFlagOverride },
+    });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+    expect(written()).toEqual({
+      poi: false,
+      nsfw: true,
+      sfwOnly: false,
+      lockedProperties: ['nsfw'],
+    });
+    expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
+    expect(overrideWrites()).toHaveLength(1);
+    expect(overrideWrites()[0]).not.toContainEqual(expect.stringContaining('flags'));
+  });
+
+  it('restores nothing from a minor flag snapshot, which only a minor lift reads', async () => {
+    mockBefore({
+      poi: true,
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
+      meta: {
+        minorFlagSnapshot: {
+          at: '2026-10-01T00:00:00.000Z',
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+    expect(written()).toEqual({ poi: false, lockedProperties: [] });
+  });
+
+  it('restores nothing on a hash revert, which puts back its own snapshot', async () => {
+    mockBefore({
+      poi: true,
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
+      meta: { ownerFlagOverride },
+    });
+    await setModelPoi({
+      id: MODEL_ID,
+      poi: false,
+      userId: MODERATOR_ID,
+      activity: 'revertPoiAutoHash',
+    });
+    expect(written()).toEqual({ poi: false, lockedProperties: [] });
+    expect(overrideWrites()).toHaveLength(0);
+  });
+
+  it('keeps the restrictions and the override while a minor flag stays on', async () => {
+    mockBefore({
+      poi: true,
+      minor: true,
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['poi', 'minor', 'nsfw', 'sfwOnly'],
+      meta: { ownerFlagOverride: { ...ownerFlagOverride, flags: ['minor', 'poi'] } },
+    });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+    expect(written()).not.toHaveProperty('nsfw');
+    expect(overrideWrites()).toHaveLength(1);
+    expect(overrideWrites()[0]).toContainEqual(expect.stringContaining('"flags":["minor"]'));
   });
 
   it('records no ruling when the model was not POI to begin with', async () => {

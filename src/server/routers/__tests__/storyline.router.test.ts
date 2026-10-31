@@ -117,7 +117,7 @@ describe('storyline router: a story outside the reader’s level serves nothing 
         postId: 102,
         depth: 1,
         // A PG chapter deep inside the X story.
-        post: { nsfwLevel: NsfwLevel.PG },
+        post: { nsfwLevel: NsfwLevel.PG, tosViolation: false, user: notBanned },
         storyline: { ...xStory, user: notBanned },
       },
     ] as never);

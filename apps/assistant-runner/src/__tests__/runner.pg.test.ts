@@ -310,6 +310,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     wallClockMs: 60_000,
     // Far past the graceful-stop bound below, so a stop that only the forced fallback ends fails it.
     stopGraceMs: 20_000,
+    // A start naming it follows the page's default: its chat is not saved as having picked it.
+    defaultModel: 'echo',
   };
 
   beforeAll(async () => {
@@ -1060,6 +1062,29 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(stale).toMatchObject({ status: 409, body: { error: 'stale-turn' } });
     const head = await store.load(user, 'c-edit-stale');
     expect(head!.turns.map((turn) => turn.user.content)).toEqual(['One.', 'Two.']);
+  });
+
+  it('keeps the model a new chat picked before its first message in the head that start makes, and not the default', async () => {
+    const picked = await post(
+      '/runs',
+      as('u-first-model'),
+      startBody({ conversationId: 'c-first-model', model: 'long' })
+    );
+    expect(picked.status).toBe(201);
+    expect(ended(await events(picked.body!.runId as string, 'u-first-model')).status).toBe('done');
+    // What the chat reads back once the run ended: the chip, and the model of the next start.
+    expect((await store.load('u-first-model', 'c-first-model'))?.model).toBe('long');
+
+    const followsDefault = await post(
+      '/runs',
+      as('u-first-default'),
+      startBody({ conversationId: 'c-first-default', model: 'echo' })
+    );
+    expect(followsDefault.status).toBe(201);
+    await events(followsDefault.body!.runId as string, 'u-first-default');
+    const head = await store.load('u-first-default', 'c-first-default');
+    expect(head?.turns).toHaveLength(1);
+    expect(head).not.toHaveProperty('model');
   });
 
   it('writes a patch into the head', async () => {

@@ -181,9 +181,9 @@ export type AccountEvent = {
 };
 
 /**
- * Type 14 is Login and Retool excluded it. 31.6M Login rows sit against 62k Muted and 48.6k Banned, so
- * without the filter a 50-row window is ~49 logins and a thrice-muted account shows no enforcement
- * history at all.
+ * Type 14 is Login and Retool excluded it. Logins vastly outnumber mutes and bans, so without the
+ * filter a 50-row window is almost all logins and a thrice-muted account shows no enforcement history
+ * at all.
  */
 export async function getAccountEvents(userId: number, limit = 50): Promise<AccountEvent[]> {
   const rows = await getClickhouse().$query<{ type: string; time: string; actorId: string }>(`

@@ -133,6 +133,18 @@ export type StorylineChapterPost = {
 };
 
 /**
+ * A chapter readers are shown as removed: removed itself, or its post taken down or its author banned
+ * or gone. Also what may not become the main route, so the two cannot drift apart.
+ */
+export const isStorylineChapterRemoved = ({
+  post,
+  removed,
+}: {
+  post: Pick<StorylineChapterPost, 'tosViolation' | 'user'>;
+  removed: boolean;
+}) => removed || post.tosViolation || !!post.user.bannedAt || !!post.user.deletedAt;
+
+/**
  * Whether one chapter is shown to one reader, and if not, why. Order matters: the first reason
  * that applies is the one reported, and the most permanent reasons come first.
  *
@@ -161,8 +173,7 @@ export function getStorylineChapterTombstone({
   const isModerator = !!viewer?.isModerator;
   const isAuthor = viewer?.id === post.userId;
 
-  if (!isModerator && (removed || post.tosViolation || post.user.bannedAt || post.user.deletedAt))
-    return 'removed';
+  if (!isModerator && isStorylineChapterRemoved({ post, removed })) return 'removed';
   if (!isAuthor && blockedUserIds.has(post.userId)) return 'unavailable';
 
   const published = !!post.publishedAt && post.publishedAt < now;

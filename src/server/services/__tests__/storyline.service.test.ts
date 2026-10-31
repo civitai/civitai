@@ -227,7 +227,7 @@ describe('writeChapterEdgeForPlacement', () => {
     });
     expect(w.storylineChapterEdge.create).toHaveBeenCalledTimes(1);
     expect(w.storylineChapterEdge.create.mock.calls[0][0]).toEqual({
-      data: { storylineId: 10, chapterId: 30, parentChapterId: 20, canon: false },
+      data: { storylineId: 10, chapterId: 30, parentChapterId: 20, canon: true },
     });
   });
 
@@ -247,27 +247,36 @@ describe('writeChapterEdgeForPlacement', () => {
     expect(w.storylineChapter.create).not.toHaveBeenCalled();
   });
 
-  it("marks the owner's continuation canon only when the parent has no canon child", async () => {
-    let canonTaken = false;
-    w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
-    w.storylineChapterEdge.findFirst.mockImplementation((({
-      where,
-    }: {
-      where: { parentChapterId: number; canon: boolean };
-    }) =>
-      Promise.resolve(
-        where.parentChapterId === 20 && where.canon && canonTaken ? { chapterId: 21 } : null
-      )) as never);
+  // Not only the owner's: an approved continuation takes the empty slot too.
+  it.each([
+    ['the owner', OWNER],
+    ['a contributor', STRANGER],
+  ])(
+    "marks %s's continuation canon only when the parent has no canon child",
+    async (_who, placerId) => {
+      let canonTaken = false;
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: placerId }) as never);
+      w.storylineChapterEdge.findFirst.mockImplementation((({
+        where,
+      }: {
+        where: { parentChapterId: number; canon: boolean };
+      }) =>
+        Promise.resolve(
+          where.parentChapterId === 20 && where.canon && canonTaken ? { chapterId: 21 } : null
+        )) as never);
 
-    await writeChapterEdgeForPlacement({ ...args, placerId: OWNER }, tx);
-    expect(w.storylineChapterEdge.create.mock.calls[0][0]).toMatchObject({ data: { canon: true } });
+      await writeChapterEdgeForPlacement({ ...args, placerId }, tx);
+      expect(w.storylineChapterEdge.create.mock.calls[0][0]).toMatchObject({
+        data: { canon: true },
+      });
 
-    canonTaken = true;
-    await writeChapterEdgeForPlacement({ ...args, placerId: OWNER }, tx);
-    expect(w.storylineChapterEdge.create.mock.calls[1][0]).toMatchObject({
-      data: { canon: false },
-    });
-  });
+      canonTaken = true;
+      await writeChapterEdgeForPlacement({ ...args, placerId }, tx);
+      expect(w.storylineChapterEdge.create.mock.calls[1][0]).toMatchObject({
+        data: { canon: false },
+      });
+    }
+  );
 
   it.each([
     [
@@ -831,7 +840,14 @@ describe('authorization', () => {
   describe('setCanonChapter', () => {
     beforeEach(() => {
       w.storylineChapterEdge.findMany.mockResolvedValue([
-        { parentChapterId: 20, storylineId: 10, chapter: { removedAt: null } },
+        {
+          parentChapterId: 20,
+          storylineId: 10,
+          chapter: {
+            removedAt: null,
+            post: { tosViolation: false, user: { bannedAt: null, deletedAt: null } },
+          },
+        },
       ] as never);
       w.storylineChapterEdge.updateMany.mockResolvedValue({ count: 1 } as never);
     });
@@ -863,6 +879,49 @@ describe('authorization', () => {
     ])('refuses %s', async (_name, userId) => {
       await expect(setCanonChapter({ chapterId: 31, userId })).rejects.toMatchObject(forbidden);
       expect(w.storylineChapterEdge.updateMany).not.toHaveBeenCalled();
+    });
+
+    // A moderator reads these chapters untombstoned and is offered the button on them; readers
+    // would find a removed chapter at the head of the main path.
+    const author = { bannedAt: null, deletedAt: null };
+    it.each([
+      ['removed', { removedAt: new Date(), post: { tosViolation: false, user: author } }],
+      ['taken down', { removedAt: null, post: { tosViolation: true, user: author } }],
+      [
+        'by a banned author',
+        {
+          removedAt: null,
+          post: { tosViolation: false, user: { ...author, bannedAt: new Date() } },
+        },
+      ],
+      ['left without its post', { removedAt: null, post: null }],
+      [
+        'by a deleted account',
+        {
+          removedAt: null,
+          post: { tosViolation: false, user: { ...author, deletedAt: new Date() } },
+        },
+      ],
+    ])('refuses a chapter that is %s, even for a moderator', async (_name, chapter) => {
+      w.storylineChapterEdge.findMany.mockResolvedValue([
+        { parentChapterId: 20, storylineId: 10, chapter },
+      ] as never);
+      await expect(
+        setCanonChapter({ chapterId: 31, userId: MODERATOR, isModerator: true })
+      ).rejects.toThrow('A removed chapter cannot be the main route');
+      expect(w.storylineChapterEdge.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('accepts the same chapter once nothing about it is removed', async () => {
+      w.storylineChapterEdge.findMany.mockResolvedValue([
+        {
+          parentChapterId: 20,
+          storylineId: 10,
+          chapter: { removedAt: null, post: { tosViolation: false, user: author } },
+        },
+      ] as never);
+      await setCanonChapter({ chapterId: 31, userId: MODERATOR, isModerator: true });
+      expect(w.storylineChapterEdge.updateMany).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -1132,7 +1191,7 @@ describe('getStorylinesForPosts', () => {
     id: postId + 1000,
     postId,
     depth: 1,
-    post: { nsfwLevel: level, userId: AUTHOR_OF_POSTS },
+    post: { nsfwLevel: level, userId: AUTHOR_OF_POSTS, tosViolation: false, user: notBanned },
     storyline: {
       id: 10,
       title: 'A story',
@@ -2697,13 +2756,25 @@ describe('a chapter whose placement was removed', () => {
     });
   });
 
+  // Every chapter the reading path shows as removed, not only one removed itself: otherwise the post
+  // says it is a chapter and the storyline shows a tombstone where it should be.
   it('gives no storyline pill to anyone but moderators', async () => {
-    const chapter = (postId: number, removedAt: Date | null) => ({
+    const chapter = (
+      postId: number,
+      removedAt: Date | null,
+      post: { tosViolation?: boolean; user?: typeof notBanned } = {}
+    ) => ({
       id: postId + 1000,
       postId,
       depth: 1,
       removedAt,
-      post: { nsfwLevel: NsfwLevel.PG, userId: STRANGER },
+      post: {
+        nsfwLevel: NsfwLevel.PG,
+        userId: STRANGER,
+        tosViolation: false,
+        user: notBanned,
+        ...post,
+      },
       storyline: {
         id: 10,
         title: 'A story',
@@ -2719,16 +2790,28 @@ describe('a chapter whose placement was removed', () => {
     r.storylineChapter.findMany.mockResolvedValue([
       chapter(1, null),
       chapter(2, REMOVED_AT),
+      chapter(3, null, { tosViolation: true }),
+      chapter(4, null, { user: { ...notBanned, bannedAt: REMOVED_AT } }),
+      chapter(5, null, { user: { ...notBanned, deletedAt: REMOVED_AT } }),
     ] as never);
     const pills = async (viewer: { id: number; isModerator?: boolean }) =>
       Object.keys(
-        await getStorylinesForPosts({ postIds: [1, 2], viewer, browsingLevel: NsfwLevel.PG })
+        await getStorylinesForPosts({
+          postIds: [1, 2, 3, 4, 5],
+          viewer,
+          browsingLevel: NsfwLevel.PG,
+        })
       );
     expect(await pills(viewers.reader)).toEqual(['1']);
     expect(await pills(viewers.author)).toEqual(['1']);
-    expect(await pills(viewers.moderator)).toEqual(['1', '2']);
+    expect(await pills(viewers.moderator)).toEqual(['1', '2', '3', '4', '5']);
     expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
-      select: { removedAt: true },
+      select: {
+        removedAt: true,
+        post: {
+          select: { tosViolation: true, user: { select: { bannedAt: true, deletedAt: true } } },
+        },
+      },
     });
   });
 
@@ -3959,7 +4042,7 @@ describe('title moderation', () => {
         postId,
         depth: 1,
         removedAt: null,
-        post: { nsfwLevel: PG, userId: AUTHOR_OF_POSTS },
+        post: { nsfwLevel: PG, userId: AUTHOR_OF_POSTS, tosViolation: false, user: notBanned },
         storyline: {
           id: postId,
           title: `s${postId}`,
@@ -4205,7 +4288,7 @@ describe('a storyline the title scan holds as about a minor', () => {
           id: 1001,
           postId: 1,
           depth: 1,
-          post: { nsfwLevel: R, userId: AUTHOR_OF_POSTS },
+          post: { nsfwLevel: R, userId: AUTHOR_OF_POSTS, tosViolation: false, user: notBanned },
           storyline: {
             id: 10,
             title: 'A story',

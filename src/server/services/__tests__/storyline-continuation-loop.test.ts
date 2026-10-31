@@ -77,6 +77,7 @@ const ROOT_POST = 100;
 const STRANGER_POST = 200;
 const COLLABORATOR_POST = 300;
 const STRANGER_X_POST = 400;
+const ANOTHER_STRANGER_POST = 700;
 // The storyline's ceiling is PG.
 const PG = 1;
 const X = 8;
@@ -190,6 +191,7 @@ beforeEach(() => {
   publishedPost(STRANGER_POST, STRANGER, PG);
   publishedPost(COLLABORATOR_POST, COLLABORATOR, PG);
   publishedPost(STRANGER_X_POST, STRANGER, X);
+  publishedPost(ANOTHER_STRANGER_POST, STRANGER, PG);
   db.insert('storylineCollaborator', {
     storylineId: STORYLINE,
     userId: COLLABORATOR,
@@ -238,13 +240,14 @@ describe('the storyline continuation loop', () => {
 
     const chapter = chapterFor(id);
     expect(chapter).toMatchObject({ storylineId: STORYLINE, postId: STRANGER_POST, depth: 1 });
+    // Approved into an empty slot, it continues the main path as the owner's own chapter would.
     expect(edgeFor(chapter!.id as number)).toMatchObject({
       parentChapterId: ROOT_CHAPTER,
-      canon: false,
+      canon: true,
     });
     expect(db.rows('storylineChapterEdge')).toHaveLength(1);
     expect((await children()).map((c) => [c.chapterId, c.rank, c.post?.id])).toEqual([
-      [chapter!.id, 'community', STRANGER_POST],
+      [chapter!.id, 'canon', STRANGER_POST],
     ]);
     expect(
       (await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS })).items
@@ -263,6 +266,19 @@ describe('the storyline continuation loop', () => {
     expect(db.rows('storylineChapterEdge')).toHaveLength(1);
   });
 
+  it('makes a second approved continuation of the same chapter another path', async () => {
+    for (const postId of [STRANGER_POST, ANOTHER_STRANGER_POST]) {
+      const { id } = await submit(STRANGER, postId);
+      await actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' });
+    }
+
+    expect((await children()).map((c) => [c.rank, c.post?.id])).toEqual([
+      ['canon', STRANGER_POST],
+      ['community', ANOTHER_STRANGER_POST],
+    ]);
+    expect(db.rows('storylineChapterEdge').filter((edge) => edge.canon)).toHaveLength(1);
+  });
+
   it("puts an endorsed collaborator's continuation straight into the story, with no queue row", async () => {
     const { id } = await submit(COLLABORATOR, COLLABORATOR_POST);
 
@@ -271,22 +287,24 @@ describe('the storyline continuation loop', () => {
       (await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS })).items
     ).toEqual([]);
     const chapter = chapterFor(id);
-    expect(edgeFor(chapter!.id as number)).toMatchObject({ parentChapterId: ROOT_CHAPTER });
+    expect(edgeFor(chapter!.id as number)).toMatchObject({
+      parentChapterId: ROOT_CHAPTER,
+      canon: true,
+    });
     expect((await children()).map((c) => [c.rank, c.post?.id])).toEqual([
-      ['endorsed', COLLABORATOR_POST],
+      ['canon', COLLABORATOR_POST],
     ]);
   });
 
   it('orders an endorsed chapter before a community one', async () => {
-    const stranger = await submit(STRANGER, STRANGER_POST);
-    await actOnStorylineContinuation({
-      placementId: stranger.id,
-      ownerId: OWNER,
-      action: 'approve',
-    });
+    // The first approved one takes the main path; the order is about the paths after it.
+    for (const postId of [STRANGER_POST, ANOTHER_STRANGER_POST]) {
+      const { id } = await submit(STRANGER, postId);
+      await actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' });
+    }
     await submit(COLLABORATOR, COLLABORATOR_POST);
 
-    expect((await children()).map((c) => c.rank)).toEqual(['endorsed', 'community']);
+    expect((await children()).map((c) => c.rank)).toEqual(['canon', 'endorsed', 'community']);
   });
 
   it('refuses a post rated above the storyline, and writes nothing', async () => {

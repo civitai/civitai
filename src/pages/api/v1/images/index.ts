@@ -8,7 +8,7 @@ import { ImageSort } from '~/server/common/enums';
 import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
-import { runImageSearch } from '~/server/services/image-search.service';
+import { runImageSearch, withoutHeldImages } from '~/server/services/image-search.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
@@ -234,10 +234,12 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // runImageSearch. The PUBLIC endpoint passes its existing region/nsfw-derived
     // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
     // block endpoint passes a server-clamped value. No other lever differs.
-    const { items, nextCursor } = await runImageSearch(
+    const { items: found, nextCursor } = await runImageSearch(
       { limit, skip, cursor, type, withMeta, flatMeta, withTags, feedService: true, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
+    // Images picked by id name no model, so each is held by its own post's model.
+    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
 
     const metadata: Metadata = {
       nextCursor,

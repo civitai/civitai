@@ -245,6 +245,7 @@ describe('voidOrphanedAppeals', () => {
       expect.objectContaining({
         type: 'entity-appeal-content-removed',
         key: `entity-appeal-content-removed:${removed.id}:under-review`,
+        category: 'Moderation',
         details: {
           entityType: EntityType.Image,
           entityId: removed.entityId,

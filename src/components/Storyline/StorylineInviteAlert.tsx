@@ -22,7 +22,6 @@ export function StorylineInviteAlert({
       }),
   };
   const accept = trpc.storyline.acceptInvite.useMutation(handlers);
-  // Declining is leaving, which a muted account can still do.
   const decline = trpc.storyline.leave.useMutation(handlers);
   const busy = accept.isPending || decline.isPending;
 
