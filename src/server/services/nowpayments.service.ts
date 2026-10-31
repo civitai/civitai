@@ -1088,7 +1088,7 @@ const watchListedPayments = async (
             paymentId,
             status,
           });
-          return report('awaiting_ok', status);
+          return report(isDepositComplete(status) ? 'awaiting_ok' : 'in_flight', status);
         }
         await processDeposit(paymentId, status, eventFromPayment(payment));
         return report('recorded', status);
@@ -1108,6 +1108,8 @@ const watchListedPayments = async (
  * Polls NOWPayments once for each paid deposit still in flight. The reconcile job only lists
  * payments created in the last 72h, so a payment that settles later is otherwise credited only
  * if its IPN arrives. Settled payments go through processDeposit, closed ones record their status.
+ * Then checks the listed ids (WATCH_PAYMENT_IDS_KEY) that have no row to poll. A listed id is
+ * credited only once it is also on WATCH_CREDIT_OK_KEY, including one whose open row this loop polls.
  */
 export const watchOpenDeposits = async () => {
   const listed = await readPaymentIdList(WATCH_PAYMENT_IDS_KEY);

@@ -1538,7 +1538,7 @@ describe('watchOpenDeposits', () => {
         expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
         expect(rowStatus[911]).toBeUndefined();
         expect(result.listed).toEqual([
-          { paymentId: '911', state: 'awaiting_ok', status: npStatus },
+          { paymentId: '911', state: 'in_flight', status: npStatus },
         ]);
       }
     );

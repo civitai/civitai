@@ -16,7 +16,8 @@ export type OpenDepositDigestItem = {
 /** Where the watch left a payment id support listed for it (nowpayments:watch-payment-ids). */
 export type ListedPaymentState =
   | 'no_row' // NowPayments still has it waiting; no row yet
-  | 'awaiting_ok' // paid or in flight, not on the credit-ok list: not processed
+  | 'awaiting_ok' // finished or partially_paid, not on the credit-ok list: not credited
+  | 'in_flight' // confirming/confirmed/sending, not on the credit-ok list: no row written
   | 'recorded' // processed this run: it now has a row
   | 'has_row' // has a row the watch already follows
   | 'held' // held for review; left alone
@@ -31,7 +32,8 @@ export type ListedPaymentDigestItem = {
 
 const LISTED_STATE_LABEL: Record<ListedPaymentState, string> = {
   no_row: 'no row yet, waiting at NowPayments',
-  awaiting_ok: 'awaiting credit confirmation (not processed)',
+  awaiting_ok: 'paid, awaiting credit confirmation (not credited)',
+  in_flight: 'in flight at NowPayments, not tracked until confirmed for credit',
   recorded: 'now has a row',
   has_row: 'has a row',
   held: 'held for review',
