@@ -39,6 +39,7 @@ const OWNER = 10;
 const STRANGER = 20;
 const MOD = 30;
 const COVER = 500;
+const OTHER_IMAGE_OWNER = 40;
 
 const viewers = {
   'a signed-out viewer': undefined,
@@ -48,9 +49,9 @@ const viewers = {
 };
 type Viewer = (typeof viewers)[keyof typeof viewers];
 
-const cover = (nsfwLevel: number, minor: boolean | null) => ({
+const cover = (nsfwLevel: number, minor: boolean | null, imageOwner = OWNER) => ({
   id: COVER,
-  userId: OWNER,
+  userId: imageOwner,
   url: 'u',
   nsfwLevel,
   minor,
@@ -62,17 +63,23 @@ const cover = (nsfwLevel: number, minor: boolean | null) => ({
 });
 
 async function detailCover(image: ReturnType<typeof cover>, viewer: Viewer) {
-  dbMock.dbRead.article.findFirst.mockResolvedValue({
-    id: 1,
-    userId: OWNER,
-    nsfwLevel: image.nsfwLevel,
-    status: ArticleStatus.Published,
-    ingestion: ArticleIngestionStatus.Scanned,
-    tags: [],
-    content: '',
-    metadata: null,
-    coverImage: image,
-  } as never);
+  // Answers only what the query selects, so a cover read without `minor` comes back without it.
+  dbMock.dbRead.article.findFirst.mockImplementation((async (args: {
+    select?: { coverImage?: { select?: { minor?: boolean } } };
+  }) => {
+    const { minor, ...unflagged } = image;
+    return {
+      id: 1,
+      userId: OWNER,
+      nsfwLevel: image.nsfwLevel,
+      status: ArticleStatus.Published,
+      ingestion: ArticleIngestionStatus.Scanned,
+      tags: [],
+      content: '',
+      metadata: null,
+      coverImage: args.select?.coverImage?.select?.minor ? image : unflagged,
+    };
+  }) as never);
   dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
   const article = await getArticleById({
     id: 1,
@@ -135,5 +142,11 @@ describe.each([
 
   it('does not add the flag to the cover it returns', async () => {
     expect(await coverFor(cover(2, true), viewers['a stranger'])).not.toHaveProperty('minor');
+  });
+
+  it("leaves it out for the article's owner when someone else owns the image, and keeps it for that image's owner", async () => {
+    const image = cover(4, true, OTHER_IMAGE_OWNER);
+    expect(await coverFor(image, viewers['the owner'])).toBeUndefined();
+    expect((await coverFor(image, { id: OTHER_IMAGE_OWNER }))?.id).toBe(COVER);
   });
 });
