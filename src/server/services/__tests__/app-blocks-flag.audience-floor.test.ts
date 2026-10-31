@@ -90,20 +90,66 @@ describe('resolveViewerAudienceFloor', () => {
     await expect(resolveViewerAudienceFloor({ user: user() })).resolves.toBe('public');
   });
 
-  it('[INV] it evaluates the APP-BLOCKS flag, per-user, with a real context', async () => {
-    // Pins WHICH flag carries the cohort. `app-blocks-enabled` is the runtime gate that
-    // stays cohort-segmented; `app-listings` is the SURFACE flag that widens to public at
-    // GA. Reading the cohort off the surface flag would make `testers` collapse into
-    // `public` the moment the store goes public — the distinction the enum exists to draw.
+  it('[INV] it evaluates the dedicated TESTER-COHORT flag, per-user, with a real context', async () => {
+    // Pins WHICH flag carries the cohort: `app-blocks-testers`, and ONLY that one.
+    // `app-blocks-enabled` (the runtime gate) and `app-listings` (the store surface) both
+    // widen to everyone at the public launch, so reading the cohort off either would make
+    // `testers` collapse into `public` the moment they widen — every signed-in viewer
+    // would see listings their owner restricted to testers.
     mockIsFlipt.mockImplementation(async () => true);
     await resolveViewerAudienceFloor({ user: user({ id: 7 }) });
     expect(mockIsFlipt).toHaveBeenCalledTimes(1);
     const [flag, entityId, context] = mockIsFlipt.mock.calls[0] as [string, string, object];
-    expect(flag).toBe('app-blocks-enabled');
+    expect(flag).toBe('app-blocks-testers');
     // Per-user, or no segment can ever match (the eval would carry entityId 'global' and
     // an empty context).
     expect(entityId).toBe('7');
     expect(context).toMatchObject({ userId: '7', isModerator: 'false' });
+  });
+
+  describe('the tester cohort is independent of `app-blocks-enabled` (civitai/flipt-state#263)', () => {
+    // Flag-aware fake: a key is `true` only when it is in `on`. Any other key — including
+    // one that does not exist in Flipt at all — answers `false`, which is what the real
+    // `isFlipt` does for an absent flag (the eval throws, the client catches → `false`).
+    const flagsOn = (...on: string[]) =>
+      mockIsFlipt.mockImplementation(async (...a: unknown[]) => on.includes(a[0] as string));
+
+    it('🔴 a viewer who passes `app-blocks-enabled` but is NOT a tester floors at `public`', async () => {
+      // THE REGRESSION. Once `app-blocks-enabled` widens to every user, the old resolver
+      // answered `testers` for all of them and published testers-only listings to every
+      // signed-in viewer.
+      flagsOn('app-blocks-enabled', 'app-listings');
+      await expect(resolveViewerAudienceFloor({ user: user({ id: 11 }) })).resolves.toBe('public');
+    });
+
+    it('a viewer IN the tester cohort floors at `testers`, even with `app-blocks-enabled` off', async () => {
+      flagsOn('app-blocks-testers');
+      await expect(resolveViewerAudienceFloor({ user: user({ id: 12 }) })).resolves.toBe('testers');
+    });
+
+    it('a tester who also passes `app-blocks-enabled` still floors at `testers`', async () => {
+      flagsOn('app-blocks-testers', 'app-blocks-enabled', 'app-listings');
+      await expect(resolveViewerAudienceFloor({ user: user({ id: 13 }) })).resolves.toBe('testers');
+    });
+
+    it('🔴 FAIL-CLOSED: the tester flag ABSENT floors every non-moderator at `public`', async () => {
+      // The deploy window before the flipt-state flag exists: every other app flag is on,
+      // the tester key is unknown. Nobody but a moderator may see a testers-only listing.
+      flagsOn('app-blocks-enabled', 'app-listings', 'app-blocks-pages-enabled');
+      for (const id of [21, 22, 23]) {
+        await expect(resolveViewerAudienceFloor({ user: user({ id }) })).resolves.toBe('public');
+      }
+    });
+
+    it('a MODERATOR still floors at `moderators` whatever the flags say', async () => {
+      for (const on of [[], ['app-blocks-testers'], ['app-blocks-enabled']]) {
+        flagsOn(...on);
+        await expect(
+          resolveViewerAudienceFloor({ user: user({ id: 31, isModerator: true }) })
+        ).resolves.toBe('moderators');
+      }
+      expect(mockIsFlipt).not.toHaveBeenCalled();
+    });
   });
 
   it('[INV] an unreachable Flipt floors at `public`, not at a cohort', async () => {

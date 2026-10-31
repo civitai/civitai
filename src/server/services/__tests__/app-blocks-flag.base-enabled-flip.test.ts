@@ -212,6 +212,25 @@ describe('a base-`enabled: true` flip, measured against the real Flipt engine', 
     );
   });
 
+  it('🔴 `app-blocks-enabled` on for EVERYONE does not make a viewer a tester (flipt-state#263)', async () => {
+    // The post-#263 state, measured on the real engine: the runtime flag resolves `true`
+    // for an unaffiliated signed-in viewer, while the dedicated tester flag is ABSENT from
+    // the snapshot — the window before its flipt-state PR merges. The floor must be
+    // `public`: an absent tester flag fails closed, and passing `app-blocks-enabled` is
+    // no longer evidence of tester membership.
+    const { isAppBlocksEnabled, resolveViewerAudienceFloor } = await import(
+      '~/server/services/app-blocks-flag'
+    );
+    const viewer = sessionUser(UNAFFILIATED_ID);
+    // FIXTURE CONTROL: the tester key really is absent, so the `public` below is the
+    // absent-flag path and not a configured `false`.
+    expect(baseTrueSnapshot.flags.map((f) => f.key)).not.toContain('app-blocks-testers');
+    // PRECONDITION CONTROL: this viewer DOES pass `app-blocks-enabled`, so the old
+    // resolver (which read the cohort off it) would have answered `testers`.
+    await expect(isAppBlocksEnabled({ user: viewer })).resolves.toBe(true);
+    await expect(resolveViewerAudienceFloor({ user: viewer })).resolves.toBe('public');
+  });
+
   it('isAppBlocksEnabled KEEPS its no-user global eval — deliberately, because it is a kill-switch', async () => {
     const { isAppBlocksEnabled } = await import('~/server/services/app-blocks-flag');
     // The asymmetry with the author helper, pinned so nobody "unifies" them. A
