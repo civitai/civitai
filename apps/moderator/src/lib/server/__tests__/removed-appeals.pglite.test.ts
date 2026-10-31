@@ -220,7 +220,7 @@ describe('resolveRemovedAppeal', () => {
       {
         userId: 1,
         type: 'entity-appeal-content-removed',
-        category: 'Other',
+        category: 'Moderation',
         key: 'entity-appeal-content-removed:11:reviewed-approved',
         details: {
           entityType: 'Image',
