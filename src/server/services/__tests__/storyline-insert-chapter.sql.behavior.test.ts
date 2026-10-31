@@ -599,8 +599,7 @@ describe('a chapter add whose parent changes after its first read', () => {
     });
   });
 
-  // "Add to a storyline" from a post's menu. The client once picked the end from its own read,
-  // capped and possibly stale, and a wrong guess quietly made a side branch.
+  // "Add to a storyline" from a post's menu.
   describe('at the end of the main path', () => {
     const edgeOf = async (chapterId: number) =>
       (
@@ -855,6 +854,17 @@ describe('insertStorylineChapter refusals', () => {
       await refuses(
         async () => insert(await post({ nsfwLevel: 0 })),
         badRequest('This post has not been rated yet. Try again once it has been')
+      );
+    });
+
+    // Blocked is a moderation verdict, not a rating: refused as unusable, never as "rated above".
+    it.each([
+      ['Blocked', NsfwLevel.Blocked],
+      ['Blocked alongside a rating that fits', NsfwLevel.PG | NsfwLevel.Blocked],
+    ])('refuses a post rated %s as unusable', async (_name, nsfwLevel) => {
+      await refuses(
+        async () => insert(await post({ nsfwLevel })),
+        badRequest("This post or one of its images can't be used in a storyline")
       );
     });
 
