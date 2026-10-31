@@ -67,6 +67,11 @@ async function isSameSession(token: string | undefined, of: SessionClaims): Prom
   return !!claims && claims.sub === of.sub && familyId(claims) === familyId(of);
 }
 
+async function isHonouredSession(token: string): Promise<boolean> {
+  const claims = await verifier.verifyToken(token).catch(() => null);
+  return !!claims && Number.isFinite(Number(claims.sub)) && (await acceptHubSession(claims));
+}
+
 /** The shared-slot device id becomes the host-only one, so the browser keeps its account list. */
 function carryDeviceId(cookies: Cookies): string {
   const host = cookies.get(deviceCookieNameForSlot('host'));
@@ -136,22 +141,26 @@ async function awaitWinner(jti: string): Promise<Upgrade | null> {
 /**
  * In host mode, move a browser that reaches the hub with a shared-slot token onto a host-only session and end
  * the shared-slot token. Requests racing on the same token all get the one session the first of them minted,
- * for 60 seconds after that token is ended. Returns the host-only token, or null when the shared-slot token is
- * not a session the hub honours.
+ * for 60 seconds after that token is ended. A host-only session the hub honours is kept, whoever it belongs to.
+ * Returns the host-only token, or null when neither is a session the hub honours.
  */
 export async function upgradeHubSession(
   cookies: Cookies,
   sharedToken: string
 ): Promise<string | null> {
   if (!slotsDiffer()) return null;
+  const hostToken = cookies.get(hostSessionCookieName());
+  // Other hosts can write the shared slot, so it never displaces a host-only session.
+  if (hostToken && (await isHonouredSession(hostToken))) {
+    expireSharedSlot(cookies);
+    return hostToken;
+  }
   const j0 = await signatureVerifier.verifyToken(sharedToken).catch(() => null);
   if (!j0?.jti || !Number.isFinite(Number(j0.sub))) return null;
-  const hostToken = cookies.get(hostSessionCookieName());
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const stored = await storedUpgrade(j0.jti);
     if (stored) return finish(cookies, j0, await sign(stored), { won: false });
-    if (await isSameSession(hostToken, j0)) return finish(cookies, j0, hostToken!, { won: false });
 
     const live = await verifier.verifyToken(sharedToken).catch(() => null);
     if (!live || !(await acceptHubSession(live))) return null;

@@ -76,6 +76,8 @@ import { deviceCookieNameForSlot, sessionCookieNameForSlot, type SessionUser } f
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { handle } from '../hooks.server';
 import { GET as authorizeGet } from '../routes/api/auth/oauth/authorize/+server';
+import { POST as switchPost } from '../routes/api/auth/switch/+server';
+import { GET as accountsGet } from '../routes/api/auth/accounts/+server';
 import { establishSession } from '$lib/server/auth/session';
 
 const CALLBACK = 'https://civitai.com/api/auth/callback';
@@ -106,14 +108,19 @@ function jar(initial: Record<string, string>) {
 
 async function visit(
   cookies: Jar,
-  opts: { path?: string; routeId?: string; run?: (event: never) => Promise<Response> } = {}
+  opts: {
+    path?: string;
+    routeId?: string;
+    init?: RequestInit;
+    run?: (event: never) => Promise<Response>;
+  } = {}
 ) {
   const path = opts.path ?? '/login';
   const url = new URL(`https://auth.civitai.com${path}`);
   const event = {
     url,
     route: { id: opts.routeId ?? '/login' },
-    request: new Request(url),
+    request: new Request(url, opts.init),
     cookies,
     locals: {} as Record<string, unknown>,
     getClientAddress: () => '127.0.0.1',
@@ -128,8 +135,10 @@ async function visit(
       throw e;
     }
   };
-  await handle({ event, resolve } as never);
-  return event.locals as { session?: Record<string, unknown>; deviceId?: string };
+  const response = await handle({ event, resolve } as never);
+  return Object.assign(event.locals as { session?: Record<string, unknown>; deviceId?: string }, {
+    response,
+  });
 }
 
 const authorize = (cookies: Jar) =>
@@ -286,6 +295,20 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
     expect(performance.now() - started).toBeLessThan(3_000);
   });
 
+  it("keeps a host-only session, whoever's it is, over a live shared-slot one", async () => {
+    sharedSession({ sub: '200' });
+    h.tokens.set('host-a', { sub: '100', jti: 'ha', sid: 'fam-a', signedAt: Date.now() });
+    const cookies = jar({ [HOST()]: 'host-a', [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+
+    const locals = await visit(cookies);
+
+    expect(locals.session?.sub).toBe('100');
+    expect(mintedJtis()).toEqual(new Set(['ha']));
+    expect(cookies.get(SHARED())).toBeUndefined();
+    expect(cookies.get(SHARED_DEVICE())).toBeUndefined();
+    expect(h.sys.hashes.get(REDIS_SYS_KEYS.SESSION.TOKEN_STATE)?.has('j0')).toBeFalsy();
+  });
+
   it('a signed-out shared-slot token is not moved', async () => {
     sharedSession();
     await h.sys.hSet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, 'j0', 'invalid');
@@ -338,6 +361,29 @@ describe('a sign-in on a browser carrying a device id from a signed-out account 
       expect(written?.value).toBeDefined();
       expect(written?.value).not.toBe('dev-d');
       expect([...(h.sys.hashes.get(accounts)?.keys() ?? [])].sort()).toEqual(['100', '200']);
+
+      const switched = await visit(cookies, {
+        path: '/api/auth/switch',
+        routeId: '/api/auth/switch',
+        init: {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ userId: 100 }),
+        },
+        run: (event) => switchPost(event) as Promise<Response>,
+      });
+      expect(switched.session?.sub).toBe('300');
+      expect(switched.response.status).toBe(403);
+
+      const listed = await visit(cookies, {
+        path: '/api/auth/accounts',
+        routeId: '/api/auth/accounts',
+        run: (event) => accountsGet(event) as Promise<Response>,
+      });
+      const { accounts: list } = (await listed.response.json()) as {
+        accounts: { userId: number }[];
+      };
+      expect(list.filter((a) => a.userId !== 300)).toEqual([]);
     }
   );
 });
