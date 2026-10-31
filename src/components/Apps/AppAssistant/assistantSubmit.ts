@@ -65,9 +65,7 @@ export function listingNoticeOf(value: unknown): SubmitListingNotice | undefined
     : [];
   const approvalBlocked = v.approvalBlocked === true;
   const nextStep = typeof v.nextStep === 'string' && v.nextStep ? v.nextStep : null;
-  // The floor problems the next step words are dropped ONLY when it is shown: on an update to a
-  // listing that went live without art there is no next step, and they are the only words
-  // saying the icon or cover is missing.
+  // Drop the floor problems only when nextStep words them; an update to a live listing has no nextStep.
   return {
     approvalBlocked,
     nextStep,

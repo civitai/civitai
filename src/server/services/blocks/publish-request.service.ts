@@ -2973,7 +2973,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // decision and a table that role cannot read, nothing is refused and nothing is written to it:
   // the approve goes ahead as it did before the split existed.
   //
-  // Same where builders as the (3b-transition)/(3b-reset) writes, so the gate and the writes agree on which row goes live.
+  // Shared with the 3b writes so the gate and the writes pick the same row.
   const goLive = await resolvePublishTarget<{
     id: string;
     iconId: number | null;

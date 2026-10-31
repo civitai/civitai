@@ -325,11 +325,7 @@ describe('Submit for review', () => {
     ).toEqual([]);
   });
 
-  /**
-   * 🔴 No listing row yet: approval is not blocked, but the route still sends the step to
-   * take. It is shown, and the icon/cover items it words are not repeated under it.
-   */
-  test('🔴 a next step without a blocked approval (no listing yet) is still shown', () => {
+  test('🔴 no listing row yet: a next step without a blocked approval is shown, and the icon/cover items it words are not repeated', () => {
     const nextStep =
       "Your app has no store listing yet. Once it is approved, add an icon and a cover on its listing's Media tab.";
     expect(

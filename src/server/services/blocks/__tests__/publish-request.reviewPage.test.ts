@@ -237,11 +237,16 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
         dbRow({ manifest: { name: 'my-app', contentRating: 'pg13' }, ...request })
       );
+      // Both go-live lookups answer only the columns they SELECT, so a dropped column
+      // (iconId / coverId: the Approve-disabled floor) is seen.
       mockDbRead.appListing.findMany.mockImplementation(async (...a: unknown[]) => {
-        const w = ((a[0] ?? {}) as { where?: Where }).where ?? {};
-        if (isDraftQuery(w)) return found.drafts ?? [];
-        if (isResetQuery(w)) return found.resets ?? [];
-        return [];
+        const args = (a[0] ?? {}) as { where?: Where; select?: Record<string, unknown> };
+        const w = args.where ?? {};
+        const rows = isDraftQuery(w) ? found.drafts : isResetQuery(w) ? found.resets : undefined;
+        const select = args.select;
+        return (rows ?? []).map((r) =>
+          select ? Object.fromEntries(Object.entries(r as object).filter(([k]) => select[k])) : r
+        );
       });
       const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
       return (res!.request as unknown as { approveRating: unknown }).approveRating;

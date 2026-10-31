@@ -3171,8 +3171,7 @@ export const blocksRouter = router({
     // unpublish, so the request status alone can't tell live from owner-hidden. One
     // batched findMany (NOT per-row) keyed by appBlockId.
     // The listing projection both queries below select — the keyed backing listing and the
-    // pre-approval draft — so the two feed `computeListingProblems` identically (through
-    // `listingProblemInput`, as every other problems surface does).
+    // pre-approval draft — so the two feed `computeListingProblems` identically.
     const listingSelect = {
       id: true,
       appBlockId: true,
@@ -3336,7 +3335,7 @@ export const blocksRouter = router({
         problems: problemsListing
           ? computeListingProblems(
               listingProblemInput(problemsListing, {
-                // Both queries admit only on-site rows, so a missing kind is on-site.
+                // kind is always selected; ?? only satisfies the type
                 kind: (problemsListing.kind ?? 'onsite') as ListingProblemKind,
                 appRating: r.appBlock?.contentRating,
                 assetScans: scansByListingId.get(problemsListing.id) ?? [],

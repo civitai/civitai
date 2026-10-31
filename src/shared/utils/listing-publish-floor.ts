@@ -29,7 +29,6 @@ export const FLOOR_PROBLEM_CODE = {
   cover: 'missing-cover',
 } as const satisfies Record<FloorAsset, string>;
 
-/** The problem codes that are the floor: what {@link listingFloorNextStep} already words. */
 export const FLOOR_PROBLEM_CODES: ReadonlySet<string> = new Set(Object.values(FLOOR_PROBLEM_CODE));
 
 export type ListingFloorResult = { ok: true } | { ok: false; missing: FloorAsset[] };
