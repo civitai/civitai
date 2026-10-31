@@ -5,11 +5,13 @@
  * 🔴 ONE PREDICATE. The callers that check the floor all ask {@link checkListingMeetsFloor}:
  * the off-site submit / approve / apply gates and the owner-republish review pre-check
  * (through `assertListingMeetsFloor` in `app-listing-assets.service`, which re-exports this),
- * the on-site version approve (`approveRequest`, up front and again in the draft
- * transition's `where`), the moderator queue's "Approve is disabled" fact
+ * the on-site version approve (`approveRequest` — a first version's draft only, up front and
+ * again in the draft transition's `where`; a moderator reset's restore is exempt), the moderator queue's "Approve is disabled" fact
  * (`listingFactsForRequests`), and the readiness a submit answers with (`submitVersion`).
  *
- * ⚠️ NOT EVERY GO-LIVE CHECKS IT. A moderator `relistListing` (removed → approved) and an
+ * ⚠️ NOT EVERY GO-LIVE CHECKS IT. A moderator reset's re-approve (exempt by operator decision
+ * 2026-10-31: the listing already went live once), a moderator `relistListing` (removed →
+ * approved) and an
  * owner `republishOwnListing` that restores immediately (no review) re-publish a listing's
  * existing assets without this check, and the legacy approve-time create (a first version
  * with no draft) mints an art-less listing. Those paths restore or mint what was there; they

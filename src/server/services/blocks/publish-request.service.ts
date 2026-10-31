@@ -173,8 +173,9 @@ export type SubmitVersionResult = {
 export type SubmitListingReadiness = {
   /**
    * True when a moderator CANNOT approve this submission until the listing has an icon and a
-   * cover — the same predicate {@link approveRequest} refuses on. False for an update to an
-   * already-live listing: the version approve does not publish it (see `approveRequest`).
+   * cover — the same predicate {@link approveRequest} refuses on, which gates only a first
+   * version's draft. False for an update to an already-live listing (the version approve does
+   * not publish it) and for a moderator-reset listing (its restore is exempt).
    */
   approvalBlocked: boolean;
   /** The floor assets the listing lacks (icon before cover); empty when it meets the floor. */
@@ -1445,8 +1446,8 @@ class ListingFloorRefusal extends Error {
  *
  * The listing read is the one `approveRequest` will publish (its draft, else its mod-reset
  * listing), falling back to the app's live listing for an update. `approvalBlocked` is set
- * only for a listing the approve PUBLISHES — the exact case `approveRequest` refuses — so it
- * never claims an update to a live listing is blocked.
+ * only for the first version's DRAFT — the exact case `approveRequest` refuses — so it never
+ * claims an update to a live listing, or a moderator reset's restore, is blocked.
  *
  * BEST-EFFORT: the submit has already been queued, so any failure here yields `null`
  * rather than failing a submission that succeeded.
@@ -1489,16 +1490,18 @@ async function submitListingReadiness(args: {
       _count?: { screenshots?: number };
     };
     // Read on the PRIMARY: the draft may have been created a moment ago.
-    const published = ((await dbWrite.appListing.findFirst({
+    const draft = (await dbWrite.appListing.findFirst({
       where: draftTransitionWhere({ slug: args.slug, submittedByUserId: args.submittedByUserId }),
       select,
-    })) ??
-      (args.existingAppBlockId
+    })) as Row | null;
+    const published =
+      draft ??
+      ((args.existingAppBlockId
         ? await dbWrite.appListing.findFirst({
             where: resetRestoreWhere(args.existingAppBlockId),
             select,
           })
-        : null)) as Row | null;
+        : null) as Row | null);
     const row =
       published ??
       ((args.existingAppBlockId
@@ -1511,7 +1514,8 @@ async function submitListingReadiness(args: {
 
     const floor = checkListingMeetsFloor(row);
     const missing = floor.ok ? [] : floor.missing;
-    const approvalBlocked = published != null && missing.length > 0;
+    // Only a draft (first go-live) is gated; a moderator reset's restore is exempt.
+    const approvalBlocked = draft != null && missing.length > 0;
     const kind = row.kind === 'offsite' ? 'offsite' : 'onsite';
     const { problems } = computeListingProblems({
       kind,
@@ -2224,9 +2228,10 @@ type RequestListingFacts = ListingQueueFacts & {
   appListingId: string | null;
   approveRating: { listingId: string; declared: string | null } | null;
   /**
-   * The publish-floor assets (icon / cover) the listing this approve PUBLISHES lacks — the
-   * exact set `approveRequest` refuses on, so the review UI disables Approve and says why.
-   * Empty when the approve publishes no listing or the listing meets the floor.
+   * The publish-floor assets (icon / cover) the first version's draft this approve publishes
+   * lacks — the exact set `approveRequest` refuses on, so the review UI disables Approve and
+   * says why. Empty when the approve publishes no draft (an update, or a moderator reset's
+   * restore, which is exempt) or the draft meets the floor.
    */
   approveFloorMissing: FloorAsset[];
 };
@@ -2433,7 +2438,12 @@ async function listingFactsForRequests(
     const draft = (drafts as ({ id: string; slug: string; userId: number } & FloorCols)[]).find(
       (d) => d.slug === req.slug && d.userId === req.submittedBy?.id
     );
-    if (draft) return { listing: draft, declared: manifestRatingOrDefault(req.manifest) };
+    if (draft)
+      return {
+        listing: draft,
+        declared: manifestRatingOrDefault(req.manifest),
+        firstGoLive: true,
+      };
     const reset = (
       resets as ({
         id: string;
@@ -2441,7 +2451,7 @@ async function listingFactsForRequests(
         contentRating: string | null;
       } & FloorCols)[]
     ).find((l) => req.appBlockId != null && l.appBlockId === req.appBlockId);
-    return reset ? { listing: reset, declared: reset.contentRating } : null;
+    return reset ? { listing: reset, declared: reset.contentRating, firstGoLive: false } : null;
   };
   const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
     const target = publishedBy(req);
@@ -2449,7 +2459,9 @@ async function listingFactsForRequests(
   };
   const approveFloorMissingFor = (req: ListingJoinSubject): FloorAsset[] => {
     const target = publishedBy(req);
-    if (!target) return [];
+    // Only a draft's first go-live is gated; a moderator reset's restore is exempt (see
+    // `approveRequest`), so its Approve is never disabled on the floor.
+    if (!target || !target.firstGoLive) return [];
     const floor = checkListingMeetsFloor({
       iconId: target.listing.iconId,
       coverId: target.listing.coverId,
@@ -2926,14 +2938,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // those writes cannot disagree about which row goes live. `null` when the approve makes
   // no listing public: an update to an app whose listing is already live (or delisted), or
   // a first version with no draft (see the floor note below).
+  const draftTarget = await dbWrite.appListing.findFirst({
+    where: draftTransitionWhere({
+      slug: request.slug,
+      submittedByUserId: request.submittedByUserId,
+    }),
+    select: { id: true, iconId: true, coverId: true },
+  });
   const publishTarget =
-    (await dbWrite.appListing.findFirst({
-      where: draftTransitionWhere({
-        slug: request.slug,
-        submittedByUserId: request.submittedByUserId,
-      }),
-      select: { id: true, iconId: true, coverId: true },
-    })) ??
+    draftTarget ??
     (existingAppBlock
       ? await dbWrite.appListing.findFirst({
           where: resetRestoreWhere(existingAppBlock.id),
@@ -2942,13 +2955,19 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       : null);
 
   // 🔴 PUBLISH FLOOR (operator ruling 2026-10-30, "enforce + warn at submit"): every store
-  // listing needs an icon AND a cover before it goes live — on-site apps too, through the
+  // listing needs an icon AND a cover before its FIRST go-live — on-site apps too, through the
   // SAME predicate the off-site approve paths use (`checkListingMeetsFloor`, which
   // `assertListingMeetsFloor` wraps). Refused HERE, before anything is written, committed or
   // built: the listing writes below are log-and-continue, so a refusal there would deploy
   // the app and leave only a log line.
   //
+  // ONLY THE DRAFT IS GATED. A first version's pre-approval draft has never been live.
+  //
   // WHAT IS NOT GATED, AND WHY:
+  //   · A moderator RESET's re-approve (the (3b-reset) restore, `pending → approved`) — EXEMPT
+  //     by operator decision 2026-10-31. The listing already went live once;
+  //     `resetOnsiteListingToPending` bounced it and suspended its app, and this re-approve
+  //     must restore both even when the listing has no art (a pre-rule listing).
   //   · An UPDATE to an app whose listing is already live. The version approve never changes
   //     that listing's visibility (3b-sync re-syncs manifest copy only), so refusing it would
   //     stall the app's code fixes without taking anything off the store. A listing that went
@@ -2958,8 +2977,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   //     version whose submit-time draft create failed, or a request from before
   //     draft-at-submit). The legacy create below mints that listing media-less, and there is
   //     no row the developer could have put art on while it waited.
-  if (publishTarget) {
-    const floor = checkListingMeetsFloor(publishTarget);
+  if (draftTarget) {
+    const floor = checkListingMeetsFloor(draftTarget);
     if (!floor.ok) throw new Error(listingFloorApproveRefusal(floor.missing));
   }
 
