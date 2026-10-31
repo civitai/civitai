@@ -336,14 +336,7 @@ describe('/apps/dev/[blockId] client', () => {
   });
 });
 
-/**
- * 🔴 REGRESSION: the frame's Retry (a load that timed out or failed) reloaded the entry URL this
- * page was served, whose short-lived entry token the edge refuses once expired — so on this page
- * Retry could never recover. The page now hands the host a fetcher for a freshly signed URL
- * (`/api/apps/dev/entry-url`, behind this page's own gates). The host's half — a Retry awaits the
- * fetcher and loads what it returns, in place — is pinned in `PageBlockHostAutoRetry.browser.test.tsx`;
- * these pin the page's half, through the real `DevTunnelBlockHost`.
- */
+/** The host's half of a Retry is pinned in `PageBlockHostAutoRetry.browser.test.tsx`. */
 describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL', () => {
   const FRESH_SRC = `https://${HOST}/?dev=fresh-entry-token`;
   const fetchMock = vi.fn<(...args: unknown[]) => Promise<Response>>();
@@ -391,8 +384,10 @@ describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL'
     [409, { error: 'No live dev tunnel' }],
     [200, { host: HOST }],
     [200, { iframeSrc: '', host: HOST }],
+    [200, { iframeSrc: `http://${HOST}/?dev=x`, host: HOST }],
+    [200, { iframeSrc: 'not a url', host: HOST }],
   ])(
-    'an answer with no URL (%i %j) rejects, so the host re-arms on the URL it has',
+    'an answer with no usable URL (%i %j) rejects, so the host re-arms on the URL it has',
     async (status, body) => {
       answer(status, body);
       await renderWithProviders(<DevTunnelPage {...FRAME} />);
@@ -411,10 +406,10 @@ describe('/apps/dev/[blockId] client — the frame retries on a fresh entry URL'
   });
 
   test('a URL whose origin is not the host it names is refused', async () => {
-    // The server derives both from one record; a mismatch is never framed.
     answer(200, { iframeSrc: `https://${OTHER}/?dev=fresh`, host: HOST });
     await renderWithProviders(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
-    await expect(refreshOf()!()).rejects.toThrow();
+    await expect(refreshOf()!()).rejects.toThrow('The entry URL is not on its tunnel host');
+    expect(router.reload).not.toHaveBeenCalled();
   });
 });

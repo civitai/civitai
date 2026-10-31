@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   fetchPreviewEntryUrl,
   fetchPreviewFrame,
+  PreviewGoneError,
 } from '~/components/Apps/AppAssistant/previewFrame';
 
-const FRAME = { blockId: 'my app', iframeSrc: 'https://dev-0123456789abcdef.apps.example/?dev=t' };
+const HOST = 'dev-0123456789abcdef.apps.example';
+const OTHER = 'dev-fedcba9876543210.apps.example';
+const FRAME = { blockId: 'my app', host: HOST, iframeSrc: `https://${HOST}/?dev=t` };
 const respond = (status: number, body: unknown) =>
   vi.fn<typeof fetch>(async () => new Response(JSON.stringify(body), { status }));
 
@@ -42,6 +45,31 @@ describe('fetchPreviewFrame', () => {
     );
   });
 
+  // The preview route returns the frame's `host` beside its URL; the URL must be an https URL on it.
+  it.each([
+    [{ ...FRAME, iframeSrc: `http://${HOST}/?dev=t` }],
+    [{ ...FRAME, iframeSrc: `https://${OTHER}/?dev=t` }],
+    [{ ...FRAME, iframeSrc: 'not a url' }],
+    [{ blockId: 'my app', iframeSrc: FRAME.iframeSrc }],
+  ])('refuses an entry URL that is not https on the host the frame names: %j', async (body) => {
+    await expect(fetchPreviewFrame('my-app', respond(200, body))).rejects.toThrow();
+  });
+
+  it('names the reason when the URL is on another host', async () => {
+    await expect(
+      fetchPreviewFrame('my-app', respond(200, { ...FRAME, iframeSrc: `https://${OTHER}/?dev=t` }))
+    ).rejects.toThrow('The entry URL is not on its tunnel host');
+  });
+
+  it('a gone preview is a PreviewGoneError, not a generic failure', async () => {
+    await expect(
+      fetchPreviewFrame(
+        'my-app',
+        respond(409, { error: 'No live preview is running for this app' })
+      )
+    ).rejects.toBeInstanceOf(PreviewGoneError);
+  });
+
   it('treats a non-JSON error as unavailable', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response('Bad Gateway', { status: 502 }));
     await expect(fetchPreviewFrame('my-app', fetchMock)).rejects.toThrow(
@@ -59,6 +87,15 @@ describe('fetchPreviewEntryUrl', () => {
     await expect(fetchPreviewEntryUrl('my-app', respond(200, { preparing: true }))).rejects.toThrow(
       'The preview is not ready yet'
     );
+  });
+
+  it('rejects a fresh URL on a host other than the one it names', async () => {
+    await expect(
+      fetchPreviewEntryUrl(
+        'my-app',
+        respond(200, { ...FRAME, iframeSrc: `https://${OTHER}/?dev=t` })
+      )
+    ).rejects.toThrow('The entry URL is not on its tunnel host');
   });
 
   it('rejects when the preview is gone', async () => {
