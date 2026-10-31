@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import type * as ModelPoiMinor from '~/server/services/text-scan/actions/model-poi-minor';
 
 // Unit tests for setModelMinor — the moderator "Set as Minor" quick action.
@@ -1510,7 +1510,8 @@ describe('setModelMinor — lift restore on a real row', () => {
           data: Record<string, unknown>;
           select: object;
         }) => {
-          const entries = Object.entries(data);
+          // Prisma leaves an undefined key out of the write.
+          const entries = Object.entries(data).filter(([, v]) => v !== undefined);
           await db.query(
             `UPDATE "Model" SET ${entries
               .map(([k], i) => `"${k}" = $${i + 2}`)
@@ -1536,11 +1537,13 @@ describe('setModelMinor — lift restore on a real row', () => {
       CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
       CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, minor bool NOT NULL DEFAULT false);
       CREATE TABLE "ModActivity" (id serial, "userId" int, activity text, "entityType" text,
-        "entityId" int, "createdAt" timestamptz NOT NULL DEFAULT clock_timestamp());
+        "entityId" int, "createdAt" timestamp(3) NOT NULL DEFAULT now());
     `);
   }, 60_000);
+  afterAll(() => pg.close());
 
   let transaction: ReturnType<typeof mockDbWrite.$transaction.getMockImplementation>;
+  let trackModActivity: ReturnType<typeof mockTrackModActivity.getMockImplementation>;
   beforeEach(async () => {
     await pg.exec(`TRUNCATE "Model", "ModActivity"`);
     // A moderator's mature ruling with its nsfw lock, before any flag.
@@ -1550,6 +1553,7 @@ describe('setModelMinor — lift restore on a real row', () => {
       [MODEL_ID, OWNER_ID]
     );
     transaction = mockDbWrite.$transaction.getMockImplementation();
+    trackModActivity = mockTrackModActivity.getMockImplementation();
     mockDbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) =>
       pg.transaction((tx) => fn(client(tx)))) as never);
     mockTrackModActivity.mockImplementation(
@@ -1562,7 +1566,10 @@ describe('setModelMinor — lift restore on a real row', () => {
       }
     );
   });
-  afterEach(() => mockDbWrite.$transaction.mockImplementation(transaction as never));
+  afterEach(() => {
+    mockDbWrite.$transaction.mockImplementation(transaction as never);
+    mockTrackModActivity.mockReset().mockImplementation(trackModActivity as never);
+  });
 
   const flag = () => setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
   const lift = () => setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
@@ -1572,6 +1579,13 @@ describe('setModelMinor — lift restore on a real row', () => {
     sfwOnly: false,
     lockedProperties: ['nsfw'],
     gallerySettings: { level: 31, users: [], tags: [] },
+  };
+  const notRestored = {
+    minor: false,
+    nsfw: false,
+    sfwOnly: true,
+    lockedProperties: [],
+    gallerySettings: { level: sfwBrowsingLevelsFlag, users: [], tags: [] },
   };
 
   it('a lift puts back the rating, SFW-only, nsfw lock and gallery level the flag replaced', async () => {
@@ -1588,17 +1602,24 @@ describe('setModelMinor — lift restore on a real row', () => {
     expect(await row()).toMatchObject(restored);
   });
 
-  it('a lift after a moderator ruled on the rating keeps that ruling', async () => {
+  it.each([
+    'setSfwOnly',
+    'unsetSfwOnly',
+    'lockProperty:nsfw',
+    'unlockProperty:nsfw',
+    'unsetMinor',
+    'rollbackMinorAutoHash',
+  ])('a lift after a logged %s does not restore', async (activity) => {
     await flag();
     await pg.query(
-      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
-       VALUES ($1, 'setSfwOnly', 'model', $2)`,
-      [MODERATOR_ID, MODEL_ID]
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+       VALUES ($1, $2, 'model', $3, now() + interval '1 second')`,
+      [MODERATOR_ID, activity, MODEL_ID]
     );
 
     await lift();
 
-    expect(await row()).toMatchObject({ minor: false, nsfw: false, sfwOnly: true });
+    expect(await row()).toMatchObject(notRestored);
   });
 
   it('a second lift does not restore the snapshot the first lift used up', async () => {
@@ -1610,12 +1631,24 @@ describe('setModelMinor — lift restore on a real row', () => {
     // A save raises the flag again without a snapshot of its own.
     await pg.query(
       `UPDATE "Model" SET minor = true, nsfw = false, "sfwOnly" = true,
-         "lockedProperties" = '{minor,nsfw,sfwOnly}' WHERE id = $1`,
-      [MODEL_ID]
+         "lockedProperties" = '{minor,nsfw,sfwOnly}',
+         "gallerySettings" = jsonb_set("gallerySettings", '{level}', to_jsonb($2::int))
+       WHERE id = $1`,
+      [MODEL_ID, sfwBrowsingLevelsFlag]
     );
 
     await lift();
 
-    expect(await row()).toMatchObject({ minor: false, nsfw: false, sfwOnly: true });
+    expect(await row()).toMatchObject(notRestored);
+  });
+
+  it('a flag after a lift takes a fresh snapshot, which the next lift restores', async () => {
+    await flag();
+    await lift();
+    await flag();
+
+    await lift();
+
+    expect(await row()).toMatchObject(restored);
   });
 });
