@@ -1039,15 +1039,20 @@ const readPaymentIdList = async (key: string): Promise<number[]> => {
   return [...new Set(ids)];
 };
 
-/**
- * Listed ids the row-driven watch cannot see. Never reads a held row from NowPayments, and never
- * credits a complete payment off the credit-ok list: support has not confirmed nobody paid it by hand.
- */
-const watchListedPayments = async (alreadyPolled: Set<number>) => {
-  const listed = await readPaymentIdList(WATCH_PAYMENT_IDS_KEY);
-  if (!listed.length) return [];
-  const creditOk = new Set(await readPaymentIdList(WATCH_CREDIT_OK_KEY));
+/** NowPayments statuses that close a payment without paying it; recording one never credits. */
+const CLOSED_UNPAID_STATUSES = ['failed', 'expired', 'refunded'];
 
+/**
+ * Listed ids the row-driven watch did not poll. Writes a row only for a closed-unpaid status, or for
+ * an id on the credit-ok list: a row in flight would let the row-driven watch credit it unconfirmed.
+ */
+const watchListedPayments = async (
+  listed: number[],
+  creditOk: Set<number>,
+  polled: Set<number>,
+  heldBack: Map<number, string>
+) => {
+  if (!listed.length) return [];
   const rows = await dbRead.cryptoDeposit.findMany({
     where: { paymentId: { in: listed.map((id) => BigInt(id)) } },
     select: { paymentId: true, status: true },
@@ -1064,7 +1069,9 @@ const watchListedPayments = async (alreadyPolled: Set<number>) => {
         state,
         status,
       });
-      if (alreadyPolled.has(paymentId)) return report('has_row', existing);
+      const npStatusHeldBack = heldBack.get(paymentId);
+      if (npStatusHeldBack) return report('awaiting_ok', npStatusHeldBack);
+      if (polled.has(paymentId)) return report('has_row', existing);
       if (existing === HELD) return report('held', existing);
       if (existing && !OPEN_DEPOSIT_STATUSES.includes(existing)) return report('has_row', existing);
 
@@ -1074,10 +1081,10 @@ const watchListedPayments = async (alreadyPolled: Set<number>) => {
           throw new Error('not found on NowPayments');
         const status = payment.payment_status;
         if (status === 'waiting') return report(existing ? 'has_row' : 'no_row', status);
-        if (isDepositComplete(status) && !creditOk.has(paymentId)) {
+        if (!creditOk.has(paymentId) && !CLOSED_UNPAID_STATUSES.includes(status)) {
           await log({
             type: 'warning',
-            message: 'Listed payment is complete but not confirmed for credit; left alone',
+            message: 'Listed payment not confirmed for credit; left alone',
             paymentId,
             status,
           });
@@ -1103,6 +1110,12 @@ const watchListedPayments = async (alreadyPolled: Set<number>) => {
  * if its IPN arrives. Settled payments go through processDeposit, closed ones record their status.
  */
 export const watchOpenDeposits = async () => {
+  const listed = await readPaymentIdList(WATCH_PAYMENT_IDS_KEY);
+  const creditOk = new Set(listed.length ? await readPaymentIdList(WATCH_CREDIT_OK_KEY) : []);
+  const awaitingOk = new Set(listed.filter((id) => !creditOk.has(id)));
+  // Listed ids whose row this loop would have credited: the row may predate the listing (an IPN).
+  const heldBack = new Map<number, string>();
+
   const open = await dbRead.cryptoDeposit.findMany({
     where: openDepositWhere(),
     select: { paymentId: true, status: true },
@@ -1113,6 +1126,10 @@ export const watchOpenDeposits = async () => {
     try {
       const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
       if (!payment) throw new Error('not found on NowPayments');
+      if (awaitingOk.has(paymentId) && isDepositComplete(payment.payment_status)) {
+        heldBack.set(paymentId, payment.payment_status);
+        return { lookupFailed: false, closed: false };
+      }
       if (payment.payment_status !== row.status || isDepositComplete(payment.payment_status)) {
         await processDeposit(paymentId, payment.payment_status, eventFromPayment(payment));
       }
@@ -1130,7 +1147,12 @@ export const watchOpenDeposits = async () => {
     }
   });
 
-  const listed = await watchListedPayments(new Set(open.map((r) => Number(r.paymentId))));
+  const listedReport = await watchListedPayments(
+    listed,
+    creditOk,
+    new Set(open.map((r) => Number(r.paymentId))),
+    heldBack
+  );
 
   const report = await getOpenDepositReport();
   return {
@@ -1139,7 +1161,7 @@ export const watchOpenDeposits = async () => {
     lookupFailed: outcomes.filter((o) => o.lookupFailed).length,
     counts: report.counts,
     digest: report.items.filter((i) => !i.held && i.daysOpen >= OPEN_DEPOSIT_DIGEST_AFTER_DAYS),
-    listed,
+    listed: listedReport,
   };
 };
 

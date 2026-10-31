@@ -1528,6 +1528,50 @@ describe('watchOpenDeposits', () => {
       }
     );
 
+    it.each(['confirming', 'confirmed', 'sending'])(
+      '(g) writes no row for a listed id %s at NowPayments until it is on the credit-ok list',
+      async (npStatus) => {
+        listIds([911]);
+
+        const result = await watch([], { 911: npStatus });
+
+        expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
+        expect(rowStatus[911]).toBeUndefined();
+        expect(result.listed).toEqual([
+          { paymentId: '911', state: 'awaiting_ok', status: npStatus },
+        ]);
+      }
+    );
+
+    it.each(['finished', 'partially_paid'])(
+      '(h) does not credit a listed id off the credit-ok list from its open row when NowPayments says %s',
+      async (npStatus) => {
+        listIds([912], []);
+
+        const result = await watch([openRow(912, 'confirming', 5)], { 912: npStatus });
+
+        expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+        expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
+        expect(rowStatus[912]).toBe('confirming');
+        expect(result.listed).toEqual([
+          { paymentId: '912', state: 'awaiting_ok', status: npStatus },
+        ]);
+      }
+    );
+
+    it.each(['failed', 'expired', 'refunded'])(
+      'records a listed id NowPayments %s without crediting it',
+      async (npStatus) => {
+        listIds([913]);
+
+        const result = await watch([], { 913: npStatus });
+
+        expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+        expect(rowStatus[913]).toBe(npStatus);
+        expect(result.listed).toEqual([{ paymentId: '913', state: 'recorded', status: npStatus }]);
+      }
+    );
+
     it('names a listed id NowPayments still has waiting, and one it cannot read', async () => {
       listIds([909, 910]);
 
