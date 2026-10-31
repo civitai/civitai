@@ -5578,7 +5578,8 @@ export function PageBlockHost({
       void Promise.race([fetched, timedOut]).then((src) => {
         clearTimeout(timer);
         entryRefreshInFlightRef.current = false;
-        if (src !== null) setFreshEntry({ base, src });
+        if (!isMounted()) return;
+        if (src) setFreshEntry({ base, src });
         rearm({ remint });
       });
     },
