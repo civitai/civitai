@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CollectionCoverVisibility from '~/server/services/collection-cover-visibility';
 import type * as CollectionService from '~/server/services/collection.service';
 
 /**
@@ -43,7 +44,8 @@ vi.mock('~/server/services/collection-collaborator.service', () => ({
   getCollectionRoster: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('~/server/services/collection-cover-visibility', () => ({
+vi.mock('~/server/services/collection-cover-visibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof CollectionCoverVisibility>()),
   withServableCovers: mockServableCovers,
   getServableCoverCollectionIds: mockServableIds,
 }));
