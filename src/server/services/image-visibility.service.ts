@@ -119,8 +119,9 @@ export async function assertImageVisibleToViewer({
 
 /**
  * The subset of `ids` the viewer may open by id: `imageVisibilityConditions`, minus images whose
- * owner has blocked the viewer. Ids missing from the replica are read again from the primary, so
- * an image created moments ago (a post published straight into a collection) still counts.
+ * owner is on the viewer's `BlockedByUsers` list. Ids missing from the replica are read again
+ * from the primary, so an image created moments ago (a post published straight into a
+ * collection) still counts.
  */
 export async function getImageIdsVisibleToViewer({
   ids,
@@ -154,9 +155,9 @@ export async function getImageIdsVisibleToViewer({
   if (missing.length > 0) rows.push(...(await read(dbWrite, missing)));
 
   if (!userId || isModerator) return new Set(rows.map((r) => r.id));
-  const blockedBy = new Set((await BlockedByUsers.getCached({ userId })).map((u) => u.id));
+  const optedOut = new Set((await BlockedByUsers.getCached({ userId })).map((u) => u.id));
   return new Set(
-    rows.filter((r) => r.userId === userId || !blockedBy.has(r.userId)).map((r) => r.id)
+    rows.filter((r) => r.userId === userId || !optedOut.has(r.userId)).map((r) => r.id)
   );
 }
 

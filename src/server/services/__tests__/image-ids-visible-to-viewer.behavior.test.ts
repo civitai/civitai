@@ -27,7 +27,7 @@ import {
 
 const OWNER = 10;
 const VIEWER = 20;
-const BLOCKER = 30;
+const OPTED_OUT_OWNER = 30;
 
 const SCHEMA = `
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
@@ -78,7 +78,7 @@ beforeEach(async () => {
       (1, ${OWNER}, now() - interval '1 day', 'Public'),
       (2, ${OWNER}, now() - interval '1 day', 'Private'),
       (3, ${OWNER}, NULL, 'Public'),
-      (4, ${BLOCKER}, now() - interval '1 day', 'Public');
+      (4, ${OPTED_OUT_OWNER}, now() - interval '1 day', 'Public');
     INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", ingestion) VALUES
       (101, ${OWNER}, 1, 1, 'Scanned'),
       (102, ${OWNER}, 2, 1, 'Scanned'),
@@ -86,7 +86,7 @@ beforeEach(async () => {
       (104, ${OWNER}, 1, ${NsfwLevel.Blocked}, 'Scanned'),
       (105, ${OWNER}, 1, 1, 'Pending'),
       (106, ${OWNER}, NULL, 1, 'Scanned'),
-      (107, ${BLOCKER}, 4, 1, 'Scanned');`;
+      (107, ${OPTED_OUT_OWNER}, 4, 1, 'Scanned');`;
   await Promise.all([replica.exec(reset), primary.exec(reset)]);
   getCached.mockReset().mockResolvedValue([]);
 });
@@ -96,7 +96,7 @@ const ALL = [101, 102, 103, 104, 105, 106, 107];
 describe('getImageIdsVisibleToViewer', () => {
   it('returns only the images a stranger could open', async () => {
     const visible = await getImageIdsVisibleToViewer({ ids: [...ALL, 999], userId: VIEWER });
-    // Private post, unpublished post, Blocked rating, unscanned, postless upload and a
+    // Private post, unpublished post, removed-level rating, unscanned, postless upload and a
     // nonexistent id are all refused; the public scanned image and the other public one pass.
     expect([...visible].sort()).toEqual([101, 107]);
   });
@@ -106,7 +106,7 @@ describe('getImageIdsVisibleToViewer', () => {
     expect([...visible].sort()).toEqual(ALL);
   });
 
-  it('lets a moderator see every image that exists', async () => {
+  it('lets staff see every image that exists', async () => {
     const visible = await getImageIdsVisibleToViewer({
       ids: [...ALL, 999],
       userId: VIEWER,
@@ -115,14 +115,14 @@ describe('getImageIdsVisibleToViewer', () => {
     expect([...visible].sort()).toEqual(ALL);
   });
 
-  it("refuses an image whose owner blocked the viewer, but not the viewer's own", async () => {
-    getCached.mockResolvedValue([{ id: BLOCKER, username: 'blocker' }]);
+  it("refuses an image from an owner who opted out of this viewer, but not the viewer's own", async () => {
+    getCached.mockResolvedValue([{ id: OPTED_OUT_OWNER, username: 'owner' }]);
     expect([...(await getImageIdsVisibleToViewer({ ids: [101, 107], userId: VIEWER }))]).toEqual([
       101,
     ]);
-    expect([...(await getImageIdsVisibleToViewer({ ids: [107], userId: BLOCKER }))].sort()).toEqual(
-      [107]
-    );
+    expect(
+      [...(await getImageIdsVisibleToViewer({ ids: [107], userId: OPTED_OUT_OWNER }))].sort()
+    ).toEqual([107]);
   });
 
   it('finds an image the replica has not caught up on, from the primary', async () => {
