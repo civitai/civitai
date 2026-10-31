@@ -2181,9 +2181,8 @@ export const getCollectionItemsByCollectionId = async ({
     return { items: [], nextCursor: undefined };
   }
 
-  if (user && forReview) {
-    user.isModerator = true;
-  }
+  // A copy: the session user is not this read's to change.
+  if (user && forReview) user = { ...user, isModerator: true };
 
   const modelIds = collectionItems.map((item) => item.modelId).filter(isDefined);
 
