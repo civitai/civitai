@@ -4572,6 +4572,8 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       // not `resources[0]` — the additional LoRA lives in `resources`.)
       const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
       expect(stepArg.input.model.id).toBe(500);
+      // The block's input urls go through the generation input check as App Blocks input.
+      expect(stepArg.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
     });
 
     it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {

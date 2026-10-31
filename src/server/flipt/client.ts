@@ -434,6 +434,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // through `coverageAudience`, which is where it meets the tier.
   // docs/features/paid-model-loading-members-gate.md
   GENERATION_LOADING_OPEN_TO_ALL = 'generation-loading-open-to-all',
+  // On: generateFromGraph / whatIfFromGraph refuse input urls on external hosts. Off (and unknown
+  // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
+  GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
