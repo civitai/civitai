@@ -53,11 +53,12 @@ const cookies = {
   set: vi.fn(),
 };
 
-function loadAs(userId: number, impersonatedBy?: number) {
+function loadAs(userId: number, impersonatedBy?: number, prompt?: string) {
   const url = new URL('https://auth.civitai.com/login/oauth/authorize');
   url.searchParams.set('client_id', 'game-frame');
   url.searchParams.set('redirect_uri', 'https://games.example.com/cb');
   url.searchParams.set('scope', 'UserRead');
+  if (prompt) url.searchParams.set('prompt', prompt);
   return load({
     url,
     locals: { user: { id: userId }, impersonatedBy },
@@ -101,6 +102,11 @@ describe('consent screen account picker', () => {
 
   it('shows the list to a moderator in it who is impersonating someone outside it', async () => {
     expect(((await loadAs(400, 100)).accounts as unknown[]).length).toBe(2);
+  });
+
+  it('select_account shows an account outside the list only itself', async () => {
+    const page = await loadAs(300, undefined, 'select_account');
+    expect((page.accounts as { userId: number }[]).map((a) => a.userId)).toEqual([300]);
   });
 
   it('shows no picker to an account outside the list', async () => {

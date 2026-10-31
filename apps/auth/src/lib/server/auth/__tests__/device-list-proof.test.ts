@@ -65,7 +65,12 @@ function makeCookies(initial: Record<string, string>) {
   return { cookies, device: () => store.get('civ-device'), token: () => store.get('civ-token') };
 }
 
-async function switchStatus(userId: number, deviceId: string, target: number) {
+async function switchStatus(
+  userId: number,
+  deviceId: string,
+  target: number,
+  impersonatedBy?: number
+) {
   try {
     const res = await switchPost({
       request: new Request('https://auth.civitai.com/api/auth/switch', {
@@ -74,7 +79,7 @@ async function switchStatus(userId: number, deviceId: string, target: number) {
         body: JSON.stringify({ userId: target }),
       }),
       cookies: { set: () => undefined },
-      locals: { user: { id: userId }, deviceId },
+      locals: { user: { id: userId }, deviceId, impersonatedBy },
     } as never);
     return res.status;
   } catch (e) {
@@ -126,6 +131,10 @@ describe('signing in on a browser with an account list', () => {
     await establishSession(makeCookies({ 'civ-device': DEVICE }).cookies, user(300));
 
     expect(await switchStatus(300, DEVICE, 100)).toBe(403);
+  });
+
+  it('a moderator in the list, impersonating someone outside it, can switch', async () => {
+    expect(await switchStatus(400, DEVICE, 200, 100)).toBe(200);
   });
 
   it('an account in the list can switch to another in it (positive control)', async () => {
