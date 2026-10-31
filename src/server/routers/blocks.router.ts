@@ -1955,6 +1955,7 @@ async function createBlockTextToImageStep(opts: {
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
     isWhatIf: opts.whatIf,
     isGreen: opts.isGreen,
+    inputGate: { entry: 'appBlocks', isApiCaller: false },
   });
   // The block path is plain txt2img with no snippet fan-out, so the graph
   // always yields exactly one step. Fail closed if that invariant breaks rather

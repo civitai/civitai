@@ -1,11 +1,16 @@
 import { TRPCError } from '@trpc/server';
+import { env as clientEnv } from '~/env/client';
 import { dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { registerCounterWithLabels } from '~/server/prom/client';
+import { CIVITAI_IMAGE_HOSTS, hasUrlAmbiguousBytes } from '~/server/schema/blocks/civitai-image-url';
 import {
   assertClientKeysIssuedToCaller,
   imageUrlUnavailableError,
   keysIn,
   MAX_KEYS,
 } from '~/server/services/image-url-ownership';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 
 export const GENERATION_IMAGE_UNAVAILABLE_MESSAGE =
   'One of the images for this generation is no longer available. Please choose or upload another.';
@@ -33,37 +38,39 @@ export async function assertStoredImageUrlsUnblocked(urls: string[]) {
 type InputImageRow = { url: string; userId: number; visible: boolean; blocked: boolean };
 
 /**
- * Client-supplied urls a generation reads (an img2img source, reference images). Each must be a
- * bare upload key, and each key must name the caller's own image, another user's publicly visible
- * image, or, with no image yet, a key issued to the caller. A blocked image is refused whoever owns it.
+ * Each key must name the caller's own image, another user's publicly visible image, or, with no
+ * image yet, a key issued to the caller. A blocked or removed image is refused whoever owns it.
+ * `urls` are the values the keys came from, matched too for images stored under a full url.
  */
-export async function assertGenerationInputUrlsUsable({
+async function assertKeysUsable({
+  keys,
   urls,
   userId,
   now,
 }: {
-  urls: (string | null | undefined)[];
+  keys: string[];
+  urls: string[];
   userId: number;
   now?: Date;
 }) {
-  const given = urls.filter((url): url is string => !!url);
-  if (given.some((url) => !BARE_KEY.test(url))) throw generationImageUnavailableError();
-  const keys = [...new Set(given)];
   if (!keys.length) return;
   if (keys.length > MAX_KEYS) throw generationImageUnavailableError();
 
   const rows = await dbWrite.$queryRaw<InputImageRow[]>`
-    SELECT i.url, i."userId", i."blockedFor" IS NOT NULL AS blocked,
+    SELECT i.url, i."userId",
+      (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE) AS blocked,
       (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
         AND NOT i."tosViolation" AND p."publishedAt" <= now()
         AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE i.url = ANY(${keys}::text[])
+    WHERE i.url = ANY(${[...new Set([...keys, ...urls])]}::text[])
   `;
   if (rows.some((r) => r.blocked)) throw generationImageUnavailableError();
 
-  const rowsByKey = new Map(keys.map((key) => [key, rows.filter((r) => r.url === key)]));
+  const rowsByKey = new Map(
+    keys.map((key) => [key, rows.filter((r) => r.url === key || keysIn(r.url).includes(key))])
+  );
   for (const keyRows of rowsByKey.values()) {
     if (!keyRows.length || keyRows.some((r) => r.userId === userId)) continue;
     if (!keyRows.every((r) => r.visible)) throw generationImageUnavailableError();
@@ -79,3 +86,196 @@ export async function assertGenerationInputUrlsUsable({
     throw error;
   }
 }
+
+/**
+ * Client-supplied urls a generation reads (an img2img source, reference images). Each must be a
+ * bare upload key, and each key must pass `assertKeysUsable`.
+ */
+export async function assertGenerationInputUrlsUsable({
+  urls,
+  userId,
+  now,
+}: {
+  urls: (string | null | undefined)[];
+  userId: number;
+  now?: Date;
+}) {
+  const given = urls.filter((url): url is string => !!url);
+  if (given.some((url) => !BARE_KEY.test(url))) throw generationImageUnavailableError();
+  const keys = [...new Set(given)];
+  await assertKeysUsable({ keys, urls: [], userId, now });
+}
+
+// #region [any generation input]
+export type GenerationInputUrlClass =
+  | 'orchestrator'
+  | 'key'
+  | 'cdn'
+  | 'civitai_other'
+  | 'external'
+  | 'invalid';
+
+export type GenerationInputEntryPoint =
+  | 'generateFromGraph'
+  | 'whatIfFromGraph'
+  | 'iterateGenerate'
+  | 'getIterateCostEstimate'
+  | 'imageUpload'
+  | 'appBlocks';
+
+const IMAGE_CDN_HOSTS = CIVITAI_IMAGE_HOSTS.map((h) => `image.${h}`);
+
+function imageCdnHosts() {
+  try {
+    const configured = new URL(clientEnv.NEXT_PUBLIC_IMAGE_LOCATION).host.toLowerCase();
+    return [configured, ...IMAGE_CDN_HOSTS];
+  } catch {
+    return IMAGE_CDN_HOSTS;
+  }
+}
+
+/** Whether any decoded form of `value` carries a url of its own (`scheme://`). */
+const carriesUrl = (value: string) => {
+  let current = value;
+  for (let pass = 0; pass < 8; pass++) {
+    if (current.includes('://')) return true;
+    let next: string;
+    try {
+      next = decodeURIComponent(current);
+    } catch {
+      return true;
+    }
+    if (next === current) return false;
+    current = next;
+  }
+  return true;
+};
+
+export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass {
+  if (BARE_KEY.test(raw)) return 'key';
+  if (hasUrlAmbiguousBytes(raw)) return 'invalid';
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return 'invalid';
+  }
+  const host = parsed.host.toLowerCase();
+  const isCdn = imageCdnHosts().includes(host);
+  const configuredOrigin = (() => {
+    try {
+      return new URL(clientEnv.NEXT_PUBLIC_IMAGE_LOCATION).origin;
+    } catch {
+      return undefined;
+    }
+  })();
+  // The configured image origin may be http on a local stack; every other url must be https.
+  if (parsed.protocol !== 'https:' && !(isCdn && parsed.origin === configuredOrigin))
+    return 'invalid';
+  if (parsed.username || parsed.password) return 'invalid';
+
+  if (isTrustedOrchestratorUrl(raw))
+    return carriesUrl(parsed.pathname + parsed.search + parsed.hash)
+      ? 'civitai_other'
+      : 'orchestrator';
+  if (isCdn) return 'cdn';
+  const hostname = parsed.hostname.toLowerCase();
+  if (CIVITAI_IMAGE_HOSTS.some((h) => hostname === h || hostname.endsWith(`.${h}`)))
+    return 'civitai_other';
+  return 'external';
+}
+
+const refusalCounter = registerCounterWithLabels({
+  name: 'generation_input_url_refusals_total',
+  help:
+    'Generation input urls refused, or (mode=log) that would be refused, labelled by entry point, ' +
+    'url class and caller type.',
+  labelNames: ['entry', 'class', 'caller', 'mode'] as const,
+});
+
+/** A whole value that names something to fetch: `scheme://…`, `data:…` or `//host…`. */
+const FETCHABLE = /^\s*(?:[a-z][a-z0-9+.-]*:\/\/|data:|\/\/)/i;
+
+/**
+ * Every string anywhere in `value` that is, as a whole, a bare upload key or a fetchable url.
+ * Text that merely contains a url (a prompt) and AIR urns are not collected.
+ */
+export function generationInputUrlsIn(value: unknown, out: string[] = [], depth = 0): string[] {
+  if (depth > 32 || value == null) return out;
+  if (typeof value === 'string') {
+    const isUrl = FETCHABLE.test(value) && !/\s/.test(value.trim());
+    if (BARE_KEY.test(value.trim().toLowerCase()) || isUrl) out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) generationInputUrlsIn(item, out, depth + 1);
+    return out;
+  }
+  if (typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>))
+      generationInputUrlsIn(item, out, depth + 1);
+  }
+  return out;
+}
+
+/**
+ * The one gate on a url a generation reads. Orchestrator blobs pass. A bare key or an image CDN
+ * url passes only if every key it carries passes `assertKeysUsable`; a CDN url with no key is
+ * refused. Other civitai hosts, non-https and unparseable values are refused. External hosts are
+ * refused, except on generateFromGraph / whatIfFromGraph while the external-host flag is off,
+ * where they are only counted.
+ */
+export async function assertGenerationInputsUsable({
+  urls,
+  userId,
+  entry,
+  isApiCaller,
+  now,
+}: {
+  urls: (string | null | undefined)[];
+  userId: number;
+  entry: GenerationInputEntryPoint;
+  isApiCaller: boolean;
+  now?: Date;
+}) {
+  const given = [...new Set(urls.filter((url): url is string => !!url))];
+  if (!given.length) return;
+  const caller = isApiCaller ? 'api' : 'session';
+  const refuse = (cls: GenerationInputUrlClass) => {
+    refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
+    return generationImageUnavailableError();
+  };
+
+  const keys = new Set<string>();
+  const keyedUrls: string[] = [];
+  for (const url of given) {
+    const cls = classifyGenerationInputUrl(url);
+    if (cls === 'orchestrator') continue;
+    if (cls === 'key') {
+      keys.add(url);
+      continue;
+    }
+    if (cls === 'cdn') {
+      const found = keysIn(url);
+      if (!found.length) throw refuse(cls);
+      found.forEach((key) => keys.add(key));
+      keyedUrls.push(url);
+      continue;
+    }
+    if (cls === 'external' && (entry === 'generateFromGraph' || entry === 'whatIfFromGraph')) {
+      if (await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS)) throw refuse(cls);
+      refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
+      continue;
+    }
+    throw refuse(cls);
+  }
+
+  try {
+    await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now });
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
+      refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });
+    throw error;
+  }
+}
+// #endregion

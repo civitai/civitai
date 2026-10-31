@@ -80,6 +80,11 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
+import {
+  assertGenerationInputsUsable,
+  generationInputUrlsIn,
+} from '~/server/services/generation-input-urls';
+import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
 import {
   getWorkflow,
@@ -206,12 +211,36 @@ export type GenerateOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
   downloadPriority?: DownloadPriority;
+  inputGate: GenerationInputGate;
 } & GenerationContext;
+
+/**
+ * Which caller a graph input came through, for `assertGenerationInputsUsable`. `'checked-by-caller'`
+ * is for server-composed input whose urls the calling route already checked (comics, iterate).
+ */
+export type GenerationInputGate =
+  | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
+  | 'checked-by-caller';
+
+/** Every url the validated graph input carries must pass the generation input gate. */
+async function assertGraphInputsUsable(
+  data: unknown,
+  userId: number | undefined,
+  gate: GenerationInputGate
+) {
+  if (gate === 'checked-by-caller') return;
+  await assertGenerationInputsUsable({
+    urls: generationInputUrlsIn(data),
+    userId: userId ?? 0,
+    ...gate,
+  });
+}
 
 /** Options for what-if requests */
 export type WhatIfOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
+  inputGate: GenerationInputGate;
   userId?: number;
   isModerator?: boolean;
   experimental?: boolean;
@@ -1579,14 +1608,17 @@ export async function createWorkflowStepsFromGraphInput({
   user,
   isWhatIf,
   isGreen,
+  inputGate,
 }: {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
   user?: { id?: number; isModerator?: boolean };
   isWhatIf?: boolean;
   isGreen?: boolean;
+  inputGate: GenerationInputGate;
 }): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
   const { data, computedKeys } = validateInput(input, externalCtx);
+  await assertGraphInputsUsable(data, user?.id, inputGate);
   const sourceImageIds = isWhatIf
     ? undefined
     : await resolveSourceImageIds(
@@ -1838,8 +1870,10 @@ export async function generateFromGraph({
   externalId,
   acknowledgedSoftBlock,
   downloadPriority,
+  inputGate,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
+  await assertGraphInputsUsable(data, userId, inputGate);
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
   // One read for both consumers below, so the provenance check and the prompt
@@ -2125,6 +2159,7 @@ export async function whatIfFromGraph({
   token,
   currencies,
   downloadPriority,
+  inputGate,
 }: WhatIfOptions) {
   // Provide fallback for fields that don't affect cost estimation.
   // The client excludes content fields (prompt/negativePrompt for image/video,
@@ -2138,6 +2173,7 @@ export async function whatIfFromGraph({
     ...input,
   };
   const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
+  await assertGraphInputsUsable(data, userId, inputGate);
   const { steps } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
