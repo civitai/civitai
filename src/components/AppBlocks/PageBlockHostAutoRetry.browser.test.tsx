@@ -1094,21 +1094,13 @@ describe('PageBlockHost dev-tunnel ready window — 30 s, wait in place, dev-ser
 /**
  * DEV-TUNNEL RETRY → A FRESH ENTRY URL (`onRefreshEntryUrl`).
  *
- * The dev tunnel's `iframeSrc` carries a short-lived entry token, and the edge
- * refuses an entry document whose token has expired. A Retry that only re-keyed
- * the <iframe> reloaded the SAME src, so any Retry made after the token expired
- * loaded a refusal page, never acked, and landed on the same fallback again — the
- * Retry button could never recover the preview.
- *
- * Now a dev-tunnel Retry (manual AND automatic) first asks the parent for a fresh
- * entry URL and remounts the frame on it, IN PLACE: the host is not remounted, so
- * the bounded automatic budget still carries across attempts.
- *
  * 🔴 The fresh URLs are distinct literals on the test page's own origin (the
  * pinned transport needs a same-origin frame — see `SAME_ORIGIN_SRC`), so an
  * assertion on the rendered `src` can only pass if the fetched value reached it.
  */
 describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
+  /** How long a Retry waits for its fresh entry URL before re-arming on the current one (contract literal). */
+  const ENTRY_REFRESH_TIMEOUT_MS = 10_000;
   const freshSrc = (n: number) => `${window.location.origin}/?dev=fresh-${n}`;
 
   /** A refresh whose result the test releases by hand. */
@@ -1256,6 +1248,124 @@ describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
     expect(autoRetryLine()?.textContent).toContain(`attempt 1 of ${MAX_AUTO_RETRIES}`);
   });
 
+  test('dev-tunnel: a fetch that never settles gives up after 10 s, re-arms on the current URL, and a later Retry still works', async () => {
+    useVirtualClock();
+    const refresh = deferredRefresh();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+        onRefreshEntryUrl={refresh.fn}
+      />
+    );
+    await driveToDevTimeout();
+
+    // The first fetch hangs: the test never releases it.
+    retryButton()?.click();
+    await advance(0);
+    expect(refresh.fn).toHaveBeenCalledTimes(1);
+
+    // Just short of the limit the Retry is still waiting on the fetch …
+    await advance(ENTRY_REFRESH_TIMEOUT_MS - 500);
+    expect(fallbackEl()).not.toBeNull();
+    expect(loadingEl()).toBeNull();
+
+    // … and past it the frame re-arms on the URL it had.
+    await advance(600);
+    expect(
+      await reaches(() => loadingEl() !== null),
+      'a hung entry-URL fetch must not leave the Retry stuck'
+    ).toBe(true);
+    expect(iframeEl()?.getAttribute('src')).toBe(SAME_ORIGIN_SRC);
+
+    // The abandoned fetch landing late changes nothing: the frame stays on the URL it had.
+    refresh.resolveNext(freshSrc(1));
+    await advance(0);
+    expect(iframeEl()?.getAttribute('src')).toBe(SAME_ORIGIN_SRC);
+
+    // The in-flight guard was released: the next Retry starts a new fetch and loads its URL.
+    await driveToDevTimeout();
+    retryButton()?.click();
+    await advance(0);
+    expect(refresh.fn).toHaveBeenCalledTimes(2);
+    refresh.resolveNext(freshSrc(2));
+    await pollFor('retry loading surface', () => loadingEl() !== null);
+    expect(iframeEl()?.getAttribute('src')).toBe(freshSrc(2));
+  }, 20_000);
+
+  test('dev-tunnel: a fetch resolving to an empty string keeps the CURRENT url and still re-arms', async () => {
+    useVirtualClock();
+    const onRefreshEntryUrl = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce(freshSrc(1))
+      .mockResolvedValueOnce('');
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+        onRefreshEntryUrl={onRefreshEntryUrl}
+      />
+    );
+    await driveToDevTimeout();
+    retryButton()?.click();
+    await pollFor('first retry loading surface', () => loadingEl() !== null);
+    expect(iframeEl()?.getAttribute('src')).toBe(freshSrc(1));
+
+    // The second fetch has nothing to give: the frame stays on the fresh URL it already had
+    // (not the original `iframeSrc`, and not an empty src) and the Retry still runs.
+    await driveToDevTimeout();
+    retryButton()?.click();
+    await pollFor('second retry loading surface', () => loadingEl() !== null);
+    expect(onRefreshEntryUrl).toHaveBeenCalledTimes(2);
+    expect(iframeEl()?.getAttribute('src')).toBe(freshSrc(1));
+  }, 20_000);
+
+  test('dev-tunnel: a fetch that lands after the host unmounted re-arms nothing and re-mints nothing', async () => {
+    useVirtualClock();
+    const refresh = deferredRefresh();
+    const onRetryToken = vi.fn();
+    function Harness() {
+      const [mounted, setMounted] = useState(true);
+      return (
+        <>
+          <button type="button" data-testid="unmount-host" onClick={() => setMounted(false)}>
+            unmount
+          </button>
+          {mounted && (
+            <PageBlockHost
+              {...baseProps}
+              surface="dev-tunnel"
+              token={null}
+              tokenError
+              onConsentGranted={vi.fn()}
+              onRetryToken={onRetryToken}
+              onRefreshEntryUrl={refresh.fn}
+            />
+          )}
+        </>
+      );
+    }
+    renderWithProviders(<Harness />);
+
+    // An AUTH terminal, so the Retry's re-arm would re-mint (`onRetryToken`) — the observable.
+    await pollFor('auth terminal', () => retryButton() !== null);
+    retryButton()?.click();
+    await advance(0);
+    expect(refresh.fn).toHaveBeenCalledTimes(1);
+
+    (page.getByTestId('unmount-host').element() as HTMLButtonElement).click();
+    await pollFor('host unmounted', () => page.getByTestId('app-page-frame').query() === null);
+
+    refresh.resolveNext(freshSrc(1));
+    // Past the fetch time limit too, so neither way the fetch can settle re-arms a dead host.
+    await advance(ENTRY_REFRESH_TIMEOUT_MS + 1_000);
+    expect(onRetryToken).not.toHaveBeenCalled();
+  });
+
   test('dev-tunnel: a failed fetch still re-arms the Retry, on the URL it had', async () => {
     useVirtualClock();
     const onRefreshEntryUrl = vi.fn(() => Promise.reject(new Error('preview gone')));
@@ -1277,9 +1387,9 @@ describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
   });
 
   /**
-   * INVARIANT GUARD (passes before and after the fix): every other surface's
-   * `iframeSrc` does not expire, so its Retry stays a remount on the same src and
-   * never consults `onRefreshEntryUrl`, even when one is passed.
+   * INVARIANT GUARD: every other surface's `iframeSrc` does not expire, so its
+   * Retry stays a remount on the same src and never consults `onRefreshEntryUrl`,
+   * even when one is passed.
    */
   test.each(['page-run', 'private-run'] as const)(
     '%s: Retry still just remounts the same src and never asks for a fresh URL',
