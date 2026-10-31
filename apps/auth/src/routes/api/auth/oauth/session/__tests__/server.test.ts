@@ -116,11 +116,19 @@ describe('oauth/session +server — client-IP resolution never 500s the exchange
     const res = await POST(makeEvent());
 
     expect(res.status).toBe(200);
-    expect((await res.json()) as { token: string }).toEqual({ token: 'civ.jwt', deviceId: undefined });
+    expect((await res.json()) as { token: string }).toEqual({
+      token: 'civ.jwt',
+      deviceId: undefined,
+    });
     // Audit log records a clear sentinel (not undefined) when the IP couldn't be resolved.
     expect(h.logOAuthEvent).toHaveBeenCalledTimes(1);
     expect(h.logOAuthEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'token.issued', userId: 7, clientId: CLIENT_ID, ip: 'unknown' })
+      expect.objectContaining({
+        type: 'token.issued',
+        userId: 7,
+        clientId: CLIENT_ID,
+        ip: 'unknown',
+      })
     );
   });
 
@@ -134,5 +142,32 @@ describe('oauth/session +server — client-IP resolution never 500s the exchange
 
     expect(res.status).toBe(200);
     expect(h.logOAuthEvent).toHaveBeenCalledWith(expect.objectContaining({ ip: '203.0.113.9' }));
+  });
+});
+
+describe('oauth/session +server — family', () => {
+  it("mints the site's session into the family of the hub session that authorized it", async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintUserSession.mockResolvedValue('tok');
+    h.consumeOidcContext.mockResolvedValue({ deviceId: 'd', family: 'family-a', iat0: 5 });
+
+    expect((await POST(makeEvent())).status).toBe(200);
+    expect(h.mintUserSession).toHaveBeenCalledWith(
+      { id: 7 },
+      { parent: { sid: 'family-a', iat0: 5 }, clearImpersonation: true }
+    );
+  });
+
+  it('starts a new family when the authorization carried none', async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintUserSession.mockResolvedValue('tok');
+
+    expect((await POST(makeEvent())).status).toBe(200);
+    expect(h.mintUserSession).toHaveBeenCalledWith(
+      { id: 7 },
+      { parent: null, clearImpersonation: true }
+    );
   });
 });

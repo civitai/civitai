@@ -76,6 +76,8 @@ export interface SessionRegistry {
   trackToken(tokenId: string, userId: number): Promise<void>;
   /** Mark a single session invalid (logout). */
   invalidateToken(tokenId: string, userId?: number): Promise<void>;
+  /** End every session descended from one sign-in (logout). */
+  invalidateFamily(familyId: string): Promise<void>;
   /** Mark every tracked session for a user invalid (ban). Requires redis.hGetAll. */
   invalidateUserSessions(userId: number): Promise<void>;
   /** Global cutoff — revokes every token signed before now (mass logout). */
@@ -217,6 +219,11 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
     await config.onInvalidate?.({ scope: 'token', tokenId, userId });
   }
 
+  async function invalidateFamily(familyId: string) {
+    await redis.hSet(keys.familyState, familyId, 'invalid');
+    if (redis.hExpire) await redis.hExpire(keys.familyState, familyId, markerTtl);
+  }
+
   async function invalidateUserSessions(userId: number) {
     if (!redis.hGetAll)
       throw new Error('[@civitai/auth] invalidateUserSessions requires redis.hGetAll');
@@ -285,6 +292,7 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   return {
     trackToken,
     invalidateToken,
+    invalidateFamily,
     invalidateUserSessions,
     invalidateAll,
     markForRefresh,

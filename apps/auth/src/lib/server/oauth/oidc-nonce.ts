@@ -20,7 +20,15 @@ import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 // hand the SAME id to the spoke — so every domain shares one device set. First-party codes carry only
 // `deviceId` (no OIDC nonce); third-party OIDC codes carry nonce/authTime — the two flows never overlap.
 // `openid` records a request that asked for the `openid` scope, which earns an id_token with or without a nonce.
-type OidcCodeContext = { nonce?: string; openid?: boolean; authTime?: number; deviceId?: string };
+// `family` and `iat0` are the hub session's lineage, so the session /session mints joins the hub's family.
+type OidcCodeContext = {
+  nonce?: string;
+  openid?: boolean;
+  authTime?: number;
+  deviceId?: string;
+  family?: string;
+  iat0?: number;
+};
 
 const field = (code: string) => createHash('sha256').update(code).digest('hex');
 

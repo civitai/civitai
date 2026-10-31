@@ -4,6 +4,7 @@ import { oauthModel } from '$lib/server/oauth/model';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { mintUserSession } from '$lib/server/auth/session';
 import { touchAccount } from '$lib/server/auth/device';
+import { markFamilyLive } from '$lib/server/auth/lineage';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
@@ -105,13 +106,16 @@ export const POST: RequestHandler = async ({ request }) => {
   const user = await getOrProduceSessionUser(userId).catch(() => null);
   if (!user) return bad('invalid_grant', 'Unknown user');
 
-  const token = await mintUserSession(user);
-
   // Device set (account switcher): the hub stashed its shared `.civitai.com` device id with the code at
   // /authorize. Register this account under it and hand the SAME id back so the spoke writes it as its own
   // civ-device — so e.g. civitai.red joins the SAME device set as civitai.com and the switcher matches across
   // domains. Best-effort: a missing/redis-less device id just means no switcher entry, never a failed login.
-  const { deviceId } = await consumeOidcContext(code);
+  const { deviceId, family, iat0 } = await consumeOidcContext(code);
+  const token = await mintUserSession(user, {
+    parent: family ? { sid: family, iat0 } : null,
+    clearImpersonation: true,
+  });
+  await markFamilyLive(family);
   if (deviceId) await touchAccount(deviceId, userId);
 
   logOAuthEvent({

@@ -169,6 +169,19 @@ describe('createSessionRegistry', () => {
       expect(await reg.isRevoked({ jti: 'unrelated', sid: 'other', signedAt: 1 })).toBe(false);
     });
 
+    it('ending a family signs out its root and every descendant, for longer than the 90-day limit', async () => {
+      const ttls = new Map<string, number>();
+      const redis = makeRedis();
+      redis.hExpire = async (key, field, seconds) => void ttls.set(`${key}|${field}`, seconds);
+      const reg = createSessionRegistry({ redis, keys: KEYS });
+      await reg.invalidateFamily('root-jti');
+
+      expect(await reg.isRevoked({ jti: 'root-jti', signedAt: 1 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'child', sid: 'root-jti', signedAt: 1 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'unrelated', sid: 'other', signedAt: 1 })).toBe(false);
+      expect(ttls.get(`${KEYS.familyState}|root-jti`)).toBe(91 * DAY);
+    });
+
     it('reads Buffer replies, as the HA sys client returns them', async () => {
       const redis = makeRedis();
       redis.hGet = async (key, field) =>

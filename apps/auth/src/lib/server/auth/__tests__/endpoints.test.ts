@@ -226,8 +226,8 @@ describe('POST /api/auth/dev/login (dev-gated)', () => {
   it('mints a session token for the userId with a valid internal token', async () => {
     const res = await DEV_LOGIN(ev({ auth: 'Bearer secret-123', body: { userId: 5 } }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ token: 'minted.jwt.token', userId: 5 });
-    expect(h.mintSessionToken).toHaveBeenCalled();
+    expect(await res.json()).toEqual({ token: 'civ.minted.jwt', userId: 5 });
+    expect(h.mintUserSession).toHaveBeenCalledWith({ id: 5 });
   });
 
   it('404 (throws) without a valid internal token', async () => {
