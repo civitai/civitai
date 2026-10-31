@@ -514,6 +514,14 @@ describe('assertGenerationInputsUsable', () => {
     expect(await gate([foreign], 'generateFromGraph')).toBe('refused');
   });
 
+  it("refuses an allowed external url carrying the caller's own blocked image key", async () => {
+    const proxied = `https://proxy.example/?url=${encodeURIComponent(CDN())}`;
+    await givenImage({ userId: CALLER });
+    expect(await gate([proxied], 'generateFromGraph')).toBe('accepted');
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'moderated'`);
+    expect(await gate([proxied], 'generateFromGraph')).toBe('refused');
+  });
+
   it('refuses an allowed external url carrying a blocked image key', async () => {
     await givenImage({ blockedFor: 'moderated' });
     expect(
