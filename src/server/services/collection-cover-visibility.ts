@@ -2,6 +2,14 @@ import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 
+/** Scanned, not awaiting review, not removed: as SQL over `"Image" i`. */
+const servableImageSql = Prisma.sql`(
+  i."ingestion" = 'Scanned'
+  AND i."needsReview" IS NULL
+  AND i."blockedFor" IS NULL
+  AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+)`;
+
 /**
  * Whether an image may be shown as a collection's cover to someone who doesn't own it, as SQL over
  * `"Image" i` with `"Post" p` LEFT JOINed on `i."postId"`. The image must be scanned, not awaiting
@@ -11,10 +19,7 @@ import { dbRead } from '~/server/db/client';
  */
 export function servableCollectionCoverSql({ postlessAllowed }: { postlessAllowed: Prisma.Sql }) {
   return Prisma.sql`(
-    i."ingestion" = 'Scanned'
-    AND i."needsReview" IS NULL
-    AND i."blockedFor" IS NULL
-    AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+    ${servableImageSql}
     AND (
       (i."postId" IS NOT NULL AND p."publishedAt" < now() AND p."availability" != 'Private')
       OR (i."postId" IS NULL AND ${postlessAllowed})
@@ -54,6 +59,122 @@ export const publishedArticleSql = Prisma.sql`(
   a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.availability != 'Private'
   AND a.ingestion = 'Scanned'
 )`;
+
+/**
+ * For each collection, a cover drawn from its first `itemsPerCollection` accepted items: one row
+ * per item, `image` projected by `imageSql` over `"Image" i` (null when no item yields a servable
+ * image) and `src` for an article's external cover.
+ */
+export function collectionItemCoversSql({
+  collectionIds,
+  itemsPerCollection,
+  imageSql,
+}: {
+  collectionIds: number[];
+  itemsPerCollection: number;
+  imageSql: Prisma.Sql;
+}) {
+  return Prisma.sql`
+    WITH target AS MATERIALIZED (
+      SELECT *
+      FROM (
+        SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY ci."collectionId"
+            ORDER BY ci.id
+          ) AS idx
+        FROM "CollectionItem" ci
+        WHERE ci.status = 'ACCEPTED'
+          AND ci."collectionId" IN (${Prisma.join(collectionIds)})
+      ) t
+      WHERE idx <= ${itemsPerCollection}
+    ), imageItemImage AS MATERIALIZED (
+      SELECT
+        ti."collectionId",
+        i.id,
+        ${imageSql}
+      FROM target ti
+      JOIN "Image" i ON i.id = ti."imageId"
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      WHERE ${servableCollectionCoverSql({
+        postlessAllowed: itemUploadSql(Prisma.sql`ti."addedById"`),
+      })}
+    ), postItemImage AS MATERIALIZED (
+      SELECT * FROM (
+          SELECT
+            i."postId" id,
+            ${imageSql},
+            ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
+          FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
+            AND ${servableImageSql}
+            AND p."publishedAt" < now()
+            AND p."availability" != 'Private'
+      ) t
+      WHERE t.rn = 1
+    ), modelItemImage AS MATERIALIZED (
+      SELECT * FROM (
+          SELECT
+            m.id,
+            ${imageSql},
+            ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
+          FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
+          WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
+              AND ${servableImageSql}
+              AND p."publishedAt" < now()
+              AND p."availability" != 'Private'
+              AND m.status = 'Published'
+              AND m."deletedAt" IS NULL
+              AND m.availability != 'Private'
+              AND m.mode IS DISTINCT FROM 'TakenDown'
+              AND mv.status = 'Published'
+              AND mv.availability != 'Private'
+              AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
+      ) t
+      WHERE t.rn = 1
+    ), articleItemImage AS MATERIALIZED (
+        SELECT
+          a.id,
+          ${imageSql}
+        FROM "Article" a
+        JOIN "Image" i ON i.id = a."coverId"
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND ${servableImageSql}
+          AND ${publishedArticleSql}
+    ), articleItemSrc AS MATERIALIZED (
+        SELECT a.id, a.cover src FROM "Article" a
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND ${publishedArticleSql}
+    ), model3dItemImage AS MATERIALIZED (
+        SELECT
+          m3.id,
+          ${imageSql}
+        FROM "Model3D" m3
+        JOIN "Image" i ON i.id = m3."thumbnailImageId"
+        WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
+          AND ${servableImageSql}
+          AND m3.status = 'Published'
+          AND m3."deletedAt" IS NULL
+          AND m3.availability != 'Private'
+    )
+    SELECT
+        target."collectionId" id,
+        COALESCE(
+          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId" AND iii."collectionId" = target."collectionId" LIMIT 1),
+          (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
+          (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
+          (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
+          NULL
+        ) image,
+        (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
+    FROM target
+  `;
+}
 
 type CoverViewer = { id?: number; isModerator?: boolean } | undefined | null;
 

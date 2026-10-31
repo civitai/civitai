@@ -23,7 +23,9 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   amIBlockedByUser: vi.fn().mockResolvedValue(false),
 }));
 
-const holder = { db: null as unknown as PGlite };
+// `db` is the primary; `replica` has the same tables and no rows, standing in for a replica
+// that has not caught up.
+const holder = { db: null as unknown as PGlite, replica: null as unknown as PGlite };
 
 const OWNER = 1;
 const STRANGER = 2;
@@ -35,33 +37,36 @@ const COLLECTION = 50;
 
 // The permission read casts to enums the harness doesn't create; answer it as the owner's
 // public collection. Everything else runs on PGlite.
-const runQuery = (strings: TemplateStringsArray, ...values: unknown[]) => {
-  const flat = Prisma.sql(strings, ...(values as never[]));
-  if (flat.text.includes('"CollectionReadConfiguration"'))
-    return Promise.resolve([
-      {
-        id: COLLECTION,
-        read: 'Public',
-        write: 'Private',
-        userId: OWNER,
-        type: 'Image',
-        mode: null,
-        collaborationDisabledAt: null,
-        contributorPermissions: null,
-        hasAcceptedSeat: false,
-      },
-    ]);
-  // getUserCollectionsWithPermissions' collection read: answered from `userCollections`.
-  if (flat.text.includes('c."imageId", c."type"')) return Promise.resolve(userCollections);
-  return holder.db.query(flat.text, flat.values as unknown[]).then((r) => r.rows);
-};
-// A lagging replica, for checks that must run on the client the cover was read from.
+const runQuery =
+  (target: () => PGlite) =>
+  (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const flat = Prisma.sql(strings, ...(values as never[]));
+    if (flat.text.includes('"CollectionReadConfiguration"'))
+      return Promise.resolve([
+        {
+          id: COLLECTION,
+          read: 'Public',
+          write: 'Private',
+          userId: OWNER,
+          type: 'Image',
+          mode: null,
+          collaborationDisabledAt: null,
+          contributorPermissions: null,
+          hasAcceptedSeat: false,
+        },
+      ]);
+    // getUserCollectionsWithPermissions' collection read: answered from `userCollections`.
+    if (flat.text.includes('c."imageId", c."type"')) return Promise.resolve(userCollections);
+    return target()
+      .query(flat.text, flat.values as unknown[])
+      .then((r) => r.rows);
+  };
+// While `replica.stale`, dbRead answers from the empty replica.
 const replica = { stale: false };
-dbMock.dbRead.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
-  replica.stale && strings.join('?').includes('unnest(')
-    ? Promise.resolve([])
-    : runQuery(strings, ...values)) as never);
-dbMock.dbWrite.$queryRaw.mockImplementation(runQuery as never);
+dbMock.dbRead.$queryRaw.mockImplementation(
+  runQuery(() => (replica.stale ? holder.replica : holder.db)) as never
+);
+dbMock.dbWrite.$queryRaw.mockImplementation(runQuery(() => holder.db) as never);
 const userCollections: { id: number; userId: number; imageId: number | null }[] = [];
 
 const { getServableCoverCollectionIds, withServableCovers } = await import(
@@ -93,8 +98,7 @@ const OWNER_REMOVED = 215; // the collection owner's own removed upload
 const REMOVED_LEVEL = 213; // stranger's image, Scanned with no reason but rated at the removed level
 
 beforeAll(async () => {
-  holder.db = new PGlite();
-  await holder.db.exec(`
+  const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       "id"              integer PRIMARY KEY,
@@ -125,6 +129,8 @@ beforeAll(async () => {
     CREATE TABLE "Bounty" ("id" integer PRIMARY KEY, "userId" integer, "availability" text);
     CREATE TABLE "BountyEntry" ("id" integer PRIMARY KEY, "bountyId" integer);
 
+  `;
+  const rows = `
     INSERT INTO "Post" ("id", "userId", "publishedAt", "availability") VALUES
       (1, ${STRANGER}, now() - interval '1 day', 'Public'),
       (2, ${STRANGER}, now() - interval '1 day', 'Private'),
@@ -152,7 +158,11 @@ beforeAll(async () => {
       (${COLLECTION}, ${MANAGER}, ARRAY['VIEW', 'MANAGE']::"CollectionContributorPermission"[]),
       (${COLLECTION}, ${VIEW_ONLY}, ARRAY['VIEW', 'ADD']::"CollectionContributorPermission"[]),
       (51, ${OTHER_MANAGER}, ARRAY['VIEW', 'MANAGE']::"CollectionContributorPermission"[]);
-  `);
+  `;
+  holder.db = new PGlite();
+  holder.replica = new PGlite();
+  await holder.db.exec(schema + rows);
+  await holder.replica.exec(schema);
 });
 
 const servable = async (imageId: number, viewer?: { id?: number; isModerator?: boolean }) =>
