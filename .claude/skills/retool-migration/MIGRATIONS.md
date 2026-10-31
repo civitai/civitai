@@ -120,8 +120,8 @@ export-vs-build pass. Two findings worth knowing here because they change other 
   fixed. Copying Retool (any message author) would have been worse: it always includes the reporter, so
   every harassment report would also mark the victim. The answer is the participant who is **not** a
   reporter, in a two-party chat — `chatReportSubject` in `report-entities.ts`, used by both the count and
-  the rows. 99.0% of human-filed reports resolve to exactly one account; group chats match nobody. The
-  old version also counted `Automated` reports the rows list hides, over-counting 11,056 accounts.
+  the rows. Nearly every human-filed report resolves to exactly one account; group chats match nobody.
+  The old version also counted `Automated` reports the rows list hides, over-counting many accounts.
 
 - [x] ~~Front Page Audit has no section~~ — covered by the 2026-08-20 pass.
 - [x] ~~**`UserRestriction` is read nowhere** (User Lookup)~~ — **fixed in `e40e93106e`**, before this

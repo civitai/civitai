@@ -91,8 +91,8 @@ literal sentinel `splitQueue` there. Any name→id backfill must skip it — see
       can still write it while it is live.
 - [ ] **`ReToolActions` has no subject column.** `getRetoolActivity` recovers the account by regex over
       `ActionType`, which is why that function needs a subject-label anchor — a bare number match
-      attributed image counts and strike numbers to whichever account shared the value (id 1 matched
-      22,130 unrelated rows; see `parity-findings.md`). The durable fix is a derived
+      attributed image counts and strike numbers to whichever account shared the value (a low id matched
+      thousands of unrelated rows; see `parity-findings.md`). The durable fix is a derived
       `subjectUserId integer` column, backfilled once by parsing the known phrasings:
 
       | Shape | Rows | Subject |
