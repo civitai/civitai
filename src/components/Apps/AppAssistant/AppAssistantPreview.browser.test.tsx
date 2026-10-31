@@ -252,8 +252,7 @@ describe('AppAssistantPreview — the app reloaded itself in the frame', () => {
  * The frame's own Retry (a load that timed out or failed) needs a fresh entry URL too: the one the
  * pane fetched expires minutes later, and the edge refuses it after that. Unlike a reload it must
  * NOT remount the host — the host's bounded auto-retry budget lives in that mount — so the pane
- * hands the host a fetcher instead of refetching its own query. Before the fix the pane passed
- * none, so the first test below is red.
+ * hands the host a fetcher instead of refetching its own query.
  */
 describe('AppAssistantPreview — the frame retries a failed load', () => {
   const FRESH_SRC = `https://${HOST}/?dev=entry-token-retry`;
@@ -279,8 +278,10 @@ describe('AppAssistantPreview — the frame retries a failed load', () => {
     await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
     expect(m.frameMounts).toBe(1);
 
-    await m.refreshEntryUrl?.();
-    await new Promise((r) => setTimeout(r, 50));
+    // A fetcher that went through the pane's query would have called `fetchPreviewFrame` by the
+    // time its result is in hand, so the counts are read the moment the fetch resolves.
+    await expect(m.refreshEntryUrl!()).resolves.toBe(FRESH_SRC);
+    expect(m.fetchEntryUrl).toHaveBeenCalledTimes(1);
     expect(m.fetchFrame).toHaveBeenCalledTimes(1);
     expect(m.frameMounts).toBe(1);
     await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
