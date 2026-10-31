@@ -2700,6 +2700,13 @@ export async function applyModelFlagSideEffects({
 
   // The served level is held by the flags too (see heldGalleryLevel), not only by the stored one.
   if (galleryBrowsingLevelChanged || minorChanged) await bustModelGallerySettings([id]);
+  // The public API decides from the flags on a replica row; a body rebuilt before the replica has
+  // the new flags is dropped again once it does.
+  if (minorChanged)
+    setTimeout(
+      () => bustPublicModelResponseCache(id).catch(() => null),
+      PUBLIC_RESPONSE_REBUST_DELAY_MS
+    ).unref?.();
 
   if (minorChanged || poiChanged) {
     const modelVersions = await dbWrite.modelVersion.findMany({
@@ -6034,6 +6041,7 @@ export async function getHeldLevelsByPost(postIds: number[]) {
 }
 
 const HELD_LEVEL_READ_CONCURRENCY = 20;
+const PUBLIC_RESPONSE_REBUST_DELAY_MS = 5_000;
 
 /**
  * For each minor or SFW-only model, the level its gallery is held at. A model not held is absent.
@@ -6064,8 +6072,9 @@ export async function getHeldLevelsByModel(
   const misses: number[] = [];
   const failed: number[] = [];
   let failure: unknown;
-  reads.forEach((read, i) => {
-    const id = ids[i];
+  ids.forEach((id, i) => {
+    // A slot left unset counts as a failed read, never as a model that is not held.
+    const read = reads[i] ?? { status: 'rejected' as const, reason: new Error('unread') };
     if (read.status === 'rejected') {
       failed.push(id);
       failure ??= read.reason;

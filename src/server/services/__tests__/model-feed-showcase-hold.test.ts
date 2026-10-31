@@ -200,6 +200,28 @@ describe('the public model API on a held model', () => {
     expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
   });
 
+  const rowWith = (flags: { minor: boolean; sfwOnly: boolean }) =>
+    mockCancellableQuery.mockResolvedValue({
+      result: async () => [
+        { id: MODEL_ID, userId: OWNER, name: 'M', ...flags, cursorId: null, meta: null, rank: {} },
+      ],
+    });
+
+  it('holds a model its row reads as minor only', async () => {
+    rowWith({ minor: true, sfwOnly: false });
+    const { items } = await getModelsWithVersions({ input });
+    expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
+  });
+
+  it('reads no gallery settings for a model its row reads as unflagged', async () => {
+    rowWith({ minor: false, sfwOnly: false });
+    const { items } = await getModelsWithVersions({ input });
+    expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([ABOVE, WITHIN]);
+    expect(
+      redisMock.redis.get.mock.calls.filter(([key]) => String(key).startsWith(GALLERY))
+    ).toEqual([]);
+  });
+
   it('serves only images within the held level to a moderator too', async () => {
     const { items } = await getModelsWithVersions({ input, user: { id: 99, isModerator: true } });
     expect(items[0].modelVersions[0].images.map((i) => i.id)).toEqual([WITHIN]);
@@ -227,6 +249,24 @@ describe('the model feed on a held model', () => {
     });
     return items[0]?.images.map((i) => i.id);
   };
+
+  it('holds a model its row reads as minor only', async () => {
+    mockCancellableQuery.mockResolvedValue({
+      result: async () => [
+        {
+          id: MODEL_ID,
+          userId: OWNER,
+          name: 'M',
+          minor: true,
+          sfwOnly: false,
+          cursorId: null,
+          meta: null,
+          rank: {},
+        },
+      ],
+    });
+    expect(await imageIds()).toEqual([WITHIN]);
+  });
 
   it('reads no gallery settings for a page of models without the flags', async () => {
     mockCancellableQuery.mockResolvedValue({

@@ -211,6 +211,32 @@ describe('holdShowcaseImages', () => {
     expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
   });
 
+  it('reads at most 20 models at a time, and a failing one does not stop the rest', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    redisMock.redis.get.mockImplementation(async (key: string) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      inFlight--;
+      if (key === 'model:gallery-settings:1003') throw new Error('redis down');
+      return JSON.stringify({ none: true });
+    });
+    const versions = Object.fromEntries(
+      Array.from({ length: 50 }, (_, i) => [
+        2000 + i,
+        { modelVersionId: 2000 + i, images: [image(1, NsfwLevel.X), image(2, NsfwLevel.PG)] },
+      ])
+    );
+    const held = await holdShowcaseImages(versions, {
+      models: new Map(Array.from({ length: 50 }, (_, i) => [2000 + i, { modelId: 1000 + i }])),
+    });
+    expect(peak).toBeLessThanOrEqual(20);
+    expect(redisMock.redis.get).toHaveBeenCalledTimes(50);
+    expect(ids(held[2003])).toEqual([2]);
+    expect(ids(held[2004])).toEqual([1, 2]);
+  });
+
   it('keeps the reads that succeed when one model fails', async () => {
     failSettingsReads([OPEN_MODEL]);
     const held = await holdShowcaseImages(
