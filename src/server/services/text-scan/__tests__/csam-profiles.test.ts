@@ -9,6 +9,7 @@ const CSAM_PROFILES: readonly string[] = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'UserProfile',
   'Post',
   'Model',

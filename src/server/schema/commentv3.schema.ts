@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { ThreadSort } from '~/server/common/enums';
+import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
 import { CommentEntityType } from '~/shared/utils/prisma/enums';
 
 const sort = z.enum(ThreadSort).default(ThreadSort.Oldest);
@@ -29,3 +30,20 @@ export const getCommentThreadSchema = z.object({
   entityId: z.number().int().positive(),
   sort,
 });
+
+const content = upsertCommentv2Schema.shape.content;
+
+export type CreateCommentV3Input = z.infer<typeof createCommentV3Schema>;
+export const createCommentV3Schema = z.object({
+  entityType: z.enum(CommentEntityType),
+  entityId: z.number().int().positive(),
+  /** A reply; its own row then decides the section, not `entityType`/`entityId`. */
+  parentId: z.number().int().positive().optional(),
+  content,
+});
+
+export type UpdateCommentV3Input = z.infer<typeof updateCommentV3Schema>;
+export const updateCommentV3Schema = z.object({ id: z.number().int().positive(), content });
+
+export type CommentV3IdInput = z.infer<typeof commentV3IdSchema>;
+export const commentV3IdSchema = z.object({ id: z.number().int().positive() });

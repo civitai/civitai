@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -229,7 +230,7 @@ const asSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     : (first as Prisma.Sql);
 
 beforeAll(async () => {
-  holder.db = new PGlite();
+  holder.db = new PGlite({ extensions: { ltree } });
   await holder.db.exec(`
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
@@ -254,6 +255,9 @@ beforeAll(async () => {
       ADD COLUMN complete boolean NOT NULL DEFAULT false,
       ADD COLUMN refunded boolean NOT NULL DEFAULT false;
     CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);
+    CREATE DOMAIN "ArticleStatus" AS text;
+    ALTER TABLE "Article" ADD COLUMN status "ArticleStatus" NOT NULL DEFAULT 'Published',
+      ADD COLUMN "updatedAt" timestamp(3), ADD COLUMN "scheduledAt" timestamp(3), ADD COLUMN metadata jsonb;
     ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
       ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
       ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
@@ -282,7 +286,25 @@ beforeAll(async () => {
       metadata jsonb NOT NULL DEFAULT '{}'
     );
     ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
+    -- What a CommentV3 write keeps in step on a comment's CommentV2 row.
+    ALTER TABLE "CommentV2" ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false,
+      ADD COLUMN "updatedAt" timestamp(3), ADD COLUMN metadata jsonb;
+    CREATE TABLE "CommentTopic" ("entityType" text NOT NULL, "entityId" int NOT NULL);
     CREATE TABLE "Collection" (id serial PRIMARY KEY, "userId" int NOT NULL);
+    -- Comments on a surface that writes CommentV3 directly, which have no CommentV2 row.
+    CREATE EXTENSION ltree;
+    CREATE TABLE "CommentV3" (
+      id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, "parentId" int,
+      "replyToId" int, path ltree NOT NULL, "rootId" int GENERATED ALWAYS AS (ltree2text(subpath(path, 0, 1))::int) STORED, "userId" int NOT NULL, content text NOT NULL,
+      "tosViolation" boolean NOT NULL DEFAULT false, "deletedAt" timestamptz, "updatedAt" timestamptz,
+      "removedByAuthor" boolean NOT NULL DEFAULT false
+    );
+    CREATE TABLE "CommentV3Report" (
+      "reportId" int PRIMARY KEY, "commentId" int NOT NULL REFERENCES "CommentV3"(id) ON DELETE CASCADE
+    );
+    CREATE TABLE "CommentV3Reaction" (
+      "commentId" int NOT NULL REFERENCES "CommentV3"(id) ON DELETE CASCADE, "userId" int NOT NULL
+    );
     CREATE TYPE "ModelStatus" AS ENUM (
       'Draft', 'Training', 'Published', 'Scheduled', 'Unpublished', 'UnpublishedViolation',
       'GatherInterest', 'Deleted'
@@ -323,6 +345,7 @@ beforeEach(async () => {
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection", "ModelVersion",
+      "CommentV3", "CommentV3Report", "CommentV3Reaction", "CommentTopic",
       ${EVIDENCE.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
     ALTER SEQUENCE "Collection_id_seq" RESTART ${COLLECTION};
     ALTER SEQUENCE "Article_id_seq" RESTART ${ARTICLE};
@@ -352,6 +375,10 @@ beforeEach(async () => {
       return [{ held: afterHeld }];
     return (await run(sql)).rows;
   }) as never);
+  vi.mocked(dbMock.dbWrite.$queryRawUnsafe).mockImplementation(
+    (async (sql: string, ...params: unknown[]) =>
+      (await holder.db.query(sql, params)).rows) as never
+  );
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
     first: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
@@ -501,6 +528,95 @@ describe('removeAllContent', () => {
     expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledWith(
       expect.objectContaining({ targetUserId: CLEAN })
     );
+  });
+
+  describe('comments that exist only in CommentV3', () => {
+    beforeEach(async () => {
+      await holder.db.exec(`
+        INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content) VALUES
+          (91, 'article', 1, NULL, '91', ${CLEAN}, 'gone'),
+          (92, 'article', 1, NULL, '92', ${CLEAN}, 'kept as a placeholder'),
+          (93, 'article', 1, 92, '92.93', ${BYSTANDER}, 'a reply by someone else'),
+          (94, 'image', 1, NULL, '94', ${CLEAN}, 'an image comment, wiped through CommentV2'),
+          (95, 'article', 1, NULL, '95', ${CLEAN}, 'above a held reply'),
+          (96, 'article', 1, 95, '95.96', ${HELD}, 'a held author''s reply');
+        INSERT INTO "CommentV3Reaction" ("commentId", "userId") VALUES (93, ${CLEAN}), (93, ${BYSTANDER});
+        -- CommentV2 twins, as comments written before the flip have.
+        INSERT INTO "CommentV2" (id, "userId") VALUES (91, ${CLEAN}), (95, ${CLEAN});
+      `);
+    });
+    const v3 = async () =>
+      (
+        await holder.db.query<{ id: number; content: string; deleted: boolean; tos: boolean }>(
+          `SELECT id, content, "deletedAt" IS NOT NULL AS deleted, "tosViolation" AS tos
+           FROM "CommentV3" ORDER BY id`
+        )
+      ).rows;
+
+    it('are wiped, with a placeholder above a reply, and kept above a held reply', async () => {
+      await removeAllContent({ id: CLEAN });
+      expect(await v3()).toEqual([
+        { id: 92, content: '', deleted: true, tos: false },
+        { id: 93, content: 'a reply by someone else', deleted: false, tos: false },
+        {
+          id: 94,
+          content: 'an image comment, wiped through CommentV2',
+          deleted: false,
+          tos: false,
+        },
+        // Kept for the held reply below it, and taken off the page.
+        { id: 95, content: 'above a held reply', deleted: false, tos: true },
+        { id: 96, content: "a held author's reply", deleted: false, tos: false },
+      ]);
+      // A reaction on a CommentV3-only comment has no CommentV2Reaction row to go with.
+      const reactors = await holder.db.query<{ userId: number }>(
+        `SELECT "userId" FROM "CommentV3Reaction" ORDER BY 1`
+      );
+      expect(reactors.rows).toEqual([{ userId: BYSTANDER }]);
+      // 95's twin outlives the CommentV2 delete: through the mirror it would blank the kept comment.
+      const twins = await holder.db.query<{ id: number }>(
+        `SELECT id FROM "CommentV2" WHERE id IN (91, 95) ORDER BY id`
+      );
+      expect(twins.rows).toEqual([{ id: 95 }]);
+      // Marked as its author's removal, so a moderator's ToS restore cannot republish it.
+      const marked = await holder.db.query<{ id: number }>(
+        `SELECT id FROM "CommentV3" WHERE "removedByAuthor" ORDER BY id`
+      );
+      expect(marked.rows).toEqual([{ id: 95 }]);
+    });
+
+    // Deleting the article would delete the held comment with it.
+    it('keep an article of the account, unpublished, while a held author commented on it', async () => {
+      await holder.db.exec(`
+        INSERT INTO "Article" (id, "userId") VALUES (777, ${CLEAN});
+        INSERT INTO "Article" (id, "userId", status, "scheduledAt") VALUES (778, ${CLEAN}, 'Draft', now() + interval '1 day');
+        INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content) VALUES
+          (97, 'article', 777, NULL, '97', ${HELD}, 'held, on the account''s article'),
+          (98, 'article', 778, NULL, '98', ${HELD}, 'held, on a scheduled draft');
+      `);
+      await removeAllContent({ id: CLEAN });
+      // Taken down as a violation: neither its owner nor its schedule can publish it again.
+      const articles = await holder.db.query<{ id: number; status: string; scheduled: boolean }>(
+        `SELECT id, status, "scheduledAt" IS NOT NULL AS scheduled FROM "Article" WHERE "userId" = ${CLEAN} ORDER BY id`
+      );
+      expect(articles.rows).toEqual([
+        { id: 777, status: 'UnpublishedViolation', scheduled: false },
+        { id: 778, status: 'UnpublishedViolation', scheduled: false },
+      ]);
+      const kept = await holder.db.query<{ id: number }>(
+        `SELECT id FROM "CommentV3" WHERE id = 97`
+      );
+      expect(kept.rows).toEqual([{ id: 97 }]);
+    });
+
+    it('are kept when a hold lands mid-wipe, before they are reached', async () => {
+      const before = await v3();
+      landsBefore = 'ResourceReview';
+      beforeEvidence = () =>
+        holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+      expect(await v3()).toEqual(before);
+    });
   });
 
   it.each([

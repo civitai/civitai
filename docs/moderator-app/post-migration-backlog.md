@@ -319,7 +319,9 @@ findings are done — see the parity checklist.
       check, the message-pattern report and (2026-08-24) the mute check and rate limit were all added
       one at a time, after the fact. Routing it through the service would delete the copies and inherit
       `commentsv2.blockCheck.service.test.ts`; the obstacle is that a chapter thread is keyed on
-      (project, chapter position) rather than a single entity id.
+      (project, chapter position) rather than a single entity id. Superseded 2026-10-30: the procedure is
+      removed, not rerouted, when chapter comments move to the v3 write path (see
+      `docs/plans/comments-v3-article-flip.md`).
 - [ ] **No way back from a ToS flag on a comment.** Setting it is a one-way door: nothing in the main
       app or the spoke clears `tosViolation` on `Comment` or `CommentV2`, and there is no comment
       equivalent of `restoreImages`. That was survivable while the flag did nothing on v2 threads; as of

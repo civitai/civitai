@@ -1,4 +1,5 @@
 import { createEventHandler } from './base';
+import { COMMENT_V3_SURFACES } from './comment-v3';
 
 /**
 ## Metrics driven by commentv2 table:
@@ -8,6 +9,8 @@ import { createEventHandler } from './base';
 - BountyMetric.commentCount (create/delete)
 - UserMetric.commentCount (create/delete) — comments *received* by the owner of the commented-on
   entity, across every surface CommentsV2 serves, not just the four with their own entity metric.
+
+A surface in COMMENT_V3_SURFACES is counted by comment-v3.ts instead, so it is skipped here.
 */
 
 interface CommentV2Record {
@@ -66,6 +69,16 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
     );
 
     if (!thread) return;
+    const surface = thread.articleId
+      ? 'article'
+      : thread.imageId
+      ? 'image'
+      : thread.postId
+      ? 'post'
+      : thread.bountyId
+      ? 'bounty'
+      : null;
+    if (surface && COMMENT_V3_SURFACES.includes(surface)) return;
 
     // A creator answering their own commenters is not engagement received. Left in, it dominates:
     // 71.4% / 60.9% / 57.6% of the raw total for userIds 1421581 / 2895 / 1279061. Keep this in step

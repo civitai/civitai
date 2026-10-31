@@ -21,6 +21,7 @@ import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForModelComment,
   getBlockCheckOwnerIdsForReply,
+  getContentOwnerIdForComment,
   throwIfBlockedByEntityOwner,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
@@ -475,7 +476,11 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
     mockDb.$queryRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
-    ) => runChainWalk(Prisma.sql(strings, ...(values as never[])).sql)) as never);
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[])).sql;
+      // An unresolved chain also asks CommentV3; none of these comments is on a CommentV3 surface.
+      return sql.includes('FROM "CommentV3" c') ? [] : runChainWalk(sql);
+    }) as never);
     mockDb.commentV2.findUnique.mockImplementation((async ({
       where,
       select,
@@ -699,5 +704,66 @@ describe('block targets resolve from the primary, where the guarded write lands'
     await expect(getBlockCheckOwnerIdsForComment(MISSING)).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
+  });
+});
+
+/**
+ * A comment written to CommentV3 after its surface flipped has no CommentV2 row; its author, the
+ * comments it answers and its section come from its CommentV3 row. Without this every reply, edit
+ * and reaction on one is refused as not found, or checked against nobody.
+ */
+describe('a comment that exists only in CommentV3', () => {
+  const v3Row = {
+    userId: 21,
+    hidden: false,
+    entityType: 'article',
+    entityId: 9,
+    parentUserId: 22,
+    replyToUserId: 23,
+  };
+  beforeEach(() => {
+    mockDb.commentV2.findUnique.mockResolvedValue(null);
+    mockDb.article.findUnique.mockResolvedValue({ userId: OWNER });
+  });
+
+  it('checks a reply against its author and the article owner', async () => {
+    mockDb.$queryRaw.mockResolvedValueOnce([v3Row]);
+    expect(await getBlockCheckOwnerIdsForReply(5)).toEqual([21, OWNER]);
+  });
+
+  it('checks an edit against the comments it answers and the article owner, not its own author', async () => {
+    mockDb.$queryRaw.mockResolvedValueOnce([v3Row]);
+    expect(await getBlockCheckOwnerIdsForComment(5)).toEqual([22, 23, OWNER]);
+  });
+
+  // The article owner hides and pins through this owner.
+  it('names the article owner as the comment’s content owner', async () => {
+    mockDb.$queryRaw.mockResolvedValueOnce([{ ...v3Row, hidden: true }]);
+    expect(await getContentOwnerIdForComment(5)).toEqual({ hidden: true, ownerId: OWNER });
+  });
+
+  it('refuses a reaction when the article owner blocks the reactor', async () => {
+    mockDb.$queryRaw.mockResolvedValueOnce([v3Row]);
+    amIBlockedByUser.mockImplementation(
+      async (args) => (args as { targetUserId: number }).targetUserId === OWNER
+    );
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'comment', entityId: 5 })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  // Deleting a pre-flip comment in CommentV3 removes its CommentV2 row, which cuts the old chain of
+  // the replies below it; their CommentV3 rows still resolve.
+  it('resolves a pre-flip reply whose old chain a CommentV3 delete cut', async () => {
+    mockDb.commentV2.findUnique.mockResolvedValue({ userId: 21, threadId: 1 });
+    mockDb.$queryRaw
+      .mockResolvedValueOnce([{ id: 1, rooted: false }])
+      .mockResolvedValueOnce([v3Row]);
+    expect(await getBlockCheckOwnerIdsForReply(5)).toEqual([21, OWNER]);
+  });
+
+  it('is not found when it is on a surface that still writes CommentV2', async () => {
+    mockDb.$queryRaw.mockResolvedValueOnce([{ ...v3Row, entityType: 'image' }]);
+    await expect(getBlockCheckOwnerIdsForReply(5)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

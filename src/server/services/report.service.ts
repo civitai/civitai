@@ -63,6 +63,7 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
+import { v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
 import {
@@ -210,7 +211,12 @@ export const findReportToFoldInto = ({
   tx?: Prisma.TransactionClient;
 }) => {
   const db = tx ?? dbWrite;
-  const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
+  const entityIdField =
+    reportType === ReportEntity.User
+      ? 'userId'
+      : reportType === ReportEntity.CommentV3
+      ? 'commentId'
+      : `${reportType}Id`;
   // A sticker report names one placement, and an image can carry several.
   // Deduping on (reason, image) alone folds a report about placement 2 into
   // an existing one about placement 1 and drops the new details, so a
@@ -302,6 +308,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Model]: 'model',
   [ReportEntity.Comment]: 'comment',
   [ReportEntity.CommentV2]: 'comment',
+  [ReportEntity.CommentV3]: 'comment',
   [ReportEntity.Image]: 'image',
   [ReportEntity.ResourceReview]: 'review',
   [ReportEntity.Article]: 'article',
@@ -326,6 +333,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.Model]: 'modelId',
   [ReportEntity.Comment]: 'commentId',
   [ReportEntity.CommentV2]: 'commentV2Id',
+  [ReportEntity.CommentV3]: 'commentId',
   [ReportEntity.Image]: 'imageId',
   [ReportEntity.ResourceReview]: 'resourceReviewId',
   [ReportEntity.Article]: 'articleId',
@@ -462,7 +470,6 @@ export const createReport = async ({
     !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That service no longer exists.');
-
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
@@ -528,6 +535,21 @@ export const createReport = async ({
   let recomputeArticleNsfwLevelId: number | null = null;
 
   const writeReport = async (tx: Prisma.TransactionClient) => {
+    // A deleted comment's placeholder keeps its row, so the link below would take it; its old
+    // reports were dropped with it. Held `FOR SHARE` until commit, so a delete waits for this report
+    // and drops its link too. A comment on another surface is reported through its old table, whose
+    // removal is what actions and rewards its reports.
+    if (type === ReportEntity.CommentV3) {
+      const [comment] = await tx.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "CommentV3"
+        WHERE id = ${id} AND "deletedAt" IS NULL AND ${Prisma.raw(
+        v3WriteSurfaceSql('"entityType"')
+      )}
+        FOR SHARE
+      `;
+      if (!comment) throw throwNotFoundError('That comment no longer exists.');
+    }
+
     // create the report
     const createdReport = await tx.report.create({
       data: {

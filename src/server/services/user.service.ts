@@ -5,6 +5,14 @@ import {
 } from '~/server/auth/moderation-account';
 import { Prisma } from '@prisma/client';
 import {
+  afterCommentsV3Deleted,
+  deleteCommentsV3UnlessHeld,
+  heldCommentV3OnArticleSql,
+  setUserCommentsV3Tos,
+} from '~/server/services/commentv3/moderation.service';
+import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
+
+import {
   accountHoldSql,
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
@@ -1668,6 +1676,8 @@ async function refundEachRemovedModel(
   return failures;
 }
 
+const REMOVE_V3_COMMENTS_BATCH = 500;
+
 /**
  * Moderator hard-wipe of a user's content. IRREVERSIBLE — unlike `deleteUser`
  * above, which soft-deletes and has a live inverse in `restoreUser`.
@@ -1714,6 +1724,8 @@ export const removeAllContent = async ({
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
+  // A reaction on a comment written to CommentV3 directly has no CommentV2Reaction row to mirror.
+  await dbWrite.$executeRaw`DELETE FROM "CommentV3Reaction" WHERE "userId" = ${id}`;
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from, so an
   // unsettled payout is settled first and an open bounty's supporters are refunded.
   const owing = await dbWrite.$queryRaw<{ id: number; pending: boolean; open: boolean }[]>`
@@ -1724,6 +1736,7 @@ export const removeAllContent = async ({
       AND (${payoutPendingSql} OR (NOT b.complete AND NOT b.refunded
         AND EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id)))`;
   const keptBountyIds: number[] = [];
+  const keptArticleIds: number[] = [];
   if (owing.length) {
     const { claimBountyRefundForDelete, settleBountyPayout, refundUnpayableBountyAward } =
       await import('~/server/services/bounty.service');
@@ -1818,7 +1831,27 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach({ reviewId: owned('ResourceReview') })}
       DELETE FROM "ResourceReview" WHERE id IN (${owned('ResourceReview')})`;
-    await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // Batched so no transaction outlives its timeout; the moderator bulk delete's rules
+    // (placeholders, kept for a held reply).
+    const v3Ids = (
+      await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "CommentV3"
+        WHERE "userId" = ${id} AND "deletedAt" IS NULL
+          AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))} AND ${unlessHeld}`
+    ).map((r) => r.id);
+    for (let i = 0; i < v3Ids.length; i += REMOVE_V3_COMMENTS_BATCH) {
+      const batch = v3Ids.slice(i, i + REMOVE_V3_COMMENTS_BATCH);
+      await afterCommentsV3Deleted(
+        await dbWrite.$transaction((tx) =>
+          deleteCommentsV3UnlessHeld(tx, batch, markerView, { byAuthor: true })
+        )
+      );
+    }
+    // Not the rows the CommentV3 pass handled: one it kept for a held reply would be blanked by the
+    // mirror's delete.
+    await dbWrite.$executeRaw`
+      DELETE FROM "CommentV2" c2
+      WHERE c2."userId" = ${id} AND ${unlessHeld} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
     // A legacy reply goes with its parent; a comment with a held reply below it is kept, hidden.
     await dbWrite.$executeRaw`
       DELETE FROM "Comment" c
@@ -1827,9 +1860,32 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       UPDATE "Comment" SET "tosViolation" = true, "removedByAuthor" = true, "updatedAt" = now()
       WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // An article with a held author's comment that exists only in CommentV3 is kept, unpublished:
+    // deleting it would delete that comment.
+    const doomedArticles = Prisma.sql`${owned('Article')}
+      AND NOT ${heldCommentV3OnArticleSql(Prisma.raw('o.id'), markerView)}`;
+    // CommentV3 first, as every write on these comments locks it, before the cascade reaches CommentV2.
     await dbWrite.$executeRaw`
-      WITH ${detach({ articleId: owned('Article') })}
-      DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
+      DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" IN (${doomedArticles})`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ articleId: doomedArticles })}
+      DELETE FROM "Article" WHERE id IN (${doomedArticles})`;
+    // Taken down as a moderator would, so neither its owner nor a pending scan or schedule
+    // publishes it again; the record says what it was.
+    keptArticleIds.push(
+      ...(
+        await dbWrite.$queryRaw<{ id: number }[]>`
+          UPDATE "Article" a
+          SET status = 'UnpublishedViolation'::"ArticleStatus", "scheduledAt" = NULL,
+              "updatedAt" = now(),
+              metadata = ${asJsonbObjectSql('a.metadata')} || jsonb_build_object(
+                'removedWithOwner', true, 'statusBeforeRemoval', a.status
+              )
+          WHERE a.id IN (${owned('Article')})
+            AND (a.status IN ('Published', 'Processing') OR (a.status = 'Draft' AND a."scheduledAt" IS NOT NULL))
+          RETURNING a.id`
+      ).map((r) => r.id)
+    );
     await dbWrite.$executeRaw`
       WITH ${detach({ postId: owned('Post') })}
       DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
@@ -1925,6 +1981,13 @@ export const removeAllContent = async ({
       [bountiesSearchIndex, 'Bounty', bounties],
     ])
       .then(async () => {
+        if (keptArticleIds.length)
+          await articlesSearchIndex.queueUpdate(
+            keptArticleIds.map((articleId) => ({
+              id: articleId,
+              action: SearchIndexUpdateQueueAction.Delete,
+            }))
+          );
         const hidden = await hiddenKeptBounties(keptBountyIds);
         if (hidden.length)
           await bountiesSearchIndex.queueUpdate(
@@ -2991,10 +3054,12 @@ export const toggleBan = async ({
             where: { userId: id, tosViolation: false },
             data: { tosViolation: true },
           }),
-          dbWrite.commentV2.updateMany({
-            where: { userId: id, tosViolation: false },
-            data: { tosViolation: true },
-          }),
+          // Not a comment on a CommentV3-write surface: `setUserCommentsV3Tos` flags those, locking
+          // CommentV3 first as every write there does, so the two cannot deadlock.
+          dbWrite.$executeRaw`
+            UPDATE "CommentV2" c2 SET "tosViolation" = true, "updatedAt" = now()
+            WHERE c2."userId" = ${id} AND NOT c2."tosViolation"
+              AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`,
         ]);
       } catch (error) {
         logToAxiom({
@@ -3004,6 +3069,15 @@ export const toggleBan = async ({
           error,
         });
       }
+      // Its own try, so a failure above still leaves these flagged.
+      await setUserCommentsV3Tos(id).catch((error: Error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-remove-comments',
+          message: error.message,
+          error,
+        })
+      );
     }
 
     // The LAST thing the ban branch does. `bannedAt` is written before any of the fan-out above, so a

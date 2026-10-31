@@ -26,14 +26,19 @@ changed after the 2026-08-25 merged design is listed under _Changes since 2026-0
    CommentsV2 after this plan was written; consolidation must carry it rather than rediscover it.
    Two tables, `CommentMute` + `CommentTopicMute` — settled 2026-09-01, to be re-reviewed with the
    rest of the schema before Phase 1 starts. See [Thread mute](#thread-mute-phase-5-detail).
-8. The v3 code is **Kysely, not the Prisma client** (added 2026-10-19, Briant): the v3 service
-   and the backfill jobs run on the main
+8. The v3 **reads** are Kysely, not the Prisma client, and the **writes are raw SQL** (amendment
+   below) (added 2026-10-19, Briant): the v3 read service and the backfill jobs run on the main
    app's Kysely clients (`src/server/db/kyselyDb.ts`, already used by five services) —
    `kyselyV3Read`/`kyselyV3Write` wherever `path`, `rootId` or `depth` is touched, since they add
    the `path` type and make the generated columns select-only — with `path` operations as `sql`
    fragments in the query builder. The tables are still declared
    in `schema.full.prisma`, because the Kysely `DB` types are generated from it; nothing calls the
    Prisma delegate for them. Old-table code keeps whatever client it has until Phase 6.
+   **Amended 2026-10-30 (Briant): the write path is raw SQL over a `SqlRunner`**
+   (`commentv3/write.service.ts`, with `prismaRunner(tx)` adapting a Prisma transaction). Each v3
+   write commits with Prisma-only work (the sticker charge, the old-table delete and its
+   `accountHoldSql` hold check, the `CommentV2` row kept in step), and a Kysely transaction runs on
+   its own connection, so it cannot join them. Reads stay on Kysely.
 
 The target schema below is the **merged design** (2026-08-25): Koen's counter-proposal — ltree
 path as the single source of tree truth, with `rootId`/`depth` generated from it — adopted with
@@ -45,6 +50,15 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-10-30 — article writes flip before the remaining cross-surface readers move** (Briant;
+  _Phase 4_). Article's writes ship first, keeping each article comment's `CommentV2` row in step
+  for the readers still on the old tables. Every other surface's reads and those readers then
+  move in one flip, the old-row sync is removed, and the other surfaces' writes flip one at a time
+  without it. Comic chapters and model comments write through the same v3 path
+  (`docs/plans/comments-v3-article-flip.md`).
+- **2026-10-30 — v3 writes are raw SQL, not Kysely** (decision 8, amended). Porting the old writes
+  to Kysely instead was rejected: the old code is deleted in Phase 6, and the hold check is shared
+  with other surfaces.
 - **2026-10-22 — the cross-surface readers read CommentV3.** Amendments on the way: the challenge
   and resource-review counts (were `Thread.commentCount`), the collection judged check and the
   metrics jobs (were root-thread CommentV2 joins) count live top-level `CommentV3` rows, not `CommentTopic.commentCount`, which counts
@@ -726,7 +740,8 @@ topic alone — the entity still exists.
   recorded here); the mirror behaviour test runs the reply-tree case from the entity side, one
   cascade level deeper (the dev apply did not repeat it).
 - `Report` rows whose comment is gone stay, with no target. D6 already accepts this for childless
-  hard-deletes, so the moderator queue has to tolerate it either way.
+  hard-deletes, so the moderator queue has to tolerate it either way. A tombstone drops its report
+  links too, so the same holds for it.
 - The event-points hook only recounts a user's comments when the comment service deletes them; a
   cascade bypasses it and awarded points stand. The 2026-10-16 FK cascade already does the same:
   an entity hard-delete removes its comments without the hook, and the points stand — not a
@@ -838,13 +853,13 @@ the child thread and quietly orphans them. Neither survives into the new model. 
   tombstoned ancestors on both edges; otherwise childless "[deleted]" rows accumulate. The Phase 2
   mirror does this; the v3 service must too.
 - A tombstone keeps its `userId`, timestamps, position and any `CommentMute` rows; only
-  `content` is blanked. The old side drops the row entirely, so a self-delete leaves a link to a
-  live account the old side did not keep. Decide before Phase 4 whether to null the author at
-  tombstone time or point it at a sentinel user (the options in the account-deletion bullet
-  below).
-- Account deletion tombstones the user's parented comments and hard-deletes the rest — confirm
-  against privacy/GDPR expectations that a tombstone as stored (blank content, `userId` kept)
-  satisfies erasure;
+  `content` is blanked, and its `CommentV3Report` links are deleted (as a hard delete's cascade
+  does), so its reports leave the queue instead of linking to a placeholder. The old side drops the row entirely, so a self-delete leaves a link to a
+  live account the old side did not keep. Decided 2026-10-29: keep `userId`, with the display
+  hiding the author (`docs/plans/comments-v3-article-flip.md`).
+- Account deletion tombstones the user's parented comments and hard-deletes the rest. A tombstone
+  as stored (blank content, `userId` kept) satisfies erasure, because account deletion keeps the
+  `User` row and removes its personal details (decided 2026-10-29);
   retention of _other users'_ replies is unchanged from v2 either way. A raw `DELETE FROM "User"`
   cannot work while any of the user's comments has a reply: `userId` is `ON DELETE CASCADE`, so
   the cascade tries to remove the tombstone too and `parentId ON DELETE RESTRICT` rejects it,
@@ -1007,25 +1022,23 @@ sweep:
 
 - **Clavata auto-moderation triggers**: `trg_moderation_comment`/`trg_moderation_commentv2`
   (migration `20250521094141`) enqueue `('ModerationRequest', entityType, id)` into `JobQueue` on
-  insert/content-update. Both are still live in prod, but the text-scan cutover
-  (`text-scan/clavata-cutover.ts`) is draining them per entity. If comments have cut over before
-  Phase 1, CommentV3 needs no trigger — `queueScamScan` on the write path plus a text-scan profile
-  cover it. If not, CommentV3 needs the equivalent trigger, which needs a `CommentV3` value in the
-  `EntityType` pg enum — an additive enum change, so the expand/contract deploy-first rule applies
-  — and `entity-moderation.ts` must consume the new value. Phase 1 (2026-10-20) wrote that trigger
-  and then pulled it back out (#6449): under dual-write every `CommentV3` row is the mirror of a
-  `Comment`/`CommentV2` row the old triggers already queued, so a `CommentV3` trigger would scan
-  every comment twice, and the consumer's flagged path files a `Report` through v3 report
-  plumbing that only exists with the service. Trigger, consumer, text-scan profile and entity
-  type ship with the first Phase 4 write flip (a profile without an adapter logs a verdict as
-  acted on and acts on nothing), after the backfill or with the trigger disabled while it runs.
-  Either way the text-scan verdict and
-  retention ledgers persist `Comment`/`CommentV2` ids, so v1 ids need the `legacyV1Id` alias there
+  insert/content-update; the text-scan cutover (`text-scan/clavata-cutover.ts`) drains them per
+  entity. `CommentV3` is moderated exactly as `CommentV2` is (decided 2026-10-30): an `EntityType`
+  value plus `trg_moderation_commentv3` (`20261211120000_comment_v3_moderation_trigger`, applied
+  2026-10-30), consumed by `entity-moderation.ts`, with a `CLAVATA_TARGETS` entry owned on
+  `CommentV2`'s rollout (`rolloutFor()` in `text-scan/mode.ts`). The trigger fires only on direct
+  writes (`WHEN pg_trigger_depth() = 0`), so under dual-write a mirrored row, which the old
+  table's trigger already queued, is not scanned twice; a backfill rerun calls the mirror's row
+  functions outside a trigger, so its copies are queued while the trigger is enabled. Phase 1
+  (2026-10-20) had written the trigger and pulled it out (#6449) for that double scan. The
+  ClickHouse `moderationRequest.entityType` column is `LowCardinality(String)`, so it needs no
+  change. The text-scan verdict and retention ledgers persist `Comment`/`CommentV2` ids, so v1 ids need the `legacyV1Id` alias there
   too.
 - **`packages/civitai-db-schema/src/kysely/updated-at-tables.ts`** is generated from the
   `@updatedAt` columns in `schema.full.prisma` (`pnpm run db:generate`): a table whose `updatedAt`
-  lacks `@updatedAt` silently never updates. Under decision 8 every v3 writer is a Kysely writer,
-  so this is the only thing that maintains `updatedAt`.
+  lacks `@updatedAt` silently never updates. The v3 write path is raw SQL (decision 8, amended),
+  which the plugin never rewrites, so an edit stamps `CommentV3."updatedAt"` itself; a Kysely
+  writer of the table gets it from this list.
   Deploy the regenerated client _before_ applying the enum-bearing migration (expand/contract
   rule in CLAUDE.md). Migrations applied manually as always.
 
@@ -1182,8 +1195,8 @@ particulars:
   file's statement order and atomicity, a dead-parent thread, and the floor taken from the
   higher old sequence. The single-session scenarios also passed on Postgres 18.6.
 
-Everything in the v3 service from Phase 4 on is Kysely transactions on `kyselyV3Write`
-(decision 8). Note the `no-io-in-transaction` guard — same-DB SQL inside a transaction is fine —
+The v3 write path from Phase 4 on is raw SQL over a `SqlRunner`, inside the caller's Prisma
+transaction (decision 8, amended). Note the `no-io-in-transaction` guard — same-DB SQL inside a transaction is fine —
 and run `test:lint-rules` whenever a transaction is touched.
 
 Dual-write ships **before** the backfill runs: with the live edge already maintained, one
@@ -1320,8 +1333,8 @@ Per-surface cutover checklist additions from the residue sweep:
   unlike every provider-based surface. It also feeds the `Thread` id into `CommentsCtx` as the
   `entityId`; after the flip the entity id is `ComicChapter.id`, which `getChapterThread` (or the
   chapter shell) has to return. Its server side, `createChapterComment` in `comics.router.ts`,
-  also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it moves onto the
-  unified service with this flip.
+  also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it is removed with this
+  flip, and chapter comments write through the `commentv3` mutations (decided 2026-10-30).
 - **crucible flip**: `getCommentThreadCrucibleId` and the `new-crucible-comment` notification go
   with it (#5780).
 - **storyline flip**: the newest surface (#6628); `getCommentThreadStorylineId` /
@@ -1559,7 +1572,9 @@ deletes about half of each:
   becomes a single `entityType` switch on the row.
 - `report-entities.ts`: gains a `{ 'CommentV3Report', 'CommentV3' }` entry beside the old two with
   `ReportEntity.CommentV3` at the first write flip; the old two go in Phase 6 (the report backfill
-  maps `CommentReport` rows through `legacyV1Id`, so no legacy-id handling survives here).
+  maps `CommentReport` rows through `legacyV1Id`, so no legacy-id handling survives here). Until
+  then the `commentV3` entry lists only reports with no old link, so the mirror's copies are not
+  listed twice.
 - `entity-url.ts` + `retool/user-lookup/CommentsPanel.svelte`: `modelCommentUrl()`/`commentV2Url()`
   collapse to one builder; the "Model comments"/"Other comments" panels and the separate
   `commentIds`/`commentV2Ids` checkbox groups become one list. The backing mod endpoints

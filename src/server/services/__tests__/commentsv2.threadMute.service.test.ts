@@ -29,8 +29,15 @@ vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
 }));
 
 import { sectionMuteSchema } from '~/server/schema/commentv2.schema';
+import { V3_WRITE_TARGET_MESSAGE } from '~/server/services/commentv3/write.service';
 import {
+  deleteComment,
+  getCommentsThreadDetails2,
+  toggleHideComment,
+  togglePinComment,
+  upsertComment,
   getSectionMuted,
+  toggleLockCommentsThread,
   getThreadMuted,
   toggleSectionMute,
   toggleThreadMute,
@@ -240,7 +247,7 @@ describe('toggleSectionMute', () => {
     // refactor that added one under a different condition. The two below can actually fail.
     expect(db.threadMute.createMany).not.toHaveBeenCalled();
     expect(db.thread.findUnique).toHaveBeenCalled();
-    expect(result).toEqual({ muted: false, threadId: null });
+    expect(result).toEqual({ muted: false, threadId: null, hasThread: false });
   });
 
   /**
@@ -250,7 +257,7 @@ describe('toggleSectionMute', () => {
    */
   it.each([
     ['post', 'postId'],
-    ['article', 'articleId'],
+    ['bounty', 'bountyId'],
   ] as const)('resolves the %s section by its own column', async (entityType, column) => {
     db.thread.findUnique.mockResolvedValue({ id: 42 });
 
@@ -272,7 +279,7 @@ describe('toggleSectionMute', () => {
       data: [{ threadId: 42, userId: 7 }],
       skipDuplicates: true,
     });
-    expect(result).toEqual({ muted: true, threadId: 42 });
+    expect(result).toEqual({ muted: true, threadId: 42, hasThread: true });
   });
 });
 
@@ -427,12 +434,143 @@ describe('getThreadMuted', () => {
   });
 });
 
+/**
+ * A surface that writes CommentV3 directly has no Thread rows for its new comments: its mutes go to
+ * CommentMute / CommentTopicMute, and a section with no comments can still be muted.
+ */
+describe('mutes on a surface that writes CommentV3', () => {
+  const sqlCalls = () => db.$queryRawUnsafe.mock.calls.map((c) => String(c[0]));
+
+  it('does not mute an article that does not exist', async () => {
+    dbMock.dbRead.article.findUnique.mockResolvedValue(null);
+    expect(await toggleSectionMute({ entityType: 'article', entityId: 5, userId: 7 })).toEqual({
+      muted: false,
+      threadId: null,
+      hasThread: false,
+    });
+    expect(db.$queryRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('mutes an article section on its topic, with or without comments', async () => {
+    dbMock.dbRead.article.findUnique.mockResolvedValue({ userId: 1 });
+    const result = await toggleSectionMute({ entityType: 'article', entityId: 5, userId: 7 });
+    expect(result).toEqual({ muted: true, threadId: null, hasThread: true });
+    expect(db.thread.findUnique).not.toHaveBeenCalled();
+    expect(sqlCalls().some((q) => q.includes('INSERT INTO "CommentTopicMute"'))).toBe(true);
+  });
+
+  it('reads an article section mute without looking for a thread', async () => {
+    kysely.state.answers = [{ userId: 7 }];
+    expect(await getSectionMuted({ entityType: 'article', entityId: 5, userId: 7 })).toEqual({
+      muted: true,
+      hasThread: true,
+    });
+    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('mutes an article comment on CommentMute, and refuses one removed as a ToS violation', async () => {
+    const row = { id: 9, entityType: 'article', deletedAt: null, tosViolation: false };
+    db.$queryRawUnsafe.mockResolvedValueOnce([row]).mockResolvedValue([]);
+    expect(await toggleThreadMute({ commentId: 9, userId: 7 })).toEqual({
+      muted: true,
+      threadId: null,
+    });
+    expect(sqlCalls().some((q) => q.includes('INSERT INTO "CommentMute"'))).toBe(true);
+    expect(db.commentV2.findUnique).not.toHaveBeenCalled();
+
+    db.$queryRawUnsafe.mockReset().mockResolvedValueOnce([{ ...row, tosViolation: true }]);
+    await expect(toggleThreadMute({ commentId: 9, userId: 7 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  // The toggle needs no reply thread there, so a lock must not hide the control.
+  it('offers the mute on an article comment under a lock, and not on one removed as a ToS violation', async () => {
+    const row = { id: 9, entityType: 'article', deletedAt: null, tosViolation: false };
+    db.$queryRawUnsafe.mockResolvedValueOnce([row]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ own: false, ancestor: false, locked: true }]);
+    expect(await getThreadMuted({ commentId: 9, userId: 7 })).toEqual({
+      muted: false,
+      viaAncestor: false,
+      canMute: true,
+    });
+    expect(db.commentV2.findUnique).not.toHaveBeenCalled();
+
+    db.$queryRawUnsafe.mockResolvedValueOnce([{ ...row, tosViolation: true }]);
+    expect(await getThreadMuted({ commentId: 9, userId: 7 })).toMatchObject({ canMute: false });
+  });
+});
+
+/**
+ * A stale page still posting to `commentv2`: on a surface that writes CommentV3 it would skip the
+ * CommentV3 lock and parent checks, and write rows the new reads ignore.
+ */
+describe('commentv2 writes aimed at a surface that writes CommentV3', () => {
+  const onV3Surface = () => db.$queryRawUnsafe.mockResolvedValue([{ entityType: 'article' }]);
+
+  it.each([
+    [
+      'an edit',
+      () =>
+        upsertComment({
+          id: 9,
+          entityType: 'article',
+          entityId: 5,
+          content: 'x',
+          userId: 1,
+        } as never),
+    ],
+    [
+      'a reply',
+      () => upsertComment({ entityType: 'comment', entityId: 9, content: 'x', userId: 1 } as never),
+    ],
+    [
+      'a new comment',
+      () => upsertComment({ entityType: 'article', entityId: 5, content: 'x', userId: 1 } as never),
+    ],
+    ['a delete', () => deleteComment({ id: 9 })],
+    ['a hide', () => toggleHideComment({ id: 9, currentToggle: false })],
+    ['a pin', () => togglePinComment({ id: 9 })],
+  ])('refuse %s, writing nothing', async (_, write) => {
+    onV3Surface();
+    // The guard's own refusal, not a later check that happens to fail the same way.
+    await expect(write()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: V3_WRITE_TARGET_MESSAGE,
+    });
+    expect(db.commentV2.update).not.toHaveBeenCalled();
+    expect(db.commentV2.delete).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('the section lock on a surface that writes CommentV3', () => {
+  it('is read from the topic, with no thread', async () => {
+    kysely.state.answers = [{ locked: true }];
+    expect(await getCommentsThreadDetails2({ entityType: 'article', entityId: 5 })).toEqual({
+      id: 0,
+      locked: true,
+    });
+    expect(kysely.state.calls.map((c) => c.table)).toEqual(['CommentTopic']);
+    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is toggled on the topic, with no thread', async () => {
+    db.$queryRawUnsafe.mockResolvedValueOnce([{ locked: true }]);
+    expect(await toggleLockCommentsThread({ entityType: 'article', entityId: 5 })).toEqual({
+      locked: true,
+    });
+    expect(String(db.$queryRawUnsafe.mock.calls[0][0])).toContain('INSERT INTO "CommentTopic"');
+    expect(db.thread.findUnique).not.toHaveBeenCalled();
+  });
+});
+
 describe('getSectionMuted', () => {
   // Same reason as the toggle's table: the mock ignores `where`, so a hardcoded `imageId` passes
   // every other assertion. Two types, because one cannot tell a hardcoded key from a computed one.
   it.each([
     ['post', 'postId'],
-    ['article', 'articleId'],
+    ['bounty', 'bountyId'],
   ] as const)('resolves the %s section by its own column', async (entityType, column) => {
     dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: 42 });
     kysely.state.answers = [undefined];

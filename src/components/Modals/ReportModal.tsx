@@ -76,6 +76,7 @@ const reports = [
       ReportEntity.Model,
       ReportEntity.Comment,
       ReportEntity.CommentV2,
+      ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
       ReportEntity.Article,
@@ -103,6 +104,7 @@ const reports = [
       ReportEntity.Model,
       ReportEntity.Comment,
       ReportEntity.CommentV2,
+      ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
       ReportEntity.Article,
@@ -163,6 +165,7 @@ const reports = [
       ReportEntity.Model,
       ReportEntity.Comment,
       ReportEntity.CommentV2,
+      ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
       ReportEntity.Article,
@@ -348,6 +351,7 @@ export default function ReportModal({
           // Nothing changes here so nothing to invalidate...
           case ReportEntity.Comment:
           case ReportEntity.CommentV2:
+          case ReportEntity.CommentV3:
           default:
             break;
         }

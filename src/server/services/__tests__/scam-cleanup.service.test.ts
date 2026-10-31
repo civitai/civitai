@@ -40,10 +40,9 @@ describe('runScamCleanup', () => {
     expect(dbMock.dbWrite.chatMessage.deleteMany).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['comments', 'UPDATE "Comment" SET hidden = true'],
-    ['commentsV2', 'UPDATE "CommentV2" SET hidden = true'],
-  ] as const)(
+  // commentsV2, which also reaches CommentV3, runs against Postgres in
+  // commentv3/__tests__/scam-cleanup.sql.behavior.test.ts.
+  it.each([['comments', 'UPDATE "Comment" SET hidden = true']] as const)(
     '%s hides only the author’s visible comments and stamps updatedAt',
     async (kind, head) => {
       dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 3 }]);
@@ -92,23 +91,23 @@ describe('restoreScamCase', () => {
     expect(values(call)).toEqual([42, 42, new Date(at)]);
   });
 
-  it.each([
-    ['comments', 'UPDATE "Comment" SET hidden = false'],
-    ['commentsV2', 'UPDATE "CommentV2" SET hidden = false'],
-  ] as const)('restores %s by recorded id and owner', async (kind, head) => {
-    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValue({
-      userId: 42,
-      type: 'scam',
-      triggers: [{ cleanup: { kind, at, count: 2, ids: [3, 4], truncated: false } }],
-    });
-    dbMock.dbWrite.$executeRaw.mockResolvedValue(2);
-    await restoreScamCase(5);
-    const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
-    expect(sqlOf(call)).toContain(head);
-    expect(sqlOf(call)).toContain('id = ANY(?::int[]) AND "userId" = ? AND hidden');
-    expect(sqlOf(call)).not.toContain('updatedAt');
-    expect(values(call)).toEqual([[3, 4], 42]);
-  });
+  it.each([['comments', 'UPDATE "Comment" SET hidden = false']] as const)(
+    'restores %s by recorded id and owner',
+    async (kind, head) => {
+      dbMock.dbWrite.userRestriction.findUnique.mockResolvedValue({
+        userId: 42,
+        type: 'scam',
+        triggers: [{ cleanup: { kind, at, count: 2, ids: [3, 4], truncated: false } }],
+      });
+      dbMock.dbWrite.$executeRaw.mockResolvedValue(2);
+      await restoreScamCase(5);
+      const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
+      expect(sqlOf(call)).toContain(head);
+      expect(sqlOf(call)).toContain('id = ANY(?::int[]) AND "userId" = ? AND hidden');
+      expect(sqlOf(call)).not.toContain('updatedAt');
+      expect(values(call)).toEqual([[3, 4], 42]);
+    }
+  );
 
   it('ignores entries without cleanup and rows of another type', async () => {
     dbMock.dbWrite.userRestriction.findUnique.mockResolvedValue({

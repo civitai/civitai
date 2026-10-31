@@ -49,6 +49,8 @@ const autoMuteCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
   Chat: 'chatMessages',
   Comment: 'comments',
   CommentV2: 'commentsV2',
+  // The commentsV2 cleanup also hides comments on surfaces that write CommentV3.
+  CommentV3: 'commentsV2',
 };
 
 /** The newest flagged message a sender wrote in one flagged chat group. */
@@ -152,6 +154,11 @@ const queues = {
   CommentV2: {
     fields: { content: true },
     selector: dbRead.commentV2,
+  },
+  // Only plain columns, so the delegate is safe here; it drops `path`, which nothing reads.
+  CommentV3: {
+    fields: { content: true },
+    selector: dbRead.commentV3,
   },
   User: {
     fields: { username: true },
@@ -410,6 +417,9 @@ const runClavata = async ({
             message: 'Error creating moderation request',
             data: { error, type, id: metadata.id },
           });
+          // Gone, or not reportable as this type: a retry scans it again and fails the same way.
+          if (deleteJob && (error as { code?: string })?.code === 'NOT_FOUND')
+            await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
           continue;
         }
 

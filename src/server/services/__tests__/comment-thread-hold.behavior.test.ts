@@ -160,6 +160,12 @@ beforeAll(async () => {
       "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE,
       "tosViolation" boolean NOT NULL DEFAULT false
     );
+    -- An article's comments written to CommentV3 directly, which have no CommentV2 row.
+    CREATE TABLE "CommentTopic" ("entityType" text NOT NULL, "entityId" int NOT NULL);
+    CREATE TABLE "CommentV3" (
+      id int PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, "userId" int NOT NULL,
+      "deletedAt" timestamptz
+    );
     -- Stands in for the hold marker's delete trigger: a marked owner's image row is kept.
     CREATE FUNCTION keep_marked_image() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
@@ -176,7 +182,8 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
     TRUNCATE "CommentV2", "Thread", "Answer", "Question", "ResourceReview", "Model", "Post",
-      "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article";
+      "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article", "CommentTopic",
+      "CommentV3";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -601,6 +608,53 @@ describe('the production delete paths keep held threads', () => {
     expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([]);
     expect(await commentIds()).toEqual([1, 2, 3]);
     expect(await isCommentDetached(3)).toBe(true);
+  });
+
+  // A CommentV3 row cannot be detached from its article as a thread is.
+  it('refuses to delete an article with a held author’s comment written only to CommentV3', async () => {
+    await db.exec(`
+      INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER});
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (5, 'article', 70, ${HELD});
+    `);
+    vi.mocked(dbMock.dbWrite.article.findUnique).mockResolvedValue({ userId: OWNER } as never);
+
+    await expect(deleteArticleById({ id: 70, userId: OWNER })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect((await db.query(`SELECT id FROM "Article"`)).rows).toEqual([{ id: 70 }]);
+  });
+
+  // A held comment with a CommentV2 row is kept by the thread detach; a deleted one keeps nothing.
+  it.each([
+    [
+      'it has a CommentV2 row the detach keeps',
+      `INSERT INTO "Thread" (id, "articleId") VALUES (300, 70);
+       INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5, ${HELD}, 300);`,
+    ],
+    ['it was deleted', `UPDATE "CommentV3" SET "deletedAt" = now() WHERE id = 5`],
+  ])('deletes an article with a held author’s CommentV3 comment when %s', async (_, seed) => {
+    await db.exec(`
+      INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER});
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (5, 'article', 70, ${HELD});
+    `);
+    await db.exec(seed);
+    vi.mocked(dbMock.dbWrite.article.findUnique).mockResolvedValue({ userId: OWNER } as never);
+
+    await deleteArticleById({ id: 70, userId: OWNER });
+
+    expect((await db.query(`SELECT id FROM "Article"`)).rows).toEqual([]);
+  });
+
+  it('deletes an article whose CommentV3-only comments are by unheld authors (control)', async () => {
+    await db.exec(`
+      INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER});
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (5, 'article', 70, ${OWNER});
+    `);
+    vi.mocked(dbMock.dbWrite.article.findUnique).mockResolvedValue({ userId: OWNER } as never);
+
+    await deleteArticleById({ id: 70, userId: OWNER });
+
+    expect((await db.query(`SELECT id FROM "Article"`)).rows).toEqual([]);
   });
 
   it('keeps a held thread on an image of a deleted post', async () => {

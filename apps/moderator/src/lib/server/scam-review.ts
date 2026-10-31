@@ -54,7 +54,7 @@ async function loadScannedText(rows: RestrictionRow[]): Promise<Map<number, Scan
       )
     ),
   ];
-  const [profiles, users, comments, commentsV2] = await Promise.all([
+  const [profiles, users, comments, commentsV2, commentsV3] = await Promise.all([
     ids('UserProfile').length
       ? dbRead
           .selectFrom('UserProfile')
@@ -83,6 +83,13 @@ async function loadScannedText(rows: RestrictionRow[]): Promise<Map<number, Scan
           .where('id', 'in', ids('CommentV2'))
           .execute()
       : [],
+    ids('CommentV3').length
+      ? dbRead
+          .selectFrom('CommentV3')
+          .select(['id', 'content'])
+          .where('id', 'in', ids('CommentV3'))
+          .execute()
+      : [],
   ]);
 
   const byEntity = new Map<string, ScannedField[]>();
@@ -97,6 +104,8 @@ async function loadScannedText(rows: RestrictionRow[]): Promise<Map<number, Scan
     byEntity.set(`Comment:${c.id}`, [{ heading: 'Comment', text: scannedText(c.content) }]);
   for (const c of commentsV2)
     byEntity.set(`CommentV2:${c.id}`, [{ heading: 'Comment', text: scannedText(c.content) }]);
+  for (const c of commentsV3)
+    byEntity.set(`CommentV3:${c.id}`, [{ heading: 'Comment', text: scannedText(c.content) }]);
 
   const out = new Map<number, ScannedField[]>();
   for (const row of rows) {
