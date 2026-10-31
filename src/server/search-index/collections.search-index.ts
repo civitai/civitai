@@ -15,6 +15,7 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { collectionsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { collectionsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
@@ -27,6 +28,12 @@ import {
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import {
+  coverUploadSql,
+  itemUploadSql,
+  publishedArticleSql,
+  servableCollectionCoverSql,
+} from '~/server/services/collection-cover-visibility';
 
 const READ_BATCH_SIZE = 1000; // 10 items per collection are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -274,13 +281,17 @@ export const pullData = async (
     GROUP BY uc."userId"
   ), images AS MATERIALIZED (
     SELECT
-      i.id,
+      t.id "collectionId",
       ${collectionIndexImageSql}
-    FROM "Image" i
-    WHERE i.id IN (SELECT "imageId" FROM target)
-      AND i."ingestion" = 'Scanned'
-      AND i."needsReview" IS NULL
-    GROUP BY i.id
+    FROM target t
+    JOIN "Image" i ON i.id = t."imageId"
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE ${servableCollectionCoverSql({
+      postlessAllowed: coverUploadSql({
+        collectionId: Prisma.sql`t.id`,
+        collectionOwnerId: Prisma.sql`t."userId"`,
+      }),
+    })}
   ), metrics as MATERIALIZED (
     SELECT
       cm."collectionId",
@@ -296,7 +307,7 @@ export const pullData = async (
   SELECT
     t.*,
     (SELECT metrics FROM metrics m WHERE m."collectionId" = t.id),
-    (SELECT "image" FROM images i WHERE i.id = t."imageId"),
+    (SELECT "image" FROM images i WHERE i."collectionId" = t.id),
     (SELECT "user" FROM users u WHERE u.id = t."userId"),
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t
@@ -334,12 +345,15 @@ export const pullData = async (
       WHERE idx <= 10
     ), imageItemImage AS MATERIALIZED (
       SELECT
+        ti."collectionId",
         i.id,
         ${collectionIndexImageSql}
-      FROM "Image" i
-      WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
-        AND i."ingestion" = 'Scanned'
-        AND i."needsReview" IS NULL
+      FROM target ti
+      JOIN "Image" i ON i.id = ti."imageId"
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      WHERE ${servableCollectionCoverSql({
+        postlessAllowed: itemUploadSql(Prisma.sql`ti."addedById"`),
+      })}
     ), postItemImage AS MATERIALIZED (
       SELECT * FROM (
           SELECT
@@ -347,9 +361,14 @@ export const pullData = async (
             ${collectionIndexImageSql},
             ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
           FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
           WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND i."blockedFor" IS NULL
+            AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+            AND p."publishedAt" < now()
+            AND p."availability" != 'Private'
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (
@@ -365,6 +384,17 @@ export const pullData = async (
           WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND i."blockedFor" IS NULL
+              AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+              AND p."publishedAt" < now()
+              AND p."availability" != 'Private'
+              AND m.status = 'Published'
+              AND m."deletedAt" IS NULL
+              AND m.availability != 'Private'
+              AND m.mode IS DISTINCT FROM 'TakenDown'
+              AND mv.status = 'Published'
+              AND mv.availability != 'Private'
+              AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
       ) t
       WHERE t.rn = 1
     ), articleItemImage AS MATERIALIZED (
@@ -374,9 +404,13 @@ export const pullData = async (
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND i."blockedFor" IS NULL
+          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+          AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND ${publishedArticleSql}
     ), model3dItemImage AS MATERIALIZED (
         SELECT m3.id, ${collectionIndexImageSql}
         FROM "Model3D" m3
@@ -384,11 +418,16 @@ export const pullData = async (
         WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND i."blockedFor" IS NULL
+          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+          AND m3.status = 'Published'
+          AND m3."deletedAt" IS NULL
+          AND m3.availability != 'Private'
     )
     SELECT
         target."collectionId" id,
         COALESCE(
-          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
+          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId" AND iii."collectionId" = target."collectionId" LIMIT 1),
           (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
           (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
           (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),

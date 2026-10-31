@@ -75,7 +75,9 @@ const {
   mockFallbackCovers,
   mockPlayableSample,
   mockRestricted,
+  mockServableCovers,
 } = vi.hoisted(() => ({
+  mockServableCovers: vi.fn(),
   mockGetAll: vi.fn(),
   mockItemCount: vi.fn(),
   mockUserCollections: vi.fn(),
@@ -92,6 +94,9 @@ vi.mock('~/server/services/collection.service', () => ({
   getAllCollections: mockGetAll,
   getCollectionItemCount: mockItemCount,
   getUserCollectionsWithPermissions: mockUserCollections,
+}));
+vi.mock('~/server/services/collection-cover-visibility', () => ({
+  getServableCoverCollectionIds: mockServableCovers,
 }));
 vi.mock('~/server/services/blocks/block-collections.service', async () => {
   const { classifyGatedImageForViewer } = await vi.importActual<typeof GatedImagesLogic>(
@@ -239,6 +244,9 @@ beforeEach(() => {
   // judge, keep", so tests that are not about the floor see no drops.
   mockPlayableSample.mockResolvedValue(new Map());
   mockRestricted.mockResolvedValue(new Set<number>());
+  mockServableCovers.mockImplementation(
+    async (candidates: { collectionId: number }[]) => new Set(candidates.map((c) => c.collectionId))
+  );
   mockItemCount.mockResolvedValue([
     { id: 10, count: 5 },
     { id: 11, count: 2 },
@@ -1387,6 +1395,29 @@ describe('cover moderation and scan gate', () => {
       expect(item.id).toBe(10);
       expect(item.coverImageUrl).toBeNull();
       expect('coverNsfwLevel' in item).toBe(false);
+    }
+  );
+
+  it.each([
+    ['public', 10, 1, 110],
+    ['mine', 20, 42, 120],
+  ])(
+    'mode=%s: a primary cover a stranger may not see is replaced by the fallback cover',
+    async (mode, id, ownerId, imageId) => {
+      if (mode === 'public')
+        mockGetAll.mockResolvedValueOnce([publicRow({ poi: false, minor: false })]);
+      else mockUserCollections.mockResolvedValueOnce([mineRow({ poi: false, minor: false })]);
+      mockServableCovers.mockResolvedValueOnce(new Set<number>());
+      mockFallbackCovers.mockResolvedValueOnce(
+        new Map([[id, { url: `fallback-${id}`, type: 'image', nsfwLevel: 2 }]])
+      );
+      const { req, res } = createMocks({ query: { mode, limit: '24' } });
+      await handler(req as never, res as never);
+      expect(mockServableCovers).toHaveBeenCalledWith([
+        { collectionId: id, collectionOwnerId: ownerId, imageId },
+      ]);
+      expect(mockFallbackCovers).toHaveBeenCalledWith([id], 3);
+      expect((res._json() as any).items[0].coverImageUrl).toBe(`edge:fallback-${id}`);
     }
   );
 

@@ -123,6 +123,9 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
     upsertCollectionMutation.mutate(
       {
         ...data,
+        // A cover hidden from this editor reads back as no cover; sending that would remove it.
+        image:
+          collection?.coverHidden && !form.formState.dirtyFields.image ? undefined : data.image,
         mode: data.mode || null,
         metadata: {
           ...(data.metadata ?? {}),
@@ -155,7 +158,8 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
         mode: collection.mode,
         metadata: collection.metadata ?? {},
       });
-      if (result.success) form.reset({ ...result.data });
+      // A refetch while the form is open must not drop what the editor already changed.
+      if (result.success) form.reset({ ...result.data }, { keepDirtyValues: true });
       else console.error(result.error);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

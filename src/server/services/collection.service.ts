@@ -122,6 +122,13 @@ import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
+import {
+  getServableCoverCollectionIds,
+  itemUploadSql,
+  publishedArticleSql,
+  servableCollectionCoverSql,
+} from '~/server/services/collection-cover-visibility';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   collectionSupportsCollaborators,
@@ -614,7 +621,19 @@ export const getUserCollectionsWithPermissions = async <
     ${Prisma.join(queries, ' UNION ')}
   `;
 
-  const collectionImageIds = collections.map((c) => c.imageId).filter(isDefined);
+  const servableCovers = await getServableCoverCollectionIds(
+    collections.flatMap((c) =>
+      c.imageId != null
+        ? [{ collectionId: c.id, collectionOwnerId: c.userId, imageId: c.imageId }]
+        : []
+    ),
+    { id: userId },
+    db
+  );
+  const collectionImageIds = collections
+    .filter((c) => servableCovers.has(c.id))
+    .map((c) => c.imageId)
+    .filter(isDefined);
 
   const images =
     collectionImageIds.length > 0
@@ -671,7 +690,14 @@ export const getUserCollectionsWithPermissions = async <
     .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
 
-export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
+export const getCollectionById = async ({
+  input,
+  viewer,
+}: {
+  input: GetByIdInput;
+  /** Who the cover is shown to. Without one the cover is judged as for a stranger. */
+  viewer?: { id?: number; isModerator?: boolean } | null;
+}) => {
   const { id } = input;
   const db = await getDbWithoutLag('collection', id);
   const collection = await db.collection.findUnique({
@@ -683,16 +709,35 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   });
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
 
+  const coverServable =
+    !!collection.image &&
+    (
+      await getServableCoverCollectionIds(
+        [
+          {
+            collectionId: collection.id,
+            collectionOwnerId: collection.userId,
+            imageId: collection.image.id,
+          },
+        ],
+        viewer,
+        db
+      )
+    ).has(collection.id);
+
   return {
     ...collection,
     nsfwLevel: collection.nsfwLevel as NsfwLevel,
-    image: collection.image
-      ? {
-          ...collection.image,
-          nsfwLevel: collection.image.nsfwLevel as NsfwLevel,
-          meta: collection.image.meta as ImageMetaProps | null,
-        }
-      : null,
+    /** A cover is stored but this viewer may not see it; an edit must not clear it. */
+    coverHidden: !!viewer && !!collection.image && !coverServable,
+    image:
+      collection.image && coverServable
+        ? {
+            ...collection.image,
+            nsfwLevel: collection.image.nsfwLevel as NsfwLevel,
+            meta: collection.image.meta as ImageMetaProps | null,
+          }
+        : null,
     metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
     tags: collection.tags.map((t) => ({
       ...t.tag,
@@ -1369,10 +1414,31 @@ export const upsertCollection = async ({
         availability: true,
         mode: true,
         metadata: true,
+        userId: true,
         image: { select: { id: true } },
       },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
+
+    // An editor shown no cover because it is hidden from them sends `image: null`; that leaves the
+    // stored cover as it is rather than removing it.
+    const keepsHiddenCover =
+      image === null &&
+      !imageId &&
+      !!currentCollection.image &&
+      !(
+        await getServableCoverCollectionIds(
+          [
+            {
+              collectionId: currentCollection.id,
+              collectionOwnerId: currentCollection.userId,
+              imageId: currentCollection.image.id,
+            },
+          ],
+          { id: userId, isModerator },
+          dbWrite
+        )
+      ).has(currentCollection.id);
 
     const canConfigure = permission.isOwner || !!isModerator;
     const nextRead = canConfigure ? read : undefined;
@@ -1465,7 +1531,7 @@ export const upsertCollection = async ({
           ) as Prisma.JsonObject,
           image: imageId
             ? { connect: { id: imageId } }
-            : image !== undefined
+            : image !== undefined && !keepsHiddenCover
             ? image === null
               ? { disconnect: true }
               : existingCover
@@ -1757,7 +1823,7 @@ export const updateCollectionCoverImage = async ({
     throw throwAuthorizationError('You do not have permission to manage this collection');
   }
 
-  // TODO if necessary, check image ownership here
+  await assertImageVisibleToViewer({ id: imageId, userId, isModerator });
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
@@ -3714,12 +3780,15 @@ export const getCollectionCoverImages = async ({
       WHERE idx <= ${imagesPerCollection}
     ), imageItemImage AS MATERIALIZED (
       SELECT
+        ti."collectionId",
         i.id,
         ${imageSql}
-      FROM "Image" i
-      WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
-        AND i."ingestion" = 'Scanned'
-        AND i."needsReview" IS NULL
+      FROM target ti
+      JOIN "Image" i ON i.id = ti."imageId"
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      WHERE ${servableCollectionCoverSql({
+        postlessAllowed: itemUploadSql(Prisma.sql`ti."addedById"`),
+      })}
     ), postItemImage AS MATERIALIZED (
       SELECT * FROM (
           SELECT
@@ -3727,9 +3796,14 @@ export const getCollectionCoverImages = async ({
             ${imageSql},
             ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
           FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
           WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND i."blockedFor" IS NULL
+            AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+            AND p."publishedAt" < now()
+            AND p."availability" != 'Private'
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (
@@ -3745,6 +3819,17 @@ export const getCollectionCoverImages = async ({
           WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND i."blockedFor" IS NULL
+              AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+              AND p."publishedAt" < now()
+              AND p."availability" != 'Private'
+              AND m.status = 'Published'
+              AND m."deletedAt" IS NULL
+              AND m.availability != 'Private'
+              AND m.mode IS DISTINCT FROM 'TakenDown'
+              AND mv.status = 'Published'
+              AND mv.availability != 'Private'
+              AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
       ) t
       WHERE t.rn = 1
     ), articleItemImage AS MATERIALIZED (
@@ -3756,9 +3841,13 @@ export const getCollectionCoverImages = async ({
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND i."blockedFor" IS NULL
+          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+          AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND ${publishedArticleSql}
     ), model3dItemImage AS MATERIALIZED (
         SELECT
           m3.id,
@@ -3768,11 +3857,16 @@ export const getCollectionCoverImages = async ({
         WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND i."blockedFor" IS NULL
+          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+          AND m3.status = 'Published'
+          AND m3."deletedAt" IS NULL
+          AND m3.availability != 'Private'
     )
     SELECT
         target."collectionId" id,
         COALESCE(
-          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
+          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId" AND iii."collectionId" = target."collectionId" LIMIT 1),
           (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
           (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
           (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
