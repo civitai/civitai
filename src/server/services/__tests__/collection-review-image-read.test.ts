@@ -109,4 +109,18 @@ describe("a collection review's image read", () => {
     const { text } = await statementFor({ id: REVIEWER }, { pending: true });
     expect(text).not.toMatch(REVIEW_ARM);
   });
+
+  // A choice, not an accident: a judge sees a submission that is acceptable only in a collection,
+  // so they can reject it; once ACCEPTED, the collection's normal read leaves it out.
+  it('keeps collection-only acceptable images in the review read, and out of the ACCEPTED read', async () => {
+    const review = await statementFor(
+      { id: REVIEWER },
+      { pending: true, reviewCollectionId: COLLECTION }
+    );
+    expect(review.text).not.toMatch(/i\."acceptableMinor" = FALSE/);
+    vi.clearAllMocks();
+    queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
+    const accepted = await statementFor({ id: REVIEWER }, { pending: false });
+    expect(accepted.text).toMatch(/i\."acceptableMinor" = FALSE/);
+  });
 });

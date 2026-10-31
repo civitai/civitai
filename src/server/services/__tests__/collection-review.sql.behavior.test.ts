@@ -41,7 +41,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, "postId" int, "nsfwLevel" int DEFAULT 1, "needsReview" text,
       ingestion "ImageIngestionStatus" DEFAULT 'Scanned', "blockedFor" text,
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
-      metadata jsonb DEFAULT '{}', "scanJobs" jsonb DEFAULT '{}'
+      metadata jsonb DEFAULT '{}', "scanJobs" jsonb DEFAULT '{}', "acceptableMinor" boolean DEFAULT false
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, status "ArticleStatus", "publishedAt" timestamp(3),
@@ -77,7 +77,11 @@ beforeAll(async () => {
       (11, 100, 0, NULL, 'Pending', NULL),    -- not yet rated, REJECTED
       (12, 100, 1, NULL, 'Error', NULL),      -- rated, but its scan errored unlocked
       (13, 100, 4, NULL, 'Scanned', NULL),    -- rated R
-      (14, 100, 0, NULL, 'Blocked', NULL);    -- not yet rated, and Blocked at ingestion
+      (14, 100, 0, NULL, 'Blocked', NULL);    -- not yet rated, ingestion status 'Blocked'
+
+    INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion, "nsfwLevelLocked", "acceptableMinor") VALUES
+      (15, 100, 1, 'Pending', true, false),   -- rated by a locked rating before its scan finished
+      (16, 100, 1, 'Scanned', false, true);   -- acceptable in a collection, not in the public feeds
 
     INSERT INTO "Article" VALUES (200, 'Published', now(), 'Scanned', 1), (201, 'Published', now(), 'Pending', 1);
     INSERT INTO "ModelMetric" VALUES (300, 'Published', 1, NULL, 'Public'), (301, 'Published', 1, NULL, 'Private');
@@ -85,7 +89,8 @@ beforeAll(async () => {
     INSERT INTO "CollectionItem" ("collectionId", status, "imageId") VALUES
       (1, 'REVIEW', 1), (1, 'REVIEW', 2), (1, 'REVIEW', 3), (1, 'REVIEW', 4), (1, 'REVIEW', 5),
       (1, 'REVIEW', 6), (1, 'REVIEW', 7), (1, 'REVIEW', 8), (1, 'ACCEPTED', 9), (2, 'REVIEW', 10),
-      (1, 'REJECTED', 11), (1, 'REVIEW', 12), (1, 'REVIEW', 13), (1, 'REVIEW', 14);
+      (1, 'REJECTED', 11), (1, 'REVIEW', 12), (1, 'REVIEW', 13), (1, 'REVIEW', 14),
+      (1, 'REVIEW', 15), (1, 'REVIEW', 16);
     INSERT INTO "CollectionItem" ("collectionId", status, "postId") VALUES (1, 'REVIEW', 100), (1, 'REVIEW', 101);
     INSERT INTO "CollectionItem" ("collectionId", status, "articleId") VALUES (1, 'REVIEW', 200), (1, 'REVIEW', 201);
     INSERT INTO "CollectionItem" ("collectionId", status, "modelId") VALUES (1, 'REVIEW', 300), (1, 'REVIEW', 301);
@@ -146,11 +151,11 @@ describe('the review queue count', () => {
     ).map((r) => r.id);
 
   it('counts the submissions the queue shows, rated or not', async () => {
-    expect(await counted('imageId')).toEqual([1, 2, 13]);
+    expect(await counted('imageId')).toEqual([1, 2, 13, 15, 16]);
   });
 
   it('counts only the rated images the requesting domain can serve, and the unrated ones', async () => {
-    expect(await counted('imageId', 1)).toEqual([1, 2]);
+    expect(await counted('imageId', 1)).toEqual([1, 2, 15, 16]);
   });
 
   it('leaves out posts, articles and models the queue does not show', async () => {

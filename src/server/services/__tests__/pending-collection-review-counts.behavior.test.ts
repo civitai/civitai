@@ -424,7 +424,7 @@ const VISIBLE_IDS: Record<number, number[]> = {
   [VIS_MODEL]: [101, 110],
   // Images on a published, non-Private post, unrated included; not one on a draft or unpublished
   // post, not the license-restricted one, not a top-level-only one, not one the reviewer's own read
-  // leaves out (ingestion, block reason, review hold, unfinished scan), not an image with no post or
+  // leaves out (ingestion status, block reason, a pending review flag, an ingestion check not passed), not an image with no post or
   // a missing post, not a missing image, and not one on a row whose draft post is judged first.
   [VIS_IMAGE]: [201, 208],
   // Only the published, rated, non-Private post. Not a draft, a scheduled post, an unrated,
