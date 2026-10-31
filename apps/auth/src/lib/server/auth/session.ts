@@ -11,7 +11,7 @@ import {
   type SessionUser,
 } from '@civitai/auth';
 import { sessions } from './registry';
-import { getOrCreateDeviceId, linkAccount } from './device';
+import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
 import { issuePendingAuthz } from './pending-authz';
@@ -163,15 +163,12 @@ export async function establishSession(
     setSessionCookie(cookies, token);
   }
 
-  // Link this account to the browser's device set (the account-switch list — see
-  // docs/auth/auth-hub-spoke-overview.md). LAZY: only writes a
-  // `device:accounts:*` key when this is a genuine 2nd distinct account (priorUserId set + != user.id), or when
-  // the set already exists. An ordinary single-account login writes nothing. Best-effort.
-  // Resolve the device id on its own line FIRST: getOrCreateDeviceId is SYNCHRONOUS and (re)sets the device
-  // cookie — keeping it outside the `.catch(...)` chain ensures the cookie-roll always lands and can't be
-  // swallowed as if it were part of linkAccount's best-effort redis write.
+  // Link this account to the browser's account list (docs/auth/auth-hub-spoke-overview.md). A list this browser
+  // can't show it is signed in to stays with the old device id; the sign-in starts on a new one.
   const deviceId = getOrCreateDeviceId(cookies);
-  await linkAccount(deviceId, user.id, priorUserId).catch(() => {});
+  if ((await linkAccount(deviceId, user.id, priorUserId)) === 'rotate') {
+    await linkAccount(rotateDeviceId(cookies), user.id, priorUserId);
+  }
 }
 
 /**

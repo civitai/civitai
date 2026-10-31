@@ -21,6 +21,7 @@ vi.mock('@civitai/redis', () => ({
 }));
 vi.mock('../cookie', () => ({ cookieDomain: () => undefined }));
 
+import { createLuaRedis } from '../../../../../../../src/server/utils/__tests__/redis-lua-harness';
 import {
   touchAccount,
   linkAccount,
@@ -33,13 +34,30 @@ const DEVICE = 'dev-1';
 const KEY = `device:accounts:${DEVICE}`;
 const DEVICE_TTL_S = 30 * 24 * 60 * 60;
 
-// Minimal in-memory sys-redis: hash-of-hashes keyed by redis key, plus a per-key TTL recorder.
+// Minimal in-memory sys-redis: hash-of-hashes keyed by redis key, plus a per-key TTL recorder. `eval` runs the
+// script in real Lua over the same store.
 function makeSys() {
   const store = new Map<string, Map<string, string>>();
   const ttl = new Map<string, number>();
   return {
     _store: store,
     _ttl: ttl,
+    eval: vi.fn(async (script: string, opts: { keys: string[]; arguments: string[] }) => {
+      const lua = createLuaRedis(Date.now());
+      for (const k of opts.keys) {
+        const m = store.get(k);
+        if (m) lua.setHash(k, Object.fromEntries(m));
+      }
+      const result = await lua.eval(script, opts);
+      for (const k of opts.keys) {
+        const after = lua.hash(k);
+        if (after) store.set(k, new Map(Object.entries(after)));
+        else store.delete(k);
+        const ms = lua.pttl(k);
+        if (ms > 0) ttl.set(k, Math.round(ms / 1000));
+      }
+      return result;
+    }),
     exists: vi.fn(async (k: string) => (store.has(k) && store.get(k)!.size > 0 ? 1 : 0)),
     // Field count of the stored hash (0 if absent) — mirrors redis HLEN, which touchAccount now gates on.
     hLen: vi.fn(async (k: string) => store.get(k)?.size ?? 0),
@@ -112,7 +130,7 @@ describe('linkAccount — lazy materialization', () => {
     h.getSysRedis.mockReturnValue(sys);
 
     await linkAccount(DEVICE, 200, 100); // -> {100, 200}
-    await linkAccount(DEVICE, 300, 100); // set already exists -> add 300
+    await linkAccount(DEVICE, 300, 100); // set exists and the prior account 100 is in it -> add 300
 
     const accounts = await listAccounts(DEVICE);
     expect(accounts.map((a) => a.userId).sort()).toEqual([100, 200, 300]);
@@ -121,7 +139,7 @@ describe('linkAccount — lazy materialization', () => {
 
   it('is a best-effort no-op when sysRedis is not configured', async () => {
     h.getSysRedis.mockReturnValue(null);
-    await expect(linkAccount(DEVICE, 200, 100)).resolves.toBeUndefined();
+    await expect(linkAccount(DEVICE, 200, 100)).resolves.toBe('kept');
   });
 });
 
@@ -165,7 +183,7 @@ describe('linkAccount — materialize is ATOMIC (no TTL-less key window)', () =>
 
     // A blip during materialize must not fail the login it rides on. And because the field-writes and TTL
     // were a single op, a failed attempt leaves NO key at all (not a TTL-less one).
-    await expect(linkAccount(DEVICE, 200, 100)).resolves.toBeUndefined();
+    await expect(linkAccount(DEVICE, 200, 100)).resolves.toBe('kept');
     expect(sys._store.has(KEY)).toBe(false);
   });
 });
@@ -229,7 +247,6 @@ describe('touchAccount — refresh-only', () => {
     await touchAccount(DEVICE, 100);
 
     // No write of any kind — the singleton must be left to expire.
-    expect(sys.hLen).toHaveBeenCalledWith(KEY);
     expect(sys.hSet).not.toHaveBeenCalled();
     expect(sys.hSetMultiWithExpire).not.toHaveBeenCalled();
     expect(sys.expire).not.toHaveBeenCalled();
@@ -243,15 +260,19 @@ describe('touchAccount — refresh-only', () => {
     h.getSysRedis.mockReturnValue(sys);
     // Seed an existing multi-account set (hlen = 2) so the refresh path is exercised.
     await linkAccount(DEVICE, 200, 100);
-    sys.expire.mockClear();
+    sys._ttl.delete(KEY);
 
-    const before = Number((await listAccounts(DEVICE)).find((a) => a.userId === 100)!.lastSwitchedAt);
+    const before = Number(
+      (await listAccounts(DEVICE)).find((a) => a.userId === 100)!.lastSwitchedAt
+    );
     await new Promise((r) => setTimeout(r, 2));
     await touchAccount(DEVICE, 100);
 
-    const after = Number((await listAccounts(DEVICE)).find((a) => a.userId === 100)!.lastSwitchedAt);
+    const after = Number(
+      (await listAccounts(DEVICE)).find((a) => a.userId === 100)!.lastSwitchedAt
+    );
     expect(after).toBeGreaterThanOrEqual(before);
-    expect(sys.expire).toHaveBeenCalledWith(KEY, DEVICE_TTL_S);
+    expect(sys._ttl.get(KEY)).toBe(DEVICE_TTL_S);
   });
 });
 
