@@ -4,12 +4,14 @@ import {
   GET_USER_FEEDBACK,
   SET_FEEDBACK_STATUS,
   createAppFeedbackSource,
+  feedbackNotRead,
   type AuthorReads,
 } from '@civitai/app-assistant';
 import { createAssistantGate } from '~/components/Apps/AppAssistant/assistantGate';
 import {
   FEEDBACK_NOTIFIES_TEXT,
   FEEDBACK_OFFER_NOT_LIVE,
+  feedbackWhatText,
   feedbackButtonText,
   feedbackChangedText,
   feedbackDoneText,
@@ -87,13 +89,21 @@ describe('the feedback status card', () => {
     const s = setup();
     const output = await offer(s);
     const card = s.render(output)!;
-    expect(card.textContent).toContain('#4417, #5528');
+    // The user sees the app and what each item says, not bare ids.
+    expect(card.textContent).toContain(feedbackWhatText(APP, 'resolved'));
+    const rows = [
+      ...card.querySelectorAll('[data-testid="app-assistant-feedback-status-items"] li'),
+    ];
+    expect(rows.map((row) => row.textContent)).toEqual([
+      '#4417: “wrong total”',
+      '#5528: “add dark mode”',
+    ]);
     expect(card.textContent).toContain(FEEDBACK_NOTIFIES_TEXT);
     expect(button(card)?.textContent).toBe(
       feedbackButtonText({
         items: [
-          { id: 1, from: 'new' },
-          { id: 2, from: 'new' },
+          { id: 1, from: 'new', excerpt: '' },
+          { id: 2, from: 'new', excerpt: '' },
         ],
         status: 'resolved',
       })
@@ -115,6 +125,33 @@ describe('the feedback status card', () => {
     expect(button(card)).toBeNull();
   });
 
+  test('an excerpt is shown as text, never as markup', async () => {
+    const s = setup();
+    const card = s.render({
+      awaitsUser: true,
+      feedbackStatus: 'earlier-visit-2',
+      app: APP,
+      appListingId: LISTING,
+      status: 'resolved',
+      items: [{ id: 4417, from: 'new', excerpt: '<img src=x onerror=alert(1)>' }],
+      note: '',
+    })!;
+    expect(card.querySelector('img')).toBeNull();
+    expect(card.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+
+  test('a new reply forgets what the last one read: no offer for those items', async () => {
+    const s = setup();
+    await s.call(GET_USER_FEEDBACK, { status: 'all' });
+    // The next reply's first call resets what was read (the gate's onReply).
+    await s.gate.beforeToolCall(SET_FEEDBACK_STATUS, {}, { conversationId: 'c', reply: 2 });
+    await expect(
+      Promise.resolve().then(() =>
+        s.gate.tools[SET_FEEDBACK_STATUS]!.execute({ ids: [4417], status: 'resolved' }, ctx)
+      )
+    ).rejects.toThrow(feedbackNotRead([4417]));
+  });
+
   test('acknowledged does not say the writers are told', async () => {
     const s = setup();
     const card = s.render(await offer(s, 'acknowledged', [4417]))!;
@@ -129,7 +166,7 @@ describe('the feedback status card', () => {
       app: APP,
       appListingId: LISTING,
       status: 'resolved',
-      items: [{ id: 4417, from: 'new' }],
+      items: [{ id: 4417, from: 'new', excerpt: 'wrong total' }],
       note: '',
     })!;
     expect(button(card)).toBeNull();

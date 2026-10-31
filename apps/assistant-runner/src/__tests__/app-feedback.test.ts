@@ -231,7 +231,7 @@ describe('the feedback tools on the runner', () => {
       awaitsUser: true,
       appListingId: 'lst_my_51',
       status: 'resolved',
-      items: [{ id: 6631, from: 'new' }],
+      items: [{ id: 6631, from: 'new', excerpt: 'Blank on my phone' }],
     });
     expect(String(offer.feedbackStatus)).toMatch(/^run-7-feedback-/);
     // Told to the page, whose card is the only thing that writes.

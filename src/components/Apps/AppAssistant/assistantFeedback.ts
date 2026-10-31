@@ -2,7 +2,6 @@ import type { ChatToolCall, ChatToolResult } from '@civitai/components-chat/civi
 import {
   REPORTER_NOTIFIED_STATUSES,
   feedbackStatusOfferOf,
-  type FeedbackItemStatus,
   type FeedbackStatus,
   type FeedbackStatusOffer,
 } from '@civitai/app-assistant';
@@ -47,6 +46,10 @@ const STATUS_WORDS: Record<FeedbackStatus, string> = {
 };
 
 export const FEEDBACK_CARD_TITLE = 'Change feedback status';
+export const feedbackWhatText = (app: string, status: FeedbackStatus) =>
+  `In ${app}, mark as ${STATUS_WORDS[status]}:`;
+export const feedbackItemText = (item: { id: number; excerpt: string }) =>
+  `#${item.id}: “${item.excerpt}”`;
 export const feedbackButtonText = (offer: Pick<FeedbackStatusOffer, 'items' | 'status'>) =>
   `Mark ${offer.items.length === 1 ? 'it' : `all ${offer.items.length}`} as ${
     STATUS_WORDS[offer.status]
@@ -80,7 +83,7 @@ interface Card {
   offer: FeedbackStatusOffer;
   phase: Phase;
   /** The items still to change: all of them, then those a failed press left. */
-  pending: { id: number; from: FeedbackItemStatus }[];
+  pending: FeedbackStatusOffer['items'];
 }
 
 const CARD_STYLE =
@@ -112,13 +115,19 @@ export function createFeedbackStatusCards({
     const title = document.createElement('div');
     title.textContent = FEEDBACK_CARD_TITLE;
     title.style.fontWeight = '600';
-    const what = line(
-      `${card.offer.items.map((item) => `#${item.id}`).join(', ')} → ${
-        STATUS_WORDS[card.offer.status]
-      }`
-    );
+    // What is being marked, in the words its writers used: the user approves the items, not ids.
+    // textContent only: the excerpts are other people's text.
+    const what = line(feedbackWhatText(card.offer.app, card.offer.status));
     what.setAttribute('data-testid', 'app-assistant-feedback-status-what');
-    card.el.replaceChildren(title, what, ...children);
+    const list = document.createElement('ul');
+    list.style.cssText = 'margin:4px 0 0;padding-left:18px';
+    list.setAttribute('data-testid', 'app-assistant-feedback-status-items');
+    for (const item of card.offer.items) {
+      const row = document.createElement('li');
+      row.textContent = feedbackItemText(item);
+      list.append(row);
+    }
+    card.el.replaceChildren(title, what, list, ...children);
   };
 
   const offerButton = (card: Card, ...notes: HTMLElement[]) => {
@@ -142,7 +151,7 @@ export function createFeedbackStatusCards({
     const { appListingId, status } = card.offer;
     const done: number[] = [];
     const changed: number[] = [];
-    const failed: { id: number; from: FeedbackItemStatus }[] = [];
+    const failed: FeedbackStatusOffer['items'] = [];
     // One at a time: each is its own conditional write, and a failure leaves the rest to retry.
     for (const item of card.pending) {
       try {

@@ -91,17 +91,20 @@ export function createAssistantGate({
   const feedbackCards = feedback ? createFeedbackStatusCards(feedback) : null;
   let feedbackOffers = 0;
   const feedbackPrefix = Math.random().toString(36).slice(2, 10);
-  const feedbackTools: Record<string, ChatTool> = feedback
+  const feedbackSet = feedback
     ? createFeedbackTools({
         current: () => openApp?.() ?? null,
         source: feedback.source,
         nextId: () => `${feedbackPrefix}-feedback-${++feedbackOffers}`,
-      }).tools
-    : {};
+      })
+    : null;
+  const feedbackTools: Record<string, ChatTool> = feedbackSet?.tools ?? {};
   const core = createGateCore({
     refuse,
     onReply: () => {
       submitCards?.withdraw();
+      // A status offer names only items read in this reply, as on the runner.
+      feedbackSet?.newReply();
       onReply?.();
     },
     openApp,
