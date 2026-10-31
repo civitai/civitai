@@ -434,7 +434,9 @@ describe('assertGenerationInputsUsable', () => {
     expect(await gate([CDN()])).toBe('accepted');
     await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'moderated'`);
     expect(await gate([CDN()])).toBe('refused');
-    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = NULL; UPDATE "Post" SET availability = 'Private'`);
+    await holder.db.exec(
+      `UPDATE "Image" SET "blockedFor" = NULL; UPDATE "Post" SET availability = 'Private'`
+    );
     expect(await gate([CDN()])).toBe('refused');
   });
 
@@ -445,6 +447,14 @@ describe('assertGenerationInputsUsable', () => {
       holder.refuseExternal = true;
       expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
     }
+  });
+
+  it('checks the keys an allowed external url carries', async () => {
+    const proxied = `https://proxy.example/?url=${encodeURIComponent(CDN())}`;
+    await givenImage();
+    expect(await gate([proxied], 'generateFromGraph')).toBe('accepted');
+    await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+    expect(await gate([proxied], 'generateFromGraph')).toBe('refused');
   });
 });
 
@@ -472,7 +482,10 @@ describe('generationInputUrlsIn', () => {
 
   it.each([
     ['a space in the path', `https://image.civitai.com/x/${KEY}/original=true/my pic.jpeg`],
-    ['a no-break space in the path', `https://image.civitai.com/x/${KEY}/original=true/my\u00a0pic.jpeg`],
+    [
+      'a no-break space in the path',
+      `https://image.civitai.com/x/${KEY}/original=true/my\u00a0pic.jpeg`,
+    ],
     ['no slashes after the scheme', `https:image.civitai.com/x/${KEY}/original=true`],
     ['one slash after the scheme', `https:/image.civitai.com/x/${KEY}/original=true`],
     ['a key without dashes', KEY.replace(/-/g, '')],
@@ -501,19 +514,21 @@ describe('a url spelled so the input walk once missed it', () => {
     ['a key without dashes', KEY.replace(/-/g, '')],
   ])("is refused for another user's private image, with %s", async (_, url) => {
     await givenImage({ postId: null });
-    expect(await gateGraph({ images: [{ url: `https://image.civitai.com/x/${KEY}/original=true` }] })).toBe(
-      'refused'
-    );
+    expect(
+      await gateGraph({ images: [{ url: `https://image.civitai.com/x/${KEY}/original=true` }] })
+    ).toBe('refused');
     expect(await gateGraph({ images: [{ url }] })).toBe('refused');
   });
 
   it("accepts the same spellings of another user's public image where they parse", async () => {
     await givenImage();
     expect(
-      await gateGraph({ images: [{ url: `https://image.civitai.com/x/${KEY}/original=true/my pic.jpeg` }] })
+      await gateGraph({
+        images: [{ url: `https://image.civitai.com/x/${KEY}/original=true/my pic.jpeg` }],
+      })
     ).toBe('accepted');
-    expect(await gateGraph({ images: [{ url: `https:image.civitai.com/x/${KEY}/original=true` }] })).toBe(
-      'accepted'
-    );
+    expect(
+      await gateGraph({ images: [{ url: `https:image.civitai.com/x/${KEY}/original=true` }] })
+    ).toBe('accepted');
   });
 });

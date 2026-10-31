@@ -3,7 +3,10 @@ import { env as clientEnv } from '~/env/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
-import { CIVITAI_IMAGE_HOSTS, hasUrlAmbiguousBytes } from '~/server/schema/blocks/civitai-image-url';
+import {
+  CIVITAI_IMAGE_HOSTS,
+  hasUrlAmbiguousBytes,
+} from '~/server/schema/blocks/civitai-image-url';
 import {
   assertClientKeysIssuedToCaller,
   imageUrlUnavailableError,
@@ -121,7 +124,8 @@ export type GenerationInputEntryPoint =
   | 'iterateGenerate'
   | 'getIterateCostEstimate'
   | 'imageUpload'
-  | 'appBlocks';
+  | 'appBlocks'
+  | 'comicsCostEstimate';
 
 const IMAGE_CDN_HOSTS = CIVITAI_IMAGE_HOSTS.map((h) => `image.${h}`);
 
@@ -194,10 +198,25 @@ const refusalCounter = registerCounterWithLabels({
 });
 
 /** Schemes a fetcher may resolve. `urn:` (AIR ids) is not one of them. */
-const FETCH_SCHEMES = new Set(['http:', 'https:', 'data:', 'blob:', 'ftp:', 'file:', 'ws:', 'wss:']);
+const FETCH_SCHEMES = new Set([
+  'http:',
+  'https:',
+  'data:',
+  'blob:',
+  'ftp:',
+  'file:',
+  'ws:',
+  'wss:',
+]);
 
 /** Graph fields that hold free text, never a url read by a handler. */
-const FREE_TEXT_FIELDS = new Set(['prompt', 'negativePrompt', 'musicDescription', 'lyrics', 'description']);
+const FREE_TEXT_FIELDS = new Set([
+  'prompt',
+  'negativePrompt',
+  'musicDescription',
+  'lyrics',
+  'description',
+]);
 
 /** Anything that may be a key in another spelling: uuid hex with or without dashes or braces. */
 const KEY_LIKE = /^\{?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\}?$/i;
@@ -280,8 +299,11 @@ export async function assertGenerationInputsUsable({
       continue;
     }
     if (cls === 'external' && (entry === 'generateFromGraph' || entry === 'whatIfFromGraph')) {
-      if (await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS)) throw refuse(cls);
+      if (await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS))
+        throw refuse(cls);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
+      // A proxy or wrapper url may carry one of our keys: those keys are checked like any other.
+      keysIn(url).forEach((key) => keys.add(key));
       continue;
     }
     throw refuse(cls);
