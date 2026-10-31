@@ -411,7 +411,7 @@ export const createSubscribeSession = async ({
         ...(blockAttributionMetadata ?? {}),
       };
 
-      const { releaseArmedGiftMonth, restoreArmedGiftMonth } = await import(
+      const { clearGiftTierReverts, releaseArmedGiftMonth, restoreArmedGiftMonth } = await import(
         '~/server/services/membership-gift.service'
       );
       const releasedGiftMonth = await releaseArmedGiftMonth({ userId: user.id });
@@ -463,6 +463,7 @@ export const createSubscribeSession = async ({
         );
       }
 
+      await clearGiftTierReverts({ userId: user.id });
       await refreshSession(user.id, { caller: 'subscription' });
       return {
         sessionId: null,
