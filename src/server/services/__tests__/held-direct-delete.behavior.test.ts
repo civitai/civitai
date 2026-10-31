@@ -8,6 +8,7 @@ import {
   REPORTED,
   commentsLeft,
   createModelHoldDb,
+  dropMarkerView,
   holdOwner,
   seedModelHoldDb,
   seedReviewThread,
@@ -58,9 +59,12 @@ beforeEach(async () => {
   before = null;
   await seedModelHoldDb(db);
   await db.exec(`
+    DROP TRIGGER IF EXISTS fail_copy ON "HeldResourceReview";
+    DROP TRIGGER IF EXISTS fail_copy ON "HeldAnswer";
     TRUNCATE "Answer", "HeldAnswer" CASCADE;
-    INSERT INTO "ResourceReview" (id, "userId", "modelVersionId", "modelId", recommended, details)
-      SELECT a * 1000, a, a * 100 + 1, a * 10, false, 'review by ' || a
+    INSERT INTO "ResourceReview"
+      (id, "userId", "modelVersionId", "modelId", rating, recommended, nsfw, details)
+      SELECT a * 1000, a, a * 100 + 1, a * 10, 3, false, true, 'review by ' || a
       FROM unnest(ARRAY[${CLEAN}, ${REPORTED}, ${MARKED}]) a;
     INSERT INTO "Answer" (id, "userId", "questionId", content)
       SELECT a * 1000 + 1, a, ${QUESTION}, 'answer by ' || a
@@ -70,7 +74,7 @@ beforeEach(async () => {
     const sql = Array.isArray(first)
       ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
       : (first as Prisma.Sql);
-    if (before && /^\s*WITH/.test(sql.text)) await before();
+    if (before && /DELETE FROM/.test(sql.text)) await before();
     return db.query(sql.text, sql.values);
   };
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(
@@ -97,10 +101,78 @@ const answerIds = async () =>
   (await db.query<{ id: number }>(`SELECT id FROM "Answer" ORDER BY id`)).rows.map((r) => r.id);
 const heldAnswers = async () =>
   (
-    await db.query<{ id: number; content: string }>(
-      `SELECT id, content FROM "HeldAnswer" ORDER BY id`
+    await db.query<{ id: number; content: string; holdReasons: string[] }>(
+      `SELECT id, content, "holdReasons" FROM "HeldAnswer" ORDER BY id`
     )
   ).rows;
+
+/** Makes every insert into `table` fail, as a copy that errors would. */
+const failCopiesInto = (table: 'HeldResourceReview' | 'HeldAnswer') =>
+  db.exec(`
+    CREATE OR REPLACE FUNCTION fail_copy() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'copy failed'; END $$;
+    CREATE TRIGGER fail_copy BEFORE INSERT ON "${table}" FOR EACH ROW EXECUTE FUNCTION fail_copy();
+  `);
+
+// Each direct delete of the unheld author's review or answer, with how to read what is left.
+const PATHS = [
+  {
+    path: 'deleteResourceReview',
+    run: () => deleteResourceReview({ id: reviewOf(CLEAN) }),
+    table: 'HeldResourceReview',
+    row: reviewOf(CLEAN),
+    left: reviewIds,
+    copies: heldReviews,
+  },
+  {
+    path: 'deleteResourceReviews',
+    run: () => deleteResourceReviews({ ids: [reviewOf(CLEAN)] }),
+    table: 'HeldResourceReview',
+    row: reviewOf(CLEAN),
+    left: reviewIds,
+    copies: heldReviews,
+  },
+  {
+    path: 'toggleReview off',
+    run: () => toggleReview({ modelId: CLEAN * 10, userId: CLEAN, setTo: false }),
+    table: 'HeldResourceReview',
+    row: reviewOf(CLEAN),
+    left: reviewIds,
+    copies: heldReviews,
+  },
+  {
+    path: 'deleteAnswer',
+    run: () => deleteAnswer({ id: answerOf(CLEAN) }),
+    table: 'HeldAnswer',
+    row: answerOf(CLEAN),
+    left: answerIds,
+    copies: heldAnswers,
+  },
+] as const;
+
+describe.each(PATHS)('$path', ({ run, table, row, left, copies }) => {
+  it('copies a row whose author is held just before the delete runs', async () => {
+    before = () => holdOwner(db, CLEAN);
+    await run();
+
+    expect((await copies()).map((c) => [c.id, c.holdReasons])).toEqual([[row, ['report']]]);
+  });
+
+  it('copies every author when the hold cannot be read', async () => {
+    await dropMarkerView(db);
+    await run();
+
+    expect((await copies()).map((c) => [c.id, c.holdReasons])).toEqual([[row, ['hold-marker']]]);
+  });
+
+  it('deletes nothing when the copy fails', async () => {
+    await holdOwner(db, CLEAN);
+    await failCopiesInto(table);
+
+    await expect(run()).rejects.toThrow('copy failed');
+    expect(await left()).toContain(row);
+  });
+});
 
 describe('deleteResourceReview', () => {
   it('deletes a held author review and keeps a copy of it', async () => {
@@ -108,16 +180,17 @@ describe('deleteResourceReview', () => {
 
     expect(await reviewIds()).not.toContain(reviewOf(MARKED));
     const copies = await heldReviews();
-    expect(copies.map((c) => [c.id, c.details])).toEqual([
-      [reviewOf(MARKED), `review by ${MARKED}`],
+    expect(copies).toEqual([
+      { id: reviewOf(MARKED), details: `review by ${MARKED}`, holdReasons: ['hold-marker'] },
     ]);
-    expect(copies[0].holdReasons.length).toBeGreaterThan(0);
   });
 
   it('keeps a copy for an author named on a pending report', async () => {
     await deleteResourceReview({ id: reviewOf(REPORTED) });
 
-    expect((await heldReviews()).map((c) => c.id)).toEqual([reviewOf(REPORTED)]);
+    expect((await heldReviews()).map((c) => [c.id, c.holdReasons])).toEqual([
+      [reviewOf(REPORTED), ['report']],
+    ]);
   });
 
   it('deletes an unheld author review with no copy (control)', async () => {
@@ -125,13 +198,6 @@ describe('deleteResourceReview', () => {
 
     expect(await reviewIds()).toEqual([reviewOf(REPORTED), reviewOf(MARKED)]);
     expect(await heldReviews()).toEqual([]);
-  });
-
-  it('copies a review whose author is held just before the delete runs', async () => {
-    before = () => holdOwner(db, CLEAN);
-    await deleteResourceReview({ id: reviewOf(CLEAN) });
-
-    expect((await heldReviews()).map((c) => c.id)).toEqual([reviewOf(CLEAN)]);
   });
 
   it('returns the deleted row as the client reads it', async () => {
@@ -142,9 +208,9 @@ describe('deleteResourceReview', () => {
       userId: CLEAN,
       modelId: CLEAN * 10,
       modelVersionId: versionOf(CLEAN),
-      rating: 5,
+      rating: 3,
       recommended: false,
-      nsfw: false,
+      nsfw: true,
     });
     expect(ret.createdAt).toBeInstanceOf(Date);
   });
@@ -185,6 +251,18 @@ describe('deleteResourceReviews', () => {
 
     expect(count).toBe(1);
   });
+
+  it('still detaches a thread a held account commented in', async () => {
+    await seedReviewThread(db, {
+      reviewId: 5000,
+      versionId: versionOf(CLEAN, 2),
+      reviewer: CLEAN,
+      commenter: MARKED,
+    });
+    await deleteResourceReviews({ ids: [5000] });
+
+    expect(await commentsLeft(db)).toEqual([{ id: 5000, onReview: false }]);
+  });
 });
 
 describe('deleteAnswer', () => {
@@ -192,7 +270,9 @@ describe('deleteAnswer', () => {
     await deleteAnswer({ id: answerOf(MARKED) });
 
     expect(await answerIds()).not.toContain(answerOf(MARKED));
-    expect(await heldAnswers()).toEqual([{ id: answerOf(MARKED), content: `answer by ${MARKED}` }]);
+    expect(await heldAnswers()).toEqual([
+      { id: answerOf(MARKED), content: `answer by ${MARKED}`, holdReasons: ['hold-marker'] },
+    ]);
   });
 
   it('deletes an unheld author answer with no copy (control)', async () => {
@@ -226,6 +306,16 @@ describe('toggleReview off', () => {
 
     expect(await reviewIds()).not.toContain(reviewOf(MARKED));
     expect((await heldReviews()).map((c) => c.id)).toEqual([reviewOf(MARKED)]);
+  });
+
+  it('still detaches a thread a held account commented in', async () => {
+    await db.exec(`
+      INSERT INTO "Thread" (id, "reviewId") VALUES (7000, ${reviewOf(CLEAN)});
+      INSERT INTO "CommentV2" VALUES (7000, ${MARKED}, 7000);
+    `);
+    await toggleReview({ modelId: CLEAN * 10, userId: CLEAN, setTo: false });
+
+    expect(await commentsLeft(db)).toEqual([{ id: 7000, onReview: false }]);
   });
 
   it('removes an unheld author review with no copy (control)', async () => {
