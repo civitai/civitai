@@ -1130,6 +1130,9 @@ export async function deleteImages(
       ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
       DELETE FROM "Image"
       WHERE id IN (SELECT id FROM doomed)
+        -- Again here: a row changed while this statement waits for it is re-checked only against
+        -- the DELETE's own WHERE, never the CTE's.
+        ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
