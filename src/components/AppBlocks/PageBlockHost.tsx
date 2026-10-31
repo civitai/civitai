@@ -22,6 +22,7 @@ import {
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
+import { useIsMounted } from '~/hooks/useIsMounted';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   BLOCK_READY_TIMEOUT_MS,
@@ -302,6 +303,9 @@ const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), {
  * surface from `readyWaitPolicyFor`, never from this constant directly.
  */
 export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
+
+/** How long a dev-tunnel Retry waits for `onRefreshEntryUrl` before re-arming on the current URL. */
+const ENTRY_REFRESH_TIMEOUT_MS = 10_000;
 
 /**
  * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly
@@ -758,7 +762,7 @@ export interface PageBlockHostProps {
    *  because `token`/`tokenError` are owned upstream — only re-minting can. Wired
    *  to the same useBlockToken.refresh as onConsentGranted (it aborts any
    *  in-flight mint; the endpoint is rate-limited 60/min). Omitted → Retry on an
-   *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
+   *  auth error only remounts (a dead end), so the route MUST pass it. */
   onRetryToken?: () => void;
   /**
    * DEV-TUNNEL ONLY: the app reloaded itself inside the frame after it was ready (Vite's
@@ -773,8 +777,8 @@ export interface PageBlockHostProps {
    * has expired, so a Retry that remounted the ORIGINAL `iframeSrc` would load a refusal page and
    * time out again. With this wired, every dev-tunnel Retry (manual and automatic) first awaits a
    * fresh URL and remounts the frame on it IN PLACE: this host is not remounted, so the bounded
-   * auto-retry budget carries across attempts. A rejected or empty result keeps the current URL
-   * (the pre-fix remount). Ignored on every other surface, whose `iframeSrc` does not expire.
+   * auto-retry budget carries across attempts. A rejected or empty result keeps the current URL.
+   * Ignored on every other surface, whose `iframeSrc` does not expire.
    */
   onRefreshEntryUrl?: () => Promise<string>;
   /**
@@ -5529,19 +5533,6 @@ export function PageBlockHost({
   // 🔴 It deliberately no longer resets `blockRenderEmittedRef`. See the
   // BEACON-SEMANTICS block on the render-failure beacon: one beacon per mount
   // describing the outcome the host settles on.
-  //
-  // 🔴 DEV-TUNNEL: A REMOUNT ALONE RELOADS AN EXPIRED ENTRY URL. The dev tunnel's
-  // `iframeSrc` carries a short-lived entry token, and the edge refuses an entry
-  // document whose token has expired — so re-keying the <iframe> on the SAME src,
-  // minutes after it was minted, loads a refusal page that never acks, and the
-  // Retry lands on the same terminal again (it could never recover). So on that
-  // surface, when the parent wires `onRefreshEntryUrl`, the re-arm WAITS for a
-  // fresh entry URL and swaps it in (`freshEntry`) in the same batch as the
-  // re-key. The terminal fallback stays up meanwhile, which is also what keeps a
-  // second Retry from starting a second fetch (`entryRefreshInFlightRef`). A
-  // rejected or empty fetch keeps the current URL — the pre-fix remount — so a
-  // Retry always re-arms. The host itself is NOT remounted, so the automatic
-  // budget below carries across the attempts exactly as on every other surface.
   const rearm = useCallback(
     ({ remint }: { remint: boolean }) => {
       if (remint) onRetryToken?.();
@@ -5558,13 +5549,12 @@ export function PageBlockHost({
   const onRefreshEntryUrlRef = useRef(onRefreshEntryUrl);
   onRefreshEntryUrlRef.current = onRefreshEntryUrl;
   const entryRefreshInFlightRef = useRef(false);
-  const hostMountedRef = useRef(true);
-  useEffect(() => {
-    hostMountedRef.current = true;
-    return () => {
-      hostMountedRef.current = false;
-    };
-  }, []);
+  const isMounted = useIsMounted();
+  // 🔴 DEV-TUNNEL: remounting alone reloads the expired entry URL, so when the
+  // parent wires `onRefreshEntryUrl` the Retry waits for a fresh one and swaps it
+  // in (`freshEntry`) in the same batch as the re-key. The in-flight guard stops a
+  // second fetch. A failed, empty or timed-out (`ENTRY_REFRESH_TIMEOUT_MS`) fetch
+  // re-arms on the current URL.
   const performRetry = useCallback(
     ({ remint }: { remint: boolean }) => {
       const refreshEntryUrl = surface === 'dev-tunnel' ? onRefreshEntryUrlRef.current : undefined;
@@ -5575,20 +5565,25 @@ export function PageBlockHost({
       if (entryRefreshInFlightRef.current) return;
       entryRefreshInFlightRef.current = true;
       const base = iframeSrcRef.current;
-      void Promise.resolve()
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ENTRY_REFRESH_TIMEOUT_MS);
+      });
+      const fetched = Promise.resolve()
         .then(refreshEntryUrl)
         .then(
           (src) => src,
           () => null
-        )
-        .then((src) => {
-          entryRefreshInFlightRef.current = false;
-          if (!hostMountedRef.current) return;
-          if (src) setFreshEntry({ base, src });
-          rearm({ remint });
-        });
+        );
+      void Promise.race([fetched, timedOut]).then((src) => {
+        clearTimeout(timer);
+        entryRefreshInFlightRef.current = false;
+        if (!isMounted()) return;
+        if (src) setFreshEntry({ base, src });
+        rearm({ remint });
+      });
     },
-    [rearm, surface]
+    [rearm, surface, isMounted]
   );
 
   const handleRetry = useCallback(() => {
