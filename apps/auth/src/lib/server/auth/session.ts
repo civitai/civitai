@@ -166,9 +166,8 @@ export async function establishSession(
   // Link this account to the browser's account list (docs/auth/auth-hub-spoke-overview.md). A list this browser
   // can't show it is signed in to stays with the old device id; the sign-in starts on a new one.
   const deviceId = getOrCreateDeviceId(cookies);
-  if ((await linkAccount(deviceId, user.id, priorUserId)) === 'rotate') {
-    await linkAccount(rotateDeviceId(cookies), user.id, priorUserId);
-  }
+  const link = (id: string) => linkAccount(id, user.id, priorUserId).catch(() => 'none' as const);
+  if ((await link(deviceId)) === 'rotate') await link(rotateDeviceId(cookies));
 }
 
 /**

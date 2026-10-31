@@ -15,7 +15,12 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   isSecureCookie: () => false,
   maybeCreateSessionSigner: () => ({ maxAge: 3600, mintSessionToken: async () => 'minted' }),
 }));
-vi.mock('../../redis', () => ({ getSysRedis: () => h.sys, getRedis: () => null }));
+vi.mock('../../redis', () => ({
+  getSysRedis: () => h.sys,
+  getRedis: () => null,
+  evalSys: (script: string, keys: string[], args: string[]) =>
+    h.sys.eval(script, { keys, arguments: args }),
+}));
 vi.mock('../registry', () => ({ sessions: { trackToken: async () => undefined } }));
 vi.mock('../verifier', () => ({
   verifier: {
@@ -40,8 +45,9 @@ import type { Cookies } from '@sveltejs/kit';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { luaSysRedis as makeLuaSysRedis } from '../../../../test/lua-sys-redis';
 import { establishSession } from '../session';
-import { touchAccount } from '../device';
+import { linkAccount, touchAccount } from '../device';
 import { POST as switchPost } from '../../../../routes/api/auth/switch/+server';
+import { DELETE as removePost } from '../../../../routes/api/auth/accounts/+server';
 
 const DEVICE = 'device-1';
 const list = (deviceId: string) => `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}`;
@@ -76,6 +82,21 @@ async function switchStatus(userId: number, deviceId: string, target: number) {
   }
 }
 
+async function removeStatus(userId: number, deviceId: string, target: number) {
+  try {
+    const res = await removePost({
+      url: new URL(`https://auth.civitai.com/api/auth/accounts?userId=${target}`),
+      locals: { user: { id: userId }, deviceId },
+    } as never);
+    return res.status;
+  } catch (e) {
+    return (e as { status: number }).status;
+  }
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TTL_MS = 30 * DAY_MS;
+
 let now: string;
 beforeEach(() => {
   h.sys = makeLuaSysRedis();
@@ -102,6 +123,10 @@ describe('signing in on a browser with an account list', () => {
     expect(await switchStatus(300, DEVICE, 100)).toBe(403);
   });
 
+  it('an account in the list can switch to another in it (positive control)', async () => {
+    expect(await switchStatus(100, DEVICE, 200)).toBe(200);
+  });
+
   it('a sign-in while an account in the list is signed in joins it and keeps the device id', async () => {
     h.verified.set('prior', { sub: '100', jti: 'j' });
     const jar = makeCookies({ 'civ-device': DEVICE, 'civ-token': 'prior' });
@@ -110,6 +135,7 @@ describe('signing in on a browser with an account list', () => {
 
     expect(jar.device()).toBe(DEVICE);
     expect(Object.keys(h.sys.lua.hash(list(DEVICE))!).sort()).toEqual(['100', '200', '300']);
+    expect(h.sys.lua.pttl(list(DEVICE))).toBe(TTL_MS);
   });
 
   it('a sign-in while some other account is signed in starts a new list on a new device id', async () => {
@@ -121,6 +147,7 @@ describe('signing in on a browser with an account list', () => {
     expect(jar.device()).not.toBe(DEVICE);
     expect(Object.keys(h.sys.lua.hash(list(DEVICE))!).sort()).toEqual(['100', '200']);
     expect(Object.keys(h.sys.lua.hash(list(jar.device()!))!).sort()).toEqual(['300', '400']);
+    expect(h.sys.lua.pttl(list(jar.device()!))).toBe(TTL_MS);
   });
 
   it('an account already in the list signing in again keeps the device id and the list', async () => {
@@ -130,6 +157,51 @@ describe('signing in on a browser with an account list', () => {
 
     expect(jar.device()).toBe(DEVICE);
     expect(Object.keys(h.sys.lua.hash(list(DEVICE))!).sort()).toEqual(['100', '200']);
+  });
+});
+
+describe('account last used long ago', () => {
+  it('a sign-in of an account idle past 30 days moves to a new device id and adds nothing', async () => {
+    const idle = String(Date.now() - 31 * DAY_MS);
+    h.sys.lua.setHash(list(DEVICE), { '100': now, '200': idle });
+    const jar = makeCookies({ 'civ-device': DEVICE });
+
+    await establishSession(jar.cookies, user(200));
+
+    expect(jar.device()).not.toBe(DEVICE);
+    expect(h.sys.lua.hash(list(DEVICE))).toEqual({ '100': now, '200': idle });
+  });
+
+  it('one used within 30 days keeps the device id', async () => {
+    h.sys.lua.setHash(list(DEVICE), { '100': now, '200': String(Date.now() - DAY_MS) });
+    const jar = makeCookies({ 'civ-device': DEVICE });
+
+    await establishSession(jar.cookies, user(200));
+
+    expect(jar.device()).toBe(DEVICE);
+  });
+});
+
+describe('creating a list', () => {
+  it('a second sign-in pair on the same new device id is refused rather than merged', async () => {
+    const fresh = 'device-2';
+    expect(await linkAccount(fresh, 200, 100)).toBe('joined');
+    expect(await linkAccount(fresh, 400, 300)).toBe('rotate');
+    expect(Object.keys(h.sys.lua.hash(list(fresh))!).sort()).toEqual(['100', '200']);
+    expect(h.sys.lua.pttl(list(fresh))).toBe(TTL_MS);
+  });
+});
+
+describe('removing an account from the list', () => {
+  it('an account outside the list is refused and the list is unchanged', async () => {
+    expect(await removeStatus(300, DEVICE, 100)).toBe(403);
+    expect(Object.keys(h.sys.lua.hash(list(DEVICE))!).sort()).toEqual(['100', '200']);
+  });
+
+  it('an account in the list removes another, or itself', async () => {
+    expect(await removeStatus(100, DEVICE, 200)).toBe(200);
+    expect(await removeStatus(100, DEVICE, 100)).toBe(200);
+    expect(h.sys.lua.hash(list(DEVICE))).toBeUndefined();
   });
 });
 

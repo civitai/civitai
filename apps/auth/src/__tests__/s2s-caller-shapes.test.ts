@@ -42,6 +42,8 @@ vi.mock('$lib/server/auth/device', async (importOriginal) => ({
   ...(await importOriginal<typeof DeviceModule>()),
   listAccounts: h.listAccounts,
   isLinkedAndFresh: h.isLinkedAndFresh,
+  canSwitch: async (d: string, p: number, t: number) =>
+    (await h.isLinkedAndFresh(d, p)) && (await h.isLinkedAndFresh(d, t)),
   touchAccount: vi.fn(async () => undefined),
 }));
 vi.mock('$lib/server/auth/session', async (importOriginal) => ({

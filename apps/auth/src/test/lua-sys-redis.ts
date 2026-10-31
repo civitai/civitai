@@ -23,10 +23,10 @@ export function luaSysRedis() {
       return lua.hash(key) ?? {};
     },
     async hDel(key: string, fields: string | string[]) {
-      const current = lua.hash(key);
-      if (!current) return;
-      for (const f of [fields].flat()) delete current[f];
-      lua.setHash(key, current);
+      return lua.eval(`return redis.call('HDEL', KEYS[1], unpack(ARGV))`, {
+        keys: [key],
+        arguments: [fields].flat(),
+      });
     },
   };
 }

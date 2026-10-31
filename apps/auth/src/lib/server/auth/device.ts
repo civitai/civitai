@@ -2,8 +2,7 @@ import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
 import { DEVICE_COOKIE_BASE, deviceCookieName, isSecureCookie } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
-import { getSysRedis } from '../redis';
-import type { EvalCapableClient } from '../oauth/redis-atomic';
+import { evalSys, getSysRedis } from '../redis';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 
 // DEVICE-LEVEL account linking (docs/main-app-auth-cutover.md, section E). A browser is identified by an
@@ -90,24 +89,33 @@ const TOUCH_SCRIPT = `
  * legacy single-account keys still exist, and refreshing them would stop that keyspace draining. Best-effort.
  */
 export async function touchAccount(deviceId: string, userId: number): Promise<void> {
-  const sys = getSysRedis();
-  if (!sys) return;
   try {
-    await (sys as unknown as EvalCapableClient).eval(TOUCH_SCRIPT, {
-      keys: [key(deviceId)],
-      arguments: [String(userId), String(Date.now()), String(DEVICE_TTL_S)],
-    });
+    await evalSys(
+      TOUCH_SCRIPT,
+      [key(deviceId)],
+      [String(userId), String(Date.now()), String(DEVICE_TTL_S)]
+    );
   } catch {
     // best-effort — a redis blip must not fail login/switch
   }
 }
 
-// An existing list is joined only by an account already in it, or by a sign-in made while one of its accounts
-// is signed in on this browser (the prior hub session). 0: no list; 1: joined; -1: refused.
+// No list: create one with both accounts when a distinct prior account is signed in (2), else write nothing (0).
+// A list: joined (1) by an account already in it and used within ACCOUNT_IDLE_MS, or by a sign-in made while one
+// of its accounts is signed in on this browser (the prior hub session); otherwise refused (-1).
+// ARGV: new user, prior user ('' if none), now (ms), TTL (s), idle limit (ms).
 const JOIN_SCRIPT = `
-  if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
-  if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1
-    or (ARGV[2] ~= '' and redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1) then
+  if redis.call('EXISTS', KEYS[1]) == 0 then
+    if ARGV[2] ~= '' and ARGV[2] ~= ARGV[1] then
+      redis.call('HSET', KEYS[1], ARGV[2], ARGV[3], ARGV[1], ARGV[3])
+      redis.call('EXPIRE', KEYS[1], ARGV[4])
+      return 2
+    end
+    return 0
+  end
+  local own = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '')
+  local recent = own ~= nil and tonumber(ARGV[3]) - own <= tonumber(ARGV[5])
+  if recent or (ARGV[2] ~= '' and redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1) then
     redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
     redis.call('EXPIRE', KEYS[1], ARGV[4])
     return 1
@@ -119,46 +127,41 @@ const JOIN_SCRIPT = `
  * Add a signed-in account to this browser's account list (the switcher). `priorUserId` is the user of the
  * verified hub session the browser held before this sign-in, never a value from the request.
  *
- *  - no list yet: create one with both accounts when a distinct prior account is signed in; otherwise write
- *    nothing (single-account browsers get no list).
- *  - a list this browser is signed in to (the new or the prior account is in it): add the account.
- *  - any other list: refuse. Returns `'rotate'`: the caller moves the browser to a new device id.
- *
- * Best-effort: a redis error leaves the list alone and returns `'kept'`.
+ * `'joined'`: the account is in a list on this device. `'none'`: there is no list (a single-account browser).
+ * `'rotate'`: the browser has a list this sign-in can't show it belongs to; the caller moves the browser to a
+ * new device id.
  */
 export async function linkAccount(
   deviceId: string,
   newUserId: number,
   priorUserId?: number | null
-): Promise<'kept' | 'rotate'> {
-  const sys = getSysRedis();
-  if (!sys) return 'kept';
-  try {
-    const now = String(Date.now());
-    const joined = Number(
-      await (sys as unknown as EvalCapableClient).eval(JOIN_SCRIPT, {
-        keys: [key(deviceId)],
-        arguments: [
-          String(newUserId),
-          priorUserId != null ? String(priorUserId) : '',
-          now,
-          String(DEVICE_TTL_S),
-        ],
-      })
-    );
-    if (joined === -1) return 'rotate';
-    if (joined === 0 && priorUserId != null && priorUserId !== newUserId) {
-      // Atomic, so the list never exists without its TTL.
-      await sys.hSetMultiWithExpire(
-        key(deviceId),
-        [String(priorUserId), now, String(newUserId), now],
-        DEVICE_TTL_S
-      );
-    }
-  } catch {
-    // best-effort — a redis blip must not fail login
-  }
-  return 'kept';
+): Promise<'joined' | 'none' | 'rotate'> {
+  const result = Number(
+    await evalSys(
+      JOIN_SCRIPT,
+      [key(deviceId)],
+      [
+        String(newUserId),
+        priorUserId != null ? String(priorUserId) : '',
+        String(Date.now()),
+        String(DEVICE_TTL_S),
+        String(ACCOUNT_IDLE_MS),
+      ]
+    )
+  );
+  if (result === -1) return 'rotate';
+  return result >= 1 ? 'joined' : 'none';
+}
+
+/** Both the caller's principal and the target are in this browser's account list and used within 30 days. */
+export async function canSwitch(
+  deviceId: string,
+  principal: number,
+  target: number
+): Promise<boolean> {
+  return (
+    (await isLinkedAndFresh(deviceId, principal)) && (await isLinkedAndFresh(deviceId, target))
+  );
 }
 
 /** The device's linked accounts (idle >30d pruned). */

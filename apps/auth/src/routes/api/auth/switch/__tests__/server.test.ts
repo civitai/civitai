@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock('$lib/server/auth/device', () => ({
   isLinkedAndFresh: h.isLinkedAndFresh,
+  canSwitch: async (d: string, p: number, t: number) =>
+    (await h.isLinkedAndFresh(d, p)) && (await h.isLinkedAndFresh(d, t)),
   touchAccount: h.touchAccount,
   rollDeviceCookie: h.rollDeviceCookie,
 }));
