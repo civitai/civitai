@@ -19,8 +19,14 @@ name: tRPC server parity
 # request policy the tRPC route applies.
 #
 # Report-only: not a required check. It needs the preview image, which the preview pipeline builds
-# only for some PRs, so a PR that will get no image fails in seconds with the reason instead of
-# waiting for one.
+# only for some PRs and finishes minutes after the PR event. So the cheap `gate` job runs first,
+# with no checkout, install or service containers:
+#   - a PR that will get no image fails red in seconds, with the reason;
+#   - a PR whose image is not built yet passes with a notice and the parity job is skipped. No
+#     runner waits for the build: the preview pipeline dispatches this workflow on the PR's head
+#     branch with `image=` once it has pushed the image, and that run reports on the head commit
+#     as the `tRPC parity` commit status (a dispatch run's own check is not listed on the PR);
+#   - a PR whose image is already there runs the parity job straight away.
 on:
   pull_request:
     branches: [main]
@@ -51,7 +57,11 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: Full image reference to test (a dispatch has no PR to derive it from).
+        description: >-
+          Full image reference to test (a dispatch has no PR to derive it from). The preview
+          pipeline's own tag form, `pr-<number>-<sha7>`, must be the dispatched branch's head commit
+          and the branch must change a path listed under `paths:` above, or the run skips; any
+          other reference (e.g. a digest) is tested as given.
         required: true
         type: string
 
@@ -66,53 +76,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  parity:
-    name: Next vs standalone tRPC server
+  # Decides, in seconds, whether this run tests anything. Its `run` output gates the parity job.
+  gate:
+    name: Preview image for parity
     runs-on: ubuntu-latest
     # Draft PRs run ESLint only (lint.yml's header). Dispatch is unaffected.
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    timeout-minutes: 75
-    services:
-      # Throwaway stores, empty. DB-backed procedures therefore fail — on both servers alike,
-      # which is still compared.
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
-    env:
-      # The tag the PR-preview pipeline pushes for a PR head: pr-<number>-<first 7 of the sha>.
-      IMAGE: ${{ inputs.image || format('ghcr.io/civitai/civitai-web:pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
-      MUTANT_IMAGE: trpc-server-parity:mutant
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.image.outputs.run }}
+      image: ${{ steps.image.outputs.image }}
     steps:
-      # The `runner` context is not available in job-level env, so the work dir is set here.
-      - name: Work directory
-        run: echo "WORK=$RUNNER_TEMP/parity" >> "$GITHUB_ENV"
-
-      - uses: actions/checkout@v7
-        with:
-          submodules: true
-
-      # Dependencies only for `fill-required-env.ts`, which loads the app's env schemas.
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
       # Whether the preview pipeline will build an image for this PR at all: the head branch is in
       # this repository (pushing one needs write access, so a fork PR is the only no-write path)
       # AND the PR carries the `preview` label or its author is on the auto-deploy list. The list
@@ -123,7 +97,6 @@ jobs:
       # sees CONTRIBUTOR for a private org member (in the API and in the event payload alike), so
       # it would fail PRs that do get an image.
       - name: Will a preview image be built for this PR?
-        id: gate
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -146,31 +119,164 @@ jobs:
             exit 1
           fi
 
-      # The image is usually there before this job starts, and is waited for (up to 40 minutes)
-      # otherwise. Its build runs the Dockerfile's boot-graph gate, which now also loads the
-      # standalone server's requires.
-      - name: Pull the preview image for this head commit
+      # A dispatch from the preview pipeline names the image it just pushed for some commit of the
+      # branch. Test it only if that commit is still the branch head (otherwise the newer commit's
+      # image brings its own dispatch, and this run would report on the wrong commit) and the
+      # branch changes something listed under `on.pull_request.paths` — read from this file, so
+      # the list has one copy. Every pattern there is a literal path or ends in `/**`, which a
+      # bash `[[ == ]]` glob matches the same way (`*` crosses `/`).
+      - name: Is this dispatch in scope?
+        id: scope
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ inputs.image }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          case "$IMAGE" in
+            *:pr-*-*) ;;
+            *) echo "in-scope=true" >> "$GITHUB_OUTPUT"; echo "not a preview tag: testing $IMAGE as given"; exit 0 ;;
+          esac
+          short=${IMAGE##*-}
+          if [ "${SHA:0:${#short}}" != "$short" ]; then
+            echo "::notice::$IMAGE is not this branch's head commit ($SHA); the newer commit's image is tested by its own run."
+            echo "in-scope=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # This workflow file, at the dispatched commit.
+          path=.github/workflows/trpc-server-parity.yml
+          patterns=$(gh api "repos/$REPO/contents/$path?ref=$SHA" --jq .content | base64 -d \
+            | yq -r '.on.pull_request.paths[]')
+          [ -n "$patterns" ] || { echo "::error::could not read on.pull_request.paths from $path"; exit 1; }
+          cmp=$(gh api "repos/$REPO/compare/main...$SHA")
+          files=$(jq -r '.files[].filename' <<< "$cmp")
+          # The compare API lists at most 300 files; past that, assume a match rather than miss one.
+          if [ "$(jq '.files | length' <<< "$cmp")" -ge 300 ]; then
+            echo "in-scope=true" >> "$GITHUB_OUTPUT"; echo "300+ changed files: treated as in scope"; exit 0
+          fi
+          while IFS= read -r f; do
+            while IFS= read -r p; do
+              # shellcheck disable=SC2053 # $p is a glob on purpose
+              if [[ $f == $p ]]; then
+                echo "in scope: $f matches $p"
+                echo "in-scope=true" >> "$GITHUB_OUTPUT"; exit 0
+              fi
+            done <<< "$patterns"
+          done <<< "$files"
+          echo "::notice::This branch changes nothing parity covers (on.pull_request.paths); nothing to test."
+          echo "in-scope=false" >> "$GITHUB_OUTPUT"
+
+      # Is the image already pushed? One registry lookup, no waiting: a PR whose image is still
+      # being built is tested by the run the preview pipeline dispatches once it is pushed.
+      - name: Is the preview image there?
+        id: image
+        if: github.event_name == 'pull_request' || steps.scope.outputs.in-scope == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The tag the PR-preview pipeline pushes for a PR head: pr-<number>-<first 7 of the sha>.
+          IMAGE: ${{ inputs.image || format('ghcr.io/civitai/civitai-web:pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
         run: |
           # The template above puts the full sha in the tag; the pipeline uses the first 7.
           case "$IMAGE" in
             *:pr-*-*) IMAGE="${IMAGE%-*}-$(cut -c1-7 <<< "${IMAGE##*-}")" ;;
           esac
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "image: $IMAGE"
           echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          for _ in $(seq 1 80); do
-            if out=$(docker pull "$IMAGE" 2>&1); then echo "$out" | tail -3; exit 0; fi
+          for attempt in 1 2 3; do
+            if out=$(docker manifest inspect "$IMAGE" 2>&1); then
+              echo "run=true" >> "$GITHUB_OUTPUT"; echo "the image is there"; exit 0
+            fi
             echo "$out" | tail -1
             if grep -qiE 'denied|unauthorized|forbidden' <<< "$out"; then
               echo "::error::this workflow's token may not read the image package; it must grant this repository read access"
               exit 1
             fi
-            sleep 30
+            if grep -qiE 'manifest unknown|not found|no such manifest' <<< "$out"; then
+              if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+                echo "::error::$IMAGE does not exist"; exit 1
+              fi
+              echo "::notice::The preview image for this commit is not built yet. Parity runs when the preview pipeline has pushed it, and reports on this commit as the \`tRPC parity\` status."
+              echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            sleep $((attempt * 5))
           done
-          echo "::error::$IMAGE did not appear within 40 minutes"
+          echo "::error::could not look up $IMAGE (registry error above)"
           exit 1
+
+  parity:
+    name: Next vs standalone tRPC server
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    # `statuses: write`: a dispatch run reports on the head commit as the `tRPC parity` status.
+    permissions:
+      contents: read
+      packages: read
+      statuses: write
+    timeout-minutes: 75
+    services:
+      # Throwaway stores, empty. DB-backed procedures therefore fail — on both servers alike,
+      # which is still compared.
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      IMAGE: ${{ needs.gate.outputs.image }}
+      MUTANT_IMAGE: trpc-server-parity:mutant
+      STATUS_CONTEXT: tRPC parity
+    steps:
+      # A dispatch run's check is attached to the head commit but not listed on the PR, so it
+      # reports there as a commit status: pending now, the verdict at the end.
+      - name: Report pending on the head commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state=pending -f context="$STATUS_CONTEXT" -f description="Testing $IMAGE" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null
+
+      # The `runner` context is not available in job-level env, so the work dir is set here.
+      - name: Work directory
+        run: echo "WORK=$RUNNER_TEMP/parity" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      # Dependencies only for `fill-required-env.ts`, which loads the app's env schemas.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The gate job saw this image in the registry, so there is nothing to wait for. Its build
+      # ran the Dockerfile's boot-graph gate, which also loads the standalone server's requires.
+      - name: Pull the preview image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "image: $IMAGE"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          out=$(docker pull "$IMAGE")
+          tail -3 <<< "$out"
 
       - name: Write the shared environment
         run: |
@@ -278,14 +384,14 @@ jobs:
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/parity.json"
 
       - name: Negative control (Next vs mutant must be red)
-        if: always() && steps.gate.outcome != 'failure'
+        if: ${{ !cancelled() }}
         run: |
           node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3002 \
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/mutant.json" \
             --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
 
       - name: The alerted span is still emitted
-        if: always() && steps.gate.outcome != 'failure'
+        if: ${{ !cancelled() }}
         run: |
           # The batch span processor flushes every 500ms here; give it a few cycles.
           sleep 5
@@ -308,3 +414,18 @@ jobs:
             ${{ runner.temp }}/parity/*.json
             ${{ runner.temp }}/parity/otlp-stub.log
           if-no-files-found: ignore
+
+      - name: Report the verdict on the head commit
+        if: always() && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          case "$JOB_STATUS" in
+            success) state=success; desc="Next and the standalone server agree" ;;
+            failure) state=failure; desc="Parity failed: see the run" ;;
+            *) state=error; desc="Run $JOB_STATUS before a verdict" ;;
+          esac
+          gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state="$state" -f context="$STATUS_CONTEXT" -f description="$desc" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null
