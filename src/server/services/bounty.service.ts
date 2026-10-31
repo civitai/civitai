@@ -923,6 +923,32 @@ export const getBountyFiles = async ({ id }: GetByIdInput) => {
   return files;
 };
 
+async function lockBenefactorForSupport(
+  tx: Prisma.TransactionClient,
+  bountyId: number,
+  userId: number
+) {
+  const locked = await lockBountyForPayout(tx, bountyId);
+  if (!locked) throw throwNotFoundError('Bounty not found');
+  if (locked.complete || locked.refunded) throw throwBadRequestError('Bounty is already complete');
+
+  const benefactor = await tx.bountyBenefactor.findUnique({
+    where: { bountyId_userId: { userId, bountyId } },
+    select: {
+      unitAmount: true,
+      currency: true,
+      buzzTransactionId: true,
+      awardedToId: true,
+      awardedAt: true,
+    },
+  });
+  if (!benefactor) throw throwNotFoundError('You are not a benefactor of this bounty');
+  // `awardedAt` outlives the awarded entry: an award stands after its entry is deleted.
+  if (benefactor.awardedToId || benefactor.awardedAt)
+    throw throwBadRequestError('You have already awarded an entry on this bounty');
+  return benefactor;
+}
+
 export const addBenefactorUnitAmount = async ({
   bountyId,
   unitAmount,
@@ -931,94 +957,65 @@ export const addBenefactorUnitAmount = async ({
 }: AddBenefactorUnitAmountInputSchema & { userId: number; buzzType: BuzzSpendType }) => {
   const bounty = await dbRead.bounty.findUnique({
     where: { id: bountyId },
-    select: { complete: true, id: true, nsfw: true, nsfwLevel: true, startsAt: true },
+    select: { id: true, startsAt: true },
   });
-
-  if (!bounty) {
-    throw throwNotFoundError('Bounty not found');
-  }
-
+  if (!bounty) throw throwNotFoundError('Bounty not found');
   assertBountyStarted(bounty);
 
-  if (bounty.complete) {
-    throw throwBadRequestError('Bounty is already complete');
-  }
-
-  const benefactor = await dbRead.bountyBenefactor.findUnique({
-    where: {
-      bountyId_userId: { userId, bountyId },
-    },
-    select: { unitAmount: true, currency: true, buzzTransactionId: true },
-  });
-  if (!benefactor) {
-    throw throwNotFoundError('You are not a benefactor of this bounty');
-  }
-
-  const { currency } = benefactor || { currency: Currency.BUZZ };
-
-  switch (currency) {
-    case Currency.BUZZ:
-      const account = await getUserBuzzAccount({ accountId: userId });
-      if ((account[0]?.balance ?? 0) < unitAmount) {
-        throw throwInsufficientFundsError();
-      }
-      break;
-    default: // Do no checks
-      break;
-  }
-
-  switch (currency) {
-    case Currency.BUZZ:
-      if (buzzType === 'blue') {
-        throw throwBadRequestError('You cannot use Blue Buzz for bounties.');
-      }
-
-      const prefix = getBountyTransactionPrefix(bounty.id, userId);
-      await createMultiAccountBuzzTransaction({
-        fromAccountId: userId,
-        fromAccountTypes: [buzzType],
-        externalTransactionIdPrefix: prefix,
-        toAccountId: 0,
-        amount: unitAmount,
-        type: TransactionType.Bounty,
-        description: 'You have supported a bounty',
-
-        details: {
-          entityId: bounty.id,
-          entityType: 'Bounty',
-        },
-      });
-
-      await dbWrite.bountyBenefactor.update({
-        where: { bountyId_userId: { userId, bountyId: bounty.id } },
+  const { currency } = await dbWrite.$transaction((tx) =>
+    lockBenefactorForSupport(tx, bountyId, userId)
+  );
+  const addSupport = (prefix?: string) =>
+    dbWrite.$transaction(async (tx) => {
+      const benefactor = await lockBenefactorForSupport(tx, bountyId, userId);
+      return tx.bountyBenefactor.update({
+        where: { bountyId_userId: { userId, bountyId } },
         data: {
-          buzzTransactionId: [...(benefactor.buzzTransactionId || []), prefix],
+          unitAmount: benefactor.unitAmount + unitAmount,
+          ...(prefix
+            ? { buzzTransactionId: [...(benefactor.buzzTransactionId ?? []), prefix] }
+            : {}),
         },
       });
-      break;
-    default: // Do no checks
-      break;
-  }
+    });
 
-  // Update benefactor record;
-  const updatedBenefactor = await dbWrite.bountyBenefactor.upsert({
-    update: {
-      unitAmount: unitAmount + (benefactor?.unitAmount ?? 0),
-    },
-    create: {
-      userId,
-      bountyId,
-      unitAmount,
-    },
-    where: {
-      bountyId_userId: {
-        userId,
-        bountyId,
-      },
-    },
+  if (currency !== Currency.BUZZ) return addSupport();
+
+  if (buzzType === 'blue') throw throwBadRequestError('You cannot use Blue Buzz for bounties.');
+  const account = await getUserBuzzAccount({ accountId: userId });
+  if ((account[0]?.balance ?? 0) < unitAmount) throw throwInsufficientFundsError();
+
+  const prefix = getBountyTransactionPrefix(bountyId, userId);
+  await createMultiAccountBuzzTransaction({
+    fromAccountId: userId,
+    fromAccountTypes: [buzzType],
+    externalTransactionIdPrefix: prefix,
+    toAccountId: 0,
+    amount: unitAmount,
+    type: TransactionType.Bounty,
+    description: 'You have supported a bounty',
+    details: { entityId: bountyId, entityType: 'Bounty' },
   });
 
-  return updatedBenefactor;
+  try {
+    return await addSupport(prefix);
+  } catch (error) {
+    // The charge is already taken; any failure to record support must refund it.
+    await refundBountyPrefix(prefix, 'Refund reason: bounty support was not added', {
+      bountyId,
+      userId,
+      unitAmount,
+    }).catch((refundError) =>
+      logBountyPayoutError({
+        bountyId,
+        userId,
+        message: `Support charge ${prefix} was not added and its refund failed: ${String(
+          refundError
+        )}`,
+      })
+    );
+    throw error;
+  }
 };
 
 export const getImagesForBounties = async ({
