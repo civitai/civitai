@@ -73,7 +73,12 @@ function fakeApi(userId: number) {
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<unknown> | unknown;
 const asRunner = { authorization: `Bearer ${SECRET}` };
 
-async function call(handler: Handler, body: unknown, headers: Record<string, string> = asRunner) {
+async function call(
+  handler: Handler,
+  body: unknown,
+  headers: Record<string, string> = asRunner,
+  method = 'POST'
+) {
   let status = 200;
   let json: Record<string, unknown> | undefined;
   const res = {
@@ -87,7 +92,7 @@ async function call(handler: Handler, body: unknown, headers: Record<string, str
     },
     setHeader: () => res,
   } as unknown as NextApiResponse;
-  await handler({ method: 'POST', headers, body, query: {} } as unknown as NextApiRequest, res);
+  await handler({ method, headers, body, query: {} } as unknown as NextApiRequest, res);
   return { status, json };
 }
 
@@ -186,6 +191,57 @@ describe('cover/listing', () => {
       { authorization: 'Bearer not-the-secret' }
     );
     expect(stranger.status).toBe(401);
+    expect(apiForMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a grant civitai did not sign, or one that has expired, before reading anything', async () => {
+    const forged = await call(listingRoute, { grant: 'test-only-not-a-grant', app: OWNED_APP });
+    expect(forged).toEqual({
+      status: 401,
+      json: { error: 'Not a current run grant', code: 'invalid_grant' },
+    });
+
+    const grant = await grantFor(OWNER);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // Past the grant's 7800 s life by a day, whatever skew the verifier allows.
+      vi.setSystemTime(Date.now() + (7800 + 86_400) * 1000);
+      const expired = await call(listingRoute, { grant, app: OWNED_APP });
+      expect(expired).toEqual({
+        status: 401,
+        json: { error: 'Not a current run grant', code: 'invalid_grant' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(runnerUserMock).not.toHaveBeenCalled();
+    expect(apiForMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a body with no app, or an app that is not a string', async () => {
+    const grant = await grantFor(OWNER);
+    for (const body of [{ grant }, { grant, app: 4242 }, { grant, app: '' }]) {
+      const { status, json } = await call(listingRoute, body);
+      expect(status).toBe(400);
+      expect(json).toEqual({ error: 'Expected { grant, app }' });
+    }
+    expect(runnerUserMock).not.toHaveBeenCalled();
+    expect(apiForMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses any method but POST', async () => {
+    const grant = await grantFor(OWNER);
+    for (const method of ['GET', 'PUT']) {
+      const { status, json } = await call(
+        listingRoute,
+        { grant, app: OWNED_APP },
+        asRunner,
+        method
+      );
+      expect(status).toBe(405);
+      expect(json).toEqual({ error: 'Method not allowed' });
+    }
+    expect(runnerUserMock).not.toHaveBeenCalled();
     expect(apiForMock).not.toHaveBeenCalled();
   });
 });
