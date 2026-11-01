@@ -29,6 +29,7 @@ import {
   createBuzzTransactionMany,
   createMultiAccountBuzzTransaction,
   getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
   getUserBuzzAccount,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -1142,8 +1143,8 @@ async function refundBountyPrefix(txId: string, description: string, details: Mi
  * after a committed claim under `lockBountyForPayout`. A failed refund is logged per benefactor
  * and the rest continue.
  *
- * Refunds by transaction id are safe to repeat. Legacy rows without ids are paid by a plain
- * transaction that is not, so a retry (`includeLegacy: false`) skips them.
+ * Refunds by transaction id are safe to repeat. Legacy rows without ids are paid under a fixed
+ * key, but one paid before that key existed is not, so a retry (`includeLegacy: false`) skips them.
  */
 export async function refundBountyBenefactorFunds({
   bountyId,
@@ -1190,13 +1191,7 @@ export async function refundBountyBenefactorFunds({
           continue;
         }
       } else if (includeLegacy) {
-        await createBuzzTransaction({
-          fromAccountId: 0,
-          toAccountId: userId,
-          amount: unitAmount,
-          type: TransactionType.Refund,
-          description,
-        });
+        await refundLegacyBenefactor({ bountyId, userId, unitAmount, description });
       } else {
         logBountyPayoutError({ bountyId, userId, message: 'Legacy refund not retried' });
         continue;
@@ -1208,6 +1203,39 @@ export async function refundBountyBenefactorFunds({
     }
   }
   return outcome;
+}
+
+/**
+ * Pays back a supporter whose charge has no transaction id, under one key per bounty and supporter,
+ * so a second attempt is refused instead of paying twice. A 409 counts as paid only when that key
+ * is on the ledger.
+ */
+async function refundLegacyBenefactor({
+  bountyId,
+  userId,
+  unitAmount,
+  description,
+}: {
+  bountyId: number;
+  userId: number;
+  unitAmount: number;
+  description: string;
+}) {
+  const externalTransactionId = `bounty-refund-b${bountyId}-u${userId}`;
+  try {
+    await createBuzzTransaction({
+      fromAccountId: 0,
+      toAccountId: userId,
+      amount: unitAmount,
+      type: TransactionType.Refund,
+      description,
+      details: { bountyId },
+      externalTransactionId,
+    });
+  } catch (error) {
+    if (getBuzzApiStatus(error) !== 409) throw error;
+    if (!(await getTransactionByExternalId(externalTransactionId))) throw error;
+  }
 }
 
 // Not `bounty-award-<id>-…`: awards before this key used that shape with an entry id OR a bounty

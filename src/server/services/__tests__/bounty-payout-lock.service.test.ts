@@ -1062,6 +1062,51 @@ describe('refundBountyBenefactorFunds', () => {
     ).toEqual({ refunded: [6], failed: [] });
     expect(moved('buzz')).toBe(0);
   });
+
+  describe('a legacy supporter refunded twice', () => {
+    const refundAll = () => refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ' });
+    beforeEach(() => {
+      benefactors[0].buzzTransactionId = [];
+    });
+
+    it('sends both refunds under the same key, the one the ledger deduplicates on', async () => {
+      await refundAll();
+      await refundAll();
+      const sent = buzz.createBuzzTransaction.mock.calls.map(([input]) => [
+        input.externalTransactionId,
+        input.details,
+      ]);
+      expect(sent).toEqual([
+        ['bounty-refund-b4-u5', { bountyId: 4 }],
+        ['bounty-refund-b4-u5', { bountyId: 4 }],
+      ]);
+    });
+
+    it('counts a refusal as refunded when that key is on the ledger', async () => {
+      buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+      buzz.getTransactionByExternalId.mockResolvedValueOnce({ transactionId: 't1' });
+      expect(await refundAll()).toEqual({ refunded: [5, 6], failed: [] });
+      expect(buzz.getTransactionByExternalId).toHaveBeenCalledWith('bounty-refund-b4-u5');
+    });
+
+    it('fails a refusal whose key is not on the ledger (control)', async () => {
+      buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+    });
+
+    it('fails any other error, even with the key on the ledger', async () => {
+      buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(500, 'Server error'));
+      buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 't1' });
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+      expect(buzz.getTransactionByExternalId).not.toHaveBeenCalledWith('bounty-refund-b4-u5');
+    });
+
+    it('fails a refusal whose ledger lookup failed', async () => {
+      buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+      buzz.getTransactionByExternalId.mockRejectedValueOnce(new Error('buzz down'));
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+    });
+  });
 });
 
 describe('retryUnsettledBountyPayouts paging', () => {
