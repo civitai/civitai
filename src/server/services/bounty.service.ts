@@ -841,6 +841,7 @@ export const deleteBountyById = async ({
   if (!claim) return null;
 
   let release: Awaited<ReturnType<typeof releaseStuckBountyAward>> = null;
+  let refundRelease: Awaited<ReturnType<typeof releaseUnconfirmedBountyRefund>> = null;
   if (claim.owed) {
     const settled = await settleBountyPayout(id, {
       firstAttempt: claim.firstAttempt,
@@ -851,7 +852,9 @@ export const deleteBountyById = async ({
     if (!settled && !(isModerator && (await refundUnpayableBountyAward(id)))) {
       // A release keeps the bounty: the hide below takes the delete's effect on visibility now.
       release = isModerator ? await releaseStuckBountyAward(id, userId) : null;
-      if (!release)
+      refundRelease =
+        isModerator && !release ? await releaseUnconfirmedBountyRefund(id, userId) : null;
+      if (!release && !refundRelease)
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message:
@@ -895,6 +898,11 @@ export const deleteBountyById = async ({
     await SearchIndexUpdate.queueUpdate({
       indexName: BOUNTIES_SEARCH_INDEX,
       items: [{ id, action: SearchIndexUpdateQueueAction.Delete }],
+    });
+  if (refundRelease)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `The bounty was hidden but NOT deleted. ${refundRelease.unconfirmedRefunds} supporter refund(s) could not be confirmed, so they were recorded for manual resolution instead of being paid again. It is deleted once they are resolved.`,
     });
   // The release moved Buzz: report it even if the bounty went before the hide.
   if (release)
@@ -1106,16 +1114,18 @@ function logBountyPayoutError({
   message,
   name = 'bounty-refund',
   transactionPrefix,
+  type = 'error',
 }: {
   bountyId: number;
   userId?: number | null;
   message: string;
   name?: 'bounty-refund' | 'bounty-award';
   transactionPrefix?: string;
+  type?: 'error' | 'warning';
 }) {
   logToAxiom({
     name,
-    type: 'error',
+    type,
     message: `Bounty ${bountyId}: ${message}`,
     bountyId,
     userId,
@@ -1145,7 +1155,9 @@ async function refundBountyPrefix(txId: string, description: string, details: Mi
  *
  * Refunds by transaction id are safe to repeat. Legacy rows without ids are paid under a fixed
  * key, but one paid before that key existed is not, so a retry (`includeLegacy: false`) never pays
- * them: it counts one refunded only when that key is on the ledger, and failed otherwise.
+ * them: it counts one refunded only when that key is on the ledger, and otherwise failed and
+ * `unconfirmed`, for `releaseUnconfirmedBountyRefund`. Pass `recordedAt` to log those at warning
+ * once the refund is a day old.
  */
 export async function refundBountyBenefactorFunds({
   bountyId,
@@ -1153,14 +1165,20 @@ export async function refundBountyBenefactorFunds({
   onlyUnawarded = false,
   includeLegacy = true,
   description = 'Reason: Bounty refund',
+  recordedAt,
 }: {
   bountyId: number;
   currency: Currency;
   onlyUnawarded?: boolean;
   includeLegacy?: boolean;
   description?: string;
-}): Promise<{ refunded: number[]; failed: number[] }> {
-  const outcome = { refunded: [] as number[], failed: [] as number[] };
+  recordedAt?: Date | null;
+}): Promise<{ refunded: number[]; failed: number[]; unconfirmed: number[] }> {
+  const outcome = {
+    refunded: [] as number[],
+    failed: [] as number[],
+    unconfirmed: [] as number[],
+  };
   if (currency !== Currency.BUZZ) return outcome;
   const benefactors = await dbWrite.bountyBenefactor.findMany({
     // An award keeps `awardedAt` after its entry is deleted and `awardedToId` is nulled.
@@ -1194,8 +1212,17 @@ export async function refundBountyBenefactorFunds({
       } else if (includeLegacy) {
         await refundLegacyBenefactor({ bountyId, userId, unitAmount, description });
       } else if (!(await getTransactionByExternalId(legacyRefundKey(bountyId, userId)))) {
-        logBountyPayoutError({ bountyId, userId, message: 'Legacy refund not confirmed' });
+        // Waiting on a moderator once a day old: a warning, so the retry job does not flood errors.
+        const waiting =
+          !!recordedAt && recordedAt.getTime() <= Date.now() - UNCONFIRMED_REFUND_RELEASE_AFTER_MS;
+        logBountyPayoutError({
+          bountyId,
+          userId,
+          message: 'Legacy refund not confirmed',
+          type: waiting ? 'warning' : 'error',
+        });
         outcome.failed.push(userId);
+        outcome.unconfirmed.push(userId);
         continue;
       }
       outcome.refunded.push(userId);
@@ -1206,6 +1233,15 @@ export async function refundBountyBenefactorFunds({
   }
   return outcome;
 }
+
+/**
+ * Set days after the release that added `legacyRefundKey` was served: a refund recorded later was
+ * only ever attempted under that key, so a retry may pay its legacy supporters under it. A refund is
+ * recorded once, when the bounty becomes refunded. Late is safe; early could pay a supporter twice.
+ */
+export const LEGACY_REFUND_KEYED_SINCE = new Date('2026-11-10T00:00:00Z');
+
+const UNCONFIRMED_REFUND_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const legacyRefundKey = (bountyId: number, userId: number) =>
   `bounty-refund-b${bountyId}-u${userId}`;
@@ -1453,7 +1489,8 @@ async function payAwardingSupporter(bountyId: number, supporter: AwardedFunds, p
 /**
  * Moves the Buzz for a recorded award or refund and stamps `payoutSettledAt`. Safe to repeat: awards
  * pay under fixed keys and refunds treat an already-refunded charge as done. Returns whether the
- * bounty owes nothing more. `firstAttempt` is false for retries, which skip legacy refunds.
+ * bounty owes nothing more. `firstAttempt` is false for retries, which pay legacy refunds only for
+ * a refund recorded after `LEGACY_REFUND_KEYED_SINCE`.
  */
 export async function settleBountyPayout(
   bountyId: number,
@@ -1481,8 +1518,11 @@ export async function settleBountyPayout(
             bountyId,
             currency: Currency.BUZZ,
             onlyUnawarded: true,
-            includeLegacy: firstAttempt,
+            includeLegacy:
+              firstAttempt ||
+              (bounty.payoutRecordedAt?.getTime() ?? 0) > LEGACY_REFUND_KEYED_SINCE.getTime(),
             description: refundDescription,
+            recordedAt: bounty.payoutRecordedAt,
           })
         ).failed.length === 0
       : await payBountyAward(bountyId, bounty.payoutWinnerUserId, bounty.payoutSettledAt).then(
@@ -1668,6 +1708,106 @@ export async function releaseStuckBountyAward(
       moderatorId,
     }).catch(() => null);
   return { unpaidAwards: unpaid.length, refundSettled };
+}
+
+/**
+ * Moderator exit for a refund that waits only on legacy supporters the ledger cannot confirm were
+ * refunded: an attempt made before `legacyRefundKey` may or may not have paid them, and no retry
+ * pays them. Records each for a manual ruling, as an unpaid award with no winner, and stamps the
+ * refund settled. Moves no Buzz. Needs a day-old refund recorded before `LEGACY_REFUND_KEYED_SINCE`
+ * whose only failures are those supporters on two reads. Returns the recorded count, or null when it
+ * does not apply.
+ */
+export async function releaseUnconfirmedBountyRefund(
+  bountyId: number,
+  moderatorId: number,
+  now = Date.now()
+) {
+  // The record is what the ruling reads; without its table there is no release.
+  if (!(await bountyUnpaidAwardTableExists(dbWrite))) return null;
+  const read = await dbWrite.bounty.findUnique({
+    where: { id: bountyId },
+    select: { refunded: true, payoutRecordedAt: true, payoutSettledAt: true },
+  });
+  const recordedAt = read?.payoutRecordedAt?.getTime();
+  if (
+    !read?.refunded ||
+    !isPayoutPending(read) ||
+    !recordedAt ||
+    recordedAt > now - UNCONFIRMED_REFUND_RELEASE_AFTER_MS ||
+    recordedAt > LEGACY_REFUND_KEYED_SINCE.getTime()
+  )
+    return null;
+
+  const refund = () =>
+    refundBountyBenefactorFunds({
+      bountyId,
+      currency: Currency.BUZZ,
+      onlyUnawarded: true,
+      includeLegacy: false,
+      recordedAt: read.payoutRecordedAt,
+    });
+  const onlyUnconfirmed = (o: Awaited<ReturnType<typeof refund>>) =>
+    o.unconfirmed.length > 0 && o.failed.every((id) => o.unconfirmed.includes(id));
+  const first = await refund();
+  if (!onlyUnconfirmed(first)) return null;
+  const second = await refund();
+  if (!onlyUnconfirmed(second) || second.unconfirmed.some((id) => !first.unconfirmed.includes(id)))
+    return null;
+
+  const unconfirmed = await dbWrite.bountyBenefactor.findMany({
+    where: { bountyId, userId: { in: second.unconfirmed } },
+    select: { userId: true, unitAmount: true },
+  });
+  if (unconfirmed.length !== second.unconfirmed.length) return null;
+
+  const claimed = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, bountyId);
+    if (
+      !locked ||
+      !locked.refunded ||
+      !isPayoutPending(locked) ||
+      locked.payoutRecordedAt?.getTime() !== recordedAt
+    )
+      return false;
+    const meta = locked.meta as { userIdBeforeRemoval?: number } | null;
+    await tx.bountyUnpaidAward.createMany({
+      data: unconfirmed.map((b) => ({
+        bountyId,
+        userId: b.userId,
+        unitAmount: b.unitAmount,
+        winnerUserId: null,
+        ownerId: locked.userId ?? meta?.userIdBeforeRemoval ?? null,
+        recordedById: moderatorId,
+      })),
+    });
+    await tx.modActivity.createMany({
+      data: unconfirmed.map(({ userId }) => ({
+        userId,
+        entityType: 'bounty',
+        entityId: bountyId,
+        activity: BOUNTY_AWARD_UNPAID_ACTIVITY,
+      })),
+    });
+    await tx.bounty.update({
+      where: { id: bountyId },
+      data: { payoutSettledAt: new Date(Math.max(Date.now(), recordedAt)) },
+    });
+    return true;
+  });
+  if (!claimed) return null;
+
+  for (const supporter of unconfirmed)
+    await logToAxiom({
+      name: 'bounty-refund',
+      type: 'error',
+      message: `Bounty ${bountyId}: refund to user ${supporter.userId} is not confirmed on the ledger; recorded for a manual ruling`,
+      bountyId,
+      userId: supporter.userId,
+      unitAmount: supporter.unitAmount,
+      moderatorId,
+    }).catch(() => null);
+  return { unconfirmedRefunds: unconfirmed.length };
 }
 
 /**
