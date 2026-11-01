@@ -161,6 +161,22 @@ describe('trainingBlobKeyFromAir / findForeignTrainingBlobKeys', () => {
     expect(trainingBlobKeyFromAir('https://evil.example/v2/consumer/blobs/K1')).toBeNull();
   });
 
+  it('never reads an image CDN url or an upload key as a blob', () => {
+    const key = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+    expect(
+      trainingBlobKeyFromAir(
+        `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${key}/original=true`
+      )
+    ).toBeNull();
+    expect(trainingBlobKeyFromAir(key)).toBeNull();
+    const items = [{ air: `https://image.civitai.com/x/${key}/original=true`, caption: '' }];
+    expect(blockTrainingDatasetItemsSchema.safeParse(items).success).toBe(false);
+    // Control: the same item naming a blob parses.
+    expect(blockTrainingDatasetItemsSchema.safeParse([{ air: 'K1', caption: '' }]).success).toBe(
+      true
+    );
+  });
+
   it('reports the quoted keys an uploader did not upload, case-insensitively', () => {
     expect(findForeignTrainingBlobKeys(['K1.jpeg', 'K2.jpeg'], ['k1.JPEG', 'k2.jpeg'])).toEqual([]);
     expect(findForeignTrainingBlobKeys(['K1.jpeg', 'K2.jpeg'], ['K1.jpeg'])).toEqual(['K2.jpeg']);

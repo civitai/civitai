@@ -1307,7 +1307,102 @@ export const getFeatureFlags = (ctx: FeatureAccessContext): FeatureAccess => {
  * full 145-flag compute, which is precisely the work we now avoid. Eager callers
  * (user.getFeatureFlags, the SSR seed) still use that cache directly.
  */
-export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
+export function getFeatureFlagsLazy(ctx: FeatureAccessContext): FeatureAccess {
+  return isLazyProtoEnabled() ? getFeatureFlagsLazyProto(ctx) : getFeatureFlagsLazyLegacy(ctx);
+}
+
+/**
+ * The `feature-flags-lazy-proto` Flipt switch, read at most once per `LAZY_PROTO_GATE_REFRESH_MS`
+ * so the per-request cost is one `Date.now()` — even the Flipt eval-cache lookup builds a key
+ * string. Global boolean (no entity, no context). `null` (unknown key, Flipt not loaded or not
+ * initialized yet) and any throw read as OFF, so the legacy object is the default and the
+ * fallback. No recursion: `isFliptSync` is the Flipt client, which never reads feature flags.
+ */
+const LAZY_PROTO_GATE_REFRESH_MS = 5_000;
+let lazyProtoGateValue = false;
+let lazyProtoGateExpiresAt = Number.NEGATIVE_INFINITY;
+function isLazyProtoEnabled(): boolean {
+  const now = Date.now();
+  if (now < lazyProtoGateExpiresAt) return lazyProtoGateValue;
+  lazyProtoGateExpiresAt = now + LAZY_PROTO_GATE_REFRESH_MS;
+  try {
+    lazyProtoGateValue =
+      !!_fliptModule &&
+      _fliptModule.isFliptSync(_fliptModule.FLIPT_FEATURE_FLAGS.FEATURE_FLAGS_LAZY_PROTO) === true;
+  } catch {
+    lazyProtoGateValue = false;
+  }
+  return lazyProtoGateValue;
+}
+
+/** Tests only: forget the cached switch read so the next call re-reads Flipt. */
+export function resetFeatureFlagsLazyGateForTests() {
+  lazyProtoGateExpiresAt = Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * The per-request object behind `feature-flags-lazy-proto`. Same contract as
+ * `getFeatureFlagsLazyLegacy` — every key reads `true | undefined`, identical to
+ * `getFeatureFlags(ctx)[key]`; memoised per object; `fliptContext` built once per object on first
+ * access; `key in obj` true for every flag key; Object.keys / spread / JSON.stringify give `{}` —
+ * but the getters live on `LazyFeatureAccess.prototype`, defined ONCE at module load, so a call
+ * allocates one small instance (plus a Map on the first read) instead of one closure and one
+ * descriptor per flag key, and the instance never leaves V8's fast-properties mode.
+ *
+ * State is in private fields: per-instance, in-object, and invisible to every reflection and copy
+ * (keys, spread, Object.assign, JSON, structuredClone, Reflect.ownKeys). It MUST stay
+ * per-instance — state on the prototype would be shared by every request.
+ *
+ * Differences a caller could observe, none of which any consumer relies on (audited when this was
+ * added): the getters are inherited, not own (`hasOwnProperty`, `Object.getOwnPropertyNames` and
+ * `getOwnPropertyDescriptor` see nothing), and the prototype is not `Object.prototype` (so
+ * `isPlainObject`-style checks — devalue, Next's props serializer, lodash — reject it). And a getter
+ * read with a receiver that is not the instance itself returns `undefined`, where the legacy
+ * object's getters — closures that ignore `this` — return the real value: `Object.create(instance).k`
+ * and `new Proxy(instance, {}).k` (a Proxy without a `get` trap passes itself as the receiver) are
+ * `undefined` here and the flag's value on the legacy object. Dormant: no consumer wraps or
+ * inherits from the object today. (A copying clone — spread, lodash `cloneDeep` — reads `undefined`
+ * on both: the legacy object's own getters are non-enumerable, so its copy is `{}`.)
+ */
+class LazyFeatureAccess {
+  readonly #ctx: FeatureAccessContext;
+  #fliptContext: Record<string, string> | undefined = undefined;
+  #memo: Map<FeatureFlagKey, boolean> | undefined = undefined;
+
+  constructor(ctx: FeatureAccessContext) {
+    this.#ctx = ctx;
+  }
+
+  static read(self: object, key: FeatureFlagKey): true | undefined {
+    if (!(#ctx in self)) return undefined;
+    const obj = self as LazyFeatureAccess;
+    let memo = obj.#memo;
+    let present = memo?.get(key);
+    if (present === undefined) {
+      obj.#fliptContext ??= buildFliptContext(obj.#ctx.user);
+      present = isFeatureFlagKeyPresent(key, obj.#ctx, obj.#fliptContext);
+      if (!memo) memo = obj.#memo = new Map();
+      memo.set(key, present);
+    }
+    return present ? true : undefined;
+  }
+}
+
+for (const key of featureFlagKeys) {
+  // Non-enumerable (the defineProperty default), getter only — as the legacy object's own getters.
+  Object.defineProperty(LazyFeatureAccess.prototype, key, {
+    get(this: object) {
+      return LazyFeatureAccess.read(this, key);
+    },
+  });
+}
+
+export function getFeatureFlagsLazyProto(ctx: FeatureAccessContext): FeatureAccess {
+  return new LazyFeatureAccess(ctx) as unknown as FeatureAccess;
+}
+
+/** The original per-request object: one getter closure defined per flag key on every call. */
+export function getFeatureFlagsLazyLegacy(ctx: FeatureAccessContext): FeatureAccess {
   const obj = {} as FeatureAccess;
   // Built once on first flag access and reused for every accessed key this
   // request — mirrors eager's "build fliptContext once per compute".

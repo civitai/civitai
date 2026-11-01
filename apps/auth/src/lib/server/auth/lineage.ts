@@ -33,9 +33,9 @@ export async function markFamilyLive(family: string | undefined): Promise<void> 
 }
 
 /**
- * Whether the hub keeps honouring its own session cookie: the family was used on some host within 30 days, or
- * the token itself was signed within 30 days. Records the use when it does. Unknown liveness (no redis, or an
- * error) counts as live; the 90-day limit still bounds the session.
+ * Whether the hub keeps honouring its own session cookie: the family was used on some host, or the token itself
+ * was signed, within FAMILY_LIVE_TTL_MS. Records the use when it does. Unknown liveness (no redis, or an error)
+ * counts as live; the 90-day limit still bounds the session.
  */
 export async function acceptHubSession(claims: SessionClaims): Promise<boolean> {
   const family = familyId(claims);

@@ -6,7 +6,7 @@ import {
   invalidateSessionUser,
   produceSessionUser,
 } from '$lib/server/auth/session-producer';
-import { SESSION_COOKIE } from '$lib/server/auth/session';
+import { readHubSession } from '$lib/server/auth/session';
 import { acceptHubSession } from '$lib/server/auth/lineage';
 import { sessions } from '$lib/server/auth/registry';
 import { isInternalRequest } from '$lib/server/auth/internal';
@@ -38,7 +38,7 @@ export const GET: RequestHandler = async ({ request, url, cookies }) => {
 
   const authHeader = request.headers.get('authorization') ?? '';
   const bearer = /^bearer /i.test(authHeader) ? authHeader.slice(7).trim() : undefined;
-  const token = bearer ?? cookies.get(SESSION_COOKIE);
+  const token = bearer ?? readHubSession(cookies)?.value;
   if (!token) return json({ error: 'unauthorized' }, { status: 401 });
 
   const claims = await verifier.verifyToken(token).catch(() => null);
