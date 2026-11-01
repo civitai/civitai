@@ -639,8 +639,10 @@ describe('a start the runner gave up on, closed by its client key', () => {
     try {
       let answer: Awaited<ReturnType<typeof call>> | undefined;
       void startKeyed(OWNER, OWNED_APP).then((a) => (answer = a));
+      // The grant's check runs on Node's crypto, which no fake timer advances: wait, on real time
+      // (`vi.waitFor`), until the start sits in its route apply. Its deadline is set by then.
+      await vi.waitFor(() => expect(held.release).toBeTypeOf('function'));
       await vi.advanceTimersByTimeAsync(184_000);
-      expect(held.release).toBeTypeOf('function');
       expect(answer).toBeUndefined();
       await vi.advanceTimersByTimeAsync(1_000);
       // The runner waits 200 s (apps/assistant-runner `START_TIMEOUT_MS`): it hears this.
