@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/components/Buzz/useBuzz', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/components/Buzz/useBuzz')>()),
+  ...(await importOriginal<Record<string, unknown>>()),
   useQueryBuzz: (types: string[] = []) => {
     const accounts = types.map((type) => ({ type, balance: mocks.balances[type] ?? 0 }));
     return {
