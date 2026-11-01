@@ -169,8 +169,18 @@ describe('starvation classifier', () => {
       await new Promise((r) => setTimeout(r, 1500));
     }
 
+    // Keep beating for the whole scrape. Recovery is one store, but the scrape that
+    // follows can outlast the threshold, and a silent stretch there would open a SECOND
+    // wedge mid-poll — a per-wedge counter would then settle on 2 on a loaded runner and
+    // on 1 everywhere else.
     Atomics.store(beat, 0, BigInt(Date.now()));
-    const body = await scrapeUntil(port, settleOn);
+    const recovered = setInterval(() => Atomics.store(beat, 0, BigInt(Date.now())), WORKER_POLL_MS);
+    let body: string;
+    try {
+      body = await scrapeUntil(port, settleOn);
+    } finally {
+      clearInterval(recovered);
+    }
     await worker.terminate();
     await Promise.all(spinners.map((s) => s.terminate()));
     return body;
@@ -278,6 +288,50 @@ describe('starvation classifier', () => {
     expect(body).toContain('civitai_app_watchdog_wedge_cpu_ratio_bucket{le="0.05"}');
     expect(body).toContain('civitai_app_watchdog_wedge_cpu_ratio_count 1');
     expect(read(body, 'civitai_app_watchdog_starved_ratio_threshold')).toBe(0.2);
+  }, 30_000);
+
+  // Summed from the body rather than a hand-listed set, so a verdict added later is
+  // counted here without anyone remembering to add it.
+  const captureDecisions = (body: string) =>
+    body
+      .split('\n')
+      .filter((l) => l.startsWith('civitai_app_watchdog_capture_total{'))
+      .reduce((sum, l) => sum + Number(l.slice(l.indexOf('} ') + 2)), 0);
+
+  it('🔴 records a decision for an executing wedge the starvation gate let through', async () => {
+    // The gate passing an executing wedge used to be UNOBSERVABLE: the disabled verdict
+    // was the one verdict that recorded nothing, so on a pool with capture off the only
+    // label that could ever move was skipped-starved. Reading it as a share of the
+    // counter then says every wedge was refused as starved, whatever the classifier
+    // says.
+    const body = await runWedge('executing', {
+      'civitai_app_watchdog_capture_total{result="skipped-disabled"}': 1,
+    });
+    expect(read(body, 'civitai_app_watchdog_capture_total{result="skipped-disabled"}')).toBe(1);
+    expect(read(body, 'civitai_app_watchdog_capture_total{result="skipped-starved"}')).toBe(0);
+  }, 30_000);
+
+  it('🔴 records exactly one decision per detected wedge, whatever the verdict', async () => {
+    // The denominator, pinned as a RELATIONSHIP rather than as a label: the decisions
+    // ledger has to equal the wedges, so no verdict can go unrecorded and none can be
+    // counted twice.
+    for (const kind of ['executing', 'starved'] as const) {
+      const body = await runWedge(kind, { civitai_app_watchdog_wedge_duration_seconds_count: 1 });
+      expect(captureDecisions(body), kind).toBe(
+        read(body, 'civitai_app_watchdog_wedge_duration_seconds_count')
+      );
+    }
+  }, 60_000);
+
+  it('refuses a starved wedge at the starvation gate, not at the disabled check', async () => {
+    // The protection this whole gate exists for: a descheduled thread has nothing to
+    // sample. The starved verdict must be the one recorded, so removing the gate is
+    // visible as the verdict MOVING rather than as a count staying the same.
+    const body = await runWedge('starved', {
+      'civitai_app_watchdog_capture_total{result="skipped-starved"}': 1,
+    });
+    expect(read(body, 'civitai_app_watchdog_capture_total{result="skipped-starved"}')).toBe(1);
+    expect(read(body, 'civitai_app_watchdog_capture_total{result="skipped-disabled"}')).toBe(0);
   }, 30_000);
 });
 
