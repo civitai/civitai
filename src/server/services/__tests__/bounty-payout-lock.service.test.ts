@@ -1105,6 +1105,47 @@ describe('several awards on one bounty', () => {
     expect(buzz.createBuzzTransactionMany).toHaveBeenCalledTimes(1);
   });
 
+  describe('one supporter whose award fails', () => {
+    // Supporter 5 fails and is listed first: the supporters after it must still be paid.
+    const recordBoth = (complete: boolean) => {
+      const at = new Date(1000);
+      Object.assign(benefactors[0], { awardedToId: 10, awardedAt: at });
+      Object.assign(benefactors[1], { awardedToId: 11, awardedAt: at });
+      if (!complete)
+        benefactors.push({ ...benefactors[1], userId: 7, awardedToId: null, awardedAt: null });
+      Object.assign(bounty!, { complete, payoutRecordedAt: at, payoutWinnerUserId: 9 });
+    };
+
+    it.each([true, false])(
+      'with no charge on record, still pays the others and leaves the bounty pending (complete: %s)',
+      async (complete) => {
+        recordBoth(complete);
+        buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) =>
+          prefix === 'bounty-4-5-1' ? [] : [{ accountType: 'yellow', amount: 50 }]
+        );
+        expect(await settleBountyPayout(4)).toBe(false);
+        expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+        expect(bounty?.complete).toBe(complete);
+        expect(bounty?.refunded).toBe(false);
+        expect(isPayoutPending(bounty!)).toBe(true);
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'bounty-award', type: 'error', bountyId: 4, userId: 5 })
+        );
+      }
+    );
+
+    it('with a failed charge lookup, still pays the others', async () => {
+      recordBoth(true);
+      buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => {
+        if (prefix === 'bounty-4-5-1') throw new Error('buzz down');
+        return [{ accountType: 'yellow', amount: 50 }];
+      });
+      expect(await settleBountyPayout(4)).toBe(false);
+      expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+      expect(isPayoutPending(bounty!)).toBe(true);
+    });
+  });
+
   // An award a settlement already paid, under the old bounty-wide key or this one, is not paid again.
   it('pays a later award without repaying one an earlier settlement covered', async () => {
     ledger.set('bounty-award-b4-yellow', { toAccountId: 8, amount: 100, type: 'Bounty' });
