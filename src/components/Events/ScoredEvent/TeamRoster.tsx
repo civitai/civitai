@@ -41,11 +41,13 @@ export function TeamRoster({
   event,
   teams,
   initialTeam,
+  startDate,
 }: {
   event: string;
   teams: readonly string[];
   /** The viewer's own team, when they have one. */
   initialTeam?: string;
+  startDate?: Date;
 }) {
   const teamColor = useTeamColor();
   const [team, setTeam] = useState<string>(initialTeam ?? teams[0] ?? '');
@@ -107,9 +109,10 @@ export function TeamRoster({
       sort,
       prices,
       now,
+      startDate,
       onVisible,
     }),
-    [team, color, sort, prices, now, onVisible]
+    [team, color, sort, prices, now, startDate, onVisible]
   );
   const teamHatUrl = standings?.teamHats?.find((h) => h.team === team)?.url;
   const podium = items.slice(0, PODIUM_SIZE);
