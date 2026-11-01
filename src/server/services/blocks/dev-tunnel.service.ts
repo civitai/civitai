@@ -93,6 +93,32 @@ const userBlockKey = (userId: number, blockId: string) =>
  */
 const userTunnelIndexKey = (userId: number) => `${SYS_PREFIX}:user-index:${userId}` as const;
 const spendKey = (sessionId: string) => `${SYS_PREFIX}:spend:${sessionId}` as const;
+/**
+ * A caller's own key for one start (`StartDevTunnelParams.clientKey`): the session that start
+ * opened, so a caller that gave up on its answer can still close it (`cancelDevTunnelStart`).
+ */
+const clientStartKey = (userId: number, clientKey: string) =>
+  `${SYS_PREFIX}:client-start:${userId}:${clientKey}` as const;
+/** Set by `cancelDevTunnelStart`: the start under that key, still in flight, closes what it opens. */
+const clientCancelledKey = (userId: number, clientKey: string) =>
+  `${SYS_PREFIX}:client-cancelled:${userId}:${clientKey}` as const;
+/**
+ * How long a start's client key is remembered. A cancel comes when the caller gives up on the
+ * start, which is bounded by `RUNNER_DEV_TUNNEL_START_DEADLINE_MS` on this side and the runner's
+ * own start timeout on that one (200 s), so 15 minutes leaves a wide margin and keeps no key for
+ * the life of a tunnel.
+ */
+export const DEV_TUNNEL_CLIENT_KEY_SECONDS = 15 * 60;
+/**
+ * How long `/api/internal/app-assistant/dev-tunnel/start` takes, at most, to answer. Its own work
+ * has no such bound: the previous tunnel's teardown (k8s calls of up to 30 s each), then the
+ * route render, which waits up to 180 s for its apply Job (`waitForApplyJob`). Past this the
+ * endpoint answers `unavailable` and cancels its own start (`cancelDevTunnelStart`), so whatever
+ * that start opens later is closed. App Assistant's runner waits this long plus 15 s
+ * (`START_TIMEOUT_MS` in apps/assistant-runner/src/app-assistant/dev-tunnel.ts, which mirrors this
+ * number as `CIVITAI_START_DEADLINE_MS`), so it always hears this answer.
+ */
+export const RUNNER_DEV_TUNNEL_START_DEADLINE_MS = 185_000;
 
 /** Label every rendered k8s object carries so the reaper + teardown can sweep by
  *  selector and never touch a live app (live apps carry no dev-tunnel label). */
@@ -795,6 +821,12 @@ export type StartDevTunnelParams = {
    *  the tunnel allowlist and re-gated at the mint. Omitted/absent → read-only. */
   declaredScopes?: string[];
   declaredAuth?: DevTunnelDeclaredAuth;
+  /**
+   * The caller's own key for this start (App Assistant's runner sends one). A start cancelled under
+   * it (`cancelDevTunnelStart`), before or while it runs, opens nothing or closes what it opened,
+   * and throws `DEV_TUNNEL_START_CANCELLED`.
+   */
+  clientKey?: string;
 };
 
 export type StartDevTunnelResult = {
@@ -813,6 +845,23 @@ export type StartDevTunnelResult = {
 /** What `startDevTunnel` throws for a public key that does not parse — the one caller mistake it
  *  throws on; every other throw is the route render failing. */
 export const INVALID_SSH_PUBLIC_KEY = 'invalid SSH public key';
+/** What `startDevTunnel` throws for a start its caller cancelled (`cancelDevTunnelStart`). */
+export const DEV_TUNNEL_START_CANCELLED = 'dev tunnel start cancelled';
+
+/**
+ * Whether the start under `clientKey` was cancelled. A mark it cannot read counts as none, rather
+ * than failing a start nobody cancelled: a cancel that comes after the session is recorded under
+ * the key finds it there and closes it itself (`cancelDevTunnelStart`). Only a cancel that came
+ * earlier AND this read failing leaves the tunnel open, to idle out (`DEV_TUNNEL_IDLE_SECONDS`).
+ */
+async function isStartCancelled(userId: number, clientKey: string): Promise<boolean> {
+  try {
+    const mark = await withSysReadDeadline(sysRedis.get(clientCancelledKey(userId, clientKey)));
+    return mark !== null && mark !== undefined;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Mint a dev-tunnel credential + host, render the ephemeral Traefik route, and
@@ -828,6 +877,10 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   if (!normalizedKey) throw new Error(INVALID_SSH_PUBLIC_KEY);
   const fingerprint = fingerprintSshPublicKey(normalizedKey);
   if (!fingerprint) throw new Error(INVALID_SSH_PUBLIC_KEY);
+  const { clientKey } = params;
+  // Cancelled before it began: nothing is opened, and the user's current tunnel is left alone.
+  if (clientKey && (await isStartCancelled(params.userId, clientKey)))
+    throw new Error(DEV_TUNNEL_START_CANCELLED);
 
   // Tear down any existing tunnel for this (user, block) so a re-run doesn't
   // orphan a route/credential.
@@ -894,6 +947,14 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     sysRedis.set(userBlockKey(params.userId, params.blockId), sessionId, {
       EX: DEV_TUNNEL_HARD_SECONDS,
     }),
+    // Written BEFORE the cancel mark is read below: see the end of this function.
+    ...(clientKey
+      ? [
+          sysRedis.set(clientStartKey(params.userId, clientKey), sessionId, {
+            EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
+          }),
+        ]
+      : []),
   ]);
 
   // Best-effort, and deliberately AFTER the state above: the index only makes a ban
@@ -938,6 +999,16 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
       expiresAt: hardExpiresAt,
     })
   );
+
+  // Cancelled while it ran (its caller gave up on the answer): close what it opened. This start
+  // records its session under the key and THEN reads the mark; a cancel sets the mark and THEN
+  // reads the key. Each awaits its write before its read, so at least one of the two sees the
+  // other's write, and the tunnel is closed by this start, by the cancel, or by both (teardown
+  // is idempotent).
+  if (clientKey && (await isStartCancelled(params.userId, clientKey))) {
+    await teardownSession(session, 'stop');
+    throw new Error(DEV_TUNNEL_START_CANCELLED);
+  }
 
   return {
     sessionId,
@@ -1010,6 +1081,35 @@ export async function stopOwnDevTunnel(
   if (read.status === 'absent' || read.session.userId !== userId) return 'not_found';
   await teardownSession(read.session, 'stop');
   return 'stopped';
+}
+
+/**
+ * Cancels `userId`'s start under `clientKey`, whether it is still running, has finished, or never
+ * came: a running one closes what it opens (`startDevTunnel`), and a finished one's tunnel is
+ * closed here. For a caller that gave up on a start's answer (it timed out, or its reply ended),
+ * which so never learned the session id. Idempotent; `unavailable` means the cancel could not be
+ * recorded, so a start still running may yet open a tunnel: ask again.
+ */
+export async function cancelDevTunnelStart(
+  userId: number,
+  clientKey: string
+): Promise<'stopped' | 'not_found' | 'unavailable'> {
+  // The mark first, then the read: the order `startDevTunnel` relies on (see its end).
+  try {
+    await sysRedis.set(clientCancelledKey(userId, clientKey), '1', {
+      EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
+    });
+  } catch {
+    return 'unavailable';
+  }
+  let sessionId: unknown;
+  try {
+    sessionId = await withSysReadDeadline(sysRedis.get(clientStartKey(userId, clientKey)));
+  } catch {
+    return 'unavailable';
+  }
+  if (!sessionId || typeof sessionId !== 'string') return 'not_found';
+  return stopOwnDevTunnel(userId, sessionId);
 }
 
 /** Stop whatever active tunnel exists for a (user, block) pair (used by

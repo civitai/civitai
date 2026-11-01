@@ -1,17 +1,24 @@
+import { randomUUID } from 'node:crypto';
+
 import type { Logger } from '../core/interfaces';
 
 /** civitai's endpoints the runner opens, keeps and closes a run's dev tunnel at, relative to `CIVITAI_URL`. */
 export const DEV_TUNNEL_PATH = 'api/internal/app-assistant/dev-tunnel';
 /** How long a keep-alive or a stop waits for civitai. */
-const REQUEST_TIMEOUT_MS = 15_000;
+export const REQUEST_TIMEOUT_MS = 15_000;
 /**
- * How long a start waits. civitai answers a start only once the tunnel's route has been applied,
- * which it waits up to 180 s for (`renderDevTunnelRoute`), and it keeps the tunnel it opened even
- * when the caller has gone. A start the runner gives up on sooner is one civitai still opens: the
- * sandbox never connects to it, yet civitai lists it as live, so the page shows a preview that can
- * only fail to load. Most starts answer in seconds; this covers civitai's own bound with margin.
+ * The longest civitai's start endpoint takes to answer (`RUNNER_DEV_TUNNEL_START_DEADLINE_MS` in
+ * civitai's `dev-tunnel.service.ts`, mirrored here, as the runner imports nothing of civitai's).
+ * Its own steps can take longer (the previous tunnel's teardown, then up to 180 s for the route's
+ * apply Job); past this it answers `unavailable` and closes whatever that start opens.
  */
-const START_TIMEOUT_MS = 200_000;
+export const CIVITAI_START_DEADLINE_MS = 185_000;
+/**
+ * How long a start waits: civitai's own bound, plus 15 s for the request to get there and back. A
+ * start given up on sooner is cancelled by its key either way (`start`), but one civitai would
+ * still have answered in time is a preview the user then does not get. Most answer in seconds.
+ */
+export const START_TIMEOUT_MS = CIVITAI_START_DEADLINE_MS + 15_000;
 
 /** What civitai's `start` answers: the tunnel's id (the runner's alone), its host and sish's host key. */
 export interface StartedTunnel {
@@ -84,18 +91,52 @@ export class CivitaiDevTunnels {
     ) => this.#post(action, grant, body, signal, timeoutMs);
     return {
       start: async (input, signal) => {
-        const answer = await post('start', { ...input }, signal, START_TIMEOUT_MS);
-        const { sessionId, host, sshHostPublicKey } = (answer ?? {}) as Record<string, unknown>;
-        if (
-          typeof sessionId !== 'string' ||
-          !sessionId ||
-          typeof host !== 'string' ||
-          !host ||
-          typeof sshHostPublicKey !== 'string' ||
-          !sshHostPublicKey
-        )
-          throw new DevTunnelError('Civitai answered the preview start oddly.', 503, 'unavailable');
-        return { sessionId, host, sshHostPublicKey };
+        // The grant is read once for the start and kept for its own cleanup below: a reply that
+        // ended (the reason a start is given up on) may already have had its grant deleted here,
+        // and civitai still takes it to close a tunnel, which only ever takes access away.
+        const token = await grant();
+        const held = async () => token;
+        // This start's own key: with it, civitai closes what this start opens even when the runner
+        // never hears its answer (`stop` by `clientKey`).
+        const clientKey = randomUUID();
+        try {
+          const answer = await this.#post(
+            'start',
+            held,
+            { ...input, clientKey },
+            signal,
+            START_TIMEOUT_MS
+          );
+          const { sessionId, host, sshHostPublicKey } = (answer ?? {}) as Record<string, unknown>;
+          if (
+            typeof sessionId !== 'string' ||
+            !sessionId ||
+            typeof host !== 'string' ||
+            !host ||
+            typeof sshHostPublicKey !== 'string' ||
+            !sshHostPublicKey
+          )
+            throw new DevTunnelError(
+              'Civitai answered the preview start oddly.',
+              503,
+              'unavailable'
+            );
+          return { sessionId, host, sshHostPublicKey };
+        } catch (error) {
+          // Given up on (the caller's signal, the timeout, civitai out of reach) or failed on
+          // civitai's side: civitai may still open the tunnel, or have opened it, so it is closed
+          // by this start's key. A refusal (4xx) opened nothing. Not awaited: a Stop is not held
+          // up by it, and the call has its own timeout.
+          if (token && (!(error instanceof DevTunnelError) || error.status >= 500))
+            void this.#post('stop', held, { clientKey }, undefined, REQUEST_TIMEOUT_MS).catch(
+              (stopError: unknown) =>
+                this.#options.log.warn(
+                  { action: 'stop', err: (stopError as Error)?.name },
+                  'closing an abandoned dev-tunnel start failed'
+                )
+            );
+          throw error;
+        }
       },
       keepalive: async ({ host }, signal) => {
         await post('keepalive', { host }, signal);

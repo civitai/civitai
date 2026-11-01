@@ -8,10 +8,15 @@ import {
 } from '@civitai/app-assistant';
 
 import type { Logger } from '../core/interfaces';
-import { MintRefusedError, type TokenSource } from '../minter';
-import { DevTunnelError, type DevTunnels } from './dev-tunnel';
+import { MINT_TIMEOUT_MS, MintRefusedError, type TokenSource } from '../minter';
+import {
+  DevTunnelError,
+  REQUEST_TIMEOUT_MS,
+  START_TIMEOUT_MS,
+  type DevTunnels,
+} from './dev-tunnel';
 import { DevServerNotRunningError, DevServerStartError, RunnerPreview } from './preview';
-import { AppSandbox } from './sandbox';
+import { AppSandbox, RUNNER_CALL_TIMEOUT_MS } from './sandbox';
 
 /** How many restarts one user may ask for in `RESTART_WINDOW_MS`, on one runner process. */
 export const RESTART_LIMIT = 10;
@@ -19,6 +24,18 @@ export const RESTART_WINDOW_MS = 10 * 60_000;
 /** How long a restart waits for an app the page just started to run; it never starts one itself. */
 export const RESTART_WAIT_MS = 60_000;
 const RESTART_POLL_MS = 3_000;
+/**
+ * How much of the request's preview grant a tunnel start needs left, as every call from there on
+ * is made with it: the start (`START_TIMEOUT_MS`, 200 s), a fresh sandbox token for the connect
+ * (`MINT_TIMEOUT_MS`, 15 s), the sandbox's connect (`RUNNER_CALL_TIMEOUT_MS`, 60 s), and the stop
+ * when it did not connect (`REQUEST_TIMEOUT_MS`, 15 s): 290 s. A grant that ran out in between
+ * leaves civitai a tunnel nothing connects to and nothing can close, so a restart with less left
+ * opens none and answers `unavailable`: the next click brings a fresh grant. civitai signs a
+ * preview grant for 7 minutes (`PREVIEW_GRANT_TTL_SECONDS`), this budget plus the 2 minutes the
+ * steps before the start may take.
+ */
+export const TUNNEL_START_BUDGET_MS =
+  START_TIMEOUT_MS + MINT_TIMEOUT_MS + RUNNER_CALL_TIMEOUT_MS + REQUEST_TIMEOUT_MS;
 /** The id the restart's own calls are logged under: there is no run. */
 const LOG_ID = 'preview-restart';
 
@@ -44,8 +61,11 @@ export interface PreviewRestarts {
    * package read as CommonJS) cannot import names from.
    */
   grantConversation(app: string): string | null;
-  /** `grant` is the request's own preview grant, already verified for this user and app. */
-  restart(userId: string, app: string, grant: string): Promise<RestartOutcome>;
+  /**
+   * `grant` is the request's own preview grant, already verified for this user and app, and
+   * `expiresAt` when it runs out (no tunnel is started without `TUNNEL_START_BUDGET_MS` of it left).
+   */
+  restart(userId: string, app: string, grant: string, expiresAt?: Date): Promise<RestartOutcome>;
 }
 
 /** The page's words for each refusal: about the user's app, never the assistant's. */
@@ -132,7 +152,7 @@ export class PreviewRestarter implements PreviewRestarts {
    * away must not stop it for the other. Its civitai calls and sandbox tool calls have their own
    * timeouts; looking up the app at the sandbox service has none beyond the HTTP client's.
    */
-  restart(userId: string, app: string, grant: string): Promise<RestartOutcome> {
+  restart(userId: string, app: string, grant: string, expiresAt?: Date): Promise<RestartOutcome> {
     const key = `${userId}\n${app}`;
     const joined = this.#inflight.get(key);
     if (joined) return joined;
@@ -142,7 +162,7 @@ export class PreviewRestarter implements PreviewRestarts {
         error: 'rate-limited',
         message: RESTART_MESSAGES['runner-rate-limited'],
       });
-    const run = this.#restart(app, grant).finally(() => this.#inflight.delete(key));
+    const run = this.#restart(app, grant, expiresAt).finally(() => this.#inflight.delete(key));
     this.#inflight.set(key, run);
     return run;
   }
@@ -167,7 +187,7 @@ export class PreviewRestarter implements PreviewRestarts {
     return true;
   }
 
-  async #restart(app: string, grant: string): Promise<RestartOutcome> {
+  async #restart(app: string, grant: string, expiresAt?: Date): Promise<RestartOutcome> {
     const { sandboxUrl, log } = this.#options;
     const { tokens, tunnels } = this.#options.forGrant(grant);
     const stop = new AbortController();
@@ -195,6 +215,7 @@ export class PreviewRestarter implements PreviewRestarts {
         ? { devServerWaitMs: this.#options.devServerWaitMs }
         : {}),
       ...(this.#options.pollMs !== undefined ? { devServerPollMs: this.#options.pollMs } : {}),
+      ...(expiresAt ? { tunnelStartBy: expiresAt.getTime() - TUNNEL_START_BUDGET_MS } : {}),
     });
     try {
       const found = await this.#running(client, app);
@@ -271,7 +292,7 @@ export class PreviewRestarter implements PreviewRestarts {
     if (error instanceof DevServerNotRunningError)
       return fail('not-running', RESTART_MESSAGES['app-not-running']);
     // civitai refused the user (a gate, their consent) at the sandbox token's mint. A grant that ran
-    // out (it lives about 2 minutes) is not a refusal: the next click brings a fresh one.
+    // out (it lives 7 minutes) is not a refusal: the next click brings a fresh one.
     if (error instanceof MintRefusedError)
       return error.code === 'refused' || error.code === 'consent_required'
         ? fail('refused', RESTART_MESSAGES.refused)

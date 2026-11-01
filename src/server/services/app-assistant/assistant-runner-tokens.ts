@@ -24,8 +24,23 @@ export const RUNNER_VIEWER_TYP = 'assistant-viewer+jwt';
 export const RUN_GRANT_AUDIENCE = 'assistant-runner:run-grant';
 export const RUN_GRANT_TYP = 'assistant-run-grant+jwt';
 export const RUNNER_VIEWER_TTL_SECONDS = 5 * 60;
-/** A preview grant's life: one Restart preview, start to finish, with room for a slow sandbox. */
-export const PREVIEW_GRANT_TTL_SECONDS = 2 * 60;
+/**
+ * A preview grant's life: one Restart preview, start to finish, including its last call to civitai.
+ * The runner reads the grant on every one of its calls here (its token mints, the tunnel's start,
+ * and the stop that closes a tunnel the sandbox could not connect to), so a grant that runs out
+ * mid-restart leaves a tunnel open that nothing connects to. The runner's restart, measured from
+ * the click (apps/assistant-runner `preview-restart.ts`):
+ *   - up to 2 min before the tunnel's start: up to 60 s waiting for an app the page just started
+ *     (`RESTART_WAIT_MS`), then a dev server it may start (`DEV_SERVER_WAIT_MS`, 20 s, plus one
+ *     probe's 10 s) and a handful of short sandbox calls. The runner does not start a tunnel once
+ *     less than the next budget is left (`TUNNEL_START_BUDGET_MS`), so this part cannot eat it;
+ *   - then up to 290 s: the start (200 s, the runner's own timeout, above this side's
+ *     `RUNNER_DEV_TUNNEL_START_DEADLINE_MS`), a fresh sandbox token (15 s), the sandbox's connect
+ *     (60 s), and the stop when it did not connect (15 s).
+ * 120 + 290 = 410 s, so 7 minutes. Verified with `CLOCK_SKEW_SECONDS` of tolerance, which is for
+ * clocks, not part of this budget.
+ */
+export const PREVIEW_GRANT_TTL_SECONDS = 7 * 60;
 const ALGORITHM = 'ES256';
 const CLOCK_SKEW_SECONDS = 30;
 
