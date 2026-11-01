@@ -524,6 +524,80 @@ describe('CivitaiDevTunnels', () => {
     expect(sent).toEqual([]);
   });
 
+  describe('how long a call waits for civitai', () => {
+    // `AbortSignal.timeout` runs on Node's own timers, which fake timers do not reach: each one
+    // is swapped for an abort on the faked `setTimeout`, so the virtual clock drives the deadline.
+    let deadlines: number[];
+    beforeEach(() => {
+      vi.useFakeTimers();
+      deadlines = [];
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
+        deadlines.push(ms);
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), ms);
+        return controller.signal;
+      });
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    });
+
+    /** civitai answers each call after `ms`, or never; an aborted call fails as fetch does. */
+    function answeringAfter(ms: number | null, answer: () => Response) {
+      return client(
+        (_url, init) =>
+          new Promise<Response>((resolve, reject) => {
+            const signal = init.signal as AbortSignal;
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            if (ms !== null) setTimeout(() => resolve(answer()), ms);
+          })
+      );
+    }
+    const started = () =>
+      Response.json({ sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY });
+
+    it('a start civitai answers 185 s in (its route takes up to 180 s) is still the start', async () => {
+      // civitai's start waits for the tunnel's route to be applied (up to 180 s) before it answers,
+      // and keeps the tunnel it opened. A runner that gives up sooner never connects the sandbox to
+      // a tunnel civitai then lists as live: the page shows it, and it can only fail to load.
+      const { tunnels } = answeringAfter(185_000, started);
+      const start = tunnels
+        .forRun(async () => GRANT)
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+        .then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error })
+        );
+      await vi.advanceTimersByTimeAsync(185_000);
+      expect(await start).toEqual({
+        value: { sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY },
+      });
+      // The control: the call did run on a deadline this test drives.
+      expect(deadlines).toHaveLength(1);
+    });
+
+    it('a start civitai never answers still fails, as `unavailable`', async () => {
+      const { tunnels } = answeringAfter(null, started);
+      const start = tunnels
+        .forRun(async () => GRANT)
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(await start).toMatchObject({ status: 503, code: 'unavailable' });
+    });
+
+    it('a keep-alive or stop civitai does not answer fails within 16 s', async () => {
+      const { tunnels } = answeringAfter(null, () => Response.json({}));
+      const run = tunnels.forRun(async () => GRANT);
+      const keepalive = run.keepalive({ host: HOST }).catch((error: unknown) => error);
+      const stop = run.stop(SESSION).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(await keepalive).toMatchObject({ status: 503, code: 'unavailable' });
+      expect(await stop).toMatchObject({ status: 503, code: 'unavailable' });
+    });
+  });
+
   it('civitai out of reach, or answering a start oddly, is `unavailable`', async () => {
     const down = client(() => {
       throw new TypeError('fetch failed');
