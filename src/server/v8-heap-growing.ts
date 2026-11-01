@@ -1,4 +1,4 @@
-import v8 from 'node:v8';
+import { setFlagsFromString } from 'node:v8';
 
 const ENV_NAME = 'V8_HEAP_GROWING_PERCENT';
 const MIN_PERCENT = 1;
@@ -8,7 +8,7 @@ const MAX_PERCENT = 400;
 // raises how far old space may grow before the next mark-compact, trading RSS for fewer major GCs.
 export function applyHeapGrowingPercent(
   raw: string | undefined = process.env[ENV_NAME],
-  setFlags: (flags: string) => void = v8.setFlagsFromString
+  setFlags: (flags: string) => void = setFlagsFromString
 ): number | undefined {
   if (raw === undefined || !/^\d+$/.test(raw)) return undefined;
   const percent = Number(raw);
