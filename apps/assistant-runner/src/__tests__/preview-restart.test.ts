@@ -12,6 +12,7 @@ import {
   restartGrantConversation,
   RESTART_LIMIT,
   RESTART_MESSAGES,
+  TUNNEL_START_BUDGET_MS,
   type PreviewRestarts,
   type RestartOutcome,
 } from '../app-assistant/preview-restart';
@@ -107,6 +108,45 @@ function restarter(
 const tunnelCalls = () => fake.calls.filter((c) => c.tool.startsWith('tunnel_')).map((c) => c.tool);
 
 describe('PreviewRestarter', () => {
+  describe('a grant too close to running out opens no tunnel', () => {
+    it('needs 290 s of the grant left to start one: the start, a token, the connect, the stop', () => {
+      expect(TUNNEL_START_BUDGET_MS).toBe(290_000);
+      // civitai signs a preview grant for 7 minutes (`PREVIEW_GRANT_TTL_SECONDS`): what is left
+      // for the steps before the start is the 2 minutes they may take, and a little more.
+      expect(7 * 60_000 - TUNNEL_START_BUDGET_MS).toBeGreaterThanOrEqual(120_000);
+    });
+
+    it('with less left, it asks civitai nothing and answers `unavailable`, which a fresh click fixes', async () => {
+      fake.add(APP);
+      const outcome = await restarter().restart(
+        'u-1',
+        APP,
+        'test-preview-grant',
+        new Date(Date.now() + 280_000)
+      );
+      expect(outcome).toEqual({
+        ok: false,
+        error: 'unavailable',
+        message: RESTART_MESSAGES.unavailable,
+      });
+      expect(tunnels.started).toEqual([]);
+      // The sandbox made its single-use key; it was never sent, and nothing dialed.
+      expect(tunnelCalls()).toEqual(['tunnel_key']);
+    });
+
+    it('with the budget left, it opens the preview (the control)', async () => {
+      fake.add(APP);
+      const outcome = await restarter().restart(
+        'u-1',
+        APP,
+        'test-preview-grant',
+        new Date(Date.now() + 300_000)
+      );
+      expect(outcome).toMatchObject({ ok: true, blockId: MANIFEST_BLOCK, host: HOST });
+      expect(tunnels.started).toHaveLength(1);
+    });
+  });
+
   it('opens the running app’s preview for its manifest’s block, and answers only the block and host', async () => {
     fake.add(APP);
     const outcome = await restarter().restart('u-1', APP, 'test-preview-grant');
@@ -557,14 +597,16 @@ async function serve(previews?: PreviewRestarts): Promise<string> {
 /** A restarter that records each call and answers `outcome`. */
 function recording(outcome: RestartOutcome = { ok: true, blockId: APP, host: HOST }) {
   const calls: [string, string, string][] = [];
+  const expiries: (Date | undefined)[] = [];
   const previews: PreviewRestarts = {
     grantConversation: restartGrantConversation,
-    restart: async (userId, appKey, grant) => {
+    restart: async (userId, appKey, grant, expiresAt) => {
       calls.push([userId, appKey, grant]);
+      expiries.push(expiresAt);
       return outcome;
     },
   };
-  return { calls, previews };
+  return { calls, expiries, previews };
 }
 
 async function post(base: string, appKey: string, headers: Record<string, string>) {
@@ -613,6 +655,20 @@ describe('POST apps/:app/preview', () => {
     const own = await previewGrant('u1', APP);
     expect((await post(base, APP, { authorization: viewer, 'x-run-grant': own })).status).toBe(200);
     expect(calls).toEqual([['u1', APP, own]]);
+  });
+
+  it('hands the restart the grant’s own expiry, which bounds when it may start a tunnel', async () => {
+    const { expiries, previews } = recording();
+    const base = await serve(previews);
+    const viewer = `Bearer ${await signViewer(keys, 'u1')}`;
+    const before = Date.now();
+    // Signed for 120 s here (`previewGrant`): the expiry is the grant's, not a default.
+    const own = await previewGrant('u1', APP);
+    expect((await post(base, APP, { authorization: viewer, 'x-run-grant': own })).status).toBe(200);
+    expect(expiries).toHaveLength(1);
+    const left = expiries[0]!.getTime() - before;
+    expect(left).toBeGreaterThan(118_000);
+    expect(left).toBeLessThanOrEqual(121_000);
   });
 
   it('refuses a preview grant for a reply start: it is good for nothing else', async () => {

@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { decodeProtectedHeader, jwtVerify, SignJWT } from 'jose';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
@@ -56,7 +56,7 @@ describe('the runner’s credentials, as the runner reads them', () => {
     expect(payload.exp! - payload.iat!).toBe(300);
   });
 
-  it('signs a preview grant: use preview, two minutes whatever the env says, never subagents', async () => {
+  it('signs a preview grant: use preview, seven minutes whatever the env says, never subagents', async () => {
     setEnv({ ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 600 });
     const { token } = await signRunGrant({ ...GRANT, use: 'preview', subagents: true });
     const { payload } = await jwtVerify(token, keys.publicKey, {
@@ -65,7 +65,28 @@ describe('the runner’s credentials, as the runner reads them', () => {
     });
     expect(payload).toMatchObject({ sub: '42', cid: 'c-1', key: 'k-1', use: 'preview' });
     expect(payload).not.toHaveProperty('subagents');
-    expect(payload.exp! - payload.iat!).toBe(120);
+    expect(payload.exp! - payload.iat!).toBe(420);
+  });
+
+  it('a preview grant is still good at the end of the slowest Restart preview the runner makes', async () => {
+    // The runner's restart: up to 2 minutes before it starts the tunnel, then up to 290 s of calls
+    // to civitai made with this same grant (the start's 200 s, a token mint, the sandbox's connect,
+    // and the stop that closes a tunnel the sandbox could not connect to). A grant that ran out
+    // before the last of them leaves civitai a tunnel nothing connects to and nothing can close.
+    const { token } = await signRunGrant({ ...GRANT, use: 'preview' });
+    vi.useFakeTimers({ now: Date.now() + 410_000, toFake: ['Date'] });
+    try {
+      expect(await verifyRunGrant(token)).toMatchObject({ userId: 42, use: 'preview' });
+    } finally {
+      vi.useRealTimers();
+    }
+    // Control: the same grant does run out, a while after that.
+    vi.useFakeTimers({ now: Date.now() + 420_000 + 31_000, toFake: ['Date'] });
+    try {
+      expect(await verifyRunGrant(token)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('takes the grant TTL from the env', async () => {

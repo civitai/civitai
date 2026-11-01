@@ -1,4 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -565,5 +567,108 @@ describe('POST dev-tunnel/stop', () => {
     const theirs = (await startFor(OWNER, OWNED_APP)).json!.sessionId as string;
     expect(await stop(OTHER, theirs)).toMatchObject({ status: 200, json: { stopped: false } });
     expect(sessionRecord(theirs)).toMatchObject({ userId: OWNER });
+  });
+});
+
+/**
+ * A start the runner gave up on (its reply ended, the user stopped it, or it timed out) never
+ * learned the session id, so it closes the tunnel by the `clientKey` it sent the start with. That
+ * must hold whether civitai's start is still running when the stop comes, or has just finished.
+ */
+describe('a start the runner gave up on, closed by its client key', () => {
+  const CLIENT_KEY = 'test-only-client-key-5e1b';
+  const sessionKeys = () => [...store.keys()].filter((k) => k.includes(':session:'));
+  const startKeyed = async (userId: number, blockId: string, clientKey = CLIENT_KEY) =>
+    call(startRoute, {
+      body: { grant: await grantFor(userId), blockId, sshPublicKey: SANDBOX_KEY, clientKey },
+    });
+  const stopKeyed = async (userId: number, clientKey = CLIENT_KEY) =>
+    call(stopRoute, { body: { grant: await grantFor(userId), clientKey } });
+  /** Holds the next route apply until `release()`, as a slow apply Job does. */
+  async function holdApply() {
+    const pipeline = await import('~/server/services/blocks/apps-pipeline.service');
+    const held: { release?: () => void } = {};
+    vi.mocked(pipeline.waitForApplyJob).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          held.release = () => resolve('succeeded');
+        })
+    );
+    return held;
+  }
+
+  it('a stop that comes while the start runs: the start closes what it opened, and answers 409', async () => {
+    const held = await holdApply();
+    const starting = startKeyed(OWNER, OWNED_APP);
+    await vi.waitFor(() => expect(held.release).toBeTypeOf('function'));
+    // Nothing is open yet, so nothing is stopped now, but the start is marked.
+    expect(await stopKeyed(OWNER)).toMatchObject({ status: 200, json: { stopped: false } });
+    held.release!();
+    expect(await starting).toMatchObject({ status: 409, json: { code: 'cancelled' } });
+    expect(sessionKeys()).toEqual([]);
+    expect(store.has(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(false);
+  });
+
+  it('a stop that comes after the start answered closes the tunnel it opened', async () => {
+    const { status, json } = await startKeyed(OWNER, OWNED_APP);
+    expect(status).toBe(200);
+    const sessionId = json!.sessionId as string;
+    // Another user's grant with the same key closes nothing of this user's.
+    expect(await stopKeyed(OTHER)).toMatchObject({ status: 200, json: { stopped: false } });
+    expect(sessionRecord(sessionId)).toMatchObject({ userId: OWNER });
+    expect(await stopKeyed(OWNER)).toMatchObject({ status: 200, json: { stopped: true } });
+    expect(sessionRecord(sessionId)).toBeNull();
+    expect(store.has(`${PREFIX}:host:${json!.host}`)).toBe(false);
+  });
+
+  it('a start that comes after its stop opens nothing, and leaves the user’s current tunnel', async () => {
+    const current = (await startFor(OWNER, OWNED_APP)).json!.sessionId as string;
+    expect(await stopKeyed(OWNER)).toMatchObject({ status: 200, json: { stopped: false } });
+    expect(await startKeyed(OWNER, OWNED_APP)).toMatchObject({
+      status: 409,
+      json: { code: 'cancelled' },
+    });
+    expect(sessionKeys()).toEqual([`${PREFIX}:session:${current}`]);
+    // Control: the same start under another key opens (and replaces the current tunnel).
+    expect((await startKeyed(OWNER, OWNED_APP, 'test-only-client-key-9a07')).status).toBe(200);
+  });
+
+  it('a start answers by 185 s however long its route takes, and what it opens later is closed', async () => {
+    const held = await holdApply();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let answer: Awaited<ReturnType<typeof call>> | undefined;
+      void startKeyed(OWNER, OWNED_APP).then((a) => (answer = a));
+      await vi.advanceTimersByTimeAsync(184_000);
+      expect(held.release).toBeTypeOf('function');
+      expect(answer).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1_000);
+      // The runner waits 200 s (apps/assistant-runner `START_TIMEOUT_MS`): it hears this.
+      expect(answer).toMatchObject({ status: 503, json: { code: 'unavailable' } });
+      held.release!();
+      for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(0);
+      expect(sessionKeys()).toEqual([]);
+      expect(store.has(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the runner waits for a start longer than civitai takes to answer one', async () => {
+    const { RUNNER_DEV_TUNNEL_START_DEADLINE_MS } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const root = path.resolve(__dirname, '../../..');
+    const runner = readFileSync(
+      path.join(root, 'apps/assistant-runner/src/app-assistant/dev-tunnel.ts'),
+      'utf8'
+    );
+    // The runner imports nothing of civitai's, so it mirrors the number; the two must agree.
+    const mirrored = /export const CIVITAI_START_DEADLINE_MS = ([\d_]+);/.exec(runner)?.[1];
+    expect(Number(mirrored?.replace(/_/g, ''))).toBe(RUNNER_DEV_TUNNEL_START_DEADLINE_MS);
+    const margin = /export const START_TIMEOUT_MS = CIVITAI_START_DEADLINE_MS \+ ([\d_]+);/.exec(
+      runner
+    )?.[1];
+    expect(Number(margin?.replace(/_/g, ''))).toBeGreaterThanOrEqual(10_000);
   });
 });
