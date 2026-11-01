@@ -14,8 +14,51 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
-const { assertClientImageUrlsUsable, COVER_IMAGE_UNAVAILABLE_MESSAGE, shopArtworkUrls } =
+const { assertClientImageUrlsUsable, COVER_IMAGE_UNAVAILABLE_MESSAGE, shopArtworkUrls, uuidsIn } =
   await import('~/server/services/image-url-ownership');
+
+describe('uuidsIn', () => {
+  // The regex it replaces: a lookahead at every position, so overlapping keys are found too.
+  const byRegex = (value: string) =>
+    [...value.matchAll(/(?=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))/gi)].map(
+      ([, key]) => key.toLowerCase()
+    );
+
+  it('finds exactly what the lookahead regex finds, overlapping keys included', () => {
+    // mulberry32: seeded, so a failure reproduces.
+    let seed = 7;
+    const next = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return (t ^ (t >>> 14)) >>> 0;
+    };
+    // Chains of overlapping keys with a few characters swapped: keys, near-keys and overlaps.
+    const chain = 'ab12CD34-0000-4000-8000-00000000beef-0000-4000-8000-0000000000aa';
+    const swaps = ['a', 'F', '0', '-', 'g', ' ', '--'];
+    const mutated = () => {
+      const chars = [...chain];
+      for (let i = next() % 4; i > 0; i--)
+        chars[next() % chars.length] = swaps[next() % swaps.length];
+      return chars.join('').slice(next() % 10);
+    };
+    const fixed = [
+      'AB12CD34-EF56-4A7B-8C9D-0E1F2A3B4C5D',
+      `x00000000-0000-4000-8000-000000000000-0000-4000-8000-00000000000a`,
+      'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5', // one short
+      'ab12cd3-ef56-4a7b-8c9d-0e1f2a3b4c5d',
+    ];
+    const samples = [...fixed, ...Array.from({ length: 5000 }, mutated)];
+    let found = 0;
+    for (const value of samples) {
+      expect(uuidsIn(value)).toEqual(byRegex(value));
+      found += byRegex(value).length;
+    }
+    // The samples reach keys at all, overlapping ones included.
+    expect(found).toBeGreaterThan(100);
+    expect(uuidsIn(fixed[1])).toHaveLength(2);
+  });
+});
 
 const CALLER = 7;
 const OTHER = 8;

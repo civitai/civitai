@@ -171,6 +171,8 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...a: unknown[]) => mockCheckBlockCatalogRateLimit(...(a as [])),
   checkBlockPublishRateLimit: async () => ({ allowed: true }),
   checkBlockPollRateLimit: (...a: unknown[]) => mockCheckBlockPollRateLimit(...(a as [])),
+  checkBlockSubmitRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitUserRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');

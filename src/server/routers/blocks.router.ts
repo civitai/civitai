@@ -70,6 +70,8 @@ import {
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
+  checkBlockSubmitRateLimit,
+  checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -386,6 +388,10 @@ import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  assertGenerationInputsUsable,
+  opaqueInputUrlsIn,
+} from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sessionClient } from '~/server/auth/session-client';
@@ -6598,104 +6604,17 @@ export const blocksRouter = router({
    * as block lifecycle errors but expects budget rejections as workflow
    * outcomes the block can recover from (e.g. by opening BuyBuzzModal).
    *
-   * 🔴 RATE LIMIT: NONE, DELIBERATELY — AND HERE IS WHAT BOUNDS IT INSTEAD
-   * (clawgate #569, criterion 1). This is the one bridge procedure in the
-   * decision ledger that takes no per-request bucket, so the reason is recorded
-   * here rather than left to be re-derived.
+   * RATE LIMIT: two buckets, charged above every `kind` branch: `:submit:` per (install,
+   * token subject) and `:submit-user:` per subject across all installs, so a submit refused before
+   * `reserveAppSpend` still counts. It fails open on a Redis error like every blocks
+   * limiter; `reserveAppSpend` (per-app generation velocity, per-user and per-app daily
+   * Buzz) fails closed and still bounds accepted generations.
    *
-   * WHAT BOUNDS IT SERVER-SIDE, all inside `reserveAppSpend`
-   * (`services/blocks/app-spend-cap.service`) and the per-user reservation above
-   * it, on every `kind` (txt2img here; customComfy, step and pass-through each
-   * call the same belt in their own handler):
-   *   1. A per-app generation VELOCITY ceiling — a fixed-window count of GENS,
-   *      `velocityMaxGens` per `BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS`. On the
-   *      `standard` tier every app has today that is 120 per 60 s, i.e. 2/s
-   *      AGGREGATE ACROSS EVERY INSTALL of the app — tighter than any per-instance
-   *      request-rate limit worth shipping here, so a second bound on the same
-   *      quantity would bound nothing while adding a way to break a generation.
-   *      🔴 THAT CONCLUSION IS TIER-SCOPED, AND AN EARLIER REVISION OF THIS
-   *      DOCBLOCK GENERALISED IT WITHOUT SAYING SO. `trusted` is 600/60 s and
-   *      `platform` is 3,000/60 s = 50 gens/s (`app-cap-limits.constants.ts`), and
-   *      a moderator `velocityOverride` is clamped only by the absolute max — so on
-   *      a promoted app this ceiling is LOOSER than the poll bucket this same
-   *      change judged appropriate. The argument below holds on `standard`, which
-   *      is every app today; it weakens as apps are promoted, and that is the
-   *      trigger to revisit rather than a reason to act now.
-   *   2. The per-user daily Buzz cap, and the per-app aggregate daily Buzz
-   *      ceiling (`dailyBuzz`), both reserved before the orchestrator is called.
-   *   3. The per-call budget the token itself carries (`claims.buzzBudget`).
-   *
-   * 🔴 THE TWO HOLES IN THAT, STATED BECAUSE THEY ARE OPEN. Do not read the
-   * paragraph above as a ceiling on REQUESTS; it is a ceiling on ACCEPTED
-   * generations.
-   *   (a) A submit REJECTED BEFORE `reserveAppSpend` never increments the
-   *       velocity counter — a version resolve, a checkpoint resolve, the
-   *       entitlement gate and the cost computation have all run by then. A block
-   *       looping on a body that fails one of those gates is doing real origin
-   *       work that no counter sees.
-   *   (b) G8 is SKIPPED for `claims.dev === true`. A dev token is self-bound (only
-   *       the owner can spend, only their own Buzz, still under the per-user daily
-   *       cap and the dev-session backstop), so the anti-Sybil aggregate does not
-   *       apply — but neither does its velocity half.
-   *   (c) 🔴 THE VELOCITY COUNTER IS NEVER REFUNDED, AND IT IS APP-WIDE. Its key is
-   *       `…:vel:<appBlockId>:<bucket>` — no user, no install — and the throw-path
-   *       rollback in this file refunds the per-user reservation, the per-app DAILY
-   *       key and the dev-session key, but not the velocity key (`refundAppSpend`
-   *       takes an `AppSpendDailyKey` and can only decrement that one). So a submit
-   *       that fails AFTER the reserve permanently consumes one slot of the app's
-   *       shared allowance at zero net Buzz cost. Since that allowance is the whole
-   *       thing standing in for a request limit here, one install can degrade
-   *       generation for every other viewer of the same app. A per-instance bucket
-   *       is precisely the control that would bound one install's share of it —
-   *       which is the sharpest argument AGAINST the decision recorded here, and it
-   *       is written down rather than omitted.
-   *
-   * 🔴 THE OTHER DIRECTION, BECAUSE THE RECORD MUST NOT BE ONE-SIDED EITHER:
-   * `reserveAppSpend` FAILS CLOSED on a Redis error (`denyAppSpend('unavailable')`),
-   * where every limiter in `block-catalog-rate-limit.ts` fails OPEN. So the one
-   * procedure left without a request bucket is the one bounded by the stricter
-   * posture, and a Redis incident stops spend here while it removes the ceiling
-   * everywhere else on this bridge.
-   *
-   * 🔴 THE DECISION WAS RE-OPENED IN THE ROUND-0 AUDIT AND IS STILL `none` — BUT THE
-   * ORIGINAL REASON WAS WRONG AND IS RETRACTED HERE RATHER THAN QUIETLY RESTATED. It
-   * read: "not shipped because the spend path is the highest-blast-radius surface in
-   * this file". That objection does not reach the placement this same docblock names —
-   * the TOP of the resolver, above the `kind` branch, where nothing has been reserved,
-   * nothing needs refunding, and the usual counter (a throw breaks a paid generation) is
-   * at its weakest because no money has moved and this procedure already returns a
-   * failed-shape snapshot for the over-budget case. An objection that does not apply to
-   * the option under discussion is not an argument; it was a reflex dressed as one.
-   *
-   * THE REASON THAT SURVIVES IS NARROWER AND IT IS ABOUT FIT, NOT RISK. Hole (c) is not
-   * "this procedure is called too often" — it is "the counter stands in for a request
-   * limit and cannot tell a burnt reservation from a delivered generation". A
-   * per-instance request bucket is a blunt instrument for that: it would bound one
-   * install's call RATE while leaving the shared velocity counter just as unrefundable,
-   * so an app with two installs still drains it. The precise fix is to make the velocity
-   * key refundable — `AppSpendResult` exposes only `dailyKey`, so the throw-path rollback
-   * has no velocity key to return even in principle — and that is a change to
-   * `app-spend-cap.service.ts`'s contract, not to this resolver.
-   * **Closing condition: a PR that returns the velocity key alongside `dailyKey` and
-   * refunds it on the same paths that refund the daily reservation.** Until then hole (c)
-   * stands, stated, as the open item it is.
-   *
-   * It is also not shipped here because the card that raised the question asks for limits
-   * to be argued rather than added reflexively, and because nothing on this surface can
-   * currently grade one: see the refusal counter noted at hole (a).
-   *
-   * 🔴 AND THE EVIDENCE THAT WOULD SETTLE IT DOES NOT EXIST — an earlier revision of
-   * this docblock named `block_scope_invocations` as the source for "the rejected-
-   * submit rate per instance", and that source is STRUCTURALLY EMPTY for exactly the
-   * population in question: this resolver's single `recordScopeInvocation` write sits
-   * AFTER every `TRPCError` throw in it, so a rejected submit — the thing hole (a) is
-   * about — records nothing, under any load. The companion claim that "nothing is
-   * under load" cited `civitai_app_block_requests_total`, which is incremented only
-   * inside the REST `withBlockScope` wrapper and never counts a bridge call at all.
-   * Both were wrong in the reassuring direction. **What would create the evidence: a
-   * counter on bridge calls and on pre-reserve submit rejections, labelled by
-   * procedure. Closing condition for reopening this decision: that counter exists and
-   * shows a non-trivial pre-reserve rejection rate on any instance.**
+   * Open: the per-app velocity counter is never refunded (`refundAppSpend` takes only the
+   * daily key), so a submit that fails after the reserve still spends one slot of the
+   * app's shared allowance. **Closing condition: a PR that returns the velocity key
+   * alongside `dailyKey` and refunds it on the same paths that refund the daily
+   * reservation.**
    */
   submitWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -6724,6 +6643,23 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
+      // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
+      const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
+      if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const userRate = await checkBlockSubmitUserRateLimit(claims.sub);
+      if (!userRate.allowed) {
+        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit-user');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
       if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -6749,6 +6685,13 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
+      if (input.body.kind === 'workflow' || input.body.kind === 'step')
+        await assertStepOrWorkflowInputsUsable(input.body, claims, {
+          confirmedSubmit:
+            input.body.kind === 'step' &&
+            isPassThroughStepBody(input.body) &&
+            input.body.quoteId !== undefined,
+        });
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -9488,6 +9431,8 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
+  if (input.body.kind === 'workflow' || input.body.kind === 'step')
+    await assertStepOrWorkflowInputsUsable(input.body, claims);
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -10634,6 +10579,42 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  */
 function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
+}
+
+/** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
+async function assertStepOrWorkflowInputsUsable(
+  body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
+  claims: BlockClaims,
+  /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
+  { confirmedSubmit = false }: { confirmedSubmit?: boolean } = {}
+) {
+  // The arm's own token checks first: a caller refused those never pays for the walk below.
+  const userId = confirmedSubmit
+    ? parseSubjectUserId(claims.sub)
+    : await assertStepRequestAllowed(claims);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
+  const [entry, inputs] =
+    body.kind === 'workflow'
+      ? (['appBlocksWorkflow', [body.steps.map((step) => step.input), body.arguments]] as const)
+      : isPassThroughStepBody(body)
+      ? (['appBlocksPassThrough', body.input] as const)
+      : (['appBlocksStep', body.params] as const);
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
+  }
+  await assertGenerationInputsUsable({
+    urls,
+    userId,
+    entry,
+    isApiCaller: false,
+    opaqueInput: true,
+  });
 }
 
 /**

@@ -530,3 +530,23 @@ export async function sAddCappedWithExpireGe(
   });
   return Math.max(Number(reply) || 0, 0);
 }
+
+/** Deletes KEYS[1] only while it still holds ARGV[1]: 1 when it did. */
+export const DEL_IF_VALUE_SCRIPT =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
+
+/**
+ * Deletes `key` only while it still holds `value`, in one script, so nothing can write the key
+ * between the read and the delete: the release of a lock (or claim) taken with that value, which
+ * must never free one a later holder took after this one's expired. True when it deleted.
+ *
+ * Throws on any Redis error; each caller decides what a failed release means for it.
+ */
+export async function delIfValue(
+  client: EvalCapableClient,
+  key: string,
+  value: string
+): Promise<boolean> {
+  const reply = await client.eval(DEL_IF_VALUE_SCRIPT, { keys: [key], arguments: [value] });
+  return Number(reply) === 1;
+}

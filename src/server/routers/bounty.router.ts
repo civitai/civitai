@@ -6,6 +6,7 @@ import {
   addBenefactorUnitAmountHandler,
   getBountyBenefactorsHandler,
   refundBountyHandler,
+  resolveUnpaidBountyAwardHandler,
   upsertBountyHandler,
 } from '../controllers/bounty.controller';
 import {
@@ -22,6 +23,7 @@ import {
   addBenefactorUnitAmountInputSchema,
   getBountyEntriesInputSchema,
   getInfiniteBountySchema,
+  resolveUnpaidBountyAwardInputSchema,
   upsertBountyInputSchema,
 } from '~/server/schema/bounty.schema';
 import { dbWrite } from '~/server/db/client';
@@ -91,4 +93,7 @@ export const bountyRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('bounties'))
     .mutation(refundBountyHandler),
+  resolveUnpaidAward: moderatorProcedure
+    .input(resolveUnpaidBountyAwardInputSchema)
+    .mutation(resolveUnpaidBountyAwardHandler),
 });

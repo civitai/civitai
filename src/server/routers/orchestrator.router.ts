@@ -202,16 +202,22 @@ export const orchestratorRouter = router({
   enhancePrompt: orchestratorGuardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(promptEnhancementSchema)
-    .mutation(({ ctx, input }) =>
-      enhancePrompt({
+    .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: input.images ?? [],
+        userId: ctx.user.id,
+        entry: 'enhancePrompt',
+        isApiCaller: ctx.apiKeyId != null,
+      });
+      return enhancePrompt({
         input,
         token: ctx.token,
         userId: ctx.user.id,
         isGreen: ctx.domain === 'green',
         isModerator: ctx.user.isModerator,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-      })
-    ),
+      });
+    }),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
   queryWorkflowsByTags: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -716,7 +722,11 @@ export const orchestratorRouter = router({
         entry: 'imageUpload',
         isApiCaller: ctx.apiKeyId != null,
       });
-      return imageUpload({ token: ctx.token, allowMatureContent: ctx.allowMatureContent, ...input });
+      return imageUpload({
+        token: ctx.token,
+        allowMatureContent: ctx.allowMatureContent,
+        ...input,
+      });
     }),
   // #endregion
 

@@ -85,6 +85,8 @@ export default MixedAuthEndpoint(
       return res.status(status).json(body);
     } catch (error) {
       if (!(error instanceof SiteSearchError)) throw error;
+      if (error.retryAfterSeconds !== undefined)
+        res.setHeader('Retry-After', String(error.retryAfterSeconds));
       return res.status(error.status).json(error.toResponseBody());
     }
   },

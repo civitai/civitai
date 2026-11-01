@@ -84,8 +84,7 @@ export const botAccountDetection = createJob(
       // The scheduler cancels by closing the response; without this the walk keeps paging and
       // keeps POSTing after nobody is listening.
       checkCanceled: () => ctx.checkIfCanceled(),
-      log: (name, data) =>
-        void logToAxiom({ type: 'info', name, ...data }, 'moderation').catch(() => undefined),
+      log: (name, data) => void logToAxiom({ type: 'info', name, ...data }).catch(() => undefined),
     });
   },
   { lockExpiration: 30 * 60 }

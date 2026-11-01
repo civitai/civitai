@@ -8,6 +8,7 @@ import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
 import { familyId } from '@civitai/auth';
 import { markFamilyLive } from '$lib/server/auth/lineage';
+import { preUpgradeHubSession } from '$lib/server/auth/legacy-upgrade';
 import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import {
@@ -339,6 +340,9 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       : undefined;
   const family = hubSession ? familyId(hubSession) : undefined;
   await markFamilyLive(family);
+  if (locals.session && locals.sessionSlot === 'shared') {
+    await preUpgradeHubSession(cookies, locals.session, locals.user).catch(() => undefined);
+  }
   await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
     openid: scopeRequest.openid || undefined,
