@@ -508,6 +508,9 @@ describe('assertGenerationInputsUsable', () => {
 
   it('refuses a key in an allowed external url when neither issue record store can be read', async () => {
     const foreign = `https://replicate.example/pbxt/${KEY}/out.png`;
+    // Either store alone being unreadable is not enough.
+    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    expect(await gate([foreign], 'generateFromGraph')).toBe('accepted');
     holder.clickhouseDown = true;
     expect(await gate([foreign], 'generateFromGraph')).toBe('accepted');
     redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
