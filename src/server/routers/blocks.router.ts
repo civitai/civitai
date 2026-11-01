@@ -388,7 +388,7 @@ import {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import {
   assertGenerationInputsUsable,
-  generationInputUrlsIn,
+  opaqueInputUrlsIn,
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -6754,7 +6754,7 @@ export const blocksRouter = router({
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
       if (input.body.kind === 'workflow' || input.body.kind === 'step')
-        await assertStepOrWorkflowInputsUsable(input.body, parseSubjectUserId(claims.sub) ?? 0);
+        await assertStepOrWorkflowInputsUsable(input.body, claims);
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -9495,7 +9495,7 @@ async function estimateBlockWorkflowCell(
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
   if (input.body.kind === 'workflow' || input.body.kind === 'step')
-    await assertStepOrWorkflowInputsUsable(input.body, parseSubjectUserId(claims.sub) ?? 0);
+    await assertStepOrWorkflowInputsUsable(input.body, claims);
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -10647,19 +10647,28 @@ function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
 /** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
 async function assertStepOrWorkflowInputsUsable(
   body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
-  userId: number
+  claims: BlockClaims
 ) {
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
   const [entry, inputs] =
     body.kind === 'workflow'
       ? (['appBlocksWorkflow', [body.steps.map((step) => step.input), body.arguments]] as const)
       : isPassThroughStepBody(body)
       ? (['appBlocksPassThrough', body.input] as const)
       : (['appBlocksStep', body.params] as const);
+  const { urls, tooDeep } = opaqueInputUrlsIn(inputs);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
+  }
   await assertGenerationInputsUsable({
-    urls: generationInputUrlsIn(inputs),
+    urls,
     userId,
     entry,
     isApiCaller: false,
+    opaqueInput: true,
   });
 }
 

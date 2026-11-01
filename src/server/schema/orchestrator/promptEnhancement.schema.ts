@@ -1,14 +1,6 @@
 import * as z from 'zod';
+import { isHttpUrl } from '~/utils/url-helpers';
 import { snippetReferenceSchema } from '~/shared/generation/schemas/snippet-schema';
-
-function isHttpUrl(value: string) {
-  try {
-    const { protocol } = new URL(value);
-    return protocol === 'https:' || protocol === 'http:';
-  } catch {
-    return false;
-  }
-}
 
 export const promptEnhancementSchema = z.object({
   ecosystem: z.string(),

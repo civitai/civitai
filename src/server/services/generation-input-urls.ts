@@ -150,6 +150,7 @@ export type GenerationInputEntryPoint =
 const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
   'generateFromGraph',
   'whatIfFromGraph',
+  'appBlocksStep',
   'appBlocksPassThrough',
   'appBlocksWorkflow',
   'enhancePrompt',
@@ -259,6 +260,18 @@ const isText = (item: unknown) =>
 /** Anything that may be a key in another spelling: uuid hex with or without dashes or braces. */
 const KEY_LIKE = /^\{?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\}?$/i;
 
+/** A `KEY_LIKE` value as minted: lowercase, dashed, no braces. */
+function canonicalKey(value: string) {
+  const hex = value.replace(/[{}-]/g, '').toLowerCase();
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join('-');
+}
+
 function parsedProtocol(value: string) {
   try {
     return new URL(value.trim()).protocol;
@@ -306,6 +319,50 @@ export function generationInputUrlsIn(value: unknown, out: string[] = [], depth 
   return out;
 }
 
+/** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
+const OPAQUE_INPUT_MAX_DEPTH = 64;
+
+/** A scheme-less url: a dotted host, then a path. */
+const SCHEMELESS_URL = /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i;
+
+/**
+ * Whether `value` is itself something to fetch, not text that mentions one: a url with a fetch
+ * scheme, a `//` url, a key, or a scheme-less url carrying a key.
+ */
+function isWholeFetchableValue(value: string) {
+  const trimmed = value.trim();
+  const protocol = parsedProtocol(trimmed);
+  if (protocol) return FETCH_SCHEMES.has(protocol);
+  if (KEY_LIKE.test(trimmed) || trimmed.startsWith('//')) return true;
+  return SCHEMELESS_URL.test(trimmed) && keysIn(trimmed).length > 0;
+}
+
+/**
+ * Every whole url or key in an orchestrator-native input, under any field name (a field name
+ * says nothing there: any step can `$ref` any field). `tooDeep` when the input nests past the
+ * walk's bound, so a caller can refuse rather than pass what it did not read.
+ */
+export function opaqueInputUrlsIn(value: unknown) {
+  const urls: string[] = [];
+  let tooDeep = false;
+  const walk = (item: unknown, depth: number) => {
+    if (item == null || tooDeep) return;
+    if (depth > OPAQUE_INPUT_MAX_DEPTH) {
+      tooDeep = true;
+      return;
+    }
+    if (typeof item === 'string') {
+      if (isWholeFetchableValue(item)) urls.push(item);
+    } else if (Array.isArray(item)) {
+      for (const child of item) walk(child, depth + 1);
+    } else if (typeof item === 'object') {
+      for (const child of Object.values(item as Record<string, unknown>)) walk(child, depth + 1);
+    }
+  };
+  walk(value, 0);
+  return { urls, tooDeep };
+}
+
 /**
  * The one gate on a url a generation reads. Orchestrator blobs pass. A bare key or an image CDN
  * url passes only if every key it carries passes `assertKeysUsable`; a CDN url with no key is
@@ -318,12 +375,19 @@ export async function assertGenerationInputsUsable({
   userId,
   entry,
   isApiCaller,
+  opaqueInput = false,
   now,
 }: {
   urls: (string | null | undefined)[];
   userId: number;
   entry: GenerationInputEntryPoint;
   isApiCaller: boolean;
+  /**
+   * Urls from an orchestrator-native input (`opaqueInputUrlsIn`), where a uuid may be any id and
+   * an http url may be a schema id: a key-shaped value is refused only when it names an image
+   * that fails, and http to an external host counts as external.
+   */
+  opaqueInput?: boolean;
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
@@ -339,7 +403,15 @@ export async function assertGenerationInputsUsable({
   // Keys found inside allowed external urls: refused only when they name an image that fails.
   const externalKeys = new Set<string>();
   for (const url of given) {
-    const cls = classifyGenerationInputUrl(url);
+    if (opaqueInput && KEY_LIKE.test(url.trim())) {
+      externalKeys.add(canonicalKey(url.trim()));
+      continue;
+    }
+    let cls = classifyGenerationInputUrl(url);
+    if (opaqueInput && cls === 'invalid' && /^http:/i.test(url.trim())) {
+      const asHttps = classifyGenerationInputUrl(url.trim().replace(/^http:/i, 'https:'));
+      if (asHttps === 'external') cls = 'external';
+    }
     if (cls === 'orchestrator') continue;
     if (cls === 'key') {
       keys.add(url);

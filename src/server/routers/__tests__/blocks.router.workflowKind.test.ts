@@ -136,6 +136,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { PlatformInternalStepTypeError } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { formatStepTimeout } from '~/server/services/blocks/workflow.service';
 import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
+import { ANON_SUBJECT } from '~/server/services/block-token-subject';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 
 // ── An in-memory sysRedis: get/set (NX)/del/incrBy/decrBy. ──────────────────
@@ -1976,4 +1977,68 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
       expect(whatifs().length).toBeGreaterThan(0);
     }
   );
+
+  const refusedBeforeTheOrchestrator = async (b: Record<string, unknown>) => {
+    await expect(estimate(b)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  };
+
+  it("refuses another user's private image in a step input, not only in arguments", async () => {
+    givenImage(OTHER_USER, false);
+    const steps = body().steps;
+    steps[1] = { ...steps[1], input: { image: CDN } };
+    await refusedBeforeTheOrchestrator(body({ steps }));
+  });
+
+  it("refuses another user's private image under a free-text field name read by `$ref`", async () => {
+    givenImage(OTHER_USER, false);
+    const steps = body().steps;
+    steps[1] = { ...steps[1], input: { image: { $ref: '$arguments', path: 'prompt' } } };
+    await refusedBeforeTheOrchestrator(body({ steps, arguments: { prompt: CDN } }));
+  });
+
+  it('refuses arguments nested past the walk bound', async () => {
+    let deep: unknown = CDN;
+    for (let i = 0; i < 70; i++) deep = { a: deep };
+    await expect(estimate(body({ arguments: { deep } }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'step input nests too deeply',
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('accepts a chat body whose text, tool schema and tool call ids mention urls and uuids', async () => {
+    givenImage(OTHER_USER, false);
+    await estimate({
+      kind: 'step' as const,
+      $type: 'chatCompletion',
+      input: {
+        messages: [
+          { role: 'user', content: `Summarize https://example.com and ${CDN}` },
+          { role: 'assistant', tool_calls: [{ id: `call_${KEY}`, arguments: `{"u":"${CDN}"}` }] },
+          { role: 'tool', tool_call_id: 'f3a9c2e1-0b4d-4e6f-9a8b-7c6d5e4f3a2b', content: 'ok' },
+        ],
+        tools: [{ parameters: { $schema: 'http://json-schema.org/draft-07/schema#' } }],
+      },
+      maxBuzz: 30,
+    }).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it('the registry step still refuses an external host (its own param schema)', async () => {
+    await expect(estimate(registryWith('https://example.com/a.png'))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a signed-out viewer before reading any image', async () => {
+    h.authorize.mockImplementation(async () => claims({ sub: ANON_SUBJECT }));
+    givenImage(OTHER_USER, false);
+    await expect(estimate(passThroughWith(CDN))).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
 });

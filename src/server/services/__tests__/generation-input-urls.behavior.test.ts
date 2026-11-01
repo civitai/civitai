@@ -41,6 +41,7 @@ const {
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
   generationInputUrlsIn,
+  opaqueInputUrlsIn,
   GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
 } = await import('~/server/services/generation-input-urls');
 const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
@@ -431,7 +432,6 @@ describe('assertGenerationInputsUsable', () => {
       'getIterateCostEstimate',
       'imageUpload',
       'appBlocks',
-      'appBlocksStep',
       'comicPanelJob',
     ] as const)
       expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
@@ -459,10 +459,53 @@ describe('assertGenerationInputsUsable', () => {
     expect(await gate([CDN()])).toBe('refused');
   });
 
+  describe('an orchestrator-native input (opaqueInput)', () => {
+    const opaque = (urls: string[]) =>
+      assertGenerationInputsUsable({
+        urls,
+        userId: CALLER,
+        entry: 'appBlocksPassThrough',
+        isApiCaller: false,
+        opaqueInput: true,
+        now: AFTER,
+      }).then(
+        () => 'accepted',
+        (e: unknown) => {
+          if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return 'refused';
+          throw e;
+        }
+      );
+    const SPELLINGS = [KEY, KEY.replace(/-/g, ''), `{${KEY.toUpperCase()}}`];
+
+    it('accepts a uuid that names no image in any spelling, where a plain input refuses it', async () => {
+      for (const id of SPELLINGS) expect(await opaque([id])).toBe('accepted');
+      expect(await gate([KEY], 'appBlocksPassThrough')).toBe('refused');
+    });
+
+    it("refuses a uuid in any spelling that names another user's private image", async () => {
+      await givenImage();
+      for (const id of SPELLINGS) expect(await opaque([id])).toBe('accepted');
+      await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+      for (const id of SPELLINGS) expect(await opaque([id])).toBe('refused');
+    });
+
+    it('counts an http url on an external host, and still refuses http on a civitai host', async () => {
+      holder.refuseExternal = false;
+      expect(await opaque(['http://json-schema.org/draft-07/schema#'])).toBe('accepted');
+      expect(await gate(['http://json-schema.org/draft-07/schema#'], 'appBlocksPassThrough')).toBe(
+        'refused'
+      );
+      expect(await opaque([`http://image.civitai.com/x/${KEY}/original=true`])).toBe('refused');
+      holder.refuseExternal = true;
+      expect(await opaque(['http://json-schema.org/draft-07/schema#'])).toBe('refused');
+    });
+  });
+
   it('allows an external host on the graph and opaque-input paths until the flag is on', async () => {
     for (const entry of [
       'generateFromGraph',
       'whatIfFromGraph',
+      'appBlocksStep',
       'appBlocksPassThrough',
       'appBlocksWorkflow',
       'enhancePrompt',
@@ -621,6 +664,51 @@ describe('generationInputUrlsIn', () => {
       resources: [{ air: `urn:air:sdxl:lora:orchestrator:blob@${KEY}` }],
     };
     expect(generationInputUrlsIn(input)).toEqual([]);
+  });
+});
+
+describe('opaqueInputUrlsIn', () => {
+  const OKEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const OCDN = `https://image.civitai.com/x/${OKEY}/original=true`;
+
+  it('collects whole urls and keys under any field name, free-text names included', () => {
+    expect(
+      opaqueInputUrlsIn({
+        prompt: OCDN,
+        name: OKEY,
+        trainedWords: ['//image.civitai.com/x/y', `image.civitai.com/x/${OKEY}`],
+        image: { $ref: '$arguments', path: 'prompt', default: 'https://example.com/a.png' },
+      }).urls
+    ).toEqual([
+      OCDN,
+      OKEY,
+      '//image.civitai.com/x/y',
+      `image.civitai.com/x/${OKEY}`,
+      'https://example.com/a.png',
+    ]);
+  });
+
+  it('leaves text that only mentions a url, JSON text, AIRs and other schemes alone', () => {
+    expect(
+      opaqueInputUrlsIn({
+        messages: [{ role: 'user', content: 'Summarize https://example.com please' }],
+        tools: [{ description: `see ${OCDN}` }],
+        toolCalls: [{ arguments: JSON.stringify({ url: OCDN }) }],
+        note: 'note: https://example.com',
+        toolCallId: `call_${OKEY}`,
+        model: 'urn:air:sdxl:checkpoint:civitai:1@1',
+        path: 'output.images[0].url',
+      }).urls
+    ).toEqual([]);
+  });
+
+  it('reports an input nested past its bound instead of passing what it did not read', () => {
+    let deep: unknown = { image: OCDN };
+    for (let i = 0; i < 70; i++) deep = { a: deep };
+    expect(opaqueInputUrlsIn(deep)).toEqual({ urls: [], tooDeep: true });
+    let shallow: unknown = { image: OCDN };
+    for (let i = 0; i < 40; i++) shallow = { a: shallow };
+    expect(opaqueInputUrlsIn(shallow)).toEqual({ urls: [OCDN], tooDeep: false });
   });
 });
 

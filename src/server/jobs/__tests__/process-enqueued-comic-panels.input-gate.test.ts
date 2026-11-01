@@ -100,16 +100,24 @@ describe('process-enqueued-comic-panels: reference image re-check', () => {
     expect(h.auditPromptServer).not.toHaveBeenCalled();
   });
 
-  it('does not pick a refused panel up again on the next run', async () => {
+  it('leaves a refused panel in a status the job never selects again', async () => {
     givenPanel(CDN);
     givenPrivateImageOf(OTHER_USER);
     await run();
-    const checks = dbMock.dbWrite.$queryRaw.mock.calls.length;
-    expect(checks).toBeGreaterThan(0);
-    await run();
-    expect(dbMock.dbWrite.$queryRaw.mock.calls.length).toBe(checks);
+    const [{ where }] = dbMock.dbRead.comicPanel.findMany.mock.calls[0] as [
+      { where: { status: ComicPanelStatus } }
+    ];
+    expect(where).toEqual({ status: ComicPanelStatus.Enqueued });
+    expect(panels[0].status).not.toBe(where.status);
     expect(dbMock.dbWrite.comicPanel.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('submits nothing when the image check itself fails', async () => {
+    givenPanel(CDN);
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('db down'));
+    await run();
     expect(h.submitPresetImageGen).not.toHaveBeenCalled();
+    expect(panels[0].status).toBe(ComicPanelStatus.Failed);
   });
 
   it("POSITIVE CONTROL: the owner's own image is submitted", async () => {
