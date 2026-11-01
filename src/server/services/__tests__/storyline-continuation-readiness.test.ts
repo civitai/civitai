@@ -31,6 +31,7 @@ const {
   getPendingStorylineContinuations,
   retractStorylineContinuation,
 } = await import('~/server/services/storyline-placement.service');
+const { StorylineHiddenRefusal } = await import('~/server/services/storyline.service');
 
 const PLACER = 20;
 const CHAPTER = 77;
@@ -169,6 +170,14 @@ describe('startReadyStorylineContinuations', () => {
     );
     await startReadyStorylineContinuations();
     expect(settlePlacement).toHaveBeenCalledWith({ placementId: ROW, action: 'expire' });
+  });
+
+  // Chapter 1 may yet be published or rated: the row waits out its deadline instead.
+  it('leaves the row while chapter 1 hides the storyline from the placer', async () => {
+    assertCanContinueStoryline.mockRejectedValue(new StorylineHiddenRefusal());
+    await expect(startReadyStorylineContinuations()).resolves.toMatchObject({ refunded: 0 });
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.placement.updateMany).not.toHaveBeenCalled();
   });
 
   // A transient failure is not a verdict: refunding on it would turn a blip

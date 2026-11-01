@@ -534,6 +534,48 @@ describe('the storyline continuation loop', () => {
     });
   });
 
+  // A storyline its chapter 1 hides is refused to a non-participant's continuation, and declining
+  // one is refused too, so the owner is not paid a fee for one they could not accept. It waits.
+  describe('in a storyline its chapter 1 now hides from the placer', () => {
+    const setRootLevel = (nsfwLevel: number) => db.update('post', { id: ROOT_POST }, { nsfwLevel });
+
+    it('is refused both answers and left unrefunded, and is answerable once chapter 1 is rated', async () => {
+      charge(100);
+      const { id } = await submit(STRANGER, STRANGER_POST, 100);
+
+      setRootLevel(0);
+      for (const action of ['approve', 'decline'] as const)
+        await expect(
+          actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action }),
+          action
+        ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+      expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+      expect(moneyCalls().refunds).toEqual([]);
+      expect(moneyCalls().payouts).toEqual([]);
+
+      setRootLevel(PG);
+      await expect(
+        actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'decline' })
+      ).resolves.toEqual({ settled: true, status: 'declined' });
+    });
+
+    it('refuses a new one from a stranger as no chapter, before saying it is closed', async () => {
+      setRootLevel(0);
+      db.insert('placementSpace', {
+        surface: 'storyline',
+        entityType: 'storyline',
+        entityId: STORYLINE,
+        mode: 'off',
+        price: 0,
+        freeSlots: null,
+        settings: null,
+      });
+      await expect(submit(STRANGER, STRANGER_POST)).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+      setRootLevel(PG);
+      await expect(submit(STRANGER, STRANGER_POST)).rejects.toThrow(STORYLINE_REFUSALS.notOpen);
+    });
+  });
+
   describe('a storyline the title scan holds as about a minor', () => {
     const PG13 = 2;
     const R = 4;

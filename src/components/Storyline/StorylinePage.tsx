@@ -26,6 +26,7 @@ import { openStorylineFirstChapterModal } from '~/components/Storyline/openStory
 import {
   StorylineClosedChip,
   StorylineRoleChip,
+  StorylineRootHiddenChip,
   StorylineStat,
   StorylineStatusChip,
   storylineCardClass,
@@ -176,6 +177,9 @@ function StorylineHeader({
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap gap-1.5">
             <StorylineStatusChip status={storyline.status} />
+            {storyline.rootHiddenReason && (
+              <StorylineRootHiddenChip reason={storyline.rootHiddenReason} />
+            )}
             <StorylineClosedNotice storyline={storyline} terms={terms} />
           </div>
           <Title order={1} fw={800} lh={1.05} className="break-words text-[26px] sm:text-[40px]">
