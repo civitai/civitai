@@ -1,6 +1,22 @@
-const DATE_SETTERS = Object.getOwnPropertyNames(Date.prototype).filter((name) =>
-  name.startsWith('set')
-);
+// Listed rather than read off `Date.prototype`, which a test's fake Date replaces.
+const DATE_SETTERS = [
+  'setDate',
+  'setFullYear',
+  'setHours',
+  'setMilliseconds',
+  'setMinutes',
+  'setMonth',
+  'setSeconds',
+  'setTime',
+  'setUTCDate',
+  'setUTCFullYear',
+  'setUTCHours',
+  'setUTCMilliseconds',
+  'setUTCMinutes',
+  'setUTCMonth',
+  'setUTCSeconds',
+  'setYear',
+];
 const MAP_WRITERS = ['set', 'delete', 'clear'];
 const SET_WRITERS = ['add', 'delete', 'clear'];
 
@@ -26,7 +42,9 @@ export function freezeRenderState<T>(value: T): T {
   const stack: unknown[] = [value];
   while (stack.length) {
     const node = stack.pop();
-    if (node === null || (typeof node !== 'object' && typeof node !== 'function')) continue;
+    // Functions are never data, and one can reach a shared constructor (a fake Date's own
+    // `constructor` is the global Date), so the walk does not enter them.
+    if (node === null || typeof node !== 'object') continue;
     if (seen.has(node)) continue;
     seen.add(node);
     if (ArrayBuffer.isView(node) || node instanceof ArrayBuffer) continue;

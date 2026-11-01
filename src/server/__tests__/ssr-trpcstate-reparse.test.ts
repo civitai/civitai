@@ -370,6 +370,17 @@ describe('the freeze guard on the handed-over state', () => {
 });
 
 describe('freezeRenderState', () => {
+  // The fake Date (useFakeTimers) gives every instance an own `constructor`: the global Date.
+  it('does not freeze a function a value points at', async () => {
+    const { freezeRenderState } = await import('~/server/utils/freeze-render-state');
+    const at = new Date(0);
+    const fn = function probe() {};
+    freezeRenderState({ at, fn });
+
+    expect(Object.isFrozen(at.constructor)).toBe(false);
+    expect(Object.isFrozen(fn)).toBe(false);
+  });
+
   it('freezes cycles and Map keys, and leaves typed arrays writable', async () => {
     const { freezeRenderState } = await import('~/server/utils/freeze-render-state');
     const key = { k: 1 };
