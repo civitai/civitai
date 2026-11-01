@@ -1,7 +1,9 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { ChatToolCall } from '@civitai/components-chat/civitai-chat';
 import {
+  COVER_PRICE_UNCHECKED,
   GENERATE_APP_COVER,
+  coverPriceRose,
   type AppCoverWorkflow,
   type CoverListing,
   type CoverOffer,
@@ -35,6 +37,8 @@ function setup() {
   const offerListing = vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING);
   const pressListing = vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING);
   const price = vi.fn(async (_w: AppCoverWorkflow) => PRICE);
+  // The re-quote at the press; separate from the offer's so a case can move the price between.
+  const pressPrice = vi.fn(async (_w: AppCoverWorkflow) => PRICE);
   let finish: (url: string) => void = () => undefined;
   const generate = vi.fn(
     (_w: AppCoverWorkflow, _s?: AbortSignal) => new Promise<string>((resolve) => (finish = resolve))
@@ -46,7 +50,7 @@ function setup() {
     openApp: () => APP,
     cover: {
       offer: { currentApp: () => APP, listing: offerListing, price, seed: () => 9 },
-      press: { listing: pressListing, generate, attach },
+      press: { listing: pressListing, price: pressPrice, generate, attach },
     },
   });
   /** Runs a call through the gate as the chat does, and tells the gate of its result. */
@@ -70,6 +74,7 @@ function setup() {
     render,
     offerListing,
     pressListing,
+    pressPrice,
     generate,
     attach,
     price,
@@ -190,5 +195,41 @@ describe('the store cover card', () => {
       prompt: 'a runner cover',
       seed: 5,
     });
+  });
+
+  test('a price that rose since the offer generates nothing until the new price is pressed', async () => {
+    const s = setup();
+    const risen = PRICE + 6;
+    s.pressPrice.mockResolvedValue(risen);
+    const card = s.render(await s.call({ prompt: 'a calculator' }))!;
+    pressButton(card)!.click();
+    // The card now asks at the new price, with a button for it, and nothing was generated.
+    await vi.waitFor(() =>
+      expect(card.textContent).toContain(coverQuestionText({ app: APP, buzz: risen }))
+    );
+    expect(card.textContent).toContain(coverPriceRose(risen));
+    expect(s.generate).not.toHaveBeenCalled();
+    const again = buttons(card).find((b) => b.textContent === coverButtonText({ buzz: risen }));
+    expect(again).toBeDefined();
+    again!.click();
+    await vi.waitFor(() => expect(s.generate).toHaveBeenCalledTimes(1));
+    expect(s.pressPrice).toHaveBeenCalledTimes(2);
+  });
+
+  test('a price that is the same or lower at the press generates on the first press', async () => {
+    const s = setup();
+    s.pressPrice.mockResolvedValue(PRICE - 4);
+    const card = s.render(await s.call({ prompt: 'a calculator' }))!;
+    pressButton(card)!.click();
+    await vi.waitFor(() => expect(s.generate).toHaveBeenCalledTimes(1));
+  });
+
+  test('a press whose price cannot be checked generates nothing and says so', async () => {
+    const s = setup();
+    s.pressPrice.mockRejectedValue(new Error('orchestration down'));
+    const card = s.render(await s.call({ prompt: 'a calculator' }))!;
+    pressButton(card)!.click();
+    await vi.waitFor(() => expect(card.textContent).toContain(COVER_PRICE_UNCHECKED));
+    expect(s.generate).not.toHaveBeenCalled();
   });
 });

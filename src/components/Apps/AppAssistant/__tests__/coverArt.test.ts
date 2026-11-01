@@ -22,13 +22,16 @@ import {
   COVER_NOT_GENERATED,
   COVER_ON_DRAFT,
   COVER_ON_LISTING_IN_REVIEW,
+  COVER_PRICE_UNCHECKED,
   COVER_PRICE_UNREADABLE,
   COVER_SCAN_PENDING,
+  CoverPriceRoseError,
   GENERATE_APP_COVER,
   appCoverWorkflow,
   coverMaybeNotAttached,
   coverNotAttached,
   coverOfferOf,
+  coverPriceRose,
   coverWorkflowFor,
   createBrowserCoverDeps,
   createCoverArt,
@@ -227,6 +230,8 @@ describe('the offer a call made', () => {
 function press(overrides: Partial<CoverPressDeps> = {}) {
   return {
     listing: vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING),
+    // The re-quote at the press: the offered price unless a case says otherwise.
+    price: vi.fn(async (_w: AppCoverWorkflow, _s?: AbortSignal) => PRICE),
     generate: vi.fn(async (_w: AppCoverWorkflow, _s?: AbortSignal) => IMAGE_URL),
     attach: vi.fn(async (_id: string, _url: string, _app: string) => ({ scanPending: true })),
     ...overrides,
@@ -265,6 +270,43 @@ describe('the press: the user makes the offered cover', () => {
     const deps = press({ listing: vi.fn(async () => ({ ...LISTING, blockedReason: reason })) });
     await expect(makeOfferedCover(deps, OFFER)).rejects.toThrow(reason);
     expect(deps.generate).not.toHaveBeenCalled();
+  });
+
+  it('prices the offered recipe again at the press, as the offer did', async () => {
+    const deps = press();
+    await makeOfferedCover(deps, OFFER);
+    expect(deps.price).toHaveBeenCalledTimes(1);
+    expect(deps.price.mock.calls[0]![0]).toEqual(appCoverWorkflow('a calculator', SEED));
+  });
+
+  it('generates nothing when the price rose since the offer, and names the new price', async () => {
+    const risen = PRICE + 6;
+    const deps = press({ price: vi.fn(async () => risen) });
+    const pressed = makeOfferedCover(deps, OFFER);
+    await expect(pressed).rejects.toBeInstanceOf(CoverPriceRoseError);
+    await expect(makeOfferedCover(deps, OFFER)).rejects.toMatchObject({ buzz: risen });
+    await expect(makeOfferedCover(deps, OFFER)).rejects.toThrow(coverPriceRose(risen));
+    expect(deps.generate).not.toHaveBeenCalled();
+    expect(deps.attach).not.toHaveBeenCalled();
+  });
+
+  it('generates at the press when the price is the same or lower', async () => {
+    for (const now of [PRICE, PRICE - 9]) {
+      const deps = press({ price: vi.fn(async () => now) });
+      await makeOfferedCover(deps, OFFER);
+      expect(deps.generate).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('generates nothing when the price cannot be checked at the press', async () => {
+    for (const price of [
+      vi.fn(async () => Promise.reject(new Error('orchestration down'))),
+      vi.fn(async () => Number.NaN),
+    ]) {
+      const deps = press({ price });
+      await expect(makeOfferedCover(deps, OFFER)).rejects.toThrow(COVER_PRICE_UNCHECKED);
+      expect(deps.generate).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -325,7 +367,20 @@ describe('the page’s cover: priced and made on the user’s own token and proc
 
   it('reads the user’s listing, no listing as none, and any other failure as unreadable', async () => {
     const coded = (code: string) => Object.assign(new Error('x'), { data: { code } });
-    expect(await browserDeps().offer.listing('tip-calculator')).toEqual(LISTING);
+    const reason = 'This listing is locked while it is reviewed.';
+    const locked = api({
+      getMyListingForApp: vi.fn(async () => ({
+        appListingId: 'apl_locked_3',
+        status: 'pending',
+        editBlockedReason: reason,
+      })),
+    });
+    expect(await browserDeps(locked).offer.listing('tip-calculator')).toEqual({
+      listingId: 'apl_locked_3',
+      blockedReason: reason,
+      status: 'pending',
+    });
+    expect(locked.getMyListingForApp).toHaveBeenCalledWith({ slug: 'tip-calculator' });
     for (const code of ['NOT_FOUND', 'FORBIDDEN']) {
       const listingApi = api({
         getMyListingForApp: vi.fn(async () => Promise.reject(coded(code))),
@@ -338,6 +393,31 @@ describe('the page’s cover: priced and made on the user’s own token and proc
     await expect(browserDeps(listingApi).offer.listing('tip-calculator')).rejects.toThrow(
       COVER_LISTING_UNREADABLE
     );
+  });
+
+  it('refuses the offer for a locked listing on the page path, and prices nothing', async () => {
+    const reason = 'This listing is locked while it is reviewed.';
+    const client = orchestration();
+    const deps = browserDeps(
+      api({
+        getMyListingForApp: vi.fn(async () => ({
+          appListingId: 'apl_locked_3',
+          status: 'pending',
+          editBlockedReason: reason,
+        })),
+      }),
+      client
+    );
+    const tool = createCoverArt({ ...deps.offer, nextId: () => 'o1' })[GENERATE_APP_COVER]!;
+    await expect(Promise.resolve(tool.execute({ prompt: 'a calculator' }))).rejects.toThrow(reason);
+    expect(client.estimateWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('re-prices at the press with the same what-if the offer used', async () => {
+    const client = orchestration();
+    expect(await browserDeps(api(), client).press.price(appCoverWorkflow('a', 1))).toBe(37);
+    expect(client.estimateWorkflow).toHaveBeenCalledTimes(1);
+    expect(client.submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('ingests the generated image as a cover upload, then sets it as the listing’s cover', async () => {
