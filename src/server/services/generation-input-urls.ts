@@ -17,6 +17,7 @@ import {
 } from '~/server/services/image-url-ownership';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
+import { INLINE_MEDIA_MAX_VISITS } from '~/server/schema/blocks/inline-media';
 import { EXTERNAL_LINK_INTERSTITIAL_PATH } from '~/utils/external-link';
 
 export const GENERATION_IMAGE_UNAVAILABLE_MESSAGE =
@@ -87,9 +88,10 @@ async function assertKeysUsable({
     );
   if (rows.some((r) => r.blocked)) throw generationImageUnavailableError();
 
-  const rowsByKey = new Map(
-    keys.map((key) => [key, rows.filter((r) => r.url === key || keysIn(r.url).includes(key))])
-  );
+  // One pass over the rows (`keysIn` once each), not keys × rows.
+  const rowsByKey = new Map(keys.map((key): [string, InputImageRow[]] => [key, []]));
+  for (const row of rows)
+    for (const key of new Set([row.url, ...keysIn(row.url)])) rowsByKey.get(key)?.push(row);
   for (const keyRows of rowsByKey.values()) {
     if (!keyRows.length || keyRows.some((r) => r.userId === userId)) continue;
     if (!keyRows.every((r) => r.visible)) throw generationImageUnavailableError();
@@ -285,11 +287,10 @@ function canonicalKey(value: string) {
 }
 
 function parsedProtocol(value: string) {
-  try {
-    return new URL(value.trim()).protocol;
-  } catch {
-    return undefined;
-  }
+  const trimmed = value.trim();
+  // `canParse` first: a thrown parse error costs microseconds per string on a large input.
+  if (!URL.canParse(trimmed)) return undefined;
+  return new URL(trimmed).protocol;
 }
 
 /**
@@ -351,8 +352,11 @@ function splitsIntoUrlLines(value: string) {
     .split(/[\r\n]+/)
     .map((line) => line.trim())
     .filter(Boolean);
+  if (lines.length < 2) return false;
+  const urlLed = (line: string) => /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(line);
+  // A url then prose is two values too; a url wrapped onto a second line with no spaces is one.
   return (
-    lines.length > 1 && lines.slice(1).some((line) => /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(line))
+    lines.slice(1).some(urlLed) || (urlLed(lines[0]) && lines.slice(1).some((l) => l.includes(' ')))
   );
 }
 
@@ -364,7 +368,7 @@ const IMAGE_ONLY_MAX_KEYS = 1024;
 /** Image-only key sets larger than this are counted by size. */
 const IMAGE_ONLY_KEY_SIZE_REPORTED = 256;
 
-const keySetSizeBucket = (size: number) =>
+export const keySetSizeBucket = (size: number) =>
   size > IMAGE_ONLY_MAX_KEYS ? 'over_1024' : size > 512 ? '513_1024' : '257_512';
 
 const largeKeySetCounter = registerCounterWithLabels({
@@ -372,6 +376,14 @@ const largeKeySetCounter = registerCounterWithLabels({
   help: 'Generation inputs carrying more than 256 image-only keys, by entry point and size bucket.',
   labelNames: ['entry', 'size'] as const,
 });
+
+/**
+ * Values and string characters one walk reads before it gives up (`tooLarge`), so the walk's
+ * cost stays bounded on an input with no byte cap of its own (a registry step's `params`).
+ * Four times the inline-media value cap and the 256 KiB block input byte cap.
+ */
+const OPAQUE_INPUT_MAX_VISITS = 4 * INLINE_MEDIA_MAX_VISITS;
+const OPAQUE_INPUT_MAX_CHARS = 4 * 256 * 1024;
 
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
@@ -428,15 +440,33 @@ function isWholeFetchableValue(value: string) {
 export function opaqueInputUrlsIn(value: unknown) {
   const urls: string[] = [];
   let tooDeep = false;
+  let tooLarge = false;
+  let visits = 0;
+  let chars = 0;
   const walk = (item: unknown, depth: number) => {
-    if (item == null || tooDeep) return;
+    if (item == null || tooDeep || tooLarge) return;
     if (depth > OPAQUE_INPUT_MAX_DEPTH) {
       tooDeep = true;
       return;
     }
-    if (typeof item === 'string' && splitsIntoUrlLines(item)) {
-      for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1);
-    } else if (typeof item === 'string') {
+    if (++visits > OPAQUE_INPUT_MAX_VISITS) {
+      tooLarge = true;
+      return;
+    }
+    if (typeof item === 'string') {
+      chars += item.length;
+      if (chars > OPAQUE_INPUT_MAX_CHARS) {
+        tooLarge = true;
+        return;
+      }
+      // Lines that are values of their own are read one by one, and the keys of the whole
+      // string as a url parser rejoins it too: a key broken across a line is found that way.
+      // The rejoined string is not a url to check whole (two listed links would glue into one).
+      if (splitsIntoUrlLines(item)) {
+        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1);
+        urls.push(...keysInText(item));
+        return;
+      }
       // Unicode spaces too: a consumer trims them (str.strip, Trim) though WHATWG does not.
       const parsed = asUrlParserReads(item).trim();
       // eslint-disable-next-line no-control-regex
@@ -456,7 +486,7 @@ export function opaqueInputUrlsIn(value: unknown) {
     }
   };
   walk(value, 0);
-  return { urls, tooDeep };
+  return { urls, tooDeep, tooLarge };
 }
 
 /**

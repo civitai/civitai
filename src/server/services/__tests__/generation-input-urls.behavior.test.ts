@@ -42,6 +42,7 @@ const {
   assertStoredImageUrlsUnblocked,
   generationInputUrlsIn,
   opaqueInputUrlsIn,
+  keySetSizeBucket,
   TOO_MANY_IDS_MESSAGE,
   GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
 } = await import('~/server/services/generation-input-urls');
@@ -787,11 +788,31 @@ describe('opaqueInputUrlsIn', () => {
     ).toEqual([`https://image.civitai.com/x/${OKEY}/original=true`]);
   });
 
+  it('reads up to 1 MiB of text, and reports more as too large instead of reading it', () => {
+    const base64 = (n: number) => 'QUJD'.repeat(Math.ceil(n / 4)).slice(0, n);
+    const started = performance.now();
+    expect(opaqueInputUrlsIn({ field: base64(1024 * 1024 - 5) })).toEqual({
+      urls: [],
+      tooDeep: false,
+      tooLarge: false,
+    });
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(1500);
+    expect(opaqueInputUrlsIn({ field: base64(1024 * 1024 - 4) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ a: base64(600_000), b: base64(600_000) }).tooLarge).toBe(true);
+  });
+
+  it('reports too many values as too large', () => {
+    expect(opaqueInputUrlsIn({ list: new Array(1_048_577).fill(0) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ list: new Array(1000).fill(0) }).tooLarge).toBe(false);
+  });
+
   it('reads a long run of spaces in linear time', () => {
     const value = `a${' '.repeat(200_000)}b`;
     const started = performance.now();
     expect(opaqueInputUrlsIn({ value }).urls).toEqual([]);
-    expect(performance.now() - started).toBeLessThan(100);
+    // Linear is milliseconds, the quadratic form seconds: a wide bound stays clear of load.
+    expect(performance.now() - started).toBeLessThan(1500);
   });
 
   it('trims Unicode spaces around a whole url, as a consumer would', () => {
@@ -808,7 +829,32 @@ describe('opaqueInputUrlsIn', () => {
         chat: `what is in this picture?\n${OCDN}`,
         [OCDN]: 1,
       }).urls
-    ).toEqual(['https://civitai.com/models/123', 'https://example.com/a.png', OCDN, OCDN]);
+    ).toEqual(['https://civitai.com/models/123', 'https://example.com/a.png', OCDN, OKEY, OCDN]);
+  });
+
+  it('finds a key broken across a line in text that splits into lines', () => {
+    const wrapped = `https://proxy.example/?u=${OCDN.replace(
+      OKEY,
+      `${OKEY.slice(0, 14)}\n${OKEY.slice(14)}`
+    )}\nNote: see above`;
+    expect(opaqueInputUrlsIn({ wrapped }).urls).toContain(OKEY);
+  });
+
+  it('splits a url followed by prose, and rejoins a url wrapped onto a second line', () => {
+    expect(opaqueInputUrlsIn({ u: 'https://example.com/a.png\nthen some words' }).urls).toEqual([
+      'https://example.com/a.png',
+    ]);
+    expect(opaqueInputUrlsIn({ u: 'https://example.com/a\n.png' }).urls).toEqual([
+      'https://example.com/a.png',
+    ]);
+  });
+
+  it.each([
+    [257, '257_512'],
+    [513, '513_1024'],
+    [1025, 'over_1024'],
+  ])('reports %i image-only keys in the %s bucket', (size, bucket) => {
+    expect(keySetSizeBucket(size)).toBe(bucket);
   });
 
   it('keeps a url with another control byte inside whole, for the gate to refuse', () => {
@@ -835,7 +881,6 @@ describe('opaqueInputUrlsIn', () => {
           'File: main.py\nprint(1)',
           'Data: the android from Star Trek',
           'Blob: a green slime monster',
-          'https://github.com/a/b\nWhat does this repo do?',
           'https://www.youtube.com/watch?v=abc summarize',
         ],
         otherSchemes: ['file:main.py', 'data:text/plain,hello', 'blob:slime', 'ws://x.y/z'],
@@ -867,6 +912,11 @@ describe('opaqueInputUrlsIn', () => {
     ['JSON-escaped dashes', `{"u":"${OCDN.replace(/-/g, '\\u002d')}"}`],
     ['HTML entity dashes', `<img src="${OCDN.replace(/-/g, '&#45;')}">`],
     ['hex HTML entity dashes', `<img src="${OCDN.replace(/-/g, '&#x2D;')}">`],
+    ['zero-padded entity dashes', `<img src="${OCDN.replace(/-/g, '&#0045;')}">`],
+    ['zero-padded hex entity dashes', `<img src="${OCDN.replace(/-/g, '&#x002d;')}">`],
+    // Only before a letter: `&#45` then a digit is another character to an HTML parser.
+    ['an entity dash with no semicolon', `<img src="${OCDN.replace('-', '&#45')}">`],
+    ['upper-case JSON-escaped dashes', `{"u":"${OCDN.replace(/-/g, '\\u002D')}"}`],
   ])('collects the key bare from %s', (_, text) => {
     expect(opaqueInputUrlsIn({ text }).urls).toEqual([OKEY]);
   });
@@ -874,10 +924,10 @@ describe('opaqueInputUrlsIn', () => {
   it('reports an input nested past its bound instead of passing what it did not read', () => {
     let deep: unknown = { image: OCDN };
     for (let i = 0; i < 70; i++) deep = { a: deep };
-    expect(opaqueInputUrlsIn(deep)).toEqual({ urls: [], tooDeep: true });
+    expect(opaqueInputUrlsIn(deep)).toEqual({ urls: [], tooDeep: true, tooLarge: false });
     let shallow: unknown = { image: OCDN };
     for (let i = 0; i < 40; i++) shallow = { a: shallow };
-    expect(opaqueInputUrlsIn(shallow)).toEqual({ urls: [OCDN], tooDeep: false });
+    expect(opaqueInputUrlsIn(shallow)).toEqual({ urls: [OCDN], tooDeep: false, tooLarge: false });
   });
 });
 

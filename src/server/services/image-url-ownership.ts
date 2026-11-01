@@ -85,7 +85,7 @@ export function keysIn(url: string | null | undefined): string[] {
 }
 
 /** A dash as a JSON or HTML escape writes it. */
-const ESCAPED_DASH = /\\u002d|&#0*45;|&#x0*2d;/gi;
+const ESCAPED_DASH = /\\u002d|&#0*45(?![0-9]);?|&#x0*2d(?![0-9a-f]);?/gi;
 
 /**
  * Every key in free text, which is not a url: no scheme exemption (`Image: https://…` is prose),

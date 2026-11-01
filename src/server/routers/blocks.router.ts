@@ -10659,9 +10659,12 @@ async function assertStepOrWorkflowInputsUsable(
       : isPassThroughStepBody(body)
       ? (['appBlocksPassThrough', body.input] as const)
       : (['appBlocksStep', body.params] as const);
-  const { urls, tooDeep } = opaqueInputUrlsIn(inputs);
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs);
   if (tooDeep) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
   }
   await assertGenerationInputsUsable({
     urls,
