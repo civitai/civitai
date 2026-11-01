@@ -27,6 +27,27 @@ export function getTransactionBadgeLabel(row: DisplayRow) {
   return isGenerationTip(row) ? GENERATION_TIP_LABEL : TransactionType[row.type];
 }
 
+// The good/collected-content rewards read "Content that you posted was liked/collected…", which the
+// page rewrites to name the entity. Matched as that exact opening: an unanchored 'Content' rewrote
+// model names too, e.g. "AI chat: ContentWriter" became "AI chat: A userWriter".
+const LEADING_CONTENT = /^Content(?= that you posted )/;
+
+/**
+ * The description line for a row. A merged workflow row carries its charge's description (the
+ * refund's own text is dropped with it), falling back to the type name when the charge has none.
+ */
+export function getTransactionDescription(
+  row: DisplayRow & { description?: string | null },
+  label?: string
+) {
+  let description = row.description || undefined;
+  if (description && label) {
+    description = description.replace(LEADING_CONTENT, `A ${label.toLowerCase()}`);
+  }
+  if (!description && row.workflowRefund) return TransactionType[row.type];
+  return description;
+}
+
 // ── One row per orchestration workflow ───────────────────────────────────────
 // A workflow is charged up front as a Generation (details.workflowId) and later partly refunded as a
 // Refund naming the same workflow, so a cheap chat used to list a "Generation -12" and a "Refund +11"

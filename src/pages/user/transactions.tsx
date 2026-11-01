@@ -38,6 +38,7 @@ import {
   filterTransactionsByDisplayType,
   getServerTransactionType,
   getTransactionBadgeLabel,
+  getTransactionDescription,
   mergeWorkflowRefundsByPage,
 } from '~/utils/buzz-transaction-display';
 import { capitalize } from '~/utils/string-helpers';
@@ -274,7 +275,6 @@ export default function UserTransactions() {
           <Stack gap="md">
             {transactions.map((transaction, index) => {
               const { amount, date, fromUser, toUser, details, type, workflowRefund } = transaction;
-              let description = transaction.description ?? undefined;
               const isDebit = amount < 0;
               const accountType = isDebit ? transaction.fromAccountType : transaction.toAccountType;
               // The bolt is colored by buzz type, never by direction: green already NAMES a buzz type,
@@ -284,9 +284,7 @@ export default function UserTransactions() {
               const { url, label }: { url?: string; label?: string } = details
                 ? parseBuzzTransactionDetails(details as BuzzTransactionDetails, type)
                 : {};
-              if (label) {
-                description = description?.replace('Content', `A ${label.toLowerCase()}`);
-              }
+              const description = getTransactionDescription(transaction, label);
 
               return (
                 <Card key={`${index}-${date.toISOString()}`} withBorder>
