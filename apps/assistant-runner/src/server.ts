@@ -2,7 +2,7 @@ import { APP_ASSISTANT_DEFAULT_MODEL, isAppAssistantModel } from '@civitai/app-a
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
-import { CivitaiCovers, CoverWorkflows, runnerCoverOrchestration } from './app-assistant/cover';
+import { CivitaiCovers, runnerCoverEstimator } from './app-assistant/cover';
 import { CivitaiAppFeedback } from './app-assistant/app-feedback';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { PreviewRestarter } from './app-assistant/preview-restart';
@@ -72,10 +72,6 @@ let models: ModelProvider = unconfiguredModel;
 let store: ConversationStore = unconfiguredStore;
 let tools: ToolProvider = unconfiguredTools;
 let previews: PreviewRestarter | undefined;
-/** The store covers still generating in this process: cancelled at shutdown (`shutdown` below). */
-let coverWorkflows: CoverWorkflows | undefined;
-/** How long a shutdown waits for those cancels: it runs after the runs' own grace. */
-const COVER_CANCEL_GRACE_MS = 5_000;
 const civitai = config.civitai;
 if (civitai) {
   const credentials = new RunCredentials(
@@ -103,9 +99,8 @@ if (civitai) {
     secret: civitai.secret,
     log,
   });
-  // The store cover's listing read and attach, which civitai makes as a run's user, by its grant.
+  // The store cover's listing read, which civitai makes as a run's user, by its grant.
   const covers = new CivitaiCovers({ civitaiUrl: civitai.civitaiUrl, secret: civitai.secret, log });
-  const liveCovers = (coverWorkflows = new CoverWorkflows(log));
   // The open app's review and user feedback, which civitai reads as a run's user: each call reads
   // the run's grant inside its own fetch, as the dev tunnel's do.
   const appFeedback = new CivitaiAppFeedback({
@@ -121,9 +116,7 @@ if (civitai) {
         devTunnels: (runId) => devTunnels.forRun(() => grants.forRun(runId)),
         covers: (runId) => ({
           listings: covers.forRun(() => grants.forRun(runId)),
-          orchestration: liveCovers.track(
-            runnerCoverOrchestration(orchestration, credentials.forRun(runId))
-          ),
+          estimator: runnerCoverEstimator(orchestration, credentials.forRun(runId)),
         }),
         appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
         log,
@@ -204,9 +197,6 @@ async function shutdown(signal: string): Promise<void> {
     // No new runs or streams from here; runs in flight get a bounded grace.
     await app.close();
     await runner.shutdown(config.shutdownGraceMs);
-    // A cover still generating past the grace belongs to a run the next process closes as
-    // interrupted: cancelled now, while its grant can still mint, so it does not bill unseen.
-    await coverWorkflows?.cancelAll(COVER_CANCEL_GRACE_MS);
     await pool.end();
     await lockPool.end();
   } catch (error) {

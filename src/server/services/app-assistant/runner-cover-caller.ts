@@ -13,17 +13,17 @@ import type { SessionUser } from '~/types/session';
 const createCaller = createCallerFactory(appRouter);
 
 /**
- * The listing editor's own procedures (`appListings.getMyListingForApp`, `ingestAssetFromUrl`,
- * `setCover`), called as `user` exactly as the page calls them over tRPC: every middleware they carry
- * (the author capability and Apps flags, their per-user rate limits, shared with the page) runs, and
- * the services behind them are the same ones. Only the transport differs: a run grant in place of
- * the session cookie.
+ * The listing editor's own read (`appListings.getMyListingForApp`), called as `user` exactly as the
+ * page calls it over tRPC: every middleware it carries (the author capability and Apps flags, its
+ * per-user rate limit, shared with the page) runs, and the service behind it is the same one. Only
+ * the transport differs: a run grant in place of the session cookie. Covers are only made by the
+ * page, on the user's press, so the runner reaches nothing that writes.
  */
 export function runnerCoverListingApi(
   req: NextApiRequest,
   res: NextApiResponse,
   user: SessionUser
-): CoverListingApi {
+): Pick<CoverListingApi, 'getMyListingForApp'> {
   const caller = createCaller({
     user,
     // A server-to-server call with the runner's secret: no browser origin to check (as a Bearer call).
@@ -42,9 +42,5 @@ export function runnerCoverListingApi(
     apiKeyType: undefined,
     subject: undefined,
   });
-  return {
-    getMyListingForApp: (input) => caller.appListings.getMyListingForApp(input),
-    ingestAssetFromUrl: (input) => caller.appListings.ingestAssetFromUrl(input),
-    setCover: (input) => caller.appListings.setCover(input),
-  };
+  return { getMyListingForApp: (input) => caller.appListings.getMyListingForApp(input) };
 }

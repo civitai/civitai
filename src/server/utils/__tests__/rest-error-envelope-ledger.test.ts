@@ -294,12 +294,9 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'download/attachments/[fileId].ts',
   'download/models/[modelVersionId].ts',
   'download/vault/[vaultItemId].ts',
-  // `{ error: COVER_LISTING_UNREADABLE }` / `{ error: COVER_NO_LISTING }`: shared constants
-  // from `@civitai/app-assistant`, text WE wrote, behind the runner's secret + a run grant.
-  // The one caught error that does reach a body goes through `coverRefusalMessage`, which
-  // never forwards an INTERNAL_SERVER_ERROR's text — asserted in
-  // `src/server/__tests__/assistant-runner-cover-endpoints.test.ts` (422 + 503 cases).
-  'internal/app-assistant/cover/attach.ts',
+  // `{ error: COVER_LISTING_UNREADABLE }`: a shared constant from `@civitai/app-assistant`, text
+  // WE wrote, behind the runner's secret + a run grant; a caught error's own text never reaches
+  // the body — asserted in `src/server/__tests__/assistant-runner-cover-endpoints.test.ts` (503).
   'internal/app-assistant/cover/listing.ts',
   // ── TIER 2 — session-authed ─────────────────────────────────────────────────
   'download/user-transactions.ts',

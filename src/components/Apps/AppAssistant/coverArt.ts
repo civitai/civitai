@@ -1,23 +1,29 @@
 import {
   attachCoverImage,
   coverErrorMessage,
+  coverMaybeNotAttached,
   coverNotAttached,
   generateCover,
+  priceCover,
   readCoverListing,
   type CoverArtDeps,
+  type CoverEstimator,
   type CoverListingApi,
   type CoverOrchestration,
+  type CoverPressDeps,
 } from '@civitai/app-assistant';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
 import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 
-// `generate_app_cover` itself (its recipe, order and messages) lives in `@civitai/app-assistant`,
-// which the server runner offers it from too; this module is only how the page reaches civitai.
+// `generate_app_cover` itself (its recipe, the offer, the press, every message) lives in
+// `@civitai/app-assistant`, which the server runner offers it from too; this module is only how the
+// page reaches civitai and orchestration as the signed-in user.
 export {
   APP_COVER_HEIGHT,
   APP_COVER_MODEL,
   APP_COVER_PROMPT_MAX,
   APP_COVER_WIDTH,
+  COVER_LISTING_CHANGED,
   COVER_LISTING_UNREADABLE,
   COVER_NO_APP,
   COVER_NO_LISTING,
@@ -25,11 +31,16 @@ export {
   COVER_NOT_GENERATED,
   COVER_ON_DRAFT,
   COVER_ON_LISTING_IN_REVIEW,
+  COVER_PRICE_UNREADABLE,
   COVER_SCAN_PENDING,
   GENERATE_APP_COVER,
   appCoverWorkflow,
+  coverMaybeNotAttached,
   coverNotAttached,
+  coverOfferOf,
+  coverWorkflowFor,
   createCoverArt,
+  makeOfferedCover,
 } from '@civitai/app-assistant';
 export type {
   AppCoverStep,
@@ -37,18 +48,29 @@ export type {
   CoverArtDeps,
   CoverListing,
   CoverListingApi,
+  CoverOffer,
   CoverOrchestration,
+  CoverPressDeps,
   CoverWorkflowResult,
   ListingForCover,
 } from '@civitai/app-assistant';
 
+/** The page's orchestration client: the cover's what-if and its run. */
+export type PageCoverOrchestration = CoverOrchestration & CoverEstimator;
+
+/** A refusal civitai answered over tRPC (it has a code): the cover is surely not on the listing. */
+function isRefusal(error: unknown): boolean {
+  return typeof (error as { data?: { code?: unknown } } | null)?.data?.code === 'string';
+}
+
 /**
- * `generate_app_cover`'s deps on the page: the user's own chat token (which holds
- * `ai:write:budgeted`, so the run is on their Buzz, as the chat's own requests are), and the
- * listing editor's procedures, so the image is ingested and scanned like an author's upload and
+ * The cover's deps on the page: what the offer reads (the listing, the what-if price) and what a
+ * press does. Both run on the user's own chat token (which holds `ai:write:budgeted`, so the run is
+ * on their Buzz under the App Assistant's daily cap, as the chat's own requests are) and through
+ * the listing editor's procedures, so the image is ingested and scanned like an author's upload and
  * attached by `setCover` with its checks on size, type and scan state.
  */
-export function createBrowserCoverArtDeps({
+export function createBrowserCoverDeps({
   currentApp,
   api,
   orchestration,
@@ -56,25 +78,39 @@ export function createBrowserCoverArtDeps({
 }: {
   currentApp: () => string | null;
   api: CoverListingApi;
-  orchestration: () => Promise<CoverOrchestration>;
+  orchestration: () => Promise<PageCoverOrchestration>;
   /** Told only once `setCover` has succeeded. */
   onAttached?: () => void;
-}): CoverArtDeps {
+}): { offer: Omit<CoverArtDeps, 'nextId'>; press: CoverPressDeps } {
+  const listing = (app: string) => readCoverListing(api, app);
   return {
-    currentApp,
-    listing: (app) => readCoverListing(api, app),
-    async generate(workflow, signal) {
-      return generateCover(await orchestration(), workflow, signal);
+    offer: {
+      currentApp,
+      listing,
+      async price(workflow) {
+        return priceCover(await orchestration(), workflow);
+      },
     },
-    async attach(listingId, url) {
-      let result: { scanPending: boolean };
-      try {
-        result = await attachCoverImage(api, listingId, url);
-      } catch (error) {
-        throw new Error(coverNotAttached(coverErrorMessage(error), url));
-      }
-      onAttached?.();
-      return result;
+    press: {
+      listing,
+      async generate(workflow, signal) {
+        return generateCover(await orchestration(), workflow, signal);
+      },
+      async attach(listingId, url) {
+        let result: { scanPending: boolean };
+        try {
+          result = await attachCoverImage(api, listingId, url);
+        } catch (error) {
+          // Only civitai's own refusal says for sure it is not on the listing; no answer may have.
+          throw new Error(
+            isRefusal(error)
+              ? coverNotAttached(coverErrorMessage(error), url)
+              : coverMaybeNotAttached(url)
+          );
+        }
+        onAttached?.();
+        return result;
+      },
     },
   };
 }
@@ -82,8 +118,8 @@ export function createBrowserCoverArtDeps({
 /** The page's orchestration client, on the user's chat token, made once. */
 export function chatTokenOrchestration(
   tokens: AssistantTokenProvider
-): () => Promise<CoverOrchestration> {
-  let client: Promise<CoverOrchestration> | null = null;
+): () => Promise<PageCoverOrchestration> {
+  let client: Promise<PageCoverOrchestration> | null = null;
   return () =>
     (client ??= import('@civitai/sdk')
       .then(({ initialize }) =>
@@ -93,7 +129,7 @@ export function chatTokenOrchestration(
           requestGrants: (scopes) => appAssistantHoldsScopes(scopes),
         })
       )
-      .then((app) => app.orchestration as unknown as CoverOrchestration)
+      .then((app) => app.orchestration as unknown as PageCoverOrchestration)
       .catch((error) => {
         client = null;
         throw error;

@@ -40,13 +40,10 @@ export interface WorkflowTemplate {
   externalId: string;
 }
 
-/**
- * A refusal from orchestration, with its status, and `detail`: what orchestration said about it
- * (`error`, `message`, `detail` or `title` of its answer), as `@civitai/sdk`'s `ApiError` reads it.
- */
+/** A refusal from orchestration, with its status. */
 export class OrchestrationError extends Error {
   override name = 'OrchestrationError';
-  constructor(readonly status: number, message: string, readonly detail?: string) {
+  constructor(readonly status: number, message: string) {
     super(message);
   }
 }
@@ -79,12 +76,19 @@ export class OrchestrationClient {
     return this.#json(tokens, 'GET', `${WORKFLOWS}?${params}`);
   }
 
-  /** The conversation store's workflows, and `generate_app_cover`'s (`AppCoverWorkflow`). */
-  submitWorkflow(
-    tokens: TokenSource,
-    template: WorkflowTemplate | AppCoverWorkflow
-  ): Promise<Workflow> {
+  submitWorkflow(tokens: TokenSource, template: WorkflowTemplate): Promise<Workflow> {
     return this.#json(tokens, 'POST', WORKFLOWS, template);
+  }
+
+  /**
+   * What `template` would cost (orchestration's what-if): submits nothing. `generate_app_cover`
+   * prices its offer with it.
+   */
+  estimateWorkflow(
+    tokens: TokenSource,
+    template: AppCoverWorkflow
+  ): Promise<{ cost?: { total?: number | null } | null }> {
+    return this.#json(tokens, 'POST', `${WORKFLOWS}?whatif=true`, template);
   }
 
   async updateWorkflow(
@@ -157,25 +161,8 @@ export class OrchestrationClient {
     if (!response.ok)
       throw new OrchestrationError(
         response.status,
-        `orchestration answered ${response.status} to ${method} ${path.split('?')[0]}`,
-        detailOf(text)
+        `orchestration answered ${response.status} to ${method} ${path.split('?')[0]}`
       );
     return (text ? JSON.parse(text) : undefined) as T;
   }
-}
-
-/** What an error answer says, as `@civitai/sdk` reads it: `error`, `message`, `detail` or `title`. */
-function detailOf(text: string): string | undefined {
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (!body || typeof body !== 'object') return undefined;
-  for (const key of ['error', 'message', 'detail', 'title']) {
-    const value = (body as Record<string, unknown>)[key];
-    if (typeof value === 'string' && value) return value.slice(0, 500);
-  }
-  return undefined;
 }

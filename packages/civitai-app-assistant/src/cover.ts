@@ -1,18 +1,22 @@
-import type { AssistantTool } from './tool';
+import { isAppBlockId } from './app-key';
+import type { AssistantTool, ToolResult } from './tool';
 
 /**
  * `generate_app_cover`, the store cover for the open app's listing: one implementation for the page
- * (`src/components/Apps/AppAssistant/coverArt.ts`) and the server runner
- * (`apps/assistant-runner/src/app-assistant/cover.ts`). Each supplies only how it reaches civitai and
- * orchestration as the user (`CoverArtDeps`); the recipe, the order (listing first, then the spend,
- * then the attach) and every message the user reads are here.
+ * (`src/components/Apps/AppAssistant/coverArt.ts`, `assistantCover.ts`) and the server runner
+ * (`apps/assistant-runner/src/app-assistant/cover.ts`).
+ *
+ * The tool spends nothing. It reads the user's listing for the open app (none: nothing more), prices
+ * the cover with orchestration's what-if, and returns an OFFER. The page shows the offer as a card
+ * with the price and a button, whichever side ran the reply, and only the user's press makes the
+ * cover (`makeOfferedCover`), as them, on their Buzz.
  */
 export const GENERATE_APP_COVER = 'generate_app_cover';
 
 /**
- * The one recipe `generate_app_cover` runs. Landscape inside the listing cover's aspect band and above
- * its minimum width (civitai's `validateListingImage`, pinned against these in its tests), and JPEG so
- * the file stays under the cover's byte cap.
+ * The one recipe a cover runs. Landscape inside the listing cover's aspect band and above its minimum
+ * width (civitai's `validateListingImage`, pinned against these in its tests), and JPEG so the file
+ * stays under the cover's byte cap.
  */
 export const APP_COVER_WIDTH = 1344;
 export const APP_COVER_HEIGHT = 768;
@@ -39,7 +43,7 @@ export interface AppCoverStep {
 
 export interface AppCoverWorkflow {
   steps: [AppCoverStep];
-  /** One per call, so a repeated submit of the same call cannot start a second run. */
+  /** One per offer, so a repeated submit of the same offer cannot start a second run. */
   externalId?: string;
 }
 
@@ -74,19 +78,65 @@ export interface CoverListing {
   status: string;
 }
 
+/** What a `generate_app_cover` call that passed returns: the page shows the card for it. */
+export interface CoverOffer {
+  awaitsUser: true;
+  /** This offer's id: the page shows a button only for an offer it heard of live. */
+  coverOffer: string;
+  app: string;
+  listingId: string;
+  /** The listing's status when offered: where the cover lands (its draft, or once approved). */
+  listingStatus: string;
+  /** What is generated on the press: exactly what was priced. */
+  prompt: string;
+  seed: number;
+  /** What orchestration quoted for it, in Buzz. */
+  buzz: number;
+  note: string;
+}
+
+/** The workflow a press runs for `offer`: the fixed recipe, its prompt and seed, one id per offer. */
+export function coverWorkflowFor(offer: Pick<CoverOffer, 'coverOffer' | 'prompt' | 'seed'>) {
+  return {
+    ...appCoverWorkflow(offer.prompt, offer.seed),
+    externalId: `app-cover-${offer.coverOffer}`,
+  };
+}
+
+/** The offer a finished call made, or null: refused, failed, a subagent's, or another tool. */
+export function coverOfferOf({
+  name,
+  output,
+  isError,
+  refused,
+  stopped,
+  subagent,
+}: ToolResult): CoverOffer | null {
+  if (name !== GENERATE_APP_COVER || isError || refused !== undefined || stopped) return null;
+  if (subagent !== undefined) return null;
+  const offer = output as Partial<CoverOffer> | null | undefined;
+  if (offer?.awaitsUser !== true || typeof offer.coverOffer !== 'string' || !offer.coverOffer)
+    return null;
+  if (typeof offer.app !== 'string' || !isAppBlockId(offer.app)) return null;
+  if (typeof offer.listingId !== 'string' || !offer.listingId) return null;
+  if (typeof offer.listingStatus !== 'string') return null;
+  if (typeof offer.prompt !== 'string' || !offer.prompt.trim()) return null;
+  if (offer.prompt.length > APP_COVER_PROMPT_MAX) return null;
+  if (!Number.isSafeInteger(offer.seed) || (offer.seed as number) < 0) return null;
+  if (typeof offer.buzz !== 'number' || !Number.isFinite(offer.buzz) || offer.buzz < 0) return null;
+  return offer as CoverOffer;
+}
+
+/** What the tool reads before it offers anything. */
 export interface CoverArtDeps {
   /** The open app's key (its blockId, which an on-site listing's slug is), or null. */
   currentApp(): string | null;
   /** The user's own listing for `app`; null when they have none. */
-  listing(app: string): Promise<CoverListing | null>;
-  /** Runs `workflow` on the user's Buzz and returns its image's URL; throws a message for the user. */
-  generate(workflow: AppCoverWorkflow, signal?: AbortSignal): Promise<string>;
-  /**
-   * Makes the image at `url` the cover of listing `listingId` (the user's own listing for `app`)
-   * through civitai's listing-asset checks.
-   */
-  attach(listingId: string, url: string, app: string): Promise<{ scanPending: boolean }>;
-  newId?(): string;
+  listing(app: string, signal?: AbortSignal): Promise<CoverListing | null>;
+  /** What `workflow` would cost, in Buzz (orchestration's what-if); spends nothing. */
+  price(workflow: AppCoverWorkflow, signal?: AbortSignal): Promise<number>;
+  /** Ids the offers are named by; per page or run, so an offer from elsewhere never matches. */
+  nextId(): string;
   seed?(): number;
 }
 
@@ -96,11 +146,20 @@ export const COVER_NO_LISTING =
   'This app has no store listing yet. Publish it first, then a cover can be made for its listing.';
 export const COVER_NO_PROMPT = 'Describe what the cover should show.';
 export const COVER_LISTING_UNREADABLE = 'Your app’s store listing could not be read right now.';
+export const COVER_PRICE_UNREADABLE =
+  'The cover’s price could not be checked right now, so nothing was offered. Try again in a moment.';
+export const COVER_NOT_SET_UP = 'Covers cannot be made here.';
 export const COVER_NOT_GENERATED = 'The cover could not be generated, so nothing was attached.';
+export const COVER_LISTING_CHANGED =
+  'Your app’s store listing changed since this cover was offered, so nothing was generated. Ask App Assistant for a cover again.';
 // Carries the image's URL: it is already paid for, so the user need not generate it again.
 export const coverNotAttached = (reason: string, url: string) =>
   `The cover was generated but could not be put on your listing: ${reason.replace(/\.?$/, '.')} ` +
   `The image is at ${url} — upload it as the cover from the listing editor rather than making a new one.`;
+/** The attach's outcome is unknown (no answer): it may be on the listing, so the user checks first. */
+export const coverMaybeNotAttached = (url: string) =>
+  `The cover was generated but may not have been put on your listing: Civitai did not confirm it. ` +
+  `Check your listing's Media tab before trying again. The image is at ${url}.`;
 // `setCover` writes an approved listing's cover to its draft revision and a draft's in place, so
 // neither shows in the store until it is submitted; a listing under review shows it once approved.
 export const COVER_ON_DRAFT =
@@ -110,37 +169,47 @@ export const COVER_ON_LISTING_IN_REVIEW =
 export const COVER_SCAN_PENDING = 'The image is still being checked.';
 
 /**
- * `generate_app_cover`: a store cover for the open app's listing, from the one fixed recipe above,
- * on the user's Buzz under the App Assistant's daily cap. One call checks the listing, generates the
- * cover and attaches it.
+ * `generate_app_cover`: an OFFER of a store cover for the open app's listing, from the one fixed
+ * recipe above, with its price. It spends nothing: no listing, no price, no offer, and the cover is
+ * made only when the user presses the offer's card (`makeOfferedCover`).
  */
 export function createCoverArt(deps: CoverArtDeps): Record<string, AssistantTool> {
-  const newId = deps.newId ?? (() => Math.random().toString(36).slice(2, 12));
   const seed = deps.seed ?? (() => Math.floor(Math.random() * 2 ** 31));
 
-  const run = async (app: string, rawPrompt: unknown, signal?: AbortSignal) => {
+  const offer = async (app: string, rawPrompt: unknown, signal?: AbortSignal) => {
     const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
     if (!prompt) throw new Error(COVER_NO_PROMPT);
-    const listing = await deps.listing(app);
+    const listing = await deps.listing(app, signal);
     if (!listing) throw new Error(COVER_NO_LISTING);
     if (listing.blockedReason) throw new Error(listing.blockedReason);
-    const workflow = {
-      ...appCoverWorkflow(prompt.slice(0, APP_COVER_PROMPT_MAX), seed()),
-      externalId: `app-cover-${newId()}`,
+    const capped = prompt.slice(0, APP_COVER_PROMPT_MAX);
+    const chosenSeed = seed();
+    let buzz: number;
+    try {
+      buzz = await deps.price(appCoverWorkflow(capped, chosenSeed), signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      throw new Error(COVER_PRICE_UNREADABLE);
+    }
+    if (!Number.isFinite(buzz) || buzz < 0) throw new Error(COVER_PRICE_UNREADABLE);
+    const result: CoverOffer = {
+      awaitsUser: true,
+      coverOffer: deps.nextId(),
+      app,
+      listingId: listing.listingId,
+      listingStatus: listing.status,
+      prompt: capped,
+      seed: chosenSeed,
+      buzz,
+      note: `The user now sees a card offering this cover for about ${buzz} Buzz, with a button. Nothing is generated or spent until they press it. Tell them that in one short sentence; your reply ends here.`,
     };
-    const url = await deps.generate(workflow, signal);
-    const attached = await deps.attach(listing.listingId, url, app);
-    const where = listing.status === 'pending' ? COVER_ON_LISTING_IN_REVIEW : COVER_ON_DRAFT;
-    return {
-      attached: true,
-      note: attached.scanPending ? `${where} ${COVER_SCAN_PENDING}` : where,
-    };
+    return result;
   };
 
   const tool: AssistantTool = {
     description:
-      "Make a store cover image for the open app's published listing and set it as the listing's cover. It spends the user's Buzz: use it only when the user asks for a cover.",
-    activity: 'Making your cover…',
+      "Offer the user a store cover image for the open app's published listing. It spends nothing itself: it checks the listing and the price, and the user sees a card with the price and a button; only their press generates the cover (on their Buzz) and sets it as the listing's cover. Use it only when the user asks for a cover.",
+    activity: 'Pricing your cover…',
     inputSchema: {
       properties: {
         prompt: {
@@ -153,12 +222,45 @@ export function createCoverArt(deps: CoverArtDeps): Record<string, AssistantTool
     // The chat passes its call context second (`ChatTool`); only its abort signal is read.
     execute(input, context?: { signal?: AbortSignal }) {
       const app = deps.currentApp();
-      if (!app) return Promise.reject(new Error(COVER_NO_APP));
-      return run(app, input.prompt, context?.signal);
+      if (!app || !isAppBlockId(app)) return Promise.reject(new Error(COVER_NO_APP));
+      return offer(app, input.prompt, context?.signal);
     },
   };
 
   return { [GENERATE_APP_COVER]: tool };
+}
+
+/** What a press on an offer's card does, as the user. */
+export interface CoverPressDeps {
+  /** The user's own listing for `app`; null when they have none. */
+  listing(app: string, signal?: AbortSignal): Promise<CoverListing | null>;
+  /** Runs `workflow` on the user's Buzz and returns its image's URL; throws a message for the user. */
+  generate(workflow: AppCoverWorkflow, signal?: AbortSignal): Promise<string>;
+  /**
+   * Makes the image at `url` the cover of listing `listingId` (the user's own listing for `app`)
+   * through civitai's listing-asset checks. Throws a message for the user, naming the image.
+   */
+  attach(listingId: string, url: string, app: string): Promise<{ scanPending: boolean }>;
+}
+
+/**
+ * The user pressed `offer`'s card: makes the cover, as them. The listing is read again first, and
+ * must still be the one offered and editable, or nothing is spent. Then the offered recipe (its
+ * prompt and seed, one external id per offer) is generated and attached. Resolves with what the
+ * user is told; throws a message for them.
+ */
+export async function makeOfferedCover(
+  deps: CoverPressDeps,
+  offer: CoverOffer,
+  signal?: AbortSignal
+): Promise<string> {
+  const listing = await deps.listing(offer.app, signal);
+  if (!listing || listing.listingId !== offer.listingId) throw new Error(COVER_LISTING_CHANGED);
+  if (listing.blockedReason) throw new Error(listing.blockedReason);
+  const url = await deps.generate(coverWorkflowFor(offer), signal);
+  const attached = await deps.attach(listing.listingId, url, offer.app);
+  const where = listing.status === 'pending' ? COVER_ON_LISTING_IN_REVIEW : COVER_ON_DRAFT;
+  return attached.scanPending ? `${where} ${COVER_SCAN_PENDING}` : where;
 }
 
 /** What `appListings.getMyListingForApp` answers that the cover reads. */
@@ -169,9 +271,9 @@ export interface ListingForCover {
 }
 
 /**
- * The civitai procedures the cover goes through: the same ones the listing editor uses. The page
- * calls them over tRPC; civitai's runner endpoints call them as the run's user (`/api/internal/
- * app-assistant/cover/*`).
+ * The civitai procedures the cover goes through: the same ones the listing editor uses, which the
+ * page calls over tRPC as the signed-in user. Only the listing read is also reached from the
+ * runner (`/api/internal/app-assistant/cover/listing`).
  */
 export interface CoverListingApi {
   getMyListingForApp(input: { slug: string }): Promise<ListingForCover>;
@@ -193,7 +295,7 @@ export function isNoListingError(error: unknown): boolean {
 
 /** The user's own listing for `app` through `api`; null when they have none. */
 export async function readCoverListing(
-  api: CoverListingApi,
+  api: Pick<CoverListingApi, 'getMyListingForApp'>,
   app: string
 ): Promise<CoverListing | null> {
   let listing: ListingForCover;
@@ -231,15 +333,35 @@ export interface CoverOrchestration {
   cancelWorkflow(id: string): Promise<unknown>;
 }
 
+/** Orchestration's what-if for a workflow: what it would cost, submitting nothing. */
+export interface CoverEstimator {
+  estimateWorkflow(
+    template: AppCoverWorkflow
+  ): Promise<{ cost?: { total?: number | null } | null }>;
+}
+
 export interface CoverWorkflowResult {
   id?: string | null;
   status: string;
   steps?: { output?: { images?: { url?: string | null; available?: boolean }[] } | null }[];
 }
 
+/** What `workflow` would cost in Buzz, from orchestration's what-if; throws when it gives no price. */
+export async function priceCover(
+  client: CoverEstimator,
+  workflow: AppCoverWorkflow
+): Promise<number> {
+  const quote = await client.estimateWorkflow(workflow);
+  const total = quote?.cost?.total;
+  if (typeof total !== 'number' || !Number.isFinite(total) || total < 0)
+    throw new Error(COVER_PRICE_UNREADABLE);
+  return Math.ceil(total);
+}
+
 /**
  * Runs `workflow` on `client` (on the user's token, so on their Buzz) and returns its image's URL.
- * A Stop while it runs cancels the run, as the chat's own jobs do, so it is not billed on.
+ * Once it is submitted it is paid for as it runs: every way the wait can fail cancels it,
+ * best-effort. A Stop is passed on as it is; any other failure says the cover was not made.
  */
 export async function generateCover(
   client: CoverOrchestration,
@@ -253,8 +375,9 @@ export async function generateCover(
   try {
     done = await client.waitForWorkflow(id, { signal });
   } catch (error) {
-    if (signal?.aborted) void client.cancelWorkflow(id).catch(() => undefined);
-    throw error;
+    void client.cancelWorkflow(id).catch(() => undefined);
+    if (signal?.aborted) throw error;
+    throw new Error(COVER_NOT_GENERATED);
   }
   const image = done.steps?.[0]?.output?.images?.[0];
   if (done.status !== 'succeeded' || !image?.url || image.available === false)

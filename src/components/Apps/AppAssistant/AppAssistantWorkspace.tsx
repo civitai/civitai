@@ -65,9 +65,7 @@ import {
 } from '~/components/Apps/AppAssistant/assistantToken';
 import {
   chatTokenOrchestration,
-  createBrowserCoverArtDeps,
-  createCoverArt,
-  GENERATE_APP_COVER,
+  createBrowserCoverDeps,
 } from '~/components/Apps/AppAssistant/coverArt';
 import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
 import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice';
@@ -392,6 +390,12 @@ export function AppAssistantWorkspace({
       }),
     []
   );
+  // The store cover (`generate_app_cover`): the tool only offers it with its price; the user's press
+  // on the card makes it, here, as them, whichever side ran the reply (the runner offers it too).
+  // Read through a ref, so a new utils object never rebuilds the gate (and with it, its state).
+  const utils = trpc.useUtils();
+  const trpcUtils = useRef(utils);
+  trpcUtils.current = utils;
   const gate = useMemo(
     () =>
       createAssistantGate({
@@ -420,22 +424,7 @@ export function AppAssistantWorkspace({
             trpcVanilla.appFeedback.setOwnerStatus.mutate(input)
           ),
         },
-      }),
-    [appTools]
-  );
-  // What was verified belongs to the sandbox it was verified in, and so does a Submit for review offer.
-  useEffect(() => {
-    gate.reset();
-    gate.appChanged(activeName);
-  }, [activeName, gate]);
-
-  // The store cover (`generate_app_cover`). In the browser the page runs it; on the server runner it is
-  // the runner's (the same `createCoverArt`), and the page's copy only shows its calls.
-  const trpcUtils = trpc.useUtils();
-  const coverTools = useMemo(
-    () =>
-      createCoverArt(
-        createBrowserCoverArtDeps({
+        cover: createBrowserCoverDeps({
           currentApp: () => {
             const app = live.current.active?.app;
             return app && isAppBlockId(app) ? app : null;
@@ -446,11 +435,16 @@ export function AppAssistantWorkspace({
             setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
           },
           orchestration: chatTokenOrchestration(tokens),
-          onAttached: () => void trpcUtils.appListings.getMyListingForApp.invalidate(),
-        })
-      ),
-    [tokens, trpcUtils]
+          onAttached: () => void trpcUtils.current.appListings.getMyListingForApp.invalidate(),
+        }),
+      }),
+    [appTools, tokens]
   );
+  // What was verified belongs to the sandbox it was verified in, and so does a Submit for review offer.
+  useEffect(() => {
+    gate.reset();
+    gate.appChanged(activeName);
+  }, [activeName, gate]);
 
   const tools = useMemo(
     () => ({
@@ -469,9 +463,8 @@ export function AppAssistantWorkspace({
       // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
       ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
-      ...coverTools,
     }),
-    [canPreview, gate, appTools, showPreview, coverTools]
+    [canPreview, gate, appTools, showPreview]
   );
 
   const instructions = useCallback(
@@ -508,9 +501,6 @@ export function AppAssistantWorkspace({
       if (isKeepLimitResult(result))
         setSlot((shown) => shown ?? { message: lastSent.current, deleting: false, error: null });
       if (!remoteRunner || result.isError) return;
-      // The runner put a cover on the listing: the page's listing reads it again, as after its own.
-      if (result.name === GENERATE_APP_COVER)
-        return void trpcUtils.appListings.getMyListingForApp.invalidate();
       const preview = runnerPreviewAction(result);
       if (preview && 'show' in preview)
         return showPreview({ ...preview.show, sessionId: null, view: ++runnerViews.current });
@@ -526,7 +516,7 @@ export function AppAssistantWorkspace({
         setActiveName(opened.name);
       });
     },
-    [gate, remoteRunner, showPreview, stopPreview, trpcUtils]
+    [gate, remoteRunner, showPreview, stopPreview]
   );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
