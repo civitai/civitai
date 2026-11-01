@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DecorationConstants from '~/shared/constants/event-decoration.constants';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -442,7 +444,56 @@ describe('getMyEventHats', () => {
   });
 });
 
+// The picker's image read is hand-written SQL, so it runs against real Postgres: the order and the
+// keyset only exist in the database.
+const pg = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+type SeedImage = { id: number; post: number | null; userId?: number; ingestion?: string };
+type SeedPost = { id: number; publishedAt: string | null; userId?: number };
+async function seedImages(posts: SeedPost[], images: SeedImage[]) {
+  await pg.db.exec(`TRUNCATE "Post"; TRUNCATE "Image";`);
+  for (const p of posts)
+    await pg.db.query(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES ($1, $2, $3)`, [
+      p.id,
+      p.userId ?? 9,
+      p.publishedAt,
+    ]);
+  for (const i of images)
+    await pg.db.query(
+      `INSERT INTO "Image" (id, "userId", "postId", ingestion) VALUES ($1, $2, $3, $4)`,
+      [i.id, i.userId ?? 9, i.post, i.ingestion ?? 'Scanned']
+    );
+}
+// `n` scanned images in one post, ids counting down from `from`.
+const postImages = (post: number, n: number, from: number): SeedImage[] =>
+  Array.from({ length: n }, (_, i) => ({ id: from - i, post }));
+function usePostgresImages() {
+  beforeAll(async () => {
+    pg.db = new PGlite();
+    await pg.db.exec(`
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp(3));
+      CREATE TABLE "Image" (
+        id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, ingestion text NOT NULL
+      );
+    `);
+  }, 60_000);
+  afterAll(() => pg.db.close());
+  beforeEach(async () => {
+    await seedImages([], []);
+    dbMock.dbRead.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await pg.db.query(sql.text, sql.values as unknown[])).rows;
+    }) as never);
+  });
+  afterEach(() => {
+    dbMock.dbRead.$queryRaw.mockImplementation((async () => []) as never);
+  });
+}
+
 describe('getPlaceableEventContent', () => {
+  usePostgresImages();
   const user = { id: 9 };
   // Braced: a function returned from beforeEach runs as teardown, and the mock is one.
   beforeEach(() => {
@@ -454,18 +505,31 @@ describe('getPlaceableEventContent', () => {
     await expect(service.getPlaceableEventContent({ event: 'birthday2026', user })).rejects.toThrow(
       "That event doesn't exist"
     );
-    expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
   // Exactly what may wear a hat: the caller's own, published, scanned content. Equipping does not
-  // check publish state, so this list is the only place a draft is kept out.
+  // check publish state, so this list is the only place a draft or a scheduled post is kept out.
   it("reads only the caller's own published content", async () => {
-    await service.getPlaceableEventContent({ event: 'birthday2026', user });
-    expect(dbMock.dbRead.image.findMany.mock.calls[0][0].where).toEqual({
-      userId: 9,
-      ingestion: 'Scanned',
-      post: { publishedAt: { not: null } },
-    });
+    vi.useFakeTimers({ now: new Date('2026-11-01T12:00:00Z'), toFake: ['Date'] });
+    await seedImages(
+      [
+        { id: 1, publishedAt: '2026-10-30T00:00:00Z' },
+        { id: 2, publishedAt: null },
+        { id: 3, publishedAt: '2026-11-03T00:00:00Z' },
+        { id: 4, publishedAt: '2026-10-30T00:00:00Z', userId: 10 },
+      ],
+      [
+        { id: 11, post: 1 },
+        { id: 12, post: 1, ingestion: 'Pending' },
+        { id: 13, post: 2 },
+        { id: 14, post: 3 },
+        { id: 15, post: 4, userId: 10 },
+        { id: 16, post: null },
+      ]
+    );
+    const content = await service.getPlaceableEventContent({ event: 'birthday2026', user });
+    expect(content.filter((c) => c.entityType === 'Image').map((c) => c.entityId)).toEqual([11]);
     expect(dbMock.dbRead.model.findMany.mock.calls[0][0].where).toEqual({
       userId: 9,
       status: 'Published',
@@ -482,13 +546,13 @@ describe('getPlaceableEventContent', () => {
       entityTypes: ['Image'],
     });
     await service.getPlaceableEventContent({ event: 'birthday2026', user });
-    expect(dbMock.dbRead.image.findMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
     expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.article.findMany).not.toHaveBeenCalled();
   });
 
   it('names each entity and keeps one with no usable cover', async () => {
-    dbMock.dbRead.image.findMany.mockResolvedValueOnce([{ id: 1 }]);
+    await seedImages([{ id: 50, publishedAt: '2026-10-01T00:00:00Z' }], [{ id: 1, post: 50 }]);
     dbMock.dbRead.model.findMany
       .mockResolvedValueOnce([{ id: 2 }])
       .mockResolvedValueOnce([{ id: 2, name: 'Velvet LoRA' }]);
@@ -516,9 +580,15 @@ describe('getPlaceableEventContentPage', () => {
   const page = (input: { entityType: 'Image' | 'Model' | 'Article' | 'Post'; cursor?: number }) =>
     service.getPlaceableEventContentPage({ event: 'birthday2026', user, ...input });
   const ids = (n: number, from = 100) => Array.from({ length: n }, (_, i) => ({ id: from - i }));
+  usePostgresImages();
   beforeEach(() => {
     engine.assertReadable.mockReset().mockResolvedValue('open');
+    vi.useFakeTimers({ now: new Date('2026-11-01T12:00:00Z'), toFake: ['Date'] });
   });
+  const imageIds = async (cursor?: number) => {
+    const result = await page({ entityType: 'Image', cursor });
+    return { ids: result.items.map((i) => i.entityId), nextCursor: result.nextCursor };
+  };
 
   it('refuses an event the caller may not read, and reads nothing', async () => {
     engine.assertReadable.mockImplementation(notStarted);
@@ -526,24 +596,80 @@ describe('getPlaceableEventContentPage', () => {
     expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
   });
 
-  // Same rule as the first page: only the caller's own published, scanned content, at any depth.
-  it("pages images below the cursor, keeping to the caller's own published images", async () => {
-    dbMock.dbRead.image.findMany.mockResolvedValueOnce(ids(25));
-    const result = await page({ entityType: 'Image', cursor: 101 });
-    const args = dbMock.dbRead.image.findMany.mock.calls[0][0];
-    expect(args.where).toEqual({
-      userId: 9,
-      ingestion: 'Scanned',
-      post: { publishedAt: { not: null } },
-      id: { lt: 101 },
-    });
-    expect(args.orderBy).toEqual({ id: 'desc' });
-    expect(args.take).toBe(25);
-    expect(result.items.map((i) => i.entityId)).toEqual(ids(24).map((x) => x.id));
-    // The 25th row only says there is more; the next page starts below the last one shown.
-    expect(result.nextCursor).toBe(77);
-    expect(covers).toHaveBeenCalledTimes(1);
+  // A bulk-scheduled post's images are uploaded days before it goes live, so by id they rank below
+  // everything posted in between; the picker lists them by when they were published.
+  it('lists images newest post first, so a just-published scheduled post leads', async () => {
+    await seedImages(
+      [
+        { id: 1, publishedAt: '2026-10-25T00:00:00Z' },
+        { id: 2, publishedAt: '2026-11-01T00:05:00Z' },
+      ],
+      [...postImages(1, 3, 500), ...postImages(2, 2, 100)]
+    );
+    expect(await imageIds()).toEqual({ ids: [100, 99, 500, 499, 498], nextCursor: null });
+  });
+
+  it('leaves out a post scheduled for later until it goes live', async () => {
+    await seedImages(
+      [
+        { id: 1, publishedAt: '2026-10-25T00:00:00Z' },
+        { id: 2, publishedAt: '2026-11-03T00:00:00Z' },
+      ],
+      [...postImages(1, 1, 10), ...postImages(2, 2, 300)]
+    );
+    expect((await imageIds()).ids).toEqual([10]);
+    vi.setSystemTime(new Date('2026-11-03T00:00:00Z'));
+    expect((await imageIds()).ids).toEqual([300, 299, 10]);
+  });
+
+  // Same rule at any depth, and the keyset is (publishedAt, id): two posts published in the same
+  // millisecond (the scheduler's batch) page through without a skip or a repeat.
+  it('pages every published image once, across posts published at the same instant', async () => {
+    const batch = '2026-10-31T00:05:00Z';
+    await seedImages(
+      [
+        { id: 1, publishedAt: batch },
+        { id: 2, publishedAt: batch },
+        { id: 3, publishedAt: '2026-10-20T00:00:00Z' },
+        { id: 4, publishedAt: '2026-11-03T00:00:00Z' },
+      ],
+      [
+        ...postImages(1, 20, 220),
+        ...postImages(2, 20, 120),
+        ...postImages(3, 20, 900),
+        ...postImages(4, 5, 999_000),
+        { id: 50, post: 3, userId: 10 },
+      ]
+    );
+    const seen: number[] = [];
+    let cursor: number | undefined;
+    for (let pages = 0; pages < 10; pages++) {
+      const next = await imageIds(cursor);
+      seen.push(...next.ids);
+      if (next.nextCursor === null) break;
+      cursor = next.nextCursor;
+    }
+    expect(seen).toHaveLength(60);
+    expect(seen).toEqual([
+      ...postImages(1, 20, 220).map((i) => i.id),
+      ...postImages(2, 20, 120).map((i) => i.id),
+      ...postImages(3, 20, 900).map((i) => i.id),
+    ]);
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
+  });
+
+  // The cursor is still the last image id shown, so a page an older client asked for still lands.
+  it('points a page with more at its last image, and ends on a page of exactly 24', async () => {
+    await seedImages([{ id: 1, publishedAt: '2026-10-25T00:00:00Z' }], postImages(1, 25, 100));
+    expect(await imageIds()).toMatchObject({ nextCursor: 77 });
+    expect(await imageIds(77)).toEqual({ ids: [76], nextCursor: null });
+    await seedImages([{ id: 1, publishedAt: '2026-10-25T00:00:00Z' }], postImages(1, 24, 100));
+    expect(await imageIds()).toMatchObject({ nextCursor: null });
+  });
+
+  it('ends the list when the image it pages from is gone', async () => {
+    await seedImages([{ id: 1, publishedAt: '2026-10-25T00:00:00Z' }], postImages(1, 3, 100));
+    expect(await imageIds(5000)).toEqual({ ids: [], nextCursor: null });
   });
 
   it('pages models and articles by offset in a fixed order', async () => {
@@ -570,20 +696,13 @@ describe('getPlaceableEventContentPage', () => {
   });
 
   it('points a first page with more at the next one', async () => {
-    dbMock.dbRead.image.findMany.mockResolvedValueOnce(ids(25));
     dbMock.dbRead.model.findMany.mockResolvedValueOnce(ids(25));
-    expect((await page({ entityType: 'Image' })).nextCursor).toBe(77);
     expect((await page({ entityType: 'Model' })).nextCursor).toBe(24);
   });
 
   // A full page of exactly 24 is the last one: only a 25th row means more.
   it('ends on a page of exactly 24', async () => {
-    dbMock.dbRead.image.findMany.mockResolvedValueOnce(ids(24));
     dbMock.dbRead.article.findMany.mockResolvedValueOnce(ids(24));
-    const images = await page({ entityType: 'Image' });
-    expect(dbMock.dbRead.image.findMany.mock.calls[0][0].where).not.toHaveProperty('id');
-    expect(images.items).toHaveLength(24);
-    expect(images.nextCursor).toBeNull();
     const articles = await page({ entityType: 'Article' });
     expect(dbMock.dbRead.article.findMany.mock.calls[0][0].skip).toBe(0);
     expect(articles.nextCursor).toBeNull();
@@ -598,7 +717,7 @@ describe('getPlaceableEventContentPage', () => {
     expect(await page({ entityType: 'Post' })).toEqual({ items: [], nextCursor: null });
     expect(dbMock.dbRead.article.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
-    expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('reads nothing for a type the hat cannot go on', async () => {

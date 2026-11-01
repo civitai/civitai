@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { pack } from 'msgpackr';
 import { CacheTTL } from '~/server/common/constants';
@@ -5,12 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getEntityCoverImage } from '~/server/services/image.service';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
-import {
-  ArticleStatus,
-  CosmeticEntity,
-  ImageIngestionStatus,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
+import { ArticleStatus, CosmeticEntity, ModelStatus } from '~/shared/utils/prisma/enums';
 import { eventEngine } from '~/server/events';
 import type { EventViewer } from '~/server/events/event-access';
 import {
@@ -686,9 +682,9 @@ export async function getPlaceableEventContentPage({
 
 const PLACEABLE_PER_TYPE = 24;
 
-// Published, scanned content only: equipping does not check publish state, so this is where a draft
-// is kept out. Images page by id (indexed with userId); a creator's models and articles are read
-// whole by userId and sorted either way, so they page by offset.
+// Published, scanned content only: equipping does not check publish state (the editors offer a hat on
+// a draft), so this is where a draft or a post scheduled for later is kept out. A creator's models
+// and articles are read whole by userId and sorted either way, so they page by offset.
 async function placeableIds(
   entityType: CosmeticEntity,
   userId: number,
@@ -697,18 +693,7 @@ async function placeableIds(
 ) {
   let ids: number[];
   if (entityType === CosmeticEntity.Image) {
-    const rows = await dbRead.image.findMany({
-      where: {
-        userId,
-        ingestion: ImageIngestionStatus.Scanned,
-        post: { publishedAt: { not: null } },
-        ...(cursor !== undefined && { id: { lt: cursor } }),
-      },
-      select: { id: true },
-      orderBy: { id: 'desc' },
-      take: take + 1,
-    });
-    ids = rows.map((r) => r.id);
+    ids = await placeableImageIds(userId, cursor, take + 1);
   } else if (entityType === CosmeticEntity.Model) {
     const rows = await dbRead.model.findMany({
       where: { userId, status: ModelStatus.Published },
@@ -738,6 +723,41 @@ async function placeableIds(
       ? page[page.length - 1]
       : (cursor ?? 0) + take,
   };
+}
+
+// Newest post first, not newest upload: a scheduled post's images are uploaded days before it goes
+// live, so by id they sit far below what the creator just posted. The cursor stays the last image
+// id shown (the wire contract older clients send); its post's publishedAt is the keyset's first half.
+async function placeableImageIds(userId: number, cursor: number | undefined, limit: number) {
+  const now = new Date();
+  let after = Prisma.empty;
+  if (cursor !== undefined) {
+    const [key] = await dbRead.$queryRaw<{ publishedAt: Date | null }[]>`
+      SELECT p."publishedAt"
+      FROM "Image" i
+      JOIN "Post" p ON p.id = i."postId"
+      WHERE i.id = ${cursor} AND i."userId" = ${userId}
+    `;
+    // The last image shown was deleted or unpublished since: no position to continue from.
+    if (!key?.publishedAt) return [];
+    after = Prisma.sql`
+      AND p."publishedAt" <= ${key.publishedAt}
+      AND (p."publishedAt", i.id) < (${key.publishedAt}, ${cursor})
+    `;
+  }
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT i.id
+    FROM "Post" p
+    JOIN "Image" i ON i."postId" = p.id
+    WHERE p."userId" = ${userId}
+      AND p."publishedAt" <= ${now}
+      AND i."userId" = ${userId}
+      AND i.ingestion = 'Scanned'
+      ${after}
+    ORDER BY p."publishedAt" DESC, i.id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((r) => r.id);
 }
 
 // Title and cover image for each entity, in the order given. An entity with no usable cover (still
