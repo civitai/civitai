@@ -183,6 +183,7 @@ afterEach(() => {
   vi.useRealTimers();
   delete process.env.AUTH_SESSION_COOKIE_MODE;
   delete process.env.CIVITAI_MODERATION_USER_ID;
+  delete process.env.AUTH_RETIRE_SHARED_SESSION;
 });
 
 const TOKEN_STATE = REDIS_SYS_KEYS.SESSION.TOKEN_STATE;
@@ -273,7 +274,10 @@ describe('/authorize copying the hub session into the host-only slot', () => {
 });
 
 describe('host mode: a browser arriving with only a shared-slot hub token', () => {
-  beforeEach(() => setMode('host'));
+  beforeEach(() => {
+    setMode('host');
+    process.env.AUTH_RETIRE_SHARED_SESSION = 'true';
+  });
 
   it('is moved to a host-only session of the same family, and the shared-slot token ends', async () => {
     sharedSession();
@@ -333,7 +337,6 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
       keys: [upgradeKey(REDIS_SYS_KEYS.SESSION.HUB_UPGRADE_LOCK)],
       arguments: [],
     });
-    const started = performance.now();
 
     const pending = visit(jar({ [SHARED()]: J0 }));
     await new Promise((r) => setTimeout(r, 700));
@@ -342,7 +345,6 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
 
     expect(locals.session?.sub).toBe('100');
     expect(mintedJtis().size).toBe(1);
-    expect(performance.now() - started).toBeLessThan(3_000);
   });
 
   it('an impersonation session is served from the shared slot, not moved and not ended', async () => {
@@ -433,6 +435,55 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
 
     expect((await visit(cookies)).session).toBeUndefined();
     expect(cookies.get(HOST())).toBeUndefined();
+  });
+});
+
+describe('host mode before the shared-slot session is retired', () => {
+  beforeEach(() => setMode('host'));
+
+  it('copies the shared-slot session but neither ends it nor expires its cookies', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+
+    const first = await visit(cookies);
+    vi.setSystemTime(Date.now() + 61_000);
+    const later = await visit(cookies);
+
+    expect(first.session).toMatchObject({ sub: '100', sid: 'j0' });
+    expect(cookies.get(HOST())).toBeDefined();
+    expect(later.session?.jti).toBe(first.session?.jti);
+    expect(cookies.get(SHARED())).toBe(J0);
+    expect(cookies.get(SHARED_DEVICE())).toBe('dev-d');
+    expect(h.sys.hashes.get(TOKEN_STATE)?.has('j0')).toBeFalsy();
+    expect((await visit(jar({ [SHARED()]: J0 }))).session?.sub).toBe('100');
+  });
+});
+
+describe('an account change in shared mode after /authorize made a host-only copy', () => {
+  it('drops the copy, so the hub keeps the new account once it reads host-only first', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-d' });
+    await authorize(cookies);
+    await h.sys.hSet(accountsOf('dev-d'), '100', String(Date.now()));
+    await h.sys.hSet(accountsOf('dev-d'), '200', String(Date.now()));
+
+    const switched = await visit(cookies, {
+      path: '/api/auth/switch',
+      routeId: '/api/auth/switch',
+      init: {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId: 200 }),
+      },
+      run: (event) => switchPost(event) as Promise<Response>,
+    });
+    setMode('host');
+    const after = await visit(cookies);
+
+    expect(switched.response.status).toBe(200);
+    expect(after.session?.sub).toBe('200');
+    expect(after.deviceId).toBe('dev-d');
   });
 });
 

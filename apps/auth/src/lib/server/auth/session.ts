@@ -4,6 +4,7 @@ import { error } from '@sveltejs/kit';
 import {
   familyClaims,
   familyId,
+  hostSessionCookieName,
   isSecureCookie,
   maybeCreateSessionSigner,
   readSessionToken,
@@ -179,7 +180,8 @@ export function setSessionCookie(
   token: string,
   slot: CookieSlot = sessionCookieMode()
 ): void {
-  cookies.set(sessionCookieNameForSlot(slot), token, {
+  const name = sessionCookieNameForSlot(slot);
+  cookies.set(name, token, {
     path: '/',
     domain: slot === 'host' ? undefined : cookieDomain(),
     httpOnly: true,
@@ -187,6 +189,12 @@ export function setSessionCookie(
     sameSite: 'lax',
     maxAge: getSigner().maxAge,
   });
+  // A host-only copy of an earlier session would win over this one once the hub reads host-only first. It is
+  // dropped, not rewritten: the next /authorize copies this session afresh.
+  const host = hostSessionCookieName();
+  if (slot === 'shared' && host !== name && cookies.get(host) !== undefined) {
+    cookies.delete(host, { path: '/', secure: true });
+  }
 }
 
 /**

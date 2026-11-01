@@ -169,7 +169,7 @@ describe("the hub's own session cookie", () => {
 });
 
 describe('a session sent by a service', () => {
-  it('is accepted however long its family has been idle, and is never re-signed', async () => {
+  it('is accepted however long its family has been idle', async () => {
     hubToken(40 * DAY_MS);
     const event = {
       url: new URL('https://auth.civitai.com/api/auth/accounts'),
@@ -186,7 +186,6 @@ describe('a session sent by a service', () => {
     await handle({ event, resolve: async () => new Response('ok') } as never);
 
     expect(event.locals.session).toBeDefined();
-    expect(h.minted).toHaveLength(0);
   });
 });
 

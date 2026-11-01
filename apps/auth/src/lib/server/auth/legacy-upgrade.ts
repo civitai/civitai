@@ -12,6 +12,7 @@ import {
   type SessionUser,
 } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
+import { env } from '$env/dynamic/private';
 import { evalSys } from '../redis';
 import { cookieDomain } from './cookie';
 import { setDeviceCookie } from './device';
@@ -44,6 +45,11 @@ interface Upgrade {
 const digest = (jti: string) => createHash('sha256').update(jti).digest('base64url');
 const resultKey = (jti: string) => `${REDIS_SYS_KEYS.SESSION.HUB_UPGRADE}:${digest(jti)}`;
 const lockKey = (jti: string) => `${REDIS_SYS_KEYS.SESSION.HUB_UPGRADE_LOCK}:${digest(jti)}`;
+
+// Off until every app reads the host-only slot first (rollout step 12 everywhere). Until then a shared-slot hub
+// token is still the session other apps read, so host mode copies it but neither ends it nor expires its cookies.
+const retireSharedSession = () =>
+  /^(true|1|on|yes)$/i.test((env.AUTH_RETIRE_SHARED_SESSION ?? '').trim());
 
 /** In dev both slots share one name, so there is nothing to move. */
 const slotsDiffer = () => hostSessionCookieName() !== sessionCookieName();
@@ -148,10 +154,11 @@ async function awaitWinner(jti: string): Promise<Upgrade | null> {
 }
 
 /**
- * In host mode, move a browser that reaches the hub with a shared-slot token onto a host-only session and end
- * the shared-slot token. Requests racing on the same token all get the one session the first of them minted,
- * for 60 seconds after that token is ended. A host-only session the hub honours is kept, whoever it belongs to;
- * the shared-slot token is ended only when it is that same session. An impersonation session, or one whose
+ * In host mode, move a browser that reaches the hub with a shared-slot token onto a host-only session; with
+ * AUTH_RETIRE_SHARED_SESSION on, also end the shared-slot token and expire its cookies. Requests racing on the
+ * same token all get the one session the first of them minted, for 60 seconds after that token is ended. A
+ * host-only session the hub honours is kept, whoever it belongs to; the shared-slot token is ended only when it
+ * is that same session. An impersonation session, or one whose
  * account may not hold a session, is not moved: it is served from the shared slot until it ends.
  * Returns the host-only token, or null when there is none to give.
  */
@@ -165,6 +172,7 @@ export async function upgradeHubSession(
   const host = hostToken ? await honouredSession(hostToken) : null;
   if (host) {
     const shared = await signatureVerifier.verifyToken(sharedToken).catch(() => null);
+    if (!retireSharedSession()) return hostToken!;
     if (shared?.jti && shared.sub === host.sub && familyId(shared) === familyId(host)) {
       await sessions.invalidateToken(shared.jti, Number(shared.sub)).catch(() => undefined);
     }
@@ -209,14 +217,15 @@ async function finish(
 ): Promise<string> {
   if (cookies.get(hostSessionCookieName()) !== token) setSessionCookie(cookies, token, 'host');
   await recordFamily(cookies, familyId(j0));
-  await sessions.invalidateToken(j0.jti!, Number(j0.sub)).catch(() => undefined);
+  const retire = retireSharedSession();
+  if (retire) await sessions.invalidateToken(j0.jti!, Number(j0.sub)).catch(() => undefined);
   // Only the minting request starts the 60s: a replay re-arming it would keep the ended token usable forever.
   if (won) {
     await evalSys(EXPIRE_SCRIPT, [resultKey(j0.jti!)], [String(UPGRADE_RESULT_TTL_S)]).catch(
       () => undefined
     );
   }
-  expireSharedSlot(cookies);
+  if (retire) expireSharedSlot(cookies);
   return token;
 }
 
