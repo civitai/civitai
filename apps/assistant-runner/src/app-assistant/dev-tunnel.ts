@@ -14,9 +14,8 @@ export const REQUEST_TIMEOUT_MS = 15_000;
  */
 export const CIVITAI_START_DEADLINE_MS = 185_000;
 /**
- * How long a start waits: civitai's own bound, plus 15 s for the request to get there and back. A
- * start given up on sooner is cancelled by its key either way (`start`), but one civitai would
- * still have answered in time is a preview the user then does not get. Most answer in seconds.
+ * How long a start waits: civitai's start deadline (`CIVITAI_START_DEADLINE_MS`) plus 15 s of
+ * margin. Any shorter, and the runner gives up on a start civitai still answers in time.
  */
 export const START_TIMEOUT_MS = CIVITAI_START_DEADLINE_MS + 15_000;
 
