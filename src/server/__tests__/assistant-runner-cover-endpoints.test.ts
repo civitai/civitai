@@ -2,6 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 
 /**
@@ -19,69 +20,59 @@ import type * as AppAssistantService from '~/server/services/app-assistant/app-a
 
 type Row = { id: string; slug: string; status: string; ownerUserId: number };
 
-const { runnerUserMock, db, rows, seats } = vi.hoisted(() => {
+const { runnerUserMock, rows, seats, read } = vi.hoisted(() => {
   const rows = new Map<string, Row>();
   /** `${listingId}:${userId}`: an accepted editor seat. */
   const seats = new Set<string>();
   const byId = (id: string) => [...rows.values()].find((r) => r.id === id) ?? null;
-  const client = {
-    appListing: {
-      // The entry read: by slug, top-level listings only.
-      findFirst: vi.fn(async (args: { where?: { slug?: string; revisionOfId?: unknown } }) => {
-        const row = args.where?.slug ? rows.get(args.where.slug) : undefined;
-        if (!row || args.where?.revisionOfId !== null) return null;
-        return {
-          id: row.id,
-          kind: 'onsite',
-          status: row.status,
-          contentRating: 'g',
-          revisionOfId: null,
-          appBlock: { contentRating: 'g' },
-        };
-      }),
-      // By id: the edit view (it selects `icon`), or the access read the ownership gate makes.
-      findUnique: vi.fn(
-        async (args: { where?: { id?: string }; select?: Record<string, unknown> }) => {
-          const row = byId(args.where?.id ?? '');
-          if (!row) return null;
-          if ('icon' in (args.select ?? {}))
-            return { iconId: null, coverId: null, icon: null, cover: null, screenshots: [] };
-          return {
-            id: row.id,
-            slug: row.slug,
-            kind: 'onsite',
-            appBlockId: `blk_${row.id}`,
-            revisionOfId: null,
-            // The listing's own column names nobody: the canonical owner is the block's.
-            userId: -1,
-            appBlock: { app: { userId: row.ownerUserId } },
-          };
-        }
-      ),
+  /** What the fake rows answer, wired onto the canonical `dbMock.dbRead` before each test. */
+  const read = {
+    // The entry read: by slug, top-level listings only.
+    entry: async (args: { where?: { slug?: string; revisionOfId?: unknown } }) => {
+      const row = args.where?.slug ? rows.get(args.where.slug) : undefined;
+      if (!row || args.where?.revisionOfId !== null) return null;
+      return {
+        id: row.id,
+        kind: 'onsite',
+        status: row.status,
+        contentRating: 'g',
+        revisionOfId: null,
+        appBlock: { contentRating: 'g' },
+      };
     },
-    appCollaborator: {
-      findFirst: vi.fn(async (args: { where?: { appListingId?: string; userId?: number } }) =>
-        seats.has(`${args.where?.appListingId}:${args.where?.userId}`)
-          ? { userId: args.where?.userId }
-          : null
-      ),
+    // By id: the edit view (it selects `icon`), or the access read the ownership gate makes.
+    byId: async (args: { where?: { id?: string }; select?: Record<string, unknown> }) => {
+      const row = byId(args.where?.id ?? '');
+      if (!row) return null;
+      if ('icon' in (args.select ?? {}))
+        return { iconId: null, coverId: null, icon: null, cover: null, screenshots: [] };
+      return {
+        id: row.id,
+        slug: row.slug,
+        kind: 'onsite',
+        appBlockId: `blk_${row.id}`,
+        revisionOfId: null,
+        // The listing's own column names nobody: the canonical owner is the block's.
+        userId: -1,
+        appBlock: { app: { userId: row.ownerUserId } },
+      };
     },
-    appListingPublishRequest: { findFirst: vi.fn(async () => null) },
-    appListingScreenshot: { findMany: vi.fn(async () => []) },
-    appListingModerationEvent: { findFirst: vi.fn(async () => null) },
-    image: { findMany: vi.fn(async () => []) },
+    seat: async (args: { where?: { appListingId?: string; userId?: number } }) =>
+      seats.has(`${args.where?.appListingId}:${args.where?.userId}`)
+        ? { userId: args.where?.userId }
+        : null,
   };
-  return { runnerUserMock: vi.fn(), db: client, rows, seats };
+  return { runnerUserMock: vi.fn(), rows, seats, read };
 });
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/db/client', () => ({ dbRead: db, dbWrite: db }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));
 vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppAssistantService>()),
   getRunnerDevTunnelUser: runnerUserMock,
 }));
 
+const db = dbMock.dbRead;
 const { signRunGrant } = await import('~/server/services/app-assistant/assistant-runner-tokens');
 const listingRoute = (await import('~/pages/api/internal/app-assistant/cover/listing')).default;
 
@@ -147,6 +138,9 @@ beforeEach(() => {
     ASSISTANT_RUNNER_SIGNING_KEY: SIGNING_KEY,
     ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 7800,
   });
+  db.appListing.findFirst.mockImplementation(read.entry);
+  db.appListing.findUnique.mockImplementation(read.byId);
+  db.appCollaborator.findFirst.mockImplementation(read.seat);
   rows.clear();
   seats.clear();
   rows.set(OWNED_APP, { id: 'apl_owned', slug: OWNED_APP, status: 'approved', ownerUserId: OWNER });
