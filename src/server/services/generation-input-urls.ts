@@ -684,7 +684,6 @@ export async function assertGenerationInputsUsable({
         caller,
         mode: refuseExternal ? 'refuse' : 'log',
         userId,
-        now,
       });
       if (refuseExternal) throw refuse(cls);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });

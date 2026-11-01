@@ -738,7 +738,9 @@ describe('assertGenerationInputsUsable', () => {
         expect.objectContaining({ caller: 'api', host: 'imgur' })
       );
       expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledExactlyOnceWith(
-        `system:generation-input-external-host-users:${AFTER.toISOString().slice(0, 10)}:api:imgur`,
+        `system:generation-input-external-host-users:${new Date()
+          .toISOString()
+          .slice(0, 10)}:api:imgur`,
         String(CALLER)
       );
     });

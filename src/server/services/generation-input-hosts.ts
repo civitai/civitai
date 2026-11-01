@@ -68,10 +68,12 @@ const externalHostUsersFailedCounter = registerCounterWithLabels({
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-// Users this process already added today, so a repeat request writes nothing.
 const RECENT_MAX = 50_000;
-let recentDay = '';
-const recent = new Set<string>();
+// Users this process already added today, so a repeat request writes nothing. On globalThis, like
+// the gauge's registry, so every bundler graph's copy of this module shares one day and one set.
+const state: { day: string; recent: Set<string> } = ((
+  globalThis as { __generationInputExternalHostUsers?: { day: string; recent: Set<string> } }
+).__generationInputExternalHostUsers ??= { day: '', recent: new Set() });
 
 const usersKey = (day: string, caller: string, bucket: string) =>
   `${REDIS_SYS_KEYS.SYSTEM.GENERATION_INPUT_EXTERNAL_HOST_USERS}:${day}:${caller}:${bucket}` as RedisKeyTemplateSys;
@@ -84,13 +86,15 @@ async function addUser(day: string, userId: number, caller: string, bucket: stri
   await sysRedis.expireAt(key, new Date(Date.parse(day) + 2 * DAY_MS));
   if (!changed) return;
   const estimate = await sysRedis.pfCount(key);
-  if (day === recentDay) externalHostUsersGauge.set({ day, caller, host: bucket }, estimate);
+  // A write that finished after the day changed would bring back the old day's row.
+  if (day === state.day) externalHostUsersGauge.set({ day, caller, host: bucket }, estimate);
 }
 
 /**
  * Counts one external generation input url by host bucket, and adds the user to that bucket's
  * distinct-user set for the day (once per user, bucket and day in this process).
  * Never throws and never waits on Redis: the set write runs in the background and fails open.
+ * `now` is for tests; the day is the wall clock's UTC date.
  */
 export function recordExternalHost({
   url,
@@ -110,25 +114,28 @@ export function recordExternalHost({
   const bucket = externalHostBucket(url);
   externalHostCounter.inc({ entry, caller, mode, host: bucket });
 
+  if (Number.isNaN(now.getTime())) return;
   const day = now.toISOString().slice(0, 10);
-  if (day !== recentDay) {
-    // A new day: the old day's estimates stop being reported by this pod.
-    recentDay = day;
-    recent.clear();
+  // Only a later day starts a new set; a clock that steps back writes nothing.
+  if (day < state.day) return;
+  if (day > state.day) {
+    // The old day's estimates stop being reported by this pod.
+    state.day = day;
+    state.recent.clear();
     externalHostUsersGauge.reset();
   }
   const member = `${caller}:${bucket}:${userId}`;
-  if (recent.has(member)) return;
-  if (recent.size >= RECENT_MAX) recent.clear();
-  recent.add(member);
+  if (state.recent.has(member)) return;
+  if (state.recent.size >= RECENT_MAX) state.recent.clear();
+  state.recent.add(member);
   void addUser(day, userId, caller, bucket).catch(() => {
-    recent.delete(member);
+    if (day === state.day) state.recent.delete(member);
     externalHostUsersFailedCounter.inc({ caller });
   });
 }
 
-/** Test seam: forget the users this process added. */
+/** Test seam: forget the day and the users this process added. */
 export function __resetRecentExternalHostUsersForTest() {
-  recentDay = '';
-  recent.clear();
+  state.day = '';
+  state.recent.clear();
 }

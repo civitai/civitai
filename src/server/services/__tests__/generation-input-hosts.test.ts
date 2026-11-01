@@ -126,6 +126,30 @@ describe('recordExternalHost', () => {
     expect(users.reset).toHaveBeenCalledTimes(2);
   });
 
+  it("does not bring back the old day's estimate when its write finishes after the day changed", async () => {
+    let finishOldDay: ((changed: number) => void) | undefined;
+    redisMock.sysRedis.pfAdd.mockImplementationOnce(
+      () => new Promise<number>((resolve) => (finishOldDay = resolve))
+    );
+    record('https://i.imgur.com/a.png', { now: new Date('2026-11-01T23:59:00Z') });
+    record('https://i.imgur.com/a.png', { now: new Date('2026-11-02T00:01:00Z') });
+    await settle();
+    finishOldDay!(1);
+    await settle();
+    expect(users.set).toHaveBeenCalledExactlyOnceWith(
+      { day: '2026-11-02', caller: 'api', host: 'imgur' },
+      17
+    );
+  });
+
+  it('writes nothing for a request dated before the current day', () => {
+    record('https://i.imgur.com/a.png', { now: new Date('2026-11-02T00:01:00Z') });
+    record('https://i.imgur.com/a.png', { now: new Date('2026-11-01T23:59:00Z'), userId: 43 });
+    expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledTimes(1);
+    expect(users.reset).toHaveBeenCalledTimes(1);
+    expect(hosts.inc).toHaveBeenCalledTimes(2);
+  });
+
   it('reports nothing new when the day set already holds the user', async () => {
     redisMock.sysRedis.pfAdd.mockResolvedValue(0);
     record('https://i.imgur.com/a.png');
@@ -159,6 +183,16 @@ describe('recordExternalHost', () => {
       [`${KEY}:2026-11-01:api:imgur`, '43'],
       [`${KEY}:2026-11-01:session:imgur`, '42'],
     ]);
+  });
+
+  it('writes nothing for a repeat request after the first write finished', async () => {
+    record('https://i.imgur.com/a.png');
+    await settle();
+    expect(users.set).toHaveBeenCalledTimes(1);
+    record('https://i.imgur.com/a.png');
+    await settle();
+    expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledTimes(1);
+    expect(failed.inc).not.toHaveBeenCalled();
   });
 
   it('never puts a raw hostname in a label or a key', () => {
