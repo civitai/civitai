@@ -44,7 +44,6 @@ const migration = (name: string) =>
 const db = { pg: null as unknown as PGlite };
 const w = dbMock.dbWrite;
 
-const OWNER = 1;
 const STRANGER = 2;
 const COLLABORATOR = 3;
 const CONTRIBUTOR = 4;
