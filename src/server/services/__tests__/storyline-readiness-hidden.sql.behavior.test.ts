@@ -44,14 +44,35 @@ const migration = (name: string) =>
 const db = { pg: null as unknown as PGlite };
 const w = dbMock.dbWrite;
 
+const OWNER = 1;
 const STRANGER = 2;
 const COLLABORATOR = 3;
 const CONTRIBUTOR = 4;
 const INVITEE = 5;
 /** One continuation of chapter 2 (post 101) from each placer, by placement id. */
-const FROM = { [STRANGER]: 1, [COLLABORATOR]: 2, [CONTRIBUTOR]: 3, [INVITEE]: 4 } as const;
-const EVERYONE = [1, 2, 3, 4];
-const PARTICIPANTS = [FROM[COLLABORATOR], FROM[CONTRIBUTOR]];
+const FROM = {
+  [STRANGER]: 1,
+  [COLLABORATOR]: 2,
+  [CONTRIBUTOR]: 3,
+  [INVITEE]: 4,
+  [OWNER]: 5,
+} as const;
+/** A stranger's continuation of another storyline, whose chapter 1 stays shown. */
+const OTHER_STORY = 6;
+/** A stranger's continuation of a post that is no chapter. */
+const NOT_A_CHAPTER = 7;
+/** A stranger's continuation of chapter 2 whose own post was taken down: doomed. */
+const DOOMED = 8;
+const EVERYONE = [1, 2, 3, 4, 5, 6, 7, 8];
+/** Rows a waiting chapter 1 of storyline 1 does not hold back. */
+const NOT_HELD = [
+  FROM[COLLABORATOR],
+  FROM[CONTRIBUTOR],
+  FROM[OWNER],
+  OTHER_STORY,
+  NOT_A_CHAPTER,
+  DOOMED,
+];
 
 beforeAll(async () => {
   db.pg = new PGlite();
@@ -96,12 +117,19 @@ beforeAll(async () => {
       (100, 1, 1, now() - interval '1 day'), (101, 1, 1, now() - interval '1 day'),
       (102, 4, 1, now() - interval '1 day'),
       (201, 2, 1, now() - interval '1 hour'), (202, 3, 1, now() - interval '1 hour'),
-      (203, 4, 1, now() - interval '1 hour'), (204, 5, 1, now() - interval '1 hour');
-    INSERT INTO "Image" ("postId") VALUES (201), (202), (203), (204);
+      (203, 4, 1, now() - interval '1 hour'), (204, 5, 1, now() - interval '1 hour'),
+      (205, 1, 1, now() - interval '1 hour'), (206, 2, 1, now() - interval '1 hour'),
+      (207, 2, 1, now() - interval '1 hour'),
+      (300, 1, 1, now() - interval '1 day'), (301, 1, 1, now() - interval '1 day'),
+      (900, 1, 1, now() - interval '1 day');
+    INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt", "tosViolation") VALUES
+      (208, 2, 1, now() - interval '1 hour', true);
+    INSERT INTO "Image" ("postId") VALUES (201), (202), (203), (204), (205), (206), (207);
     INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt") VALUES
-      (1, 1, 'The Long Road', 1, now());
+      (1, 1, 'The Long Road', 1, now()), (2, 1, 'Another Road', 1, now());
     INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth) VALUES
-      (10, 1, 100, 1, 0), (11, 1, 101, 1, 1), (12, 1, 102, 4, 1);
+      (10, 1, 100, 1, 0), (11, 1, 101, 1, 1), (12, 1, 102, 4, 1),
+      (20, 2, 300, 1, 0), (21, 2, 301, 1, 1);
     INSERT INTO "StorylineCollaborator" ("storylineId", "userId", "acceptedAt") VALUES
       (1, 3, now()), (1, 5, NULL);
     INSERT INTO "Placement" (id, surface, "targetType", "targetId", "ownerId", "placerId", data,
@@ -109,7 +137,11 @@ beforeAll(async () => {
       (1, 'storyline', 'post', 101, 1, 2, '{"awaitingReadiness": true, "postId": 201}', 'pending', 0),
       (2, 'storyline', 'post', 101, 1, 3, '{"awaitingReadiness": true, "postId": 202}', 'pending', 0),
       (3, 'storyline', 'post', 101, 1, 4, '{"awaitingReadiness": true, "postId": 203}', 'pending', 0),
-      (4, 'storyline', 'post', 101, 1, 5, '{"awaitingReadiness": true, "postId": 204}', 'pending', 0);
+      (4, 'storyline', 'post', 101, 1, 5, '{"awaitingReadiness": true, "postId": 204}', 'pending', 0),
+      (5, 'storyline', 'post', 101, 1, 1, '{"awaitingReadiness": true, "postId": 205}', 'pending', 0),
+      (6, 'storyline', 'post', 301, 1, 2, '{"awaitingReadiness": true, "postId": 206}', 'pending', 0),
+      (7, 'storyline', 'post', 900, 1, 2, '{"awaitingReadiness": true, "postId": 207}', 'pending', 0),
+      (8, 'storyline', 'post', 101, 1, 2, '{"awaitingReadiness": true, "postId": 208}', 'pending', 0);
   `);
 });
 
@@ -138,8 +170,11 @@ afterEach(() =>
     UPDATE "StorylineChapter" SET "postId" = 100, "removedAt" = NULL WHERE id = 10;
     UPDATE "Post" SET "nsfwLevel" = 1, "publishedAt" = now() - interval '1 day',
       "tosViolation" = false WHERE id = 100;
-    UPDATE "User" SET "bannedAt" = NULL WHERE id = 1;
-    UPDATE "StorylineChapter" SET "removedAt" = NULL WHERE id = 12;
+    UPDATE "User" SET "bannedAt" = NULL, "deletedAt" = NULL WHERE id = 1;
+    UPDATE "StorylineChapter" SET "postId" = 102, "removedAt" = NULL WHERE id = 12;
+    UPDATE "Post" SET "tosViolation" = false WHERE id = 102;
+    UPDATE "StorylineChapter" SET "removedAt" = NULL WHERE id = 11;
+    UPDATE "Storyline" SET "tosViolation" = false WHERE id = 1;
   `)
 );
 
@@ -157,31 +192,45 @@ describe('the readiness selection while chapter 1 hides the storyline', () => {
     ['unpublished', `UPDATE "Post" SET "publishedAt" = NULL WHERE id = 100`],
     ['scheduled', `UPDATE "Post" SET "publishedAt" = now() + interval '1 day' WHERE id = 100`],
     ['unrated', `UPDATE "Post" SET "nsfwLevel" = 0 WHERE id = 100`],
-  ])(
-    'leaves out a non-participant’s row while chapter 1 is %s, and keeps participants’',
-    async (_n, sql) => {
-      await db.pg.exec(sql);
-      await expect(select()).resolves.toEqual(PARTICIPANTS);
-    }
-  );
+  ])('leaves out a non-participant’s row while chapter 1 is %s, and no other', async (_n, sql) => {
+    await db.pg.exec(sql);
+    await expect(select()).resolves.toEqual(NOT_HELD);
+  });
 
-  // Selected so the pass refunds them at once rather than holding them to the deadline.
+  // Selected so the pass refunds them at once rather than holding them to the deadline. Each is
+  // also unpublished, so only the removal itself can be what keeps it out of the waiting rule.
+  const unpublished = `UPDATE "Post" SET "publishedAt" = NULL WHERE id = 100;`;
   it.each([
     ['removed', `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 10`],
     ['deleted', `UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 10`],
     ['taken down', `UPDATE "Post" SET "tosViolation" = true WHERE id = 100`],
     ['wholly Blocked', `UPDATE "Post" SET "nsfwLevel" = ${NsfwLevel.Blocked} WHERE id = 100`],
     ['by a banned author', `UPDATE "User" SET "bannedAt" = now() WHERE id = 1`],
-  ])('still selects every row while chapter 1 is %s', async (_n, sql) => {
-    await db.pg.exec(sql);
+    ['by a deleted author', `UPDATE "User" SET "deletedAt" = now() WHERE id = 1`],
+  ])('still selects every row while chapter 1 is %s, unpublished or not', async (_n, sql) => {
+    await db.pg.exec(unpublished + sql);
     await expect(select()).resolves.toEqual(EVERYONE);
   });
 
-  it('leaves out a contributor whose only chapter was removed, as a non-participant', async () => {
-    await db.pg.exec(`
-      UPDATE "Post" SET "nsfwLevel" = 0 WHERE id = 100;
-      UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 12;
-    `);
-    await expect(select()).resolves.toEqual([FROM[COLLABORATOR]]);
+  // The contributor counts only through a chapter readers are not shown as removed.
+  it.each([
+    ['removed', `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 12`],
+    ['taken down', `UPDATE "Post" SET "tosViolation" = true WHERE id = 102`],
+    ['deleted', `UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 12`],
+  ])('holds back a contributor whose only chapter is %s, as a non-participant', async (_n, sql) => {
+    await db.pg.exec(unpublished + sql);
+    await expect(select()).resolves.toEqual(NOT_HELD.filter((id) => id !== FROM[CONTRIBUTOR]));
+  });
+
+  // Refused for another reason first, as `assertCanContinueStoryline` does: refunded at once.
+  it.each([
+    [
+      'its parent chapter is removed',
+      `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 11`,
+    ],
+    ['its storyline is taken down', `UPDATE "Storyline" SET "tosViolation" = true WHERE id = 1`],
+  ])('still selects a stranger’s row when %s, though chapter 1 is unpublished', async (_n, sql) => {
+    await db.pg.exec(unpublished + sql);
+    await expect(select()).resolves.toEqual(EVERYONE);
   });
 });

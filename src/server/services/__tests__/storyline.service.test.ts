@@ -1480,11 +1480,13 @@ describe('a storyline whose chapter 1 keeps it from the public', () => {
 
     it.each(cases)(
       'when %s, refuses a stranger, an unaccepted invitee or a signed-out price check as no chapter, and not insiders',
-      async (_n, overrides) => {
+      async (_n, overrides, reason) => {
         parentFor(overrides);
+        // The reason rides along for the readiness pass, which refunds only a 'removed' one.
         for (const placerId of [STRANGER, INVITEE, 0])
           await expect(attempt(placerId), `user ${placerId}`).rejects.toMatchObject({
             message: STORYLINE_REFUSALS.notAChapter,
+            reason,
           });
         for (const placerId of [OWNER, PARTICIPANT, LIVE_CHAPTER_AUTHOR])
           await expect(attempt(placerId), `user ${placerId}`).resolves.toMatchObject({

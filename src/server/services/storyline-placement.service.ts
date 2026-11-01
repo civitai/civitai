@@ -630,20 +630,6 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
       -- tick; selecting it would let a backlog of them fill the batch and
       -- starve the rows behind. The unfunded sweep settles those.
       AND (pl.amount = 0 OR ${receiptedHolds} >= pl.amount)
-      AND NOT EXISTS (
-        SELECT 1 FROM "StorylineChapter" pc
-        JOIN "Storyline" st ON st.id = pc."storylineId"
-        JOIN "StorylineChapter" rc ON rc."storylineId" = pc."storylineId" AND rc.depth = 0
-        LEFT JOIN "Post" rp ON rp.id = rc."postId"
-        LEFT JOIN "User" ru ON ru.id = rp."userId"
-        WHERE pc."postId" = pl."targetId"
-          AND st."userId" <> pl."placerId"
-          AND ${storylineRootWaitingSql}
-          AND NOT ${storylineParticipantSql(
-            Prisma.sql`pl."placerId"`,
-            Prisma.sql`pc."storylineId"`
-          )}
-      )
       AND (
         p.id IS NULL
         OR p."tosViolation"
@@ -658,6 +644,24 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
           AND NOT EXISTS (
             SELECT 1 FROM "Image" i WHERE i."postId" = p.id
               AND (i.ingestion <> 'Scanned' OR i."needsReview" IS NOT NULL)
+          )
+          -- Ready, but its storyline hidden from the placer by a chapter 1 that may yet be
+          -- published or rated: it waits for its deadline. A doomed post, a taken-down
+          -- storyline or a removed parent is still selected, to be refunded at once.
+          AND NOT EXISTS (
+            SELECT 1 FROM "StorylineChapter" pc
+            JOIN "Storyline" st ON st.id = pc."storylineId"
+            JOIN "StorylineChapter" rc ON rc."storylineId" = pc."storylineId" AND rc.depth = 0
+            LEFT JOIN "Post" rp ON rp.id = rc."postId"
+            LEFT JOIN "User" ru ON ru.id = rp."userId"
+            WHERE pc."postId" = pl."targetId"
+              AND pc."removedAt" IS NULL AND st."tosViolation" = false
+              AND st."userId" <> pl."placerId"
+              AND ${storylineRootWaitingSql}
+              AND NOT ${storylineParticipantSql(
+                Prisma.sql`pl."placerId"`,
+                Prisma.sql`pc."storylineId"`
+              )}
           )
         )
       )
