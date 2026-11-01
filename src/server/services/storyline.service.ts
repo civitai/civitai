@@ -1767,6 +1767,20 @@ export async function addOwnerChapterAtEnd({
     // route from before they did, can still end at one. Nothing continues a tombstone, so the
     // route is moved back to the last live chapter here, where it would otherwise stay stuck.
     if (end.removed) {
+      // Locks the parents whose edges the heal rewrites first, the order `setCanonChapter` takes
+      // (a parent's row, then its edges), so the two cannot deadlock.
+      await tx.$queryRaw`
+        WITH RECURSIVE up AS (
+          SELECT ${end.id}::int AS id, 1 AS step
+          UNION ALL
+          SELECT e."parentChapterId", up.step + 1 FROM up
+          JOIN "StorylineChapter" c ON c.id = up.id AND c."removedAt" IS NOT NULL
+          JOIN "StorylineChapterEdge" e ON e."chapterId" = up.id AND e.canon
+          WHERE up.step < 100000
+        )
+        SELECT id FROM "StorylineChapter" WHERE id IN (SELECT id FROM up WHERE step > 1)
+        ORDER BY id FOR NO KEY UPDATE
+      `;
       await clearTombstoneTips([end.id], tx);
       end = await findEnd();
     }
