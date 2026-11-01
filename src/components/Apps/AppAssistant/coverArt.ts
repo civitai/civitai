@@ -6,6 +6,7 @@ import {
   generateCover,
   priceCover,
   readCoverListing,
+  type AppCoverWorkflow,
   type CoverArtDeps,
   type CoverEstimator,
   type CoverListingApi,
@@ -30,13 +31,16 @@ export {
   COVER_NOT_GENERATED,
   COVER_ON_DRAFT,
   COVER_ON_LISTING_IN_REVIEW,
+  COVER_PRICE_UNCHECKED,
   COVER_PRICE_UNREADABLE,
   COVER_SCAN_PENDING,
+  CoverPriceRoseError,
   GENERATE_APP_COVER,
   appCoverWorkflow,
   coverMaybeNotAttached,
   coverNotAttached,
   coverOfferOf,
+  coverPriceRose,
   coverWorkflowFor,
   createCoverArt,
   makeOfferedCover,
@@ -80,16 +84,13 @@ export function createBrowserCoverDeps({
   onAttached?: () => void;
 }): { offer: Omit<CoverArtDeps, 'nextId'>; press: CoverPressDeps } {
   const listing = (app: string) => readCoverListing(api, app);
+  // One what-if for both: the press asks the same question the offer did, as the same user.
+  const price = async (workflow: AppCoverWorkflow) => priceCover(await orchestration(), workflow);
   return {
-    offer: {
-      currentApp,
-      listing,
-      async price(workflow) {
-        return priceCover(await orchestration(), workflow);
-      },
-    },
+    offer: { currentApp, listing, price },
     press: {
       listing,
+      price,
       async generate(workflow, signal) {
         return generateCover(await orchestration(), workflow, signal);
       },

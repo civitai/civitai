@@ -149,6 +149,18 @@ export const COVER_NO_PROMPT = 'Describe what the cover should show.';
 export const COVER_LISTING_UNREADABLE = 'Your app’s store listing could not be read right now.';
 export const COVER_PRICE_UNREADABLE =
   'The cover’s price could not be checked right now, so nothing was offered. Try again in a moment.';
+export const COVER_PRICE_UNCHECKED =
+  'The cover’s price could not be checked just now, so nothing was generated. Try again in a moment.';
+export const coverPriceRose = (buzz: number) =>
+  `The cover now costs about ${buzz} Buzz, more than when it was offered, so nothing was generated. Press again to make it at the new price.`;
+
+/** The press found a higher price than the user last saw: nothing was generated. */
+export class CoverPriceRoseError extends Error {
+  override name = 'CoverPriceRoseError';
+  constructor(readonly buzz: number) {
+    super(coverPriceRose(buzz));
+  }
+}
 export const COVER_NOT_SET_UP = 'Covers cannot be made here.';
 export const COVER_NOT_GENERATED = 'The cover could not be generated, so nothing was attached.';
 export const COVER_LISTING_CHANGED =
@@ -231,6 +243,8 @@ export function createCoverArt(deps: CoverArtDeps): Record<string, AssistantTool
 export interface CoverPressDeps {
   /** The user's own listing for `app`; null when they have none. */
   listing(app: string, signal?: AbortSignal): Promise<CoverListing | null>;
+  /** What `workflow` would cost now, in Buzz: the offer's own what-if, asked again. */
+  price(workflow: AppCoverWorkflow, signal?: AbortSignal): Promise<number>;
   /** Runs `workflow` on the user's Buzz and returns its image's URL; throws a message for the user. */
   generate(workflow: AppCoverWorkflow, signal?: AbortSignal): Promise<string>;
   /**
@@ -241,8 +255,9 @@ export interface CoverPressDeps {
 }
 
 /**
- * The press. The listing is read again and must still be the offered one and editable, or nothing
- * is spent; then exactly the offered recipe is generated and attached. Resolves with what the user
+ * The press. The listing is read again and must still be the offered one and editable, and the
+ * price is checked again and must be no more than offered, or nothing is spent; then exactly the
+ * offered recipe is generated and attached. Resolves with what the user
  * is told; throws a message for them.
  */
 export async function makeOfferedCover(
@@ -253,6 +268,17 @@ export async function makeOfferedCover(
   const listing = await deps.listing(offer.app, signal);
   if (!listing || listing.listingId !== offer.listingId) throw new Error(COVER_LISTING_CHANGED);
   if (listing.blockedReason) throw new Error(listing.blockedReason);
+  // Never more than the user last saw: a higher price is shown to them, and only a press at it
+  // makes the cover (the card offers it again at `CoverPriceRoseError.buzz`).
+  let now: number;
+  try {
+    now = await deps.price(appCoverWorkflow(offer.prompt, offer.seed), signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error(COVER_PRICE_UNCHECKED);
+  }
+  if (!Number.isFinite(now) || now < 0) throw new Error(COVER_PRICE_UNCHECKED);
+  if (now > offer.buzz) throw new CoverPriceRoseError(now);
   const url = await deps.generate(coverWorkflowFor(offer), signal);
   const attached = await deps.attach(listing.listingId, url, offer.app);
   const where = listing.status === 'pending' ? COVER_ON_LISTING_IN_REVIEW : COVER_ON_DRAFT;

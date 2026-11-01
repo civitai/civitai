@@ -1,5 +1,10 @@
 import type { ChatToolCall, ChatToolResult } from '@civitai/components-chat/civitai-chat';
-import { coverErrorMessage, coverOfferOf, type CoverOffer } from '@civitai/app-assistant';
+import {
+  CoverPriceRoseError,
+  coverErrorMessage,
+  coverOfferOf,
+  type CoverOffer,
+} from '@civitai/app-assistant';
 import {
   BUTTON_STYLE,
   CARD_STYLE,
@@ -51,6 +56,7 @@ const OFFER_BUTTON_STYLE = `${BUTTON_STYLE};margin-right:8px`;
 /**
  * The cover offer cards. A press runs once: the button goes as it is pressed, and nothing on the card
  * can start a second run. Leaving the page while a cover is made stops it (its run is cancelled).
+ * A press that finds a higher price makes nothing: the card asks again at that price.
  */
 export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCards {
   const cards = new Map<string, Card>();
@@ -68,7 +74,8 @@ export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCar
     card.el.replaceChildren(title, question, prompt, ...children);
   };
 
-  const offerButtons = (card: Card) => {
+  /** Buttons for the card's offer at its price; `notice` first, when there is something to say. */
+  const offerButtons = (card: Card, notice?: string) => {
     card.phase = 'ready';
     const yes = document.createElement('button');
     yes.type = 'button';
@@ -80,7 +87,7 @@ export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCar
     no.textContent = COVER_DECLINE_TEXT;
     no.style.cssText = SECONDARY_STYLE;
     no.addEventListener('click', () => decline(card));
-    show(card, yes, no);
+    show(card, ...(notice ? [line(notice, 'alert')] : []), yes, no);
   };
 
   const decline = (card: Card) => {
@@ -99,13 +106,20 @@ export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCar
     window.addEventListener('pagehide', leave, { once: true });
     try {
       const said = await make(card.offer, stop.signal);
+      card.phase = 'done';
       show(card, line(said, 'status'));
     } catch (error) {
+      if (error instanceof CoverPriceRoseError) {
+        // Nothing was generated. Offered again at the new price, which only a press accepts.
+        card.offer = { ...card.offer, buzz: error.buzz };
+        offerButtons(card, coverErrorMessage(error));
+        return;
+      }
+      // Never offered again: a failed press says why, and a new cover is asked for afresh.
+      card.phase = 'done';
       show(card, line(coverErrorMessage(error), 'alert'));
     } finally {
       window.removeEventListener('pagehide', leave);
-      // Never offered again: a failed press says why, and a new cover is asked for afresh.
-      card.phase = 'done';
     }
   };
 
