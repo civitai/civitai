@@ -31,6 +31,14 @@ function fakeRedis() {
   return { redis, strings, lua, ttlOf, typed: redis as unknown as JobLockRedis };
 }
 
+/**
+ * Waits for the lock's last script to finish: a refresh or release the interval started runs in the
+ * Lua harness on real time, which advancing fake timers does not wait for.
+ */
+async function settled(fake: ReturnType<typeof fakeRedis>) {
+  await fake.redis.eval.mock.results.at(-1)?.value;
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -68,6 +76,7 @@ describe('acquireJobLock', () => {
     expect(fake.redis.eval).toHaveBeenCalledTimes(1);
     expect(fake.strings.has(jobLockKey('some-job'))).toBe(true);
     await vi.advanceTimersByTimeAsync(16_000);
+    await settled(fake);
     expect(fake.strings.has(jobLockKey('some-job'))).toBe(false);
     await lock!.release();
   });
@@ -96,6 +105,7 @@ describe('acquireJobLock', () => {
       keys: [jobLockKey('some-job')],
       arguments: [token, '10'],
     });
+    await settled(fake);
     expect(fake.ttlOf(jobLockKey('some-job'))).toBe(10);
     await lock!.release();
     await lock!.release();
