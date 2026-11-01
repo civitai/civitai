@@ -2015,6 +2015,18 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('refuses registry params too large to read whole, on estimate AND submit', async () => {
+    const make = () => ({
+      kind: 'step' as const,
+      step: 'convert-image',
+      params: { image: CDN, note: 'a'.repeat(4.1 * 1024 * 1024), output: { format: 'png' } },
+    });
+    const refusal = { code: 'BAD_REQUEST', message: 'step input is too large to check' };
+    await expect(estimate(make())).rejects.toMatchObject(refusal);
+    await expect(submit(make())).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('accepts a chat body whose text, tool schema and tool call ids mention urls and uuids', async () => {
     givenImage(OTHER_USER, false);
     await estimate({

@@ -560,6 +560,23 @@ describe('assertGenerationInputsUsable', () => {
       ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
     });
 
+    it('matches 1024 keys to their 1024 images in linear time', async () => {
+      await holder.db.query(
+        `INSERT INTO "Image" (id, "userId", url, "postId")
+         SELECT 1000 + g, $1, lpad(g::text, 8, '0') || '-0000-4000-8000-000000000000', 1
+         FROM generate_series(0, 1023) g`,
+        [CALLER]
+      );
+      const keys = Array.from(
+        { length: 1024 },
+        (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+      );
+      const started = performance.now();
+      expect(await opaque(keys)).toBe('accepted');
+      // One pass is tens of milliseconds, keys × rows seconds: a wide bound stays clear of load.
+      expect(performance.now() - started).toBeLessThan(750);
+    });
+
     it('checks the keys in a later batch, not only the first', async () => {
       const keys = Array.from(
         { length: 70 },
@@ -785,21 +802,28 @@ describe('opaqueInputUrlsIn', () => {
   it('reads a whole url as a url parser does: tab, CR and LF inside are dropped', () => {
     expect(
       opaqueInputUrlsIn({ split: `https://image.civitai.com/x/\n${OKEY}/orig\tinal=true` }).urls
-    ).toEqual([`https://image.civitai.com/x/${OKEY}/original=true`]);
+    ).toEqual([`https://image.civitai.com/x/${OKEY}/original=true`, OKEY]);
   });
 
-  it('reads up to 1 MiB of text, and reports more as too large instead of reading it', () => {
-    const base64 = (n: number) => 'QUJD'.repeat(Math.ceil(n / 4)).slice(0, n);
+  const base64 = (n: number) => 'QUJD'.repeat(Math.ceil(n / 4)).slice(0, n);
+  const MiB = 1024 * 1024;
+
+  it('reads up to 4 MiB of text, and reports more as too large instead of reading it', () => {
     const started = performance.now();
-    expect(opaqueInputUrlsIn({ field: base64(1024 * 1024 - 5) })).toEqual({
+    expect(opaqueInputUrlsIn({ field: base64(4 * MiB - 5) })).toEqual({
       urls: [],
       tooDeep: false,
       tooLarge: false,
     });
     const elapsed = performance.now() - started;
     expect(elapsed).toBeLessThan(1500);
-    expect(opaqueInputUrlsIn({ field: base64(1024 * 1024 - 4) }).tooLarge).toBe(true);
-    expect(opaqueInputUrlsIn({ a: base64(600_000), b: base64(600_000) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ field: base64(4 * MiB - 4) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ a: base64(2.1 * MiB), b: base64(2.1 * MiB) }).tooLarge).toBe(true);
+  });
+
+  it('counts the text of a value split into lines once', () => {
+    const text = `https://example.com/a\nhttps://example.com/b ${base64(3 * MiB)}`;
+    expect(opaqueInputUrlsIn({ text }).tooLarge).toBe(false);
   });
 
   it('reports too many values as too large', () => {
@@ -852,6 +876,9 @@ describe('opaqueInputUrlsIn', () => {
   it.each([
     [257, '257_512'],
     [513, '513_1024'],
+    [512, '257_512'],
+    [513, '513_1024'],
+    [1024, '513_1024'],
     [1025, 'over_1024'],
   ])('reports %i image-only keys in the %s bucket', (size, bucket) => {
     expect(keySetSizeBucket(size)).toBe(bucket);
@@ -919,6 +946,21 @@ describe('opaqueInputUrlsIn', () => {
     ['upper-case JSON-escaped dashes', `{"u":"${OCDN.replace(/-/g, '\\u002D')}"}`],
   ])('collects the key bare from %s', (_, text) => {
     expect(opaqueInputUrlsIn({ text }).urls).toEqual([OKEY]);
+  });
+
+  it.each([
+    ['a decimal entity whose code point runs on into a digit', OCDN.replace('-e', '&#451')],
+    ['a hex entity whose code point runs on into a hex letter', OCDN.replace('-', '&#x2d')],
+  ])('reads no dash in %s', (_, url) => {
+    expect(opaqueInputUrlsIn({ text: `<img src="${url}">` }).urls).toEqual([]);
+  });
+
+  it.each([
+    ['a line of its own', `\n${OKEY}`],
+    ['a line with a tab in it', `\n${OKEY}\tsee`],
+  ])('collects a key from %s after an orchestrator url it would rejoin', (_, rest) => {
+    const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/a';
+    expect(opaqueInputUrlsIn({ text: `${blob}${rest}` }).urls).toContain(OKEY);
   });
 
   it('reports an input nested past its bound instead of passing what it did not read', () => {

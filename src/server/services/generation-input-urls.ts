@@ -380,10 +380,11 @@ const largeKeySetCounter = registerCounterWithLabels({
 /**
  * Values and string characters one walk reads before it gives up (`tooLarge`), so the walk's
  * cost stays bounded on an input with no byte cap of its own (a registry step's `params`).
- * Four times the inline-media value cap and the 256 KiB block input byte cap.
+ * Four times the inline-media value cap; 4 MiB of text is above the largest `params` a step
+ * schema accepts (a chat completion's messages and tool calls, about 2.3M characters).
  */
 const OPAQUE_INPUT_MAX_VISITS = 4 * INLINE_MEDIA_MAX_VISITS;
-const OPAQUE_INPUT_MAX_CHARS = 4 * 256 * 1024;
+const OPAQUE_INPUT_MAX_CHARS = 4 * 1024 * 1024;
 
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
@@ -443,7 +444,8 @@ export function opaqueInputUrlsIn(value: unknown) {
   let tooLarge = false;
   let visits = 0;
   let chars = 0;
-  const walk = (item: unknown, depth: number) => {
+  /** `counted`: a line of a string whose characters were already counted whole. */
+  const walk = (item: unknown, depth: number, counted = false) => {
     if (item == null || tooDeep || tooLarge) return;
     if (depth > OPAQUE_INPUT_MAX_DEPTH) {
       tooDeep = true;
@@ -454,7 +456,7 @@ export function opaqueInputUrlsIn(value: unknown) {
       return;
     }
     if (typeof item === 'string') {
-      chars += item.length;
+      if (!counted) chars += item.length;
       if (chars > OPAQUE_INPUT_MAX_CHARS) {
         tooLarge = true;
         return;
@@ -463,7 +465,7 @@ export function opaqueInputUrlsIn(value: unknown) {
       // string as a url parser rejoins it too: a key broken across a line is found that way.
       // The rejoined string is not a url to check whole (two listed links would glue into one).
       if (splitsIntoUrlLines(item)) {
-        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1);
+        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true);
         urls.push(...keysInText(item));
         return;
       }
@@ -474,8 +476,11 @@ export function opaqueInputUrlsIn(value: unknown) {
       const protocol = parsedProtocol(parsed);
       // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
       if (controlInside && (protocol === 'https:' || protocol === 'http:')) urls.push(parsed);
-      else if (isWholeFetchableValue(parsed)) urls.push(parsed);
-      else urls.push(...keysInText(item));
+      else if (isWholeFetchableValue(parsed)) {
+        urls.push(parsed);
+        // A url rejoined across a line break: a consumer splitting the lines reads their keys.
+        if (/[\r\n]/.test(item)) urls.push(...keysInText(item));
+      } else urls.push(...keysInText(item));
     } else if (Array.isArray(item)) {
       for (const child of item) walk(child, depth + 1);
     } else if (typeof item === 'object') {
