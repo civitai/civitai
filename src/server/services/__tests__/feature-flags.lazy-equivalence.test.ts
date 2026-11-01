@@ -55,16 +55,26 @@ function fakeIsFliptSync(
 
 vi.mock('~/server/flipt/client', () => ({
   isFliptSync: (...a: Parameters<typeof fakeIsFliptSync>) => fakeIsFliptSync(...a),
-  ensureFliptInitialized: async () => {},
+  ensureFliptInitialized: async () => undefined,
 }));
 
 import {
   featureFlagKeys,
   getFeatureFlags,
-  getFeatureFlagsLazy,
   getFeatureFlagsAsync,
-  type FeatureFlagKey,
+  getFeatureFlagsLazyLegacy,
+  getFeatureFlagsLazyProto,
+  type FeatureAccess,
+  type FeatureAccessContext,
 } from '../feature-flags.service';
+
+// Both implementations behind the `feature-flags-lazy-proto` switch, chosen EXPLICITLY — never
+// through `getFeatureFlagsLazy`, whose choice would then depend on what this file's Flipt mock
+// happens to export or answer for the switch key.
+const impls: { name: string; build: (ctx: FeatureAccessContext) => FeatureAccess }[] = [
+  { name: 'legacy', build: getFeatureFlagsLazyLegacy },
+  { name: 'proto', build: getFeatureFlagsLazyProto },
+];
 
 type Ctx = { user?: SessionUser; req: NextApiRequest | IncomingMessage };
 
@@ -145,39 +155,43 @@ beforeAll(async () => {
   await getFeatureFlagsAsync({ req: makeReq('civitai.com', 'US') });
 });
 
-describe('lazy per-flag === eager, for every flag key across representative contexts', () => {
-  for (const { name, ctx } of contexts) {
-    it(name, () => {
-      const eager = getFeatureFlags(ctx);
-      const lazy = getFeatureFlagsLazy(ctx);
-      for (const key of featureFlagKeys) {
-        expect(lazy[key as keyof typeof lazy], `flag "${key}" diverged in context "${name}"`).toBe(
-          eager[key as keyof typeof eager]
-        );
-      }
+describe.each(impls)(
+  '$name lazy per-flag === eager, for every flag key across representative contexts',
+  ({ build }) => {
+    for (const { name, ctx } of contexts) {
+      it(name, () => {
+        const eager = getFeatureFlags(ctx);
+        const lazy = build(ctx);
+        for (const key of featureFlagKeys) {
+          expect(
+            lazy[key as keyof typeof lazy],
+            `flag "${key}" diverged in context "${name}"`
+          ).toBe(eager[key as keyof typeof eager]);
+        }
+      });
+    }
+
+    it('covers every registered flag key (data-driven, so new flags auto-covered)', () => {
+      expect(featureFlagKeys.length).toBeGreaterThan(60);
+    });
+
+    it('is non-vacuous: a representative context yields BOTH present and absent flags', () => {
+      // Guards against a false "equivalence" where eager and lazy are identically
+      // broken (e.g. everything undefined). granted-all/green/US resolves a real
+      // mix of present (true) and absent (undefined) keys.
+      const eager = getFeatureFlags({ user: grantedAll, req: makeReq('civitai.com', 'US') });
+      const present = featureFlagKeys.filter((k) => eager[k as keyof typeof eager] === true).length;
+      const absent = featureFlagKeys.length - present;
+      expect(present).toBeGreaterThan(0);
+      expect(absent).toBeGreaterThan(0);
     });
   }
+);
 
-  it('covers every registered flag key (data-driven, so new flags auto-covered)', () => {
-    expect(featureFlagKeys.length).toBeGreaterThan(60);
-  });
-
-  it('is non-vacuous: a representative context yields BOTH present and absent flags', () => {
-    // Guards against a false "equivalence" where eager and lazy are identically
-    // broken (e.g. everything undefined). granted-all/green/US resolves a real
-    // mix of present (true) and absent (undefined) keys.
-    const eager = getFeatureFlags({ user: grantedAll, req: makeReq('civitai.com', 'US') });
-    const present = featureFlagKeys.filter((k) => eager[k as keyof typeof eager] === true).length;
-    const absent = featureFlagKeys.length - present;
-    expect(present).toBeGreaterThan(0);
-    expect(absent).toBeGreaterThan(0);
-  });
-});
-
-describe('lazy evaluates ONLY the accessed key', () => {
+describe.each(impls)('$name lazy evaluates ONLY the accessed key', ({ build }) => {
   it('reading canViewNsfw (no fliptKey) triggers ZERO Flipt evals; a fliptKey flag triggers exactly one', () => {
     const ctx: Ctx = { req: makeReq('civitai.com', 'US') };
-    const lazy = getFeatureFlagsLazy(ctx);
+    const lazy = build(ctx);
 
     // canViewNsfw has NO fliptKey → the flipt branch must never run.
     fliptEvalCalls.length = 0;

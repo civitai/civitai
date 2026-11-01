@@ -9,6 +9,7 @@ import {
 } from '@civitai/auth';
 import {
   canHoldSession,
+  dropStaleHostCopy,
   readHubSession,
   reissueSession,
   setSessionCookie,
@@ -142,6 +143,10 @@ export const handle: Handle = async ({ event, resolve }) => {
       // Impersonation (F): the moderator's id, if this is an impersonation session — read by the exit route.
       event.locals.impersonatedBy = claims.impersonatedBy;
       if (!internal) event.locals.sessionSlot = slot;
+      // The main app writes the shared slot through its own proxy (an account switch), unseen by the hub.
+      if (!internal && slot === 'shared' && sessionCookieMode() === 'shared') {
+        dropStaleHostCopy(event.cookies, token);
+      }
       const writeSlot = slot && rollSlot({ slot });
       if (!internal && writeSlot && shouldRoll(event.request, claims, event.locals.user)) {
         const fresh = await reissueSession(claims, userId, claims.jti!).catch(() => null);

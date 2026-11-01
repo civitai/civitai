@@ -492,11 +492,17 @@ export async function writeChapterEdgeForPlacement(
     parentPostId,
     postId,
     placerId,
+    asCollaborator = false,
   }: {
     placementId: number;
     parentPostId: number;
     postId: number;
     placerId: number;
+    /**
+     * An approval nobody answered (auto-approval) stands only on the placer being an accepted
+     * collaborator, so it is re-read here: one removed since submission is refused.
+     */
+    asCollaborator?: boolean;
   },
   // Required: outside a transaction the parent lock is a no-op, and a failed edge insert would
   // leave a chapter row without a parent that a replay then reports as already written.
@@ -516,7 +522,12 @@ export async function writeChapterEdgeForPlacement(
 
   // Re-checked at approval: the storyline may have been taken down, a block made, or the
   // setting changed to collaborators only since the continuation was submitted.
-  const { parent } = await assertCanContinueStoryline({ parentPostId, placerId }, db);
+  const { parent, isCollaborator } = await assertCanContinueStoryline(
+    { parentPostId, placerId },
+    db
+  );
+  if (asCollaborator && !isCollaborator)
+    throw throwBadRequestError('storyline: the placer is no longer a collaborator');
 
   await assertPostCanBeChapter(db, {
     postId,

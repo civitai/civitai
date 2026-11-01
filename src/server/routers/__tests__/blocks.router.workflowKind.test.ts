@@ -135,6 +135,8 @@ import { envMock } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { PlatformInternalStepTypeError } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { formatStepTimeout } from '~/server/services/blocks/workflow.service';
+import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
+import { ANON_SUBJECT } from '~/server/services/block-token-subject';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 
 // ── An in-memory sysRedis: get/set (NX)/del/incrBy/decrBy. ──────────────────
@@ -1903,4 +1905,216 @@ describe("pass-through arm (kind:'step') — `repeat`", () => {
       expect(h.submitWorkflow).not.toHaveBeenCalled();
     }
   );
+});
+
+describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
+  const OTHER_USER = 7;
+  const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const CDN = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=true`;
+  const BLOB = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
+
+  /** The image row the gate reads for KEY: owner and visibility as given. */
+  function givenImage(owner: number, visible: boolean) {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FROM "Image" i')
+        ? [{ url: KEY, userId: owner, visible, blocked: false }]
+        : []) as never);
+  }
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+  const workflowWith = (url: string) => body({ arguments: { strength: 0.4, image: url } });
+  const passThroughWith = (url: string) => ({
+    kind: 'step' as const,
+    $type: 'imageUpscaler',
+    input: { image: url },
+    maxBuzz: 30,
+  });
+  const registryWith = (url: string) => ({
+    kind: 'step' as const,
+    step: 'convert-image',
+    params: { image: url, output: { format: 'png' } },
+  });
+
+  const ARMS = [
+    ['workflow', workflowWith],
+    ['pass-through step', passThroughWith],
+    ['registry step', registryWith],
+  ] as const;
+
+  it.each(ARMS)(
+    "%s: refuses another user's private image on estimate AND submit, before any orchestrator call",
+    async (_, make) => {
+      givenImage(OTHER_USER, false);
+      await expect(estimate(make(CDN))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+      });
+      await expect(submit(make(CDN))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+
+  it.each(ARMS.slice(0, 2))(
+    '%s: an external host is counted, not refused, while the external-host flag is off',
+    async (_, make) => {
+      await estimate(make('https://example.com/a.png')).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    }
+  );
+
+  it.each(ARMS)(
+    "POSITIVE CONTROL %s: the caller's own image and an orchestrator blob reach the orchestrator",
+    async (_, make) => {
+      givenImage(VIEWER, false);
+      await estimate(make(CDN)).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+      h.submitWorkflow.mockClear();
+      await estimate(make(BLOB)).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    }
+  );
+
+  const refusedBeforeTheOrchestrator = async (b: Record<string, unknown>) => {
+    const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
+    await expect(estimate(b)).rejects.toMatchObject(refusal);
+    await expect(submit(b)).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  };
+
+  it('refuses a url with a control byte inside, where the same url without it is counted', async () => {
+    await refusedBeforeTheOrchestrator(passThroughWith('https://example.com/a\u0001.png'));
+    await estimate(passThroughWith('https://example.com/a.png')).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it("refuses another user's private image in a step input, not only in arguments", async () => {
+    givenImage(OTHER_USER, false);
+    const steps = body().steps;
+    steps[1] = { ...steps[1], input: { image: CDN } };
+    await refusedBeforeTheOrchestrator(body({ steps }));
+  });
+
+  it("refuses another user's private image under a free-text field name read by `$ref`", async () => {
+    givenImage(OTHER_USER, false);
+    const steps = body().steps;
+    steps[1] = { ...steps[1], input: { image: { $ref: '$arguments', path: 'prompt' } } };
+    await refusedBeforeTheOrchestrator(body({ steps, arguments: { prompt: CDN } }));
+  });
+
+  it('refuses arguments nested past the walk bound', async () => {
+    let deep: unknown = CDN;
+    for (let i = 0; i < 70; i++) deep = { a: deep };
+    await expect(estimate(body({ arguments: { deep } }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'step input nests too deeply',
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a token the step arms refuse before reading its input', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ ctx: { slotId: 'model.sidebar_top', entityType: 'model', modelId: 5 } })
+    );
+    const make = () => ({
+      kind: 'step' as const,
+      step: 'convert-image',
+      params: { image: CDN, note: 'a'.repeat(4.1 * 1024 * 1024), output: { format: 'png' } },
+    });
+    const refusal = { code: 'FORBIDDEN', message: 'registry steps are page-only' };
+    await expect(estimate(make())).rejects.toMatchObject(refusal);
+    await expect(submit(make())).rejects.toMatchObject(refusal);
+  });
+
+  it('on estimate, a quoteId does not move the token checks after the input', async () => {
+    givenImage(OTHER_USER, false);
+    h.authorize.mockImplementation(async () =>
+      claims({ ctx: { slotId: 'model.sidebar_top', entityType: 'model', modelId: 5 } })
+    );
+    await expect(
+      estimate({ ...passThroughWith(CDN), quoteId: `sq_${'1'.repeat(32)}` })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'registry steps are page-only',
+    });
+  });
+
+  it('refuses registry params too large to read whole, on estimate AND submit', async () => {
+    const make = () => ({
+      kind: 'step' as const,
+      step: 'convert-image',
+      params: { image: CDN, note: 'a'.repeat(4.1 * 1024 * 1024), output: { format: 'png' } },
+    });
+    const refusal = { code: 'BAD_REQUEST', message: 'step input is too large to check' };
+    await expect(estimate(make())).rejects.toMatchObject(refusal);
+    await expect(submit(make())).rejects.toMatchObject(refusal);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('accepts a chat body whose text, tool schema and tool call ids mention urls and uuids', async () => {
+    givenImage(OTHER_USER, false);
+    await estimate({
+      kind: 'step' as const,
+      $type: 'chatCompletion',
+      input: {
+        messages: [
+          {
+            role: 'user',
+            content: `Summarize https://example.com and https://civitai.com/models/1`,
+          },
+          {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_0c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f',
+                arguments: `{"u":"https://example.com/a.png"}`,
+              },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'f3a9c2e1-0b4d-4e6f-9a8b-7c6d5e4f3a2b', content: 'ok' },
+        ],
+        tools: [{ parameters: { $schema: 'http://json-schema.org/draft-07/schema#' } }],
+      },
+      maxBuzz: 30,
+    }).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    [OTHER_USER, 'refuses'],
+    [VIEWER, 'accepts'],
+  ] as const)(
+    'a chat message carrying an image CDN url among words: owner %s -> %s',
+    async (owner, verdict) => {
+      givenImage(owner, false);
+      const chat = {
+        kind: 'step' as const,
+        $type: 'chatCompletion',
+        input: { messages: [{ role: 'user', content: `what is in this picture?\n${CDN}` }] },
+        maxBuzz: 30,
+      };
+      if (verdict === 'refuses') await refusedBeforeTheOrchestrator(chat);
+      else {
+        await estimate(chat).catch(() => undefined);
+        expect(whatifs().length).toBeGreaterThan(0);
+      }
+    }
+  );
+
+  it('the registry step still refuses an external host (its own param schema)', async () => {
+    const error = await estimate(registryWith('https://example.com/a.png')).catch((e) => e);
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(String(error.message)).toContain('Civitai-hosted https image URL');
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a signed-out viewer before reading any image', async () => {
+    h.authorize.mockImplementation(async () => claims({ sub: ANON_SUBJECT }));
+    givenImage(OTHER_USER, false);
+    await expect(estimate(passThroughWith(CDN))).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
 });

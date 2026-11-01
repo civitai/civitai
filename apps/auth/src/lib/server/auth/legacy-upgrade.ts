@@ -3,6 +3,7 @@ import type { Cookies } from '@sveltejs/kit';
 import {
   deviceCookieNameForSlot,
   familyClaims,
+  sessionCookieMode,
   familyId,
   hostSessionCookieName,
   sessionCookieName,
@@ -82,12 +83,13 @@ async function honouredSession(token: string): Promise<SessionClaims | null> {
 }
 
 /**
- * The shared-slot device id becomes the host-only one, so the browser keeps its account list. The shared one
- * wins when both exist: it is where a sign-in that moved the browser to a new id wrote it.
+ * The browser's device id, carried into the host-only slot so it keeps its account list. When both slots hold one,
+ * the mode's own slot wins: that is where a sign-in that moved the browser to a new id wrote it.
  */
 function carryDeviceId(cookies: Cookies): string {
   const host = cookies.get(deviceCookieNameForSlot('host'));
-  const id = cookies.get(deviceCookieNameForSlot('shared')) ?? host ?? randomUUID();
+  const shared = cookies.get(deviceCookieNameForSlot('shared'));
+  const id = (sessionCookieMode() === 'host' ? host ?? shared : shared ?? host) ?? randomUUID();
   if (host !== id) setDeviceCookie(cookies, id, 'host');
   return id;
 }

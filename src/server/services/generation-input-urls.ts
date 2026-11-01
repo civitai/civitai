@@ -9,13 +9,18 @@ import {
 } from '~/server/schema/blocks/civitai-image-url';
 import {
   assertClientKeysIssuedToCaller,
+  type DecodeBudget,
   imageUrlUnavailableError,
   keyIssuers,
   keysIn,
+  keysInTextWithin,
+  keysInWithin,
   MAX_KEYS,
 } from '~/server/services/image-url-ownership';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
+import { INLINE_MEDIA_MAX_VISITS } from '~/server/schema/blocks/inline-media';
+import { EXTERNAL_LINK_INTERSTITIAL_PATH } from '~/utils/external-link';
 
 export const GENERATION_IMAGE_UNAVAILABLE_MESSAGE =
   'One of the images for this generation is no longer available. Please choose or upload another.';
@@ -55,31 +60,40 @@ async function assertKeysUsable({
   userId,
   now,
   imagesOnly = false,
+  maxKeys = MAX_KEYS,
 }: {
   keys: string[];
   urls: string[];
   userId: number;
   now?: Date;
   imagesOnly?: boolean;
+  /** Most keys one check reads; the image lookup still goes `MAX_KEYS` at a time. */
+  maxKeys?: number;
 }) {
   if (!keys.length) return;
-  if (keys.length > MAX_KEYS) throw generationImageUnavailableError();
+  if (keys.length > maxKeys) throw generationImageUnavailableError();
 
-  const rows = await dbWrite.$queryRaw<InputImageRow[]>`
-    SELECT i.url, i."userId",
-      (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE) AS blocked,
-      (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
-        AND NOT i."tosViolation" AND p."publishedAt" <= now()
-        AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible
-    FROM "Image" i
-    LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE i.url = ANY(${[...new Set([...keys, ...urls])]}::text[])
-  `;
+  const lookup = [...new Set([...keys, ...urls])];
+  const rows: InputImageRow[] = [];
+  for (let i = 0; i < lookup.length; i += MAX_KEYS)
+    rows.push(
+      ...(await dbWrite.$queryRaw<InputImageRow[]>`
+        SELECT i.url, i."userId",
+          (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE) AS blocked,
+          (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
+            AND NOT i."tosViolation" AND p."publishedAt" <= now()
+            AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible
+        FROM "Image" i
+        LEFT JOIN "Post" p ON p.id = i."postId"
+        WHERE i.url = ANY(${lookup.slice(i, i + MAX_KEYS)}::text[])
+      `)
+    );
   if (rows.some((r) => r.blocked)) throw generationImageUnavailableError();
 
-  const rowsByKey = new Map(
-    keys.map((key) => [key, rows.filter((r) => r.url === key || keysIn(r.url).includes(key))])
-  );
+  // One pass over the rows (`keysIn` once each), not keys × rows.
+  const rowsByKey = new Map(keys.map((key): [string, InputImageRow[]] => [key, []]));
+  for (const row of rows)
+    for (const key of new Set([row.url, ...keysIn(row.url)])) rowsByKey.get(key)?.push(row);
   for (const keyRows of rowsByKey.values()) {
     if (!keyRows.length || keyRows.some((r) => r.userId === userId)) continue;
     if (!keyRows.every((r) => r.visible)) throw generationImageUnavailableError();
@@ -89,7 +103,8 @@ async function assertKeysUsable({
   if (!unrowed.length) return;
   if (imagesOnly) {
     // Only an issue record to someone else marks it as ours; an unrecorded uuid may be anyone's id.
-    const issuers = await keyIssuers({ urls: unrowed, userId });
+    // One issue-record and request-log read over every unrowed key.
+    const issuers = await keyIssuers({ urls: unrowed, userId, maxKeys });
     const unreadable = issuers.recordReadFailed && issuers.requestLogReadFailed;
     if (issuers.tooMany || issuers.issuedToOthers.length || unreadable)
       throw generationImageUnavailableError();
@@ -139,7 +154,22 @@ export type GenerationInputEntryPoint =
   | 'getIterateCostEstimate'
   | 'imageUpload'
   | 'appBlocks'
-  | 'comicsCostEstimate';
+  | 'appBlocksStep'
+  | 'appBlocksPassThrough'
+  | 'appBlocksWorkflow'
+  | 'enhancePrompt'
+  | 'comicsCostEstimate'
+  | 'comicPanelJob';
+
+/** Entry points where an external host is only counted while the external-host flag is off. */
+const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
+  'generateFromGraph',
+  'whatIfFromGraph',
+  'appBlocksStep',
+  'appBlocksPassThrough',
+  'appBlocksWorkflow',
+  'enhancePrompt',
+]);
 
 const IMAGE_CDN_HOSTS = CIVITAI_IMAGE_HOSTS.map((h) => `image.${h}`);
 
@@ -178,7 +208,8 @@ export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass
   } catch {
     return 'invalid';
   }
-  const host = parsed.host.toLowerCase();
+  // A fully-qualified host (`image.civitai.com.`) resolves to the same server.
+  const host = parsed.host.toLowerCase().replace(/\.(?=(:\d+)?$)/, '');
   const isCdn = imageCdnHosts().includes(host);
   const configuredOrigin = (() => {
     try {
@@ -198,7 +229,7 @@ export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass
       ? 'civitai_other'
       : 'orchestrator';
   if (isCdn) return 'cdn';
-  const hostname = parsed.hostname.toLowerCase();
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
   if (CIVITAI_IMAGE_HOSTS.some((h) => hostname === h || hostname.endsWith(`.${h}`)))
     return 'civitai_other';
   return 'external';
@@ -245,12 +276,44 @@ const isText = (item: unknown) =>
 /** Anything that may be a key in another spelling: uuid hex with or without dashes or braces. */
 const KEY_LIKE = /^\{?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\}?$/i;
 
+/** A `KEY_LIKE` value as minted: lowercase, dashed, no braces. */
+function canonicalKey(value: string) {
+  const hex = value.replace(/[{}-]/g, '').toLowerCase();
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join('-');
+}
+
+/** A scheme as a url parser reads it: leading C0 and space skipped, tab, CR and LF dropped. */
+// eslint-disable-next-line no-control-regex
+const SCHEME_LED = /^[\x00-\x20]*([a-z][a-z0-9+.\t\r\n-]*):/i;
+
+/** `new URL(value.trim()).protocol`, or undefined where that throws, without building the URL. */
 function parsedProtocol(value: string) {
-  try {
-    return new URL(value.trim()).protocol;
-  } catch {
+  const trimmed = value.trim();
+  const scheme = SCHEME_LED.exec(trimmed)?.[1];
+  if (!scheme || !URL.canParse(trimmed)) return undefined;
+  return `${scheme.replace(/[\t\r\n]/g, '').toLowerCase()}:`;
+}
+
+const SPECIAL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file']);
+
+/**
+ * The host of a special-scheme `value` as a url parser takes it (up to the first `/ ? # \`), or
+ * undefined. A parser converts such a host to ASCII, at a cost of about its length squared.
+ */
+function specialHostIn(value: string) {
+  const trimmed = value.trim();
+  const match = SCHEME_LED.exec(trimmed);
+  if (!match || !SPECIAL_SCHEMES.has(match[1].replace(/[\t\r\n]/g, '').toLowerCase()))
     return undefined;
-  }
+  const rest = trimmed.slice(match[0].length).replace(/^[/\\\t\r\n]*/, '');
+  const end = rest.search(/[/?#\\]/);
+  return end === -1 ? rest : rest.slice(0, end);
 }
 
 /**
@@ -292,24 +355,284 @@ export function generationInputUrlsIn(value: unknown, out: string[] = [], depth 
   return out;
 }
 
+/** `value` as a WHATWG url parser reads it: C0 controls and spaces trimmed, tab/LF/CR removed. */
+const asUrlParserReads = (value: string) => {
+  // A scan from each end, not an unanchored `[…]+$` regex, which is quadratic on long runs.
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) <= 0x20) start++;
+  while (end > start && value.charCodeAt(end - 1) <= 0x20) end--;
+  return value.slice(start, end).replace(/[\t\n\r]/g, '');
+};
+
+/**
+ * Whether a later line of `value` starts like a url of its own (`scheme:` or `//`): then the
+ * lines are separate values, as a consumer splitting them would fetch them, not one url broken
+ * by a newline (which a url parser would rejoin).
+ */
+function splitsIntoUrlLines(value: string) {
+  const lines = value
+    .split(/[\r\n]+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return false;
+  const urlLed = (line: string) => /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(line);
+  // A url then prose is two values too; a url wrapped onto a second line with no spaces is one.
+  return (
+    lines.slice(1).some(urlLed) || (urlLed(lines[0]) && lines.slice(1).some((l) => l.includes(' ')))
+  );
+}
+
+export const TOO_MANY_IDS_MESSAGE =
+  'This request carries too many ids to check. Send fewer ids in one request.';
+
+/** Most image-only keys one check reads (rows `MAX_KEYS` at a time, issuers in one read). */
+const IMAGE_ONLY_MAX_KEYS = 1024;
+/** Image-only key sets larger than this are counted by size. */
+const IMAGE_ONLY_KEY_SIZE_REPORTED = 256;
+
+export const keySetSizeBucket = (size: number) =>
+  size > IMAGE_ONLY_MAX_KEYS ? 'over_1024' : size > 512 ? '513_1024' : '257_512';
+
+const largeKeySetCounter = registerCounterWithLabels({
+  name: 'generation_input_large_key_sets_total',
+  help: 'Generation inputs carrying more than 256 image-only keys, by entry point and size bucket.',
+  labelNames: ['entry', 'size'] as const,
+});
+
+/**
+ * What one walk reads before it gives up (`tooLarge`), so its cost stays bounded on an input with
+ * no byte cap of its own (a registry step's `params`): values (an object entry is two), string
+ * characters, line breaks, characters of `%XX`-decoded forms, url parses, and values collected
+ * (count and total length).
+ * 4 MiB of text is above the largest `params` a step schema accepts (a chat completion's messages
+ * and tool calls).
+ */
+const OPAQUE_INPUT_MAX_VISITS = INLINE_MEDIA_MAX_VISITS;
+const OPAQUE_INPUT_MAX_CHARS = 4 * 1024 * 1024;
+/** Line breaks (a run of CR and LF is one) across every string. */
+const OPAQUE_INPUT_MAX_LINES = 65_536;
+
+/** Runs of CR and LF in `value`, counted without splitting it. */
+function lineBreaksIn(value: string) {
+  let breaks = 0;
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    if ((c === 10 || c === 13) && i > 0) {
+      const prev = value.charCodeAt(i - 1);
+      if (prev !== 10 && prev !== 13) breaks++;
+    }
+  }
+  return breaks;
+}
+const OPAQUE_INPUT_MAX_DECODED_CHARS = 1024 * 1024;
+const OPAQUE_INPUT_MAX_URLS = 4096;
+const OPAQUE_INPUT_MAX_URL_CHARS = 64 * 1024;
+/** Strings that start like a url, each parsed as one. */
+const OPAQUE_INPUT_MAX_PARSES = 32_768;
+/**
+ * Work a parser does converting hosts to ASCII (those holding non-ASCII, `%` escapes or `xn--`),
+ * charged as the conversion costs plus a fixed cost per parse: the host as a parser maps it
+ * (NFKC expands some characters), its length times its distinct characters, or its length squared
+ * when escapes or `xn--` hide what it decodes to. An ASCII host costs nothing.
+ */
+const OPAQUE_INPUT_MAX_IDNA_COST = 32 * 1024 * 1024;
+const IDNA_PARSE_COST = 8192;
+function idnaCostOf(host: string) {
+  // Past this, mapping it would cost the most of all; no message holds a run that long.
+  if (host.length > 64 * 1024) return OPAQUE_INPUT_MAX_IDNA_COST + 1;
+  // A run of combining marks is reordered, by the mapping below and by a parser, in its length
+  // squared: charged first, so an over-budget run is refused before it is mapped. A parser
+  // deletes ignorable characters first, rejoining a run they split, and two halfwidth katakana
+  // marks map to combining marks.
+  let marks = 0;
+  const visible = host.replace(/\p{Default_Ignorable_Code_Point}/gu, '');
+  for (const [run] of visible.matchAll(/[\p{M}\uFF9E\uFF9F]+/gu)) marks += run.length * run.length;
+  if (marks > OPAQUE_INPUT_MAX_IDNA_COST) return marks;
+  const mapped = host.normalize('NFKC');
+  const work = /%[0-9a-f]{2}|xn--/i.test(mapped)
+    ? mapped.length * mapped.length
+    : mapped.length * new Set(mapped).size;
+  return marks + work + IDNA_PARSE_COST;
+}
+// eslint-disable-next-line no-control-regex
+const IDNA_HOST = /[^\x00-\x7f]|%|xn--/i;
+
+/** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
+const OPAQUE_INPUT_MAX_DEPTH = 64;
+
+/** Whether a host is one of ours, any subdomain, a trailing dot ignored. */
+function isCivitaiHostname(host: string) {
+  const name = host.toLowerCase().replace(/\.$/, '');
+  return CIVITAI_IMAGE_HOSTS.some((h) => name === h || name.endsWith(`.${h}`));
+}
+
+/**
+ * A link to one of our pages (`https://civitai.com/models/1`) that names no upload key and
+ * carries no url of its own: it reads what any anonymous visitor reads, so it is not an image
+ * input to guard.
+ */
+function isPlainPageLink(url: string) {
+  if (keysIn(url).length) return false;
+  try {
+    const { pathname, search, hash } = new URL(url);
+    // The external-link interstitial shows its target; it never fetches or redirects.
+    if (pathname === EXTERNAL_LINK_INTERSTITIAL_PATH) return true;
+    return !carriesUrl(pathname + search + hash);
+  } catch {
+    return false;
+  }
+}
+
+/** A scheme-less url: a dotted host, then a path. */
+const SCHEMELESS_URL = /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i;
+
+/**
+ * Whether a trimmed `value` is itself something to fetch, not text that mentions one: exactly an
+ * http(s) url (no whitespace or control bytes inside, which a url parser would silently drop), or
+ * a scheme-less url on one of our hosts carrying a key.
+ */
+function isWholeFetchableValue(value: string, budget: DecodeBudget, protocol: string | undefined) {
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
+  if (protocol) return protocol === 'https:' || protocol === 'http:';
+  return (
+    SCHEMELESS_URL.test(value) &&
+    isCivitaiHostname(value.split('/')[0]) &&
+    keysInWithin(value, budget).length > 0
+  );
+}
+
+/**
+ * What an orchestrator-native input may fetch, under any field name (a field name says nothing
+ * there: any step can `$ref` any field). A string that is a url is collected whole (trimmed). Any
+ * other string is text, which a consumer may still split into urls, so every upload key in it is
+ * collected bare, in any spelling `keysIn` reads: the gate's `opaqueInput` mode refuses those
+ * only when they name an image that fails. `tooDeep` when the input nests past the walk's bound,
+ * so a caller can refuse rather than pass what it did not read.
+ */
+export function opaqueInputUrlsIn(value: unknown) {
+  // Not `walkJsonValues`: this walk splits strings into lines and budgets depth and characters too.
+  const urls: string[] = [];
+  let tooDeep = false;
+  let tooLarge = false;
+  let visits = 0;
+  let chars = 0;
+  let lines = 0;
+  const decoded: DecodeBudget = { left: OPAQUE_INPUT_MAX_DECODED_CHARS };
+  let urlChars = 0;
+  let parses = 0;
+  let idnaCost = 0;
+  // The gate decodes every distinct collected value again, so their total length is bounded too.
+  const seen = new Set<string>();
+  const collect = (url: string) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    urlChars += url.length;
+    if (urls.length >= OPAQUE_INPUT_MAX_URLS || urlChars > OPAQUE_INPUT_MAX_URL_CHARS)
+      tooLarge = true;
+    else urls.push(url);
+  };
+  const pushKeysInText = (text: string) => {
+    for (const key of keysInTextWithin(text, decoded)) collect(key);
+    if (decoded.left < 0) tooLarge = true;
+  };
+  /** `counted`: a line of a string whose characters were already counted whole. */
+  const walk = (item: unknown, depth: number, counted = false) => {
+    if (item == null || tooDeep || tooLarge) return;
+    if (depth > OPAQUE_INPUT_MAX_DEPTH) {
+      tooDeep = true;
+      return;
+    }
+    if (++visits > OPAQUE_INPUT_MAX_VISITS) {
+      tooLarge = true;
+      return;
+    }
+    if (typeof item === 'string') {
+      if (!counted) chars += item.length;
+      if (chars > OPAQUE_INPUT_MAX_CHARS) {
+        tooLarge = true;
+        return;
+      }
+      // Lines that are values of their own are read one by one, and the keys of the whole
+      // string as a url parser rejoins it too: a key broken across a line is found that way.
+      // The rejoined string is not a url to check whole (two listed links would glue into one).
+      lines += lineBreaksIn(item);
+      if (lines > OPAQUE_INPUT_MAX_LINES) {
+        tooLarge = true;
+        return;
+      }
+      if (splitsIntoUrlLines(item)) {
+        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true);
+        pushKeysInText(item);
+        return;
+      }
+      // Unicode spaces too: a consumer trims them (str.strip, Trim) though WHATWG does not.
+      const parsed = asUrlParserReads(item).trim();
+      // eslint-disable-next-line no-control-regex
+      const controlInside = /[\u0000-\u001f\u007f]/.test(parsed);
+      if (SCHEME_LED.test(parsed) && ++parses > OPAQUE_INPUT_MAX_PARSES) {
+        tooLarge = true;
+        return;
+      }
+      const host = specialHostIn(parsed);
+      if (
+        host !== undefined &&
+        IDNA_HOST.test(host) &&
+        (idnaCost += idnaCostOf(host)) > OPAQUE_INPUT_MAX_IDNA_COST
+      ) {
+        tooLarge = true;
+        return;
+      }
+      const protocol = parsedProtocol(parsed);
+      // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
+      if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
+      else if (isWholeFetchableValue(parsed, decoded, protocol)) {
+        collect(parsed);
+        // A url rejoined across a break or space: a consumer splitting on it reads the keys.
+        if (/[^\x21-\x7e]/.test(item)) pushKeysInText(item);
+      } else pushKeysInText(item);
+      if (decoded.left < 0) tooLarge = true;
+    } else if (Array.isArray(item)) {
+      for (const child of item) walk(child, depth + 1);
+    } else if (typeof item === 'object') {
+      const record = item as Record<string, unknown>;
+      for (const field of Object.keys(record)) {
+        if (tooDeep || tooLarge) return;
+        walk(field, depth + 1);
+        walk(record[field], depth + 1);
+      }
+    }
+  };
+  walk(value, 0);
+  return { urls, tooDeep, tooLarge };
+}
+
 /**
  * The one gate on a url a generation reads. Orchestrator blobs pass. A bare key or an image CDN
  * url passes only if every key it carries passes `assertKeysUsable`; a CDN url with no key is
  * refused. Other civitai hosts, non-https and unparseable values are refused. External hosts are
- * refused, except on generateFromGraph / whatIfFromGraph while the external-host flag is off,
- * where they are only counted.
+ * refused, except on `EXTERNAL_COUNTED_ENTRIES` while the external-host flag is off, where they
+ * are only counted.
  */
 export async function assertGenerationInputsUsable({
   urls,
   userId,
   entry,
   isApiCaller,
+  opaqueInput = false,
   now,
 }: {
   urls: (string | null | undefined)[];
   userId: number;
   entry: GenerationInputEntryPoint;
   isApiCaller: boolean;
+  /**
+   * Urls from an orchestrator-native input (`opaqueInputUrlsIn`), where a uuid may be any id and
+   * an http url may be a schema id: a key-shaped value is refused only when it names an image
+   * that fails, and http to an external host counts as external.
+   */
+  opaqueInput?: boolean;
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
@@ -324,8 +647,22 @@ export async function assertGenerationInputsUsable({
   const keyedUrls: string[] = [];
   // Keys found inside allowed external urls: refused only when they name an image that fails.
   const externalKeys = new Set<string>();
+  // Read once per call, only when an external url is seen.
+  let refuseExternal: boolean | undefined;
   for (const url of given) {
-    const cls = classifyGenerationInputUrl(url);
+    if (opaqueInput && KEY_LIKE.test(url.trim())) {
+      externalKeys.add(canonicalKey(url.trim()));
+      continue;
+    }
+    let cls = classifyGenerationInputUrl(url);
+    if (opaqueInput) {
+      const asHttps =
+        cls === 'invalid' && /^http:/i.test(url)
+          ? classifyGenerationInputUrl(url.replace(/^http:/i, 'https:'))
+          : cls;
+      if (asHttps === 'external' || (asHttps === 'civitai_other' && isPlainPageLink(url)))
+        cls = 'external';
+    }
     if (cls === 'orchestrator') continue;
     if (cls === 'key') {
       keys.add(url);
@@ -338,9 +675,9 @@ export async function assertGenerationInputsUsable({
       keyedUrls.push(url);
       continue;
     }
-    if (cls === 'external' && (entry === 'generateFromGraph' || entry === 'whatIfFromGraph')) {
-      if (await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS))
-        throw refuse(cls);
+    if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
+      refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
+      if (refuseExternal) throw refuse(cls);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
       // A proxy or wrapper url may carry one of our image keys.
       keysIn(url).forEach((key) => externalKeys.add(key));
@@ -352,7 +689,20 @@ export async function assertGenerationInputsUsable({
   try {
     await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now });
     const imageOnlyKeys = [...externalKeys].filter((key) => !keys.has(key));
-    await assertKeysUsable({ keys: imageOnlyKeys, urls: [], userId, now, imagesOnly: true });
+    if (imageOnlyKeys.length > IMAGE_ONLY_KEY_SIZE_REPORTED)
+      largeKeySetCounter.inc({ entry, size: keySetSizeBucket(imageOnlyKeys.length) });
+    // Text can carry many unrelated uuids (message and tool call ids). Past the bound a check
+    // would cost too much; an unchecked remainder could be padded around, so it is refused.
+    if (imageOnlyKeys.length > IMAGE_ONLY_MAX_KEYS)
+      throw new TRPCError({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
+    await assertKeysUsable({
+      keys: imageOnlyKeys,
+      urls: [],
+      userId,
+      now,
+      imagesOnly: true,
+      maxKeys: IMAGE_ONLY_MAX_KEYS,
+    });
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });

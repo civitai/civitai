@@ -190,11 +190,18 @@ export function setSessionCookie(
     sameSite: 'lax',
     maxAge: getSigner().maxAge,
   });
-  // A host-only copy of a different session would win over this one once the hub reads host-only first. It is
-  // dropped, not rewritten: the next /authorize copies this session afresh.
+  if (slot === 'shared') dropStaleHostCopy(cookies, token);
+}
+
+/**
+ * Drop a host-only copy of a session other than `shared`: it would win over `shared` once the hub reads host-only
+ * first. Dropped, not rewritten: the next /authorize copies the shared session afresh.
+ */
+export function dropStaleHostCopy(cookies: Cookies, shared: string): void {
   const host = hostSessionCookieName();
-  const copy = slot === 'shared' && host !== name ? cookies.get(host) : undefined;
-  if (copy !== undefined && !isCopyOf(copy, token))
+  if (host === sessionCookieName()) return;
+  const copy = cookies.get(host);
+  if (copy !== undefined && !isCopyOf(copy, shared))
     cookies.delete(host, { path: '/', secure: true });
 }
 

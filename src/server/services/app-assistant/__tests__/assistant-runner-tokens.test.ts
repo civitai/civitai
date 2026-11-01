@@ -1,10 +1,13 @@
 import { generateKeyPairSync } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { decodeProtectedHeader, jwtVerify, SignJWT } from 'jose';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   isAssistantRunnerConfigured,
+  PREVIEW_GRANT_TTL_SECONDS,
   signRunGrant,
   signRunnerViewerToken,
   verifyRunGrant,
@@ -21,6 +24,38 @@ function testKeyPair() {
 }
 const keys = testKeyPair();
 const GRANT = { userId: 42, conversationId: 'c-1', idempotencyKey: 'k-1' };
+
+/** The steps of a Restart preview before its tunnel's start: the app's wait, maybe a dev server. */
+const SETUP_MS = 2 * 60_000;
+
+/**
+ * An `export const` of the runner's, evaluated from its source (the runner and this app share no
+ * code): a numeric literal, or a sum of literals and other such constants.
+ */
+function runnerConstant(name: string): number {
+  const root = path.resolve(__dirname, '../../../../..');
+  const source = [
+    'apps/assistant-runner/src/app-assistant/preview-restart.ts',
+    'apps/assistant-runner/src/app-assistant/dev-tunnel.ts',
+    'apps/assistant-runner/src/app-assistant/sandbox.ts',
+    'apps/assistant-runner/src/minter.ts',
+  ]
+    .map((file) => readFileSync(path.join(root, file), 'utf8'))
+    .join('\n');
+  const evaluate = (constant: string): number => {
+    const expr = new RegExp(`export const ${constant} =\\s*([^;]+);`).exec(source)?.[1];
+    if (!expr) throw new Error(`the runner has no export const ${constant}`);
+    return expr
+      .split('+')
+      .map((term) => term.trim())
+      .reduce(
+        (sum, term) =>
+          sum + (/^[\d_]+$/.test(term) ? Number(term.replace(/_/g, '')) : evaluate(term)),
+        0
+      );
+  };
+  return evaluate(name);
+}
 
 beforeEach(() => {
   setEnv({
@@ -56,7 +91,7 @@ describe('the runner’s credentials, as the runner reads them', () => {
     expect(payload.exp! - payload.iat!).toBe(300);
   });
 
-  it('signs a preview grant: use preview, two minutes whatever the env says, never subagents', async () => {
+  it('signs a preview grant: use preview, seven minutes whatever the env says, never subagents', async () => {
     setEnv({ ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 600 });
     const { token } = await signRunGrant({ ...GRANT, use: 'preview', subagents: true });
     const { payload } = await jwtVerify(token, keys.publicKey, {
@@ -65,7 +100,34 @@ describe('the runner’s credentials, as the runner reads them', () => {
     });
     expect(payload).toMatchObject({ sub: '42', cid: 'c-1', key: 'k-1', use: 'preview' });
     expect(payload).not.toHaveProperty('subagents');
-    expect(payload.exp! - payload.iat!).toBe(120);
+    expect(payload.exp! - payload.iat!).toBe(420);
+  });
+
+  it('a preview grant is still good at the end of the slowest Restart preview the runner makes', async () => {
+    // Every call of a Restart preview is made with this grant: up to `SETUP_MS` of steps before
+    // the tunnel's start, then the runner's `TUNNEL_START_BUDGET_MS` (the start, a token mint, the
+    // sandbox's connect, the stop). A grant that ran out before the last of them leaves civitai a
+    // tunnel nothing connects to and nothing can close. The budget is read from the runner's own
+    // source, so a change to it on either side goes red here.
+    const budget = runnerConstant('TUNNEL_START_BUDGET_MS');
+    expect(budget).toBeGreaterThan(0);
+    const { token } = await signRunGrant({ ...GRANT, use: 'preview' });
+    vi.useFakeTimers({ now: Date.now() + SETUP_MS + budget, toFake: ['Date'] });
+    try {
+      expect(await verifyRunGrant(token)).toMatchObject({ userId: 42, use: 'preview' });
+    } finally {
+      vi.useRealTimers();
+    }
+    // Control: the same grant does run out, past its life and the clock tolerance.
+    vi.useFakeTimers({
+      now: Date.now() + (PREVIEW_GRANT_TTL_SECONDS + 31) * 1000,
+      toFake: ['Date'],
+    });
+    try {
+      expect(await verifyRunGrant(token)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('takes the grant TTL from the env', async () => {
