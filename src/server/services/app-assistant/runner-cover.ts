@@ -38,9 +38,6 @@ export function runnerCoverListingRead(userId: number): CoverListingRead {
   };
 }
 
-/** An app key as the runner sends it (the page's own state, never trusted: looked up as the user). */
-export const RUNNER_COVER_APP_MAX = 200;
-
 /**
  * The front door of `/api/internal/app-assistant/cover/listing`: `readRunnerRequest`'s checks, then a
  * preview grant refused (it opens one live preview, nothing else), then the user the grant names

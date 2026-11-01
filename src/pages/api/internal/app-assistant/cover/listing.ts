@@ -4,10 +4,8 @@ import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 import { COVER_LISTING_UNREADABLE, readCoverListing } from '@civitai/app-assistant';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import {
-  RUNNER_COVER_APP_MAX,
-  openRunnerCover,
-} from '~/server/services/app-assistant/runner-cover';
+import { openRunnerCover } from '~/server/services/app-assistant/runner-cover';
+import { runnerAppKey } from '~/server/services/app-assistant/runner-request';
 
 /**
  * POST /api/internal/app-assistant/cover/listing
@@ -25,7 +23,7 @@ import {
  */
 const body = z.object({
   grant: z.string().min(1).max(4096),
-  app: z.string().min(1).max(RUNNER_COVER_APP_MAX),
+  app: runnerAppKey,
 });
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
