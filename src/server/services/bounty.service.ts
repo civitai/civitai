@@ -1016,6 +1016,7 @@ export const addBenefactorUnitAmount = async ({
   if ((account[0]?.balance ?? 0) < unitAmount) throw throwInsufficientFundsError();
 
   const prefix = getBountyTransactionPrefix(bountyId, userId);
+  let charged = false;
   try {
     await createMultiAccountBuzzTransaction({
       fromAccountId: userId,
@@ -1027,10 +1028,19 @@ export const addBenefactorUnitAmount = async ({
       description: 'You have supported a bounty',
       details: { entityId: bountyId, entityType: 'Bounty' },
     });
+    charged = true;
     return await addSupport(prefix);
   } catch (error) {
     // A charge that threw may still be on the ledger: the client retries a lost response and
     // gets a 409. Refunding by prefix reverses whatever landed, and nothing when nothing did.
+    // One that times out can land after the refund looks, so its prefix is logged to find it.
+    if (!charged)
+      logBountyPayoutError({
+        bountyId,
+        userId,
+        transactionPrefix: prefix,
+        message: `Support charge ${prefix} threw and is being refunded: ${String(error)}`,
+      });
     await refundBountyPrefix(prefix, 'Refund reason: bounty support was not added', {
       bountyId,
       userId,

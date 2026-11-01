@@ -1675,8 +1675,15 @@ describe('addBenefactorUnitAmount', () => {
     buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new BuzzApiError(404, 'Not found'));
 
     await expect(topUp(6)).rejects.toThrow('buzz down');
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    // A charge that timed out may land after the refund looked; its prefix is what finds it.
+    const [[{ externalTransactionIdPrefix: prefix }]] =
+      buzz.refundMultiAccountTransaction.mock.calls;
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ bountyId: 4, userId: 6, transactionPrefix: prefix })
+    );
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error' })
+      expect.objectContaining({ message: expect.stringContaining('refund failed') })
     );
     expect(find(6)!.unitAmount).toBe(50);
   });
@@ -1689,11 +1696,11 @@ describe('addBenefactorUnitAmount', () => {
   });
 
   it('gives two top-ups in the same millisecond their own charge prefix', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_700_000_000_000 });
     try {
       await Promise.all([topUp(6, 30), topUp(6, 20)]);
     } finally {
-      vi.mocked(Date.now).mockRestore();
+      vi.useRealTimers();
     }
     const prefixes = buzz.createMultiAccountBuzzTransaction.mock.calls.map(
       ([input]) => input.externalTransactionIdPrefix
