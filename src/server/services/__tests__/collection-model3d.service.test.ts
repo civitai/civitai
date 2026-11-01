@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
+import type * as CollectionItemVisibility from '~/server/services/collection-item-visibility';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { saveCollectionItemInputSchema } from '~/server/schema/collection.schema';
@@ -7,6 +8,11 @@ import { saveCollectionItemInputSchema } from '~/server/schema/collection.schema
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
+// Whether the item may be added is covered by collection-item-visibility's own tests.
+vi.mock('~/server/services/collection-item-visibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof CollectionItemVisibility>()),
+  assertCollectionItemsVisibleToViewer: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },

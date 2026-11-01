@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
+import type * as CollectionItemVisibility from '~/server/services/collection-item-visibility';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
 import type * as ModelService from '~/server/services/model.service';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
@@ -14,6 +15,11 @@ const mockDbWrite = dbMock.dbWrite;
 // creator whose models were in the Krea 2 event collection: adding one to their own collection 400'd with
 // "Collection is not accepting submissions at this time".
 
+// Whether the item may be added is covered by collection-item-visibility's own tests.
+vi.mock('~/server/services/collection-item-visibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof CollectionItemVisibility>()),
+  assertCollectionItemsVisibleToViewer: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },

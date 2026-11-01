@@ -349,7 +349,11 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(getByIdSchema)
     .mutation(({ ctx, input }) =>
-      toggleBookmarkedArticle({ articleId: input.id, userId: ctx.user.id })
+      toggleBookmarkedArticle({
+        articleId: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
     ),
   toggleBountyEngagement: verifiedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
