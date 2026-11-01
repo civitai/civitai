@@ -63,6 +63,33 @@ export const NEXT_PAYOUT_RECORDED_AT_SQL = `GREATEST(NOW(), b."payoutSettledAt" 
 export const payoutPendingSql = Prisma.sql`(b."payoutRecordedAt" IS NOT NULL
   AND (b."payoutSettledAt" IS NULL OR b."payoutSettledAt" < b."payoutRecordedAt"))`;
 
+export const BOUNTY_AWARD_UNPAID_ACTIVITY = 'bountyAwardUnpaid';
+export const BOUNTY_AWARD_RULINGS = [
+  'paid_winner',
+  'refunded_supporter',
+  'no_charge_found',
+] as const;
+export type BountyAwardRuling = (typeof BOUNTY_AWARD_RULINGS)[number];
+/** The ModActivity row that resolves an unpaid award: its activity names the ruling. */
+export const BOUNTY_AWARD_RESOLVED_PREFIX = 'bountyAwardResolved:';
+export const bountyAwardResolvedActivity = (ruling: BountyAwardRuling) =>
+  `${BOUNTY_AWARD_RESOLVED_PREFIX}${ruling}`;
+
+/**
+ * An award recorded as unpaid for the bounty `bountyId` (a SQL expression) and not resolved since.
+ * Its supporter row holds the amount and charge the ruling needs, so the bounty must not be deleted.
+ */
+export const openUnpaidBountyAwardSql = (bountyId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ModActivity" u
+  WHERE u."entityType" = 'bounty' AND u."entityId" = ${bountyId}
+    AND u.activity = ${BOUNTY_AWARD_UNPAID_ACTIVITY}
+    AND NOT EXISTS (
+      SELECT 1 FROM "ModActivity" r
+      WHERE r."entityType" = 'bounty' AND r."entityId" = u."entityId" AND r."userId" = u."userId"
+        AND r.activity LIKE ${`${BOUNTY_AWARD_RESOLVED_PREFIX}%`} AND r.id > u.id
+    )
+)`;
+
 // Every path that moves Buzz for a bounty takes this row lock first, checks the state it
 // returns, and records its claim (`payoutRecordedAt`) in the same transaction. The Buzz calls run
 // after commit, through `settleBountyPayout`.

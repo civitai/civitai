@@ -23,7 +23,7 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
-import { payoutPendingSql } from '~/server/services/bounty-payout-lock';
+import { openUnpaidBountyAwardSql, payoutPendingSql } from '~/server/services/bounty-payout-lock';
 import {
   bountyThreadParents,
   detachHeldThreadsCte,
@@ -1796,10 +1796,12 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach({ bountyEntryId: doomedEntries })}
       DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
-    const heldEntry = heldEntryOnBountySql(Prisma.raw('b.id'), markerView);
+    // A held entrant, or an award recorded for manual resolution, keeps the bounty hidden.
+    const keepsBounty = Prisma.sql`(${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
+      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'))})`;
     const doomedBounties = Prisma.sql`SELECT b.id FROM "Bounty" b
       WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}
-        AND NOT ${heldEntry}`;
+        AND NOT ${keepsBounty}`;
     // Keep the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
     await dbWrite.$executeRaw`
       WITH ${detach(bountyThreadParents(doomedBounties))},
@@ -1811,7 +1813,7 @@ export const removeAllContent = async ({
               'removedWithOwner', true,
               'availabilityBeforeRemoval', b.availability
             )
-        WHERE b."userId" = ${id} AND (b.id = ANY(${keptBountyIds}::int[]) OR ${heldEntry})
+        WHERE b."userId" = ${id} AND (b.id = ANY(${keptBountyIds}::int[]) OR ${keepsBounty})
           AND b.id NOT IN (SELECT id FROM gone)
           AND ${notRemovedWithOwnerSql('b.meta')} AND ${unlessHeld}
       )

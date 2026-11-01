@@ -34,11 +34,16 @@ import {
 import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import {
+  BOUNTY_AWARD_RESOLVED_PREFIX,
+  BOUNTY_AWARD_UNPAID_ACTIVITY,
   BOUNTY_PAYOUT_RETRY_AFTER_MS,
+  bountyAwardResolvedActivity,
+  type BountyAwardRuling,
   isPayoutOverdue,
   isPayoutPending,
   lockBountyForPayout,
   nextPayoutRecordedAt,
+  openUnpaidBountyAwardSql,
   payoutPendingSql,
 } from '~/server/services/bounty-payout-lock';
 import { assertBountyStarted } from '~/server/services/bounty-schedule';
@@ -862,6 +867,14 @@ export const deleteBountyById = async ({
     if (!(await lockBountyForPayout(tx, id))) return null;
     const stored = await tx.bounty.findUnique({ where: { id } });
     if (!stored) return null;
+    const [{ open }] = await tx.$queryRaw<{ open: boolean }[]>`
+      SELECT ${openUnpaidBountyAwardSql(Prisma.sql`${id}`)} AS open`;
+    if (open)
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message:
+          'The bounty was NOT deleted: it has an award recorded for manual resolution. Resolve it first.',
+      });
     // A held entrant keeps the bounty: hidden and detached from its owner, deleted later by
     // `bounty-payout-retry`.
     const heldEntry = heldEntryOnBountySql(Prisma.raw('b.id'), markerView);
@@ -1567,7 +1580,7 @@ export async function releaseStuckBountyAward(
         userId,
         entityType: 'bounty',
         entityId: bountyId,
-        activity: 'bountyAwardUnpaid',
+        activity: BOUNTY_AWARD_UNPAID_ACTIVITY,
       })),
     });
     return true;
@@ -1592,6 +1605,72 @@ export async function releaseStuckBountyAward(
       moderatorId,
     }).catch(() => null);
   return { unpaidAwards: unpaid.length, refundSettled };
+}
+
+/**
+ * Records the ruling on an award `releaseStuckBountyAward` recorded as unpaid. Moves no Buzz: the
+ * ruling is settled in the ledger first, and this only lets the bounty be deleted again.
+ */
+export async function resolveUnpaidBountyAward({
+  bountyId,
+  userId,
+  ruling,
+  ledgerReference,
+  moderatorId,
+}: {
+  bountyId: number;
+  userId: number;
+  ruling: BountyAwardRuling;
+  ledgerReference: string;
+  moderatorId: number;
+}) {
+  const activity = bountyAwardResolvedActivity(ruling);
+  const recorded = await dbWrite.$transaction(async (tx) => {
+    // Serialises two resolutions of one award.
+    await lockBountyForPayout(tx, bountyId);
+    const where = { entityType: 'bounty', entityId: bountyId, userId };
+    const unpaid = await tx.modActivity.findFirst({
+      where: { ...where, activity: BOUNTY_AWARD_UNPAID_ACTIVITY },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    if (!unpaid)
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: `No award from user ${userId} on bounty ${bountyId} is recorded for manual resolution`,
+      });
+    const resolved = await tx.modActivity.findFirst({
+      where: {
+        ...where,
+        activity: { startsWith: BOUNTY_AWARD_RESOLVED_PREFIX },
+        id: { gt: unpaid.id },
+      },
+      select: { activity: true },
+    });
+    if (resolved) {
+      if (resolved.activity === activity) return false;
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: `That award is already resolved as ${resolved.activity.slice(
+          BOUNTY_AWARD_RESOLVED_PREFIX.length
+        )}`,
+      });
+    }
+    await tx.modActivity.create({ data: { ...where, activity } });
+    return true;
+  });
+  if (recorded)
+    await logToAxiom({
+      name: 'bounty-award',
+      type: 'info',
+      message: `Bounty ${bountyId}: unpaid award from user ${userId} resolved as ${ruling}`,
+      bountyId,
+      userId,
+      ruling,
+      ledgerReference,
+      moderatorId,
+    }).catch(() => null);
+  return { recorded };
 }
 
 export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
@@ -1619,7 +1698,8 @@ const keptBountyOwnerSql = Prisma.raw(
 
 /**
  * Kept bounties that never had a payout or supporters, or whose payout is settled: any other still
- * owes supporters. One whose owner or an entrant is held waits for the first run after the hold ends.
+ * owes supporters. One whose owner or an entrant is held waits for the first run after the hold ends,
+ * and one with an award recorded for manual resolution waits until it is resolved.
  */
 
 export async function deleteSettledKeptBounties() {
@@ -1630,7 +1710,8 @@ export async function deleteSettledKeptBounties() {
           AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id))
         OR (b.complete AND b."payoutSettledAt" >= b."payoutRecordedAt"))
       AND NOT ${ownerHeldSql(keptBountyOwnerSql)}
-      AND NOT ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}`;
+      AND NOT ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
+      AND NOT ${openUnpaidBountyAwardSql(Prisma.raw('b.id'))}`;
   const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
     WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)},
     gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),

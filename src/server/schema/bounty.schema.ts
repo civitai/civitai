@@ -16,6 +16,7 @@ import { tagSchema } from './tag.schema';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { BOUNTY_AWARD_RULINGS } from '~/server/services/bounty-payout-lock';
 
 // A function, not a value: a bound computed at module load freezes "today" at the pod's boot date.
 const utcToday = () => dayjs.utc(stripTime(new Date()));
@@ -138,6 +139,14 @@ export type AddBenefactorUnitAmountInputSchema = z.infer<typeof addBenefactorUni
 export const addBenefactorUnitAmountInputSchema = z.object({
   unitAmount: z.number().min(1),
   bountyId: z.number(),
+});
+
+export type ResolveUnpaidBountyAwardInput = z.infer<typeof resolveUnpaidBountyAwardInputSchema>;
+export const resolveUnpaidBountyAwardInputSchema = z.object({
+  bountyId: z.number().int().positive(),
+  userId: z.number().int().positive(),
+  ruling: z.enum(BOUNTY_AWARD_RULINGS),
+  ledgerReference: z.string().trim().min(1).max(500),
 });
 
 export type GetBountyEntriesInputSchema = z.infer<typeof getBountyEntriesInputSchema>;

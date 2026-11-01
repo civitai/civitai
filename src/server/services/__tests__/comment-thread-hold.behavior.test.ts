@@ -143,6 +143,9 @@ beforeAll(async () => {
     CREATE TABLE "BountyBenefactor" (
       "bountyId" int NOT NULL REFERENCES "Bounty"(id) ON DELETE CASCADE, "userId" int
     );
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int
+    );
     CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int NOT NULL, "coverId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Thread" (
@@ -186,7 +189,7 @@ beforeEach(async () => {
   await db.exec(`
     TRUNCATE "CommentV2", "Thread", "Answer", "Question", "ResourceReview", "Model", "Post",
       "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article",
-      "HeldResourceReview", "HeldAnswer", "BountyBenefactor";
+      "HeldResourceReview", "HeldAnswer", "BountyBenefactor", "ModActivity";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -799,6 +802,72 @@ describe("a held author's rows under a deleted parent", () => {
     expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
     expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([]);
     expect(searchDeletes()).toEqual([]);
+  });
+
+  describe('an award recorded for manual resolution', () => {
+    const SUPPORTER = 7;
+    const record = (activity: string, userId = SUPPORTER) =>
+      db.query(
+        `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+          VALUES ($1, $2, 'bounty', 60)`,
+        [userId, activity]
+      );
+    const resolved = 'bountyAwardResolved:paid_winner';
+    const seedReleased = async () => {
+      await db.exec(`
+        INSERT INTO "Bounty" (id, "userId", meta, "payoutRecordedAt", "payoutSettledAt")
+          VALUES (60, ${OWNER}, '{"removedWithOwner": true}', now(), now());
+        INSERT INTO "BountyBenefactor" VALUES (60, ${SUPPORTER});`);
+      await record('bountyAwardUnpaid');
+    };
+
+    it('keeps the bounty from a moderator delete until it is resolved', async () => {
+      await seedEnteredBounty(OTHER);
+      await record('bountyAwardUnpaid');
+
+      await expect(
+        deleteBountyById({ id: 60, isModerator: true, userId: 1 })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([{ id: 60 }]);
+
+      await record(resolved);
+      await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
+      expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
+    });
+
+    it('keeps a settled kept bounty from the cleanup job, and its supporter rows', async () => {
+      await seedReleased();
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await rows(`SELECT "userId" FROM "BountyBenefactor"`)).toEqual([
+        { userId: SUPPORTER },
+      ]);
+
+      await record(resolved);
+      expect(await deleteSettledKeptBounties()).toBe(1);
+    });
+
+    it.each([
+      [
+        'a resolution recorded before the award',
+        async () => {
+          await db.exec(`DELETE FROM "ModActivity"`);
+          await record(resolved);
+          await record('bountyAwardUnpaid');
+        },
+      ],
+      ['a resolution of another supporter', () => record(resolved, OTHER)],
+      ['another activity on the award', () => record('bountyAwardResolvedLater')],
+    ])('does not count %s', async (_, after) => {
+      await seedReleased();
+      await after();
+      expect(await deleteSettledKeptBounties()).toBe(0);
+    });
+
+    it('deletes a settled kept bounty with no award recorded (control)', async () => {
+      await seedReleased();
+      await db.exec(`DELETE FROM "ModActivity"`);
+      expect(await deleteSettledKeptBounties()).toBe(1);
+    });
   });
 
   it('reports a question that is not there as not found', async () => {

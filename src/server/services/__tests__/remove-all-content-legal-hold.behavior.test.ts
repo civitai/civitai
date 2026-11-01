@@ -255,6 +255,9 @@ beforeAll(async () => {
       ADD COLUMN complete boolean NOT NULL DEFAULT false,
       ADD COLUMN refunded boolean NOT NULL DEFAULT false;
     CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int
+    );
     ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
       ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
       ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
@@ -325,6 +328,7 @@ beforeEach(async () => {
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection", "ModelVersion",
+      "ModActivity",
       "HeldResourceReview", "HeldAnswer", ${EVIDENCE.map((t) => `"${t}"`).join(
         ', '
       )} RESTART IDENTITY;
@@ -2075,6 +2079,19 @@ describe('an open bounty with supporters, in a content wipe', () => {
 
     expect(payout.claimed).toEqual([]);
     expect(await bountyRow()).toBeUndefined();
+  });
+
+  it('keeps it, hidden, while an award on it is recorded for manual resolution', async () => {
+    await holder.db.exec(`
+      TRUNCATE "BountyBenefactor";
+      INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+        VALUES (${BYSTANDER}, 'bountyAwardUnpaid', 'bounty', ${BOUNTY});`);
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bountyRow()).toEqual({
+      availability: 'Private',
+      meta: { removedWithOwner: true, availabilityBeforeRemoval: 'Public' },
+    });
   });
 
   it('keeps it, hidden, when its refund throws, and finishes the wipe', async () => {

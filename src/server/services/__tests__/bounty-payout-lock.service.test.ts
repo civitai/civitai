@@ -77,6 +77,7 @@ const {
   refundBounty,
   refundBountyBenefactorFunds,
   releaseStuckBountyAward,
+  resolveUnpaidBountyAward,
   retryUnsettledBountyPayouts,
   settleBountyPayout,
 } = await import('~/server/services/bounty.service');
@@ -109,7 +110,17 @@ type BountyRow = {
 let bounty: BountyRow | null;
 let benefactors: Benefactor[];
 let entryFiles: { metadata: Record<string, unknown> }[];
-let modActivityRows: { userId: number; activity: string }[];
+type ModActivityRow = { userId: number; entityType: string; entityId: number; activity: string };
+let modActivityRows: ModActivityRow[];
+// The open-unpaid-award rule, over the rows in order: a resolution counts only after the record.
+const openUnpaidAward = () =>
+  modActivityRows.some(
+    (u, i) =>
+      u.activity === 'bountyAwardUnpaid' &&
+      !modActivityRows
+        .slice(i + 1)
+        .some((r) => r.userId === u.userId && r.activity.startsWith('bountyAwardResolved:'))
+  );
 const entry = { id: 10, bountyId: 4, userId: 8 };
 // Who owns each entry a supporter may award; entry 11 is a second entrant's.
 const entryOwners: Record<number, number> = { 10: 8, 11: 9 };
@@ -151,6 +162,8 @@ function transactionClient(held: (() => void)[]) {
         if (gone) events.push('delete');
         return [{ gone }];
       }
+      // The open-unpaid-award check ahead of a delete.
+      if (sql.includes('AS open')) return [{ open: openUnpaidAward() }];
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);
       held.push(await rowLock.acquire());
       return bounty ? [{ meta: null, ...bounty }] : [];
@@ -257,10 +270,33 @@ function transactionClient(held: (() => void)[]) {
       deleteMany: async () => ({ count: 0 }),
     },
     modActivity: {
-      createMany: async ({ data }: { data: { userId: number; activity: string }[] }) => {
+      createMany: async ({ data }: { data: ModActivityRow[] }) => {
         await tick();
         modActivityRows.push(...data);
         return { count: data.length };
+      },
+      create: async ({ data }: { data: ModActivityRow }) => {
+        await tick();
+        modActivityRows.push(data);
+        return data;
+      },
+      findFirst: async ({
+        where,
+      }: {
+        where: { userId: number; activity: string | { startsWith: string }; id?: { gt: number } };
+      }) => {
+        await tick();
+        const rows = modActivityRows
+          .map((row, id) => ({ ...row, id }))
+          .filter(
+            (r) =>
+              r.userId === where.userId &&
+              (where.id === undefined || r.id > where.id.gt) &&
+              (typeof where.activity === 'string'
+                ? r.activity === where.activity
+                : r.activity.startsWith(where.activity.startsWith))
+          );
+        return rows.at(-1) ?? null;
       },
     },
     imageConnection: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
@@ -1764,5 +1800,73 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
     );
     expect(refunded()).toEqual([]);
     expect(bounty?.refunded).toBe(false);
+  });
+
+  describe('after the release', () => {
+    const resolve = (ruling: 'paid_winner' | 'refunded_supporter' = 'paid_winner', userId = 5) =>
+      resolveUnpaidBountyAward({
+        bountyId: 4,
+        userId,
+        ruling,
+        ledgerReference: 'manual payout to the winner',
+        moderatorId: 99,
+      });
+    beforeEach(async () => {
+      recordStuckAward();
+      await expect(moderatorDelete()).rejects.toThrow('NOT deleted');
+      vi.clearAllMocks();
+    });
+
+    it('refuses a second delete while the award is unresolved, and keeps the supporter rows', async () => {
+      await expect(moderatorDelete()).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringContaining('award recorded for manual resolution'),
+      });
+      expect(bounty).not.toBeNull();
+      expect(events).not.toContain('delete');
+      expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
+      expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    });
+
+    it('deletes once the award is resolved', async () => {
+      expect(await resolve()).toEqual({ recorded: true });
+      expect(modActivityRows.at(-1)).toEqual({
+        userId: 5,
+        entityType: 'bounty',
+        entityId: 4,
+        activity: 'bountyAwardResolved:paid_winner',
+      });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bountyId: 4,
+          userId: 5,
+          ruling: 'paid_winner',
+          ledgerReference: 'manual payout to the winner',
+          moderatorId: 99,
+        })
+      );
+      await moderatorDelete();
+      expect(bounty).toBeNull();
+      expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
+      expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    });
+
+    it('records a repeated resolution once', async () => {
+      await resolve();
+      expect(await resolve()).toEqual({ recorded: false });
+      expect(modActivityRows).toHaveLength(2);
+    });
+
+    it('refuses a different ruling on a resolved award', async () => {
+      await resolve();
+      await expect(resolve('refunded_supporter')).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(modActivityRows).toHaveLength(2);
+    });
+
+    it('refuses to resolve a supporter with no award recorded as unpaid', async () => {
+      await expect(resolve('paid_winner', 6)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(modActivityRows).toHaveLength(1);
+      await expect(moderatorDelete()).rejects.toMatchObject({ code: 'CONFLICT' });
+    });
   });
 });
