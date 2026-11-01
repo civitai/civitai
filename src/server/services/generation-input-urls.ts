@@ -430,10 +430,13 @@ const OPAQUE_INPUT_MAX_URLS = 4096;
 const OPAQUE_INPUT_MAX_URL_CHARS = 64 * 1024;
 /** Strings that start like a url, each parsed as one. */
 const OPAQUE_INPUT_MAX_PARSES = 32_768;
-/** A host longer than DNS allows is not one to fetch, and costs a parser the most. */
-const OPAQUE_INPUT_MAX_HOST_CHARS = 253;
-/** Characters of hosts a parser converts to ASCII (non-ASCII, `%` escapes or `xn--`), in all. */
-const OPAQUE_INPUT_MAX_IDNA_CHARS = 16 * 1024;
+/**
+ * Work a parser does converting hosts to ASCII (those holding non-ASCII, `%` escapes or `xn--`),
+ * charged as each host's length squared (the conversion's cost) plus a fixed cost per parse. An
+ * ASCII host costs nothing.
+ */
+const OPAQUE_INPUT_MAX_IDNA_COST = 16 * 1024 * 1024;
+const IDNA_PARSE_COST = 8192;
 // eslint-disable-next-line no-control-regex
 const IDNA_HOST = /[^\x00-\x7f]|%|xn--/i;
 
@@ -501,7 +504,7 @@ export function opaqueInputUrlsIn(value: unknown) {
   const decoded: DecodeBudget = { left: OPAQUE_INPUT_MAX_DECODED_CHARS };
   let urlChars = 0;
   let parses = 0;
-  let idnaChars = 0;
+  let idnaCost = 0;
   // The gate decodes every distinct collected value again, so their total length is bounded too.
   const seen = new Set<string>();
   const collect = (url: string) => {
@@ -557,8 +560,8 @@ export function opaqueInputUrlsIn(value: unknown) {
       const host = specialHostIn(parsed);
       if (
         host !== undefined &&
-        (host.length > OPAQUE_INPUT_MAX_HOST_CHARS ||
-          (IDNA_HOST.test(host) && (idnaChars += host.length) > OPAQUE_INPUT_MAX_IDNA_CHARS))
+        IDNA_HOST.test(host) &&
+        (idnaCost += host.length * host.length + IDNA_PARSE_COST) > OPAQUE_INPUT_MAX_IDNA_COST
       ) {
         tooLarge = true;
         return;
