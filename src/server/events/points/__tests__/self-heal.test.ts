@@ -46,7 +46,7 @@ function fakeRedis() {
     },
     async eval(script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) {
       if (strings.get(keys[0]) !== args[0]) return 0;
-      if (script.includes('"del"')) return Number(strings.delete(keys[0]));
+      if (/redis\.call\(["']del["']/i.test(script)) return Number(strings.delete(keys[0]));
       ttls.set(keys[0], Number(args[1]));
       return 'OK';
     },

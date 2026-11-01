@@ -602,7 +602,7 @@ describe('bankBuzz', () => {
       const acquire = set.mock.calls.findIndex(([key]: [string]) => key === lockKey);
       const release = evalScript.mock.calls.findIndex(
         ([script, opts]: [string, { keys: string[] }]) =>
-          script.includes('"del"') && opts.keys[0] === lockKey
+          /redis\.call\('DEL'/i.test(script) && opts.keys[0] === lockKey
       );
       expect(acquire, 'lock acquired under the per-user key').toBeGreaterThanOrEqual(0);
       expect(release, 'lock released under the per-user key').toBeGreaterThanOrEqual(0);
