@@ -699,6 +699,84 @@ describe('CivitaiDevTunnels', () => {
       expect(deadlines).toEqual([200_000, 15_000]);
     });
 
+    describe('the stop by key, when civitai says to ask again', () => {
+      /** The start fails on civitai's side; each stop answers the next of `stops`, in turn. */
+      function failingStart(stops: (() => Response)[]) {
+        let next = 0;
+        return client((url) =>
+          url.endsWith('/start')
+            ? Response.json({ error: 'later', code: 'unavailable' }, { status: 503 })
+            : (stops[Math.min(next++, stops.length - 1)] ?? (() => Response.json({})))()
+        );
+      }
+      const unavailable = () =>
+        Response.json({ error: 'later', code: 'unavailable' }, { status: 503 });
+      const stopped = () => Response.json({ stopped: true });
+      async function startAndWait(tunnels: CivitaiDevTunnels) {
+        await tunnels
+          .forRun(async () => GRANT)
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        // Long past any retry the runner makes: what was sent by then is all it sends.
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+      }
+      const stopsOf = (sent: { url: string; init: RequestInit }[]) =>
+        sent.filter((s) => s.url.endsWith('/stop'));
+
+      it('a stop civitai answers `unavailable` is asked again, with the same key, until it is done', async () => {
+        const { sent, tunnels } = failingStart([unavailable, unavailable, stopped]);
+        await startAndWait(tunnels);
+        const stops = stopsOf(sent);
+        expect(stops).toHaveLength(3);
+        const key = JSON.parse(String(sent[0]!.init.body)).clientKey;
+        for (const stop of stops)
+          expect(JSON.parse(String(stop.init.body))).toEqual({ grant: GRANT, clientKey: key });
+      });
+
+      it('a stop civitai keeps answering `unavailable` is asked a bounded number of times', async () => {
+        const { sent, tunnels } = failingStart([unavailable]);
+        await startAndWait(tunnels);
+        expect(stopsOf(sent)).toHaveLength(3);
+      });
+
+      it('asks again 5 s after a stop civitai answered `unavailable`, not sooner', async () => {
+        const { sent, tunnels } = failingStart([unavailable, stopped]);
+        await tunnels
+          .forRun(async () => GRANT)
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stopsOf(sent)).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(stopsOf(sent)).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(stopsOf(sent)).toHaveLength(2);
+      });
+
+      it('a stop that could not reach civitai at all is asked again too', async () => {
+        const { sent, tunnels } = failingStart([
+          () => {
+            throw new TypeError('fetch failed');
+          },
+          stopped,
+        ]);
+        await startAndWait(tunnels);
+        expect(stopsOf(sent)).toHaveLength(2);
+      });
+
+      it('a stop civitai refuses (4xx), or answers, is not asked again', async () => {
+        for (const answer of [
+          stopped,
+          () => Response.json({ error: 'no', code: 'invalid_grant' }, { status: 401 }),
+          () => Response.json({ error: 'bad' }, { status: 400 }),
+        ]) {
+          const { sent, tunnels } = failingStart([answer]);
+          await startAndWait(tunnels);
+          expect(stopsOf(sent), String(answer)).toHaveLength(1);
+        }
+      });
+    });
+
     it('a keep-alive or stop civitai does not answer fails within 16 s', async () => {
       const { tunnels } = answeringAfter(null, () => Response.json({}));
       const run = tunnels.forRun(async () => GRANT);

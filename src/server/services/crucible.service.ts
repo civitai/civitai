@@ -90,6 +90,7 @@ import {
   resolveWatchSeconds,
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
+import { delIfValue } from '~/server/redis/atomic';
 import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -2001,15 +2002,9 @@ async function acquireEntryLock(crucibleId: number, userId: number): Promise<str
   return result === 'OK' ? token : null;
 }
 
-const DELETE_IF_EQUALS_SCRIPT =
-  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
-
 async function releaseEntryLock(crucibleId: number, userId: number, token: string) {
   try {
-    await sysRedis.eval(DELETE_IF_EQUALS_SCRIPT, {
-      keys: [getEntryLockKey(crucibleId, userId)],
-      arguments: [token],
-    });
+    await delIfValue(sysRedis, getEntryLockKey(crucibleId, userId), token);
   } catch (error) {
     log(
       `Failed to release entry lock for crucible ${crucibleId}, user ${userId}: ${
@@ -3381,10 +3376,11 @@ export const submitVote = async ({
   let loserElo: number;
   try {
     const pairKey = createPairKey(winnerEntryId, loserEntryId);
-    const served = await sysRedis.eval(DELETE_IF_EQUALS_SCRIPT, {
-      keys: [getServedPairKey(crucibleId, userId)],
-      arguments: [createServedPairValue(pairKey, anchorEntryId)],
-    });
+    const served = await delIfValue(
+      sysRedis,
+      getServedPairKey(crucibleId, userId),
+      createServedPairValue(pairKey, anchorEntryId)
+    );
     if (!served) {
       throw throwBadRequestError(
         'This pair is no longer available. Please wait for the next pair to load.'

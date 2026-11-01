@@ -168,7 +168,9 @@ export function createLuaRedis(
     if (!h.size) hashes.delete(key);
   }
 
-  function redisCall(command: string, ...args: unknown[]) {
+  function redisCall(name: string, ...args: unknown[]) {
+    // Redis reads command names in any case.
+    const command = name.toUpperCase();
     const strArgs = args.map((a) => {
       if (typeof a === 'string') return a;
       if (integerArgs && typeof a === 'number' && Number.isInteger(a)) return String(a);

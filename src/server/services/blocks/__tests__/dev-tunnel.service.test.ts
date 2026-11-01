@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
 /**
  * APP DEV TUNNEL — service coverage: manifest shape (SSRF-safe host match),
@@ -12,19 +13,17 @@ const {
   mockUnwrap,
   mockWaitForApplyJob,
   mockRecordTeardown,
+  mockRecordMint,
   mockRecordDnsGc,
   sysRedis,
-  evalTtls,
+  luaRef,
   mockEnv,
   mockNewId,
 } = vi.hoisted(() => {
   const store = new Map<string, string>();
-  // TTL floors the `eval` fake was handed, asserted by the index test below. It cannot
-  // model the GE comparison itself — the fake has no TTL clock — so it pins the VALUE the
-  // service passes, not the floor semantics, and the test says so.
-  const evalTtls = new Map<string, number>();
+  const luaRef: { current: LuaRedis | null } = { current: null };
   return {
-    evalTtls,
+    luaRef,
     store,
     mockK8sFetch: vi.fn(),
     mockGetDp1Target: vi.fn(async () => ({ server: 'https://k8s', token: 't' })),
@@ -37,6 +36,7 @@ const {
     // don't poll; the failure test overrides it.
     mockWaitForApplyJob: vi.fn(async () => 'succeeded' as const),
     mockRecordTeardown: vi.fn(),
+    mockRecordMint: vi.fn(),
     mockRecordDnsGc: vi.fn(),
     sysRedis: {
       _store: store,
@@ -63,61 +63,26 @@ const {
       ttl: vi.fn(async () => 100),
       // The per-user tunnel INDEX (a SET of blockIds), read by the publisher-ban
       // revocation writer so a ban can find an ephemeral app's live tunnel — the only
-      // server record such an app leaves. Backed by the same store so the
-      // add/remove assertions below are about real state, not about a stub.
-      sAdd: vi.fn(async (k: string, v: string) => {
-        const cur = new Set(JSON.parse(store.get(k) ?? '[]') as string[]);
-        const added = cur.has(v) ? 0 : 1;
-        cur.add(v);
-        store.set(k, JSON.stringify([...cur]));
-        return added;
-      }),
-      sRem: vi.fn(async (k: string, v: string) => {
-        const cur = new Set(JSON.parse(store.get(k) ?? '[]') as string[]);
-        const removed = cur.delete(v) ? 1 : 0;
-        if (cur.size === 0) store.delete(k);
-        else store.set(k, JSON.stringify([...cur]));
-        return removed;
-      }),
-      sMembers: vi.fn(async (k: string) => JSON.parse(store.get(k) ?? '[]') as string[]),
-      // The index write is an EVAL (the start's listing script), so it lands here rather than on
-      // `sAdd`. This EXECUTES the script's effect against the same store — SADD the
-      // member, record the TTL floor — rather than returning a canned reply, so a test
-      // that reads the member back is measuring a real write. A stub returning 1 would
-      // let every assertion below pass with the index never populated.
-      //
-      // The service's other EVAL is a teardown's compare-and-delete of the (user, block)
-      // pointer, told apart by its key (never the index's): it deletes only a pointer that
-      // still names the session, and answers 1 only then.
-      //
-      // A start lists its tunnel with one script: KEYS = [pointer, index, cancel mark?],
-      // ARGV = [sessionId, ttl, blockId]. It writes nothing while the mark exists.
-      eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) => {
-        const [key] = opts.keys;
-        if (opts.keys.length >= 2) {
-          const [pointer, index, mark] = opts.keys;
-          const [sessionId, ttl, blockId] = opts.arguments;
-          if (mark && store.has(mark)) return 0;
-          store.set(pointer, sessionId);
-          const members = new Set(JSON.parse(store.get(index) ?? '[]') as string[]);
-          members.add(blockId);
-          store.set(index, JSON.stringify([...members]));
-          evalTtls.set(index, Number(ttl));
-          return 1;
-        }
-        if (!key.includes(':user-index:')) {
-          if (store.get(key) !== opts.arguments[0]) return 0;
-          store.delete(key);
-          return 1;
-        }
-        const [member, ttl] = opts.arguments;
-        const cur = new Set(JSON.parse(store.get(key) ?? '[]') as string[]);
-        const added = cur.has(member) ? 0 : 1;
-        cur.add(member);
-        store.set(key, JSON.stringify([...cur]));
-        evalTtls.set(key, Number(ttl));
-        return added;
-      }),
+      // server record such an app leaves. It and every EVAL (the start's listing script, a
+      // teardown's compare-and-delete) run in the real Lua harness, set up per test in
+      // `beforeEach` over this same string store, so a test that reads the index or the
+      // pointer back is measuring what the service's own scripts wrote.
+      sAdd: vi.fn(async (k: string, v: string) =>
+        luaRef.current!.eval("return redis.call('SADD', KEYS[1], ARGV[1])", {
+          keys: [k],
+          arguments: [v],
+        })
+      ),
+      sRem: vi.fn(async (k: string, v: string) =>
+        luaRef.current!.eval("return redis.call('SREM', KEYS[1], ARGV[1])", {
+          keys: [k],
+          arguments: [v],
+        })
+      ),
+      sMembers: vi.fn(async (k: string) => luaRef.current!.set(k) ?? []),
+      eval: vi.fn(async (script: string, opts: { keys: string[]; arguments: string[] }) =>
+        luaRef.current!.eval(script, opts)
+      ),
     },
     mockEnv: {
       APPS_DOMAIN: 'civit.ai',
@@ -151,7 +116,7 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newBlockInstanceId: () => mockNewId() }));
 vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
-  recordDevTunnelMint: vi.fn(),
+  recordDevTunnelMint: (...a: unknown[]) => mockRecordMint(...(a as [])),
   recordDevTunnelTeardown: (...a: unknown[]) => mockRecordTeardown(...(a as [])),
   recordDevTunnelDnsGc: (...a: unknown[]) => mockRecordDnsGc(...(a as [])),
 }));
@@ -197,6 +162,7 @@ function okRes(body = '{}') {
 
 beforeEach(() => {
   sysRedis._store.clear();
+  luaRef.current = createLuaRedis(Date.now(), { integerArgs: true, strings: sysRedis._store });
   vi.clearAllMocks();
   mockK8sFetch.mockResolvedValue(okRes());
   mockGetDp1Target.mockResolvedValue({ server: 'https://k8s', token: 't' });
@@ -337,13 +303,13 @@ describe('the dev-tunnel index a ban enumerates', () => {
     expect(sysRedis.eval).toHaveBeenCalledTimes(1);
     expect(sysRedis.sAdd, 'the non-atomic SADD is back').not.toHaveBeenCalled();
 
-    // 🔴 AND THE TTL IS ASSERTED, not merely recorded. `evalTtls` was written and never
-    // read, under a comment promising TTL coverage — which is the shape of a guard that
-    // reads as coverage and provides none. A TTL-less index is exactly the state the
-    // atomic swap exists to make unreachable, so the floor it passes is worth pinning.
-    const key = [...evalTtls.keys()].find((k) => k.includes('user-index'));
-    expect(key, 'the index write did not go through the EVAL path').toBeTruthy();
-    expect(evalTtls.get(key!)).toBe(DEV_TUNNEL_HARD_SECONDS);
+    // 🔴 AND THE TTL IS ASSERTED, as the script left it: a TTL-less index is exactly the state
+    // the atomic write exists to make unreachable.
+    const key = `system:blocks:dev-tunnel:user-index:${TEST_USER_ID}`;
+    expect(luaRef.current!.set(key), 'the index write did not go through the EVAL path').toEqual([
+      TEST_BLOCK_ID,
+    ]);
+    expect(luaRef.current!.pttl(key)).toBe(DEV_TUNNEL_HARD_SECONDS * 1000);
   });
 
   it('teardown removes the member, so a stopped tunnel is not re-revoked', async () => {
@@ -414,6 +380,35 @@ describe('startDevTunnel', () => {
     // the session record carries the initial idle marker
     const sessionRaw = sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!;
     expect(JSON.parse(sessionRaw).lastActivityAt).toBeTypeOf('number');
+  });
+
+  it('a start whose records could not all be written closes the route and what it did write', async () => {
+    // A credential written without its session is one the sish authz still accepts, for a
+    // tunnel no ban, reap or stop can find. The start must not leave it, or the route, behind.
+    const write = sysRedis.set.getMockImplementation()!;
+    sysRedis.set.mockImplementation(async (k: string, v: string) => {
+      if (k.includes(':host:')) throw new Error('redis blip');
+      return write(k, v);
+    });
+    try {
+      // The write's own error, not another one from the cleanup.
+      await expect(startTunnel()).rejects.toThrow('redis blip');
+    } finally {
+      sysRedis.set.mockImplementation(write);
+    }
+    // One mint and one teardown: the active-tunnel gauge ends where it began.
+    expect(mockRecordMint).toHaveBeenCalledTimes(1);
+    expect(mockRecordTeardown.mock.calls).toEqual([['stop']]);
+    expect(
+      [...sysRedis._store.keys()].filter((k) => /:(cred|session|host|user):/.test(k)),
+      'a partly-written start was left behind'
+    ).toEqual([]);
+    // The route goes too: its objects are listed by this session's own label, then deleted.
+    expect(mockK8sFetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('dev-tunnel-session%3Dbki_testsession'),
+      expect.objectContaining({ method: 'GET' })
+    );
   });
 
   it('R1: returns an EMPTY host pubkey when the env is unset (CLI fails closed)', async () => {

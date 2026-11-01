@@ -124,7 +124,6 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       try {
         started = await startDevTunnel({
           userId: grant.userId,
-          // The RESOLVED, canonical block id, never the raw input (as the tRPC procedure).
           blockId: gate.blockId,
           sshPublicKey,
           declaredScopes,
@@ -166,11 +165,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     }
   };
 
-  // Answered within `RUNNER_DEV_TUNNEL_START_DEADLINE_MS`, whatever the start's own steps take
-  // (the runner gives up a little after it). Past it, the start is cancelled: one still running
-  // closes what it opens, one that just finished is closed now, and the runner hears
-  // `unavailable`, as for any start that could not open.
-  // `open` never rejects (it answers every failure), so the fallback stands only for the deadline.
+  // Past the deadline the start is cancelled and the runner hears `unavailable`. `open` never
+  // rejects, so the fallback only ever stands for the deadline.
   const outcome = await withTimeoutFallback<Answer | 'deadline'>(
     open(),
     RUNNER_DEV_TUNNEL_START_DEADLINE_MS,

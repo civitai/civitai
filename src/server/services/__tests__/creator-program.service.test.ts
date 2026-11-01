@@ -2,6 +2,7 @@ import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { CacheTTL } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { BANKABLE_CUTOVER, MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
@@ -600,10 +601,21 @@ describe('bankBuzz', () => {
       const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:creator-program:bank:${userId}`;
       const { set, eval: evalScript } = redisMock.redis;
       const acquire = set.mock.calls.findIndex(([key]: [string]) => key === lockKey);
-      const release = evalScript.mock.calls.findIndex(
-        ([script, opts]: [string, { keys: string[] }]) =>
-          script.includes('"del"') && opts.keys[0] === lockKey
-      );
+      // The release is the script on the lock's key that, run for real against a lock held with
+      // its own value, deletes it (a renewal on the same key leaves it).
+      let release = -1;
+      for (const [i, [script, opts]] of (
+        evalScript.mock.calls as [string, { keys: string[]; arguments: string[] }][]
+      ).entries()) {
+        if (opts.keys[0] !== lockKey) continue;
+        const lua = createLuaRedis(0);
+        lua.setString(lockKey, opts.arguments[0]!);
+        await lua.eval(script, opts);
+        if (lua.string(lockKey) === undefined) {
+          release = i;
+          break;
+        }
+      }
       expect(acquire, 'lock acquired under the per-user key').toBeGreaterThanOrEqual(0);
       expect(release, 'lock released under the per-user key').toBeGreaterThanOrEqual(0);
       const acquiredAt = set.mock.invocationCallOrder[acquire];

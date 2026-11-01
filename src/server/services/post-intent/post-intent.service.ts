@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { delIfValue } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
@@ -49,8 +50,6 @@ const APPROVED = 'approved';
 export const POST_INTENT_USER_STAGE_LIMIT = { max: 20, windowSeconds: 60 * 60 };
 export const POST_INTENT_APP_STAGE_LIMIT = { max: 2000, windowSeconds: 60 * 60 };
 const STAGE_LOCK_SECONDS = 30 * 60;
-const DEL_IF_EQUALS =
-  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 const SWEEP_BUDGET_MS = 4 * 60 * 1000;
 
 export type StagedIntentMedia = {
@@ -177,7 +176,7 @@ async function acquireStageLock(key: string): Promise<(() => Promise<void>) | nu
     .catch(() => null);
   if (!acquired) return null;
   return async () => {
-    await redis.eval(DEL_IF_EQUALS, { keys: [redisKey], arguments: [token] }).catch(() => null);
+    await delIfValue(redis, redisKey, token).catch(() => null);
   };
 }
 

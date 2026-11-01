@@ -66,7 +66,6 @@ const startRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/
 const keepaliveRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/keepalive'))
   .default;
 const stopRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/stop')).default;
-const { recordDevTunnelTeardown } = await import('~/server/prom/dev-tunnel.metrics');
 
 // TEST-ONLY values: a key pair generated for this run, a placeholder secret and host key.
 const SECRET = 'test-only-runner-secret-for-tunnels';
@@ -595,23 +594,35 @@ describe('a start the runner gave up on, closed by its client key', () => {
     });
   const stopKeyed = async (userId: number, clientKey = CLIENT_KEY) =>
     call(stopRoute, { body: { grant: await grantFor(userId), clientKey } });
-  /** Holds the next route apply until `release()`, as a slow apply Job does. */
+  /**
+   * Holds the next route apply until `release()`, as a slow apply Job does. `reached` resolves
+   * once a start is sitting in it (by then its handler has set its deadline).
+   */
   async function holdApply() {
     const pipeline = await import('~/server/services/blocks/apps-pipeline.service');
-    const held: { release?: () => void } = {};
+    let arrived!: () => void;
+    const held: { release?: () => void; reached: Promise<void> } = {
+      reached: new Promise((resolve) => (arrived = resolve)),
+    };
     vi.mocked(pipeline.waitForApplyJob).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           held.release = () => resolve('succeeded');
+          arrived();
         })
     );
     return held;
   }
+  /** Every session record the starts have written so far, live or since closed. */
+  const sessionsWritten = () =>
+    redisMock.sysRedis.set.mock.calls
+      .map((c: unknown[]) => c[0] as string)
+      .filter((k: string) => k.includes(':session:'));
 
   it('a stop that comes while the start runs: the start closes what it opened, and answers 409', async () => {
     const held = await holdApply();
     const starting = startKeyed(OWNER, OWNED_APP);
-    await vi.waitFor(() => expect(held.release).toBeTypeOf('function'));
+    await held.reached;
     // Nothing is open yet, so nothing is stopped now, but the start is marked.
     expect(await stopKeyed(OWNER)).toMatchObject({ status: 200, json: { stopped: false } });
     held.release!();
@@ -650,18 +661,18 @@ describe('a start the runner gave up on, closed by its client key', () => {
     try {
       let answer: Awaited<ReturnType<typeof call>> | undefined;
       void startKeyed(OWNER, OWNED_APP).then((a) => (answer = a));
-      // The grant's check runs on Node's crypto, which no fake timer advances: wait, on real time
-      // (`vi.waitFor`), until the start sits in its route apply. Its deadline is set by then.
-      await vi.waitFor(() => expect(held.release).toBeTypeOf('function'));
+      await held.reached;
       await vi.advanceTimersByTimeAsync(184_000);
       expect(answer).toBeUndefined();
       await vi.advanceTimersByTimeAsync(1_000);
       // The runner waits longer than this (apps/assistant-runner `START_TIMEOUT_MS`).
       expect(answer).toMatchObject({ status: 503, json: { code: 'unavailable' } });
       held.release!();
-      // Done once the late start has closed what it opened: its one teardown.
-      await vi.waitFor(() => expect(recordDevTunnelTeardown).toHaveBeenCalledTimes(1));
-      expect(sessionKeys()).toEqual([]);
+      // Done once the late start has written its session, and closed it again.
+      await vi.waitFor(() => {
+        expect(sessionsWritten()).toHaveLength(1);
+        expect(sessionKeys()).toEqual([]);
+      });
       expect(store.has(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(false);
     } finally {
       vi.useRealTimers();
@@ -680,7 +691,7 @@ describe('a start the runner gave up on, closed by its client key', () => {
     try {
       let lateA: Awaited<ReturnType<typeof call>> | undefined;
       void startKeyed(OWNER, OWNED_APP).then((a) => (lateA = a));
-      await vi.waitFor(() => expect(held.release).toBeTypeOf('function'));
+      await held.reached;
       await vi.advanceTimersByTimeAsync(185_000);
       expect(lateA).toMatchObject({ status: 503, json: { code: 'unavailable' } });
 
@@ -691,10 +702,11 @@ describe('a start the runner gave up on, closed by its client key', () => {
       expect(lua.set(banIndex)).toEqual([OWNED_APP]);
 
       held.release!();
-      // Done once A has closed what it opened: its one teardown.
-      await vi.waitFor(() => expect(recordDevTunnelTeardown).toHaveBeenCalledTimes(1));
-      // A's own keys are gone: only B's session (and its host) is left.
-      expect(sessionKeys()).toEqual([`${PREFIX}:session:${sessionB}`]);
+      // Done once A has written its session after B's, and closed it again: only B's is left.
+      await vi.waitFor(() => {
+        expect(sessionsWritten()).toHaveLength(2);
+        expect(sessionKeys()).toEqual([`${PREFIX}:session:${sessionB}`]);
+      });
       expect([...store.keys()].filter((k) => k.includes(':host:'))).toEqual([
         `${PREFIX}:host:${b.json!.host}`,
       ]);
@@ -755,7 +767,7 @@ describe('a start the runner gave up on, closed by its client key', () => {
 
     const held = await holdApply();
     const startingA = startKeyed(OWNER, OWNED_APP);
-    await vi.waitFor(() => expect(held.release).toBeTypeOf('function'));
+    await held.reached;
     const b = await startKeyed(OWNER, OWNED_APP, 'test-only-client-key-b3c8');
     expect(b.status).toBe(200);
     expect(store.get(pointer)).toBe(b.json!.sessionId);

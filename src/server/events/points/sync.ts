@@ -20,6 +20,7 @@ import {
 } from '~/server/events/points/keys';
 import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
 import { logToAxiom } from '~/server/logging/client';
+import { delIfValue } from '~/server/redis/atomic';
 import { sysRedis } from '~/server/redis/client';
 
 // Enough log for an app server that missed a few refreshes; one further behind reloads the hash.
@@ -250,8 +251,6 @@ export async function syncOwnerEventHats(
 }
 
 const PENDING_ALL = '*';
-const DELETE_IF_EQUALS_SCRIPT =
-  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 const RENEW_IF_EQUALS_SCRIPT =
   "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end return 0";
 // Content left for the holder outlives a slow pass by a wide margin.
@@ -311,9 +310,7 @@ async function runOwnerHatSync(
       // Lost the lock mid-pass: the next attempt leaves our content to whoever holds it now.
       if (!(await syncOwnerPass(ownerId, next, now, scope, stillHeld))) continue;
     } finally {
-      await sysRedis
-        .eval(DELETE_IF_EQUALS_SCRIPT, { keys: [lock.lock], arguments: [token] })
-        .catch(() => undefined);
+      await delIfValue(sysRedis, lock.lock, token).catch(() => undefined);
     }
     const pending = await popPending(lock.pending);
     if (!pending.length) return;
