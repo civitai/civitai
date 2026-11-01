@@ -28,8 +28,8 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const UPDATE_AGE_MS = (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60) * 1000;
 
-// The hub's own cookie is re-signed on a page navigation once it is older than UPDATE_AGE, as spokes roll theirs.
-// Impersonation sessions are left to run out.
+// Impersonation sessions are not re-signed, so one ends at its original expiry instead of living on in the hub's
+// own cookie.
 function shouldRoll(request: Request, claims: SessionClaims, user: SessionUser | undefined) {
   return (
     request.method === 'GET' &&
