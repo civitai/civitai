@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 
 // A feed's first-column card sits at the page scroller's left edge on a phone, so a hat hung off
 // its corner is cut by that scroller. Browser mode only: needs a real layout.
@@ -100,5 +101,36 @@ describe('the hat on a first-column card at phone width', () => {
     const [h] = hats();
     const card = document.querySelector('[data-testid="card"]')!;
     expect(rect(card).left - rect(h).left).toBeGreaterThan(15);
+  });
+
+  test('a card scrolled out to the left takes its hat with it, not across the rail', async () => {
+    function Rail() {
+      const [, tick] = useState(0);
+      return (
+        <>
+          <button data-testid="tick" onClick={() => tick((n) => n + 1)}>
+            tick
+          </button>
+          <div data-testid="rail" style={{ overflowX: 'auto', display: 'flex', gap: 8 }}>
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} style={{ width: 200, flex: 'none' }}>
+                <Card i={i} />
+              </div>
+            ))}
+          </div>
+        </>
+      );
+    }
+    await phoneFeed(<Rail />);
+    const [first] = hats();
+    // Control: flush against the rail's edge, the hat does move in.
+    expect(first.style.translate).not.toBe('');
+    document.querySelector('[data-testid="rail"]')!.scrollLeft = 150;
+    await userEvent.click(page.getByTestId('tick'));
+    await new Promise((r) => setTimeout(r, 150));
+    const [card1, card2] = [...document.querySelectorAll('[data-testid="card"]')];
+    expect(rect(card1).left).toBeLessThan(0);
+    expect(first.style.translate).toBe('');
+    expect(rect(first).left).toBeLessThan(rect(card2).left);
   });
 });

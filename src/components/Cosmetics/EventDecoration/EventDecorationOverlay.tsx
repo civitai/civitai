@@ -157,8 +157,17 @@ function CardHat({
   useLayoutEffect(() => {
     const el = hatRef.current;
     if (!el || placement !== 'corner') return;
-    const room = el.getBoundingClientRect().left - inward;
-    const next = Math.max(0, Math.ceil(clipLeft(el) + CLIP_MARGIN - room));
+    const edge = clipLeft(el);
+    const cardLeft = el.offsetParent?.getBoundingClientRect().left ?? 0;
+    const hatLeft = el.getBoundingClientRect().left - inward;
+    // Never more than the hat hangs past its card, and none for a card already scrolled out of
+    // view: its hat goes with it instead of crossing the scroller.
+    const next =
+      cardLeft < edge - 1
+        ? 0
+        : Math.ceil(
+            Math.min(Math.max(0, cardLeft - hatLeft), Math.max(0, edge + CLIP_MARGIN - hatLeft))
+          );
     if (next !== inward) setInward(next);
   });
   const layout =
