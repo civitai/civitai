@@ -294,6 +294,10 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'download/attachments/[fileId].ts',
   'download/models/[modelVersionId].ts',
   'download/vault/[vaultItemId].ts',
+  // `{ error: COVER_LISTING_UNREADABLE }`: a shared constant from `@civitai/app-assistant`, text
+  // WE wrote, behind the runner's secret + a run grant; a caught error's own text never reaches
+  // the body — asserted in `src/server/__tests__/assistant-runner-cover-endpoints.test.ts` (503).
+  'internal/app-assistant/cover/listing.ts',
   // ── TIER 2 — session-authed ─────────────────────────────────────────────────
   'download/user-transactions.ts',
   'media/ingest/[mediaId].ts',

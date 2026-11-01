@@ -12,7 +12,7 @@ import {
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { getRunnerDevTunnelUser } from '~/server/services/app-assistant/app-assistant.service';
 import type { VerifiedRunGrant } from '~/server/services/app-assistant/assistant-runner-tokens';
-import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
+import { readRunnerRequest, runnerAppKey } from '~/server/services/app-assistant/runner-request';
 import { listMyAppListings } from '~/server/services/blocks/app-access.service';
 import { listAppFeedbackForListing } from '~/server/services/blocks/app-feedback.service';
 import { listListingHistory } from '~/server/services/blocks/app-listing-history.service';
@@ -32,7 +32,7 @@ export function appFeedbackSourceFor(userId: number): AppFeedbackSource {
 }
 
 const grant = z.string().min(1).max(4096);
-const app = z.string().min(1).max(200);
+const app = runnerAppKey;
 const reviewBody = z.object({ grant, app });
 const userBody = z.object({
   grant,
