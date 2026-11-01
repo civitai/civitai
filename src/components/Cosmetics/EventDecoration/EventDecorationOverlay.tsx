@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type {
@@ -117,6 +117,16 @@ export function imageMediaHatClearLeft(decoration: WornDecoration, inLayer = fal
 
 const CONFETTI_COLORS = ['#fab005', '#228be6', '#e64980', '#40c057', '#fd7e14', '#be4bdb'];
 const CONFETTI_PIECES = 14;
+const CLIP_MARGIN = 2;
+
+/** The left edge of the nearest ancestor that clips sideways, or the viewport's. */
+function clipLeft(el: HTMLElement) {
+  for (let up = el.parentElement; up; up = up.parentElement) {
+    if (getComputedStyle(up).overflowX !== 'visible')
+      return Math.max(0, up.getBoundingClientRect().left);
+  }
+  return 0;
+}
 
 function CardHat({
   url,
@@ -139,6 +149,18 @@ function CardHat({
 }) {
   const [burst, setBurst] = useState(0);
   const [opened, setOpened] = useState(false);
+  const hatRef = useRef<HTMLButtonElement>(null);
+  const [inward, setInward] = useState(0);
+  // A card flush against a clipping edge (the first column on a phone) has no room for a corner
+  // hat to hang into, so the hat moves inward by what would be cut, and the card stays put.
+  // Runs every render: a carousel moves the hat without React, then re-renders it once settled.
+  useLayoutEffect(() => {
+    const el = hatRef.current;
+    if (!el || placement !== 'corner') return;
+    const room = el.getBoundingClientRect().left - inward;
+    const next = Math.max(0, Math.ceil(clipLeft(el) + CLIP_MARGIN - room));
+    if (next !== inward) setInward(next);
+  });
   const layout =
     placement === 'corner'
       ? getHatLayout(
@@ -162,12 +184,14 @@ function CardHat({
     height: layout.height,
     transform: `rotate(${layout.tilt}deg)`,
     transformOrigin: layout.origin,
+    translate: inward ? `${inward}px` : undefined,
     '--hat-grow': layout.grow,
   } as CSSProperties;
   const grows = placement === 'corner' && styles.grows;
 
   const hat = (
     <button
+      ref={hatRef}
       type="button"
       aria-label="Party hat"
       data-event-decoration="hat"
