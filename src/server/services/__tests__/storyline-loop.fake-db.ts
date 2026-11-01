@@ -456,6 +456,22 @@ export function createFakeDb() {
       return [{ exists: blocks.has(`${a}:${b}`) || blocks.has(`${c}:${d}`) }];
     }
     if (text.includes("'scores'")) return [{ score: 0 }];
+    if (text.includes('UPDATE "StorylineChapterEdge" e SET canon = false')) {
+      // `clearTombstoneTips`, one round: canon edges into removed chapters with no canon child.
+      const [frontier] = v as [number[]];
+      const tips = new Set(
+        frontier.filter(
+          (id) =>
+            tables.storylineChapter.find((c) => same(c.id, id))?.removedAt != null &&
+            !tables.storylineChapterEdge.some((e) => same(e.parentChapterId, id) && e.canon)
+        )
+      );
+      const cleared = tables.storylineChapterEdge.filter(
+        (e) => e.canon && tips.has(e.chapterId as number)
+      );
+      for (const edge of cleared) edge.canon = false;
+      return cleared.map((e) => ({ parentChapterId: e.parentChapterId }));
+    }
     if (text.includes('FROM "StorylinePendingChapter"') && text.includes('WHERE "postId" =')) {
       // The link a promotion reads, which it must lock: two writers then take turns on it.
       // Modelled only while the statement locks, so one that drops the lock is refused.

@@ -40,6 +40,7 @@ import {
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { getStorylineImageCaptions } from '~/server/services/storyline-caption.service';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
+import { clearTombstoneTips } from '~/server/services/storyline-chapter-removal.service';
 import {
   DIRECT_LIFT_APPEAL_NOTE,
   DIRECT_LIFT_APPEAL_REASON,
@@ -1251,6 +1252,12 @@ export async function removeStorylineChapter({
         DELETE FROM "StorylineChapter" WHERE id = ${chapterId}
       `;
     }
+    // A tombstone, or a leaf deleted from under one, can leave the main route ending where
+    // nothing can be added.
+    await clearTombstoneTips(
+      role === 'moderator' ? [chapterId] : parents.map((p) => p.parentChapterId),
+      tx
+    );
     if (openReportIds.length)
       await tx.$executeRaw`
         INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "storylineTitle", "chapterId",

@@ -37,6 +37,9 @@ const {
   insertStorylineChapter,
   setCanonChapter,
 } = await import('~/server/services/storyline.service');
+const { tombstoneChaptersForPlacements } = await import(
+  '~/server/services/storyline-chapter-removal.service'
+);
 const { bustFetchThroughCache } = await import('~/server/utils/cache-helpers');
 
 const migration = (name: string) =>
@@ -639,6 +642,73 @@ describe('a chapter add whose parent changes after its first read', () => {
       });
 
       expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5204, canon: true });
+    });
+
+    // A moderator's takedown of a placement, as `takeDownApproved` runs it: nothing can continue a
+    // tombstone, so the main route must not end at one.
+    describe('after a moderator takes a chapter down', () => {
+      beforeEach(() => {
+        w.storylineChapter.updateMany.mockImplementation((async ({
+          where,
+        }: {
+          where: { placementId: { in: number[] } };
+        }) => {
+          const { affectedRows } = await db.pg.query(
+            `UPDATE "StorylineChapter" SET "removedAt" = now()
+             WHERE "placementId" = ANY($1::int[]) AND "removedAt" IS NULL`,
+            [where.placementId.in]
+          );
+          return { count: affectedRows ?? 0 };
+        }) as never);
+        w.storylineChapter.findMany.mockImplementation((async ({
+          where,
+        }: {
+          where: { placementId: { in: number[] } };
+        }) =>
+          rows(`SELECT id FROM "StorylineChapter" WHERE "placementId" = ANY($1::int[])`, [
+            where.placementId.in,
+          ])) as never);
+      });
+      const takeDown = async (chapterId: number, placementId: number) => {
+        await db.pg.query(`UPDATE "StorylineChapter" SET "placementId" = $2 WHERE id = $1`, [
+          chapterId,
+          placementId,
+        ]);
+        await w.$transaction((tx) =>
+          tombstoneChaptersForPlacements({ placementIds: [placementId] }, tx as never)
+        );
+      };
+      const addAtEnd = async () =>
+        addOwnerChapterAtEnd({ storylineId: STORY, postId: await post(), userId: OWNER });
+
+      it('ends the main path at the parent of a canon tip taken down, and adds there', async () => {
+        await takeDown(60, 900);
+
+        expect(await edgeOf(60)).toEqual({ parentChapterId: 6, canon: false });
+        const { chapterId } = await addAtEnd();
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 6, canon: true });
+      });
+
+      it('keeps a chapter taken down mid-route on the main path, with the chapters after it', async () => {
+        await takeDown(5, 901);
+
+        expect(await edgeOf(5)).toEqual({ parentChapterId: C, canon: true });
+        const { chapterId } = await addAtEnd();
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 60, canon: true });
+      });
+
+      it('walks up past an earlier tombstone when the leaf under it is taken down', async () => {
+        await takeDown(6, 902);
+        expect(await edgeOf(6)).toEqual({ parentChapterId: 5, canon: true });
+        await takeDown(60, 900);
+
+        expect([await edgeOf(60), await edgeOf(6)]).toEqual([
+          { parentChapterId: 6, canon: false },
+          { parentChapterId: 5, canon: false },
+        ]);
+        const { chapterId } = await addAtEnd();
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5, canon: true });
+      });
     });
 
     it('refuses rather than branch when the end moves while it adds', async () => {
