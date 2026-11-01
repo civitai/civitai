@@ -20,15 +20,8 @@ import {
  * Called only by the runner, with `Authorization: Bearer <ASSISTANT_RUNNER_SECRET>`. Body:
  *   { grant, app }   `app` the open app's key (its listing's slug)
  *
- * Re-judged on every call (`openRunnerCover`): the App Assistant gates and the App Blocks author
- * capability for the grant's user as they are now; a preview grant is refused.
- *
- *   200 `{ listing: { listingId, blockedReason, status } | null }` null: no listing of theirs
- *   400 `{ error }` the body is not that shape
- *   401 the runner's secret is missing or wrong; `invalid_grant` not a current run grant
- *   403 `refused` an App Assistant gate refuses the user, or a preview grant; `FORBIDDEN` no author
- *       capability
- *   503 `unavailable` the gates or the listing could not be read just now
+ * 200 `{ listing: { listingId, blockedReason, status } | null }` (null: no listing of theirs).
+ * Every refusal is `openRunnerCover`'s (secret, method, body, grant, user gates), or 503 `unavailable`.
  */
 const body = z.object({
   grant: z.string().min(1).max(4096),

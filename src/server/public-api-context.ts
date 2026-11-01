@@ -6,6 +6,7 @@ import { createCallerFactory } from '~/server/trpc';
 import { appRouter } from '~/server/routers';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type { Context } from '~/server/createContext';
 import type { SessionUser } from '~/types/session';
 
 // Kept out of `~/server/createContext` deliberately: this is the only piece that needs
@@ -13,7 +14,7 @@ import type { SessionUser } from '~/types/session';
 // that only wanted the `Context` type or `createContext` itself.
 const createCaller = createCallerFactory(appRouter);
 
-type CallerCache = Parameters<typeof createCaller>[0]['cache'];
+type CallerCache = NonNullable<Context['cache']>;
 
 /** A server-side caller's context: no browser origin to check, the full scope, an open signal. */
 function serverCaller(

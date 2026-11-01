@@ -8,6 +8,7 @@ import {
 import { getBase64 } from '~/utils/file-utils';
 import type { SubmitListingReadiness } from '~/server/services/blocks/publish-request.service';
 import { FLOOR_PROBLEM_CODES } from '~/shared/utils/listing-publish-floor';
+import { BUTTON_STYLE, CARD_STYLE, line } from '~/components/Apps/AppAssistant/assistantCards';
 
 /**
  * Submit for review from App Assistant: the user's press on the card a `submit_for_review` call shows
@@ -265,11 +266,6 @@ interface Card {
   withdrawn?: true;
 }
 
-const CARD_STYLE =
-  'border:1px solid var(--civitai-color-border, #8884);border-radius:8px;padding:8px 12px;margin:4px 0';
-const BUTTON_STYLE =
-  'min-height:44px;margin-top:8px;padding:0 16px;border-radius:6px;border:0;cursor:pointer;font:inherit;font-weight:600;color:#fff;background:var(--civitai-color-primary, #228be6)';
-
 /**
  * The Submit for review cards. Only the offer the latest `submit_for_review` made gets a button, and
  * only until anything else happens in the conversation: the checks it passed were of the app as it
@@ -278,13 +274,6 @@ const BUTTON_STYLE =
 export function createSubmitCards({ prepare, send }: SubmitCardsDeps): SubmitCards {
   const cards = new Map<string, Card>();
   let open: { id: string; sandbox: string } | null = null;
-
-  const line = (text: string, role: 'status' | 'alert' | null = null) => {
-    const el = document.createElement('div');
-    el.textContent = text;
-    if (role) el.setAttribute('role', role);
-    return el;
-  };
 
   const show = (card: Card, ...children: HTMLElement[]) => {
     const title = document.createElement('div');

@@ -1,5 +1,11 @@
 import type { ChatToolCall, ChatToolResult } from '@civitai/components-chat/civitai-chat';
 import { coverErrorMessage, coverOfferOf, type CoverOffer } from '@civitai/app-assistant';
+import {
+  BUTTON_STYLE,
+  CARD_STYLE,
+  SECONDARY_STYLE,
+  line,
+} from '~/components/Apps/AppAssistant/assistantCards';
 
 /**
  * The card a `generate_app_cover` offer shows; its press is the one that makes the cover (the rule:
@@ -39,12 +45,8 @@ interface Card {
   phase: Phase;
 }
 
-const CARD_STYLE =
-  'border:1px solid var(--civitai-color-border, #8884);border-radius:8px;padding:8px 12px;margin:4px 0';
-const BUTTON_STYLE =
-  'min-height:44px;margin-top:8px;margin-right:8px;padding:0 16px;border-radius:6px;border:0;cursor:pointer;font:inherit;font-weight:600;color:#fff;background:var(--civitai-color-primary, #228be6)';
-const SECONDARY_STYLE =
-  'min-height:44px;margin-top:8px;padding:0 16px;border-radius:6px;border:1px solid var(--civitai-color-border, #8884);cursor:pointer;font:inherit;background:transparent;color:inherit';
+// The cover card has two buttons side by side.
+const OFFER_BUTTON_STYLE = `${BUTTON_STYLE};margin-right:8px`;
 
 /**
  * The cover offer cards. A press runs once: the button goes as it is pressed, and nothing on the card
@@ -53,13 +55,6 @@ const SECONDARY_STYLE =
 export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCards {
   const cards = new Map<string, Card>();
   const live = new Set<string>();
-
-  const line = (text: string, role: 'status' | 'alert' | null = null) => {
-    const el = document.createElement('div');
-    el.textContent = text;
-    if (role) el.setAttribute('role', role);
-    return el;
-  };
 
   // textContent only: the prompt is the assistant's text.
   const show = (card: Card, ...children: HTMLElement[]) => {
@@ -78,7 +73,7 @@ export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCar
     const yes = document.createElement('button');
     yes.type = 'button';
     yes.textContent = coverButtonText(card.offer);
-    yes.style.cssText = BUTTON_STYLE;
+    yes.style.cssText = OFFER_BUTTON_STYLE;
     yes.addEventListener('click', () => void press(card));
     const no = document.createElement('button');
     no.type = 'button';

@@ -151,6 +151,9 @@ describe('the store cover card', () => {
     const s = setup();
     const offer = await s.call({ prompt: 'a calculator' }, { subagent: 'dispatch-1' });
     const card = s.render(offer)!;
+    // Settled: the offer read the listing and the card is drawn, so no button is final.
+    await vi.waitFor(() => expect(s.offerListing).toHaveBeenCalledTimes(1));
+    expect(card.textContent).toContain(COVER_OFFER_NOT_LIVE);
     expect(buttons(card)).toEqual([]);
     expect(s.generate).not.toHaveBeenCalled();
   });
