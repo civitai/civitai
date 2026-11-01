@@ -1078,6 +1078,11 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
   );
 }
 
+/** The entity id every feature-flag evaluation passes to Flipt for this user. */
+function fliptEntityId(user?: SessionUser): string {
+  return user ? String(user.id) : 'anonymous';
+}
+
 const hasFeature = (
   key: FeatureFlagKey,
   { user, req, host = req?.headers.host }: FeatureAccessContext,
@@ -1122,7 +1127,7 @@ const hasFeature = (
   if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
     const fliptResult = _fliptModule.isFliptSync(
       feature.fliptKey,
-      user ? String(user.id) : 'anonymous',
+      fliptEntityId(user),
       fliptContext
     );
     if (fliptResult !== null) {
@@ -1190,6 +1195,20 @@ export type FeatureAccess = Record<FeatureFlagKey, boolean>;
  * so a single lazy request reuses one context across every accessed key, exactly
  * as eager reuses it across every key.
  */
+/**
+ * `fliptContext` as `prepareFliptContext` returns it: a frozen copy carrying its Flipt eval-cache
+ * key, so evaluating every flag for this user builds that key once. Same values, same cache
+ * entries. The plain context when the Flipt module (or a test's stand-in for it) has no
+ * `prepareFliptContext`.
+ */
+function prepareForFlipt(
+  user: SessionUser | undefined,
+  fliptContext: Record<string, string>
+): Record<string, string> {
+  const prepare = _fliptModule?.prepareFliptContext;
+  return typeof prepare === 'function' ? prepare(fliptEntityId(user), fliptContext) : fliptContext;
+}
+
 function isFeatureFlagKeyPresent(
   key: FeatureFlagKey,
   ctx: FeatureAccessContext,
@@ -1202,8 +1221,9 @@ function isFeatureFlagKeyPresent(
 }
 
 function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
-  // Build the Flipt context once and reuse for every flag (was rebuilt per flag).
-  const fliptContext = buildFliptContext(ctx.user);
+  // Build the Flipt context once and reuse for every flag (was rebuilt per flag). Prepared so the
+  // eval-cache key it implies is also built once, not once per flag.
+  const fliptContext = prepareForFlipt(ctx.user, buildFliptContext(ctx.user));
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
     // Delegate the per-key decision to the shared evaluator so eager output is

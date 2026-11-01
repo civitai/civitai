@@ -81,6 +81,16 @@ app that gates on them (the monolith's list is `FLIPT_FEATURE_FLAGS` in
   monolith exports these as `civitai_app_flipt_eval_cache_*` (see
   `src/server/metrics/flipt-eval-cache.metrics.ts`); `misses - expiredMisses` is an upper bound on
   cold traffic, not a measurement of it.
+- **Two per-snapshot shortcuts sit in front of the TTL cache**, for boolean evaluations only. Both are
+  rebuilt when the engine applies a new snapshot (so they follow a flag change at the next poll, with
+  no TTL on top), work with `FLIPT_EVAL_CACHE_TTL_MS=0`, skip `cacheBypass` flags, and switch
+  themselves off if the SDK's engine cannot be hooked:
+  - a key the engine does not list is evaluated once per snapshot; later calls rethrow that error, so
+    callers see the same `false` / `null` / `onEvalError` as before without a throwing wasm call each.
+  - with `noRolloutFastPathSwitch` ON, a boolean flag with no rollouts returns its `enabled` — what the
+    engine returns for it for every entity and context — without the wasm call.
+- **Evaluating many flags for one subject?** Pass `prepareFliptContext(entityId, context)` as the
+  context: the eval-cache key part that depends on the context is then built once, not per flag.
 - **`FLIPT_EVAL_CACHE_TTL_MS` is parsed with `parseInt`**: `"0.5"` → `0` (cache off) and `"1e4"` → `1`.
   The resolved value is logged through the factory's `log` on startup — read it if behavior surprises you.
 - After an init failure the client stays `null` for `failureCooldownMs` (30s) and every read returns

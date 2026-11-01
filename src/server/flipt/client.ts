@@ -1,4 +1,4 @@
-import { createFliptClient } from '@civitai/flipt';
+import { createFliptClient, prepareFliptContext } from '@civitai/flipt';
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
@@ -272,6 +272,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
   // at most once per 5s per process.
   FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
+  // Lets a boolean evaluation of a flag with no rollouts in the current snapshot return the
+  // flag's `enabled` without the wasm call — the value the engine returns for such a flag for
+  // every entity and context (`noRolloutFastPathSwitch` in @civitai/flipt). DEFAULT-OFF: read by
+  // the Flipt client itself, straight from the engine (no entity, no context), at most once per
+  // 5s per process; an unknown key reads as off. Not read through `isFliptSync`, so it cannot
+  // recurse into the path it gates.
+  //
+  // Add the key (enabled: false) to flag state before this code serves traffic. A missing key
+  // reads as off, at the cost of one throwing engine call per 5s per process.
+  FLIPT_SKIP_NOROLLOUT_EVAL = 'flipt-skip-norollout-eval',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path
@@ -547,6 +557,7 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
   url: env.FLIPT_URL,
   clientToken: env.FLIPT_FETCHER_SECRET,
   cacheBypass: FLIPT_EVAL_CACHE_BYPASS,
+  noRolloutFastPathSwitch: FLIPT_FEATURE_FLAGS.FLIPT_SKIP_NOROLLOUT_EVAL,
   onInitError: (error) => {
     logToAxiom(
       {
@@ -583,6 +594,8 @@ export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
 export const ensureFliptInitialized = flipt.ensureInitialized;
+// Build a context's eval-cache key once for many evaluations of one subject (see the package).
+export { prepareFliptContext };
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.
 export const getFliptCacheStats = flipt.getCacheStats;

@@ -108,11 +108,19 @@ export function fliptCacheKey(
   entityId: string,
   context: Record<string, string>
 ): string {
+  return flag + fliptCacheKeySuffix(entityId, context);
+}
+
+/**
+ * Everything in `fliptCacheKey` after the flag key. It depends only on (entityId, context), so a
+ * caller evaluating many flags for one subject can build it once (`prepareFliptContext`).
+ */
+export function fliptCacheKeySuffix(entityId: string, context: Record<string, string>): string {
   const keys = Object.keys(context);
-  if (keys.length === 0) return `${flag}|${encodeURIComponent(entityId)}`;
+  if (keys.length === 0) return `|${encodeURIComponent(entityId)}`;
   const ctx = keys
     .sort()
     .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(context[k])}`)
     .join('&');
-  return `${flag}|${encodeURIComponent(entityId)}|${ctx}`;
+  return `|${encodeURIComponent(entityId)}|${ctx}`;
 }
