@@ -2,7 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { verifier } from '$lib/server/auth/verifier';
 import { familyId } from '@civitai/auth';
-import { refuseModerationAccount, reissueSession, SESSION_COOKIE } from '$lib/server/auth/session';
+import { readHubSession, refuseModerationAccount, reissueSession } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { acceptHubSession, markFamilyLive } from '$lib/server/auth/lineage';
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
@@ -19,7 +19,7 @@ import { readInternalCaller } from '$lib/server/auth/s2s';
 export const POST: RequestHandler = async ({ request, cookies }) => {
   const internal = await readInternalCaller(request);
   const bearer = internal ? undefined : bearerToken(request);
-  const token = internal ? internal.token : bearer || cookies.get(SESSION_COOKIE);
+  const token = internal ? internal.token : bearer || readHubSession(cookies)?.value;
   if (!token) error(401, 'unauthorized');
 
   const claims = await verifier.verifyToken(token).catch(() => null);

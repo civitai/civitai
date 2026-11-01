@@ -2623,6 +2623,11 @@ export const REDIS_SYS_KEYS = {
     // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
     DEVICE_FAMILIES: 'session:device-families',
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
+    // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
+    // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
+    HUB_UPGRADE: 'session:hub-upgrade',
+    // `session:hub-upgrade-lock:${sha256(jti)}` → held (SET NX, short TTL) by the one request minting that session.
+    HUB_UPGRADE_LOCK: 'session:hub-upgrade-lock',
     // Single-use identity for an in-flight authorization whose spoke is OUTSIDE the hub's cookie scope
     // (e.g. civitai.red) — `session:pending-authz:${id}` → { userId, domain }, short TTL, deleted once
     // spent. Carries the just-authenticated user from the login callback to /api/auth/oauth/authorize
