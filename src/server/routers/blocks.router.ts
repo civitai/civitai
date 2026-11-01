@@ -386,6 +386,10 @@ import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  assertGenerationInputsUsable,
+  opaqueInputUrlsIn,
+} from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sessionClient } from '~/server/auth/session-client';
@@ -6749,6 +6753,13 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
+      if (input.body.kind === 'workflow' || input.body.kind === 'step')
+        await assertStepOrWorkflowInputsUsable(input.body, claims, {
+          confirmedSubmit:
+            input.body.kind === 'step' &&
+            isPassThroughStepBody(input.body) &&
+            input.body.quoteId !== undefined,
+        });
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -9488,6 +9499,8 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
+  if (input.body.kind === 'workflow' || input.body.kind === 'step')
+    await assertStepOrWorkflowInputsUsable(input.body, claims);
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -10634,6 +10647,42 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  */
 function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
+}
+
+/** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
+async function assertStepOrWorkflowInputsUsable(
+  body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
+  claims: BlockClaims,
+  /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
+  { confirmedSubmit = false }: { confirmedSubmit?: boolean } = {}
+) {
+  // The arm's own token checks first: a caller refused those never pays for the walk below.
+  const userId = confirmedSubmit
+    ? parseSubjectUserId(claims.sub)
+    : await assertStepRequestAllowed(claims);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
+  const [entry, inputs] =
+    body.kind === 'workflow'
+      ? (['appBlocksWorkflow', [body.steps.map((step) => step.input), body.arguments]] as const)
+      : isPassThroughStepBody(body)
+      ? (['appBlocksPassThrough', body.input] as const)
+      : (['appBlocksStep', body.params] as const);
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
+  }
+  await assertGenerationInputsUsable({
+    urls,
+    userId,
+    entry,
+    isApiCaller: false,
+    opaqueInput: true,
+  });
 }
 
 /**
