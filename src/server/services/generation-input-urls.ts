@@ -300,6 +300,22 @@ function parsedProtocol(value: string) {
   return `${scheme.replace(/[\t\r\n]/g, '').toLowerCase()}:`;
 }
 
+const SPECIAL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file']);
+
+/**
+ * The host of a special-scheme `value` as a url parser takes it (up to the first `/ ? # \`), or
+ * undefined. A parser converts such a host to ASCII, at a cost of about its length squared.
+ */
+function specialHostIn(value: string) {
+  const trimmed = value.trim();
+  const match = SCHEME_LED.exec(trimmed);
+  if (!match || !SPECIAL_SCHEMES.has(match[1].replace(/[\t\r\n]/g, '').toLowerCase()))
+    return undefined;
+  const rest = trimmed.slice(match[0].length).replace(/^[/\\\t\r\n]*/, '');
+  const end = rest.search(/[/?#\\]/);
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
 /**
  * Whether `value` may name something to fetch: it parses to a fetch scheme, holds `://` or starts
  * with `//`, is key-shaped, or carries an upload key in an http(s) or scheme-less value (`keysIn`
@@ -414,6 +430,12 @@ const OPAQUE_INPUT_MAX_URLS = 4096;
 const OPAQUE_INPUT_MAX_URL_CHARS = 64 * 1024;
 /** Strings that start like a url, each parsed as one. */
 const OPAQUE_INPUT_MAX_PARSES = 32_768;
+/** A host longer than DNS allows is not one to fetch, and costs a parser the most. */
+const OPAQUE_INPUT_MAX_HOST_CHARS = 253;
+/** Characters of hosts a parser converts to ASCII (non-ASCII, `%` escapes or `xn--`), in all. */
+const OPAQUE_INPUT_MAX_IDNA_CHARS = 16 * 1024;
+// eslint-disable-next-line no-control-regex
+const IDNA_HOST = /[^\x00-\x7f]|%|xn--/i;
 
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
@@ -449,11 +471,7 @@ const SCHEMELESS_URL = /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i;
  * http(s) url (no whitespace or control bytes inside, which a url parser would silently drop), or
  * a scheme-less url on one of our hosts carrying a key.
  */
-function isWholeFetchableValue(
-  value: string,
-  budget?: DecodeBudget,
-  protocol = parsedProtocol(value)
-) {
+function isWholeFetchableValue(value: string, budget: DecodeBudget, protocol: string | undefined) {
   // eslint-disable-next-line no-control-regex
   if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
   if (protocol) return protocol === 'https:' || protocol === 'http:';
@@ -483,8 +501,12 @@ export function opaqueInputUrlsIn(value: unknown) {
   const decoded: DecodeBudget = { left: OPAQUE_INPUT_MAX_DECODED_CHARS };
   let urlChars = 0;
   let parses = 0;
-  // The gate decodes every collected value again, so their total length is bounded too.
+  let idnaChars = 0;
+  // The gate decodes every distinct collected value again, so their total length is bounded too.
+  const seen = new Set<string>();
   const collect = (url: string) => {
+    if (seen.has(url)) return;
+    seen.add(url);
     urlChars += url.length;
     if (urls.length >= OPAQUE_INPUT_MAX_URLS || urlChars > OPAQUE_INPUT_MAX_URL_CHARS)
       tooLarge = true;
@@ -529,6 +551,15 @@ export function opaqueInputUrlsIn(value: unknown) {
       // eslint-disable-next-line no-control-regex
       const controlInside = /[\u0000-\u001f\u007f]/.test(parsed);
       if (SCHEME_LED.test(parsed) && ++parses > OPAQUE_INPUT_MAX_PARSES) {
+        tooLarge = true;
+        return;
+      }
+      const host = specialHostIn(parsed);
+      if (
+        host !== undefined &&
+        (host.length > OPAQUE_INPUT_MAX_HOST_CHARS ||
+          (IDNA_HOST.test(host) && (idnaChars += host.length) > OPAQUE_INPUT_MAX_IDNA_CHARS))
+      ) {
         tooLarge = true;
         return;
       }
