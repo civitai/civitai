@@ -14,7 +14,14 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     '/', // Home page
-    '/((?!api|_next|favicon.ico|region-blocked|fonts|sounds|robots.txt|site.webmanifest).*)', // Removed 'images' exclusion to allow image pages to be processed
+    // Every page. The lookahead also skips the static files in `public/` that every page load
+    // requests — `/workers/*`, the favicons, the touch icons and `/images/<file>.<ext>` — because
+    // no middleware does anything for them: the region middlewares skip static file extensions
+    // (`shouldRunRegionMiddleware`), and the rest act on `/api/*`, on numeric detail pages, or by
+    // adding a noindex header / dropping a client-sent bot header, neither of which means anything
+    // on a static file. The `/images` file rule needs the extension: `/images`,
+    // `/images/iterate` and `/images/[imageId]` are pages and must still run the proxy.
+    '/((?!api|_next|favicon.ico|region-blocked|fonts|sounds|robots.txt|site.webmanifest|workers/|favicon-[a-z]+\\.ico$|apple-touch-icon[^/]*\\.png$|images/.+\\.(?:png|jpe?g|gif|svg|webp|ico)$).*)',
     '/moderator/:path*',
     '/testing/:path*',
     '/api/testing/:path*',
@@ -25,7 +32,8 @@ export const config = {
     '/api/v1/:path*',
     // Viewer page data for static shells: needs the region block the page itself gets.
     '/api/page-data/:path*',
-    '/images/:path*', // Explicitly include image pages for region blocking
+    // No `/images/:path*` entry: the image PAGES are matched by the page pattern above, and an
+    // entry here would put the static `/images/<file>` requests back through the proxy.
     // '/models/:path*',
     '/user/:path*',
   ],
