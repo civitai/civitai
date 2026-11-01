@@ -25,7 +25,9 @@ import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrap
 
 const hat = { type: 'hat', event: 'birthday2026', url: 'hat' };
 const rect = (el: Element | null | undefined) => el!.getBoundingClientRect();
-const hats = () => [...document.querySelectorAll('button[data-event-decoration="hat"]')];
+const hats = () => [
+  ...document.querySelectorAll<HTMLButtonElement>('button[data-event-decoration="hat"]'),
+];
 
 function Card({ i }: { i: number }) {
   return (
