@@ -1,4 +1,4 @@
-import { SimpleGrid, Stack, Text } from '@mantine/core';
+import { Button, Group, Paper, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconHanger, IconPlus } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
@@ -48,6 +48,10 @@ export function MyEventHats({
       component: PlaceHatModal,
       props: { event, hat, myHats: hats },
     });
+  const minutesLeft = (hat: MyHat) =>
+    minutesUntilMovable(hat.moveCooldownLeftMs, now.getTime() - fetchedAt);
+  const idleHat =
+    !ended && hats.every((h) => !h.placedOn) ? hats.find((h) => minutesLeft(h) === 0) : undefined;
 
   return (
     <Stack gap="md">
@@ -66,6 +70,32 @@ export function MyEventHats({
         }
       />
 
+      {idleHat && (
+        <Paper
+          withBorder
+          p="md"
+          radius="md"
+          style={{ borderColor: teamColor }}
+          data-testid="idle-hat-cta"
+        >
+          <Group justify="space-between" wrap="wrap" gap="sm">
+            <Stack gap={2}>
+              <Text fw={700}>Put your hat on something</Text>
+              <Text size="sm" c="dimmed">
+                A hat scores for your team once it&apos;s on one of your images, models or articles.
+              </Text>
+            </Stack>
+            <Button
+              color={teamColor}
+              leftSection={<IconHanger size={16} />}
+              onClick={() => openPicker(idleHat)}
+            >
+              Place your hat
+            </Button>
+          </Group>
+        </Paper>
+      )}
+
       {heldBoxes.map((box) => (
         <MysteryBoxCard key={box.boxDefinitionId} event={event} view={box} color={teamColor} />
       ))}
@@ -82,7 +112,7 @@ export function MyEventHats({
             key={`${hat.cosmeticId}:${hat.claimKey}`}
             hat={hat}
             color={teamColor}
-            minutesLeft={minutesUntilMovable(hat.moveCooldownLeftMs, now.getTime() - fetchedAt)}
+            minutesLeft={minutesLeft(hat)}
             onPlace={() => openPicker(hat)}
           />
         ))}
