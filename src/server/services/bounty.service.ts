@@ -1115,6 +1115,7 @@ function logBountyPayoutError({
   name = 'bounty-refund',
   transactionPrefix,
   type = 'error',
+  details,
 }: {
   bountyId: number;
   userId?: number | null;
@@ -1122,8 +1123,10 @@ function logBountyPayoutError({
   name?: 'bounty-refund' | 'bounty-award';
   transactionPrefix?: string;
   type?: 'error' | 'warning';
+  details?: MixedObject;
 }) {
   logToAxiom({
+    ...details,
     name,
     type,
     message: `Bounty ${bountyId}: ${message}`,
@@ -1212,7 +1215,7 @@ export async function refundBountyBenefactorFunds({
       } else if (includeLegacy) {
         await refundLegacyBenefactor({ bountyId, userId, unitAmount, description });
       } else if (!(await getTransactionByExternalId(legacyRefundKey(bountyId, userId)))) {
-        // Waiting on a moderator once a day old: a warning, so the retry job does not flood errors.
+        // A warning, not an error, so the retry job does not flood errors while a moderator is pending.
         const waiting =
           !!recordedAt && recordedAt.getTime() <= Date.now() - MODERATOR_RELEASE_AFTER_MS;
         logBountyPayoutError({
@@ -1233,14 +1236,6 @@ export async function refundBountyBenefactorFunds({
   }
   return outcome;
 }
-
-/**
- * Set days after the release that added `legacyRefundKey` was served: a refund recorded later was
- * only ever attempted under that key, so a retry may pay its legacy supporters under it. A refund is
- * recorded once, when the bounty becomes refunded. Late is safe; never move it earlier, which could
- * pay a supporter twice.
- */
-export const LEGACY_REFUND_KEYED_SINCE = new Date('2026-11-10T00:00:00Z');
 
 /** How long a payout waits before a moderator may release it for a manual ruling. */
 const MODERATOR_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -1491,8 +1486,7 @@ async function payAwardingSupporter(bountyId: number, supporter: AwardedFunds, p
 /**
  * Moves the Buzz for a recorded award or refund and stamps `payoutSettledAt`. Safe to repeat: awards
  * pay under fixed keys and refunds treat an already-refunded charge as done. Returns whether the
- * bounty owes nothing more. `firstAttempt` is false for retries, which pay legacy refunds only for
- * a refund recorded after `LEGACY_REFUND_KEYED_SINCE`.
+ * bounty owes nothing more. `firstAttempt` is false for retries, which never pay legacy refunds.
  */
 export async function settleBountyPayout(
   bountyId: number,
@@ -1520,9 +1514,7 @@ export async function settleBountyPayout(
             bountyId,
             currency: Currency.BUZZ,
             onlyUnawarded: true,
-            includeLegacy:
-              firstAttempt ||
-              (bounty.payoutRecordedAt?.getTime() ?? 0) > LEGACY_REFUND_KEYED_SINCE.getTime(),
+            includeLegacy: firstAttempt,
             description: refundDescription,
             recordedAt: bounty.payoutRecordedAt,
           })
@@ -1749,17 +1741,14 @@ export async function releaseStuckBountyAward(
  * Moderator exit for a refund that waits only on legacy supporters the ledger cannot confirm were
  * refunded: an attempt made before `legacyRefundKey` may or may not have paid them, and no retry
  * pays them. Records each for a manual ruling, as an unpaid award with no winner, and stamps the
- * refund settled. Pays no legacy supporter. A ruling must first check the ledger for
- * `legacyRefundKey`, since a concurrent first attempt may have paid. Applies only to a refund at least
- * a day old and recorded at or before `LEGACY_REFUND_KEYED_SINCE`, whose only failures are those
- * supporters on two reads. Returns the recorded count, or null when it does not apply.
+ * refund settled; pays no one. A ruling must first check the ledger for `legacyRefundKey`, since a
+ * concurrent first attempt may have paid. Returns the recorded count, or null when it does not apply.
  */
 export async function releaseUnconfirmedBountyRefund(
   bountyId: number,
   moderatorId: number,
   now = Date.now()
 ) {
-  // The record is what the ruling reads; without its table there is no release.
   if (!(await bountyUnpaidAwardTableExists(dbWrite))) return null;
   const read = await dbWrite.bounty.findUnique({
     where: { id: bountyId },
@@ -1770,8 +1759,7 @@ export async function releaseUnconfirmedBountyRefund(
     !read?.refunded ||
     !isPayoutPending(read) ||
     !recordedAt ||
-    recordedAt > now - MODERATOR_RELEASE_AFTER_MS ||
-    recordedAt > LEGACY_REFUND_KEYED_SINCE.getTime()
+    recordedAt > now - MODERATOR_RELEASE_AFTER_MS
   )
     return null;
 
@@ -1822,16 +1810,16 @@ export async function releaseUnconfirmedBountyRefund(
   if (!claimed) return null;
 
   for (const supporter of unconfirmed)
-    await logToAxiom({
-      name: 'bounty-refund',
-      type: 'error',
-      message: `Bounty ${bountyId}: refund to user ${supporter.userId} is not confirmed on the ledger; recorded for a manual ruling`,
+    logBountyPayoutError({
       bountyId,
       userId: supporter.userId,
-      unitAmount: supporter.unitAmount,
-      refundKey: legacyRefundKey(bountyId, supporter.userId),
-      moderatorId,
-    }).catch(() => null);
+      message: `refund to user ${supporter.userId} is not confirmed on the ledger; recorded for a manual ruling`,
+      details: {
+        unitAmount: supporter.unitAmount,
+        refundKey: legacyRefundKey(bountyId, supporter.userId),
+        moderatorId,
+      },
+    });
   return { unconfirmedRefunds: unconfirmed.length };
 }
 

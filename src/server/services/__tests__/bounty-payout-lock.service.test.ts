@@ -75,7 +75,6 @@ const { awardBountyEntry, deleteBountyEntry } = await import(
 const {
   addBenefactorUnitAmount,
   deleteBountyById,
-  LEGACY_REFUND_KEYED_SINCE,
   refundBounty,
   refundBountyBenefactorFunds,
   releaseStuckBountyAward,
@@ -970,7 +969,7 @@ describe('settleBountyPayout — the winner and the money basis', () => {
 
     it('leaves the bounty pending when a retry cannot confirm a legacy refund', async () => {
       benefactors[0].buzzTransactionId = [];
-      bounty!.payoutRecordedAt = LEGACY_REFUND_KEYED_SINCE;
+      bounty!.payoutRecordedAt = new Date();
       expect(await settleBountyPayout(4)).toBe(false);
       expect(bounty?.payoutSettledAt).not.toBeInstanceOf(Date);
       expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
@@ -2183,10 +2182,10 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
 
 describe('a refund whose legacy supporter no retry can confirm', () => {
   const HOUR = 60 * 60 * 1000;
-  const cutoff = LEGACY_REFUND_KEYED_SINCE.getTime();
+  // Any date: no date makes a retry pay a supporter without a charge id.
+  const base = Date.parse('2026-12-01T00:00:00Z');
   const moderatorDelete = () => deleteBountyById({ id: 4, isModerator: true, userId: 99 });
-  // Supporter 5 has no charge id; 6 has one. The refund was recorded before the cutoff.
-  const recordRefund = (recordedAt = cutoff - 3 * 24 * HOUR) => {
+  const recordRefund = (recordedAt = base - 3 * 24 * HOUR) => {
     benefactors[0].buzzTransactionId = [];
     Object.assign(bounty!, {
       userId: 3,
@@ -2199,29 +2198,25 @@ describe('a refund whose legacy supporter no retry can confirm', () => {
   const at = (time: number) => vi.useFakeTimers({ toFake: ['Date'], now: time });
   afterEach(() => vi.useRealTimers());
 
-  // See LEGACY_REFUND_KEYED_SINCE: moving it earlier can pay a supporter twice.
-  it('is set to a fixed date after the key shipped', () => {
-    expect(LEGACY_REFUND_KEYED_SINCE.toISOString()).toBe('2026-11-10T00:00:00.000Z');
-  });
-
-  describe('recorded after the cutoff', () => {
-    it('a retry refunds it under the fixed key and settles', async () => {
-      recordRefund(cutoff + HOUR);
-      at(cutoff + 2 * HOUR);
-      expect(await settleBountyPayout(4)).toBe(true);
-      expect(buzz.createBuzzTransaction).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({
-          toAccountId: 5,
-          amount: 100,
-          externalTransactionId: 'bounty-refund-b4-u5',
-        })
-      );
-      expect(isPayoutPending(bounty!)).toBe(false);
-    });
+  it('a retry with no keyed refund on the ledger moves no Buzz and reports it unconfirmed', async () => {
+    recordRefund(base - HOUR);
+    at(base);
+    expect(await settleBountyPayout(4)).toBe(false);
+    expect(
+      await refundBountyBenefactorFunds({
+        bountyId: 4,
+        currency: 'BUZZ',
+        onlyUnawarded: true,
+        includeLegacy: false,
+      })
+    ).toMatchObject({ failed: [5], unconfirmed: [5] });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(isPayoutPending(bounty!)).toBe(true);
   });
 
   it('logs an error while the refund is under a day old, then a warning', async () => {
-    const recordedAt = cutoff - 3 * 24 * HOUR;
+    const recordedAt = base - 3 * 24 * HOUR;
     recordRefund(recordedAt);
     const level = () =>
       loggingMock.logToAxiom.mock.calls
@@ -2236,7 +2231,7 @@ describe('a refund whose legacy supporter no retry can confirm', () => {
   });
 
   describe('a moderator release', () => {
-    beforeEach(() => at(cutoff - 24 * HOUR));
+    beforeEach(() => at(base));
 
     it('records the supporter for a ruling, settles the refund, keeps the bounty, and pays nothing', async () => {
       recordRefund();
@@ -2268,8 +2263,7 @@ describe('a refund whose legacy supporter no retry can confirm', () => {
     };
 
     it('refuses a refund under a day old', async () => {
-      recordRefund(cutoff - 25 * HOUR);
-      at(cutoff - 2 * HOUR);
+      recordRefund(base - 23 * HOUR);
       await refuses();
     });
 
@@ -2279,23 +2273,14 @@ describe('a refund whose legacy supporter no retry can confirm', () => {
       await refuses();
     });
 
-    it('refuses a refund recorded after the cutoff, which a retry pays instead', async () => {
-      recordRefund(cutoff + HOUR);
-      at(cutoff + 30 * HOUR);
-      expect(await releaseUnconfirmedBountyRefund(4, 99)).toBeNull();
-      expect(unpaidAwards.size).toBe(0);
-      expect(isPayoutPending(bounty!)).toBe(true);
-    });
-
     it('refuses while another refund is failing too', async () => {
       recordRefund();
       buzz.refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
       await refuses();
     });
 
-    it('releases a refund recorded at the cutoff itself, which no retry pays', async () => {
-      recordRefund(cutoff);
-      at(cutoff + 25 * HOUR);
+    it('releases a refund exactly a day old', async () => {
+      recordRefund(base - 24 * HOUR);
       expect(await releaseUnconfirmedBountyRefund(4, 99)).toEqual({ unconfirmedRefunds: 1 });
     });
 
