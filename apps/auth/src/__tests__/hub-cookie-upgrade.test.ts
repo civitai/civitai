@@ -537,6 +537,7 @@ describe('a new sign-in of the same account in shared mode after its copied sess
     sharedSession();
     const cookies = jar({ [SHARED()]: J0 });
     await authorize(cookies);
+    expect(cookies.get(HOST())).toBeDefined();
     await h.sys.hSet(REDIS_SYS_KEYS.SESSION.FAMILY_STATE, 'j0', 'invalid');
     cookies.values.delete(SHARED());
 

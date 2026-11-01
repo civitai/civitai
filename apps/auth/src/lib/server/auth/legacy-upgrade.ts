@@ -26,7 +26,7 @@ import { signatureVerifier, verifier } from './verifier';
 // The hub moves its own session from the shared slot (Domain=<registrable>) to its host-only slot. Before the hub
 // reads the host-only slot first, /authorize copies the shared session into it (preUpgradeHubSession). Once it
 // does, a browser still carrying only a shared-slot token is moved over on its next hub request
-// (upgradeHubSession), and that token is ended so it can't be replayed.
+// (upgradeHubSession); with AUTH_RETIRE_SHARED_SESSION on, that token is also ended.
 
 const UPGRADE_RESULT_TTL_S = 60;
 const UPGRADE_LOCK_TTL_S = 5;
@@ -220,7 +220,7 @@ async function finish(
   await recordFamily(cookies, familyId(j0));
   const retire = retireSharedSession();
   if (retire) await sessions.invalidateToken(j0.jti!, Number(j0.sub)).catch(() => undefined);
-  // Only the minting request starts the 60s: a replay re-arming it would keep the ended token usable forever.
+  // Only the minting request starts the TTL: a replay re-arming it would keep an ended token usable indefinitely.
   if (won) {
     await evalSys(EXPIRE_SCRIPT, [resultKey(j0.jti!)], [String(UPGRADE_RESULT_TTL_S)]).catch(
       () => undefined
