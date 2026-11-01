@@ -190,8 +190,8 @@ export const processEnqueuedComicPanelsJob = createJob(
             // Cap reference images (simple slice)
             const images = (referenceImages || []).slice(0, maxReferenceImages || 3);
 
-            // The stored urls were checked at enqueue; an image may have been blocked or
-            // hidden since.
+            // The one generation input check on a queued panel's stored reference urls: enqueue
+            // only drops blocked images, and an image may have been blocked or hidden since.
             try {
               await assertGenerationInputsUsable({
                 urls: images.map((image: { url?: string }) => image?.url),

@@ -2023,7 +2023,12 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
           },
           {
             role: 'assistant',
-            tool_calls: [{ id: `call_${KEY}`, arguments: `{"u":"https://example.com/a.png"}` }],
+            tool_calls: [
+              {
+                id: 'call_0c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f',
+                arguments: `{"u":"https://example.com/a.png"}`,
+              },
+            ],
           },
           { role: 'tool', tool_call_id: 'f3a9c2e1-0b4d-4e6f-9a8b-7c6d5e4f3a2b', content: 'ok' },
         ],

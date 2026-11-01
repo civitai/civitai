@@ -16,6 +16,7 @@ import {
 } from '~/server/services/image-url-ownership';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
+import { EXTERNAL_LINK_INTERSTITIAL_PATH } from '~/utils/external-link';
 
 export const GENERATION_IMAGE_UNAVAILABLE_MESSAGE =
   'One of the images for this generation is no longer available. Please choose or upload another.';
@@ -320,30 +321,21 @@ export function generationInputUrlsIn(value: unknown, out: string[] = [], depth 
   return out;
 }
 
+/** `value` as a WHATWG url parser reads it: C0 controls and spaces trimmed, tab/LF/CR removed. */
+const asUrlParserReads = (value: string) =>
+  // eslint-disable-next-line no-control-regex
+  value.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '');
+
+/** Batches of `MAX_KEYS` image-only keys one check reads before it refuses outright. */
+const IMAGE_ONLY_KEY_BATCHES = 4;
+
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
 
-/** Every `//`-led url in a text, up to the next whitespace, quote or angle bracket. */
-const URL_IN_TEXT = /(?:[a-z][a-z0-9+.-]*:)?\/\/[^\s"'<>`]+/gi;
-
-/**
- * The image CDN urls a text carries among other words (a multi-line node input, a JSON string):
- * a consumer may split such text and fetch them. Other hosts in prose are left alone.
- */
-function imageCdnUrlsInText(text: string) {
-  if (!text.includes('//')) return [];
-  const cdnHosts = imageCdnHosts();
-  return (text.match(URL_IN_TEXT) ?? []).filter((candidate) => {
-    const host = candidate
-      .replace(/^[a-z][a-z0-9+.-]*:/i, '')
-      .slice(2)
-      .split(/[/?#\\]/)[0]
-      .split('@')
-      .pop()!
-      .toLowerCase()
-      .replace(/\.(?=(:\d+)?$)/, '');
-    return cdnHosts.includes(host);
-  });
+/** Whether a host is one of ours, any subdomain, a trailing dot ignored. */
+function isCivitaiHostname(host: string) {
+  const name = host.toLowerCase().replace(/\.$/, '');
+  return CIVITAI_IMAGE_HOSTS.some((h) => name === h || name.endsWith(`.${h}`));
 }
 
 /**
@@ -355,6 +347,8 @@ function isPlainPageLink(url: string) {
   if (keysIn(url).length) return false;
   try {
     const { pathname, search, hash } = new URL(url);
+    // The external-link interstitial shows its target; it never fetches or redirects.
+    if (pathname === EXTERNAL_LINK_INTERSTITIAL_PATH) return true;
     return !carriesUrl(pathname + search + hash);
   } catch {
     return false;
@@ -365,23 +359,27 @@ function isPlainPageLink(url: string) {
 const SCHEMELESS_URL = /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i;
 
 /**
- * Whether `value` is itself something to fetch, not text that mentions one: exactly an http(s)
- * url (no whitespace or control bytes anywhere, which the url parser would silently drop), or a
- * scheme-less url carrying a key. A bare uuid is not collected: our server expands keys to CDN
- * urls before anything reaches the orchestrator, so a uuid there names something else.
+ * Whether a trimmed `value` is itself something to fetch, not text that mentions one: exactly an
+ * http(s) url (no whitespace or control bytes inside, which a url parser would silently drop), or
+ * a scheme-less url on one of our hosts carrying a key.
  */
 function isWholeFetchableValue(value: string) {
   // eslint-disable-next-line no-control-regex
   if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
   const protocol = parsedProtocol(value);
   if (protocol) return protocol === 'https:' || protocol === 'http:';
-  return SCHEMELESS_URL.test(value) && keysIn(value).length > 0;
+  return (
+    SCHEMELESS_URL.test(value) && isCivitaiHostname(value.split('/')[0]) && keysIn(value).length > 0
+  );
 }
 
 /**
- * Every whole url or key in an orchestrator-native input, under any field name (a field name
- * says nothing there: any step can `$ref` any field). `tooDeep` when the input nests past the
- * walk's bound, so a caller can refuse rather than pass what it did not read.
+ * What an orchestrator-native input may fetch, under any field name (a field name says nothing
+ * there: any step can `$ref` any field). A string that is a url is collected whole (trimmed). Any
+ * other string is text, which a consumer may still split into urls, so every upload key in it is
+ * collected bare, in any spelling `keysIn` reads: the gate's `opaqueInput` mode refuses those
+ * only when they name an image that fails. `tooDeep` when the input nests past the walk's bound,
+ * so a caller can refuse rather than pass what it did not read.
  */
 export function opaqueInputUrlsIn(value: unknown) {
   const urls: string[] = [];
@@ -393,8 +391,14 @@ export function opaqueInputUrlsIn(value: unknown) {
       return;
     }
     if (typeof item === 'string') {
-      if (isWholeFetchableValue(item)) urls.push(item);
-      else urls.push(...imageCdnUrlsInText(item));
+      const parsed = asUrlParserReads(item);
+      // eslint-disable-next-line no-control-regex
+      const controlInside = /[\u0000-\u001f\u007f]/.test(parsed);
+      const protocol = parsedProtocol(parsed);
+      // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
+      if (controlInside && (protocol === 'https:' || protocol === 'http:')) urls.push(parsed);
+      else if (isWholeFetchableValue(parsed)) urls.push(parsed);
+      else urls.push(...new Set(keysIn(item)));
     } else if (Array.isArray(item)) {
       for (const child of item) walk(child, depth + 1);
     } else if (typeof item === 'object') {
@@ -486,7 +490,17 @@ export async function assertGenerationInputsUsable({
   try {
     await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now });
     const imageOnlyKeys = [...externalKeys].filter((key) => !keys.has(key));
-    await assertKeysUsable({ keys: imageOnlyKeys, urls: [], userId, now, imagesOnly: true });
+    // Text can carry many unrelated uuids (tool call ids); check them in bounded batches.
+    if (imageOnlyKeys.length > MAX_KEYS * IMAGE_ONLY_KEY_BATCHES)
+      throw generationImageUnavailableError();
+    for (let i = 0; i < imageOnlyKeys.length; i += MAX_KEYS)
+      await assertKeysUsable({
+        keys: imageOnlyKeys.slice(i, i + MAX_KEYS),
+        urls: [],
+        userId,
+        now,
+        imagesOnly: true,
+      });
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });

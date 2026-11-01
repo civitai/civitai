@@ -520,9 +520,44 @@ describe('assertGenerationInputsUsable', () => {
         await opaque([`https://civitai.com/r?to=${encodeURIComponent('https://example.com/a')}`])
       ).toBe('refused');
       expect(await opaque(['https://image.civitai.com/x/original=true/a.png'])).toBe('refused');
+      // The external-link interstitial carries its target but never fetches it.
+      const out = encodeURIComponent('https://example.com/post');
+      expect(await opaque([`https://civitai.com/leaving?url=${out}`])).toBe('accepted');
+      expect(await opaque([`https://civitai.com/_next/image?url=${out}`])).toBe('refused');
+      // An http page link is the same link; an http link carrying a key is not.
+      expect(await opaque(['http://civitai.com/models/123'])).toBe('accepted');
+      expect(await opaque(['HTTP://example.com/a.png'])).toBe('accepted');
+      expect(await opaque([`HTTP://civitai.com/api/redirect/${KEY}`])).toBe('refused');
+      holder.refuseExternal = true;
+      expect(await opaque(['https://civitai.com/models/123'])).toBe('refused');
     });
 
-    it('counts an http url on an external host, and still refuses http on a civitai host', async () => {
+    it('refuses a url with a control byte inside, and counts the same url without it', async () => {
+      holder.refuseExternal = false;
+      expect(await opaque(['https://example.com/a\u0001.png'])).toBe('refused');
+      expect(await opaque(['https://example.com/a.png'])).toBe('accepted');
+    });
+
+    it('reads many unrelated uuids in batches, and refuses past the bound', async () => {
+      const uuids = (n: number) =>
+        Array.from(
+          { length: n },
+          (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+        );
+      expect(await opaque(uuids(70))).toBe('accepted');
+      expect(await opaque(uuids(257))).toBe('refused');
+    });
+
+    it('checks every url in one call, whatever comes before it', async () => {
+      holder.refuseExternal = false;
+      const counted = 'https://example.com/a.png';
+      const refused = `https://civitai.com/api/redirect/${KEY}`;
+      expect(await opaque([counted, refused])).toBe('refused');
+      expect(await opaque([refused, counted])).toBe('refused');
+      expect(await opaque([counted, 'https://example.org/b.png'])).toBe('accepted');
+    });
+
+    it('counts an http url on an external host, and still refuses http to our image CDN', async () => {
       holder.refuseExternal = false;
       expect(await opaque(['http://json-schema.org/draft-07/schema#'])).toBe('accepted');
       expect(await gate(['http://json-schema.org/draft-07/schema#'], 'appBlocksPassThrough')).toBe(
@@ -704,39 +739,44 @@ describe('opaqueInputUrlsIn', () => {
   const OKEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
   const OCDN = `https://image.civitai.com/x/${OKEY}/original=true`;
 
-  it('collects whole urls and keys under any field name, free-text names included', () => {
+  it('collects whole urls under any field name, free-text names included', () => {
     expect(
       opaqueInputUrlsIn({
         prompt: OCDN,
-        trainedWords: ['//image.civitai.com/x/y', `image.civitai.com/x/${OKEY}`],
-        image: { $ref: '$arguments', path: 'prompt', default: 'http://example.com/a.png' },
+        trainedWords: [`image.civitai.com/x/${OKEY}`],
+        image: { $ref: '$arguments', path: 'prompt', default: ' http://example.com/a.png\n' },
       }).urls
-    ).toEqual([
-      OCDN,
-      '//image.civitai.com/x/y',
-      `image.civitai.com/x/${OKEY}`,
-      'http://example.com/a.png',
+    ).toEqual([OCDN, `image.civitai.com/x/${OKEY}`, 'http://example.com/a.png']);
+  });
+
+  it('reads a whole url as a url parser does: tab, CR and LF inside are dropped', () => {
+    expect(
+      opaqueInputUrlsIn({ split: `https://image.civitai.com/x/\n${OKEY}/orig\tinal=true` }).urls
+    ).toEqual([`https://image.civitai.com/x/${OKEY}/original=true`]);
+  });
+
+  it('keeps a url with another control byte inside whole, for the gate to refuse', () => {
+    expect(opaqueInputUrlsIn({ u: 'https://example.com/a\u0001.png' }).urls).toEqual([
+      'https://example.com/a\u0001.png',
     ]);
   });
 
-  it('leaves text that only mentions a url, JSON text, AIRs and other schemes alone', () => {
+  it('collects nothing from text that names no key', () => {
     expect(
       opaqueInputUrlsIn({
         messages: [{ role: 'user', content: 'Summarize https://example.com please' }],
         tools: [{ description: 'see https://civitai.com/models/1 for details' }],
         toolCalls: [{ arguments: JSON.stringify({ url: 'https://example.com/a.png' }) }],
         note: 'note: https://example.com',
-        toolCallId: `call_${OKEY}`,
         file: 'models/model.safetensors/x',
         host: 'example.com/a.png',
-        toolCallUuid: OKEY,
+        cdnNoKey: 'see https://image.civitai.com/x/original=true/a.png now',
         chat: [
           '// fix this function\nfunction add(a, b) {}',
           'File: main.py\nprint(1)',
           'Data: the android from Star Trek',
           'Blob: a green slime monster',
           'https://github.com/a/b\nWhat does this repo do?',
-          'https://example.com/\n',
           'https://www.youtube.com/watch?v=abc summarize',
         ],
         otherSchemes: ['file:main.py', 'data:text/plain,hello', 'blob:slime', 'ws://x.y/z'],
@@ -746,15 +786,25 @@ describe('opaqueInputUrlsIn', () => {
     ).toEqual([]);
   });
 
-  it('collects image CDN urls from inside a longer text, and no other host', () => {
-    const fqdn = `https://image.civitai.com./x/${OKEY}/original=true`;
-    expect(
-      opaqueInputUrlsIn({
-        text: `first line\n${OCDN}\nhttps://example.com/b.png`,
-        json: JSON.stringify([OCDN]),
-        prose: `compare ${fqdn}, and https://civitai.com/images/1`,
-      }).urls
-    ).toEqual([OCDN, OCDN, `${fqdn},`]);
+  it.each([
+    ['a tool call id', `call_${OKEY}`],
+    ['a bare uuid in upper case', OKEY.toUpperCase()],
+    ['a path that is not ours', `v1.0/${OKEY}`],
+    ['a CDN url among words', `what is in this picture?\n${OCDN}`],
+    ['a CDN url in a JSON string', JSON.stringify({ image_url: OCDN })],
+    ['a JSON-escaped CDN url', `{"u":"https:\\/\\/image.civitai.com\\/x\\/${OKEY}"}`],
+    ['an over-escaped CDN url', `{\\"image_url\\":\\"${OCDN}\\"}`],
+    ['a percent-encoded host', `x https://image%2Ecivitai%2Ecom/x/${OKEY} y`],
+    ['a CDN url behind userinfo', `a https://evil.example\\@image.civitai.com/x/${OKEY} b`],
+    ['a CDN url with a port', `a https://image.civitai.com:443/x/${OKEY} b`],
+    ['a wrapper url in prose', `see https://wsrv.nl/?url=https://image.civitai.com/x/${OKEY}`],
+    [
+      'a key split by a tab',
+      `see https://image.civitai.com/x/${OKEY.slice(0, 9)}\t${OKEY.slice(9)}`,
+    ],
+    ['a percent-encoded key', `see ${encodeURIComponent(OCDN)}`],
+  ])('collects the key bare from %s', (_, text) => {
+    expect(opaqueInputUrlsIn({ text }).urls).toEqual([OKEY]);
   });
 
   it('reports an input nested past its bound instead of passing what it did not read', () => {
