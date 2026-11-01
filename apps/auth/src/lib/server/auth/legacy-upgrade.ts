@@ -46,8 +46,8 @@ const digest = (jti: string) => createHash('sha256').update(jti).digest('base64u
 const resultKey = (jti: string) => `${REDIS_SYS_KEYS.SESSION.HUB_UPGRADE}:${digest(jti)}`;
 const lockKey = (jti: string) => `${REDIS_SYS_KEYS.SESSION.HUB_UPGRADE_LOCK}:${digest(jti)}`;
 
-// Off until every app reads the host-only slot first (rollout step 12 everywhere). Until then a shared-slot hub
-// token is still the session other apps read, so host mode copies it but neither ends it nor expires its cookies.
+// Off until every app that reads the hub session runs with AUTH_SESSION_COOKIE_MODE=host. Until then a shared-slot
+// hub token is still the session other apps read, so host mode copies it but neither ends it nor expires its cookies.
 const retireSharedSession = () =>
   /^(true|1|on|yes)$/i.test((env.AUTH_RETIRE_SHARED_SESSION ?? '').trim());
 

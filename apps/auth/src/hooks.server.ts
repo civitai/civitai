@@ -1,5 +1,6 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 import {
+  legacyCookieReadEnabled,
   rollSlot,
   sessionCookieMode,
   sessionCookieNameForSlot,
@@ -119,7 +120,9 @@ export const handle: Handle = async ({ event, resolve }) => {
     : null;
   let token = internal ? internal.token : cookieToken;
   let slot = cookieRead?.slot;
-  const sharedToken = event.cookies.get(sessionCookieNameForSlot('shared'));
+  const sharedToken = legacyCookieReadEnabled()
+    ? event.cookies.get(sessionCookieNameForSlot('shared'))
+    : undefined;
   // Only a browser keeps the host-only cookie it is given; any other caller would be moved again on every request.
   if (
     !internal &&

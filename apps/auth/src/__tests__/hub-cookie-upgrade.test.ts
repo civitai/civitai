@@ -189,6 +189,7 @@ afterEach(() => {
   delete process.env.AUTH_SESSION_COOKIE_MODE;
   delete process.env.CIVITAI_MODERATION_USER_ID;
   delete process.env.AUTH_RETIRE_SHARED_SESSION;
+  delete process.env.AUTH_LEGACY_READ;
 });
 
 const TOKEN_STATE = REDIS_SYS_KEYS.SESSION.TOKEN_STATE;
@@ -431,6 +432,18 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
     expect(cookies.get(SHARED())).toBeUndefined();
     expect(cookies.get(SHARED_DEVICE())).toBeUndefined();
     expect(h.sys.hashes.get(REDIS_SYS_KEYS.SESSION.TOKEN_STATE)?.has('j0')).toBeFalsy();
+  });
+
+  it('with the shared slot no longer read, a shared-slot token is neither honoured nor moved', async () => {
+    process.env.AUTH_LEGACY_READ = 'false';
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0 });
+
+    const locals = await visit(cookies);
+
+    expect(locals.session).toBeUndefined();
+    expect(mintedJtis().size).toBe(0);
+    expect(cookies.get(HOST())).toBeUndefined();
   });
 
   it('a signed-out shared-slot token is not moved', async () => {
