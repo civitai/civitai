@@ -24,8 +24,15 @@ export const RUNNER_VIEWER_TYP = 'assistant-viewer+jwt';
 export const RUN_GRANT_AUDIENCE = 'assistant-runner:run-grant';
 export const RUN_GRANT_TYP = 'assistant-run-grant+jwt';
 export const RUNNER_VIEWER_TTL_SECONDS = 5 * 60;
-/** A preview grant's life: one Restart preview, start to finish, with room for a slow sandbox. */
-export const PREVIEW_GRANT_TTL_SECONDS = 2 * 60;
+/**
+ * A preview grant's life. It must outlast one Restart preview, as the runner makes every call of
+ * one with it: the steps before the tunnel's start (waiting for an app the page just started,
+ * `RESTART_WAIT_MS`, and maybe its dev server) plus `TUNNEL_START_BUDGET_MS`, which owns the
+ * arithmetic of everything from the start on (both in apps/assistant-runner
+ * `preview-restart.ts`). A grant that runs out mid-restart leaves a tunnel open that nothing
+ * connects to. `CLOCK_SKEW_SECONDS` is for clocks, not part of this.
+ */
+export const PREVIEW_GRANT_TTL_SECONDS = 7 * 60;
 const ALGORITHM = 'ES256';
 const CLOCK_SKEW_SECONDS = 30;
 

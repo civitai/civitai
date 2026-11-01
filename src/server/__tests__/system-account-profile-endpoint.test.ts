@@ -248,8 +248,7 @@ describe('POST /api/admin/system-account-profile', () => {
           changed: ['name', 'settings.chat.dmPolicy'],
           asserted_actor: 9,
         },
-      }),
-      'moderation'
+      })
     );
     expect(JSON.stringify(logToAxiom.mock.calls)).not.toContain(name);
   });
@@ -330,8 +329,7 @@ describe('POST /api/admin/system-account-profile', () => {
           failed: { fields: ['settings.chat.dmPolicy'], error: 'Error' },
           asserted_actor: 9,
         },
-      }),
-      'moderation'
+      })
     );
   });
 

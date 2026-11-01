@@ -80,13 +80,36 @@ const {
         return removed;
       }),
       sMembers: vi.fn(async (k: string) => JSON.parse(store.get(k) ?? '[]') as string[]),
-      // `sAddWithExpireGe` is an EVAL, so the index write lands here rather than on
+      // The index write is an EVAL (the start's listing script), so it lands here rather than on
       // `sAdd`. This EXECUTES the script's effect against the same store — SADD the
       // member, record the TTL floor — rather than returning a canned reply, so a test
       // that reads the member back is measuring a real write. A stub returning 1 would
       // let every assertion below pass with the index never populated.
+      //
+      // The service's other EVAL is a teardown's compare-and-delete of the (user, block)
+      // pointer, told apart by its key (never the index's): it deletes only a pointer that
+      // still names the session, and answers 1 only then.
+      //
+      // A start lists its tunnel with one script: KEYS = [pointer, index, cancel mark?],
+      // ARGV = [sessionId, ttl, blockId]. It writes nothing while the mark exists.
       eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) => {
         const [key] = opts.keys;
+        if (opts.keys.length >= 2) {
+          const [pointer, index, mark] = opts.keys;
+          const [sessionId, ttl, blockId] = opts.arguments;
+          if (mark && store.has(mark)) return 0;
+          store.set(pointer, sessionId);
+          const members = new Set(JSON.parse(store.get(index) ?? '[]') as string[]);
+          members.add(blockId);
+          store.set(index, JSON.stringify([...members]));
+          evalTtls.set(index, Number(ttl));
+          return 1;
+        }
+        if (!key.includes(':user-index:')) {
+          if (store.get(key) !== opts.arguments[0]) return 0;
+          store.delete(key);
+          return 1;
+        }
         const [member, ttl] = opts.arguments;
         const cur = new Set(JSON.parse(store.get(key) ?? '[]') as string[]);
         const added = cur.has(member) ? 0 : 1;
@@ -307,7 +330,7 @@ describe('the dev-tunnel index a ban enumerates', () => {
   it('writes the index ATOMICALLY — one EVAL, not a SADD + EXPIRE pair, and with a TTL', async () => {
     await startTunnel();
 
-    // `sAddWithExpireGe` is an EVAL. The racy pair it replaced could land the SADD and
+    // The index write is an EVAL. The racy pair it replaced could land the SADD and
     // drop the EXPIRE on a failover, leaving a TTL-less set that accumulates every
     // blockId the user ever tunnels — and every later ban would then emit a marker for
     // all of them.
@@ -381,8 +404,10 @@ describe('startDevTunnel', () => {
     expect(appliedIr.spec.routes[0].services[0].port).toBe(80);
     expect(appliedIr.spec.routes[0].middlewares[0].namespace).toBe('apps-dev-tunnel');
     expect(mockWaitForApplyJob).toHaveBeenCalledTimes(1);
-    // persisted the 4 index keys (cred/session/host/user-block)
-    expect(sysRedis.set).toHaveBeenCalledTimes(4);
+    // persisted the 3 record keys (cred/session/host) with SET; the user-block pointer is written
+    // by the listing script, with the ban index, and names this session
+    expect(sysRedis.set).toHaveBeenCalledTimes(3);
+    expect(sysRedis._store.get('system:blocks:dev-tunnel:user:555:my-app')).toBe('bki_testsession');
     // the credential is keyed by pubkey fingerprint (sish authz lookup index)
     const credKeys = [...sysRedis._store.keys()].filter((k) => k.includes(':cred:'));
     expect(credKeys.length).toBe(1);

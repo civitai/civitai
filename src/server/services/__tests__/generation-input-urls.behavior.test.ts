@@ -5,6 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -36,13 +37,33 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
+// Counts the gate's `keysIn` calls, so a match's cost is asserted as work, not wall clock.
+const keysInCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageUrlOwnership>();
+  return {
+    ...actual,
+    keysIn: (url: string | null | undefined) => {
+      keysInCalls.count++;
+      return actual.keysIn(url);
+    },
+  };
+});
+
 const {
   assertGenerationInputsUsable,
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
   generationInputUrlsIn,
+  opaqueInputUrlsIn,
+  keySetSizeBucket,
+  TOO_MANY_IDS_MESSAGE,
   GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
 } = await import('~/server/services/generation-input-urls');
+const { registerCounterWithLabels } = await import('~/server/prom/client');
+const { __resetRecentExternalHostUsersForTest } = await import(
+  '~/server/services/generation-input-hosts'
+);
 const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
   '~/server/services/image-url-ownership'
 );
@@ -300,6 +321,13 @@ describe('assertStoredImageUrlsUnblocked', () => {
     );
   });
 
+  it('reads a later url with a percent escape like the first', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'moderated'`);
+    const escaped = `https://cdn.example/x/${KEY.replace('-', '%2d')}/a%20b.jpeg`;
+    expect(await stored(['https://example.com/a.png', escaped])).toBe('refused');
+  });
+
   it('matches an image stored under the full url', async () => {
     const url = `https://cdn.example/x/${KEY}/original=true`;
     await givenImage({ url, blockedFor: 'moderated' });
@@ -416,6 +444,11 @@ describe('assertGenerationInputsUsable', () => {
       'iterateGenerate',
       'imageUpload',
       'appBlocks',
+      'appBlocksStep',
+      'appBlocksPassThrough',
+      'appBlocksWorkflow',
+      'enhancePrompt',
+      'comicPanelJob',
     ] as const)
       expect(await gate([url], entry)).toBe('refused');
   });
@@ -426,6 +459,7 @@ describe('assertGenerationInputsUsable', () => {
       'getIterateCostEstimate',
       'imageUpload',
       'appBlocks',
+      'comicPanelJob',
     ] as const)
       expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
   });
@@ -434,6 +468,26 @@ describe('assertGenerationInputsUsable', () => {
     const signed =
       'https://orchestration.civitai.com/v2/consumer/blobs/ABC.jpeg?sig=a%2Bb%2Fc%3D&exp=2026-11-01T00%3A00%3A00Z';
     expect(await gate([signed])).toBe('accepted');
+  });
+
+  it('treats a fully-qualified host (trailing dot) as the host itself', async () => {
+    await givenImage();
+    // Classed as our CDN and key-checked: another user's public image passes...
+    expect(
+      await gate([`https://image.civitai.com./x/${KEY}/original=true`], 'appBlocksPassThrough')
+    ).toBe('accepted');
+    // ...and the same image once private is refused.
+    await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+    holder.refuseExternal = false;
+    for (const entry of ['generateFromGraph', 'appBlocksPassThrough'] as const) {
+      expect(await gate([`https://image.civitai.com./x/${KEY}/original=true`], entry)).toBe(
+        'refused'
+      );
+      expect(await gate(['https://civitai.com./api/x'], entry)).toBe('refused');
+    }
+    // Control: the same host without the dot is just as refused, and a stranger's host is counted.
+    expect(await gate([CDN()], 'appBlocksPassThrough')).toBe('refused');
+    expect(await gate(['https://example.com./a.png'], 'appBlocksPassThrough')).toBe('accepted');
   });
 
   it('treats a host that only ends in a civitai name as external, not ours', async () => {
@@ -452,13 +506,244 @@ describe('assertGenerationInputsUsable', () => {
     expect(await gate([CDN()])).toBe('refused');
   });
 
-  it('allows an external host on the graph paths until the flag is on', async () => {
-    for (const entry of ['generateFromGraph', 'whatIfFromGraph'] as const) {
+  describe('an orchestrator-native input (opaqueInput)', () => {
+    const opaque = (urls: string[]) =>
+      assertGenerationInputsUsable({
+        urls,
+        userId: CALLER,
+        entry: 'appBlocksPassThrough',
+        isApiCaller: false,
+        opaqueInput: true,
+        now: AFTER,
+      }).then(
+        () => 'accepted',
+        (e: unknown) => {
+          if (e instanceof TRPCError && e.code === 'BAD_REQUEST') return 'refused';
+          throw e;
+        }
+      );
+    const SPELLINGS = [KEY, KEY.replace(/-/g, ''), `{${KEY.toUpperCase()}}`];
+
+    it('accepts a uuid that names no image in any spelling, where a plain input refuses it', async () => {
+      for (const id of SPELLINGS) expect(await opaque([id])).toBe('accepted');
+      expect(await gate([KEY], 'appBlocksPassThrough')).toBe('refused');
+    });
+
+    it("refuses a uuid in any spelling that names another user's private image", async () => {
+      await givenImage();
+      for (const id of SPELLINGS) expect(await opaque([id])).toBe('accepted');
+      await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+      for (const id of SPELLINGS) expect(await opaque([id])).toBe('refused');
+    });
+
+    it('counts a plain link to one of our pages, and refuses one that carries a key or a url', async () => {
+      holder.refuseExternal = false;
+      expect(await opaque(['https://civitai.com/models/123'])).toBe('accepted');
+      expect(await gate(['https://civitai.com/models/123'], 'appBlocksPassThrough')).toBe(
+        'refused'
+      );
+      expect(await opaque([`https://civitai.com/api/redirect/${KEY}`])).toBe('refused');
+      expect(
+        await opaque([`https://civitai.com/r?to=${encodeURIComponent('https://example.com/a')}`])
+      ).toBe('refused');
+      expect(await opaque(['https://image.civitai.com/x/original=true/a.png'])).toBe('refused');
+      // The external-link interstitial carries its target but never fetches it.
+      const out = encodeURIComponent('https://example.com/post');
+      expect(await opaque([`https://civitai.com/leaving?url=${out}`])).toBe('accepted');
+      expect(await opaque([`https://civitai.com/_next/image?url=${out}`])).toBe('refused');
+      // An http page link is the same link; an http link carrying a key is not.
+      expect(await opaque(['http://civitai.com/models/123'])).toBe('accepted');
+      expect(await opaque(['HTTP://example.com/a.png'])).toBe('accepted');
+      expect(await opaque([`HTTP://civitai.com/api/redirect/${KEY}`])).toBe('refused');
+      holder.refuseExternal = true;
+      expect(await opaque(['https://civitai.com/models/123'])).toBe('refused');
+    });
+
+    it('refuses a url with a control byte inside, and counts the same url without it', async () => {
+      holder.refuseExternal = false;
+      expect(await opaque(['https://example.com/a\u0001.png'])).toBe('refused');
+      expect(await opaque(['https://example.com/a.png'])).toBe('accepted');
+    });
+
+    it('reads many unrelated uuids in batches, and refuses past the bound', async () => {
+      const uuids = (n: number) =>
+        Array.from(
+          { length: n },
+          (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+        );
+      expect(await opaque(uuids(70))).toBe('accepted');
+      expect(await opaque(uuids(1024))).toBe('accepted');
+      await expect(
+        assertGenerationInputsUsable({
+          urls: uuids(1025),
+          userId: CALLER,
+          entry: 'appBlocksPassThrough',
+          isApiCaller: false,
+          opaqueInput: true,
+          now: AFTER,
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
+    });
+
+    it('matches 1024 keys to their 1024 images reading each image once', async () => {
+      await holder.db.query(
+        `INSERT INTO "Image" (id, "userId", url, "postId")
+         SELECT 1000 + g, $1, lpad(g::text, 8, '0') || '-0000-4000-8000-000000000000', 1
+         FROM generate_series(0, 1023) g`,
+        [CALLER]
+      );
+      const keys = Array.from(
+        { length: 1024 },
+        (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+      );
+      keysInCalls.count = 0;
+      expect(await opaque(keys)).toBe('accepted');
+      // A pass over the rows is about a thousand reads; keys × rows is about a million.
+      expect(keysInCalls.count).toBeGreaterThanOrEqual(1024);
+      expect(keysInCalls.count).toBeLessThan(4 * 1024);
+    });
+
+    it('checks the keys in a later batch, not only the first', async () => {
+      const keys = Array.from(
+        { length: 70 },
+        (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+      );
+      await recordUploadKeyOwner(keys[66], OTHER);
+      expect(await opaque(keys)).toBe('refused');
+      expect(await opaque(keys.filter((_, i) => i !== 66))).toBe('accepted');
+    });
+
+    it("finds another user's hidden image past the first lookup batch", async () => {
+      const keys = Array.from(
+        { length: 300 },
+        (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+      );
+      await givenImage({ url: keys[200] });
+      expect(await opaque(keys)).toBe('accepted');
+      await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+      expect(await opaque(keys)).toBe('refused');
+    });
+
+    it('checks every url in one call, whatever comes before it', async () => {
+      holder.refuseExternal = false;
+      const counted = 'https://example.com/a.png';
+      const refused = `https://civitai.com/api/redirect/${KEY}`;
+      expect(await opaque([counted, refused])).toBe('refused');
+      expect(await opaque([refused, counted])).toBe('refused');
+      expect(await opaque([counted, 'https://example.org/b.png'])).toBe('accepted');
+    });
+
+    it('counts an http url on an external host, and still refuses http to our image CDN', async () => {
+      holder.refuseExternal = false;
+      expect(await opaque(['http://json-schema.org/draft-07/schema#'])).toBe('accepted');
+      expect(await gate(['http://json-schema.org/draft-07/schema#'], 'appBlocksPassThrough')).toBe(
+        'refused'
+      );
+      expect(await opaque([`http://image.civitai.com/x/${KEY}/original=true`])).toBe('refused');
+      holder.refuseExternal = true;
+      expect(await opaque(['http://json-schema.org/draft-07/schema#'])).toBe('refused');
+    });
+  });
+
+  it('allows an external host on the graph and opaque-input paths until the flag is on', async () => {
+    for (const entry of [
+      'generateFromGraph',
+      'whatIfFromGraph',
+      'appBlocksStep',
+      'appBlocksPassThrough',
+      'appBlocksWorkflow',
+      'enhancePrompt',
+    ] as const) {
       holder.refuseExternal = false;
       expect(await gate(['https://example.com/a.png'], entry)).toBe('accepted');
       holder.refuseExternal = true;
       expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
     }
+  });
+
+  describe('the external host count', () => {
+    // The setup mock's stub for the counter, found by name; captured at collection time.
+    const registered = vi.mocked(registerCounterWithLabels).mock;
+    const hostCounter = registered.results[
+      registered.calls.findIndex(([def]) => def.name === 'generation_input_external_hosts_total')
+    ]?.value as { inc: ReturnType<typeof vi.fn> };
+    beforeEach(() => {
+      __resetRecentExternalHostUsersForTest();
+      hostCounter.inc.mockClear();
+      redisMock.sysRedis.pfAdd.mockClear();
+    });
+
+    it('counts an external url by host bucket and mode, and adds the caller to its day set', async () => {
+      expect(await gate(['https://i.imgur.com/a.png'], 'generateFromGraph')).toBe('accepted');
+      expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith({
+        entry: 'generateFromGraph',
+        caller: 'session',
+        mode: 'log',
+        host: 'imgur',
+      });
+      expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledExactlyOnceWith(
+        expect.stringMatching(
+          /^system:generation-input-external-host-users:\d{4}-\d{2}-\d{2}:session:imgur$/
+        ),
+        String(CALLER)
+      );
+
+      hostCounter.inc.mockClear();
+      holder.refuseExternal = true;
+      expect(await gate(['https://i.imgur.com/a.png'], 'generateFromGraph')).toBe('refused');
+      expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ mode: 'refuse', host: 'imgur' })
+      );
+    });
+
+    it('is not counted where an external host is refused outright', async () => {
+      expect(await gate(['https://i.imgur.com/a.png'], 'iterateGenerate')).toBe('refused');
+      expect(hostCounter.inc).not.toHaveBeenCalled();
+      expect(redisMock.sysRedis.pfAdd).not.toHaveBeenCalled();
+    });
+
+    it('counts every external url in a request and adds the caller once per bucket', async () => {
+      const urls = [
+        'https://i.imgur.com/a.png',
+        'https://i.imgur.com/b.png',
+        'https://example.com/c.png',
+      ];
+      expect(await gate(urls, 'generateFromGraph')).toBe('accepted');
+      expect(hostCounter.inc).toHaveBeenCalledTimes(3);
+      expect(redisMock.sysRedis.pfAdd.mock.calls.map(([key]) => key.split(':').pop())).toEqual([
+        'imgur',
+        'other',
+      ]);
+    });
+
+    it('counts an external url in a request a later url gets refused', async () => {
+      expect(await gate(['https://i.imgur.com/a.png', CDN('no-key')], 'generateFromGraph')).toBe(
+        'refused'
+      );
+      expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ mode: 'log', host: 'imgur' })
+      );
+      expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledTimes(1);
+    });
+
+    it('labels an API caller as api, in the count and the day set', async () => {
+      await assertGenerationInputsUsable({
+        urls: ['https://i.imgur.com/a.png'],
+        userId: CALLER,
+        entry: 'generateFromGraph',
+        isApiCaller: true,
+        now: AFTER,
+      });
+      expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ caller: 'api', host: 'imgur' })
+      );
+      expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledExactlyOnceWith(
+        `system:generation-input-external-host-users:${new Date()
+          .toISOString()
+          .slice(0, 10)}:api:imgur`,
+        String(CALLER)
+      );
+    });
   });
 
   it('checks the keys an allowed external url carries', async () => {
@@ -599,6 +884,14 @@ describe('generationInputUrlsIn', () => {
     expect(generationInputUrlsIn({ [field]: ['text', url] })).toEqual([]);
   });
 
+  it('reads a scheme as a url parser does: any case, a tab inside dropped', () => {
+    const urls = ['HTTPS:example.com/a.png', 'ht\ttps:example.com/b.png'];
+    expect(generationInputUrlsIn({ a: urls[0], b: urls[1] })).toEqual(urls);
+    expect(opaqueInputUrlsIn({ u: 'HTTPS://example.com/a.png' }).urls).toEqual([
+      'HTTPS://example.com/a.png',
+    ]);
+  });
+
   it('still walks an object or a mixed list under a text field name', () => {
     expect(generationInputUrlsIn({ description: { url: KEY } })).toEqual([KEY]);
     expect(generationInputUrlsIn({ title: ['x', { url: KEY }] })).toEqual([KEY]);
@@ -611,6 +904,340 @@ describe('generationInputUrlsIn', () => {
       resources: [{ air: `urn:air:sdxl:lora:orchestrator:blob@${KEY}` }],
     };
     expect(generationInputUrlsIn(input)).toEqual([]);
+  });
+});
+
+describe('opaqueInputUrlsIn', () => {
+  const OKEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const OCDN = `https://image.civitai.com/x/${OKEY}/original=true`;
+
+  it('collects whole urls under any field name, free-text names included', () => {
+    expect(
+      opaqueInputUrlsIn({
+        prompt: OCDN,
+        trainedWords: [`image.civitai.com/x/${OKEY}`],
+        image: { $ref: '$arguments', path: 'prompt', default: ' http://example.com/a.png\n' },
+      }).urls
+    ).toEqual([OCDN, `image.civitai.com/x/${OKEY}`, 'http://example.com/a.png']);
+  });
+
+  it('reads a whole url as a url parser does: tab, CR and LF inside are dropped', () => {
+    expect(
+      opaqueInputUrlsIn({ split: `https://image.civitai.com/x/\n${OKEY}/orig\tinal=true` }).urls
+    ).toEqual([`https://image.civitai.com/x/${OKEY}/original=true`, OKEY]);
+  });
+
+  const base64 = (n: number) => 'QUJD'.repeat(Math.ceil(n / 4)).slice(0, n);
+  const MiB = 1024 * 1024;
+
+  it('reads up to 4 MiB of text, and reports more as too large instead of reading it', () => {
+    expect(opaqueInputUrlsIn({ field: base64(4 * MiB - 5) })).toEqual({
+      urls: [],
+      tooDeep: false,
+      tooLarge: false,
+    });
+    expect(opaqueInputUrlsIn({ field: base64(4 * MiB - 4) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ a: base64(2.1 * MiB), b: base64(2.1 * MiB) }).tooLarge).toBe(true);
+  });
+
+  it('counts the text of a value split into lines once', () => {
+    const text = `https://example.com/a\nhttps://example.com/b ${base64(3 * MiB)}`;
+    expect(opaqueInputUrlsIn({ text }).tooLarge).toBe(false);
+  });
+
+  it('reads up to 65,536 line breaks across its strings, and reports more as too large', () => {
+    const breaks = (n: number) => `${'x\n'.repeat(n)}a:`;
+    expect(opaqueInputUrlsIn({ text: breaks(65_536) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ text: breaks(65_537) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ a: breaks(40_000), b: breaks(40_000) }).tooLarge).toBe(true);
+    // Text that does not split counts too, and a run of breaks is one.
+    expect(opaqueInputUrlsIn({ text: 'x\n'.repeat(65_537) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ text: `x${'\r\n'.repeat(70_000)}y` }).tooLarge).toBe(false);
+  });
+
+  it('collects up to 4,096 values of up to 64 KiB in all, and reports more as too large', () => {
+    // Keys overlap: each segment ends one key and its last 8 characters start the next.
+    const keys = (n: number) =>
+      `see 00000000${Array.from(
+        { length: n },
+        (_, i) => `-0000-4000-8000-${i.toString(16).padStart(12, '0')}`
+      ).join('')}`;
+    // As many whole keys as fit in 64 KiB, then one more.
+    expect(opaqueInputUrlsIn({ text: keys(1820) })).toMatchObject({ tooLarge: false });
+    expect(opaqueInputUrlsIn({ text: keys(1820) }).urls).toHaveLength(1820);
+    expect(opaqueInputUrlsIn({ text: keys(1821) }).tooLarge).toBe(true);
+    // More keys than a call takes as arguments: refused, not a stack overflow.
+    expect(opaqueInputUrlsIn({ text: keys(140_000) }).tooLarge).toBe(true);
+    // Short urls, under the length cap in all, but one value too many.
+    const list = Array.from({ length: 4097 }, (_, i) => `http://a/${i.toString(36)}`);
+    expect(opaqueInputUrlsIn({ list }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ list: list.slice(1) }).tooLarge).toBe(false);
+    // A value repeated is collected, and counted, once.
+    const repeated = new Array(10_000).fill(`https://image.civitai.com/x/${OKEY}/original=true`);
+    expect(opaqueInputUrlsIn({ repeated })).toEqual({
+      urls: [repeated[0]],
+      tooDeep: false,
+      tooLarge: false,
+    });
+  });
+
+  it('decodes up to 1 MiB of escaped text, and reports more as too large', () => {
+    const escaped = (n: number) => 'A%41'.repeat(n / 4);
+    expect(opaqueInputUrlsIn({ text: escaped(MiB) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ text: escaped(MiB + 4) }).tooLarge).toBe(true);
+    // Escapes nested eight deep across 4 MiB: refused before it is decoded, not read for seconds.
+    const nested = '%2525252525252525252541'.repeat(Math.floor((4 * MiB - 64) / 23));
+    expect(opaqueInputUrlsIn({ text: nested }).tooLarge).toBe(true);
+    // Split text whose lines are too short to hold a key is still decoded whole.
+    // A url, then prose lines (no scheme to parse) each shorter than a key: only the budget stops it.
+    const shortLines = `https://x.y/\n${'%2525252541 xxxxxxxxxxxxxxxxxxxxxx\n'.repeat(40_000)}`;
+    expect(opaqueInputUrlsIn({ text: shortLines }).tooLarge).toBe(true);
+    // The budget is one per walk: two halves of it add up.
+    const half = escaped(MiB / 2 + 4);
+    expect(opaqueInputUrlsIn({ a: half, b: half }).tooLarge).toBe(true);
+  });
+
+  it('parses up to 32,768 strings that start like a url, and reports more as too large', () => {
+    const list = new Array(32_769).fill('a:b');
+    expect(opaqueInputUrlsIn({ list }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ list: list.slice(1) }).tooLarge).toBe(false);
+    // Text with no scheme is not parsed, so it does not count.
+    expect(opaqueInputUrlsIn({ list: new Array(40_000).fill('ab') }).tooLarge).toBe(false);
+  });
+
+  it('reads text after a url scheme of any length when its host is ASCII', () => {
+    const prose = 'opens fine, and I have tried restarting it more than once today '.repeat(6);
+    for (const u of [
+      `http://localhost:7860 ${prose}`,
+      `HTTPS: why does my site show as insecure ${prose}`,
+      `File: summary of the meeting notes ${prose}`,
+      `https://${'a'.repeat(10_000)}.com/a.png`,
+      `ws://${'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(28_000)}/`,
+      `https://u:${'a'.repeat(400)}@h.example.com/a.png`,
+    ])
+      expect(opaqueInputUrlsIn({ u }).tooLarge).toBe(false);
+    // A scheme a parser does not convert a host for: non-ASCII text after it costs nothing.
+    const distinct = Array.from({ length: 8000 }, (_, j) => String.fromCharCode(0x4e00 + j));
+    expect(opaqueInputUrlsIn({ u: `Note: ${distinct.join('')}` }).tooLarge).toBe(false);
+  });
+
+  it('budgets the work of converting non-ASCII hosts, and reports more as too large', () => {
+    // Distinct characters, as a parser's conversion costs the most for them.
+    const cjk = (n: number, from = 0) =>
+      Array.from({ length: n }, (_, j) => String.fromCharCode(0x4e00 + from + j)).join('');
+    // One host: its length times its distinct characters, plus a parse, is the cost.
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(5791)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(5792)}/` }).tooLarge).toBe(true);
+    // Many short hosts: the fixed cost per parse adds up.
+    const short = (k: number) =>
+      Array.from({ length: k }, (_, i) => `ws://${cjk(64, (i * 64) % 20_000)}/`);
+    expect(opaqueInputUrlsIn({ list: short(2730) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ list: short(2731) }).tooLarge).toBe(true);
+    // Escapes and `xn--` hide what a host decodes to, so they are charged its length squared.
+    expect(opaqueInputUrlsIn({ u: `ws://${'%41'.repeat(1930)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${'%41'.repeat(1931)}/` }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ u: `ws://xn--${'a'.repeat(5800)}/` }).tooLarge).toBe(true);
+    // A host too long to map cheaply is refused unmapped, however few its characters.
+    const accented = String.fromCharCode(0xe9);
+    expect(opaqueInputUrlsIn({ u: `ws://${accented.repeat(64 * 1024)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${accented.repeat(64 * 1024 + 1)}/` }).tooLarge).toBe(true);
+    // A run of combining marks a parser must reorder is charged its length squared, unmapped.
+    const marks = (n: number) =>
+      `a${String.fromCharCode(0x300).repeat(n)}${String.fromCharCode(0x316).repeat(n)}`;
+    const normalize = vi.spyOn(String.prototype, 'normalize');
+    try {
+      // Under the length past which a host is refused unmapped: only the marks refuse it.
+      expect(opaqueInputUrlsIn({ u: `ws://${marks(2 ** 15 - 2)}/` }).tooLarge).toBe(true);
+      // Refused before the reordering is paid for, not after.
+      expect(normalize).not.toHaveBeenCalled();
+    } finally {
+      normalize.mockRestore();
+    }
+    // A run split by marks NFKC makes (halfwidth katakana), or by characters a parser deletes
+    // (a soft hyphen), is one run to the parser: charged whole, refused before it is mapped.
+    const ch = (code: number) => String.fromCharCode(code);
+    const halfwidth = `a${(ch(0x300) + ch(0xff9e)).repeat(32_000)}`;
+    const softSplit = `a${(ch(0x300) + ch(0xad)).repeat(16_000)}${(ch(0x316) + ch(0xad)).repeat(
+      16_000
+    )}`;
+    for (const host of [halfwidth, softSplit]) {
+      const spy = vi.spyOn(String.prototype, 'normalize');
+      try {
+        expect(opaqueInputUrlsIn({ u: `ws://${host}/` }).tooLarge).toBe(true);
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+    expect(opaqueInputUrlsIn({ u: `ws://${marks(2000)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${marks(3000)}/` }).tooLarge).toBe(true);
+    // The marks add to the rest of the host's cost.
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(3000)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(3000)}${marks(2000)}/` }).tooLarge).toBe(true);
+    // A character the parser expands (a square katakana is six) is charged as expanded.
+    const square = String.fromCharCode(0x3316).repeat(2000);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(2600)}${square}/` }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(2600)}${square.slice(0, 1000)}/` }).tooLarge).toBe(
+      false
+    );
+    // Prose that repeats a few characters costs little, however long: a message after a link.
+    const hiragana = (n: number) =>
+      Array.from({ length: n }, (_, j) => String.fromCharCode(0x3042 + (j % 80))).join('');
+    // A percent sign that is not an escape hides nothing, so it is not charged as one.
+    const messages = Array.from({ length: 6 }, () => `https://civitai.com 50% ${hiragana(8000)}`);
+    expect(opaqueInputUrlsIn({ messages }).tooLarge).toBe(false);
+  });
+
+  it('reports too many values as too large', () => {
+    // The root, the field name and the array are three values.
+    expect(opaqueInputUrlsIn({ list: new Array(262_141).fill(0) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ list: new Array(262_142).fill(0) }).tooLarge).toBe(true);
+  });
+
+  it('reads a long run of spaces in linear time', () => {
+    const value = `a${' '.repeat(1_000_000)}b`;
+    const started = performance.now();
+    expect(opaqueInputUrlsIn({ value }).urls).toEqual([]);
+    // Linear is milliseconds, the quadratic form minutes at this length: the bound sits far from
+    // both, so load cannot redden it and only a quadratic scan can.
+    expect(performance.now() - started).toBeLessThan(5000);
+  });
+
+  it('trims Unicode spaces around a whole url, as a consumer would', () => {
+    expect(opaqueInputUrlsIn({ u: ' https://example.com/a.png　', v: `﻿${OCDN}` }).urls).toEqual([
+      'https://example.com/a.png',
+      OCDN,
+      OKEY,
+    ]);
+  });
+
+  it('reads urls listed one per line as separate urls, and an object key as a value', () => {
+    expect(
+      opaqueInputUrlsIn({
+        list: 'https://civitai.com/models/123\nhttps://example.com/a.png\n',
+        chat: `what is in this picture?\n${OCDN}`,
+        [OCDN]: 1,
+      }).urls
+    ).toEqual(['https://civitai.com/models/123', 'https://example.com/a.png', OCDN, OKEY]);
+  });
+
+  it('finds a key broken across a line in text that splits into lines', () => {
+    const wrapped = `https://proxy.example/?u=${OCDN.replace(
+      OKEY,
+      `${OKEY.slice(0, 14)}\n${OKEY.slice(14)}`
+    )}\nNote: see above`;
+    expect(opaqueInputUrlsIn({ wrapped }).urls).toContain(OKEY);
+  });
+
+  it('splits a url followed by prose, and rejoins a url wrapped onto a second line', () => {
+    expect(opaqueInputUrlsIn({ u: 'https://example.com/a.png\nthen some words' }).urls).toEqual([
+      'https://example.com/a.png',
+    ]);
+    expect(opaqueInputUrlsIn({ u: 'https://example.com/a\n.png' }).urls).toEqual([
+      'https://example.com/a.png',
+    ]);
+  });
+
+  it.each([
+    [257, '257_512'],
+    [512, '257_512'],
+    [513, '513_1024'],
+    [1024, '513_1024'],
+    [1025, 'over_1024'],
+  ])('reports %i image-only keys in the %s bucket', (size, bucket) => {
+    expect(keySetSizeBucket(size)).toBe(bucket);
+  });
+
+  it('keeps a url with another control byte inside whole, for the gate to refuse', () => {
+    expect(opaqueInputUrlsIn({ u: 'https://example.com/a\u0001.png' }).urls).toEqual([
+      'https://example.com/a\u0001.png',
+    ]);
+    expect(opaqueInputUrlsIn({ u: 'https://example.com/a.png' }).urls).toEqual([
+      'https://example.com/a.png',
+    ]);
+  });
+
+  it('collects nothing from text that names no key', () => {
+    expect(
+      opaqueInputUrlsIn({
+        messages: [{ role: 'user', content: 'Summarize https://example.com please' }],
+        tools: [{ description: 'see https://civitai.com/models/1 for details' }],
+        toolCalls: [{ arguments: JSON.stringify({ url: 'https://example.com/a.png' }) }],
+        note: 'note: https://example.com',
+        file: 'models/model.safetensors/x',
+        host: 'example.com/a.png',
+        cdnNoKey: 'see https://image.civitai.com/x/original=true/a.png now',
+        chat: [
+          '// fix this function\nfunction add(a, b) {}',
+          'File: main.py\nprint(1)',
+          'Data: the android from Star Trek',
+          'Blob: a green slime monster',
+          'https://www.youtube.com/watch?v=abc summarize',
+        ],
+        otherSchemes: ['file:main.py', 'data:text/plain,hello', 'blob:slime', 'ws://x.y/z'],
+        model: 'urn:air:sdxl:checkpoint:civitai:1@1',
+        path: 'output.images[0].url',
+      }).urls
+    ).toEqual([]);
+  });
+
+  it.each([
+    ['a tool call id', `call_${OKEY}`],
+    ['a bare uuid in upper case', OKEY.toUpperCase()],
+    ['a path that is not ours', `v1.0/${OKEY}`],
+    ['a CDN url in a JSON string', JSON.stringify({ image_url: OCDN })],
+    ['a JSON-escaped CDN url', `{"u":"https:\\/\\/image.civitai.com\\/x\\/${OKEY}"}`],
+    ['an over-escaped CDN url', `{\\"image_url\\":\\"${OCDN}\\"}`],
+    ['a percent-encoded host', `x https://image%2Ecivitai%2Ecom/x/${OKEY} y`],
+    ['a CDN url behind userinfo', `a https://evil.example\\@image.civitai.com/x/${OKEY} b`],
+    ['a CDN url with a port', `a https://image.civitai.com:443/x/${OKEY} b`],
+    ['a wrapper url in prose', `see https://wsrv.nl/?url=https://image.civitai.com/x/${OKEY}`],
+    [
+      'a key split by a tab',
+      `see https://image.civitai.com/x/${OKEY.slice(0, 9)}\t${OKEY.slice(9)}`,
+    ],
+    ['a percent-encoded key', `see ${encodeURIComponent(OCDN)}`],
+    ['text opening with a word and a colon', `Image: ${OCDN}`],
+    ['a role prefix', `User: what is in ${OCDN}`],
+    ['a uri list', `data:text/uri-list,${OCDN}`],
+    ['JSON-escaped dashes', `{"u":"${OCDN.replace(/-/g, '\\u002d')}"}`],
+    ['HTML entity dashes', `<img src="${OCDN.replace(/-/g, '&#45;')}">`],
+    ['hex HTML entity dashes', `<img src="${OCDN.replace(/-/g, '&#x2D;')}">`],
+    ['zero-padded entity dashes', `<img src="${OCDN.replace(/-/g, '&#0045;')}">`],
+    ['zero-padded hex entity dashes', `<img src="${OCDN.replace(/-/g, '&#x002d;')}">`],
+    // Only before a letter: `&#45` then a digit is another character to an HTML parser.
+    ['an entity dash with no semicolon', `<img src="${OCDN.replace('-', '&#45')}">`],
+    ['upper-case JSON-escaped dashes', `{"u":"${OCDN.replace(/-/g, '\\u002D')}"}`],
+  ])('collects the key bare from %s', (_, text) => {
+    expect(opaqueInputUrlsIn({ text }).urls).toEqual([OKEY]);
+  });
+
+  it.each([
+    ['a decimal entity whose code point runs on into a digit', OCDN.replace('-e', '&#451')],
+    ['a hex entity whose code point runs on into a hex letter', OCDN.replace('-', '&#x2d')],
+    ['a hex entity whose code point runs on into a digit', OCDN.replace('-ef56', '&#x2d5678')],
+  ])('reads no dash in %s', (_, url) => {
+    expect(opaqueInputUrlsIn({ text: `<img src="${url}">` }).urls).toEqual([]);
+  });
+
+  it.each([
+    ['a line of its own', `\n${OKEY}`],
+    ['a line with a tab in it', `\n${OKEY}\tsee`],
+    ['a line after a carriage return', `\r${OKEY}`],
+    ['a tab', `\t${OKEY}`],
+    ['a next-line character', `\u0085${OKEY}`],
+  ])('collects a key from %s after an orchestrator url it would rejoin', (_, rest) => {
+    const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/a';
+    expect(opaqueInputUrlsIn({ text: `${blob}${rest}` }).urls).toContain(OKEY);
+  });
+
+  it('reports an input nested past its bound instead of passing what it did not read', () => {
+    let deep: unknown = { image: OCDN };
+    for (let i = 0; i < 70; i++) deep = { a: deep };
+    expect(opaqueInputUrlsIn(deep)).toEqual({ urls: [], tooDeep: true, tooLarge: false });
+    let shallow: unknown = { image: OCDN };
+    for (let i = 0; i < 40; i++) shallow = { a: shallow };
+    expect(opaqueInputUrlsIn(shallow)).toEqual({ urls: [OCDN], tooDeep: false, tooLarge: false });
   });
 });
 

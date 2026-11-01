@@ -135,6 +135,7 @@ import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { composeConfirmedStepBlockExternalId } from '~/server/utils/block-gen-idempotency';
 import { hashPassThroughStepBody } from '~/server/services/blocks/block-quote-grant.service';
 import { blockPassThroughStepBodySchema } from '~/server/schema/blocks/workflow.schema';
+import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
 
 // ── An in-memory sysRedis: get/set (NX/XX)/getDel/del/incrBy/decrBy. ──────────
 const store = new Map<string, string>();
@@ -1304,5 +1305,45 @@ describe('orchestrator submit failures — the training contract', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'block-confirmed-step-submit-failed', outcome: 'refused' })
     );
+  });
+});
+
+describe('the generation input gate runs on a CONFIRMED submit too', () => {
+  const OTHER_USER = 7;
+  const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const CDN = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=true`;
+  const imageBody = (over: Record<string, unknown> = {}) =>
+    body({ input: { engine: 'meshy', prompt: 'a teapot', image: CDN }, ...over });
+
+  /** The image row the gate reads for KEY: owner and visibility as given. */
+  function givenImage(owner: number, visible: boolean) {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FROM "Image" i')
+        ? [{ url: KEY, userId: owner, visible, blocked: false }]
+        : []) as never);
+  }
+  beforeEach(() =>
+    seedQuote(SEEDED, {
+      bodyHash: hashPassThroughStepBody(blockPassThroughStepBodySchema.parse(imageBody())),
+    })
+  );
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+  it("refuses another user's private image, with nothing charged and the quote unclaimed", async () => {
+    givenImage(OTHER_USER, false);
+    await expect(submit(imageBody({ quoteId: SEEDED }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(keysWith(QUOTE_PREFIX)).toHaveLength(1);
+  });
+
+  it('control: the same quoted body with the viewer’s own image runs', async () => {
+    givenImage(VIEWER, false);
+    const r = await submit(imageBody({ quoteId: SEEDED }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
+    expect(realSubmits()).toHaveLength(1);
   });
 });

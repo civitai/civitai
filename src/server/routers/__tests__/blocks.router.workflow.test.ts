@@ -221,7 +221,7 @@ const { mockClaimGen, mockFinalizeGen, mockReleaseGen, genIdemStore } = vi.hoist
   mockReleaseGen: vi.fn(),
 }));
 vi.mock('~/server/utils/block-gen-idempotency', async (importActual) => {
-  const actual = await importActual<typeof import('~/server/utils/block-gen-idempotency')>();
+  const actual = await importActual<object>();
   return {
     ...actual,
     claimGenIdempotency: (...a: unknown[]) => mockClaimGen(...(a as [])),
@@ -499,6 +499,8 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   // because the router imports it: a factory that omits an export the module under test binds
   // makes every call through it throw `No "…" export is defined on the mock`.
   checkBlockPollRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitUserRateLimit: async () => ({ allowed: true }),
 }));
 // 🔴 `getResourceData` IS HERE ON PURPOSE, AND IS NOT MOCKED AWAY AT THE SERVICE
 // BOUNDARY. The customComfy INLINE arm's entitlement belt
@@ -513,6 +515,12 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
+}));
+// The generation input gate is tested at these routes in blocks.router.workflowKind.test; here
+// it passes, so the placeholder image urls below reach the quote and budget logic under test.
+vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  assertGenerationInputsUsable: async () => undefined,
 }));
 // W3 flow A — the submit path dynamic-imports recordSpendAttribution from
 // here. Mock the whole module so we drive the spend-write behavior; the

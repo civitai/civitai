@@ -18,7 +18,7 @@ const EXPIRY_MARGIN_MS = 60_000;
  * the runner's flag, so a ban, a revoked consent or the runner turned off lands within about this.
  */
 export const MAX_TOKEN_REUSE_MS = 60_000;
-const MINT_TIMEOUT_MS = 15_000;
+export const MINT_TIMEOUT_MS = 15_000;
 /** The most tokens kept in memory; past it, expired ones are dropped first, then the oldest. */
 const MAX_CACHED = 5_000;
 

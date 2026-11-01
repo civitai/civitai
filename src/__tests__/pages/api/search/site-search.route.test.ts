@@ -141,15 +141,93 @@ describe('POST /api/search/multi-search', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('reports a backend that refuses our key as unavailable, not as a bad query', async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ code: 'invalid_api_key' }), { status: 403 })
-    );
-    const { status, body } = await post(['multi-search'], {
-      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }],
+  it.each([401, 403])(
+    'reports a backend that refuses our key (%i) as a 502 with no Retry-After, not as a bad query',
+    async (upstreamStatus) => {
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ code: 'invalid_api_key' }), { status: upstreamStatus })
+      );
+      const { status, body, retryAfter } = await post(['multi-search'], {
+        queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }],
+      });
+      expect(status).toBe(502);
+      expect(body.code).toBe('search_unavailable');
+      expect(retryAfter).toBeUndefined();
+    }
+  );
+});
+
+describe('search backend unavailable', () => {
+  const query = { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }] };
+
+  it.each([
+    ['a network error', new TypeError('fetch failed')],
+    ['a timeout', new DOMException('The operation was aborted due to timeout', 'TimeoutError')],
+  ])('%s is a retryable 503 with Retry-After', async (_, error) => {
+    fetchMock.mockRejectedValue(error);
+    const { status, body, retryAfter, cacheControl } = await post(['multi-search'], query);
+    expect(status).toBe(503);
+    expect(retryAfter).toBe('2');
+    expect(cacheControl).toBe('private, no-store');
+    expect(body).toEqual({
+      message: 'Search is temporarily unavailable',
+      code: 'search_unavailable',
+      type: 'system',
     });
+  });
+
+  it.each([500, 502, 503, 504])(
+    'an upstream %i is a retryable 503 with Retry-After',
+    async (upstreamStatus) => {
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ code: 'internal' }), { status: upstreamStatus })
+      );
+      const { status, body, retryAfter } = await post(['indexes', MODELS_SEARCH_INDEX, 'search'], {
+        q: 'x',
+      });
+      expect(status).toBe(503);
+      expect(retryAfter).toBe('2');
+      expect(body.code).toBe('search_unavailable');
+    }
+  );
+
+  it('an upstream 5xx with a non-JSON body is still a 503', async () => {
+    fetchMock.mockResolvedValue(new Response('<html>Bad Gateway</html>', { status: 502 }));
+    const { status, retryAfter } = await post(['indexes', MODELS_SEARCH_INDEX, 'facet-search'], {
+      facetName: 'type',
+    });
+    expect(status).toBe(503);
+    expect(retryAfter).toBe('2');
+  });
+
+  it('a query the backend rejects is passed through as-is, with no Retry-After', async () => {
+    const rejection = {
+      message: 'Attribute `nope` is not filterable.',
+      code: 'invalid_search_filter',
+      type: 'invalid_request',
+    };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(rejection), { status: 400 }));
+    const { status, body, retryAfter } = await post(['multi-search'], query);
+    expect(status).toBe(400);
+    expect(body).toEqual(rejection);
+    expect(retryAfter).toBeUndefined();
+  });
+
+  it('a 2xx whose body cannot be read is a 502 with no Retry-After', async () => {
+    fetchMock.mockResolvedValue(new Response('{"results": [', { status: 200 }));
+    const { status, body, retryAfter } = await post(['multi-search'], query);
     expect(status).toBe(502);
     expect(body.code).toBe('search_unavailable');
+    expect(retryAfter).toBeUndefined();
+  });
+
+  it('search with no host configured is a 503 with no Retry-After, and nothing is fetched', async () => {
+    setEnv({ NEXT_PUBLIC_SEARCH_HOST: undefined });
+    const { status, body, retryAfter } = await post(['multi-search'], query);
+    expect(status).toBe(503);
+    expect(body).toMatchObject({ code: 'search_unavailable', message: 'Search is not configured' });
+    expect(retryAfter).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

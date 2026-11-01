@@ -261,6 +261,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off:
   // `evaluateBoolean` throws and `isFliptSync` swallows it, at most once per refresh per process.
   OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
+  // Picks how `getFeatureFlagsLazy` (feature-flags.service.ts) builds the per-request flag
+  // object: ON = one small instance of a class whose prototype carries the per-key getters,
+  // defined once at module load; OFF = a fresh object with one getter defined per flag key on
+  // every call, as before. Same value per key either way. DEFAULT-OFF: `isFliptSync` returns null
+  // for an unknown flag or an uninitialized client, which keeps the old object. Global boolean,
+  // evaluated with no entity or context, at most once per 5s per process.
+  //
+  // Add the key (enabled: false) to flag state before this code serves traffic. A missing key
+  // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
+  // at most once per 5s per process.
+  FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path

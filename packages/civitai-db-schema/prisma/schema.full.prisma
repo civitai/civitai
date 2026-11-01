@@ -6725,6 +6725,30 @@ model BountyBenefactor {
   @@index([userId], type: Hash)
 }
 
+/// An award a moderator release left neither paid nor refunded because its supporter has no charge
+/// on record, kept for a manual ruling. No foreign key: it outlives the bounty. Open while
+/// resolvedAt is null; an open row keeps the bounty from being deleted.
+model BountyUnpaidAward {
+  bountyId           Int
+  /// The supporter whose award is unpaid.
+  userId             Int
+  unitAmount         Int
+  buzzTransactionIds String[]  @default([])
+  winnerUserId       Int?
+  /// The bounty owner when the award was recorded, before any delete detaches the bounty.
+  ownerId            Int?
+  /// Null on a row backfilled from ModActivity, which did not record the moderator.
+  recordedById       Int?
+  recordedAt         DateTime  @default(now())
+  /// paid_winner | refunded_supporter | no_charge_found
+  ruling             String?
+  ledgerReference    String?
+  resolvedById       Int?
+  resolvedAt         DateTime?
+
+  @@id([bountyId, userId])
+}
+
 enum BountyEngagementType {
   Favorite
   Track

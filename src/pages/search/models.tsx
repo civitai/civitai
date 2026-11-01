@@ -36,6 +36,7 @@ import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { searchHitCanGenerate } from '~/shared/generation/coverage-fields';
 import { trpc } from '~/utils/trpc';
 
@@ -96,7 +97,7 @@ const RenderFilters = () => {
         title="Filter by Base Model"
         attribute="versions.baseModel"
         sortBy={['name']}
-        limit={100}
+        limit={SEARCH_FACET_LIMIT}
         searchable
         renderOption={renderBaseModelOption}
       />
@@ -104,7 +105,7 @@ const RenderFilters = () => {
         title="Filter by Model Type"
         attribute="type"
         sortBy={['name']}
-        limit={100}
+        limit={SEARCH_FACET_LIMIT}
       />
       <ChipRefinementList
         title="Filter by Checkpoint Type"
@@ -117,7 +118,7 @@ const RenderFilters = () => {
         title="Filter by Category"
         sortBy={['name']}
         attribute="category.name"
-        limit={100}
+        limit={SEARCH_FACET_LIMIT}
       />
       <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       <SearchableMultiSelectRefinementList

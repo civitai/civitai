@@ -1,15 +1,22 @@
 import { randomUUID } from 'crypto';
+import { decodeJwt } from 'jose';
 import type { Cookies } from '@sveltejs/kit';
 import { error } from '@sveltejs/kit';
 import {
   familyClaims,
   familyId,
+  hostSessionCookieName,
   isSecureCookie,
   maybeCreateSessionSigner,
+  readSessionToken,
   SESSION_LINEAGE_MAX_AGE_MS,
   SESSION_COOKIE_BASE,
+  sessionCookieMode,
   sessionCookieName,
+  sessionCookieNameForSlot,
   SPOKE_AUTHORIZE_PATH,
+  type CookieRead,
+  type CookieSlot,
   type FamilyClaims,
   type SessionClaims,
   type SessionSigner,
@@ -18,6 +25,7 @@ import {
 import { sessions } from './registry';
 import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
+import { cookieJar } from './cookie-jar';
 import { verifier } from './verifier';
 import { acceptHubSession } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
@@ -86,6 +94,11 @@ export function refuseModerationAccount(
   if (isRefusedModerationAccount(user, source)) error(403, 'This account cannot sign in.');
 }
 
+/** Whether this account may be given a new or re-signed session cookie. */
+export function canHoldSession(user: SessionUser | null | undefined): user is SessionUser {
+  return !!user && !user.bannedAt && !user.deletedAt && !isRefusedModerationAccount(user, 'cookie');
+}
+
 /** Seconds a session minted now may live: the normal lifetime, cut short by the 90-day limit and `impExp`. */
 export function sessionExpiresIn(lineage: FamilyClaims, now = Date.now()): number {
   let until = now + getSigner().maxAge * 1000;
@@ -151,21 +164,61 @@ export async function mintUserSession(user: SessionUser, opts?: MintOptions): Pr
   return (await mintSession(user, opts)).token;
 }
 
+/** The hub session token this request carries, and which slot it was read from. */
+export function readHubSession(cookies: Pick<Cookies, 'get'>): CookieRead | null {
+  return readSessionToken(cookieJar(cookies));
+}
+
 /**
  * Set the thin-session cookie from an ALREADY-MINTED token — no mint, no device-set touch. Used by endpoints
  * that serve the browser client DIRECTLY (switch / impersonate / exit), so the hub itself lands the
  * `.civitai.com` cookie on a credentialed CORS response. (The main app's proxies don't use this — they read the
- * returned token and set their own cookie, because they also deploy cross-site as `.red`.)
+ * returned token and set their own cookie, because they also deploy cross-site as `.red`.) The host-only slot
+ * is this hub's alone and carries no Domain.
  */
-export function setSessionCookie(cookies: Cookies, token: string): void {
-  cookies.set(SESSION_COOKIE, token, {
+export function setSessionCookie(
+  cookies: Cookies,
+  token: string,
+  slot: CookieSlot = sessionCookieMode()
+): void {
+  const name = sessionCookieNameForSlot(slot);
+  cookies.set(name, token, {
     path: '/',
-    domain: cookieDomain(),
+    domain: slot === 'host' ? undefined : cookieDomain(),
     httpOnly: true,
     secure: isSecureCookie(),
     sameSite: 'lax',
     maxAge: getSigner().maxAge,
   });
+  if (slot === 'shared') dropStaleHostCopy(cookies, token);
+}
+
+/**
+ * Drop a host-only copy of a session other than `shared`: it would win over `shared` once the hub reads host-only
+ * first. Dropped, not rewritten: the next /authorize copies the shared session afresh.
+ */
+export function dropStaleHostCopy(cookies: Cookies, shared: string): void {
+  const host = hostSessionCookieName();
+  if (host === sessionCookieName()) return;
+  const copy = cookies.get(host);
+  if (copy !== undefined && !isCopyOf(copy, shared))
+    cookies.delete(host, { path: '/', secure: true });
+}
+
+// Unverified: it only decides whether the hub keeps a cookie of its own, never whether a session is valid.
+function isCopyOf(copy: string, token: string): boolean {
+  try {
+    const a = decodeJwt(copy);
+    const b = decodeJwt(token);
+    return (
+      !!a.sub &&
+      a.sub === b.sub &&
+      familyId(a as Pick<SessionClaims, 'sid' | 'jti'>) ===
+        familyId(b as Pick<SessionClaims, 'sid' | 'jti'>)
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -289,7 +342,7 @@ async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | und
 
 /** The valid session already on this request's civ-token cookie, or undefined. Best-effort. */
 async function resolvePriorSession(cookies: Cookies): Promise<SessionClaims | undefined> {
-  const token = cookies.get(SESSION_COOKIE);
+  const token = readHubSession(cookies)?.value;
   if (!token) return undefined;
   try {
     const claims = await verifier.verifyToken(token);

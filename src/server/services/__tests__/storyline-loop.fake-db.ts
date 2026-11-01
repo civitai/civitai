@@ -456,6 +456,8 @@ export function createFakeDb() {
       return [{ exists: blocks.has(`${a}:${b}`) || blocks.has(`${c}:${d}`) }];
     }
     if (text.includes("'scores'")) return [{ score: 0 }];
+    // `clearTombstoneTips`: the route's canon edges are not this loop's subject (the SQL suites).
+    if (text.includes('UPDATE "StorylineChapterEdge" e SET canon = false')) return [];
     if (text.includes('FROM "StorylinePendingChapter"') && text.includes('WHERE "postId" =')) {
       // The link a promotion reads, which it must lock: two writers then take turns on it.
       // Modelled only while the statement locks, so one that drops the lock is refused.
