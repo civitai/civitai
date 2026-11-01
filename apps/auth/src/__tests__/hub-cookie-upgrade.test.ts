@@ -159,15 +159,22 @@ const authorize = (cookies: Jar) =>
     run: (event) => authorizeGet(event) as Promise<Response>,
   });
 
-const J0 = 'j0-token';
+// Fixture tokens are JWT-shaped (unsigned) so the hub's unverified decode reads them as it reads real ones.
+const fakeJwt = (claims: Record<string, unknown>) =>
+  ['{"alg":"none"}', JSON.stringify(claims)]
+    .map((part) => Buffer.from(part).toString('base64url'))
+    .join('.') + '.sig';
+let J0 = '';
 function sharedSession(extra: Record<string, unknown> = {}) {
-  h.tokens.set(J0, {
+  const claims = {
     sub: '100',
     jti: 'j0',
     iat0: Date.now() - 5 * DAY_MS,
     signedAt: Date.now() - 60 * 60 * 1000,
     ...extra,
-  });
+  };
+  J0 = fakeJwt(claims);
+  h.tokens.set(J0, claims);
 }
 const claimsOf = (token: string | undefined) => (token ? h.tokens.get(token) : undefined);
 const upgradeKey = (base: string) =>
@@ -378,15 +385,24 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
     }
   );
 
-  it('carries the shared-slot device id over a different host-only one', async () => {
-    sharedSession();
-    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-new', [HOST_DEVICE()]: 'dev-d' });
+  it.each(['false', 'true'])(
+    'keeps a host-only device id the hub moved the browser to over a stale shared one (retire %s)',
+    async (retire) => {
+      process.env.AUTH_RETIRE_SHARED_SESSION = retire;
+      sharedSession();
+      const cookies = jar({
+        [SHARED()]: J0,
+        [SHARED_DEVICE()]: 'dev-d',
+        [HOST_DEVICE()]: 'dev-rotated',
+      });
 
-    const locals = await visit(cookies);
+      const locals = await visit(cookies);
 
-    expect(locals.deviceId).toBe('dev-new');
-    expect(cookies.get(HOST_DEVICE())).toBe('dev-new');
-  });
+      expect(locals.session?.sid).toBe('j0');
+      expect(locals.deviceId).toBe('dev-rotated');
+      expect(cookies.get(HOST_DEVICE())).toBe('dev-rotated');
+    }
+  );
 
   it('a host-only copy of the same session ends the shared-slot token', async () => {
     setMode('shared');
@@ -544,6 +560,35 @@ describe('a new sign-in of the same account in shared mode after its copied sess
     await establishSession(cookies as never, asUser(100));
 
     expect(cookies.get(HOST())).toBeUndefined();
+  });
+});
+
+describe('an account change the hub did not make, after /authorize made a host-only copy', () => {
+  it('drops the copy at the next hub request, so the hub keeps the new account once it reads host-only first', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0 });
+    await authorize(cookies);
+    expect(cookies.get(HOST())).toBeDefined();
+    const other = { sub: '200', jti: 'j1', signedAt: Date.now() };
+    cookies.values.set(SHARED(), fakeJwt(other));
+    h.tokens.set(cookies.get(SHARED())!, other);
+
+    await visit(cookies);
+    setMode('host');
+    const after = await visit(cookies);
+
+    expect(after.session?.sub).toBe('200');
+  });
+
+  it('keeps a copy of the session the hub reads', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0 });
+    await authorize(cookies);
+    const copy = cookies.get(HOST());
+
+    await visit(cookies);
+
+    expect(cookies.get(HOST())).toBe(copy);
   });
 });
 
