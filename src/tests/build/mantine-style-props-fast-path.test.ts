@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -404,3 +405,38 @@ describe.each(['esm', 'cjs'] as const)('patched @mantine/core style props (%s)',
     );
   });
 });
+
+/**
+ * Liveness: every case above compares the installed functions with the unpatched originals, so
+ * it also passes when the patch did not apply. These fail on a pristine install.
+ */
+describe.each(['esm', 'cjs'] as const)(
+  'the installed @mantine/core is the patched one (%s)',
+  (build) => {
+    it.each([FILES.extract, FILES.parse, FILES.filter])('%s carries the patch', (rel) => {
+      const ext = build === 'esm' ? 'mjs' : 'cjs';
+      const source = readFileSync(join(MANTINE, build, `${rel}.${ext}`), 'utf8');
+      expect(source).toContain('// Patched (civitai):');
+    });
+
+    // The two documented differences, observable only on the patched code paths.
+    it('extractStyleProps does not read an inherited-only style prop', async () => {
+      const impl = await loadBuild(build);
+      const props = Object.create({ mt: 'xs' }) as Props;
+      expect(originalExtractStyleProps(props).styleProps).toEqual({ mt: 'xs' });
+      expect(impl.extractStyleProps(props).styleProps).toEqual({});
+    });
+
+    it('parseStyleProps takes the early return for a null styleProps', async () => {
+      const impl = await loadBuild(build);
+      const args = { styleProps: null as unknown as Props, data, theme };
+      expect(() => originalParseStyleProps(args)).toThrow(TypeError);
+      expect(impl.parseStyleProps(args)).toStrictEqual({
+        hasResponsiveStyles: false,
+        styles: {},
+        inlineStyles: {},
+        media: [],
+      });
+    });
+  }
+);

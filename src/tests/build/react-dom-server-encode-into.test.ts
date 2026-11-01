@@ -67,8 +67,17 @@ const WIDE = ['a', 'é', '中', '😀'];
  * strings either side of the `3 * length > 512` cutoff (170/171 code units) that routes a string
  * to a standalone encode; strings whose UTF-8 is larger than the view; and precomputed chunks
  * (tag names, attribute names, `="`) interleaved with all of them.
+ *
+ * The cutoff sweep puts 171-256 three-byte characters (513-768 bytes) behind ~450 bytes of ASCII.
+ * Only there does a cutoff looser than `3 * length` show: such a string would be encodeInto'd into
+ * a nearly full view, and its remainder would no longer fit in a fresh one.
  */
 function variedTree() {
+  const cutoffSweep = [];
+  for (let n = 171; n <= 256; n++) {
+    for (let k = 0; k < 3; k++) cutoffSweep.push(h('s', { key: `p${n}-${k}` }, 'x'.repeat(150)));
+    cutoffSweep.push(h('q', { key: `q${n}` }, '中'.repeat(n)));
+  }
   const sweep = [];
   for (let i = 0; i < 700; i++) {
     sweep.push(h('span', { key: i, 'data-i': i }, WIDE[i % 4].repeat(1 + (i % 61)), i));
@@ -86,6 +95,7 @@ function variedTree() {
       h('u', { key: `e${n}` }, '😀'.repeat(n / 2) + 'é'.repeat(n / 2))
     ),
     h('pre', null, '中'.repeat(5000)),
+    h('article', null, cutoffSweep),
     h('section', null, sweep),
     h('img', { src: '/a.png', alt: 'alt "q" & <x> 😀' }),
     h('input', { defaultValue: 'v'.repeat(171) }),
@@ -98,7 +108,7 @@ describe('patched react-dom server.browser production build', () => {
     const expected = Buffer.from(legacy.renderToString(variedTree()), 'utf8');
     const got = await streamBytes(variedTree());
 
-    expect(expected.length).toBeGreaterThan(40_000); // the tree spans many 512-byte views
+    expect(expected.length).toBeGreaterThan(150_000); // the tree spans many 512-byte views
     expect(firstDifference(got, expected)).toBe(-1);
   });
 
