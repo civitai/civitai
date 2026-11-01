@@ -26,13 +26,11 @@ export const RESTART_WAIT_MS = 60_000;
 const RESTART_POLL_MS = 3_000;
 /**
  * How much of the request's preview grant a tunnel start needs left, as every call from there on
- * is made with it: the start (`START_TIMEOUT_MS`, 200 s), a fresh sandbox token for the connect
- * (`MINT_TIMEOUT_MS`, 15 s), the sandbox's connect (`RUNNER_CALL_TIMEOUT_MS`, 60 s), and the stop
- * when it did not connect (`REQUEST_TIMEOUT_MS`, 15 s): 290 s. A grant that ran out in between
- * leaves civitai a tunnel nothing connects to and nothing can close, so a restart with less left
- * opens none and answers `unavailable`: the next click brings a fresh grant. civitai signs a
- * preview grant for 7 minutes (`PREVIEW_GRANT_TTL_SECONDS`), this budget plus the 2 minutes the
- * steps before the start may take.
+ * is made with it: the start, a fresh sandbox token for the connect, the sandbox's connect, and
+ * the stop when it did not connect. A grant that ran out in between leaves civitai a tunnel
+ * nothing connects to and nothing can close, so a restart with less left opens none and answers
+ * `unavailable`: the next click brings a fresh grant. civitai's `PREVIEW_GRANT_TTL_SECONDS` must
+ * cover this plus the steps before the start.
  */
 export const TUNNEL_START_BUDGET_MS =
   START_TIMEOUT_MS + MINT_TIMEOUT_MS + RUNNER_CALL_TIMEOUT_MS + REQUEST_TIMEOUT_MS;
@@ -292,7 +290,7 @@ export class PreviewRestarter implements PreviewRestarts {
     if (error instanceof DevServerNotRunningError)
       return fail('not-running', RESTART_MESSAGES['app-not-running']);
     // civitai refused the user (a gate, their consent) at the sandbox token's mint. A grant that ran
-    // out (it lives 7 minutes) is not a refusal: the next click brings a fresh one.
+    // out is not a refusal: the next click brings a fresh one.
     if (error instanceof MintRefusedError)
       return error.code === 'refused' || error.code === 'consent_required'
         ? fail('refused', RESTART_MESSAGES.refused)

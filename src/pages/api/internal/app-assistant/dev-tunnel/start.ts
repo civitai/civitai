@@ -8,6 +8,7 @@ import { devTunnelStartFields } from '~/server/schema/blocks/dev-tunnel.schema';
 import { getRunnerDevTunnelUser } from '~/server/services/app-assistant/app-assistant.service';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
 import { authorizeDevTunnelStart } from '~/server/services/blocks/dev-tunnel-access.service';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   cancelDevTunnelStart,
   DEV_TUNNEL_START_CANCELLED,
@@ -169,11 +170,12 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // (the runner gives up a little after it). Past it, the start is cancelled: one still running
   // closes what it opens, one that just finished is closed now, and the runner hears
   // `unavailable`, as for any start that could not open.
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<'deadline'>((resolve) => {
-    timer = setTimeout(() => resolve('deadline'), RUNNER_DEV_TUNNEL_START_DEADLINE_MS);
-  });
-  const outcome = await Promise.race([open(), deadline]).finally(() => clearTimeout(timer));
+  // `open` never rejects (it answers every failure), so the fallback stands only for the deadline.
+  const outcome = await withTimeoutFallback<Answer | 'deadline'>(
+    open(),
+    RUNNER_DEV_TUNNEL_START_DEADLINE_MS,
+    'deadline'
+  );
   if (outcome === 'deadline') {
     const cancelled = await cancelDevTunnelStart(grant.userId, clientKey).catch(
       () => 'unavailable' as const

@@ -7,10 +7,9 @@ export const DEV_TUNNEL_PATH = 'api/internal/app-assistant/dev-tunnel';
 /** How long a keep-alive or a stop waits for civitai. */
 export const REQUEST_TIMEOUT_MS = 15_000;
 /**
- * The longest civitai's start endpoint takes to answer (`RUNNER_DEV_TUNNEL_START_DEADLINE_MS` in
- * civitai's `dev-tunnel.service.ts`, mirrored here, as the runner imports nothing of civitai's).
- * Its own steps can take longer (the previous tunnel's teardown, then up to 180 s for the route's
- * apply Job); past this it answers `unavailable` and closes whatever that start opens.
+ * The longest civitai's start endpoint takes to answer. Mirrors
+ * `RUNNER_DEV_TUNNEL_START_DEADLINE_MS` in civitai's `dev-tunnel.service.ts` (the runner imports
+ * nothing of civitai's); keep them equal.
  */
 export const CIVITAI_START_DEADLINE_MS = 185_000;
 /**

@@ -30,8 +30,9 @@ const query = z.object({
  * says whether the viewer may start subagents (`appAssistantSubagents`), so the runner takes that from
  * civitai rather than from the page.
  *
- * With `purpose=preview` it signs a preview grant instead (7 minutes, `PREVIEW_GRANT_TTL_SECONDS`, no subagents), which the
- * runner takes only for the page's Restart preview (`POST /api/assistant-runner/apps/<app>/preview`);
+ * With `purpose=preview` it signs a preview grant instead (`PREVIEW_GRANT_TTL_SECONDS`, no
+ * subagents), which the runner takes only for the page's Restart preview
+ * (`POST /api/assistant-runner/apps/<app>/preview`);
  * the page names `conversationId=preview:<app>`, which the runner checks against the app.
  *
  *   GET ?conversationId=&idempotencyKey=[&purpose=preview] → `{ grant, expiresAt }`, or 403

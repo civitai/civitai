@@ -1,5 +1,4 @@
 import { env } from '~/env/server';
-import { sAddWithExpireGe } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { newBlockInstanceId } from '~/server/utils/app-block-ids';
 import {
@@ -103,22 +102,16 @@ const clientStartKey = (userId: number, clientKey: string) =>
 const clientCancelledKey = (userId: number, clientKey: string) =>
   `${SYS_PREFIX}:client-cancelled:${userId}:${clientKey}` as const;
 /**
- * How long a start's client key is remembered. A cancel comes when the caller gives up on the
- * start, which is bounded by `RUNNER_DEV_TUNNEL_START_DEADLINE_MS` on this side and the runner's
- * own start timeout on that one (200 s), so 15 minutes leaves a wide margin and keeps no key for
+ * How long a start's client key is remembered: well past the moment a caller gives up on a start
+ * (`RUNNER_DEV_TUNNEL_START_DEADLINE_MS` here, the runner's start timeout there), and nowhere near
  * the life of a tunnel.
  */
 export const DEV_TUNNEL_CLIENT_KEY_SECONDS = 15 * 60;
 /**
- * How long `/api/internal/app-assistant/dev-tunnel/start` takes, at most, to answer. Its own work
- * has no such bound: the previous tunnel's teardown (k8s calls of up to 30 s each), then the
- * route render, which waits up to 180 s for its apply Job (`waitForApplyJob`). Past this the
- * endpoint answers `unavailable` and cancels its own start (`cancelDevTunnelStart`), so whatever
- * that start opens later is closed. App Assistant's runner waits this long plus 15 s
- * (`START_TIMEOUT_MS` in apps/assistant-runner/src/app-assistant/dev-tunnel.ts, which mirrors this
- * number as `CIVITAI_START_DEADLINE_MS`), so it normally hears this answer. Not always: the
- * answer waits for that cancel's own Redis calls, which can overrun the 15 s, and the runner then
- * times out first. It stops the start by its key either way, so the outcome is the same.
+ * How long `/api/internal/app-assistant/dev-tunnel/start` takes, at most, to answer; past it, it
+ * answers `unavailable` and cancels its own start (`cancelDevTunnelStart`). Mirrored as
+ * `CIVITAI_START_DEADLINE_MS` in apps/assistant-runner/src/app-assistant/dev-tunnel.ts; keep them
+ * in step.
  */
 export const RUNNER_DEV_TUNNEL_START_DEADLINE_MS = 185_000;
 
@@ -851,10 +844,9 @@ export const INVALID_SSH_PUBLIC_KEY = 'invalid SSH public key';
 export const DEV_TUNNEL_START_CANCELLED = 'dev tunnel start cancelled';
 
 /**
- * Whether the start under `clientKey` was cancelled. A mark it cannot read counts as none, rather
- * than failing a start nobody cancelled: a cancel that comes after the session is recorded under
- * the key finds it there and closes it itself (`cancelDevTunnelStart`). Only a cancel that came
- * earlier AND this read failing leaves the tunnel open, to idle out (`DEV_TUNNEL_IDLE_SECONDS`).
+ * Whether the start under `clientKey` was already cancelled when it began: an early way out, so
+ * a cancelled start renders nothing. Not the check that decides: the script that lists a tunnel
+ * re-reads the mark as it writes (`LIST_DEV_TUNNEL`), so a mark this cannot read counts as none.
  */
 async function isStartCancelled(userId: number, clientKey: string): Promise<boolean> {
   try {
@@ -941,8 +933,7 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   // failed mint leaves nothing behind.
   await renderDevTunnelRoute(host, sessionId);
 
-  // Persist the records, all with the hard-TTL EX so they self-expire. Not yet the (user, block)
-  // pointer: see below.
+  // Persist the records, all with the hard-TTL EX so they self-expire.
   await Promise.all([
     sysRedis.set(credKey(fingerprint), JSON.stringify(credential), { EX: DEV_TUNNEL_HARD_SECONDS }),
     sysRedis.set(sessionKey(sessionId), JSON.stringify(session), { EX: DEV_TUNNEL_HARD_SECONDS }),
@@ -958,55 +949,32 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   ]);
   recordDevTunnelMint();
 
-  // Cancelled while it ran (its caller gave up on the answer): close what it opened. This start
-  // records its session under the key and THEN reads the mark; a cancel sets the mark and THEN
-  // reads the key. Each awaits its write before its read, so at least one of the two sees the
-  // other's write, and the tunnel is closed by this start, by the cancel, or by both (teardown
-  // is idempotent).
+  // Lists the tunnel: the (user, block) pointer and the ban index, in ONE script that writes
+  // neither when this start was cancelled (its caller gave up on the answer). This start records
+  // its session under the key and THEN runs the script; a cancel sets the mark and THEN reads the
+  // key. Each awaits its write before its read, so at least one sees the other's: the tunnel is
+  // closed by this start, by the cancel, or by both (teardown is idempotent).
   //
-  // 🔴 BEFORE the (user, block) pointer and the ban index are written, so a cancelled start never
-  // touches them. A late start (its route apply finished after the deadline cancelled it) may
-  // find a NEWER start of the same app already holding the pointer; writing it would steal that
-  // live tunnel's pointer, and the teardown would then drop the newer tunnel from the pointer
-  // and the ban index both (a ban would not revoke its token, and the next start would not
-  // replace it). Teardown also only removes a pointer that still names its own session.
-  if (clientKey && (await isStartCancelled(params.userId, clientKey))) {
+  // 🔴 ONE script, because a check and a write made apart let a cancel land between them: a late
+  // start (its route apply finished after the deadline cancelled it) would then write over a
+  // NEWER start's pointer, and its teardown take that live tunnel off the pointer and the ban
+  // index (a ban would not revoke its token, and the next start would not replace it).
+  //
+  // The ban index is one SADD with a TTL FLOOR in the same script, never a SADD + EXPIRE pair: the
+  // pair could land the SADD and drop the EXPIRE on a failover, leaving a TTL-less set that every
+  // later ban would emit a `page_ephemeral-<blockId>` marker for. The floor (GE) means a
+  // concurrent start cannot shorten the set beneath a member that needs it.
+  let listed: boolean;
+  try {
+    listed = await listDevTunnel(session, clientKey);
+  } catch {
+    // Fail CLOSED: an unlisted tunnel is invisible to a ban, and the caller can retry a start.
+    await teardownSession(session, 'stop');
+    throw new Error('dev tunnel could not be listed');
+  }
+  if (!listed) {
     await teardownSession(session, 'stop');
     throw new Error(DEV_TUNNEL_START_CANCELLED);
-  }
-
-  await sysRedis.set(userBlockKey(params.userId, params.blockId), sessionId, {
-    EX: DEV_TUNNEL_HARD_SECONDS,
-  });
-
-  // Best-effort, and deliberately AFTER the state above: the index only makes a ban
-  // able to find this tunnel, so any failure here must degrade revocation COVERAGE
-  // rather than fail a developer's tunnel start.
-  //
-  // 🔴 ONE ATOMIC EVAL, NOT `sAdd` + `expire`. This was written as that pair inside a
-  // single swallowing catch, which `sAddWithExpireGe`'s own docblock calls racy: a
-  // failure between the two — a sentinel failover is the documented case on this exact
-  // client, see `packages/civitai-redis/src/sys-inflight.ts` — lands the SADD and drops
-  // the EXPIRE, leaving a TTL-LESS set that then accumulates every blockId this user
-  // ever tunnels. Every later ban would emit `page_ephemeral-<blockId>` for all of them,
-  // and the index's own TTL guarantee below would be false. The EVAL form makes
-  // "member added, no TTL" unreachable, and its EXPIRE is a FLOOR (GE) so a concurrent
-  // start cannot shorten the set beneath a member that needs it.
-  //
-  // 🔴 try/catch, NOT a trailing `.catch()`. A rejected promise is only one of the ways
-  // this can fail — if the client ever lacks the method, the CALL throws synchronously
-  // and a `.catch()` attached to its result never runs, so the throw escapes and takes
-  // the tunnel start with it. That is the opposite of what this block is for, and it is
-  // the shape that broke the dev-tunnel suite the moment these lines were added.
-  try {
-    await sAddWithExpireGe(
-      sysRedis,
-      userTunnelIndexKey(params.userId),
-      params.blockId,
-      DEV_TUNNEL_HARD_SECONDS
-    );
-  } catch {
-    // A ban may not be able to see this tunnel; the tunnel itself is unaffected.
   }
 
   // eslint-disable-next-line no-console
@@ -1033,6 +1001,35 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     // CLI fails closed). Non-secret, so it rides the mint response directly.
     sshHostPublicKey: env.APPS_DEV_TUNNEL_SSH_HOST_PUBKEY ?? '',
   };
+}
+
+/**
+ * Writes the (user, block) pointer and adds the block to the user's ban index (with a TTL floor),
+ * unless the start's cancel mark (KEYS[3], when given) exists: then it writes nothing. 1 when it
+ * wrote, 0 when cancelled.
+ */
+const LIST_DEV_TUNNEL = `
+  if KEYS[3] and redis.call('EXISTS', KEYS[3]) == 1 then return 0 end
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  redis.call('SADD', KEYS[2], ARGV[3])
+  if redis.call('TTL', KEYS[2]) < tonumber(ARGV[2]) then redis.call('EXPIRE', KEYS[2], ARGV[2]) end
+  return 1
+`;
+
+/** `LIST_DEV_TUNNEL` for a session: false when its start was cancelled. Throws on a Redis error. */
+async function listDevTunnel(
+  session: DevTunnelSessionRecord,
+  clientKey?: string
+): Promise<boolean> {
+  const reply = await sysRedis.eval(LIST_DEV_TUNNEL, {
+    keys: [
+      userBlockKey(session.userId, session.blockId),
+      userTunnelIndexKey(session.userId),
+      ...(clientKey ? [clientCancelledKey(session.userId, clientKey)] : []),
+    ],
+    arguments: [session.sessionId, String(DEV_TUNNEL_HARD_SECONDS), session.blockId],
+  });
+  return Number(reply) === 1;
 }
 
 /** Deletes KEYS[1] only while it still holds ARGV[1], in one step: 1 when it did. */
