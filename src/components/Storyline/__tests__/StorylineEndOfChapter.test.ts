@@ -561,10 +561,22 @@ describe('StorylineEndOfChapter', () => {
       );
     });
 
-    it("gives the owner's own post to the end as well", () => {
+    // On the main path the server finds the end when it adds the post (`addChapterAtEnd`): one
+    // added since this card read it would otherwise turn the owner's add into a branch.
+    it("gives the owner's own post to the end as well, found when it is added on the main path", () => {
       const container = render({ parentPostId: 15, isOwner: true });
       act(() => within(container, 'storyline-add-own-chapter')?.click());
-      expect(mocks.openContinue.mock.calls).toEqual([[{ parentPostId: 120, parentChapterId: 12 }]]);
+      expect(mocks.openContinue.mock.calls).toEqual([
+        [{ parentPostId: 120, parentChapterId: 12, atEnd: true }],
+      ]);
+      document.body.innerHTML = '';
+      mocks.openContinue.mockClear();
+      // A branch's end is not the main path's: that one stays on the chapter the card read.
+      const onBranch = render({ parentPostId: 15, isOwner: true, onMain: false });
+      act(() => within(onBranch, 'storyline-add-own-chapter')?.click());
+      expect(mocks.openContinue.mock.calls).toEqual([
+        [{ parentPostId: 120, parentChapterId: 12, atEnd: false }],
+      ]);
     });
 
     it('says "this path" on a branch', () => {

@@ -37,6 +37,11 @@ export type StorylineContinueModalProps = {
   mode?: 'post' | 'join';
   /** The parent already has a main-path chapter: this starts a branch, and says so. */
   branch?: boolean;
+  /**
+   * The owner's post goes at the end of the main path, found when it is added: a chapter added
+   * since `parentChapterId` was read as the end would otherwise make this a branch.
+   */
+  atEnd?: boolean;
 };
 
 export default function StorylineContinueModal({
@@ -46,6 +51,7 @@ export default function StorylineContinueModal({
   insertBeforeChapterId,
   mode: initialMode = 'post',
   branch = false,
+  atEnd = false,
 }: StorylineContinueModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -186,6 +192,8 @@ export default function StorylineContinueModal({
                       childChapterId: insertBeforeChapterId,
                       postId: post.id,
                     });
+                  else if (atEnd)
+                    addOwn.mutateAtEnd({ storylineId: storyline.id, postId: post.id });
                   else addOwn.mutate({ parentChapterId, postId: post.id });
                   return;
                 }

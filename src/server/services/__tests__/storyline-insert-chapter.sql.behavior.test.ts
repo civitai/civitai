@@ -792,6 +792,30 @@ describe('a chapter add whose parent changes after its first read', () => {
       ]);
     });
 
+    // The end-of-chapter card read 60 as the end; another chapter has landed after it since.
+    it('lands after a chapter added since the card read the end, where adding after that chapter would branch', async () => {
+      const { chapterId: moved } = await addOwnerChapter({
+        parentChapterId: 60,
+        postId: await post(),
+        userId: OWNER,
+      });
+
+      const { chapterId } = await addOwnerChapterAtEnd({
+        storylineId: STORY,
+        postId: await post(),
+        userId: OWNER,
+      });
+      expect(await edgeOf(chapterId)).toEqual({ parentChapterId: moved, canon: true });
+
+      // What the card's own chapter id would have done: a second way on from 60, not the end.
+      const { chapterId: stale } = await addOwnerChapter({
+        parentChapterId: 60,
+        postId: await post(),
+        userId: OWNER,
+      });
+      expect(await edgeOf(stale)).toEqual({ parentChapterId: 60, canon: false });
+    });
+
     it('refuses rather than branch when the end moves while it adds', async () => {
       const [addedPost, otherPost] = [await post(), await post()];
       const { pausedAt, release } = holdAddAtItsPost(addedPost);
