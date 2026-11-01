@@ -10649,8 +10649,16 @@ async function assertStepOrWorkflowInputsUsable(
   body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
   claims: BlockClaims
 ) {
-  // The arm's own token checks first: a caller refused those never pays for the walk below.
-  const userId = await assertStepRequestAllowed(claims);
+  // The arm's own token checks first: a caller refused those never pays for the walk below. A
+  // confirmed step (a `quoteId`) has its own, stricter gate and refusal, so it keeps them.
+  const confirmed =
+    body.kind === 'step' && isPassThroughStepBody(body) && body.quoteId !== undefined;
+  const userId = confirmed
+    ? parseSubjectUserId(claims.sub)
+    : await assertStepRequestAllowed(claims);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
   const [entry, inputs] =
     body.kind === 'workflow'
       ? (['appBlocksWorkflow', [body.steps.map((step) => step.input), body.arguments]] as const)
