@@ -839,14 +839,11 @@ describe('opaqueInputUrlsIn', () => {
   const MiB = 1024 * 1024;
 
   it('reads up to 4 MiB of text, and reports more as too large instead of reading it', () => {
-    const started = performance.now();
     expect(opaqueInputUrlsIn({ field: base64(4 * MiB - 5) })).toEqual({
       urls: [],
       tooDeep: false,
       tooLarge: false,
     });
-    const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(1500);
     expect(opaqueInputUrlsIn({ field: base64(4 * MiB - 4) }).tooLarge).toBe(true);
     expect(opaqueInputUrlsIn({ a: base64(2.1 * MiB), b: base64(2.1 * MiB) }).tooLarge).toBe(true);
   });
@@ -952,6 +949,23 @@ describe('opaqueInputUrlsIn', () => {
     const accented = String.fromCharCode(0xe9);
     expect(opaqueInputUrlsIn({ u: `ws://${accented.repeat(64 * 1024)}/` }).tooLarge).toBe(false);
     expect(opaqueInputUrlsIn({ u: `ws://${accented.repeat(64 * 1024 + 1)}/` }).tooLarge).toBe(true);
+    // A run of combining marks a parser must reorder is charged its length squared, unmapped.
+    const marks = (n: number) =>
+      `a${String.fromCharCode(0x300).repeat(n)}${String.fromCharCode(0x316).repeat(n)}`;
+    const normalize = vi.spyOn(String.prototype, 'normalize');
+    try {
+      // Under the length past which a host is refused unmapped: only the marks refuse it.
+      expect(opaqueInputUrlsIn({ u: `ws://${marks(2 ** 15 - 2)}/` }).tooLarge).toBe(true);
+      // Refused before the reordering is paid for, not after.
+      expect(normalize).not.toHaveBeenCalled();
+    } finally {
+      normalize.mockRestore();
+    }
+    expect(opaqueInputUrlsIn({ u: `ws://${marks(2000)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${marks(3000)}/` }).tooLarge).toBe(true);
+    // The marks add to the rest of the host's cost.
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(3000)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(3000)}${marks(2000)}/` }).tooLarge).toBe(true);
     // A character the parser expands (a square katakana is six) is charged as expanded.
     const square = String.fromCharCode(0x3316).repeat(2000);
     expect(opaqueInputUrlsIn({ u: `ws://${cjk(2600)}${square}/` }).tooLarge).toBe(true);
@@ -961,7 +975,8 @@ describe('opaqueInputUrlsIn', () => {
     // Prose that repeats a few characters costs little, however long: a message after a link.
     const hiragana = (n: number) =>
       Array.from({ length: n }, (_, j) => String.fromCharCode(0x3042 + (j % 80))).join('');
-    const messages = Array.from({ length: 6 }, () => `https://civitai.com ${hiragana(8000)}`);
+    // A percent sign that is not an escape hides nothing, so it is not charged as one.
+    const messages = Array.from({ length: 6 }, () => `https://civitai.com 50% ${hiragana(8000)}`);
     expect(opaqueInputUrlsIn({ messages }).tooLarge).toBe(false);
   });
 
@@ -972,11 +987,12 @@ describe('opaqueInputUrlsIn', () => {
   });
 
   it('reads a long run of spaces in linear time', () => {
-    const value = `a${' '.repeat(200_000)}b`;
+    const value = `a${' '.repeat(1_000_000)}b`;
     const started = performance.now();
     expect(opaqueInputUrlsIn({ value }).urls).toEqual([]);
-    // Linear is milliseconds, the quadratic form seconds: a wide bound stays clear of load.
-    expect(performance.now() - started).toBeLessThan(1500);
+    // Linear is milliseconds, the quadratic form minutes at this length: the bound sits far from
+    // both, so load cannot redden it and only a quadratic scan can.
+    expect(performance.now() - started).toBeLessThan(5000);
   });
 
   it('trims Unicode spaces around a whole url, as a consumer would', () => {

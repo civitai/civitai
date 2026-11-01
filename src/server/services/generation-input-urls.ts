@@ -406,7 +406,7 @@ const largeKeySetCounter = registerCounterWithLabels({
  * characters, line breaks, characters of `%XX`-decoded forms, url parses, and values collected
  * (count and total length).
  * 4 MiB of text is above the largest `params` a step schema accepts (a chat completion's messages
- * and tool calls, about 2.3M characters).
+ * and tool calls).
  */
 const OPAQUE_INPUT_MAX_VISITS = INLINE_MEDIA_MAX_VISITS;
 const OPAQUE_INPUT_MAX_CHARS = 4 * 1024 * 1024;
@@ -441,11 +441,16 @@ const IDNA_PARSE_COST = 8192;
 function idnaCostOf(host: string) {
   // Past this, mapping it would cost the most of all; no message holds a run that long.
   if (host.length > 64 * 1024) return OPAQUE_INPUT_MAX_IDNA_COST + 1;
+  // A run of combining marks is reordered, by the mapping below and by a parser, in its length
+  // squared: charged first, so an over-budget run is refused before it is mapped.
+  let marks = 0;
+  for (const [run] of host.matchAll(/\p{M}+/gu)) marks += run.length * run.length;
+  if (marks > OPAQUE_INPUT_MAX_IDNA_COST) return marks;
   const mapped = host.normalize('NFKC');
-  const work = /%|xn--/i.test(mapped)
+  const work = /%[0-9a-f]{2}|xn--/i.test(mapped)
     ? mapped.length * mapped.length
     : mapped.length * new Set(mapped).size;
-  return work + IDNA_PARSE_COST;
+  return marks + work + IDNA_PARSE_COST;
 }
 // eslint-disable-next-line no-control-regex
 const IDNA_HOST = /[^\x00-\x7f]|%|xn--/i;
