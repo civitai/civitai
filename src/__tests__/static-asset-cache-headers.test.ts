@@ -5,7 +5,7 @@ import { getContentType } from 'next/dist/server/serve-static';
 import { buildCustomRoute } from 'next/dist/server/lib/router-utils/filesystem';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { routerPathname } from '~/server/middleware/__tests__/next-proxy-matcher';
-import { isStaticAssetRulePath } from '~/server/utils/static-asset-cache';
+import { isStaticAssetRuleCacheControl } from '~/server/utils/static-asset-cache';
 import { fileHashWorkerUrl } from '~/hooks/useFileHash';
 
 /**
@@ -134,45 +134,54 @@ describe('static asset Cache-Control in production', () => {
 });
 
 /**
- * `_app` decides which page renders to make private with its OWN compile of the same rule list
- * (`isStaticAssetRulePath`), so the two matchers must agree: one that matched less than Next would
- * leave a page render on a rule path public. Checked on every fixture above plus case and locale
- * variants, against Next's own compiled routes.
+ * `_app` recognises a page render that Next gave a static-asset rule header by its VALUE, so each
+ * value must be unique to those rules: a page, API route or sitemap that set an identical value
+ * would be privatised, and one rule value reused elsewhere would make that code path look like a
+ * rule hit. Walks every first-party source file outside tests for the exact strings; only the rules
+ * module may hold them. A value built at runtime from parts is outside what this can see.
  */
-describe("_app's rule matcher agrees with Next's", () => {
-  const STATIC_VALUES = new Set([SHORT_LIVED, LONG_LIVED]);
-  it.each([
-    '/workers/signals.worker.js?v=2.3',
-    '/workers/file-hash.worker.js',
-    '/WORKERS/FILE-HASH.WORKER.JS',
-    '/workers/a/b.js',
-    '/favicon.ico',
-    '/favicon-red.ico',
-    '/FAVICON-RED.ICO',
-    '/favicon-x.png',
-    '/apple-touch-icon.png',
-    '/site.webmanifest',
-    '/images/base-badge.png',
-    '/images/BASE-BADGE.PNG',
-    '/images/no-such-file.png',
-    '/images/creators/x.webp',
-    '/en/images/base-badge.png',
-    '/images',
-    '/images/123',
-    '/images/iterate',
-    '/models/123/v1.5',
-    '/sitemap.xml',
-    '/sw.js',
-    '/api/v1/images',
-    '/',
-  ])('%s', (url) => {
-    const next = STATIC_VALUES.has(prod.cacheControl(url) ?? '');
-    expect(isStaticAssetRulePath(url, ['en'])).toBe(next);
+describe('static-asset rule values are unique to the rules', () => {
+  const ROOT = path.resolve(__dirname, '../..');
+  const RULES_MODULE = 'src/shared/constants/static-asset-cache-rules.mjs';
+  const SOURCE = /\.(?:[cm]?[jt]sx?)$/;
+  const SKIP_DIR = new Set(['node_modules', '.next', '__tests__', 'dist', '.git']);
+
+  function sources(dir: string): string[] {
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return SKIP_DIR.has(entry.name) ? [] : sources(full);
+      return SOURCE.test(entry.name) && !/\.test\.[jt]sx?$/.test(entry.name) ? [full] : [];
+    });
+  }
+
+  const files = [
+    ...['src', 'scripts', 'apps', 'packages'].flatMap((d) => sources(path.join(ROOT, d))),
+    path.join(ROOT, 'next.config.mjs'),
+  ];
+
+  it('POSITIVE CONTROL: the walk sees the rules module and many sources', () => {
+    expect(files.length).toBeGreaterThan(1000);
+    expect(files.map((f) => path.relative(ROOT, f))).toContain(RULES_MODULE);
   });
 
-  it('POSITIVE CONTROL: the fixtures include both answers', () => {
-    expect(isStaticAssetRulePath('/images/BASE-BADGE.PNG', ['en'])).toBe(true);
-    expect(isStaticAssetRulePath('/images/123', ['en'])).toBe(false);
+  it.each([SHORT_LIVED, LONG_LIVED])('only the rules module contains %j', (value) => {
+    const holders = files
+      .filter((file) => fs.readFileSync(file, 'utf8').includes(value))
+      .map((file) => path.relative(ROOT, file));
+    expect(holders).toEqual([RULES_MODULE]);
+  });
+
+  it.each([
+    [SHORT_LIVED, true],
+    [LONG_LIVED, true],
+    ['PUBLIC,max-age=3600,  s-maxage=14400, stale-while-revalidate=3600', true],
+    ['public, max-age=86400, must-revalidate', false],
+    ['public, max-age=3600, s-maxage=14400', false],
+    ['private, no-cache, no-store, max-age=0, must-revalidate', false],
+    [undefined, false],
+  ])('isStaticAssetRuleCacheControl(%j) is %s', (value, expected) => {
+    expect(isStaticAssetRuleCacheControl(value)).toBe(expected);
   });
 });
 

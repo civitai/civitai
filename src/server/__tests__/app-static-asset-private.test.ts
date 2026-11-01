@@ -1,5 +1,5 @@
 /**
- * A page render on a path a static-asset `Cache-Control` rule matches must leave private.
+ * A page render that arrives carrying a static-asset rule's `Cache-Control` must leave private.
  *
  * `next.config.mjs` gives `/images/<file>.<ext>` (and the worker, icon and manifest paths) a
  * public, CDN-cacheable `Cache-Control`, and Next sets it on the response BEFORE it knows whether a
@@ -7,7 +7,8 @@
  * filesystem does not), is answered by the `/images/[imageId]` page instead, through `_app`, with
  * per-viewer props and cookies — and Next keeps the rule's header on that page's 404, its 500 when
  * `getServerSideProps` throws, its redirect, and on `_app`'s own 302 (measured on a Next 16.4.3
- * production build). `_app.getInitialProps` therefore sets the private value first.
+ * production build). `_app.getInitialProps` therefore replaces a rule value with the private one
+ * first, recognising it by the value Next already set (not by re-deriving the path).
  *
  * Each case replays Next's order on ONE real response: the rule header, `_app` for the page, the
  * page's real `createServerSideProps` handler, and `_app` again for the `/404` or `/_error` Next
@@ -52,6 +53,7 @@ const getInitialProps = (AppWithTRPC as unknown as { getInitialProps: (c: AppCon
   .getInitialProps;
 
 const RULE_HEADER = 'public, max-age=3600, s-maxage=14400, stale-while-revalidate=3600';
+const SHORT_RULE = 'public, max-age=60, s-maxage=300, stale-while-revalidate=300';
 const PRIVATE = 'private, no-cache, no-store, max-age=0, must-revalidate';
 
 type Exit = 'render' | 'throw' | 'redirect' | 'notFound';
@@ -111,48 +113,53 @@ beforeEach(() => {
   );
 });
 
-// The `/_next/data/<id>/…json` forms are the same page requests from client navigation: Next
-// normalises them to the page path before matching the header rules, but `_app` sees the raw url.
-describe.each([
+// What Next put on the response from a `next.config.mjs` rule before `_app` ran; `_app` decides
+// by this value alone, so the url only feeds the page handler (`/index/` data form included).
+const RULE_VALUES = [SHORT_RULE, RULE_HEADER];
+const URLS = [
   '/images/no-such-file.png',
   '/images/BASE-BADGE.PNG',
-  '/en/images/x.webp',
   '/_next/data/BUILD_ID/images/a.png.json',
-  '/_next/data/BUILD_ID/en/images/a.png.json',
-  '/_next/data/BUILD_ID/images/A.PNG.json',
-])('a page render on the static-asset rule path %s', (url) => {
-  it.each<Exit>(['notFound', 'throw', 'redirect', 'render'])(
-    'leaves private when the page exits by %s',
-    async (exit) => {
-      const res = await serve(url, exit, RULE_HEADER);
+  '/_next/data/BUILD_ID/index/en/images/a.png.json?foo=1',
+];
+
+describe.each(RULE_VALUES.flatMap((value) => URLS.map((url) => [value, url] as const)))(
+  'a page render that arrives with the rule value %j (%s)',
+  (ruleValue, url) => {
+    it.each<Exit>(['notFound', 'throw', 'redirect', 'render'])(
+      'leaves private when the page exits by %s',
+      async (exit) => {
+        const res = await serve(url, exit, ruleValue);
+        expect(res.getHeader('cache-control')).toBe(PRIVATE);
+      }
+    );
+
+    it("leaves private on _app's own 302", async () => {
+      h.syncUrl.current = '/api/auth/authorize?returnUrl=%2F';
+      const res = await serve(url, 'render', ruleValue);
+      expect(res.statusCode).toBe(302);
       expect(res.getHeader('cache-control')).toBe(PRIVATE);
+    });
+  }
+);
+
+describe('a render with any other Cache-Control is left alone', () => {
+  it.each([
+    // A page that sets its OWN public header (the sitemaps) must keep it.
+    ['/sitemap.xml', 'public, max-age=86400, must-revalidate'],
+    // Close to a rule value but not one: only exact values are rule hits.
+    ['/images/no-such-file.png', 'public, max-age=3600, s-maxage=14400'],
+    ['/images/no-such-file.png', 'public, max-age=60'],
+  ])('%s keeps %j', async (url, value) => {
+    const res = await serve(url, 'render', value);
+    expect(res.getHeader('cache-control')).toBe(value);
+  });
+
+  it.each(['/images/123', '/_next/data/BUILD_ID/images/123.json', '/images/no-such-file.png'])(
+    '%s with no incoming Cache-Control gets none from _app',
+    async (url) => {
+      const res = await serve(url, 'render');
+      expect(res.getHeader('cache-control')).toBeUndefined();
     }
   );
-
-  it("leaves private on _app's own 302", async () => {
-    h.syncUrl.current = '/api/auth/authorize?returnUrl=%2F';
-    const res = await serve(url, 'render', RULE_HEADER);
-    expect(res.statusCode).toBe(302);
-    expect(res.getHeader('cache-control')).toBe(PRIVATE);
-  });
-});
-
-describe('paths no static-asset rule matches are left alone', () => {
-  // `/images/123` is the image page itself; nothing set a rule header, so nothing is added.
-  it('/images/123 gets no Cache-Control from _app', async () => {
-    const res = await serve('/images/123', 'render');
-    expect(res.getHeader('cache-control')).toBeUndefined();
-  });
-
-  it('the data request for /images/123 gets no Cache-Control from _app', async () => {
-    const res = await serve('/_next/data/BUILD_ID/images/123.json', 'render');
-    expect(res.getHeader('cache-control')).toBeUndefined();
-  });
-
-  // A page that sets its OWN public header (the sitemaps) must keep it.
-  it('/sitemap.xml keeps the public header it was given', async () => {
-    const SITEMAP = 'public, max-age=86400, must-revalidate';
-    const res = await serve('/sitemap.xml', 'render', SITEMAP);
-    expect(res.getHeader('cache-control')).toBe(SITEMAP);
-  });
 });

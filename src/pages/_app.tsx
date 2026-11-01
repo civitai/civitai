@@ -478,16 +478,12 @@ function MyApp(props: CustomAppProps) {
 //   };
 // };
 MyApp.getInitialProps = async (appContext: AppContext) => {
-  // 🔴 First, before anything can render or redirect: a page render on a path a static-asset
-  // `Cache-Control` rule matches (a missing `/images/<file>.<ext>`, a case variant of a real one)
-  // must not leave with that rule's public header. See `~/server/utils/static-asset-cache`.
+  // 🔴 First, before anything can render or redirect: a page render that Next already gave a
+  // static-asset rule's public `Cache-Control` (a missing `/images/<file>.<ext>`, a case variant of
+  // a real one, their data requests) must not leave with it. See `~/server/utils/static-asset-cache`.
   if (typeof window === 'undefined') {
     const { privatizeStaticAssetPageRender } = await import('~/server/utils/static-asset-cache');
-    privatizeStaticAssetPageRender(
-      appContext.ctx.req?.url,
-      appContext.ctx.res,
-      appContext.router?.locales ?? []
-    );
+    privatizeStaticAssetPageRender(appContext.ctx.res);
   }
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;

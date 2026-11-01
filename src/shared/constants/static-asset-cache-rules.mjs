@@ -3,7 +3,7 @@
  * `Cache-Control` for files served from `public/`. Plain `.mjs` so both readers load THIS list:
  * `next.config.mjs` (which Node loads natively, so it cannot import TypeScript) turns each entry
  * into a `headers()` rule, and `_app.getInitialProps` (`~/server/utils/static-asset-cache`) makes
- * any PAGE render on one of these paths private again (see below).
+ * any PAGE render that carries one of these values private again (see below).
  *
  * Next serves every public file with `public, max-age=0` (it cannot know whether one changed), so a
  * CDN in front revalidates each one against the origin on EVERY request. None of these URLs
@@ -26,8 +26,10 @@
  * `/images/<file>.<ext>` — or a case variant of a real file, since rules match without case and
  * the filesystem does not — is rendered by `/images/[imageId]` through `_app`, with per-viewer
  * props and cookies, and Next leaves the rule's header on its 404, its 500 when the page throws,
- * and its redirects. `_app` therefore sets `STATIC_ASSET_MISS_CACHE_CONTROL` first on every render
- * whose path one of these rules matches.
+ * and its redirects. `_app` therefore replaces a rule's value with `STATIC_ASSET_MISS_CACHE_CONTROL`
+ * first on every render, recognising it by the VALUE: each value here must stay unique to these
+ * rules (no page, API route or sitemap may set an identical one), which
+ * `static-asset-cache-headers.test.ts` enforces.
  *
  * `/_next/static` is not listed: Next already serves it immutable and ignores any override.
  */
