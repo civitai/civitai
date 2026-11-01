@@ -12,6 +12,7 @@ import {
   Switch,
   Text,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {
   CategoryScale,
@@ -23,7 +24,11 @@ import {
 } from 'chart.js';
 import React, { useMemo } from 'react';
 import { Bar } from 'react-chartjs-2';
-import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/useBuzz';
+import {
+  useBuzzTransactions,
+  useQueryBuzz,
+  useTransactionsReport,
+} from '~/components/Buzz/useBuzz';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
@@ -38,6 +43,8 @@ import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateValue } from '~/components/Buzz/chart-defaults';
 import { getReportSeries, getStackPartner } from '~/components/Buzz/Dashboard/report-series';
 
@@ -101,11 +108,22 @@ export const BuzzDashboardOverview = ({
     }));
   }, [currentAccountType]);
 
-  const [stackOther, setStackOther] = React.useState(false);
   const stackPartner = getStackPartner(currentAccountType);
+  // One remembered choice per account type, so Yellow and Green each keep their own.
+  const [stackOther, setStackOther] = useLocalStorage<boolean>({
+    key: `buzz-dashboard-stack-${currentAccountType}`,
+    defaultValue: false,
+  });
   const partnerLabel = stackPartner ? getAccountTypeLabel(stackPartner) : '';
   const partnerConfig = useBuzzCurrencyConfig(stackPartner);
   const stacking = stackOther && !!stackPartner;
+  const { data: partnerBuzz, isLoading: isLoadingBuzz } = useQueryBuzz(
+    stackPartner ? [currentAccountType, stackPartner] : [currentAccountType]
+  );
+  const formatBalance = (type: BuzzSpendType) => {
+    const balance = partnerBuzz.accounts.find((a) => a.type === type)?.balance;
+    return isLoadingBuzz || balance === undefined ? '…' : balance.toLocaleString();
+  };
 
   const { report, isLoading } = useTransactionsReport(reportFilters, {
     enabled: true,
@@ -246,15 +264,19 @@ export const BuzzDashboardOverview = ({
                 <Group justify="space-between" align="flex-start" wrap="wrap" mb="sm">
                   <Stack gap={4}>
                     <h3 className="text-xl font-bold" style={{ margin: 0 }}>
-                      Current {currentAccountTypeLabel} Buzz
+                      {stacking
+                        ? `Current ${currentAccountTypeLabel} + ${partnerLabel} Buzz`
+                        : `Current ${currentAccountTypeLabel} Buzz`}
                     </h3>
                     <Group gap="sm" align="center" wrap="nowrap">
                       <UserBuzz
-                        key={currentAccountType}
+                        key={`${currentAccountType}-${stacking}`}
                         accountId={accountId}
                         textSize="xl"
                         withAbbreviation={false}
-                        accountTypes={[currentAccountType]}
+                        accountTypes={
+                          stacking ? [currentAccountType, stackPartner] : [currentAccountType]
+                        }
                       />
                       <Popover width={350} withArrow withinPortal shadow="sm">
                         <Popover.Target>
@@ -278,6 +300,24 @@ export const BuzzDashboardOverview = ({
                                 {getAccountTypeDescription(currentAccountType)}
                               </Text>
                             </Group>
+                            {stacking && stackPartner && (
+                              <Stack gap={4} data-testid="stacked-balances">
+                                {[currentAccountType, stackPartner].map((type) => {
+                                  const config = getCurrencyConfig({
+                                    currency: Currency.BUZZ,
+                                    type,
+                                  });
+                                  return (
+                                    <Text key={type} size="sm">
+                                      <Text component="span" fw="bold" c={config.color}>
+                                        {getAccountTypeLabel(type)} Buzz:
+                                      </Text>{' '}
+                                      {formatBalance(type)}
+                                    </Text>
+                                  );
+                                })}
+                              </Stack>
+                            )}
                             {getAccountTypeUsages(currentAccountType).length > 0 && (
                               <List>
                                 {getAccountTypeUsages(currentAccountType).map((usage, index) => (
