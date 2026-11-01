@@ -562,7 +562,9 @@ const previewGrant = (
   app: string,
   extra: Record<string, unknown> = { use: 'preview' }
 ) =>
-  signGrant(keys, { userId, conversationId: `preview:${app}`, idempotencyKey: 'pk-1' }, 120, extra);
+  // For 7 minutes, as civitai signs one (`PREVIEW_GRANT_TTL_SECONDS`): a shorter one leaves a
+  // restart too little to start a tunnel with (`TUNNEL_START_BUDGET_MS`).
+  signGrant(keys, { userId, conversationId: `preview:${app}`, idempotencyKey: 'pk-1' }, 420, extra);
 
 /** The run API's own service is not what this route uses: any call to it fails the test. */
 const noRuns = new Proxy({} as RunService, {
@@ -662,13 +664,13 @@ describe('POST apps/:app/preview', () => {
     const base = await serve(previews);
     const viewer = `Bearer ${await signViewer(keys, 'u1')}`;
     const before = Date.now();
-    // Signed for 120 s here (`previewGrant`): the expiry is the grant's, not a default.
+    // Signed for 420 s here (`previewGrant`): the expiry is the grant's, not a default.
     const own = await previewGrant('u1', APP);
     expect((await post(base, APP, { authorization: viewer, 'x-run-grant': own })).status).toBe(200);
     expect(expiries).toHaveLength(1);
     const left = expiries[0]!.getTime() - before;
-    expect(left).toBeGreaterThan(118_000);
-    expect(left).toBeLessThanOrEqual(121_000);
+    expect(left).toBeGreaterThan(418_000);
+    expect(left).toBeLessThanOrEqual(421_000);
   });
 
   it('refuses a preview grant for a reply start: it is good for nothing else', async () => {
