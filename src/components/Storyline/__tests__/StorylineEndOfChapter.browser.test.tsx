@@ -33,6 +33,13 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   useStorylineForkShares: () => ({ data: { enough: true, total: 0, minChoices: 1, shares: {} } }),
   useStorylineContinueTerms: () => ({ open: true, price: 50, closedReason: null }),
   useStorylineTracking: () => ({ trackBranchChoice: vi.fn(), trackCreateClick: mocks.track }),
+  // The main path after the chapter: none here unless a test sets one.
+  useStorylineCanonAhead: () => ({
+    ahead: [],
+    childrenByChapterId: new Map(),
+    isLoading: false,
+    isSuccess: true,
+  }),
 }));
 vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
   ...(await importOriginal<typeof DialogStoreModule>()),

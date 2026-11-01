@@ -132,6 +132,7 @@ export function StorylinePostNext({ postId }: { postId: number }) {
         chapterTombstone={end.tombstone}
         parentPostId={end.post?.id}
         isOwner={!!currentUser && currentUser.id === path.storyline.userId}
+        onMain={end.onMain}
         onContinue={onContinue}
       />
       <Text
