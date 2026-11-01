@@ -245,6 +245,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
   // no entity or context. See `responseWriteSerialize`.
   TRPC_FAST_SUPERJSON_WRITE = 'trpc-fast-superjson-write',
+  // Hands a full page load's server render the prefetched state it serialised into `trpcState`
+  // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
+  // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
+  // parse. Evaluated per request (user id, or one of a fixed set of anonymous buckets) so a
+  // percentage rollout splits traffic.
+  SSR_SKIP_TRPCSTATE_REPARSE = 'ssr-skip-trpcstate-reparse',
   // Lets `withSpan` (@civitai/telemetry/otel-helpers) run its work without opening a span when the
   // active parent is a local, unsampled span — that span could never be recorded or exported.
   // DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized client, which
