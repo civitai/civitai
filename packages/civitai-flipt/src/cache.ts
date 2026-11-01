@@ -112,8 +112,8 @@ export function fliptCacheKey(
 }
 
 /**
- * Everything in `fliptCacheKey` after the flag key. It depends only on (entityId, context), so a
- * caller evaluating many flags for one subject can build it once (`prepareFliptContext`).
+ * Everything in `fliptCacheKey` after the flag key. It depends only on (entityId, context), so the
+ * client builds it once per frozen context rather than once per flag.
  */
 export function fliptCacheKeySuffix(entityId: string, context: Record<string, string>): string {
   const keys = Object.keys(context);

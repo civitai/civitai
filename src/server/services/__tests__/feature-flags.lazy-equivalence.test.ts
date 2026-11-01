@@ -198,16 +198,16 @@ describe.each(impls)('$name lazy evaluates ONLY the accessed key', ({ build }) =
     void lazy.canViewNsfw;
     expect(fliptEvalCalls).toHaveLength(0);
 
-    // videoTraining (fliptKey 'video-training', public availability) reaches the
+    // aiToolkitSd15 (fliptKey 'ai-toolkit-sd15', public availability) reaches the
     // flipt eval → exactly ONE call for that single key (not all 64).
     fliptEvalCalls.length = 0;
-    void lazy.videoTraining;
+    void lazy.aiToolkitSd15;
     expect(fliptEvalCalls).toHaveLength(1);
-    expect(fliptEvalCalls[0].flag).toBe('video-training');
+    expect(fliptEvalCalls[0].flag).toBe('ai-toolkit-sd15');
 
     // Memoized: a repeat read of the same key does not re-eval.
     fliptEvalCalls.length = 0;
-    void lazy.videoTraining;
+    void lazy.aiToolkitSd15;
     expect(fliptEvalCalls).toHaveLength(0);
   });
 });

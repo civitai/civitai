@@ -23,96 +23,7 @@ export type FliptOptions = Partial<FliptConfig> & {
   onEvalError?: (error: unknown, flag: string) => void;
   /** Startup/diagnostic lines. Defaults to console.log. */
   log?: FliptLogFn;
-  /**
-   * Key of a boolean flag that, when ON, lets a boolean evaluation of a flag with NO rollouts in
-   * the current snapshot return that flag's `enabled` without calling the wasm engine — which is
-   * exactly what the engine returns for such a flag, for every entity and context. Read by this
-   * client straight from the engine (entityId 'global', no context, local overrides honoured), at
-   * most once per 5s; unknown or unreadable reads as OFF. Omitted: never skips the engine.
-   */
-  noRolloutFastPathSwitch?: string;
 };
-
-// `prepareFliptContext` stores the cache-key suffix under this symbol. Non-enumerable, so
-// `Object.keys`, spreads, `for…in` (the SDK's request serializer) and JSON never see it.
-const PREPARED_KEY = Symbol('fliptPreparedCacheKey');
-type PreparedContext = Readonly<Record<string, string>> & {
-  readonly [PREPARED_KEY]?: { entityId: string; suffix: string };
-};
-
-/**
- * A frozen copy of `context` carrying its eval-cache key suffix for `entityId`, built once. Pass
- * it to every evaluation of one subject (e.g. a full feature-flag compute) to skip re-sorting and
- * re-encoding the context per flag. The key is the same string `fliptCacheKey` builds, so it
- * shares cache entries with unprepared calls; it is used only when the call's `entityId` matches,
- * and the copy is frozen, so it cannot drift from the context it describes.
- */
-export function prepareFliptContext(
-  entityId: string,
-  context: Record<string, string>
-): Readonly<Record<string, string>> {
-  const copy: Record<string, string> = { ...context };
-  Object.defineProperty(copy, PREPARED_KEY, {
-    value: { entityId, suffix: fliptCacheKeySuffix(entityId, copy) },
-    enumerable: false,
-  });
-  return Object.freeze(copy);
-}
-
-function evalCacheKey(flag: string, entityId: string, context: PreparedContext): string {
-  const prepared = context[PREPARED_KEY];
-  if (prepared && prepared.entityId === entityId) return flag + prepared.suffix;
-  return flag + fliptCacheKeySuffix(entityId, context);
-}
-
-const NO_ROLLOUT_SWITCH_REFRESH_MS = 5_000;
-
-/**
- * What one engine snapshot says about its flags, built at most once per snapshot (lazily, on the
- * first evaluation after it is applied) and dropped when the next one is applied.
- */
-type SnapshotView = {
-  /** Flag keys the ENGINE lists for this snapshot; null if it could not list them. */
-  keys: Set<string> | null;
-  /** Boolean evaluations that failed for a key not in `keys`: the engine's own error, rethrown. */
-  missing: Map<string, unknown>;
-  /**
-   * Boolean flags whose evaluation cannot depend on entity or context: BOOLEAN type, no rollouts
-   * (`rollouts` absent, null or []), so the engine returns `enabled`. Rules are not read by a
-   * boolean evaluation. Null when the raw snapshot was not captured.
-   */
-  constants: Map<string, boolean> | null;
-};
-
-type RawSnapshotFlag = { key?: unknown; enabled?: unknown; rollouts?: unknown };
-
-function buildConstants(
-  listed: { key: string; enabled: boolean; type: string }[],
-  raw: unknown
-): Map<string, boolean> | null {
-  const rawFlags = (raw as { flags?: unknown } | null | undefined)?.flags;
-  if (!Array.isArray(rawFlags)) return null;
-  const byKey = new Map<string, RawSnapshotFlag | null>();
-  for (const f of rawFlags as RawSnapshotFlag[]) {
-    if (!f || typeof f.key !== 'string') continue;
-    // A key listed twice is ambiguous about which copy the engine kept: never fast-path it.
-    byKey.set(f.key, byKey.has(f.key) ? null : f);
-  }
-  const constants = new Map<string, boolean>();
-  for (const flag of listed) {
-    // Type and `enabled` come from the engine's own listing; the raw snapshot only answers
-    // "does it have rollouts", and must agree with the engine on `enabled`.
-    if (flag.type !== 'BOOLEAN_FLAG_TYPE') continue;
-    const r = byKey.get(flag.key);
-    if (!r || r.enabled !== flag.enabled) continue;
-    const noRollouts =
-      r.rollouts === undefined ||
-      r.rollouts === null ||
-      (Array.isArray(r.rollouts) && r.rollouts.length === 0);
-    if (noRollouts) constants.set(flag.key, flag.enabled);
-  }
-  return constants;
-}
 
 export type FliptFeatureFlags = {
   /** Boolean evaluation honoring local overrides. `false` when Flipt is unreachable or the flag is unknown. */
@@ -161,7 +72,6 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     onInitError = (error: Error) => console.error('[flipt] init error:', error),
     onEvalError = (error: unknown) => console.error('[flipt] evaluation error:', error),
     log = console.log,
-    noRolloutFastPathSwitch,
     ...configOverrides
   } = options;
 
@@ -181,78 +91,20 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   let initializing: Promise<FliptClient | null> | null = null;
   let lastFailureTime = 0;
 
-  // Per-snapshot state, per SDK client. Only a client whose engine `trackSnapshots` hooked gets a
-  // view, so a snapshot change can never leave a stale one in place; any other client takes the
-  // engine path exactly as before. Keyed by client because an init that loses its timeout race
-  // leaves an orphaned client whose own refresh timer keeps applying snapshots.
-  const tracked = new WeakMap<FliptClient, { raw: unknown; view: SnapshotView | null }>();
-  let noRolloutSwitchValue = false;
-  let noRolloutSwitchExpiresAt = Number.NEGATIVE_INFINITY;
+  // The context part of the cache key, built once per FROZEN context (as `buildFliptContext`
+  // returns) instead of once per flag: a caller evaluating every flag for one user passes the same
+  // object each time. Frozen only, because a frozen object cannot change after its key part was
+  // built; any other context builds it on every call, as before. Weak, so it lives as long as the
+  // context does (one request).
+  const keySuffixes = new WeakMap<object, { entityId: string; suffix: string }>();
 
-  // Hook the engine's `snapshot()` — the one place a new flag state is applied (init and every
-  // refresh) — to drop the view and keep the raw document. Relies on the SDK's `engine` field,
-  // which its types mark protected; if a future SDK moves it, this returns false and nothing
-  // here changes behaviour.
-  function trackSnapshots(client: FliptClient): boolean {
-    const engine = (client as unknown as { engine?: { snapshot?: unknown } }).engine;
-    if (!engine || typeof engine.snapshot !== 'function') return false;
-    const apply = engine.snapshot as (data: unknown) => unknown;
-    const state: { raw: unknown; view: SnapshotView | null } = { raw: undefined, view: null };
-    engine.snapshot = function (this: unknown, data: unknown) {
-      // Cleared first: if the engine rejects `data` it may or may not have kept its old state,
-      // so no raw document is trusted until the next snapshot it accepts.
-      state.raw = undefined;
-      try {
-        const result = apply.call(this, data);
-        state.raw = data;
-        return result;
-      } finally {
-        state.view = null;
-      }
-    };
-    tracked.set(client, state);
-    return true;
-  }
-
-  function snapshotView(client: FliptClient): SnapshotView | null {
-    const state = tracked.get(client);
-    if (!state) return null;
-    if (state.view) return state.view;
-    let keys: Set<string> | null = null;
-    let constants: Map<string, boolean> | null = null;
-    try {
-      const listed = client.listFlags();
-      keys = new Set(listed.map((f) => f.key));
-      constants = buildConstants(listed, state.raw);
-    } catch {
-      // Unlistable snapshot: no negative cache and no fast path until the next one.
-    }
-    state.view = { keys, missing: new Map(), constants };
-    return state.view;
-  }
-
-  // The `noRolloutFastPathSwitch` flag. Evaluated on the engine directly — never through
-  // `evalBooleanCached` — so reading it cannot recurse into the fast path it gates.
-  function noRolloutSwitchOn(client: FliptClient): boolean {
-    if (!noRolloutFastPathSwitch) return false;
-    const now = Date.now();
-    if (now < noRolloutSwitchExpiresAt) return noRolloutSwitchValue;
-    noRolloutSwitchExpiresAt = now + NO_ROLLOUT_SWITCH_REFRESH_MS;
-    const override = localOverrides[noRolloutFastPathSwitch];
-    if (override !== undefined) {
-      noRolloutSwitchValue = override === 'on';
-      return noRolloutSwitchValue;
-    }
-    try {
-      noRolloutSwitchValue = client.evaluateBoolean({
-        flagKey: noRolloutFastPathSwitch,
-        entityId: 'global',
-        context: {},
-      }).enabled;
-    } catch {
-      noRolloutSwitchValue = false;
-    }
-    return noRolloutSwitchValue;
+  function evalCacheKey(flag: string, entityId: string, context: Record<string, string>): string {
+    if (!Object.isFrozen(context)) return flag + fliptCacheKeySuffix(entityId, context);
+    const memo = keySuffixes.get(context);
+    if (memo && memo.entityId === entityId) return flag + memo.suffix;
+    const suffix = fliptCacheKeySuffix(entityId, context);
+    keySuffixes.set(context, { entityId, suffix });
+    return flag + suffix;
   }
 
   async function getInstance(): Promise<FliptClient | null> {
@@ -278,13 +130,6 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
             authentication: { clientToken: connection.clientToken },
             updateInterval: config.updateIntervalSeconds,
           });
-          // `init` applied its snapshot before the hook existed. Forgetting the etag makes the
-          // refresh below download the current document again instead of getting a 304, so
-          // the hook sees it. If that download fails, the fast path just waits for the next
-          // changed snapshot.
-          if (trackSnapshots(client)) {
-            (client as unknown as { etag?: string }).etag = undefined;
-          }
           await client.refresh();
           return client;
         })();
@@ -328,29 +173,11 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     if (bypass.has(flag)) {
       return client.evaluateBoolean({ flagKey: flag, entityId, context }).enabled;
     }
-    // A blank flag or entity id is rejected by the SDK before the engine sees it, with its own
-    // error; leave those to it.
-    const snapshot = flag.trim() !== '' && entityId.trim() !== '' ? snapshotView(client) : null;
-    if (snapshot) {
-      // A key this snapshot does not have: rethrow the engine's error from the first attempt
-      // instead of asking again. The next snapshot starts with an empty map.
-      if (snapshot.missing.has(flag)) throw snapshot.missing.get(flag);
-      const constant = snapshot.constants?.get(flag);
-      if (constant !== undefined && noRolloutSwitchOn(client)) return constant;
-    }
     const now = Date.now();
     const key = evalCacheKey(flag, entityId, context);
     const cached = boolCache.get(key, now);
     if (cached.hit) return cached.value as boolean;
-    let enabled: boolean;
-    try {
-      enabled = client.evaluateBoolean({ flagKey: flag, entityId, context }).enabled;
-    } catch (e) {
-      // Remembered only when the engine itself does not list the key, so any other failure
-      // keeps being retried as before.
-      if (snapshot?.keys && !snapshot.keys.has(flag)) snapshot.missing.set(flag, e);
-      throw e;
-    }
+    const { enabled } = client.evaluateBoolean({ flagKey: flag, entityId, context });
     boolCache.set(key, enabled, now);
     return enabled;
   }

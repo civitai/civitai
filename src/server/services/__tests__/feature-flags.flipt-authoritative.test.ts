@@ -27,7 +27,7 @@ vi.mock('~/server/flipt/client', async () => {
 
 beforeAll(async () => {
   const snapshot = deriveSnapshotFromFlagShape(sourceSnapshot, 'app-blocks-enabled', [
-    { key: 'image-search', enabled: true },
+    { key: 'trpc-unified-batch-window', enabled: true },
     { key: 'hi-dpi-previews', enabled: false },
   ]);
   server = await startFliptFixtureServer(snapshot);
@@ -48,7 +48,7 @@ describe('a flag that exists in Flipt is authoritative over static availability'
     const anon = buildFliptContext(undefined);
 
     expect(server.received.length).toBeGreaterThan(0);
-    expect(isFliptSync('image-search', 'anonymous', anon)).toBe(true);
+    expect(isFliptSync('trpc-unified-batch-window', 'anonymous', anon)).toBe(true);
     expect(isFliptSync('hi-dpi-previews', 'anonymous', anon)).toBe(false);
   });
 
@@ -56,7 +56,7 @@ describe('a flag that exists in Flipt is authoritative over static availability'
     const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
     const features = await getFeatureFlagsAsync({});
 
-    expect(features.imageSearch).toBe(true);
+    expect(features.trpcUnifiedBatchWindow).toBe(true);
   });
 
   it('Flipt OFF overrides a static-ON registry entry', async () => {
