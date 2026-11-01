@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 
 import type * as MeiliClientModule from '~/server/meilisearch/client';
 import type * as MeiliUtilModule from '~/server/meilisearch/util';
@@ -894,6 +895,24 @@ describe('🔴 onIndexSetup hands the ENGINE the frozen lists — behaviourally,
       'updateSortableAttributes',
       'updateTypoTolerance',
     ]);
+  });
+
+  it('raises the facet cap to SEARCH_FACET_LIMIT, and leaves it alone once it matches', async () => {
+    // Meili's default cap is 100 values per facet, returned alphabetically, so a base-model list
+    // longer than the cap silently drops its tail from "Filter by Base Model".
+    const first = await runSetup();
+    expect(first.find((r) => r.method === 'updateFaceting')?.arg).toEqual({
+      maxValuesPerFacet: SEARCH_FACET_LIMIT,
+    });
+
+    // Negative control: an index already at the limit gets no faceting write.
+    setupProbe.received.length = 0;
+    vi.spyOn(setupProbe.index, 'getSettings').mockResolvedValue({
+      faceting: { maxValuesPerFacet: SEARCH_FACET_LIMIT },
+    } as never);
+    const second = await runSetup();
+    expect(second.length, 'the other settings writes still fire').toBeGreaterThan(0);
+    expect(second.map((r) => r.method)).not.toContain('updateFaceting');
   });
 
   it('🔴 gives the searchable write the frozen export ITSELF, with no `*` in it', async () => {
