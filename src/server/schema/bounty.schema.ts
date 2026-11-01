@@ -16,7 +16,7 @@ import { tagSchema } from './tag.schema';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { BOUNTY_AWARD_RULINGS } from '~/server/services/bounty-payout-lock';
+import { BOUNTY_AWARD_RULINGS } from '~/shared/constants/bounty.constants';
 
 // A function, not a value: a bound computed at module load freezes "today" at the pod's boot date.
 const utcToday = () => dayjs.utc(stripTime(new Date()));

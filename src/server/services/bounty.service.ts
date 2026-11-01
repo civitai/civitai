@@ -38,7 +38,6 @@ import {
   BOUNTY_AWARD_UNPAID_ACTIVITY,
   BOUNTY_PAYOUT_RETRY_AFTER_MS,
   bountyUnpaidAwardTableExists,
-  type BountyAwardRuling,
   isPayoutOverdue,
   isPayoutPending,
   lockBountyForPayout,
@@ -47,6 +46,7 @@ import {
   payoutPendingSql,
 } from '~/server/services/bounty-payout-lock';
 import { assertBountyStarted } from '~/server/services/bounty-schedule';
+import type { BountyAwardRuling } from '~/shared/constants/bounty.constants';
 import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
 import {
   hasOpenTextScanFlag,

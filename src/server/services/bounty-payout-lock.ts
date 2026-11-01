@@ -65,12 +65,6 @@ export const payoutPendingSql = Prisma.sql`(b."payoutRecordedAt" IS NOT NULL
 
 export const BOUNTY_AWARD_UNPAID_ACTIVITY = 'bountyAwardUnpaid';
 export const BOUNTY_AWARD_RESOLVED_ACTIVITY = 'bountyAwardResolved';
-export const BOUNTY_AWARD_RULINGS = [
-  'paid_winner',
-  'refunded_supporter',
-  'no_charge_found',
-] as const;
-export type BountyAwardRuling = (typeof BOUNTY_AWARD_RULINGS)[number];
 
 /** Whether "BountyUnpaidAward" exists: it is created by a hand-applied migration. */
 export async function bountyUnpaidAwardTableExists(
