@@ -5,7 +5,7 @@ import { LuaFactory } from 'wasmoon';
  * with a settable clock, so a script's arithmetic and its redis.call sequence are tested rather
  * than mocked. CI has no Redis server.
  *
- * Supports only the commands the scripts under test use: TIME, EXISTS, HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
+ * Supports only the commands the scripts under test use: TIME, EXISTS, GET, HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
  * HPEXPIRE, EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
  * every redis.call argument must already be a string (so a script must format its own numbers),
  * and every number it returns must be an integer (Redis would silently truncate a float).
@@ -42,7 +42,17 @@ export type LuaRedis = {
 
 export function createLuaRedis(
   startMs: number,
-  { integerArgs = false }: { integerArgs?: boolean } = {}
+  {
+    integerArgs = false,
+    strings = new Map<string, string>(),
+  }: {
+    integerArgs?: boolean;
+    /**
+     * The plain string keys GET reads and DEL removes. Pass a test's own map to run a script over
+     * the same keys its fake client's `get`/`set`/`del` serve.
+     */
+    strings?: Map<string, string>;
+  } = {}
 ): LuaRedis {
   const factory = new LuaFactory();
   const hashes = new Map<string, Map<string, string>>();
@@ -122,7 +132,7 @@ export function createLuaRedis(
   };
 
   function exists(key: string) {
-    return hashes.has(key) || sets.has(key) || lists.has(key);
+    return hashes.has(key) || sets.has(key) || lists.has(key) || strings.has(key);
   }
 
   function expire(key: string) {
@@ -130,6 +140,7 @@ export function createLuaRedis(
     if (at !== undefined && at <= state.nowMs) {
       sets.delete(key);
       hashes.delete(key);
+      strings.delete(key);
       expiresAt.delete(key);
       fieldExpiresAt.delete(key);
     }
@@ -161,6 +172,8 @@ export function createLuaRedis(
         ];
       case 'EXISTS':
         return exists(key) ? 1 : 0;
+      case 'GET':
+        return strings.get(key) ?? false;
       case 'HGET':
         return hashes.get(key)?.get(strArgs[1]) ?? false;
       case 'HEXISTS':
@@ -255,7 +268,7 @@ export function createLuaRedis(
         return removed;
       }
       case 'DEL': {
-        const existed = hashes.delete(key) || sets.delete(key);
+        const existed = hashes.delete(key) || sets.delete(key) || strings.delete(key);
         expiresAt.delete(key);
         return existed ? 1 : 0;
       }

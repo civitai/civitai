@@ -5,6 +5,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 
@@ -96,6 +97,8 @@ const ageSession = (sessionId: string, lastActivityAt: number) =>
     JSON.stringify({ ...sessionRecord(sessionId), lastActivityAt })
   );
 const nowSec = () => Math.floor(Date.now() / 1000);
+/** The service's scripts' Redis, set up per test in `beforeEach`. */
+let lua: LuaRedis;
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<unknown> | unknown;
 
@@ -200,8 +203,15 @@ beforeEach(() => {
   });
   sys.expire.mockImplementation(async () => true);
   sys.ttl.mockImplementation(async () => 3600);
-  sys.eval.mockImplementation(async () => 1);
-  sys.sRem.mockImplementation(async () => 1);
+  // The service's scripts (the ban index's SADD, a pointer's compare-and-delete) run for real, in
+  // Lua, over the same keys `get`/`set`/`del` serve; the ban index lives in the harness's sets.
+  lua = createLuaRedis(Date.now(), { integerArgs: true, strings: store });
+  sys.eval.mockImplementation((script: string, opts: { keys: string[]; arguments: string[] }) =>
+    lua.eval(script, opts)
+  );
+  sys.sRem.mockImplementation((k: string, v: string) =>
+    lua.eval("return redis.call('SREM', KEYS[1], ARGV[1])", { keys: [k], arguments: [v] })
+  );
 });
 
 describe('the runner’s secret and run grant, on every endpoint', () => {
@@ -651,6 +661,44 @@ describe('a start the runner gave up on, closed by its client key', () => {
       for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(0);
       expect(sessionKeys()).toEqual([]);
       expect(store.has(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a late start the deadline cancelled leaves a newer start’s tunnel listed, and the ban index too', async () => {
+    // A is held in its route apply past the deadline, which cancels it. B then opens the same app
+    // and owns the (user, app) pointer. Then A's apply finishes, and A closes what it opened: it
+    // must not take B's pointer, or B's ban-index entry, with it. Otherwise B's live tunnel is
+    // invisible to a ban (its token is not revoked) and to the next start (it is not replaced).
+    const pointer = `${PREFIX}:user:${OWNER}:${OWNED_APP}`;
+    const banIndex = `${PREFIX}:user-index:${OWNER}`;
+    const held = await holdApply();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let lateA: Awaited<ReturnType<typeof call>> | undefined;
+      void startKeyed(OWNER, OWNED_APP).then((a) => (lateA = a));
+      await vi.waitFor(() => expect(held.release).toBeTypeOf('function'));
+      await vi.advanceTimersByTimeAsync(185_000);
+      expect(lateA).toMatchObject({ status: 503, json: { code: 'unavailable' } });
+
+      const b = await startKeyed(OWNER, OWNED_APP, 'test-only-client-key-b3c8');
+      expect(b.status).toBe(200);
+      const sessionB = b.json!.sessionId as string;
+      expect(store.get(pointer)).toBe(sessionB);
+      expect(lua.set(banIndex)).toEqual([OWNED_APP]);
+
+      held.release!();
+      for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(0);
+      // A's own keys are gone: only B's session (and its host) is left.
+      expect(sessionKeys()).toEqual([`${PREFIX}:session:${sessionB}`]);
+      expect([...store.keys()].filter((k) => k.includes(':host:'))).toEqual([
+        `${PREFIX}:host:${b.json!.host}`,
+      ]);
+      // B is still the app's tunnel, and still in the index a ban enumerates.
+      expect(store.get(pointer), 'B dropped off its (user, app) pointer').toBe(sessionB);
+      expect(lua.set(banIndex), 'B dropped out of the ban index').toEqual([OWNED_APP]);
+      expect(lua.errors).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
