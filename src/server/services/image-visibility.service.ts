@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import { imageReviewedSql, minorMatureImageVisibleSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -70,6 +70,7 @@ export function imageVisibilityConditions({
     // mod review) — never serve it by direct id to anyone but the owner. Feeds already
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
+    minorMatureImageVisibleSql({ userId }),
   ];
 }
 

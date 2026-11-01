@@ -7,7 +7,7 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import { hasBlockMarker, isMinorMatureImage } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -550,12 +550,16 @@ export const getArticles = async ({
     });
 
     const coverIds = articles.map((x) => x.coverId).filter(isDefined);
-    const coverImages = coverIds.length
-      ? await dbRead.image.findMany({
-          where: { id: { in: coverIds } },
-          select: imageSelect,
-        })
-      : [];
+    const coverImages = (
+      coverIds.length
+        ? await dbRead.image.findMany({
+            where: { id: { in: coverIds } },
+            select: { ...imageSelect, minor: true },
+          })
+        : []
+    )
+      .filter((image) => isModerator || image.userId === userId || !isMinorMatureImage(image))
+      .map(({ minor, ...image }) => image);
 
     const articleCategories = await getCategoryTags('article');
     const [cosmetics, eventDecorations] = includeCosmetics
@@ -773,6 +777,7 @@ export const getArticleById = async ({
       // field doesn't flow into external webhook / search-index payloads.
       select: {
         ...articleDetailSelect,
+        coverImage: { select: { ...imageSelect, minor: true } },
         moderatorNsfwLevel: true,
         scheduledAt: true,
         reactions: viewerReactionsSelect(userId),
@@ -801,20 +806,23 @@ export const getArticleById = async ({
       type: 'Article',
     });
 
+    const { minor: coverMinor, ...cover } = article.coverImage ?? { minor: null };
     const coverImage = article.coverImage
       ? {
-          ...article.coverImage,
+          ...(cover as Omit<typeof article.coverImage, 'minor'>),
           nsfwLevel: article.coverImage.nsfwLevel as NsfwLevel,
           meta: article.coverImage.meta as ImageMetaProps,
           metadata: article.coverImage.metadata as ImageMetadata,
-          tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
+          tags: article.coverImage.tags.flatMap((x) => x.tag.id),
         }
       : undefined;
 
     const canViewCoverImage =
       isModerator ||
-      userId === article.userId ||
-      (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
+      ((userId === article.userId ||
+        (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview)) &&
+        (userId === coverImage?.userId ||
+          !isMinorMatureImage({ minor: coverMinor, nsfwLevel: coverImage?.nsfwLevel ?? 0 })));
 
     // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
     // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
