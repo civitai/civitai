@@ -830,9 +830,11 @@ describe('opaqueInputUrlsIn', () => {
     const lines = (n: number) => `${'x\n'.repeat(n - 1)}a:`;
     expect(opaqueInputUrlsIn({ text: lines(262_144) }).tooLarge).toBe(false);
     expect(opaqueInputUrlsIn({ text: lines(262_145) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ a: lines(150_000), b: lines(150_000) }).tooLarge).toBe(true);
   });
 
   it('collects more keys than a call can take as arguments', () => {
+    // Past the ~123k arguments a call takes on the default (forks) pool's stack.
     // Keys overlap: each segment ends one key and its last 8 characters start the next.
     const segments = Array.from(
       { length: 140_000 },
