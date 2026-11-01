@@ -961,6 +961,13 @@ describe('settleBountyPayout — the winner and the money basis', () => {
       expect(await settleBountyPayout(4)).toBe(true);
     });
 
+    it('leaves the bounty pending when a retry cannot confirm a legacy refund', async () => {
+      benefactors[0].buzzTransactionId = [];
+      expect(await settleBountyPayout(4)).toBe(false);
+      expect(bounty?.payoutSettledAt).not.toBeInstanceOf(Date);
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    });
+
     it('refunds a pre-multi-account charge by its transaction id', async () => {
       benefactors[0].buzzTransactionId = ['legacy-tx'];
       expect(await settleBountyPayout(4, { refundDescription: 'Reason: test' })).toBe(true);
@@ -1055,12 +1062,24 @@ describe('refundBountyBenefactorFunds', () => {
     );
   });
 
-  it('skips a legacy supporter on a retry, since its refund cannot be deduplicated', async () => {
-    benefactors[0].buzzTransactionId = [];
-    expect(
-      await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ', includeLegacy: false })
-    ).toEqual({ refunded: [6], failed: [] });
-    expect(moved('buzz')).toBe(0);
+  describe('a legacy supporter on a retry', () => {
+    const retry = () =>
+      refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ', includeLegacy: false });
+    beforeEach(() => {
+      benefactors[0].buzzTransactionId = [];
+    });
+
+    it('is not paid, and counts as failed when the ledger has no refund under its key', async () => {
+      expect(await retry()).toEqual({ refunded: [6], failed: [5] });
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+      expect(buzz.getTransactionByExternalId).toHaveBeenCalledWith('bounty-refund-b4-u5');
+    });
+
+    it('counts as refunded when the ledger has its keyed refund', async () => {
+      buzz.getTransactionByExternalId.mockResolvedValueOnce({ transactionId: 't1' });
+      expect(await retry()).toEqual({ refunded: [5, 6], failed: [] });
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    });
   });
 
   describe('a legacy supporter refunded twice', () => {

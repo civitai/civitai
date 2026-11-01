@@ -1144,7 +1144,8 @@ async function refundBountyPrefix(txId: string, description: string, details: Mi
  * and the rest continue.
  *
  * Refunds by transaction id are safe to repeat. Legacy rows without ids are paid under a fixed
- * key, but one paid before that key existed is not, so a retry (`includeLegacy: false`) skips them.
+ * key, but one paid before that key existed is not, so a retry (`includeLegacy: false`) never pays
+ * them: it counts one refunded only when that key is on the ledger, and failed otherwise.
  */
 export async function refundBountyBenefactorFunds({
   bountyId,
@@ -1192,8 +1193,9 @@ export async function refundBountyBenefactorFunds({
         }
       } else if (includeLegacy) {
         await refundLegacyBenefactor({ bountyId, userId, unitAmount, description });
-      } else {
-        logBountyPayoutError({ bountyId, userId, message: 'Legacy refund not retried' });
+      } else if (!(await getTransactionByExternalId(legacyRefundKey(bountyId, userId)))) {
+        logBountyPayoutError({ bountyId, userId, message: 'Legacy refund not confirmed' });
+        outcome.failed.push(userId);
         continue;
       }
       outcome.refunded.push(userId);
@@ -1204,6 +1206,9 @@ export async function refundBountyBenefactorFunds({
   }
   return outcome;
 }
+
+const legacyRefundKey = (bountyId: number, userId: number) =>
+  `bounty-refund-b${bountyId}-u${userId}`;
 
 /**
  * Pays back a supporter whose charge has no transaction id, under one key per bounty and supporter,
@@ -1221,7 +1226,7 @@ async function refundLegacyBenefactor({
   unitAmount: number;
   description: string;
 }) {
-  const externalTransactionId = `bounty-refund-b${bountyId}-u${userId}`;
+  const externalTransactionId = legacyRefundKey(bountyId, userId);
   try {
     await createBuzzTransaction({
       fromAccountId: 0,
