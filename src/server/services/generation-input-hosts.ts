@@ -1,4 +1,4 @@
-import { registerCounterWithLabels } from '~/server/prom/client';
+import { registerCounterWithLabels, registerGaugeWithLabels } from '~/server/prom/client';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
@@ -52,37 +52,44 @@ const externalHostCounter = registerCounterWithLabels({
   labelNames: ['entry', 'caller', 'mode', 'host'] as const,
 });
 
-const externalHostUsersCounter = registerCounterWithLabels({
-  name: 'generation_input_external_host_users_total',
+const externalHostUsersGauge = registerGaugeWithLabels({
+  name: 'generation_input_external_host_users',
   help:
-    'Users counted for the first time in a UTC day as sending a generation input url on an ' +
-    'external host bucket, by caller type and host bucket. increase over a day = distinct users.',
-  labelNames: ['caller', 'host'] as const,
+    'Estimated distinct users who sent a generation input url on an external host bucket in a ' +
+    'UTC day (HyperLogLog, about 1% error), by day, caller type and host bucket. Each pod reports ' +
+    'the latest estimate it read for the current day only: take the max across pods.',
+  labelNames: ['day', 'caller', 'host'] as const,
 });
 
 const externalHostUsersFailedCounter = registerCounterWithLabels({
   name: 'generation_input_external_host_users_failed_total',
-  help: 'Distinct-user set writes for generation input external hosts that failed (not counted).',
+  help: 'Failed distinct-user set writes or reads for generation input external hosts.',
   labelNames: ['caller'] as const,
 });
 
-const USERS_TTL_SECONDS = 2 * 24 * 60 * 60;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Users this process already added today, so a repeat request writes nothing.
+const RECENT_MAX = 50_000;
+let recentDay = '';
+const recent = new Set<string>();
 
 const usersKey = (day: string, caller: string, bucket: string) =>
   `${REDIS_SYS_KEYS.SYSTEM.GENERATION_INPUT_EXTERNAL_HOST_USERS}:${day}:${caller}:${bucket}` as RedisKeyTemplateSys;
 
-async function addUser(key: RedisKeyTemplateSys, userId: number, caller: string, bucket: string) {
-  // A HyperLogLog keeps no ids. PFADD answers 1 when the set's estimate changed, which for a
-  // set of up to about a thousand users is when the user is new to it.
-  if ((await sysRedis.pfAdd(key, String(userId))) === 1) {
-    externalHostUsersCounter.inc({ caller, host: bucket });
-    await sysRedis.expire(key, USERS_TTL_SECONDS, 'NX');
-  }
+async function addUser(day: string, userId: number, caller: string, bucket: string) {
+  const key = usersKey(day, caller, bucket);
+  // A HyperLogLog keeps no ids. PFADD answers 1 when the set's estimate changed.
+  const changed = (await sysRedis.pfAdd(key, String(userId))) === 1;
+  // A fixed expiry a day after the day ends, set on every add so a failed one is set again.
+  await sysRedis.expireAt(key, new Date(Date.parse(day) + 2 * DAY_MS));
+  if (!changed) return;
+  const estimate = await sysRedis.pfCount(key);
+  if (day === recentDay) externalHostUsersGauge.set({ day, caller, host: bucket }, estimate);
 }
 
 /**
  * Counts one external generation input url by host bucket, and adds the user to that bucket's
- * distinct-user set for the day. `seen` holds the buckets this request already added the user to.
+ * distinct-user set for the day (once per user, bucket and day in this process).
  * Never throws and never waits on Redis: the set write runs in the background and fails open.
  */
 export function recordExternalHost({
@@ -92,7 +99,6 @@ export function recordExternalHost({
   mode,
   userId,
   now = new Date(),
-  seen,
 }: {
   url: string;
   entry: string;
@@ -100,14 +106,29 @@ export function recordExternalHost({
   mode: 'log' | 'refuse';
   userId: number;
   now?: Date;
-  seen: Set<string>;
 }) {
   const bucket = externalHostBucket(url);
   externalHostCounter.inc({ entry, caller, mode, host: bucket });
-  if (seen.has(bucket)) return;
-  seen.add(bucket);
-  const key = usersKey(now.toISOString().slice(0, 10), caller, bucket);
-  void addUser(key, userId, caller, bucket).catch(() =>
-    externalHostUsersFailedCounter.inc({ caller })
-  );
+
+  const day = now.toISOString().slice(0, 10);
+  if (day !== recentDay) {
+    // A new day: the old day's estimates stop being reported by this pod.
+    recentDay = day;
+    recent.clear();
+    externalHostUsersGauge.reset();
+  }
+  const member = `${caller}:${bucket}:${userId}`;
+  if (recent.has(member)) return;
+  if (recent.size >= RECENT_MAX) recent.clear();
+  recent.add(member);
+  void addUser(day, userId, caller, bucket).catch(() => {
+    recent.delete(member);
+    externalHostUsersFailedCounter.inc({ caller });
+  });
+}
+
+/** Test seam: forget the users this process added. */
+export function __resetRecentExternalHostUsersForTest() {
+  recentDay = '';
+  recent.clear();
 }

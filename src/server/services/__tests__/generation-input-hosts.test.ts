@@ -1,20 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { registerCounterWithLabels } from '~/server/prom/client';
-import { externalHostBucket, recordExternalHost } from '~/server/services/generation-input-hosts';
+import { registerCounterWithLabels, registerGaugeWithLabels } from '~/server/prom/client';
+import {
+  __resetRecentExternalHostUsersForTest,
+  externalHostBucket,
+  recordExternalHost,
+} from '~/server/services/generation-input-hosts';
 
-// The setup mock builds one stub per registered counter. Captured at import, before any hook
-// clears the factory's call log.
-const registered = vi.mocked(registerCounterWithLabels).mock;
-const counterNamed = (name: string) => {
-  const i = registered.calls.findIndex(([def]) => def.name === name);
-  if (i < 0) throw new Error(`counter ${name} was not registered`);
-  return registered.results[i].value as { inc: ReturnType<typeof vi.fn> };
+type Stub = {
+  inc: ReturnType<typeof vi.fn>;
+  set: ReturnType<typeof vi.fn>;
+  reset: ReturnType<typeof vi.fn>;
 };
-const hosts = counterNamed('generation_input_external_hosts_total');
-const users = counterNamed('generation_input_external_host_users_total');
-const failed = counterNamed('generation_input_external_host_users_failed_total');
+// The setup mock builds one stub per registered metric. Captured at import, before any hook
+// clears the factories' call logs.
+const stubNamed = (factory: typeof registerCounterWithLabels, name: string) => {
+  const { calls, results } = vi.mocked(factory).mock;
+  const i = calls.findIndex(([def]) => def.name === name);
+  if (i < 0) throw new Error(`metric ${name} was not registered`);
+  return results[i].value as Stub;
+};
+const hosts = stubNamed(registerCounterWithLabels, 'generation_input_external_hosts_total');
+const failed = stubNamed(
+  registerCounterWithLabels,
+  'generation_input_external_host_users_failed_total'
+);
+const users = stubNamed(
+  registerGaugeWithLabels as typeof registerCounterWithLabels,
+  'generation_input_external_host_users'
+);
 
+const KEY = 'system:generation-input-external-host-users';
 const NOW = new Date('2026-11-01T12:00:00Z');
 const record = (url: string, over: Partial<Parameters<typeof recordExternalHost>[0]> = {}) =>
   recordExternalHost({
@@ -24,9 +40,10 @@ const record = (url: string, over: Partial<Parameters<typeof recordExternalHost>
     mode: 'log',
     userId: 42,
     now: NOW,
-    seen: new Set(),
     ...over,
   });
+/** Lets the background set write finish: it is a chain of microtasks. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('externalHostBucket', () => {
   it.each([
@@ -58,14 +75,24 @@ describe('externalHostBucket', () => {
 
 describe('recordExternalHost', () => {
   beforeEach(() => {
-    for (const counter of [hosts, users, failed]) counter.inc.mockClear();
-    redisMock.sysRedis.pfAdd.mockReset();
-    redisMock.sysRedis.expire.mockReset();
+    __resetRecentExternalHostUsersForTest();
+    for (const stub of [hosts, failed, users]) {
+      stub.inc.mockClear();
+      stub.set.mockClear();
+      stub.reset.mockClear();
+    }
+    for (const fn of [
+      redisMock.sysRedis.pfAdd,
+      redisMock.sysRedis.pfCount,
+      redisMock.sysRedis.expireAt,
+    ])
+      fn.mockReset();
     redisMock.sysRedis.pfAdd.mockResolvedValue(1);
-    redisMock.sysRedis.expire.mockResolvedValue(true);
+    redisMock.sysRedis.pfCount.mockResolvedValue(17);
+    redisMock.sysRedis.expireAt.mockResolvedValue(true);
   });
 
-  it('counts the url by bucket and adds the user to the day set for that bucket', async () => {
+  it("counts the url by bucket and reports the bucket's distinct users for the day", async () => {
     record('https://i.imgur.com/a.png');
     expect(hosts.inc).toHaveBeenCalledExactlyOnceWith({
       entry: 'generateFromGraph',
@@ -74,37 +101,63 @@ describe('recordExternalHost', () => {
       host: 'imgur',
     });
     expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledExactlyOnceWith(
-      'system:generation-input-external-host-users:2026-11-01:api:imgur',
+      `${KEY}:2026-11-01:api:imgur`,
       '42'
     );
-    await vi.waitFor(() =>
-      expect(users.inc).toHaveBeenCalledExactlyOnceWith({ caller: 'api', host: 'imgur' })
+    await settle();
+    expect(redisMock.sysRedis.expireAt).toHaveBeenCalledExactlyOnceWith(
+      `${KEY}:2026-11-01:api:imgur`,
+      new Date('2026-11-03T00:00:00Z')
     );
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(
-      'system:generation-input-external-host-users:2026-11-01:api:imgur',
-      2 * 24 * 60 * 60,
-      'NX'
+    expect(users.set).toHaveBeenCalledExactlyOnceWith(
+      { day: '2026-11-01', caller: 'api', host: 'imgur' },
+      17
     );
   });
 
-  it('does not count a user the day set already holds', async () => {
+  it('keys the day set on the UTC date of the request', () => {
+    record('https://i.imgur.com/a.png', { now: new Date('2026-11-01T23:30:00Z') });
+    record('https://i.imgur.com/a.png', { now: new Date('2026-11-02T00:30:00Z') });
+    expect(redisMock.sysRedis.pfAdd.mock.calls.map(([key]) => key)).toEqual([
+      `${KEY}:2026-11-01:api:imgur`,
+      `${KEY}:2026-11-02:api:imgur`,
+    ]);
+    // The pod stops reporting the old day once the new one starts.
+    expect(users.reset).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports nothing new when the day set already holds the user', async () => {
     redisMock.sysRedis.pfAdd.mockResolvedValue(0);
     record('https://i.imgur.com/a.png');
-    await vi.waitFor(() => expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledTimes(1));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(users.inc).not.toHaveBeenCalled();
+    await settle();
+    expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledTimes(1);
+    expect(redisMock.sysRedis.expireAt).toHaveBeenCalledTimes(1);
+    expect(redisMock.sysRedis.pfCount).not.toHaveBeenCalled();
+    expect(users.set).not.toHaveBeenCalled();
     expect(hosts.inc).toHaveBeenCalledTimes(1);
   });
 
-  it('writes each bucket once per request, and counts every url', () => {
-    const seen = new Set<string>();
-    record('https://i.imgur.com/a.png', { seen });
-    record('https://i.imgur.com/b.png', { seen });
-    record('https://example.com/c.png', { seen });
+  it('writes each bucket once for a user, and counts every url', () => {
+    record('https://i.imgur.com/a.png');
+    record('https://i.imgur.com/b.png');
+    record('https://example.com/c.png');
     expect(hosts.inc).toHaveBeenCalledTimes(3);
     expect(redisMock.sysRedis.pfAdd.mock.calls.map(([key]) => key)).toEqual([
-      'system:generation-input-external-host-users:2026-11-01:api:imgur',
-      'system:generation-input-external-host-users:2026-11-01:api:other',
+      `${KEY}:2026-11-01:api:imgur`,
+      `${KEY}:2026-11-01:api:other`,
+    ]);
+  });
+
+  it('writes a user once per day per bucket across requests, and each other user', () => {
+    record('https://i.imgur.com/a.png');
+    record('https://i.imgur.com/b.png');
+    record('https://i.imgur.com/a.png', { userId: 43 });
+    record('https://i.imgur.com/a.png', { caller: 'session' });
+    expect(hosts.inc).toHaveBeenCalledTimes(4);
+    expect(redisMock.sysRedis.pfAdd.mock.calls).toEqual([
+      [`${KEY}:2026-11-01:api:imgur`, '42'],
+      [`${KEY}:2026-11-01:api:imgur`, '43'],
+      [`${KEY}:2026-11-01:session:imgur`, '42'],
     ]);
   });
 
@@ -113,15 +166,29 @@ describe('recordExternalHost', () => {
     expect(hosts.inc).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ host: 'other', mode: 'refuse', caller: 'session' })
     );
-    const [key] = redisMock.sysRedis.pfAdd.mock.calls[0];
-    expect(key).toBe('system:generation-input-external-host-users:2026-11-01:session:other');
+    expect(redisMock.sysRedis.pfAdd.mock.calls[0][0]).toBe(`${KEY}:2026-11-01:session:other`);
   });
 
-  it('fails open: a Redis error is counted and never thrown', async () => {
-    redisMock.sysRedis.pfAdd.mockRejectedValue(new Error('redis down'));
+  it('fails open: a failed add is counted, never thrown, and tried again next request', async () => {
+    redisMock.sysRedis.pfAdd.mockRejectedValueOnce(new Error('redis down'));
     expect(() => record('https://i.imgur.com/a.png')).not.toThrow();
-    await vi.waitFor(() => expect(failed.inc).toHaveBeenCalledExactlyOnceWith({ caller: 'api' }));
-    expect(users.inc).not.toHaveBeenCalled();
-    expect(hosts.inc).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(failed.inc).toHaveBeenCalledExactlyOnceWith({ caller: 'api' });
+    expect(users.set).not.toHaveBeenCalled();
+    record('https://i.imgur.com/a.png');
+    expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledTimes(2);
+  });
+
+  it('a failed expiry is counted, and the add is tried again next request', async () => {
+    redisMock.sysRedis.expireAt.mockRejectedValueOnce(new Error('redis down'));
+    record('https://i.imgur.com/a.png');
+    await settle();
+    expect(failed.inc).toHaveBeenCalledExactlyOnceWith({ caller: 'api' });
+    expect(users.set).not.toHaveBeenCalled();
+    // The user is in the set now, so the retry's add changes nothing; the expiry is still set.
+    redisMock.sysRedis.pfAdd.mockResolvedValueOnce(0);
+    record('https://i.imgur.com/a.png');
+    await settle();
+    expect(redisMock.sysRedis.expireAt).toHaveBeenCalledTimes(2);
   });
 });

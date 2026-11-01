@@ -650,7 +650,6 @@ export async function assertGenerationInputsUsable({
   const externalKeys = new Set<string>();
   // Read once per call, only when an external url is seen.
   let refuseExternal: boolean | undefined;
-  const hostBucketsSeen = new Set<string>();
   for (const url of given) {
     if (opaqueInput && KEY_LIKE.test(url.trim())) {
       externalKeys.add(canonicalKey(url.trim()));
@@ -686,7 +685,6 @@ export async function assertGenerationInputsUsable({
         mode: refuseExternal ? 'refuse' : 'log',
         userId,
         now,
-        seen: hostBucketsSeen,
       });
       if (refuseExternal) throw refuse(cls);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });

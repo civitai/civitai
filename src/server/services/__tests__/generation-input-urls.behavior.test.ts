@@ -61,6 +61,9 @@ const {
   GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
 } = await import('~/server/services/generation-input-urls');
 const { registerCounterWithLabels } = await import('~/server/prom/client');
+const { __resetRecentExternalHostUsersForTest } = await import(
+  '~/server/services/generation-input-hosts'
+);
 const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
   '~/server/services/image-url-ownership'
 );
@@ -665,6 +668,7 @@ describe('assertGenerationInputsUsable', () => {
       registered.calls.findIndex(([def]) => def.name === 'generation_input_external_hosts_total')
     ]?.value as { inc: ReturnType<typeof vi.fn> };
     beforeEach(() => {
+      __resetRecentExternalHostUsersForTest();
       hostCounter.inc.mockClear();
       redisMock.sysRedis.pfAdd.mockClear();
     });
@@ -696,6 +700,47 @@ describe('assertGenerationInputsUsable', () => {
       expect(await gate(['https://i.imgur.com/a.png'], 'iterateGenerate')).toBe('refused');
       expect(hostCounter.inc).not.toHaveBeenCalled();
       expect(redisMock.sysRedis.pfAdd).not.toHaveBeenCalled();
+    });
+
+    it('counts every external url in a request and adds the caller once per bucket', async () => {
+      const urls = [
+        'https://i.imgur.com/a.png',
+        'https://i.imgur.com/b.png',
+        'https://example.com/c.png',
+      ];
+      expect(await gate(urls, 'generateFromGraph')).toBe('accepted');
+      expect(hostCounter.inc).toHaveBeenCalledTimes(3);
+      expect(redisMock.sysRedis.pfAdd.mock.calls.map(([key]) => key.split(':').pop())).toEqual([
+        'imgur',
+        'other',
+      ]);
+    });
+
+    it('counts an external url in a request a later url gets refused', async () => {
+      expect(await gate(['https://i.imgur.com/a.png', CDN('no-key')], 'generateFromGraph')).toBe(
+        'refused'
+      );
+      expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ mode: 'log', host: 'imgur' })
+      );
+      expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledTimes(1);
+    });
+
+    it('labels an API caller as api, in the count and the day set', async () => {
+      await assertGenerationInputsUsable({
+        urls: ['https://i.imgur.com/a.png'],
+        userId: CALLER,
+        entry: 'generateFromGraph',
+        isApiCaller: true,
+        now: AFTER,
+      });
+      expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ caller: 'api', host: 'imgur' })
+      );
+      expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledExactlyOnceWith(
+        `system:generation-input-external-host-users:${AFTER.toISOString().slice(0, 10)}:api:imgur`,
+        String(CALLER)
+      );
     });
   });
 
