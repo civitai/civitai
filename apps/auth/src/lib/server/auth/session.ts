@@ -19,6 +19,7 @@ import { sessions } from './registry';
 import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
 import { clearOtherCookieNames, cookieDomain } from './cookie';
 import { verifier } from './verifier';
+import { acceptHubSession } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
 import { isRefusedModerationAccount } from './moderation-account';
@@ -128,6 +129,22 @@ export async function mintSession(
   // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
   await sessions.trackToken(tokenId, user.id).catch(() => {});
   return { token, family: familyId({ sid: lineage.sid, jti: tokenId }) ?? tokenId };
+}
+
+/** Re-sign an existing session under the same jti, keeping its lineage and 90-day limit, and re-track it. */
+export async function reissueSession(
+  claims: SessionClaims,
+  userId: number,
+  jti: string
+): Promise<string> {
+  const now = Date.now();
+  const lineage = familyClaims(claims, { now });
+  const token = await getSigner().mintSessionToken(
+    { sub: String(userId), signedAt: now, ...lineage },
+    { jti, expiresIn: sessionExpiresIn(lineage, now) }
+  );
+  await sessions.trackToken(jti, userId).catch(() => undefined);
+  return token;
 }
 
 export async function mintUserSession(user: SessionUser, opts?: MintOptions): Promise<string> {
@@ -276,7 +293,9 @@ async function resolvePriorSession(cookies: Cookies): Promise<SessionClaims | un
   if (!token) return undefined;
   try {
     const claims = await verifier.verifyToken(token);
-    return claims && Number.isFinite(Number(claims.sub)) ? claims : undefined;
+    return claims && Number.isFinite(Number(claims.sub)) && (await acceptHubSession(claims))
+      ? claims
+      : undefined;
   } catch {
     return undefined; // no / expired / invalid prior session ⇒ not a 2nd-account login
   }

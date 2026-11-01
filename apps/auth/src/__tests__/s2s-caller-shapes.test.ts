@@ -52,8 +52,7 @@ vi.mock('$lib/server/auth/device', async (importOriginal) => ({
 }));
 vi.mock('$lib/server/auth/session', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionModule>()),
-  getSigner: () => ({ mintSessionToken: async () => 'fresh-token' }),
-  sessionExpiresIn: () => 60,
+  reissueSession: async () => 'fresh-token',
   mintUserSession: async () => 'minted-token',
   setSessionCookie: vi.fn(),
   clearSession: vi.fn(),

@@ -102,10 +102,10 @@ export async function touchAccount(deviceId: string, userId: number): Promise<vo
 }
 
 // Account list (KEYS[1]). No list: create one with both accounts when a distinct prior account is signed in (2),
-// else write nothing (0). A list: joined (1) by an account already in it and used within ACCOUNT_IDLE_MS, or by a
-// sign-in made while one of its accounts is signed in on this browser (the prior hub session); otherwise -1.
+// else write nothing (0). A list: joined (1) when the new account, or the account of the browser's prior hub
+// session, is in it and used within ACCOUNT_IDLE_MS; otherwise -1.
 // Family record (KEYS[2], when given): joined by a list join, or when it holds the new or the prior family;
-// created (with the prior family) when absent; otherwise -1. Either -1 writes nothing to both.
+// created when absent; otherwise -1. Either -1 writes nothing to both.
 // ARGV: new user, prior user ('' if none), now (ms), list TTL (s), idle limit (ms), family, prior family
 // ('' if none), family record TTL (s).
 const JOIN_SCRIPT = `
@@ -113,9 +113,11 @@ const JOIN_SCRIPT = `
   if redis.call('EXISTS', KEYS[1]) == 0 then
     listed = (ARGV[2] ~= '' and ARGV[2] ~= ARGV[1]) and 2 or 0
   else
-    local own = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '')
-    local recent = own ~= nil and tonumber(ARGV[3]) - own <= tonumber(ARGV[5])
-    if not (recent or (ARGV[2] ~= '' and redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1)) then
+    local function fresh(user)
+      local at = tonumber(redis.call('HGET', KEYS[1], user) or '')
+      return at ~= nil and tonumber(ARGV[3]) - at <= tonumber(ARGV[5])
+    end
+    if not (fresh(ARGV[1]) or (ARGV[2] ~= '' and fresh(ARGV[2]))) then
       return -1
     end
     listed = 1
@@ -133,7 +135,6 @@ const JOIN_SCRIPT = `
   end
   if listed ~= 0 then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
   if fam then
-    if not famExists and ARGV[7] ~= '' then redis.call('SADD', KEYS[2], ARGV[7]) end
     redis.call('SADD', KEYS[2], ARGV[6])
     redis.call('EXPIRE', KEYS[2], ARGV[8])
   end

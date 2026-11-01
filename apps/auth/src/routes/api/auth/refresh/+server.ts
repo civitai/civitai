@@ -1,16 +1,10 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { verifier } from '$lib/server/auth/verifier';
-import { familyClaims, familyId } from '@civitai/auth';
-import {
-  getSigner,
-  refuseModerationAccount,
-  SESSION_COOKIE,
-  sessionExpiresIn,
-} from '$lib/server/auth/session';
+import { familyId } from '@civitai/auth';
+import { refuseModerationAccount, reissueSession, SESSION_COOKIE } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
-import { markFamilyLive } from '$lib/server/auth/lineage';
-import { sessions } from '$lib/server/auth/registry';
+import { acceptHubSession, markFamilyLive } from '$lib/server/auth/lineage';
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { bearerToken } from '$lib/server/auth/request';
 import { readInternalCaller } from '$lib/server/auth/s2s';
@@ -24,13 +18,15 @@ import { readInternalCaller } from '$lib/server/auth/s2s';
 // See docs/main-app-auth-cutover.md (section C). An expired token fails verification → 401 → re-login.
 export const POST: RequestHandler = async ({ request, cookies }) => {
   const internal = await readInternalCaller(request);
-  const token = internal ? internal.token : bearerToken(request) || cookies.get(SESSION_COOKIE);
+  const bearer = internal ? undefined : bearerToken(request);
+  const token = internal ? internal.token : bearer || cookies.get(SESSION_COOKIE);
   if (!token) error(401, 'unauthorized');
 
   const claims = await verifier.verifyToken(token).catch(() => null);
   const userId = Number(claims?.sub);
   const jti = claims?.jti;
   if (!claims || !Number.isFinite(userId) || !jti) error(401, 'unauthorized');
+  if (!internal && !bearer && !(await acceptHubSession(claims))) error(401, 'unauthorized');
   refuseModerationAccount({ id: userId }, 'refresh');
   // Checked against the current account, not the token: a session that rolls must not outlive a ban.
   if (!(await isActiveAccount(userId))) error(403, 'account_disabled');
@@ -38,15 +34,8 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     error(403, 'account_disabled');
 
   // Same jti, family, sign-in time and impersonation: the same session with a fresh window.
-  const now = Date.now();
-  const lineage = familyClaims(claims, { now });
-  const fresh = await getSigner().mintSessionToken(
-    { sub: String(userId), signedAt: now, ...lineage },
-    { jti, expiresIn: sessionExpiresIn(lineage, now) }
-  );
+  const fresh = await reissueSession(claims, userId, jti);
   await markFamilyLive(familyId(claims));
-  // Refresh the token-tracking TTL so an actively-used session's tracking entry doesn't lapse.
-  await sessions.trackToken(jti, userId).catch(() => {});
 
   // Keep the ACTIVE account fresh in this browser's switcher: a rolling refresh (section C) means the user is
   // active, so slide the account's 30-day idle clock + roll the device record TTL. Without this, an actively-
