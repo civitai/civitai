@@ -4,6 +4,7 @@ import { getModerationAccountId } from '~/server/auth/moderation-account';
 import { createHash, randomUUID } from 'crypto';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createMessage, upsertChat } from '~/server/services/chat.service';
 import { reportConcernsUser } from '~/server/services/report-subject';
@@ -25,7 +26,6 @@ const PENDING_TTL_SECONDS = 5 * 60;
 const SEND_LOCK_SECONDS = 30;
 const PENDING = 'pending';
 // Redis runs a script atomically, so nothing can take the lock between the GET and the DEL.
-const RELEASE_IF_OWNER = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0`;
 
 function requireModerationAccountId(): number {
   const id = getModerationAccountId();
@@ -148,9 +148,7 @@ export async function sendAsCivitai({ actorId, userId, message, context }: SendA
     return await sendLocked({ actorId, userId, message, context, moderationId });
   } finally {
     // Only our own lock: a send that outlived the TTL must not free the next sender's.
-    await sysRedis
-      .eval(RELEASE_IF_OWNER, { keys: [lockKey], arguments: [owner] })
-      .catch(() => undefined);
+    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
   }
 }
 
