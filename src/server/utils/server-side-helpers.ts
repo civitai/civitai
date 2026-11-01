@@ -33,6 +33,9 @@ import {
 import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
+/** What Next sends on a dynamic page render that sets no `Cache-Control` of its own. */
+const NOT_FOUND_CACHE_CONTROL = 'private, no-cache, no-store, max-age=0, must-revalidate';
+
 export const getServerProxySSGHelpers = async (
   // A page's gSSP context, or an API route's request/response (`/api/page-data/*`).
   ctx: { req: GetServerSidePropsContext['req']; res: GetServerSidePropsContext['res'] },
@@ -196,7 +199,15 @@ export function createServerSideProps<P>({
     })) ?? { props: {} }) as GetPropsFnResult<NonNullable<P>>;
 
     if (result.redirect) return { redirect: result.redirect };
-    if (result.notFound) return { notFound: result.notFound };
+    if (result.notFound) {
+      // A 404 is rendered with `_app`'s per-viewer props, so it must never be shared-cacheable.
+      // Next keeps a `Cache-Control` that a `next.config.mjs` header rule already set on a page's
+      // `notFound` render (it resets it for its own unmatched-route 404 and for `_error`, not
+      // here). The static-asset rules there cover `/images/<file>.<ext>`, which `/images/[imageId]`
+      // answers with a 404 whenever no such file exists, so state Next's own default explicitly.
+      context.res.setHeader('Cache-Control', NOT_FOUND_CACHE_CONTROL);
+      return { notFound: result.notFound };
+    }
 
     // const props =  await result.props;
     const props =
