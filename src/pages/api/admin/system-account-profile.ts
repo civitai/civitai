@@ -117,14 +117,11 @@ export default HeaderTokenSecuredEndpoint(
       }
     }
 
-    logToAxiom(
-      {
-        type: 'error',
-        name: failed ? 'system-account-profile-set-failed' : 'system-account-profile-set',
-        details: { userId, changed, failed, asserted_actor: actorUserId },
-      },
-      'moderation'
-    ).catch(() => null);
+    logToAxiom({
+      type: 'error',
+      name: failed ? 'system-account-profile-set-failed' : 'system-account-profile-set',
+      details: { userId, changed, failed, asserted_actor: actorUserId },
+    }).catch(() => null);
     const auditRecorded = await trackModActivity(SYSTEM_ACTOR_ID, {
       entityType: 'user',
       activity: 'setSystemAccountProfile',
