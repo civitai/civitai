@@ -432,11 +432,21 @@ const OPAQUE_INPUT_MAX_URL_CHARS = 64 * 1024;
 const OPAQUE_INPUT_MAX_PARSES = 32_768;
 /**
  * Work a parser does converting hosts to ASCII (those holding non-ASCII, `%` escapes or `xn--`),
- * charged as each host's length squared (the conversion's cost) plus a fixed cost per parse. An
- * ASCII host costs nothing.
+ * charged as the conversion costs plus a fixed cost per parse: the host as a parser maps it
+ * (NFKC expands some characters), its length times its distinct characters, or its length squared
+ * when escapes or `xn--` hide what it decodes to. An ASCII host costs nothing.
  */
-const OPAQUE_INPUT_MAX_IDNA_COST = 16 * 1024 * 1024;
+const OPAQUE_INPUT_MAX_IDNA_COST = 32 * 1024 * 1024;
 const IDNA_PARSE_COST = 8192;
+function idnaCostOf(host: string) {
+  // Past this, mapping it would cost the most of all; no message holds a run that long.
+  if (host.length > 64 * 1024) return OPAQUE_INPUT_MAX_IDNA_COST + 1;
+  const mapped = host.normalize('NFKC');
+  const work = /%|xn--/i.test(mapped)
+    ? mapped.length * mapped.length
+    : mapped.length * new Set(mapped).size;
+  return work + IDNA_PARSE_COST;
+}
 // eslint-disable-next-line no-control-regex
 const IDNA_HOST = /[^\x00-\x7f]|%|xn--/i;
 
@@ -561,7 +571,7 @@ export function opaqueInputUrlsIn(value: unknown) {
       if (
         host !== undefined &&
         IDNA_HOST.test(host) &&
-        (idnaCost += host.length * host.length + IDNA_PARSE_COST) > OPAQUE_INPUT_MAX_IDNA_COST
+        (idnaCost += idnaCostOf(host)) > OPAQUE_INPUT_MAX_IDNA_COST
       ) {
         tooLarge = true;
         return;

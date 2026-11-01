@@ -923,29 +923,46 @@ describe('opaqueInputUrlsIn', () => {
       `HTTPS: why does my site show as insecure ${prose}`,
       `File: summary of the meeting notes ${prose}`,
       `https://${'a'.repeat(10_000)}.com/a.png`,
+      `ws://${'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(28_000)}/`,
       `https://u:${'a'.repeat(400)}@h.example.com/a.png`,
     ])
       expect(opaqueInputUrlsIn({ u }).tooLarge).toBe(false);
     // A scheme a parser does not convert a host for: non-ASCII text after it costs nothing.
-    const japanese = Array.from({ length: 6000 }, (_, j) => String.fromCharCode(0x3042 + (j % 80)));
-    expect(opaqueInputUrlsIn({ u: `Note: ${japanese.join('')}` }).tooLarge).toBe(false);
+    const distinct = Array.from({ length: 8000 }, (_, j) => String.fromCharCode(0x4e00 + j));
+    expect(opaqueInputUrlsIn({ u: `Note: ${distinct.join('')}` }).tooLarge).toBe(false);
   });
 
   it('budgets the work of converting non-ASCII hosts, and reports more as too large', () => {
     // Distinct characters, as a parser's conversion costs the most for them.
     const cjk = (n: number, from = 0) =>
       Array.from({ length: n }, (_, j) => String.fromCharCode(0x4e00 + from + j)).join('');
-    // One host: its length squared plus a parse is the cost.
-    expect(opaqueInputUrlsIn({ u: `ws://${cjk(4094)}/` }).tooLarge).toBe(false);
-    expect(opaqueInputUrlsIn({ u: `ws://${cjk(4095)}/` }).tooLarge).toBe(true);
+    // One host: its length times its distinct characters, plus a parse, is the cost.
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(5791)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(5792)}/` }).tooLarge).toBe(true);
     // Many short hosts: the fixed cost per parse adds up.
     const short = (k: number) =>
       Array.from({ length: k }, (_, i) => `ws://${cjk(64, (i * 64) % 20_000)}/`);
-    expect(opaqueInputUrlsIn({ list: short(1365) }).tooLarge).toBe(false);
-    expect(opaqueInputUrlsIn({ list: short(1366) }).tooLarge).toBe(true);
-    // A percent-escaped host is converted too.
-    expect(opaqueInputUrlsIn({ u: `ws://${'%41'.repeat(1364)}/` }).tooLarge).toBe(false);
-    expect(opaqueInputUrlsIn({ u: `ws://${'%41'.repeat(1366)}/` }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ list: short(2730) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ list: short(2731) }).tooLarge).toBe(true);
+    // Escapes and `xn--` hide what a host decodes to, so they are charged its length squared.
+    expect(opaqueInputUrlsIn({ u: `ws://${'%41'.repeat(1930)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${'%41'.repeat(1931)}/` }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ u: `ws://xn--${'a'.repeat(5800)}/` }).tooLarge).toBe(true);
+    // A host too long to map cheaply is refused unmapped, however few its characters.
+    const accented = String.fromCharCode(0xe9);
+    expect(opaqueInputUrlsIn({ u: `ws://${accented.repeat(64 * 1024)}/` }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ u: `ws://${accented.repeat(64 * 1024 + 1)}/` }).tooLarge).toBe(true);
+    // A character the parser expands (a square katakana is six) is charged as expanded.
+    const square = String.fromCharCode(0x3316).repeat(2000);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(2600)}${square}/` }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ u: `ws://${cjk(2600)}${square.slice(0, 1000)}/` }).tooLarge).toBe(
+      false
+    );
+    // Prose that repeats a few characters costs little, however long: a message after a link.
+    const hiragana = (n: number) =>
+      Array.from({ length: n }, (_, j) => String.fromCharCode(0x3042 + (j % 80))).join('');
+    const messages = Array.from({ length: 6 }, () => `https://civitai.com ${hiragana(8000)}`);
+    expect(opaqueInputUrlsIn({ messages }).tooLarge).toBe(false);
   });
 
   it('reports too many values as too large', () => {
