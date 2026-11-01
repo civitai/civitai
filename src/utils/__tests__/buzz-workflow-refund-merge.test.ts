@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
+  formatSignedAmount,
   getTransactionBadgeLabel,
   getTransactionDescription,
   mergeWorkflowRefunds,
@@ -44,7 +45,8 @@ function refund(
     toAccountType: accountType,
     description: `refund ${workflowId}`,
     details: { workflowId } as Record<string, unknown> | null,
-    externalTransactionId: `refund-${accountId}-${workflowId}` as string | null,
+    // The orchestration shape: the account TYPE, not the account id. Not used as an identity.
+    externalTransactionId: `refund-${accountType === 'blue' ? 'Blue' : 'Yellow'}-${workflowId}`,
   };
 }
 
@@ -148,24 +150,20 @@ describe('mergeWorkflowRefunds', () => {
     ]);
   });
 
-  it('identifies the refund by its external id when its details carry no workflow id', () => {
+  it('takes the workflow from the refund details only, never from its external id', () => {
     const bare = { ...refundAlpha, details: null };
-    expect(mergeWorkflowRefunds([bare, chargeAlpha])).toEqual([
-      {
-        ...chargeAlpha,
-        amount: -8,
-        workflowRefund: {
-          grossAmount: -37,
-          refundAmount: 29,
-          refundDate: new Date('2026-10-30T10:00:47Z'),
-        },
-      },
-    ]);
+    expect(mergeWorkflowRefunds([bare, chargeAlpha])).toEqual([bare, chargeAlpha]);
   });
 
-  it('does not pair when the refund details and external id name different workflows', () => {
-    const conflicted = { ...refundAlpha, externalTransactionId: `refund-${ME}-wf-bravo` };
-    expect(mergeWorkflowRefunds([conflicted, chargeAlpha])).toEqual([conflicted, chargeAlpha]);
+  it('nets a fully refunded workflow to zero', () => {
+    const full = refund('wf-alpha', 37, '2026-10-30T10:06:23Z');
+    const [merged] = mergeWorkflowRefunds([full, chargeAlpha]);
+    expect(merged.amount).toBe(0);
+    expect(merged.workflowRefund).toEqual({
+      grossAmount: -37,
+      refundAmount: 37,
+      refundDate: new Date('2026-10-30T10:06:23Z'),
+    });
   });
 
   it('only pairs a Refund with a Generation charge', () => {
@@ -174,12 +172,17 @@ describe('mergeWorkflowRefunds', () => {
   });
 });
 
-describe('merged row label', () => {
-  it('names the refunded amount on a merged row and leaves other rows alone', () => {
+describe('merged row label and amount', () => {
+  it('keeps the plain type badge on a merged row', () => {
     const [merged] = mergeWorkflowRefunds([refundAlpha, chargeAlpha]);
-    expect(getTransactionBadgeLabel(merged)).toBe('Generation (refunded 29)');
-    expect(getTransactionBadgeLabel(chargeAlpha)).toBe('Generation');
+    expect(getTransactionBadgeLabel(merged)).toBe('Generation');
     expect(getTransactionBadgeLabel(refundAlpha)).toBe('Refund');
+  });
+
+  it('signs credits and debits and shows a zero net without a sign', () => {
+    expect(formatSignedAmount(43)).toBe('+43');
+    expect(formatSignedAmount(-47)).toBe('-47');
+    expect(formatSignedAmount(0)).toBe('0');
   });
 });
 
@@ -208,11 +211,11 @@ describe('transaction description', () => {
     expect(getTransactionDescription(merged, 'User')).toBe('AI chat: ContentWriter');
   });
 
-  it('falls back to the type label on a merged row with no description', () => {
+  it('shows no description line on a merged row whose charge has none', () => {
     const bare = { ...chargeAlpha, description: '' };
     const [merged] = mergeWorkflowRefunds([refundAlpha, bare]);
     expect(merged.workflowRefund?.refundAmount).toBe(29);
-    expect(getTransactionDescription(merged, 'User')).toBe('Generation');
+    expect(getTransactionDescription(merged, 'User')).toBeUndefined();
   });
 
   it('leaves an unmerged row with no description blank, as today', () => {

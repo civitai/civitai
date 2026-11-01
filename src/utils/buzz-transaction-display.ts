@@ -8,11 +8,7 @@ import {
 export const GENERATION_TIP_LABEL = 'Tip';
 export const GENERATION_TIP_FILTER = 'Generation tip';
 
-type DisplayRow = {
-  type: TransactionType;
-  externalTransactionId?: string | null;
-  workflowRefund?: WorkflowRefund;
-};
+type DisplayRow = { type: TransactionType; externalTransactionId?: string | null };
 
 export function isGenerationTip(row: DisplayRow) {
   return (
@@ -22,8 +18,6 @@ export function isGenerationTip(row: DisplayRow) {
 }
 
 export function getTransactionBadgeLabel(row: DisplayRow) {
-  if (row.workflowRefund)
-    return `${TransactionType[row.type]} (refunded ${row.workflowRefund.refundAmount.toLocaleString()})`;
   return isGenerationTip(row) ? GENERATION_TIP_LABEL : TransactionType[row.type];
 }
 
@@ -33,19 +27,18 @@ export function getTransactionBadgeLabel(row: DisplayRow) {
 const LEADING_CONTENT = /^Content(?= that you posted )/;
 
 /**
- * The description line for a row. A merged workflow row carries its charge's description (the
- * refund's own text is dropped with it), falling back to the type name when the charge has none.
+ * The description line for a row. A merged workflow row is its charge, so it shows the charge's
+ * description; the refund's own text goes with the refund row.
  */
-export function getTransactionDescription(
-  row: DisplayRow & { description?: string | null },
-  label?: string
-) {
-  let description = row.description || undefined;
-  if (description && label) {
-    description = description.replace(LEADING_CONTENT, `A ${label.toLowerCase()}`);
-  }
-  if (!description && row.workflowRefund) return TransactionType[row.type];
-  return description;
+export function getTransactionDescription(row: { description?: string | null }, label?: string) {
+  const description = row.description || undefined;
+  if (!description || !label) return description;
+  return description.replace(LEADING_CONTENT, `A ${label.toLowerCase()}`);
+}
+
+/** "+11" for a credit, "-12" for a debit, and a plain "0" for a fully refunded workflow. */
+export function formatSignedAmount(amount: number) {
+  return `${amount > 0 ? '+' : ''}${amount.toLocaleString()}`;
 }
 
 // ── One row per orchestration workflow ───────────────────────────────────────
@@ -71,16 +64,6 @@ function detailsWorkflowId(row: PairableRow) {
   return typeof id === 'string' && id ? id : undefined;
 }
 
-/** The workflow a refund returns Buzz for, or undefined when its details and external id disagree. */
-function refundWorkflowId(row: PairableRow) {
-  const fromDetails = detailsWorkflowId(row);
-  const prefix = `refund-${row.toAccountId}-`;
-  const ext = row.externalTransactionId;
-  const fromExternal = ext?.startsWith(prefix) ? ext.slice(prefix.length) || undefined : undefined;
-  if (fromDetails && fromExternal && fromDetails !== fromExternal) return undefined;
-  return fromDetails ?? fromExternal;
-}
-
 // The identity both legs must share exactly: the workflow, the account the Buzz left and came back
 // to, and the currency it moved in.
 function pairKey(workflowId: string, accountId: number, accountType: string) {
@@ -95,7 +78,9 @@ function chargeKey(row: PairableRow) {
 
 function refundKey(row: PairableRow) {
   if (row.type !== TransactionType.Refund || row.amount <= 0) return undefined;
-  const workflowId = refundWorkflowId(row);
+  // Every orchestration refund carries details.workflowId; its external id names the account TYPE,
+  // not the account, so it is not an identity here.
+  const workflowId = detailsWorkflowId(row);
   return workflowId && pairKey(workflowId, row.toAccountId, row.toAccountType);
 }
 

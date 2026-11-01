@@ -36,6 +36,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import {
   GENERATION_TIP_FILTER,
   filterTransactionsByDisplayType,
+  formatSignedAmount,
   getServerTransactionType,
   getTransactionBadgeLabel,
   getTransactionDescription,
@@ -276,7 +277,10 @@ export default function UserTransactions() {
             {transactions.map((transaction, index) => {
               const { amount, date, fromUser, toUser, details, type, workflowRefund } = transaction;
               const isDebit = amount < 0;
-              const accountType = isDebit ? transaction.fromAccountType : transaction.toAccountType;
+              // A merged workflow row is the charge, so its Buzz type is the debited side even when the
+              // refund nets it to zero or above.
+              const accountType =
+                isDebit || workflowRefund ? transaction.fromAccountType : transaction.toAccountType;
               // The bolt is colored by buzz type, never by direction: green already NAMES a buzz type,
               // so tinting credits green labelled every yellow gain as green buzz (CU 868kk3aw1).
               const spendType = buzzSpendTypes.find((t) => t === accountType);
@@ -303,8 +307,7 @@ export default function UserTransactions() {
                         <Group gap={4}>
                           <CurrencyIcon currency="BUZZ" size={16} type={spendType} />
                           <Text style={{ fontVariantNumeric: 'tabular-nums' }} span>
-                            {isDebit ? '' : '+'}
-                            {amount.toLocaleString()}
+                            {formatSignedAmount(amount)}
                           </Text>
                         </Group>
                       </Text>
