@@ -65,6 +65,8 @@ const {
   mockCheckBlockPublishRateLimit,
   mockCheckBlockPollRateLimit,
   mockCheckBlockEstimateCellsRateLimit,
+  mockCheckBlockSubmitRateLimit,
+  mockCheckBlockSubmitUserRateLimit,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockListMyBlockWorkflows,
@@ -85,6 +87,8 @@ const {
   mockCheckBlockPublishRateLimit: vi.fn(async () => ({ allowed: true })),
   mockCheckBlockPollRateLimit: vi.fn(async () => ({ allowed: true })),
   mockCheckBlockEstimateCellsRateLimit: vi.fn(async () => ({ allowed: true })),
+  mockCheckBlockSubmitRateLimit: vi.fn(async () => ({ allowed: true })),
+  mockCheckBlockSubmitUserRateLimit: vi.fn(async () => ({ allowed: true })),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsAppBlocksAuthorEnabled: vi.fn(async () => true),
   mockListMyBlockWorkflows: vi.fn(async () => ({ items: [], nextCursor: null })),
@@ -151,12 +155,16 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   // file's BASE, like the poll one above was, and declared for the same reason.
   checkBlockEstimateCellsRateLimit: (...a: unknown[]) =>
     mockCheckBlockEstimateCellsRateLimit(...(a as [])),
+  checkBlockSubmitRateLimit: (...a: unknown[]) => mockCheckBlockSubmitRateLimit(...(a as [])),
+  checkBlockSubmitUserRateLimit: (...a: unknown[]) =>
+    mockCheckBlockSubmitUserRateLimit(...(a as [])),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(({ next }) => next()) };
 });
 
+import promClient from 'prom-client';
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -263,6 +271,8 @@ beforeEach(() => {
     mockCheckBlockCatalogRateLimit,
     mockCheckBlockPublishRateLimit,
     mockCheckBlockPollRateLimit,
+    mockCheckBlockSubmitRateLimit,
+    mockCheckBlockSubmitUserRateLimit,
     mockIsAppBlocksEnabled,
     mockIsAppBlocksAuthorEnabled,
     mockListMyBlockWorkflows,
@@ -285,6 +295,8 @@ beforeEach(() => {
   mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
   mockCheckBlockPublishRateLimit.mockResolvedValue({ allowed: true });
   mockCheckBlockPollRateLimit.mockResolvedValue({ allowed: true });
+  mockCheckBlockSubmitRateLimit.mockResolvedValue({ allowed: true });
+  mockCheckBlockSubmitUserRateLimit.mockResolvedValue({ allowed: true });
   mockVerifyBlockToken.mockResolvedValue(validClaims());
   mockCancelWorkflow.mockResolvedValue(undefined);
   mockGetWorkflow.mockResolvedValue(workflowFixture());
@@ -535,24 +547,84 @@ describe('blocks.getMyBuzzBalance', () => {
   });
 });
 
-describe('blocks.submitWorkflow — DELIBERATELY unlimited, pinned as a fact', () => {
-  it('INVARIANT GUARD — charges NEITHER per-request bucket', async () => {
-    // 🔴 THIS IS THE DECISION, PINNED. `submitWorkflow` takes no per-request rate limit: what
-    // bounds it server-side is the per-app generation VELOCITY ceiling inside `reserveAppSpend`
-    // plus the per-user and per-app daily Buzz caps — a generation-count bound that is strictly
-    // tighter than any request-rate limit we would be willing to ship on the spend path. The
-    // rationale and its two STATED HOLES live at the procedure. This case exists so that ADDING a
-    // per-request bucket here is a deliberate act that fails a test and gets read, rather than a
-    // reflex — which is the failure mode clawgate #569 names in its own non-goals.
-    //
-    // The call is expected to throw (the txt2img path needs far more of the world stubbed than
-    // this file provides); what is asserted is which buckets were charged on the way, which is
-    // independent of where it stops.
+describe('blocks.submitWorkflow — its own submit bucket, above every kind branch', () => {
+  async function refusals(bucket = 'submit'): Promise<number> {
+    const metric = promClient.register.getSingleMetric(
+      'civitai_app_block_bridge_rate_limit_refusals_total'
+    ) as
+      | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+      | undefined;
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    return (
+      values.find((v) => v.labels.procedure === 'submitWorkflow' && v.labels.bucket === bucket)
+        ?.value ?? 0
+    );
+  }
+
+  it('REFUSES past the ceiling, with TOO_MANY_REQUESTS, before any spend is reserved', async () => {
+    mockCheckBlockSubmitRateLimit.mockResolvedValue(REFUSED);
+    const before = await refusals();
+
+    await expect(
+      caller().submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    expect((await refusals()) - before).toBe(1);
+  });
+
+  it('REFUSES when the PER-USER bucket refuses, under its own counter label', async () => {
+    // The per-install bucket ALLOWS here, so only the per-user bucket can produce this code.
+    mockCheckBlockSubmitUserRateLimit.mockResolvedValue(REFUSED);
+    const before = await refusals('submit-user');
+    const beforeInstall = await refusals('submit');
+
+    await expect(
+      caller().submitWorkflow({
+        blockToken: 'tok',
+        body: { kind: 'customComfy', recipe: 'starter-comfy-txt2img', params: {} } as never,
+      })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    expect((await refusals('submit-user')) - before).toBe(1);
+    expect((await refusals('submit')) - beforeInstall).toBe(0);
+  });
+
+  it('refuses a customComfy submit too — a kind that returns before the txt2img arm', async () => {
+    mockCheckBlockSubmitRateLimit.mockResolvedValue(REFUSED);
+
+    await expect(
+      caller().submitWorkflow({
+        blockToken: 'tok',
+        // A body that really PARSES, so `.input()` cannot be what refuses it.
+        body: { kind: 'customComfy', recipe: 'starter-comfy-txt2img', params: {} } as never,
+      })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockReserveAppSpend).not.toHaveBeenCalled();
+  });
+
+  it('REACHABILITY CONTROL — keyed on the install and the token subject, and does not refuse when allowed', async () => {
+    // Does not assert success: the txt2img path needs more of the world than this file stubs.
     await caller()
       .submitWorkflow({ blockToken: 'tok', body: validBody() })
-      .catch(() => undefined);
-
-    expect(mockCheckBlockPollRateLimit).not.toHaveBeenCalled();
+      .catch((e: { code?: string }) => {
+        expect(e.code).not.toBe('TOO_MANY_REQUESTS');
+      });
+    expect(mockCheckBlockSubmitRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockCheckBlockSubmitRateLimit).toHaveBeenCalledWith(INSTANCE, `user:${VIEWER}`);
+    expect(mockCheckBlockSubmitUserRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockCheckBlockSubmitUserRateLimit).toHaveBeenCalledWith(`user:${VIEWER}`);
     expect(mockCheckBlockCatalogRateLimit).not.toHaveBeenCalled();
+    expect(mockCheckBlockPollRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('refuses before the scope check: a token without the spend scope still charges the bucket', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: [] }));
+    mockCheckBlockSubmitRateLimit.mockResolvedValue(REFUSED);
+
+    await expect(
+      caller().submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 });
