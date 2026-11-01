@@ -113,14 +113,11 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
   }
 
   const actor = actorUserId ?? SYSTEM_ACTOR_ID;
-  logToAxiom(
-    {
-      type: 'info',
-      name: 'system-account-created',
-      details: { userId, username, emailDomain: SYSTEM_ACCOUNT_EMAIL_DOMAIN, actorUserId: actor },
-    },
-    'moderation'
-  ).catch(() => null);
+  logToAxiom({
+    type: 'info',
+    name: 'system-account-created',
+    details: { userId, username, emailDomain: SYSTEM_ACCOUNT_EMAIL_DOMAIN, actorUserId: actor },
+  }).catch(() => null);
   const auditRecorded = await trackModActivity(actor, {
     entityType: 'user',
     activity: 'createSystemAccount',
