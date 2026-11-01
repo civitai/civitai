@@ -2,6 +2,7 @@
 import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import { createRequire } from 'module';
+import { STATIC_ASSET_CACHE_RULES } from './src/shared/constants/static-asset-cache-rules.mjs';
 const require = createRequire(import.meta.url);
 const packageJson = require('./package.json');
 
@@ -27,45 +28,9 @@ const analyze = process.env.ANALYZE === 'true';
  */
 const skipBuildTypecheck = process.env.CIVITAI_SKIP_BUILD_TYPECHECK === '1';
 
-/**
- * `Cache-Control` for files served from `public/`. Next serves every public file with
- * `public, max-age=0` (it cannot know whether one changed), so a CDN in front revalidates each one
- * against the origin on EVERY request. None of these URLs carries a content hash, so every TTL here
- * bounds how long a deploy that edits a file in place can take to reach everyone:
- * worst case = `s-maxage` + `stale-while-revalidate` at the CDN, then `max-age` in the browser.
- *
- * - Workers (`public/workers/*.js`, built by `pnpm build:workers` on every build): SHORT. The
- *   signals worker URL carries `?v=SIGNALS_WORKER_VERSION` and the client retries a script that
- *   reports another protocol version (`useSignalsWorker`), but during a rolling deploy a new-version
- *   URL can be answered by an old pod, and the CDN would keep that wrong copy for the whole TTL. The
- *   civitai-link and file-hash workers have no version in the URL at all. Five minutes keeps a
- *   mismatched copy short-lived while still taking the per-request revalidation off the origin.
- * - Icons, the web manifest and the bundled default images (`/favicon*.ico`, `/apple-touch-icon*`,
- *   `/site.webmanifest`, `/images/<file>.<ext>`): a stale copy is cosmetic only, so hours.
- *
- * Next applies a rule BEFORE it knows whether the file exists. A miss on a path no page owns is
- * Next's own 404, which resets `Cache-Control`; a miss on `/images/<file>.<ext>` reaches
- * `/images/[imageId]`, whose `notFound` render Next does NOT reset — `createServerSideProps` sets
- * it private (that 404 carries per-viewer `_app` props), pinned by `image-detail-page.gssp.test.ts`.
- *
- * `/_next/static` is not listed: Next already serves it immutable and ignores any override.
- * Production only (like the dev-only X-Robots-Tag rule below), so a rebuilt worker shows up at once
- * under `next dev`. `static-asset-cache-headers.test.ts` reads these through Next's own route
- * compiler, including that no page or API route picks one up — `/images/[imageId]` is a page.
- */
-const SHORT_LIVED_STATIC = 'public, max-age=60, s-maxage=300, stale-while-revalidate=300';
-const LONG_LIVED_STATIC = 'public, max-age=3600, s-maxage=14400, stale-while-revalidate=3600';
-const STATIC_ASSET_CACHE_RULES = [
-  { source: '/workers/:file([^/]+\\.js)', cacheControl: SHORT_LIVED_STATIC },
-  { source: '/:file(favicon(?:-[a-z]+)?\\.ico)', cacheControl: LONG_LIVED_STATIC },
-  { source: '/:file(apple-touch-icon(?:-precomposed)?\\.png)', cacheControl: LONG_LIVED_STATIC },
-  { source: '/site.webmanifest', cacheControl: LONG_LIVED_STATIC },
-  {
-    // The extension is required: `/images`, `/images/iterate` and `/images/123` are pages.
-    source: '/images/:file(.+\\.(?:png|jpe?g|gif|svg|webp|ico))',
-    cacheControl: LONG_LIVED_STATIC,
-  },
-];
+// Production only (like the dev-only X-Robots-Tag rule below), so a rebuilt worker shows up at once
+// under `next dev`. The rules, their TTLs and the page-render hazard they carry are documented in
+// the shared module; `static-asset-cache-headers.test.ts` reads them through Next's route compiler.
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,

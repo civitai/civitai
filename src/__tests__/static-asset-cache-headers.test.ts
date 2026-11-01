@@ -5,6 +5,8 @@ import { getContentType } from 'next/dist/server/serve-static';
 import { buildCustomRoute } from 'next/dist/server/lib/router-utils/filesystem';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { routerPathname } from '~/server/middleware/__tests__/next-proxy-matcher';
+import { isStaticAssetRulePath } from '~/server/utils/static-asset-cache';
+import { fileHashWorkerUrl } from '~/hooks/useFileHash';
 
 /**
  * The `Cache-Control` each static file in `public/` is served with. Next's default for a public
@@ -17,7 +19,8 @@ import { routerPathname } from '~/server/middleware/__tests__/next-proxy-matcher
  * `resolve-routes.js`. A text scan of the config would pass on a rule that never reaches Next.
  *
  * The values are a wire contract with the CDN and the browser, so they are pinned as literals:
- * the TTLs and why each was chosen are documented beside the rules in `next.config.mjs`.
+ * the TTLs and why each was chosen are documented beside the rules in
+ * `~/shared/constants/static-asset-cache-rules.mjs`.
  */
 
 const SHORT_LIVED = 'public, max-age=60, s-maxage=300, stale-while-revalidate=300';
@@ -127,6 +130,64 @@ describe('static asset Cache-Control in production', () => {
     '/sw.js',
   ])('%s gets no static-asset Cache-Control', (url) => {
     expect(prod.cacheControl(url)).toBeUndefined();
+  });
+});
+
+/**
+ * `_app` decides which page renders to make private with its OWN compile of the same rule list
+ * (`isStaticAssetRulePath`), so the two matchers must agree: one that matched less than Next would
+ * leave a page render on a rule path public. Checked on every fixture above plus case and locale
+ * variants, against Next's own compiled routes.
+ */
+describe("_app's rule matcher agrees with Next's", () => {
+  const STATIC_VALUES = new Set([SHORT_LIVED, LONG_LIVED]);
+  it.each([
+    '/workers/signals.worker.js?v=2.3',
+    '/workers/file-hash.worker.js',
+    '/WORKERS/FILE-HASH.WORKER.JS',
+    '/workers/a/b.js',
+    '/favicon.ico',
+    '/favicon-red.ico',
+    '/FAVICON-RED.ICO',
+    '/favicon-x.png',
+    '/apple-touch-icon.png',
+    '/site.webmanifest',
+    '/images/base-badge.png',
+    '/images/BASE-BADGE.PNG',
+    '/images/no-such-file.png',
+    '/images/creators/x.webp',
+    '/en/images/base-badge.png',
+    '/images',
+    '/images/123',
+    '/images/iterate',
+    '/models/123/v1.5',
+    '/sitemap.xml',
+    '/sw.js',
+    '/api/v1/images',
+    '/',
+  ])('%s', (url) => {
+    const next = STATIC_VALUES.has(prod.cacheControl(url) ?? '');
+    expect(isStaticAssetRulePath(url, ['en'])).toBe(next);
+  });
+
+  it('POSITIVE CONTROL: the fixtures include both answers', () => {
+    expect(isStaticAssetRulePath('/images/BASE-BADGE.PNG', ['en'])).toBe(true);
+    expect(isStaticAssetRulePath('/images/123', ['en'])).toBe(false);
+  });
+});
+
+describe('the file-hash worker URL', () => {
+  afterEach(() => {
+    delete (globalThis as { __NEXT_DATA__?: unknown }).__NEXT_DATA__;
+  });
+
+  it("carries the page's build id, so a page never runs another build's cached script", () => {
+    (globalThis as { __NEXT_DATA__?: unknown }).__NEXT_DATA__ = { buildId: 'build 7' };
+    expect(fileHashWorkerUrl()).toBe('/workers/file-hash.worker.js?v=build%207');
+  });
+
+  it('falls back to the bare path when there is no build id', () => {
+    expect(fileHashWorkerUrl()).toBe('/workers/file-hash.worker.js');
   });
 });
 

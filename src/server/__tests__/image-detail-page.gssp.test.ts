@@ -198,32 +198,4 @@ describe('/images/[imageId] getServerSideProps', () => {
     expect(result).toEqual({ notFound: true });
     expect(procedureCalls).toEqual([]);
   });
-
-  // `next.config.mjs` gives `/images/<file>.<ext>` a public Cache-Control so the CDN caches the
-  // static files in `public/images`. Next applies that header BEFORE it knows whether the file
-  // exists; when it does not, the request reaches this page, and Next keeps the header on a
-  // `notFound` render. That 404 is rendered with `_app`'s per-viewer props, so it must leave
-  // private, whatever the path rule said. The upper-case case: header rules match without case,
-  // the filesystem does not, so a case variant of a REAL file also lands here.
-  it.each(['no-such-file.png', 'BASE-BADGE.PNG'])(
-    'makes the 404 for the file-shaped id %s private, over a static-asset header',
-    async (imageId) => {
-      const res = fakeResponse();
-      res.setHeader(
-        'Cache-Control',
-        'public, max-age=3600, s-maxage=14400, stale-while-revalidate=3600'
-      );
-      const result = await page.getServerSideProps({
-        req: { url: `/images/${imageId}`, headers: { host: 'civitai.com' }, cookies: {} },
-        res,
-        params: { imageId },
-        query: { imageId },
-        resolvedUrl: `/images/${imageId}`,
-      } as unknown as GetServerSidePropsContext);
-      expect(result).toEqual({ notFound: true });
-      expect(res.getHeader('cache-control')).toBe(
-        'private, no-cache, no-store, max-age=0, must-revalidate'
-      );
-    }
-  );
 });
