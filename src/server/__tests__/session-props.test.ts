@@ -103,9 +103,12 @@ describe('jsonSafeSession', () => {
 
     // A resolver's `notFound` must reach Next, or every page's 404 silently becomes a 200 with
     // props — the soft-404 the article page was fixed for. Pinned by text for the same reason as
-    // above; a rename of `result` or `notFound` here needs this line changed with it.
+    // above; a rename of `result` or `notFound` here needs this line changed with it. The branch is
+    // a block because it also makes the 404's Cache-Control private before returning.
     it('returns a resolver notFound instead of falling through to props', () => {
-      expect(source()).toContain('if (result.notFound) return { notFound: result.notFound };');
+      expect(source()).toMatch(
+        /if \(result\.notFound\) \{\n(?:\s*\/\/.*\n)*\s*context\.res\.setHeader\('Cache-Control', NOT_FOUND_CACHE_CONTROL\);\n\s*return \{ notFound: result\.notFound \};\n\s*\}/
+      );
     });
 
     // `session` must stay the LAST key in the props object: a later spread would re-add the raw
