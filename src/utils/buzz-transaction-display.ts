@@ -21,10 +21,11 @@ export function getTransactionBadgeLabel(row: DisplayRow) {
   return isGenerationTip(row) ? GENERATION_TIP_LABEL : TransactionType[row.type];
 }
 
-// The good/collected-content rewards read "Content that you posted was liked/collected…", which the
-// page rewrites to name the entity. Matched as that exact opening: an unanchored 'Content' rewrote
-// model names too, e.g. "AI chat: ContentWriter" became "AI chat: A userWriter".
-const LEADING_CONTENT = /^Content(?= that you posted )/;
+// The good/collected-content rewards are stored as "Buzz Reward: Content that you posted was
+// liked/collected…" (base.reward.ts adds the prefix), and the page rewrites "Content" to name the
+// entity. Matched as that exact phrase: an unanchored 'Content' rewrote model names too, e.g.
+// "AI chat: ContentWriter" became "AI chat: A userWriter".
+const LEADING_CONTENT = /^(Buzz Reward: )?Content(?= that you posted )/;
 
 /**
  * The description line for a row. A merged workflow row is its charge, so it shows the charge's
@@ -33,7 +34,10 @@ const LEADING_CONTENT = /^Content(?= that you posted )/;
 export function getTransactionDescription(row: { description?: string | null }, label?: string) {
   const description = row.description || undefined;
   if (!description || !label) return description;
-  return description.replace(LEADING_CONTENT, `A ${label.toLowerCase()}`);
+  return description.replace(
+    LEADING_CONTENT,
+    (_match, prefix?: string) => `${prefix ?? ''}A ${label.toLowerCase()}`
+  );
 }
 
 /** "+11" for a credit, "-12" for a debit, and a plain "0" for a fully refunded workflow. */
