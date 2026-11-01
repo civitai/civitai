@@ -85,8 +85,17 @@ const {
       // member, record the TTL floor — rather than returning a canned reply, so a test
       // that reads the member back is measuring a real write. A stub returning 1 would
       // let every assertion below pass with the index never populated.
+      //
+      // The service's other EVAL is a teardown's compare-and-delete of the (user, block)
+      // pointer, told apart by its key (never the index's): it deletes only a pointer that
+      // still names the session, and answers 1 only then.
       eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) => {
         const [key] = opts.keys;
+        if (!key.includes(':user-index:')) {
+          if (store.get(key) !== opts.arguments[0]) return 0;
+          store.delete(key);
+          return 1;
+        }
         const [member, ttl] = opts.arguments;
         const cur = new Set(JSON.parse(store.get(key) ?? '[]') as string[]);
         const added = cur.has(member) ? 0 : 1;

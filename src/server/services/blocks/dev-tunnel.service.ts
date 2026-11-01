@@ -116,7 +116,9 @@ export const DEV_TUNNEL_CLIENT_KEY_SECONDS = 15 * 60;
  * endpoint answers `unavailable` and cancels its own start (`cancelDevTunnelStart`), so whatever
  * that start opens later is closed. App Assistant's runner waits this long plus 15 s
  * (`START_TIMEOUT_MS` in apps/assistant-runner/src/app-assistant/dev-tunnel.ts, which mirrors this
- * number as `CIVITAI_START_DEADLINE_MS`), so it always hears this answer.
+ * number as `CIVITAI_START_DEADLINE_MS`), so it normally hears this answer. Not always: the
+ * answer waits for that cancel's own Redis calls, which can overrun the 15 s, and the runner then
+ * times out first. It stops the start by its key either way, so the outcome is the same.
  */
 export const RUNNER_DEV_TUNNEL_START_DEADLINE_MS = 185_000;
 
@@ -939,15 +941,13 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   // failed mint leaves nothing behind.
   await renderDevTunnelRoute(host, sessionId);
 
-  // Persist the index + records, all with the hard-TTL EX so they self-expire.
+  // Persist the records, all with the hard-TTL EX so they self-expire. Not yet the (user, block)
+  // pointer: see below.
   await Promise.all([
     sysRedis.set(credKey(fingerprint), JSON.stringify(credential), { EX: DEV_TUNNEL_HARD_SECONDS }),
     sysRedis.set(sessionKey(sessionId), JSON.stringify(session), { EX: DEV_TUNNEL_HARD_SECONDS }),
     sysRedis.set(hostKey(host), sessionId, { EX: DEV_TUNNEL_HARD_SECONDS }),
-    sysRedis.set(userBlockKey(params.userId, params.blockId), sessionId, {
-      EX: DEV_TUNNEL_HARD_SECONDS,
-    }),
-    // Written BEFORE the cancel mark is read below: see the end of this function.
+    // Written BEFORE the cancel mark is read below.
     ...(clientKey
       ? [
           sysRedis.set(clientStartKey(params.userId, clientKey), sessionId, {
@@ -956,6 +956,28 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
         ]
       : []),
   ]);
+  recordDevTunnelMint();
+
+  // Cancelled while it ran (its caller gave up on the answer): close what it opened. This start
+  // records its session under the key and THEN reads the mark; a cancel sets the mark and THEN
+  // reads the key. Each awaits its write before its read, so at least one of the two sees the
+  // other's write, and the tunnel is closed by this start, by the cancel, or by both (teardown
+  // is idempotent).
+  //
+  // 🔴 BEFORE the (user, block) pointer and the ban index are written, so a cancelled start never
+  // touches them. A late start (its route apply finished after the deadline cancelled it) may
+  // find a NEWER start of the same app already holding the pointer; writing it would steal that
+  // live tunnel's pointer, and the teardown would then drop the newer tunnel from the pointer
+  // and the ban index both (a ban would not revoke its token, and the next start would not
+  // replace it). Teardown also only removes a pointer that still names its own session.
+  if (clientKey && (await isStartCancelled(params.userId, clientKey))) {
+    await teardownSession(session, 'stop');
+    throw new Error(DEV_TUNNEL_START_CANCELLED);
+  }
+
+  await sysRedis.set(userBlockKey(params.userId, params.blockId), sessionId, {
+    EX: DEV_TUNNEL_HARD_SECONDS,
+  });
 
   // Best-effort, and deliberately AFTER the state above: the index only makes a ban
   // able to find this tunnel, so any failure here must degrade revocation COVERAGE
@@ -987,7 +1009,6 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     // A ban may not be able to see this tunnel; the tunnel itself is unaffected.
   }
 
-  recordDevTunnelMint();
   // eslint-disable-next-line no-console
   console.log(
     JSON.stringify({
@@ -999,16 +1020,6 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
       expiresAt: hardExpiresAt,
     })
   );
-
-  // Cancelled while it ran (its caller gave up on the answer): close what it opened. This start
-  // records its session under the key and THEN reads the mark; a cancel sets the mark and THEN
-  // reads the key. Each awaits its write before its read, so at least one of the two sees the
-  // other's write, and the tunnel is closed by this start, by the cancel, or by both (teardown
-  // is idempotent).
-  if (clientKey && (await isStartCancelled(params.userId, clientKey))) {
-    await teardownSession(session, 'stop');
-    throw new Error(DEV_TUNNEL_START_CANCELLED);
-  }
 
   return {
     sessionId,
@@ -1024,6 +1035,28 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   };
 }
 
+/** Deletes KEYS[1] only while it still holds ARGV[1], in one step: 1 when it did. */
+const DEL_IF_VALUE =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
+
+/**
+ * Removes the session's (user, block) pointer, but only while it still names this session: another
+ * start of the same app may have taken it since (a newer, live tunnel). True when it was this
+ * session's and is now gone; false when it named another session, was already gone, or could not
+ * be read (left alone: a pointer to a closed session reads as no tunnel).
+ */
+async function releaseUserBlockPointer(session: DevTunnelSessionRecord): Promise<boolean> {
+  try {
+    const reply = await sysRedis.eval(DEL_IF_VALUE, {
+      keys: [userBlockKey(session.userId, session.blockId)],
+      arguments: [session.sessionId],
+    });
+    return Number(reply) === 1;
+  } catch {
+    return false;
+  }
+}
+
 /** Delete all state + the route for a session (used by stop + reap). Best-effort;
  *  never throws. `reason` labels the teardown metric. */
 async function teardownSession(
@@ -1031,20 +1064,25 @@ async function teardownSession(
   reason: DevTunnelTeardownReason
 ): Promise<void> {
   await deleteDevTunnelRoute(session.sessionId).catch(() => {});
-  await Promise.all([
+  const [ownedPointer] = await Promise.all([
+    releaseUserBlockPointer(session),
     sysRedis.del(credKey(session.fingerprint)).catch(() => {}),
     sysRedis.del(sessionKey(session.sessionId)).catch(() => {}),
     sysRedis.del(hostKey(session.host)).catch(() => {}),
-    sysRedis.del(userBlockKey(session.userId, session.blockId)).catch(() => {}),
     sysRedis.del(spendKey(session.sessionId)).catch(() => {}),
   ]);
+  // The block leaves the ban index only with the pointer: a pointer naming another session is a
+  // newer live tunnel of the same app, which the index must keep listing. A member left behind
+  // (no pointer of ours, or the release failing) costs a ban one harmless marker; a live one
+  // dropped leaves a banned author's token working.
   // Same reasoning as the add site: a try/catch, so a MISSING method (a synchronous
   // throw) is swallowed as well as a rejection. An index write must never break teardown.
-  try {
-    await sysRedis.sRem(userTunnelIndexKey(session.userId), session.blockId);
-  } catch {
-    // The member ages out with the index's TTL.
-  }
+  if (ownedPointer)
+    try {
+      await sysRedis.sRem(userTunnelIndexKey(session.userId), session.blockId);
+    } catch {
+      // The member ages out with the index's TTL.
+    }
   recordDevTunnelTeardown(reason);
   // eslint-disable-next-line no-console
   console.log(
