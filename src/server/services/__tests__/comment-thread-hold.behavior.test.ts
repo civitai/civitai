@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
@@ -86,6 +88,13 @@ import {
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
 import { createReportHandler } from '~/server/controllers/report.controller';
 
+const unpaidAwardMigration = readFileSync(
+  path.join(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/migrations/20261217120000_bounty_unpaid_award/migration.sql'
+  ),
+  'utf8'
+);
 const OWNER = 1;
 const HELD = 2; // named on a pending report
 const OTHER = 3;
@@ -141,8 +150,14 @@ beforeAll(async () => {
       "bountyId" int NOT NULL REFERENCES "Bounty"(id) ON DELETE CASCADE
     );
     CREATE TABLE "BountyBenefactor" (
-      "bountyId" int NOT NULL REFERENCES "Bounty"(id) ON DELETE CASCADE, "userId" int
+      "bountyId" int NOT NULL REFERENCES "Bounty"(id) ON DELETE CASCADE, "userId" int,
+      "unitAmount" int NOT NULL DEFAULT 0, "buzzTransactionId" text[] DEFAULT '{}'
     );
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    ${unpaidAwardMigration}
     CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int NOT NULL, "coverId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Thread" (
@@ -186,7 +201,7 @@ beforeEach(async () => {
   await db.exec(`
     TRUNCATE "CommentV2", "Thread", "Answer", "Question", "ResourceReview", "Model", "Post",
       "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article",
-      "HeldResourceReview", "HeldAnswer", "BountyBenefactor";
+      "HeldResourceReview", "HeldAnswer", "BountyBenefactor", "ModActivity", "BountyUnpaidAward";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -799,6 +814,163 @@ describe("a held author's rows under a deleted parent", () => {
     expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
     expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([]);
     expect(searchDeletes()).toEqual([]);
+  });
+
+  describe('an award recorded for manual resolution', () => {
+    const SUPPORTER = 7;
+    const recordAward = (resolved = false, userId = SUPPORTER, bountyId = 60) =>
+      db.query(
+        `INSERT INTO "BountyUnpaidAward" ("bountyId", "userId", "unitAmount", "recordedById",
+          "resolvedAt") VALUES ($1, $2, 100, 1, $3)`,
+        [bountyId, userId, resolved ? new Date() : null]
+      );
+    const resolveAward = () =>
+      db.query(`UPDATE "BountyUnpaidAward" SET ruling = 'paid_winner', "resolvedAt" = now()`);
+    /** The ModActivity record of an award made before the table existed. */
+    const recordLegacy = (userId = SUPPORTER, entityId = 60, entityType = 'bounty') =>
+      db.query(
+        `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+          VALUES ($1, 'bountyAwardUnpaid', $2, $3)`,
+        [userId, entityType, entityId]
+      );
+    const seedReleased = () =>
+      db.exec(`
+        INSERT INTO "Bounty" (id, "userId", meta, "payoutRecordedAt", "payoutSettledAt")
+          VALUES (60, ${OWNER}, '{"removedWithOwner": true}', now(), now());
+        INSERT INTO "BountyBenefactor" ("bountyId", "userId", "unitAmount", "buzzTransactionId")
+          VALUES (60, ${SUPPORTER}, 100, ARRAY['bounty-60-7-1']);`);
+    const withoutTable = async (run: () => Promise<unknown>) => {
+      await db.exec(`ALTER TABLE "BountyUnpaidAward" RENAME TO "BountyUnpaidAwardAside"`);
+      try {
+        await run();
+      } finally {
+        await db.exec(`ALTER TABLE "BountyUnpaidAwardAside" RENAME TO "BountyUnpaidAward"`);
+      }
+    };
+
+    it('hides a bounty a moderator deletes, at once and out of search, until it is resolved', async () => {
+      await seedEnteredBounty(OTHER);
+      await recordAward();
+
+      await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
+      expect(await keptBounty()).toEqual([
+        expect.objectContaining({ userId: null, availability: 'Private', owner: OWNER }),
+      ]);
+      expect(searchDeletes()).toEqual([{ id: 60, action: 'Delete' }]);
+
+      await resolveAward();
+      expect(await deleteSettledKeptBounties()).toBe(1);
+      expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
+    });
+
+    it('keeps a settled kept bounty from the cleanup job, and its supporter rows', async () => {
+      await seedReleased();
+      await recordAward();
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await rows(`SELECT "userId" FROM "BountyBenefactor"`)).toEqual([
+        { userId: SUPPORTER },
+      ]);
+
+      await resolveAward();
+      expect(await deleteSettledKeptBounties()).toBe(1);
+    });
+
+    it.each([
+      ['a resolved award', () => recordAward(true)],
+      ['an open award on another bounty', () => recordAward(false, SUPPORTER, 61)],
+      [
+        'a pre-table record that has a row in the table',
+        async () => {
+          await recordLegacy();
+          await recordAward(true);
+        },
+      ],
+      ['a pre-table record on another bounty', () => recordLegacy(SUPPORTER, 61)],
+      [
+        'a pre-table record on another entity with the same id',
+        () => recordLegacy(SUPPORTER, 60, 'model'),
+      ],
+      [
+        'another activity',
+        () =>
+          db.query(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+          VALUES (${SUPPORTER}, 'bountyAwardResolved', 'bounty', 60)`),
+      ],
+    ])('deletes a settled kept bounty with %s (control)', async (_, seed) => {
+      await seedReleased();
+      await seed();
+      expect(await deleteSettledKeptBounties()).toBe(1);
+    });
+
+    it.each([
+      ['no row in the table', async () => undefined],
+      ['only another supporter resolved in the table', () => recordAward(true, OTHER)],
+    ])('keeps a settled kept bounty with a pre-table record and %s', async (_, seed) => {
+      await seedReleased();
+      await recordLegacy();
+      await seed();
+      expect(await deleteSettledKeptBounties()).toBe(0);
+    });
+
+    it('fails closed without the table: a pre-table record keeps the bounty, and nothing throws', async () => {
+      await seedReleased();
+      await recordLegacy();
+      await withoutTable(async () => {
+        expect(await deleteSettledKeptBounties()).toBe(0);
+        await db.exec(`DELETE FROM "ModActivity"`);
+        expect(await deleteSettledKeptBounties()).toBe(1);
+      });
+    });
+
+    it('backfills a pre-table record once, as open, with its amount, charge, owner and winner', async () => {
+      await seedReleased();
+      await db.exec(`UPDATE "Bounty" SET "userId" = NULL, "payoutWinnerUserId" = ${OTHER},
+        meta = '{"removedWithOwner": true, "userIdBeforeRemoval": ${OWNER}}' WHERE id = 60`);
+      await db.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+        VALUES (${SUPPORTER}, 'bountyAwardUnpaid', 'bounty', 60, '2026-11-01T02:00:00Z'),
+          (${SUPPORTER}, 'bountyAwardUnpaid', 'bounty', 60, '2026-11-01T01:00:00Z')`);
+      await db.exec(unpaidAwardMigration);
+      await db.exec(unpaidAwardMigration);
+      expect(
+        await rows(`SELECT "bountyId", "userId", "unitAmount", "buzzTransactionIds", "ownerId",
+          "winnerUserId", "recordedById", "recordedAt", "resolvedAt" FROM "BountyUnpaidAward"`)
+      ).toEqual([
+        {
+          bountyId: 60,
+          userId: SUPPORTER,
+          unitAmount: 100,
+          buzzTransactionIds: ['bounty-60-7-1'],
+          ownerId: OWNER,
+          winnerUserId: OTHER,
+          recordedById: null,
+          recordedAt: new Date('2026-11-01T01:00:00Z'),
+          resolvedAt: null,
+        },
+      ]);
+      expect(await deleteSettledKeptBounties()).toBe(0);
+    });
+
+    it('backfills a supporter row with no charge array as an empty one', async () => {
+      await seedReleased();
+      await db.exec(`UPDATE "BountyBenefactor" SET "buzzTransactionId" = NULL`);
+      await recordLegacy();
+      await db.exec(unpaidAwardMigration);
+      expect(await rows(`SELECT "buzzTransactionIds" FROM "BountyUnpaidAward"`)).toEqual([
+        { buzzTransactionIds: [] },
+      ]);
+    });
+
+    it('does not reopen a resolved award when the backfill runs again', async () => {
+      await seedReleased();
+      await recordLegacy();
+      await db.exec(unpaidAwardMigration);
+      await resolveAward();
+      await db.exec(unpaidAwardMigration);
+      expect(await rows(`SELECT ruling FROM "BountyUnpaidAward"`)).toEqual([
+        { ruling: 'paid_winner' },
+      ]);
+      expect(await deleteSettledKeptBounties()).toBe(1);
+    });
   });
 
   it('reports a question that is not there as not found', async () => {

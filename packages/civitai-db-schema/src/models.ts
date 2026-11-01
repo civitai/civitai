@@ -4120,6 +4120,21 @@ export interface BountyBenefactor {
   buzzTransactionId: string[];
 }
 
+export interface BountyUnpaidAward {
+  bountyId: number;
+  userId: number;
+  unitAmount: number;
+  buzzTransactionIds: string[];
+  winnerUserId: number | null;
+  ownerId: number | null;
+  recordedById: number | null;
+  recordedAt: Date;
+  ruling: string | null;
+  ledgerReference: string | null;
+  resolvedById: number | null;
+  resolvedAt: Date | null;
+}
+
 export interface BountyEngagement {
   userId: number;
   user?: User;
