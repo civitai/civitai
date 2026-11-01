@@ -65,6 +65,11 @@ function setup() {
 }
 
 const buttons = (card: HTMLElement) => [...card.querySelectorAll('button')];
+/**
+ * Lets anything already started run on: a cover made without a press reads the listing (awaited)
+ * before it generates, so a "not generated" check straight after a render could not see it.
+ */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 const pressButton = (card: HTMLElement) =>
   buttons(card).find((b) => b.textContent === coverButtonText({ buzz: PRICE }));
 
@@ -77,6 +82,7 @@ describe('the store cover card', () => {
     expect(card.textContent).toContain('Generate a cover for tip-calc for ~23 Buzz?');
     expect(pressButton(card)).toBeDefined();
     expect(s.price).toHaveBeenCalledTimes(1);
+    await settle();
     expect(s.generate).not.toHaveBeenCalled();
     expect(s.attach).not.toHaveBeenCalled();
   });
@@ -158,6 +164,7 @@ describe('the store cover card', () => {
       isError: false,
     });
     const card = s.render(fromRunner)!;
+    await settle();
     expect(s.generate).not.toHaveBeenCalled();
     pressButton(card)!.click();
     await vi.waitFor(() => expect(s.generate).toHaveBeenCalledTimes(1));
