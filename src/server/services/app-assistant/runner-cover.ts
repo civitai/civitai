@@ -1,13 +1,42 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TRPCError } from '@trpc/server';
 import type * as z from 'zod';
 import type { CoverListingApi } from '@civitai/app-assistant';
 import { getRunnerDevTunnelUser } from '~/server/services/app-assistant/app-assistant.service';
 import type { VerifiedRunGrant } from '~/server/services/app-assistant/assistant-runner-tokens';
-import { runnerCoverListingApi } from '~/server/services/app-assistant/runner-cover-caller';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
 
-/** The one procedure the runner reaches: the user's own listing read. */
+/** The one read the runner reaches: the user's own listing for an app. */
 type CoverListingRead = Pick<CoverListingApi, 'getMyListingForApp'>;
+
+/**
+ * `userId`'s own listing for an app, through the service `appListings.getMyListingForApp` calls
+ * (as `runner-app-feedback.ts` reads through `listMyAppListings`). Same gate as that procedure:
+ * the service takes a user id and nothing else, so there is no moderator override to have, and it
+ * admits only the listing's owner or an accepted editor seat (`resolveListingRole`). Someone else's
+ * listing (`NOT_OWNED`) and none (`NOT_FOUND`) both answer NOT_FOUND, which `readCoverListing`
+ * reads as no listing: one answer, so the runner learns nothing about listings it may not see.
+ * Not the procedure's 60/60 rate limit: this sits behind the runner's secret and the run grant.
+ */
+export function runnerCoverListingRead(userId: number): CoverListingRead {
+  return {
+    async getMyListingForApp({ slug }) {
+      const { OffsiteRequestError, getMyListingForApp } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await getMyListingForApp({ slug, userId });
+      } catch (err) {
+        if (
+          err instanceof OffsiteRequestError &&
+          (err.code === 'NOT_FOUND' || err.code === 'NOT_OWNED')
+        )
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'No listing of yours for this app' });
+        throw err;
+      }
+    },
+  };
+}
 
 /** An app key as the runner sends it (the page's own state, never trusted: looked up as the user). */
 export const RUNNER_COVER_APP_MAX = 200;
@@ -38,5 +67,5 @@ export async function openRunnerCover<S extends z.ZodType<{ grant: string }>>(
       .json({ error: subject.refusal.error, code: subject.refusal.code });
     return null;
   }
-  return { grant, body: request.body, api: runnerCoverListingApi(req, res, subject.user) };
+  return { grant, body: request.body, api: runnerCoverListingRead(subject.user.id) };
 }

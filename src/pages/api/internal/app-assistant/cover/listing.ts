@@ -13,9 +13,9 @@ import {
  * POST /api/internal/app-assistant/cover/listing
  *
  * App Assistant's server runner reads, for the user its run grant names, their own store listing for
- * an app, before its `generate_app_cover` offers a cover: the same read the page makes
- * (`appListings.getMyListingForApp`, called as the user), so an app with no listing, or someone
- * else's, answers none and nothing is offered.
+ * an app, before its `generate_app_cover` offers a cover: the service behind the page's
+ * `appListings.getMyListingForApp`, with its gate (`runnerCoverListingRead`), so an app with no
+ * listing, or someone else's, answers none and nothing is offered.
  *
  * Called only by the runner, with `Authorization: Bearer <ASSISTANT_RUNNER_SECRET>`. Body:
  *   { grant, app }   `app` the open app's key (its listing's slug)
