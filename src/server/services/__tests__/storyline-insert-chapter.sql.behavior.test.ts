@@ -709,6 +709,57 @@ describe('a chapter add whose parent changes after its first read', () => {
         expect(await edgeOf(60)).toEqual({ parentChapterId: 6, canon: false });
       });
 
+      it('walks up every parent of a rejoined tip, past tombstones on both', async () => {
+        // Storyline 2: root 7000 -> A 7001, and root -> X 7004 -> B 7002. A and B, both taken
+        // down before, rejoin at tip T 7003; T's canon edges kept them on their routes.
+        await db.pg.exec(`
+          INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt")
+            VALUES (2, 1, 'Rejoined', 1, now());
+          INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth, "removedAt") VALUES
+            (7000, 2, 1, 0, NULL), (7001, 2, 1, 1, now()), (7004, 2, 1, 1, NULL),
+            (7002, 2, 1, 2, now()), (7003, 2, 2, 3, NULL);
+          INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
+            VALUES (2, 7001, 7000, true), (2, 7004, 7000, false), (2, 7002, 7004, true),
+              (2, 7003, 7001, true), (2, 7003, 7002, true);
+        `);
+        await takeDown(7003, 950);
+
+        expect(
+          await rows(
+            `SELECT "chapterId", "parentChapterId", canon FROM "StorylineChapterEdge"
+             WHERE "storylineId" = 2 ORDER BY "chapterId", "parentChapterId"`
+          )
+        ).toEqual([
+          { chapterId: 7001, parentChapterId: 7000, canon: false },
+          { chapterId: 7002, parentChapterId: 7004, canon: false },
+          { chapterId: 7003, parentChapterId: 7001, canon: false },
+          { chapterId: 7003, parentChapterId: 7002, canon: false },
+          { chapterId: 7004, parentChapterId: 7000, canon: false },
+        ]);
+        const { chapterId } = await addOwnerChapterAtEnd({
+          storylineId: 2,
+          postId: await post(),
+          userId: OWNER,
+        });
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 7000, canon: true });
+      });
+
+      it("clears a removed tip's edge though it has live side branches, and keeps them", async () => {
+        await db.pg.exec(`
+          INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth) VALUES (7100, 1, 2, 7);
+          INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon)
+            VALUES (1, 7100, 60, false);
+        `);
+        await takeDown(60, 900);
+
+        expect([await edgeOf(60), await edgeOf(7100)]).toEqual([
+          { parentChapterId: 6, canon: false },
+          { parentChapterId: 60, canon: false },
+        ]);
+        const { chapterId } = await addAtEnd();
+        expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 6, canon: true });
+      });
+
       it('walks up past an earlier tombstone when the leaf under it is taken down', async () => {
         await takeDown(6, 902);
         expect(await edgeOf(6)).toEqual({ parentChapterId: 5, canon: true });
