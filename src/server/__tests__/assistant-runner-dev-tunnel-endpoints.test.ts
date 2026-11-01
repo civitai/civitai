@@ -66,6 +66,7 @@ const startRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/
 const keepaliveRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/keepalive'))
   .default;
 const stopRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/stop')).default;
+const { recordDevTunnelTeardown } = await import('~/server/prom/dev-tunnel.metrics');
 
 // TEST-ONLY values: a key pair generated for this run, a placeholder secret and host key.
 const SECRET = 'test-only-runner-secret-for-tunnels';
@@ -655,10 +656,11 @@ describe('a start the runner gave up on, closed by its client key', () => {
       await vi.advanceTimersByTimeAsync(184_000);
       expect(answer).toBeUndefined();
       await vi.advanceTimersByTimeAsync(1_000);
-      // The runner waits 200 s (apps/assistant-runner `START_TIMEOUT_MS`): it hears this.
+      // The runner waits longer than this (apps/assistant-runner `START_TIMEOUT_MS`).
       expect(answer).toMatchObject({ status: 503, json: { code: 'unavailable' } });
       held.release!();
-      for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(0);
+      // Done once the late start has closed what it opened: its one teardown.
+      await vi.waitFor(() => expect(recordDevTunnelTeardown).toHaveBeenCalledTimes(1));
       expect(sessionKeys()).toEqual([]);
       expect(store.has(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(false);
     } finally {
@@ -689,7 +691,8 @@ describe('a start the runner gave up on, closed by its client key', () => {
       expect(lua.set(banIndex)).toEqual([OWNED_APP]);
 
       held.release!();
-      for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(0);
+      // Done once A has closed what it opened: its one teardown.
+      await vi.waitFor(() => expect(recordDevTunnelTeardown).toHaveBeenCalledTimes(1));
       // A's own keys are gone: only B's session (and its host) is left.
       expect(sessionKeys()).toEqual([`${PREFIX}:session:${sessionB}`]);
       expect([...store.keys()].filter((k) => k.includes(':host:'))).toEqual([
@@ -702,6 +705,99 @@ describe('a start the runner gave up on, closed by its client key', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /**
+   * A is held in its route apply while B opens the same app and takes the (user, app) pointer.
+   * Then A finishes, and something goes wrong exactly where A decides whether it was cancelled:
+   * the pointer and the ban-index entry must still be B's. `onPointerWrite` runs just before the
+   * first write that names the pointer from then on (a plain SET, or a script), so it lands
+   * between a cancel check and the write wherever the start makes them.
+   */
+  async function raceLateStart({
+    whileHeld,
+    onPointerWrite,
+    failCancelCheck,
+  }: {
+    /** Runs after B has opened, while A is still held. */
+    whileHeld?: () => Promise<void>;
+    onPointerWrite?: () => Promise<void>;
+    /** A key whose read (or any script naming it) fails once A is released. */
+    failCancelCheck?: string;
+  }): Promise<{ lateA: Awaited<ReturnType<typeof call>>; sessionB: string }> {
+    const pointer = `${PREFIX}:user:${OWNER}:${OWNED_APP}`;
+    const sys = redisMock.sysRedis;
+    const baseSet = sys.set.getMockImplementation()!;
+    const baseGet = sys.get.getMockImplementation()!;
+    const baseEval = sys.eval.getMockImplementation()!;
+    let armed = false;
+    const before = async (keys: string[]) => {
+      if (!armed || !keys.includes(pointer)) return;
+      armed = false;
+      await onPointerWrite?.();
+    };
+    sys.set.mockImplementation(async (k: string, v: string, opts?: Record<string, unknown>) => {
+      await before([k]);
+      return baseSet(k, v, opts);
+    });
+    sys.get.mockImplementation(async (k: string) => {
+      if (failCancelCheck && armed && k === failCancelCheck) throw new Error('redis blip');
+      return baseGet(k);
+    });
+    sys.eval.mockImplementation(
+      async (script: string, opts: { keys: string[]; arguments: string[] }) => {
+        if (failCancelCheck && armed && opts.keys.includes(failCancelCheck))
+          throw new Error('redis blip');
+        await before(opts.keys);
+        return baseEval(script, opts);
+      }
+    );
+
+    const held = await holdApply();
+    const startingA = startKeyed(OWNER, OWNED_APP);
+    await vi.waitFor(() => expect(held.release).toBeTypeOf('function'));
+    const b = await startKeyed(OWNER, OWNED_APP, 'test-only-client-key-b3c8');
+    expect(b.status).toBe(200);
+    expect(store.get(pointer)).toBe(b.json!.sessionId);
+    await whileHeld?.();
+    armed = true;
+    held.release!();
+    return { lateA: await startingA, sessionB: b.json!.sessionId as string };
+  }
+
+  function expectBStillListed(sessionB: string) {
+    expect(
+      store.get(`${PREFIX}:user:${OWNER}:${OWNED_APP}`),
+      'B dropped off its (user, app) pointer'
+    ).toBe(sessionB);
+    expect(lua.set(`${PREFIX}:user-index:${OWNER}`), 'B dropped out of the ban index').toEqual([
+      OWNED_APP,
+    ]);
+    expect(sessionKeys()).toEqual([`${PREFIX}:session:${sessionB}`]);
+  }
+
+  it('a cancel landing between a late start’s cancel check and its pointer write leaves B listed', async () => {
+    const { lateA, sessionB } = await raceLateStart({
+      onPointerWrite: async () => {
+        // The runner gives up on A right then: the cancel finds A's session and closes it.
+        expect(await stopKeyed(OWNER)).toMatchObject({ status: 200, json: { stopped: true } });
+      },
+    });
+    expect(lateA.status).not.toBe(200);
+    expectBStillListed(sessionB);
+  });
+
+  it('a cancel check that errors, after a cancel landed, never takes a newer start’s pointer', async () => {
+    // The cancel lands while A is still in its apply (nothing of A's to close yet), and the read
+    // of its mark then fails: A must not go on as if nobody had cancelled it.
+    const { lateA, sessionB } = await raceLateStart({
+      whileHeld: async () => {
+        expect(await stopKeyed(OWNER)).toMatchObject({ status: 200, json: { stopped: false } });
+      },
+      failCancelCheck: `${PREFIX}:client-cancelled:${OWNER}:${CLIENT_KEY}`,
+    });
+    expect(lateA.status).not.toBe(200);
+    expectBStillListed(sessionB);
   });
 
   it('the runner waits for a start longer than civitai takes to answer one', async () => {

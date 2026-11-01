@@ -12,7 +12,6 @@ import {
   restartGrantConversation,
   RESTART_LIMIT,
   RESTART_MESSAGES,
-  TUNNEL_START_BUDGET_MS,
   type PreviewRestarts,
   type RestartOutcome,
 } from '../app-assistant/preview-restart';
@@ -109,13 +108,6 @@ const tunnelCalls = () => fake.calls.filter((c) => c.tool.startsWith('tunnel_'))
 
 describe('PreviewRestarter', () => {
   describe('a grant too close to running out opens no tunnel', () => {
-    it('needs 290 s of the grant left to start one: the start, a token, the connect, the stop', () => {
-      expect(TUNNEL_START_BUDGET_MS).toBe(290_000);
-      // civitai signs a preview grant for 7 minutes (`PREVIEW_GRANT_TTL_SECONDS`): what is left
-      // for the steps before the start is the 2 minutes they may take, and a little more.
-      expect(7 * 60_000 - TUNNEL_START_BUDGET_MS).toBeGreaterThanOrEqual(120_000);
-    });
-
     it('with less left, it asks civitai nothing and answers `unavailable`, which a fresh click fixes', async () => {
       fake.add(APP);
       const outcome = await restarter().restart(

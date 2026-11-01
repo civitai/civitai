@@ -573,13 +573,18 @@ describe('CivitaiDevTunnels', () => {
         const { sent, tunnels } = client((url) =>
           url.endsWith('/start') ? answer() : Response.json({ stopped: false })
         );
-        await tunnels
-          .forRun(async () => GRANT)
+        const run = tunnels.forRun(async () => GRANT);
+        await run
           .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
           .catch(() => undefined);
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        // A call made after the start failed: a cleanup the start began is already on its way
+        // ahead of it, so what reached civitai before this marker is all the start sent.
+        await run.keepalive({ host: HOST });
+        expect(
+          sent.map((s) => s.url.split('/').pop()),
+          String(answer)
+        ).toEqual(stops ? ['start', 'stop', 'keepalive'] : ['start', 'keepalive']);
         const stopsSent = sent.filter((s) => s.url.endsWith('/stop'));
-        expect(stopsSent, String(answer)).toHaveLength(stops);
         if (stops)
           expect(JSON.parse(String(stopsSent[0]!.init.body))).toEqual({
             grant: GRANT,
@@ -595,8 +600,9 @@ describe('CivitaiDevTunnels', () => {
       const run = tunnels.forRun(async () => GRANT);
       await run.start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY });
       await run.start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY });
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(sent.map((s) => s.url.split('/').pop())).toEqual(['start', 'start']);
+      // The marker, as above: no stop went ahead of it.
+      await run.keepalive({ host: HOST });
+      expect(sent.map((s) => s.url.split('/').pop())).toEqual(['start', 'start', 'keepalive']);
       const [a, b] = bodies(sent);
       expect(a!.clientKey).not.toBe(b!.clientKey);
     });
