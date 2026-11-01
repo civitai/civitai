@@ -5,7 +5,7 @@ import { LuaFactory } from 'wasmoon';
  * with a settable clock, so a script's arithmetic and its redis.call sequence are tested rather
  * than mocked. CI has no Redis server.
  *
- * Supports only the commands the scripts under test use: TIME, EXISTS, HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
+ * Supports only the commands the scripts under test use: TIME, EXISTS, GET, SET (NX, EX, PX), HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
  * HPEXPIRE, EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
  * every redis.call argument must already be a string (so a script must format its own numbers),
  * and every number it returns must be an integer (Redis would silently truncate a float).
@@ -46,13 +46,22 @@ export type LuaRedis = {
 
 export function createLuaRedis(
   startMs: number,
-  { integerArgs = false }: { integerArgs?: boolean } = {}
+  {
+    integerArgs = false,
+    strings = new Map<string, string>(),
+  }: {
+    integerArgs?: boolean;
+    /**
+     * The plain string keys GET/SET read and write. Pass a test's own map to run a script over
+     * the same keys its fake client's `get`/`set`/`del` serve.
+     */
+    strings?: Map<string, string>;
+  } = {}
 ): LuaRedis {
   const factory = new LuaFactory();
   const hashes = new Map<string, Map<string, string>>();
   const lists = new Map<string, string[]>();
   const sets = new Map<string, Set<string>>();
-  const strings = new Map<string, string>();
   const expiresAt = new Map<string, number>();
   const fieldExpiresAt = new Map<string, Map<string, number>>();
   const calls: string[][] = [];
