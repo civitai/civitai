@@ -5,7 +5,10 @@ import { getContentType } from 'next/dist/server/serve-static';
 import { buildCustomRoute } from 'next/dist/server/lib/router-utils/filesystem';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { routerPathname } from '~/server/middleware/__tests__/next-proxy-matcher';
-import { isStaticAssetRuleCacheControl } from '~/server/utils/static-asset-cache';
+import {
+  isStaticAssetRuleCacheControl,
+  privatizeStaticAssetPageRender,
+} from '~/server/utils/static-asset-cache';
 import { fileHashWorkerUrl } from '~/hooks/useFileHash';
 
 /**
@@ -180,8 +183,34 @@ describe('static-asset rule values are unique to the rules', () => {
     ['public, max-age=3600, s-maxage=14400', false],
     ['private, no-cache, no-store, max-age=0, must-revalidate', false],
     [undefined, false],
+    [[LONG_LIVED], true],
+    [['public', 'max-age=60', 's-maxage=300', 'stale-while-revalidate=300'], true],
+    [['public, max-age=86400, must-revalidate'], false],
+    [[LONG_LIVED, 'no-transform'], false],
+    [3600, false],
   ])('isStaticAssetRuleCacheControl(%j) is %s', (value, expected) => {
     expect(isStaticAssetRuleCacheControl(value)).toBe(expected);
+  });
+
+  // The same decision on a response, for the header shapes Node allows: only a rule value (as a
+  // string or an array) is replaced; anything else is left exactly as it was.
+  it.each([
+    [[LONG_LIVED], 'private, no-cache, no-store, max-age=0, must-revalidate'],
+    [['public, max-age=86400, must-revalidate'], ['public, max-age=86400, must-revalidate']],
+    [3600, 3600],
+    [undefined, undefined],
+  ])('a response with Cache-Control %j leaves with %j', (incoming, expected) => {
+    const headers = new Map<string, unknown>();
+    if (incoming !== undefined) headers.set('cache-control', incoming);
+    const res = {
+      headersSent: false,
+      getHeader: (name: string) => headers.get(name.toLowerCase()),
+      setHeader: (name: string, value: unknown) => headers.set(name.toLowerCase(), value),
+    };
+    privatizeStaticAssetPageRender(
+      res as unknown as Parameters<typeof privatizeStaticAssetPageRender>[0]
+    );
+    expect(headers.get('cache-control')).toEqual(expected);
   });
 });
 

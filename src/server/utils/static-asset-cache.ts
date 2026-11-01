@@ -15,9 +15,19 @@ const RULE_VALUES = new Set(
   STATIC_ASSET_CACHE_RULES.map(({ cacheControl }) => normalise(cacheControl))
 );
 
-/** Whether `value` is exactly one of the static-asset rules' `Cache-Control` values. */
+/**
+ * Whether `value` is exactly one of the static-asset rules' `Cache-Control` values. A multi-value
+ * header (an array) is joined with `', '`, as Node joins it on the wire, then compared the same
+ * way. Anything else (a number, `undefined`) is not a rule value.
+ */
 export function isStaticAssetRuleCacheControl(value: unknown) {
-  return typeof value === 'string' && RULE_VALUES.has(normalise(value));
+  const text =
+    typeof value === 'string'
+      ? value
+      : Array.isArray(value) && value.every((part) => typeof part === 'string')
+      ? value.join(', ')
+      : null;
+  return text !== null && RULE_VALUES.has(normalise(text));
 }
 
 /**
