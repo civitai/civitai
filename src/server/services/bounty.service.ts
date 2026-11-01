@@ -804,7 +804,8 @@ export async function claimBountyRefundForDelete(id: number) {
 export const deleteBountyById = async ({
   id,
   isModerator,
-}: GetByIdInput & { isModerator: boolean }) => {
+  userId,
+}: GetByIdInput & { isModerator: boolean; userId?: number }) => {
   const bounty = await getBountyById({
     id,
     select: { userId: true, expiresAt: true },
@@ -837,12 +838,19 @@ export const deleteBountyById = async ({
         ? 'Refund reason: moderator deleted bounty'
         : 'Refund reason: owner deleted bounty',
     });
-    if (!settled && !(isModerator && (await refundUnpayableBountyAward(id))))
+    if (!settled && !(isModerator && (await refundUnpayableBountyAward(id)))) {
+      const release = isModerator && userId ? await releaseStuckBountyAward(id, userId) : null;
+      if (release)
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: `The bounty was NOT deleted. Its award could not be paid in full, so it was closed instead: the other awards were paid, supporters who had not awarded were refunded, and ${release.unpaidAwards} award(s) were recorded for manual resolution.`,
+        });
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
         message:
           'The bounty could not be paid out, so it was not deleted. The payout is retried automatically; try deleting it again later.',
       });
+    }
   }
 
   const markerView = await holdMarkerViewExists();
@@ -1495,6 +1503,94 @@ export async function refundUnpayableBountyAward(bountyId: number) {
 
 const BOUNTY_PAYOUT_RETRY_BATCH_SIZE = 100;
 const BOUNTY_PAYOUT_RETRY_MAX_BATCHES = 20;
+
+const STUCK_AWARD_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The moderator exit for an award that some supporter's missing charge keeps from settling, once its
+ * oldest unpaid award (`awardedAt`) is a day old. Every other award is paid, the bounty is closed as
+ * a refund of the supporters who never awarded, and it is kept. A supporter whose award could not be
+ * priced gets neither payment nor refund: each is recorded for a manual ruling after a ledger check.
+ * Returns how many awards were recorded, or null when the exit does not apply: any other failure is
+ * the retry job's.
+ */
+export async function releaseStuckBountyAward(
+  bountyId: number,
+  moderatorId: number,
+  now = Date.now()
+) {
+  const read = await dbWrite.bounty.findUnique({
+    where: { id: bountyId },
+    select: {
+      refunded: true,
+      payoutRecordedAt: true,
+      payoutSettledAt: true,
+      payoutWinnerUserId: true,
+    },
+  });
+  if (!read || read.refunded || !isPayoutPending(read)) return null;
+  const settledAt = read.payoutSettledAt;
+  const oldest = await dbWrite.bountyBenefactor.findFirst({
+    where: { bountyId, awardedAt: settledAt ? { gt: settledAt } : { not: null } },
+    orderBy: { awardedAt: 'asc' },
+    select: { awardedAt: true },
+  });
+  if (!oldest?.awardedAt || oldest.awardedAt.getTime() > now - STUCK_AWARD_RELEASE_AFTER_MS)
+    return null;
+
+  const outcome = await payBountyAward(bountyId, read.payoutWinnerUserId, settledAt);
+  if (!outcome.ok || !outcome.unpriceable.length) return null;
+
+  // Awarding marks are kept (see the invariant above), so the refund leaves every award out.
+  const claimed = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, bountyId);
+    if (
+      !locked ||
+      locked.refunded ||
+      locked.payoutRecordedAt?.getTime() !== read.payoutRecordedAt?.getTime()
+    )
+      return false;
+    await tx.bounty.update({
+      where: { id: bountyId },
+      data: { complete: true, refunded: true, payoutRecordedAt: nextPayoutRecordedAt(locked) },
+    });
+    return true;
+  });
+  if (!claimed) return null;
+
+  const unpaid = await dbWrite.bountyBenefactor.findMany({
+    where: { bountyId, userId: { in: outcome.unpriceable } },
+    select: { userId: true, unitAmount: true, buzzTransactionId: true },
+  });
+  for (const supporter of unpaid) {
+    await dbWrite.modActivity.create({
+      data: {
+        userId: supporter.userId,
+        entityType: 'bounty',
+        entityId: bountyId,
+        activity: 'bountyAwardUnpaid',
+      },
+    });
+    await logToAxiom({
+      name: 'bounty-award',
+      type: 'error',
+      message: `Bounty ${bountyId}: award from user ${supporter.userId} has no charge on record; neither paid nor refunded, for a manual ruling`,
+      bountyId,
+      userId: supporter.userId,
+      unitAmount: supporter.unitAmount,
+      buzzTransactionId: supporter.buzzTransactionId,
+      winnerUserId: read.payoutWinnerUserId,
+      moderatorId,
+    }).catch(() => null);
+  }
+
+  // A refund that fails here stays pending, for the retry job.
+  await settleBountyPayout(bountyId, {
+    firstAttempt: true,
+    refundDescription: 'Reason: Bounty refund, the bounty was closed by a moderator',
+  });
+  return { unpaidAwards: unpaid.length };
+}
 
 export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
   const cutoff = new Date(now.getTime() - BOUNTY_PAYOUT_RETRY_AFTER_MS);
