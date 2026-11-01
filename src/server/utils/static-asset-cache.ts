@@ -11,13 +11,23 @@ const RULE_REGEXPS = STATIC_ASSET_CACHE_RULES.map(({ source }) =>
   pathToRegexp(source, [], { sensitive: false, strict: true, delimiter: '/' })
 );
 
+// `/_next/data/<buildId>/<path>.json` — the client-navigation form of a page request.
+const NEXT_DATA_URL = /^\/_next\/data\/[^/]+(\/.*?)?\.json$/i;
+
 /**
- * Whether a `next.config.mjs` static-asset `Cache-Control` rule applies to `url` (path + query).
- * With `i18n`, Next also matches each source under a locale prefix, so a leading `/<locale>`
- * segment is tried with and without.
+ * Whether a `next.config.mjs` static-asset `Cache-Control` rule applies to `url` (path + query), as
+ * Next decides it. `_app` only sees the RAW request url, while Next matches the header rules
+ * against the normalised page path, so both normalisations Next applies first are applied here:
+ * - a data request `/_next/data/<id>/images/a.png.json` is matched as `/images/a.png` (Next's
+ *   data normaliser runs before header matching, measured on 16.4.3 with this app's proxy, and
+ *   `_app`'s `ctx.req.url` keeps the raw form);
+ * - with `i18n`, Next matches each source under a locale prefix, so a leading `/<locale>` segment
+ *   is tried with and without.
  */
 export function isStaticAssetRulePath(url: string, locales: readonly string[] = []) {
-  const pathname = url.split('?')[0].split('#')[0] || '/';
+  let pathname = url.split('?')[0].split('#')[0] || '/';
+  const data = NEXT_DATA_URL.exec(pathname);
+  if (data) pathname = !data[1] || data[1] === '/index' ? '/' : data[1];
   const candidates = [pathname];
   for (const locale of locales) {
     const prefix = `/${locale.toLowerCase()}/`;

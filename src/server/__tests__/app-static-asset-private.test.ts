@@ -111,30 +111,41 @@ beforeEach(() => {
   );
 });
 
-describe.each(['/images/no-such-file.png', '/images/BASE-BADGE.PNG', '/en/images/x.webp'])(
-  'a page render on the static-asset rule path %s',
-  (url) => {
-    it.each<Exit>(['notFound', 'throw', 'redirect', 'render'])(
-      'leaves private when the page exits by %s',
-      async (exit) => {
-        const res = await serve(url, exit, RULE_HEADER);
-        expect(res.getHeader('cache-control')).toBe(PRIVATE);
-      }
-    );
-
-    it("leaves private on _app's own 302", async () => {
-      h.syncUrl.current = '/api/auth/authorize?returnUrl=%2F';
-      const res = await serve(url, 'render', RULE_HEADER);
-      expect(res.statusCode).toBe(302);
+// The `/_next/data/<id>/…json` forms are the same page requests from client navigation: Next
+// normalises them to the page path before matching the header rules, but `_app` sees the raw url.
+describe.each([
+  '/images/no-such-file.png',
+  '/images/BASE-BADGE.PNG',
+  '/en/images/x.webp',
+  '/_next/data/BUILD_ID/images/a.png.json',
+  '/_next/data/BUILD_ID/en/images/a.png.json',
+  '/_next/data/BUILD_ID/images/A.PNG.json',
+])('a page render on the static-asset rule path %s', (url) => {
+  it.each<Exit>(['notFound', 'throw', 'redirect', 'render'])(
+    'leaves private when the page exits by %s',
+    async (exit) => {
+      const res = await serve(url, exit, RULE_HEADER);
       expect(res.getHeader('cache-control')).toBe(PRIVATE);
-    });
-  }
-);
+    }
+  );
+
+  it("leaves private on _app's own 302", async () => {
+    h.syncUrl.current = '/api/auth/authorize?returnUrl=%2F';
+    const res = await serve(url, 'render', RULE_HEADER);
+    expect(res.statusCode).toBe(302);
+    expect(res.getHeader('cache-control')).toBe(PRIVATE);
+  });
+});
 
 describe('paths no static-asset rule matches are left alone', () => {
   // `/images/123` is the image page itself; nothing set a rule header, so nothing is added.
   it('/images/123 gets no Cache-Control from _app', async () => {
     const res = await serve('/images/123', 'render');
+    expect(res.getHeader('cache-control')).toBeUndefined();
+  });
+
+  it('the data request for /images/123 gets no Cache-Control from _app', async () => {
+    const res = await serve('/_next/data/BUILD_ID/images/123.json', 'render');
     expect(res.getHeader('cache-control')).toBeUndefined();
   });
 

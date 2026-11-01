@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { config } from '~/proxy';
+import { shouldRunRegionMiddleware } from '~/server/middleware/region-middleware-utils';
 import {
   matchingSources,
   NO_I18N,
@@ -138,5 +139,29 @@ describe.each([
     expect(matchingSources(matcher, '/images/base-badge.png', nextConfig)).toEqual([
       '/images/:path*',
     ]);
+  });
+});
+
+// The page pattern's exclusions are case-sensitive (Next compiles the matcher with no `i` flag and
+// JS has no inline one), while the `next.config.mjs` static-asset rules match without case. So a
+// case variant of a static path still runs the proxy WITH the public rule header already set, and
+// a terminal proxy response would carry it. The only middlewares that can end such a request are
+// the region ones; they must skip every rule path whatever its case.
+describe('case variants that still reach the proxy', () => {
+  it.each([
+    '/IMAGES/BASE-BADGE.PNG',
+    '/Site.Webmanifest',
+    '/SITE.WEBMANIFEST',
+    '/Favicon-Red.ICO',
+    '/Workers/Signals.Worker.JS',
+    '/Apple-Touch-Icon.PNG',
+  ])('%s is skipped by the region middlewares', (pathname) => {
+    expect(matchingSources(config.matcher, pathname, PRODUCTION)).not.toEqual([]);
+    expect(shouldRunRegionMiddleware(pathname, true)).toBe(false);
+    expect(shouldRunRegionMiddleware(pathname, false)).toBe(false);
+  });
+
+  it('POSITIVE CONTROL: the region middlewares still run for a page', () => {
+    expect(shouldRunRegionMiddleware('/images/123', true)).toBe(true);
   });
 });
