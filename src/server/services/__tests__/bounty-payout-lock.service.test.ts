@@ -1069,13 +1069,17 @@ describe('refundBountyBenefactorFunds', () => {
       benefactors[0].buzzTransactionId = [];
     });
 
-    it('sends both refunds under the same key, so the ledger refuses the second', async () => {
+    it('sends both refunds under the same key, the one the ledger deduplicates on', async () => {
       await refundAll();
       await refundAll();
-      const keys = buzz.createBuzzTransaction.mock.calls.map(
-        ([input]) => input.externalTransactionId
-      );
-      expect(keys).toEqual(['bounty-refund-b4-u5', 'bounty-refund-b4-u5']);
+      const sent = buzz.createBuzzTransaction.mock.calls.map(([input]) => [
+        input.externalTransactionId,
+        input.details,
+      ]);
+      expect(sent).toEqual([
+        ['bounty-refund-b4-u5', { bountyId: 4 }],
+        ['bounty-refund-b4-u5', { bountyId: 4 }],
+      ]);
     });
 
     it('counts a refusal as refunded when that key is on the ledger', async () => {
@@ -1087,6 +1091,19 @@ describe('refundBountyBenefactorFunds', () => {
 
     it('fails a refusal whose key is not on the ledger (control)', async () => {
       buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+    });
+
+    it('fails any other error, even with the key on the ledger', async () => {
+      buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(500, 'Server error'));
+      buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 't1' });
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+      expect(buzz.getTransactionByExternalId).not.toHaveBeenCalledWith('bounty-refund-b4-u5');
+    });
+
+    it('fails a refusal whose ledger lookup failed', async () => {
+      buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+      buzz.getTransactionByExternalId.mockRejectedValueOnce(new Error('buzz down'));
       expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
     });
   });
