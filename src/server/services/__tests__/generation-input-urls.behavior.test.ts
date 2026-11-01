@@ -826,27 +826,52 @@ describe('opaqueInputUrlsIn', () => {
     expect(opaqueInputUrlsIn({ text }).tooLarge).toBe(false);
   });
 
-  it('reads up to 262,144 lines of split text, and reports more as too large', () => {
-    const lines = (n: number) => `${'x\n'.repeat(n - 1)}a:`;
-    expect(opaqueInputUrlsIn({ text: lines(262_144) }).tooLarge).toBe(false);
-    expect(opaqueInputUrlsIn({ text: lines(262_145) }).tooLarge).toBe(true);
-    expect(opaqueInputUrlsIn({ a: lines(150_000), b: lines(150_000) }).tooLarge).toBe(true);
+  it('reads up to 65,536 line breaks across its strings, and reports more as too large', () => {
+    const breaks = (n: number) => `${'x\n'.repeat(n)}a:`;
+    expect(opaqueInputUrlsIn({ text: breaks(65_536) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ text: breaks(65_537) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ a: breaks(40_000), b: breaks(40_000) }).tooLarge).toBe(true);
+    // Text that does not split counts too, and a run of breaks is one.
+    expect(opaqueInputUrlsIn({ text: 'x\n'.repeat(65_537) }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ text: `x${'\r\n'.repeat(70_000)}y` }).tooLarge).toBe(false);
   });
 
-  it('collects more keys than a call can take as arguments', () => {
-    // Past the ~123k arguments a call takes on the default (forks) pool's stack.
+  it('collects up to 4,096 values, and reports more as too large', () => {
     // Keys overlap: each segment ends one key and its last 8 characters start the next.
-    const segments = Array.from(
-      { length: 140_000 },
-      (_, i) => `-0000-4000-8000-${i.toString(16).padStart(12, '0')}`
-    );
-    const text = `see 00000000${segments.join('')}`;
-    expect(opaqueInputUrlsIn({ text }).urls.length).toBe(140_000);
+    const keys = (n: number) =>
+      `see 00000000${Array.from(
+        { length: n },
+        (_, i) => `-0000-4000-8000-${i.toString(16).padStart(12, '0')}`
+      ).join('')}`;
+    expect(opaqueInputUrlsIn({ text: keys(4096) })).toMatchObject({ tooLarge: false });
+    expect(opaqueInputUrlsIn({ text: keys(4096) }).urls).toHaveLength(4096);
+    expect(opaqueInputUrlsIn({ text: keys(4097) }).tooLarge).toBe(true);
+    // More keys than a call takes as arguments: refused, not a stack overflow.
+    expect(opaqueInputUrlsIn({ text: keys(140_000) }).tooLarge).toBe(true);
+    const list = new Array(4097).fill('https://example.com/a.png');
+    expect(opaqueInputUrlsIn({ list }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ list: list.slice(1) }).tooLarge).toBe(false);
+  });
+
+  it('decodes up to 1 MiB of escaped text, and reports more as too large', () => {
+    const escaped = (n: number) => 'A%41'.repeat(n / 4);
+    expect(opaqueInputUrlsIn({ text: escaped(MiB) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ text: escaped(MiB + 4) }).tooLarge).toBe(true);
+    // Escapes nested eight deep across 4 MiB: refused before it is decoded, not read for seconds.
+    const nested = '%2525252525252525252541'.repeat(Math.floor((4 * MiB - 64) / 23));
+    expect(opaqueInputUrlsIn({ text: nested }).tooLarge).toBe(true);
+    // Split text whose lines are too short to hold a key is still decoded whole.
+    const shortLines = `https://x.y/\n${'h:%25252541xxxxx\n'.repeat(65_000)}`;
+    expect(opaqueInputUrlsIn({ text: shortLines }).tooLarge).toBe(true);
+    // The budget is one per walk: two halves of it add up.
+    const half = escaped(MiB / 2 + 4);
+    expect(opaqueInputUrlsIn({ a: half, b: half }).tooLarge).toBe(true);
   });
 
   it('reports too many values as too large', () => {
-    expect(opaqueInputUrlsIn({ list: new Array(1_048_577).fill(0) }).tooLarge).toBe(true);
-    expect(opaqueInputUrlsIn({ list: new Array(1000).fill(0) }).tooLarge).toBe(false);
+    // The root, the field name and the array are three values.
+    expect(opaqueInputUrlsIn({ list: new Array(262_141).fill(0) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ list: new Array(262_142).fill(0) }).tooLarge).toBe(true);
   });
 
   it('reads a long run of spaces in linear time', () => {

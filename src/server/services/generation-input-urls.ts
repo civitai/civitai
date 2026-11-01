@@ -9,6 +9,7 @@ import {
 } from '~/server/schema/blocks/civitai-image-url';
 import {
   assertClientKeysIssuedToCaller,
+  type DecodeBudget,
   imageUrlUnavailableError,
   keyIssuers,
   keysIn,
@@ -288,6 +289,7 @@ function canonicalKey(value: string) {
 
 function parsedProtocol(value: string) {
   const trimmed = value.trim();
+  if (!trimmed.includes(':')) return undefined;
   // `canParse` first: a thrown parse error costs microseconds per string on a large input.
   if (!URL.canParse(trimmed)) return undefined;
   return new URL(trimmed).protocol;
@@ -378,15 +380,31 @@ const largeKeySetCounter = registerCounterWithLabels({
 });
 
 /**
- * Values and string characters one walk reads before it gives up (`tooLarge`), so the walk's
- * cost stays bounded on an input with no byte cap of its own (a registry step's `params`).
- * Four times the inline-media value cap; 4 MiB of text is above the largest `params` a step
- * schema accepts (a chat completion's messages and tool calls, about 2.3M characters).
+ * What one walk reads before it gives up (`tooLarge`), so its cost stays bounded on an input with
+ * no byte cap of its own (a registry step's `params`): values (an object entry is two), string
+ * characters, lines of split strings, characters of `%XX`-decoded forms, and values collected.
+ * 4 MiB of text is above the largest `params` a step schema accepts (a chat completion's messages
+ * and tool calls, about 2.3M characters).
  */
-const OPAQUE_INPUT_MAX_VISITS = 4 * INLINE_MEDIA_MAX_VISITS;
+const OPAQUE_INPUT_MAX_VISITS = INLINE_MEDIA_MAX_VISITS;
 const OPAQUE_INPUT_MAX_CHARS = 4 * 1024 * 1024;
-/** Lines of split strings one walk reads: each is parsed as a url, so lines cost the most. */
-const OPAQUE_INPUT_MAX_LINES = INLINE_MEDIA_MAX_VISITS;
+/** Line breaks (a run of CR and LF is one) across every string. */
+const OPAQUE_INPUT_MAX_LINES = 65_536;
+
+/** Runs of CR and LF in `value`, counted without splitting it. */
+function lineBreaksIn(value: string) {
+  let breaks = 0;
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    if ((c === 10 || c === 13) && i > 0) {
+      const prev = value.charCodeAt(i - 1);
+      if (prev !== 10 && prev !== 13) breaks++;
+    }
+  }
+  return breaks;
+}
+const OPAQUE_INPUT_MAX_DECODED_CHARS = 1024 * 1024;
+const OPAQUE_INPUT_MAX_URLS = 4096;
 
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
@@ -422,13 +440,15 @@ const SCHEMELESS_URL = /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i;
  * http(s) url (no whitespace or control bytes inside, which a url parser would silently drop), or
  * a scheme-less url on one of our hosts carrying a key.
  */
-function isWholeFetchableValue(value: string) {
+function isWholeFetchableValue(value: string, budget?: DecodeBudget) {
   // eslint-disable-next-line no-control-regex
   if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
   const protocol = parsedProtocol(value);
   if (protocol) return protocol === 'https:' || protocol === 'http:';
   return (
-    SCHEMELESS_URL.test(value) && isCivitaiHostname(value.split('/')[0]) && keysIn(value).length > 0
+    SCHEMELESS_URL.test(value) &&
+    isCivitaiHostname(value.split('/')[0]) &&
+    keysIn(value, budget).length > 0
   );
 }
 
@@ -448,9 +468,14 @@ export function opaqueInputUrlsIn(value: unknown) {
   let visits = 0;
   let chars = 0;
   let lines = 0;
-  // A loop, not `push(...keys)`: a spread of ~125k arguments overflows the stack.
+  const decoded: DecodeBudget = { left: OPAQUE_INPUT_MAX_DECODED_CHARS };
+  const collect = (url: string) => {
+    if (urls.length >= OPAQUE_INPUT_MAX_URLS) tooLarge = true;
+    else urls.push(url);
+  };
   const pushKeysInText = (text: string) => {
-    for (const key of keysInText(text)) urls.push(key);
+    for (const key of keysInText(text, decoded)) collect(key);
+    if (decoded.left < 0) tooLarge = true;
   };
   /** `counted`: a line of a string whose characters were already counted whole. */
   const walk = (item: unknown, depth: number, counted = false) => {
@@ -472,14 +497,13 @@ export function opaqueInputUrlsIn(value: unknown) {
       // Lines that are values of their own are read one by one, and the keys of the whole
       // string as a url parser rejoins it too: a key broken across a line is found that way.
       // The rejoined string is not a url to check whole (two listed links would glue into one).
+      lines += lineBreaksIn(item);
+      if (lines > OPAQUE_INPUT_MAX_LINES) {
+        tooLarge = true;
+        return;
+      }
       if (splitsIntoUrlLines(item)) {
-        const itemLines = item.split(/[\r\n]+/);
-        lines += itemLines.length;
-        if (lines > OPAQUE_INPUT_MAX_LINES) {
-          tooLarge = true;
-          return;
-        }
-        for (const line of itemLines) walk(line, depth + 1, true);
+        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true);
         pushKeysInText(item);
         return;
       }
@@ -489,18 +513,21 @@ export function opaqueInputUrlsIn(value: unknown) {
       const controlInside = /[\u0000-\u001f\u007f]/.test(parsed);
       const protocol = parsedProtocol(parsed);
       // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
-      if (controlInside && (protocol === 'https:' || protocol === 'http:')) urls.push(parsed);
-      else if (isWholeFetchableValue(parsed)) {
-        urls.push(parsed);
+      if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
+      else if (isWholeFetchableValue(parsed, decoded)) {
+        collect(parsed);
         // A url rejoined across a break or space: a consumer splitting on it reads the keys.
         if (/[^\x21-\x7e]/.test(item)) pushKeysInText(item);
       } else pushKeysInText(item);
+      if (decoded.left < 0) tooLarge = true;
     } else if (Array.isArray(item)) {
       for (const child of item) walk(child, depth + 1);
     } else if (typeof item === 'object') {
-      for (const [field, child] of Object.entries(item as Record<string, unknown>)) {
+      const record = item as Record<string, unknown>;
+      for (const field of Object.keys(record)) {
+        if (tooDeep || tooLarge) return;
         walk(field, depth + 1);
-        walk(child, depth + 1);
+        walk(record[field], depth + 1);
       }
     }
   };

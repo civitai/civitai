@@ -50,14 +50,26 @@ const MAX_DECODE_PASSES = 8;
 
 const compacted = (value: string) => value.replace(/[\t\r\n]/g, '');
 
+/** A key's length; no shorter string holds one, since decoding and compacting only shorten. */
+const KEY_LENGTH = 36;
+
+/**
+ * Characters `decodedForms` may decode across calls (each pass over text holding `%`). Past it, `left`
+ * goes negative and the forms stop, so the caller must refuse rather than trust what was read.
+ */
+export type DecodeBudget = { left: number };
+
 /**
  * `value` and each form it takes as its `%XX` escapes are decoded, one pass at a time, each escape
  * on its own.
  */
-function decodedForms(value: string) {
+function decodedForms(value: string, budget?: DecodeBudget) {
   const forms = [compacted(value)];
   for (let pass = 0; pass < MAX_DECODE_PASSES; pass++) {
     const current = forms[forms.length - 1];
+    if (!current.includes('%')) break;
+    // Charged before the pass, so a refused input never pays for it.
+    if (budget && (budget.left -= current.length) < 0) break;
     const next = compacted(
       current.replace(ESCAPE, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
     );
@@ -77,9 +89,9 @@ function storedUrlsFor(url: string | null | undefined): string[] {
   return keys.length ? [url as string, ...keys] : [];
 }
 
-export function keysIn(url: string | null | undefined): string[] {
-  if (!url || isUnfinishedUploadUrl(url)) return [];
-  return decodedForms(url).flatMap((value) =>
+export function keysIn(url: string | null | undefined, budget?: DecodeBudget): string[] {
+  if (!url || url.length < KEY_LENGTH || isUnfinishedUploadUrl(url)) return [];
+  return decodedForms(url, budget).flatMap((value) =>
     [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())
   );
 }
@@ -91,8 +103,11 @@ const ESCAPED_DASH = /\\u002d|&#0*45(?![0-9]);?|&#x0*2d(?![0-9a-f]);?/gi;
  * Every key in free text, which is not a url: no scheme exemption (`Image: https://…` is prose),
  * and dashes written as JSON or HTML escapes read as dashes.
  */
-export function keysInText(text: string): string[] {
-  const keys = decodedForms(text.replace(ESCAPED_DASH, '-')).flatMap((value) =>
+export function keysInText(text: string, budget?: DecodeBudget): string[] {
+  if (text.length < KEY_LENGTH) return [];
+  const forms = decodedForms(text.replace(ESCAPED_DASH, '-'), budget);
+  if (budget && budget.left < 0) return [];
+  const keys = forms.flatMap((value) =>
     [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())
   );
   return [...new Set(keys)];
