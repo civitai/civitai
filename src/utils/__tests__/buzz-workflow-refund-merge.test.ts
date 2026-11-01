@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   getTransactionBadgeLabel,
+  getTransactionDescription,
   mergeWorkflowRefunds,
   mergeWorkflowRefundsByPage,
 } from '~/utils/buzz-transaction-display';
@@ -179,5 +180,43 @@ describe('merged row label', () => {
     expect(getTransactionBadgeLabel(merged)).toBe('Generation (refunded 29)');
     expect(getTransactionBadgeLabel(chargeAlpha)).toBe('Generation');
     expect(getTransactionBadgeLabel(refundAlpha)).toBe('Refund');
+  });
+});
+
+describe('transaction description', () => {
+  it('keeps "Content" inside a model name intact', () => {
+    // parseBuzzTransactionDetails labels {workflowId} details 'User', which used to turn this into
+    // "AI chat: A userWriter".
+    const row = { type: TransactionType.Generation, description: 'AI chat: ContentWriter' };
+    expect(getTransactionDescription(row, 'User')).toBe('AI chat: ContentWriter');
+  });
+
+  it('still names the entity on the reward descriptions the replace was written for', () => {
+    const row = {
+      type: TransactionType.Reward,
+      description: 'Content that you posted was liked by someone else',
+    };
+    expect(getTransactionDescription(row, 'Comment')).toBe(
+      'A comment that you posted was liked by someone else'
+    );
+  });
+
+  it('shows the charge description on a merged row, not the refund one', () => {
+    const chat = { ...chargeAlpha, description: 'AI chat: ContentWriter' };
+    const chatRefund = { ...refundAlpha, description: 'Refund: AI chat: ContentWriter' };
+    const [merged] = mergeWorkflowRefunds([chatRefund, chat]);
+    expect(getTransactionDescription(merged, 'User')).toBe('AI chat: ContentWriter');
+  });
+
+  it('falls back to the type label on a merged row with no description', () => {
+    const bare = { ...chargeAlpha, description: '' };
+    const [merged] = mergeWorkflowRefunds([refundAlpha, bare]);
+    expect(merged.workflowRefund?.refundAmount).toBe(29);
+    expect(getTransactionDescription(merged, 'User')).toBe('Generation');
+  });
+
+  it('leaves an unmerged row with no description blank, as today', () => {
+    const row = { type: TransactionType.Generation, description: null };
+    expect(getTransactionDescription(row, 'User')).toBeUndefined();
   });
 });
