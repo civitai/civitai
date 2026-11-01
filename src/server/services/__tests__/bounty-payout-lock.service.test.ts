@@ -1062,6 +1062,34 @@ describe('refundBountyBenefactorFunds', () => {
     ).toEqual({ refunded: [6], failed: [] });
     expect(moved('buzz')).toBe(0);
   });
+
+  describe('a legacy supporter refunded twice', () => {
+    const refundAll = () => refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ' });
+    beforeEach(() => {
+      benefactors[0].buzzTransactionId = [];
+    });
+
+    it('sends both refunds under the same key, so the ledger refuses the second', async () => {
+      await refundAll();
+      await refundAll();
+      const keys = buzz.createBuzzTransaction.mock.calls.map(
+        ([input]) => input.externalTransactionId
+      );
+      expect(keys).toEqual(['bounty-refund-b4-u5', 'bounty-refund-b4-u5']);
+    });
+
+    it('counts a refusal as refunded when that key is on the ledger', async () => {
+      buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+      buzz.getTransactionByExternalId.mockResolvedValueOnce({ transactionId: 't1' });
+      expect(await refundAll()).toEqual({ refunded: [5, 6], failed: [] });
+      expect(buzz.getTransactionByExternalId).toHaveBeenCalledWith('bounty-refund-b4-u5');
+    });
+
+    it('fails a refusal whose key is not on the ledger (control)', async () => {
+      buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+    });
+  });
 });
 
 describe('retryUnsettledBountyPayouts paging', () => {
