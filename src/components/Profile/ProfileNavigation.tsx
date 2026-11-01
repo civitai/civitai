@@ -2,6 +2,7 @@ import React from 'react';
 import {
   IconAssembly,
   IconBook,
+  IconBook2,
   IconBookmark,
   IconCategory,
   IconCube,
@@ -98,6 +99,11 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconBook {...props} />,
       count: userOverview?.comicCount ?? 0,
       disabled: !features.comicCreator || !!user?.bannedAt,
+    },
+    storylines: {
+      url: `${baseUrl}/storylines`,
+      icon: (props) => <IconBook2 {...props} />,
+      disabled: !features.storylines || !!user?.bannedAt,
     },
     achievements: {
       url: `${baseUrl}/achievements`,

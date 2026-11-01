@@ -199,6 +199,71 @@ describe('the storylines feed', () => {
     });
   });
 
+  // A profile's Storylines tab: the feed narrowed to one owner, under the feed's gates.
+  describe("one owner's storylines", () => {
+    beforeAll(() =>
+      db.pg.exec(`
+        INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt") VALUES
+          (120, 2, 1, now() - interval '1 day'), (130, 1, 8, now() - interval '1 day');
+        INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt") VALUES
+          (4, 2, 'A stranger''s story', 1, now()), (5, 1, 'Rated X', 8, now());
+        INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth) VALUES
+          (12, 4, 120, 2, 0), (13, 5, 130, 1, 0);
+      `)
+    );
+    afterAll(() =>
+      db.pg.exec(`
+        DELETE FROM "StorylineChapter" WHERE id IN (12, 13);
+        DELETE FROM "Storyline" WHERE id IN (4, 5);
+        DELETE FROM "Post" WHERE id IN (120, 130);
+      `)
+    );
+    const profileIds = async (
+      userId: number,
+      viewer?: { id: number; isModerator?: boolean },
+      browsingLevel: number = NsfwLevel.PG
+    ) =>
+      (
+        await getStorylinesInfinite({
+          filter: 'all',
+          sort: 'newest',
+          limit: 20,
+          viewer,
+          browsingLevel,
+          userId,
+        })
+      ).items.map((item) => item.id);
+
+    it("lists only that owner's storylines a reader may open", async () => {
+      // Not 2 (no chapter 1), not 4 (another owner's), not 5 (above the reader's level).
+      await expect(profileIds(OWNER, { id: STRANGER })).resolves.toEqual([3, WITH_CHAPTER]);
+      await expect(profileIds(OWNER, undefined)).resolves.toEqual([3, WITH_CHAPTER]);
+      await expect(profileIds(STRANGER, undefined)).resolves.toEqual([4]);
+    });
+
+    it('lists one above PG to a reader browsing at its level', async () => {
+      await expect(profileIds(OWNER, undefined, NsfwLevel.PG | NsfwLevel.X)).resolves.toEqual([
+        5,
+        3,
+        WITH_CHAPTER,
+      ]);
+    });
+
+    it('leaves a taken-down storyline off the profile, for its owner too', async () => {
+      await db.pg.exec(
+        `UPDATE "Storyline" SET "tosViolation" = true, "tosViolationByModerator" = true WHERE id = 3`
+      );
+      try {
+        await expect(profileIds(OWNER, { id: STRANGER })).resolves.toEqual([WITH_CHAPTER]);
+        await expect(profileIds(OWNER, { id: OWNER })).resolves.toEqual([5, EMPTY, WITH_CHAPTER]);
+      } finally {
+        await db.pg.exec(
+          `UPDATE "Storyline" SET "tosViolation" = false, "tosViolationByModerator" = false WHERE id = 3`
+        );
+      }
+    });
+  });
+
   it('gives the owner their empty storyline with no chapter 1 and no cover', async () => {
     const { items } = await getStorylinesInfinite({
       filter: 'all',

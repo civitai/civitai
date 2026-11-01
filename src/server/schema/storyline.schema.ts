@@ -155,6 +155,8 @@ export const getStorylinesInfiniteSchema = z.object({
   cursor: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).default(20),
   browsingLevel: z.number().int().min(0).optional(),
+  /** One owner's storylines, as their profile lists them. */
+  userId: z.number().int().positive().optional(),
 });
 
 export const moderateStorylineTitleSchema = z

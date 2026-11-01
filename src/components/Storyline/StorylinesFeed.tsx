@@ -42,14 +42,17 @@ const cardClass = `flex h-full flex-col overflow-hidden ${storylineCardClass}`;
 export function StorylinesFeed({
   filter,
   sort,
+  userId,
 }: {
   filter: StorylineFeedFilter;
   sort: StorylineFeedSort;
+  /** One owner's storylines only, for their profile. */
+  userId?: number;
 }) {
   const browsingLevel = useViewerBrowsingLevelDebounced();
   const { data, isLoading, isError, refetch, hasNextPage, fetchNextPage, isFetching } =
     trpc.storyline.getInfinite.useInfiniteQuery(
-      { filter, sort, limit: 24, browsingLevel },
+      { filter, sort, limit: 24, browsingLevel, userId },
       { getNextPageParam: (last) => last.nextCursor }
     );
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
