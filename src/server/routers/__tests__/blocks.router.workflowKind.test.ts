@@ -2017,8 +2017,14 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
       $type: 'chatCompletion',
       input: {
         messages: [
-          { role: 'user', content: `Summarize https://example.com and ${CDN}` },
-          { role: 'assistant', tool_calls: [{ id: `call_${KEY}`, arguments: `{"u":"${CDN}"}` }] },
+          {
+            role: 'user',
+            content: `Summarize https://example.com and https://civitai.com/models/1`,
+          },
+          {
+            role: 'assistant',
+            tool_calls: [{ id: `call_${KEY}`, arguments: `{"u":"https://example.com/a.png"}` }],
+          },
           { role: 'tool', tool_call_id: 'f3a9c2e1-0b4d-4e6f-9a8b-7c6d5e4f3a2b', content: 'ok' },
         ],
         tools: [{ parameters: { $schema: 'http://json-schema.org/draft-07/schema#' } }],
@@ -2028,10 +2034,31 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     expect(whatifs().length).toBeGreaterThan(0);
   });
 
+  it.each([
+    [OTHER_USER, 'refuses'],
+    [VIEWER, 'accepts'],
+  ] as const)(
+    'a chat message carrying an image CDN url among words: owner %s -> %s',
+    async (owner, verdict) => {
+      givenImage(owner, false);
+      const chat = {
+        kind: 'step' as const,
+        $type: 'chatCompletion',
+        input: { messages: [{ role: 'user', content: `what is in this picture?\n${CDN}` }] },
+        maxBuzz: 30,
+      };
+      if (verdict === 'refuses') await refusedBeforeTheOrchestrator(chat);
+      else {
+        await estimate(chat).catch(() => undefined);
+        expect(whatifs().length).toBeGreaterThan(0);
+      }
+    }
+  );
+
   it('the registry step still refuses an external host (its own param schema)', async () => {
-    await expect(estimate(registryWith('https://example.com/a.png'))).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    });
+    const error = await estimate(registryWith('https://example.com/a.png')).catch((e) => e);
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(String(error.message)).toContain('Civitai-hosted https image URL');
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 

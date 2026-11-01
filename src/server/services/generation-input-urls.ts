@@ -193,7 +193,8 @@ export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass
   } catch {
     return 'invalid';
   }
-  const host = parsed.host.toLowerCase();
+  // A fully-qualified host (`image.civitai.com.`) resolves to the same server.
+  const host = parsed.host.toLowerCase().replace(/\.(?=(:\d+)?$)/, '');
   const isCdn = imageCdnHosts().includes(host);
   const configuredOrigin = (() => {
     try {
@@ -213,7 +214,7 @@ export function classifyGenerationInputUrl(raw: string): GenerationInputUrlClass
       ? 'civitai_other'
       : 'orchestrator';
   if (isCdn) return 'cdn';
-  const hostname = parsed.hostname.toLowerCase();
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
   if (CIVITAI_IMAGE_HOSTS.some((h) => hostname === h || hostname.endsWith(`.${h}`)))
     return 'civitai_other';
   return 'external';
@@ -322,19 +323,59 @@ export function generationInputUrlsIn(value: unknown, out: string[] = [], depth 
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
 
+/** Every `//`-led url in a text, up to the next whitespace, quote or angle bracket. */
+const URL_IN_TEXT = /(?:[a-z][a-z0-9+.-]*:)?\/\/[^\s"'<>`]+/gi;
+
+/**
+ * The image CDN urls a text carries among other words (a multi-line node input, a JSON string):
+ * a consumer may split such text and fetch them. Other hosts in prose are left alone.
+ */
+function imageCdnUrlsInText(text: string) {
+  if (!text.includes('//')) return [];
+  const cdnHosts = imageCdnHosts();
+  return (text.match(URL_IN_TEXT) ?? []).filter((candidate) => {
+    const host = candidate
+      .replace(/^[a-z][a-z0-9+.-]*:/i, '')
+      .slice(2)
+      .split(/[/?#\\]/)[0]
+      .split('@')
+      .pop()!
+      .toLowerCase()
+      .replace(/\.(?=(:\d+)?$)/, '');
+    return cdnHosts.includes(host);
+  });
+}
+
+/**
+ * A link to one of our pages (`https://civitai.com/models/1`) that names no upload key and
+ * carries no url of its own: it reads what any anonymous visitor reads, so it is not an image
+ * input to guard.
+ */
+function isPlainPageLink(url: string) {
+  if (keysIn(url).length) return false;
+  try {
+    const { pathname, search, hash } = new URL(url);
+    return !carriesUrl(pathname + search + hash);
+  } catch {
+    return false;
+  }
+}
+
 /** A scheme-less url: a dotted host, then a path. */
 const SCHEMELESS_URL = /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i;
 
 /**
- * Whether `value` is itself something to fetch, not text that mentions one: a url with a fetch
- * scheme, a `//` url, a key, or a scheme-less url carrying a key.
+ * Whether `value` is itself something to fetch, not text that mentions one: exactly an http(s)
+ * url (no whitespace or control bytes anywhere, which the url parser would silently drop), or a
+ * scheme-less url carrying a key. A bare uuid is not collected: our server expands keys to CDN
+ * urls before anything reaches the orchestrator, so a uuid there names something else.
  */
 function isWholeFetchableValue(value: string) {
-  const trimmed = value.trim();
-  const protocol = parsedProtocol(trimmed);
-  if (protocol) return FETCH_SCHEMES.has(protocol);
-  if (KEY_LIKE.test(trimmed) || trimmed.startsWith('//')) return true;
-  return SCHEMELESS_URL.test(trimmed) && keysIn(trimmed).length > 0;
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
+  const protocol = parsedProtocol(value);
+  if (protocol) return protocol === 'https:' || protocol === 'http:';
+  return SCHEMELESS_URL.test(value) && keysIn(value).length > 0;
 }
 
 /**
@@ -353,6 +394,7 @@ export function opaqueInputUrlsIn(value: unknown) {
     }
     if (typeof item === 'string') {
       if (isWholeFetchableValue(item)) urls.push(item);
+      else urls.push(...imageCdnUrlsInText(item));
     } else if (Array.isArray(item)) {
       for (const child of item) walk(child, depth + 1);
     } else if (typeof item === 'object') {
@@ -402,15 +444,21 @@ export async function assertGenerationInputsUsable({
   const keyedUrls: string[] = [];
   // Keys found inside allowed external urls: refused only when they name an image that fails.
   const externalKeys = new Set<string>();
+  // Read once per call, only when an external url is seen.
+  let refuseExternal: boolean | undefined;
   for (const url of given) {
     if (opaqueInput && KEY_LIKE.test(url.trim())) {
       externalKeys.add(canonicalKey(url.trim()));
       continue;
     }
     let cls = classifyGenerationInputUrl(url);
-    if (opaqueInput && cls === 'invalid' && /^http:/i.test(url.trim())) {
-      const asHttps = classifyGenerationInputUrl(url.trim().replace(/^http:/i, 'https:'));
-      if (asHttps === 'external') cls = 'external';
+    if (opaqueInput) {
+      const asHttps =
+        cls === 'invalid' && /^http:/i.test(url)
+          ? classifyGenerationInputUrl(url.replace(/^http:/i, 'https:'))
+          : cls;
+      if (asHttps === 'external' || (asHttps === 'civitai_other' && isPlainPageLink(url)))
+        cls = 'external';
     }
     if (cls === 'orchestrator') continue;
     if (cls === 'key') {
@@ -425,8 +473,8 @@ export async function assertGenerationInputsUsable({
       continue;
     }
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
-      if (await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS))
-        throw refuse(cls);
+      refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
+      if (refuseExternal) throw refuse(cls);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
       // A proxy or wrapper url may carry one of our image keys.
       keysIn(url).forEach((key) => externalKeys.add(key));

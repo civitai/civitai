@@ -443,6 +443,26 @@ describe('assertGenerationInputsUsable', () => {
     expect(await gate([signed])).toBe('accepted');
   });
 
+  it('treats a fully-qualified host (trailing dot) as the host itself', async () => {
+    await givenImage();
+    // Classed as our CDN and key-checked: another user's public image passes...
+    expect(
+      await gate([`https://image.civitai.com./x/${KEY}/original=true`], 'appBlocksPassThrough')
+    ).toBe('accepted');
+    // ...and the same image once private is refused.
+    await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+    holder.refuseExternal = false;
+    for (const entry of ['generateFromGraph', 'appBlocksPassThrough'] as const) {
+      expect(await gate([`https://image.civitai.com./x/${KEY}/original=true`], entry)).toBe(
+        'refused'
+      );
+      expect(await gate(['https://civitai.com./api/x'], entry)).toBe('refused');
+    }
+    // Control: the same host without the dot is just as refused, and a stranger's host is counted.
+    expect(await gate([CDN()], 'appBlocksPassThrough')).toBe('refused');
+    expect(await gate(['https://example.com./a.png'], 'appBlocksPassThrough')).toBe('accepted');
+  });
+
   it('treats a host that only ends in a civitai name as external, not ours', async () => {
     expect(await gate(['https://notcivitai.com/a.png'], 'generateFromGraph')).toBe('accepted');
     expect(await gate(['https://evil.civitai.com/a.png'], 'generateFromGraph')).toBe('refused');
@@ -487,6 +507,19 @@ describe('assertGenerationInputsUsable', () => {
       for (const id of SPELLINGS) expect(await opaque([id])).toBe('accepted');
       await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
       for (const id of SPELLINGS) expect(await opaque([id])).toBe('refused');
+    });
+
+    it('counts a plain link to one of our pages, and refuses one that carries a key or a url', async () => {
+      holder.refuseExternal = false;
+      expect(await opaque(['https://civitai.com/models/123'])).toBe('accepted');
+      expect(await gate(['https://civitai.com/models/123'], 'appBlocksPassThrough')).toBe(
+        'refused'
+      );
+      expect(await opaque([`https://civitai.com/api/redirect/${KEY}`])).toBe('refused');
+      expect(
+        await opaque([`https://civitai.com/r?to=${encodeURIComponent('https://example.com/a')}`])
+      ).toBe('refused');
+      expect(await opaque(['https://image.civitai.com/x/original=true/a.png'])).toBe('refused');
     });
 
     it('counts an http url on an external host, and still refuses http on a civitai host', async () => {
@@ -675,16 +708,14 @@ describe('opaqueInputUrlsIn', () => {
     expect(
       opaqueInputUrlsIn({
         prompt: OCDN,
-        name: OKEY,
         trainedWords: ['//image.civitai.com/x/y', `image.civitai.com/x/${OKEY}`],
-        image: { $ref: '$arguments', path: 'prompt', default: 'https://example.com/a.png' },
+        image: { $ref: '$arguments', path: 'prompt', default: 'http://example.com/a.png' },
       }).urls
     ).toEqual([
       OCDN,
-      OKEY,
       '//image.civitai.com/x/y',
       `image.civitai.com/x/${OKEY}`,
-      'https://example.com/a.png',
+      'http://example.com/a.png',
     ]);
   });
 
@@ -692,14 +723,38 @@ describe('opaqueInputUrlsIn', () => {
     expect(
       opaqueInputUrlsIn({
         messages: [{ role: 'user', content: 'Summarize https://example.com please' }],
-        tools: [{ description: `see ${OCDN}` }],
-        toolCalls: [{ arguments: JSON.stringify({ url: OCDN }) }],
+        tools: [{ description: 'see https://civitai.com/models/1 for details' }],
+        toolCalls: [{ arguments: JSON.stringify({ url: 'https://example.com/a.png' }) }],
         note: 'note: https://example.com',
         toolCallId: `call_${OKEY}`,
+        file: 'models/model.safetensors/x',
+        host: 'example.com/a.png',
+        toolCallUuid: OKEY,
+        chat: [
+          '// fix this function\nfunction add(a, b) {}',
+          'File: main.py\nprint(1)',
+          'Data: the android from Star Trek',
+          'Blob: a green slime monster',
+          'https://github.com/a/b\nWhat does this repo do?',
+          'https://example.com/\n',
+          'https://www.youtube.com/watch?v=abc summarize',
+        ],
+        otherSchemes: ['file:main.py', 'data:text/plain,hello', 'blob:slime', 'ws://x.y/z'],
         model: 'urn:air:sdxl:checkpoint:civitai:1@1',
         path: 'output.images[0].url',
       }).urls
     ).toEqual([]);
+  });
+
+  it('collects image CDN urls from inside a longer text, and no other host', () => {
+    const fqdn = `https://image.civitai.com./x/${OKEY}/original=true`;
+    expect(
+      opaqueInputUrlsIn({
+        text: `first line\n${OCDN}\nhttps://example.com/b.png`,
+        json: JSON.stringify([OCDN]),
+        prose: `compare ${fqdn}, and https://civitai.com/images/1`,
+      }).urls
+    ).toEqual([OCDN, OCDN, `${fqdn},`]);
   });
 
   it('reports an input nested past its bound instead of passing what it did not read', () => {
