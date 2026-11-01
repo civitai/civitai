@@ -25,6 +25,7 @@ import {
   COVER_PRICE_UNCHECKED,
   COVER_PRICE_UNREADABLE,
   COVER_SCAN_PENDING,
+  COVER_SUBMIT_UNCONFIRMED,
   CoverPriceRoseError,
   GENERATE_APP_COVER,
   appCoverWorkflow,
@@ -298,6 +299,19 @@ describe('the press: the user makes the offered cover', () => {
     }
   });
 
+  it('generates nothing when the user left while the price was re-checked', async () => {
+    const stop = new AbortController();
+    // A re-quote that does not watch the signal, answering after the user has left.
+    const deps = press({
+      price: vi.fn(async () => {
+        stop.abort();
+        return PRICE;
+      }),
+    });
+    await expect(makeOfferedCover(deps, OFFER, stop.signal)).rejects.toThrow();
+    expect(deps.generate).not.toHaveBeenCalled();
+  });
+
   it('generates nothing when the price cannot be checked at the press', async () => {
     for (const price of [
       vi.fn(async () => Promise.reject(new Error('orchestration down'))),
@@ -452,6 +466,36 @@ describe('the page’s cover: priced and made on the user’s own token and proc
     ).rejects.toThrow(coverMaybeNotAttached(IMAGE_URL));
   });
 
+  it('says it may be on the listing when civitai failed on its own side', async () => {
+    // `setListingCover` commits before the call that can throw: a server error is no refusal.
+    for (const code of ['INTERNAL_SERVER_ERROR', 'GATEWAY_TIMEOUT', 'TIMEOUT']) {
+      const failed = api({
+        setCover: vi.fn(async () =>
+          Promise.reject(Object.assign(new Error('boom'), { data: { code } }))
+        ),
+      });
+      await expect(
+        browserDeps(failed).press.attach('apl_1', IMAGE_URL, 'tip-calculator')
+      ).rejects.toThrow(coverMaybeNotAttached(IMAGE_URL));
+    }
+  });
+
+  it('passes the press’s abort to the listing read and the re-quote', async () => {
+    const listingApi = api();
+    const client = orchestration();
+    const deps = browserDeps(listingApi, client);
+    const stop = new AbortController();
+    await deps.press.listing('tip-calculator', stop.signal);
+    await deps.press.price(appCoverWorkflow('a', 1), stop.signal);
+    expect(listingApi.getMyListingForApp).toHaveBeenCalledWith(
+      { slug: 'tip-calculator' },
+      { signal: stop.signal }
+    );
+    expect(client.estimateWorkflow).toHaveBeenCalledWith(appCoverWorkflow('a', 1), {
+      signal: stop.signal,
+    });
+  });
+
   it('cancels the run when the user leaves while it is generating', async () => {
     const controller = new AbortController();
     const stopped = new DOMException('Aborted', 'AbortError');
@@ -480,6 +524,32 @@ describe('the page’s cover: priced and made on the user’s own token and proc
       )
     ).rejects.toThrow(COVER_NOT_GENERATED);
     expect(client.cancelWorkflow).toHaveBeenCalledWith('wf_1');
+  });
+
+  it('says the user may have been charged when the submit’s outcome is unknown', async () => {
+    for (const failure of [
+      new TypeError('fetch failed'),
+      Object.assign(new Error('upstream'), { status: 502 }),
+    ]) {
+      const client = orchestration({ submitWorkflow: vi.fn(async () => Promise.reject(failure)) });
+      await expect(
+        browserDeps(api(), client).press.generate(
+          coverWorkflowFor(OFFER),
+          new AbortController().signal
+        )
+      ).rejects.toThrow(COVER_SUBMIT_UNCONFIRMED);
+    }
+  });
+
+  it('passes on orchestration’s own refusal of the submit, which charged nothing', async () => {
+    const refusal = Object.assign(new Error('Not enough Buzz for this.'), { status: 402 });
+    const client = orchestration({ submitWorkflow: vi.fn(async () => Promise.reject(refusal)) });
+    await expect(
+      browserDeps(api(), client).press.generate(
+        coverWorkflowFor(OFFER),
+        new AbortController().signal
+      )
+    ).rejects.toThrow('Not enough Buzz for this.');
   });
 
   it('fails without a generated image, and attaches nothing', async () => {

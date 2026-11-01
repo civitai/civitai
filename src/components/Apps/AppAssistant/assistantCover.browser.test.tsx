@@ -4,12 +4,15 @@ import {
   COVER_PRICE_UNCHECKED,
   GENERATE_APP_COVER,
   coverPriceRose,
+  generateCover,
+  type CoverOrchestration,
   type AppCoverWorkflow,
   type CoverListing,
   type CoverOffer,
 } from '@civitai/app-assistant';
 import { createAssistantGate } from '~/components/Apps/AppAssistant/assistantGate';
 import {
+  COVER_MAKING as COVER_MAKING_TEXT,
   COVER_DECLINED,
   COVER_DECLINE_TEXT,
   COVER_OFFER_NOT_LIVE,
@@ -231,5 +234,105 @@ describe('the store cover card', () => {
     pressButton(card)!.click();
     await vi.waitFor(() => expect(card.textContent).toContain(COVER_PRICE_UNCHECKED));
     expect(s.generate).not.toHaveBeenCalled();
+  });
+
+  describe('leaving the page', () => {
+    const leave = () => window.dispatchEvent(new PageTransitionEvent('pagehide'));
+
+    /** A gate whose press really runs `generateCover` on `orchestration`, as the page's does. */
+    function withOrchestration(
+      orchestration: CoverOrchestration,
+      pressPrice: (w: AppCoverWorkflow) => Promise<number> = async () => PRICE
+    ) {
+      const listing = vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING);
+      const gate = createAssistantGate({
+        openApp: () => APP,
+        cover: {
+          offer: { currentApp: () => APP, listing, price: async () => PRICE, seed: () => 9 },
+          press: {
+            listing,
+            price: pressPrice,
+            generate: (workflow, signal) => generateCover(orchestration, workflow, signal),
+            attach: async () => ({ scanPending: false }),
+          },
+        },
+      });
+      const open = async () => {
+        const input = { prompt: 'a calculator' };
+        await gate.beforeToolCall(GENERATE_APP_COVER, input, conv);
+        const output = await gate.tools[GENERATE_APP_COVER]!.execute(input, ctx);
+        gate.onToolResult({ name: GENERATE_APP_COVER, input, output, isError: false });
+        return gate.tools[GENERATE_APP_COVER]!.render!({
+          id: 'call-leave',
+          name: GENERATE_APP_COVER,
+          input: {},
+          output,
+          state: 'done',
+        } as ChatToolCall) as HTMLElement;
+      };
+      return { open };
+    }
+
+    /** An orchestration whose wait holds until its signal aborts. */
+    function holdingOrchestration() {
+      return {
+        submitWorkflow: vi.fn(async () => ({ id: 'wf_leave', status: 'submitted' })),
+        waitForWorkflow: vi.fn(
+          (_id: string, opts?: { signal?: AbortSignal }) =>
+            new Promise<never>((_resolve, reject) =>
+              opts?.signal?.addEventListener('abort', () =>
+                reject(new DOMException('Aborted', 'AbortError'))
+              )
+            )
+        ),
+        cancelWorkflow: vi.fn(async () => undefined),
+      };
+    }
+
+    test('leaving while the cover is generated cancels its run', async () => {
+      const orchestration = holdingOrchestration();
+      const card = await withOrchestration(orchestration).open();
+      pressButton(card)!.click();
+      await vi.waitFor(() => expect(orchestration.waitForWorkflow).toHaveBeenCalledTimes(1));
+      leave();
+      await vi.waitFor(() => expect(orchestration.cancelWorkflow).toHaveBeenCalledWith('wf_leave'));
+    });
+
+    test('leaving while the price is re-checked submits nothing', async () => {
+      const orchestration = holdingOrchestration();
+      let answer: (buzz: number) => void = () => undefined;
+      const requote = vi.fn(() => new Promise<number>((resolve) => (answer = resolve)));
+      const card = await withOrchestration(orchestration, requote).open();
+      pressButton(card)!.click();
+      await vi.waitFor(() => expect(requote).toHaveBeenCalledTimes(1));
+      leave();
+      // The re-quote answers after the user left, at the offered price: still nothing is made.
+      answer(PRICE);
+      // Settled when either happens: a submit, or the press ending without one.
+      await vi.waitFor(() =>
+        expect(
+          orchestration.submitWorkflow.mock.calls.length > 0 ||
+            !card.textContent!.includes(COVER_MAKING_TEXT)
+        ).toBe(true)
+      );
+      expect(orchestration.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    test('asks before the page unloads while a cover is being made, and not after', async () => {
+      const orchestration = holdingOrchestration();
+      const card = await withOrchestration(orchestration).open();
+      const unload = () => {
+        const event = new Event('beforeunload', { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      expect(unload()).toBe(false);
+      pressButton(card)!.click();
+      await vi.waitFor(() => expect(orchestration.waitForWorkflow).toHaveBeenCalledTimes(1));
+      expect(unload()).toBe(true);
+      leave();
+      await vi.waitFor(() => expect(orchestration.cancelWorkflow).toHaveBeenCalled());
+      await vi.waitFor(() => expect(unload()).toBe(false));
+    });
   });
 });
