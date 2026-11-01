@@ -84,6 +84,20 @@ export function keysIn(url: string | null | undefined): string[] {
   );
 }
 
+/** A dash as a JSON or HTML escape writes it. */
+const ESCAPED_DASH = /\\u002d|&#0*45;|&#x0*2d;/gi;
+
+/**
+ * Every key in free text, which is not a url: no scheme exemption (`Image: https://…` is prose),
+ * and dashes written as JSON or HTML escapes read as dashes.
+ */
+export function keysInText(text: string): string[] {
+  const keys = decodedForms(text.replace(ESCAPED_DASH, '-')).flatMap((value) =>
+    [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())
+  );
+  return [...new Set(keys)];
+}
+
 /**
  * The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url: shop
  * columns hold whatever the client sent. 🔴 Must match the expression indexes in migration
@@ -310,6 +324,8 @@ type KeyIssuerArgs = {
   db?: Db;
   /** Read the request log for every key, not only those the issue record lacks. */
   readLogForAll?: boolean;
+  /** Most keys one call reads (`MAX_KEYS` by default); past it the result is `tooMany`. */
+  maxKeys?: number;
 };
 
 /**
@@ -322,6 +338,7 @@ export async function keyIssuers({
   alsoIssuedTo,
   db = dbWrite,
   readLogForAll = false,
+  maxKeys = MAX_KEYS,
 }: KeyIssuerArgs) {
   const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
   const keys = [...new Set(urls.flatMap(keysIn))];
@@ -335,7 +352,7 @@ export async function keyIssuers({
     requestLogReadFailed: false,
   };
   if (!keys.length) return result;
-  if (keys.length > MAX_KEYS) return { ...result, tooMany: true };
+  if (keys.length > maxKeys) return { ...result, tooMany: true };
 
   const { owners, readFailed } = await ownersFromRedis(keys);
   result.recordReadFailed = readFailed;

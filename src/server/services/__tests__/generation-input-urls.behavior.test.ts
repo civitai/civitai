@@ -42,6 +42,7 @@ const {
   assertStoredImageUrlsUnblocked,
   generationInputUrlsIn,
   opaqueInputUrlsIn,
+  TOO_MANY_IDS_MESSAGE,
   GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
 } = await import('~/server/services/generation-input-urls');
 const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
@@ -545,7 +546,38 @@ describe('assertGenerationInputsUsable', () => {
           (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
         );
       expect(await opaque(uuids(70))).toBe('accepted');
-      expect(await opaque(uuids(257))).toBe('refused');
+      expect(await opaque(uuids(1024))).toBe('accepted');
+      await expect(
+        assertGenerationInputsUsable({
+          urls: uuids(1025),
+          userId: CALLER,
+          entry: 'appBlocksPassThrough',
+          isApiCaller: false,
+          opaqueInput: true,
+          now: AFTER,
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
+    });
+
+    it('checks the keys in a later batch, not only the first', async () => {
+      const keys = Array.from(
+        { length: 70 },
+        (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+      );
+      await recordUploadKeyOwner(keys[66], OTHER);
+      expect(await opaque(keys)).toBe('refused');
+      expect(await opaque(keys.filter((_, i) => i !== 66))).toBe('accepted');
+    });
+
+    it("finds another user's hidden image past the first lookup batch", async () => {
+      const keys = Array.from(
+        { length: 300 },
+        (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
+      );
+      await givenImage({ url: keys[200] });
+      expect(await opaque(keys)).toBe('accepted');
+      await holder.db.exec(`UPDATE "Post" SET availability = 'Private'`);
+      expect(await opaque(keys)).toBe('refused');
     });
 
     it('checks every url in one call, whatever comes before it', async () => {
@@ -755,9 +787,36 @@ describe('opaqueInputUrlsIn', () => {
     ).toEqual([`https://image.civitai.com/x/${OKEY}/original=true`]);
   });
 
+  it('reads a long run of spaces in linear time', () => {
+    const value = `a${' '.repeat(200_000)}b`;
+    const started = performance.now();
+    expect(opaqueInputUrlsIn({ value }).urls).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  it('trims Unicode spaces around a whole url, as a consumer would', () => {
+    expect(opaqueInputUrlsIn({ u: ' https://example.com/a.png　', v: `﻿${OCDN}` }).urls).toEqual([
+      'https://example.com/a.png',
+      OCDN,
+    ]);
+  });
+
+  it('reads urls listed one per line as separate urls, and an object key as a value', () => {
+    expect(
+      opaqueInputUrlsIn({
+        list: 'https://civitai.com/models/123\nhttps://example.com/a.png\n',
+        chat: `what is in this picture?\n${OCDN}`,
+        [OCDN]: 1,
+      }).urls
+    ).toEqual(['https://civitai.com/models/123', 'https://example.com/a.png', OCDN, OCDN]);
+  });
+
   it('keeps a url with another control byte inside whole, for the gate to refuse', () => {
     expect(opaqueInputUrlsIn({ u: 'https://example.com/a\u0001.png' }).urls).toEqual([
       'https://example.com/a\u0001.png',
+    ]);
+    expect(opaqueInputUrlsIn({ u: 'https://example.com/a.png' }).urls).toEqual([
+      'https://example.com/a.png',
     ]);
   });
 
@@ -790,7 +849,6 @@ describe('opaqueInputUrlsIn', () => {
     ['a tool call id', `call_${OKEY}`],
     ['a bare uuid in upper case', OKEY.toUpperCase()],
     ['a path that is not ours', `v1.0/${OKEY}`],
-    ['a CDN url among words', `what is in this picture?\n${OCDN}`],
     ['a CDN url in a JSON string', JSON.stringify({ image_url: OCDN })],
     ['a JSON-escaped CDN url', `{"u":"https:\\/\\/image.civitai.com\\/x\\/${OKEY}"}`],
     ['an over-escaped CDN url', `{\\"image_url\\":\\"${OCDN}\\"}`],
@@ -803,6 +861,12 @@ describe('opaqueInputUrlsIn', () => {
       `see https://image.civitai.com/x/${OKEY.slice(0, 9)}\t${OKEY.slice(9)}`,
     ],
     ['a percent-encoded key', `see ${encodeURIComponent(OCDN)}`],
+    ['text opening with a word and a colon', `Image: ${OCDN}`],
+    ['a role prefix', `User: what is in ${OCDN}`],
+    ['a uri list', `data:text/uri-list,${OCDN}`],
+    ['JSON-escaped dashes', `{"u":"${OCDN.replace(/-/g, '\\u002d')}"}`],
+    ['HTML entity dashes', `<img src="${OCDN.replace(/-/g, '&#45;')}">`],
+    ['hex HTML entity dashes', `<img src="${OCDN.replace(/-/g, '&#x2D;')}">`],
   ])('collects the key bare from %s', (_, text) => {
     expect(opaqueInputUrlsIn({ text }).urls).toEqual([OKEY]);
   });

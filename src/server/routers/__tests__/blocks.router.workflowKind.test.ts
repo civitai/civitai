@@ -1979,12 +1979,17 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
   );
 
   const refusedBeforeTheOrchestrator = async (b: Record<string, unknown>) => {
-    await expect(estimate(b)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
-    });
+    const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
+    await expect(estimate(b)).rejects.toMatchObject(refusal);
+    await expect(submit(b)).rejects.toMatchObject(refusal);
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   };
+
+  it('refuses a url with a control byte inside, where the same url without it is counted', async () => {
+    await refusedBeforeTheOrchestrator(passThroughWith('https://example.com/a\u0001.png'));
+    await estimate(passThroughWith('https://example.com/a.png')).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
 
   it("refuses another user's private image in a step input, not only in arguments", async () => {
     givenImage(OTHER_USER, false);

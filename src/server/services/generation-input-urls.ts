@@ -12,6 +12,7 @@ import {
   imageUrlUnavailableError,
   keyIssuers,
   keysIn,
+  keysInText,
   MAX_KEYS,
 } from '~/server/services/image-url-ownership';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
@@ -56,26 +57,34 @@ async function assertKeysUsable({
   userId,
   now,
   imagesOnly = false,
+  maxKeys = MAX_KEYS,
 }: {
   keys: string[];
   urls: string[];
   userId: number;
   now?: Date;
   imagesOnly?: boolean;
+  /** Most keys one check reads; the image lookup still goes `MAX_KEYS` at a time. */
+  maxKeys?: number;
 }) {
   if (!keys.length) return;
-  if (keys.length > MAX_KEYS) throw generationImageUnavailableError();
+  if (keys.length > maxKeys) throw generationImageUnavailableError();
 
-  const rows = await dbWrite.$queryRaw<InputImageRow[]>`
-    SELECT i.url, i."userId",
-      (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE) AS blocked,
-      (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
-        AND NOT i."tosViolation" AND p."publishedAt" <= now()
-        AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible
-    FROM "Image" i
-    LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE i.url = ANY(${[...new Set([...keys, ...urls])]}::text[])
-  `;
+  const lookup = [...new Set([...keys, ...urls])];
+  const rows: InputImageRow[] = [];
+  for (let i = 0; i < lookup.length; i += MAX_KEYS)
+    rows.push(
+      ...(await dbWrite.$queryRaw<InputImageRow[]>`
+        SELECT i.url, i."userId",
+          (i."blockedFor" IS NOT NULL OR i."tosViolation" OR p."tosViolation" IS TRUE) AS blocked,
+          (i.ingestion = 'Scanned' AND i."blockedFor" IS NULL AND i."needsReview" IS NULL
+            AND NOT i."tosViolation" AND p."publishedAt" <= now()
+            AND p.availability IN ('Public', 'Unsearchable') AND NOT p."tosViolation") IS TRUE AS visible
+        FROM "Image" i
+        LEFT JOIN "Post" p ON p.id = i."postId"
+        WHERE i.url = ANY(${lookup.slice(i, i + MAX_KEYS)}::text[])
+      `)
+    );
   if (rows.some((r) => r.blocked)) throw generationImageUnavailableError();
 
   const rowsByKey = new Map(
@@ -90,7 +99,8 @@ async function assertKeysUsable({
   if (!unrowed.length) return;
   if (imagesOnly) {
     // Only an issue record to someone else marks it as ours; an unrecorded uuid may be anyone's id.
-    const issuers = await keyIssuers({ urls: unrowed, userId });
+    // One issue-record and request-log read over every unrowed key.
+    const issuers = await keyIssuers({ urls: unrowed, userId, maxKeys });
     const unreadable = issuers.recordReadFailed && issuers.requestLogReadFailed;
     if (issuers.tooMany || issuers.issuedToOthers.length || unreadable)
       throw generationImageUnavailableError();
@@ -322,12 +332,46 @@ export function generationInputUrlsIn(value: unknown, out: string[] = [], depth 
 }
 
 /** `value` as a WHATWG url parser reads it: C0 controls and spaces trimmed, tab/LF/CR removed. */
-const asUrlParserReads = (value: string) =>
-  // eslint-disable-next-line no-control-regex
-  value.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '');
+const asUrlParserReads = (value: string) => {
+  // A scan from each end, not an unanchored `[…]+$` regex, which is quadratic on long runs.
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) <= 0x20) start++;
+  while (end > start && value.charCodeAt(end - 1) <= 0x20) end--;
+  return value.slice(start, end).replace(/[\t\n\r]/g, '');
+};
 
-/** Batches of `MAX_KEYS` image-only keys one check reads before it refuses outright. */
-const IMAGE_ONLY_KEY_BATCHES = 4;
+/**
+ * Whether a later line of `value` starts like a url of its own (`scheme:` or `//`): then the
+ * lines are separate values, as a consumer splitting them would fetch them, not one url broken
+ * by a newline (which a url parser would rejoin).
+ */
+function splitsIntoUrlLines(value: string) {
+  const lines = value
+    .split(/[\r\n]+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return (
+    lines.length > 1 && lines.slice(1).some((line) => /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(line))
+  );
+}
+
+export const TOO_MANY_IDS_MESSAGE =
+  'This request carries too many ids to check. Send fewer ids in one request.';
+
+/** Most image-only keys one check reads (rows `MAX_KEYS` at a time, issuers in one read). */
+const IMAGE_ONLY_MAX_KEYS = 1024;
+/** Image-only key sets larger than this are counted by size. */
+const IMAGE_ONLY_KEY_SIZE_REPORTED = 256;
+
+const keySetSizeBucket = (size: number) =>
+  size > IMAGE_ONLY_MAX_KEYS ? 'over_1024' : size > 512 ? '513_1024' : '257_512';
+
+const largeKeySetCounter = registerCounterWithLabels({
+  name: 'generation_input_large_key_sets_total',
+  help: 'Generation inputs carrying more than 256 image-only keys, by entry point and size bucket.',
+  labelNames: ['entry', 'size'] as const,
+});
 
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
@@ -390,19 +434,25 @@ export function opaqueInputUrlsIn(value: unknown) {
       tooDeep = true;
       return;
     }
-    if (typeof item === 'string') {
-      const parsed = asUrlParserReads(item);
+    if (typeof item === 'string' && splitsIntoUrlLines(item)) {
+      for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1);
+    } else if (typeof item === 'string') {
+      // Unicode spaces too: a consumer trims them (str.strip, Trim) though WHATWG does not.
+      const parsed = asUrlParserReads(item).trim();
       // eslint-disable-next-line no-control-regex
       const controlInside = /[\u0000-\u001f\u007f]/.test(parsed);
       const protocol = parsedProtocol(parsed);
       // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
       if (controlInside && (protocol === 'https:' || protocol === 'http:')) urls.push(parsed);
       else if (isWholeFetchableValue(parsed)) urls.push(parsed);
-      else urls.push(...new Set(keysIn(item)));
+      else urls.push(...keysInText(item));
     } else if (Array.isArray(item)) {
       for (const child of item) walk(child, depth + 1);
     } else if (typeof item === 'object') {
-      for (const child of Object.values(item as Record<string, unknown>)) walk(child, depth + 1);
+      for (const [field, child] of Object.entries(item as Record<string, unknown>)) {
+        walk(field, depth + 1);
+        walk(child, depth + 1);
+      }
     }
   };
   walk(value, 0);
@@ -490,17 +540,20 @@ export async function assertGenerationInputsUsable({
   try {
     await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now });
     const imageOnlyKeys = [...externalKeys].filter((key) => !keys.has(key));
-    // Text can carry many unrelated uuids (tool call ids); check them in bounded batches.
-    if (imageOnlyKeys.length > MAX_KEYS * IMAGE_ONLY_KEY_BATCHES)
-      throw generationImageUnavailableError();
-    for (let i = 0; i < imageOnlyKeys.length; i += MAX_KEYS)
-      await assertKeysUsable({
-        keys: imageOnlyKeys.slice(i, i + MAX_KEYS),
-        urls: [],
-        userId,
-        now,
-        imagesOnly: true,
-      });
+    // Text can carry many unrelated uuids (message and tool call ids). Past the bound a check
+    // would cost too much; an unchecked remainder could be padded around, so it is refused.
+    if (imageOnlyKeys.length > IMAGE_ONLY_KEY_SIZE_REPORTED)
+      largeKeySetCounter.inc({ entry, size: keySetSizeBucket(imageOnlyKeys.length) });
+    if (imageOnlyKeys.length > IMAGE_ONLY_MAX_KEYS)
+      throw new TRPCError({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
+    await assertKeysUsable({
+      keys: imageOnlyKeys,
+      urls: [],
+      userId,
+      now,
+      imagesOnly: true,
+      maxKeys: IMAGE_ONLY_MAX_KEYS,
+    });
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });
