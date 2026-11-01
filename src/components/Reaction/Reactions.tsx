@@ -38,6 +38,12 @@ export type ReactionMetrics = {
   tippedAmountCount?: number;
 };
 
+/**
+ * `'container'` renders both forms and lets a CSS container query pick one, so the choice follows
+ * the width of the surrounding row with no measuring pass and no flash on first paint.
+ */
+export type CountFormat = boolean | 'container';
+
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
@@ -111,7 +117,7 @@ export function Reactions({
   showAll?: boolean;
   invisibleEmpty?: boolean;
   disableBuzzTip?: boolean;
-  abbreviate?: boolean;
+  abbreviate?: CountFormat;
 }) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
@@ -216,6 +222,56 @@ export function Reactions({
   );
 }
 
+/**
+ * The Buzz tip badge on its own, for a layout that places it outside the reaction bar.
+ * Pair it with `disableBuzzTip` on `<Reactions>` so the tip is not drawn twice.
+ */
+export function ImageBuzzTip({
+  entityId,
+  targetUserId,
+  tippedAmountCount,
+  metricsUnknown: metricsUnknownFromServer,
+  readonly,
+  className,
+}: {
+  entityId: number;
+  targetUserId: number;
+  tippedAmountCount?: number;
+  metricsUnknown?: boolean;
+  readonly?: boolean;
+  className?: string;
+}) {
+  const { hideReactions } = useReactionSettingsContext();
+  const features = useFeatureFlags();
+  const metricsUnknown = !!metricsUnknownFromServer && !!features.reactionCountsUnknown;
+
+  if (hideReactions) return null;
+
+  return (
+    <LoginPopover message="You must be logged in to react to this">
+      <div
+        className={className}
+        onClick={(e) => {
+          if (!readonly) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+      >
+        <BuzzTippingBadge
+          toUserId={targetUserId}
+          tippedAmountCount={tippedAmountCount ?? 0}
+          countUnknown={metricsUnknown}
+          entityType="image"
+          entityId={entityId}
+          hideLoginPopover
+          readonly={readonly}
+        />
+      </div>
+    </LoginPopover>
+  );
+}
+
 const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
 const keyMap = keys.reduce<Record<string, keyof ReactionMetrics>>(
   (acc, key) => ({ ...acc, [key]: `${key.toLowerCase()}Count` as keyof ReactionMetrics }),
@@ -244,7 +300,7 @@ function ReactionsList({
 
   readonly?: boolean;
   invisibleEmpty?: boolean;
-  abbreviate?: boolean;
+  abbreviate?: CountFormat;
 }) {
   const currentUser = useCurrentUser();
 
@@ -329,7 +385,7 @@ function ReactionBadge({
   countUnknown?: boolean;
   reaction: ReviewReactions;
   canClick: boolean;
-  abbreviate?: boolean;
+  abbreviate?: CountFormat;
   resetKey?: string | number;
 } & Omit<ButtonProps, 'children'> &
   React.ComponentPropsWithoutRef<'button'>) {
@@ -357,6 +413,15 @@ function ReactionBadge({
         <Text inherit lh={1}>
           {countUnknown ? (
             '–'
+          ) : abbreviate === 'container' ? (
+            <>
+              <span data-count="full">
+                <AnimatedCount value={count} abbreviate={false} resetKey={resetKey} />
+              </span>
+              <span data-count="abbr">
+                <AnimatedCount value={count} abbreviate animate={false} />
+              </span>
+            </>
           ) : (
             <AnimatedCount value={count} abbreviate={abbreviate ?? false} resetKey={resetKey} />
           )}
