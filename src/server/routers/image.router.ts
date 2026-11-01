@@ -17,7 +17,6 @@ import {
   getImageDetail,
   getImageGenerationData,
   getImagesByUserIdForModeration,
-  getImagesForModelVersionCache,
   getMyImages,
   ingestImageById,
   removeImageResource,
@@ -50,6 +49,7 @@ import {
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
+  getImagesForModelVersionHandler,
 } from './../controllers/image.controller';
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
@@ -118,7 +118,7 @@ export const imageRouter = router({
   getImagesForModelVersion: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
-    .query(({ input }) => getImagesForModelVersionCache([input.id])),
+    .query(getImagesForModelVersionHandler),
   getImagesAsPostsInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
