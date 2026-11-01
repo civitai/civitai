@@ -60,6 +60,7 @@ const {
   TOO_MANY_IDS_MESSAGE,
   GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
 } = await import('~/server/services/generation-input-urls');
+const { registerCounterWithLabels } = await import('~/server/prom/client');
 const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
   '~/server/services/image-url-ownership'
 );
@@ -655,6 +656,47 @@ describe('assertGenerationInputsUsable', () => {
       holder.refuseExternal = true;
       expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
     }
+  });
+
+  describe('the external host count', () => {
+    // The setup mock's stub for the counter, found by name; captured at collection time.
+    const registered = vi.mocked(registerCounterWithLabels).mock;
+    const hostCounter = registered.results[
+      registered.calls.findIndex(([def]) => def.name === 'generation_input_external_hosts_total')
+    ]?.value as { inc: ReturnType<typeof vi.fn> };
+    beforeEach(() => {
+      hostCounter.inc.mockClear();
+      redisMock.sysRedis.pfAdd.mockClear();
+    });
+
+    it('counts an external url by host bucket and mode, and adds the caller to its day set', async () => {
+      expect(await gate(['https://i.imgur.com/a.png'], 'generateFromGraph')).toBe('accepted');
+      expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith({
+        entry: 'generateFromGraph',
+        caller: 'session',
+        mode: 'log',
+        host: 'imgur',
+      });
+      expect(redisMock.sysRedis.pfAdd).toHaveBeenCalledExactlyOnceWith(
+        expect.stringMatching(
+          /^system:generation-input-external-host-users:\d{4}-\d{2}-\d{2}:session:imgur$/
+        ),
+        String(CALLER)
+      );
+
+      hostCounter.inc.mockClear();
+      holder.refuseExternal = true;
+      expect(await gate(['https://i.imgur.com/a.png'], 'generateFromGraph')).toBe('refused');
+      expect(hostCounter.inc).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ mode: 'refuse', host: 'imgur' })
+      );
+    });
+
+    it('is not counted where an external host is refused outright', async () => {
+      expect(await gate(['https://i.imgur.com/a.png'], 'iterateGenerate')).toBe('refused');
+      expect(hostCounter.inc).not.toHaveBeenCalled();
+      expect(redisMock.sysRedis.pfAdd).not.toHaveBeenCalled();
+    });
   });
 
   it('checks the keys an allowed external url carries', async () => {
