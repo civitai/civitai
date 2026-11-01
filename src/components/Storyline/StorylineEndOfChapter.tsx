@@ -357,6 +357,7 @@ export function StorylineEndOfChapter({
                             openStorylineContinueModal({
                               parentPostId: mainWay.post.id,
                               parentChapterId: mainWay.chapterId,
+                              atEnd: onMain,
                             })
                           }
                           data-testid="storyline-add-own-chapter"

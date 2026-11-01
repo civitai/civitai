@@ -8,6 +8,7 @@ import StorylineContinueModal from '~/components/Storyline/continue/StorylineCon
 const mocks = vi.hoisted(() => ({
   insert: vi.fn(),
   addOwn: vi.fn(),
+  addAtEnd: vi.fn(),
   refusal: null as string | null,
   invalidate: vi.fn(),
   currentUser: { id: 10, username: 'owner' } as {
@@ -97,6 +98,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
         'storyline.insertChapter': mutation(mocks.insert),
         'storyline.addChapter': mutation(mocks.addOwn),
+        'storyline.addChapterAtEnd': mutation(mocks.addAtEnd),
       },
       {
         useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }),
@@ -126,7 +128,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
 vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => <div /> }));
 
 beforeEach(() => {
-  for (const fn of [mocks.insert, mocks.addOwn, mocks.invalidate]) fn.mockReset();
+  for (const fn of [mocks.insert, mocks.addOwn, mocks.addAtEnd, mocks.invalidate]) fn.mockReset();
   mocks.refusal = null;
   mocks.currentUser = { id: 10, username: 'owner' };
 });
@@ -193,5 +195,32 @@ describe('inserting a chapter from the map', () => {
 
     expect(mocks.addOwn).toHaveBeenCalledWith({ parentChapterId: 104, postId: 900 });
     expect(mocks.insert).not.toHaveBeenCalled();
+    expect(mocks.addAtEnd).not.toHaveBeenCalled();
+  });
+});
+
+// The end-of-chapter card's main-path "use a post": the end the card read (104) may no longer be
+// the end, so the server finds it when it adds the post.
+describe('adding at the end of the main path', () => {
+  test('sends the storyline, never the chapter the card read as the end', async () => {
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Add chapter' }).click();
+
+    expect(mocks.addAtEnd).toHaveBeenCalledWith({ storylineId: 2, postId: 900 });
+    expect(mocks.addOwn).not.toHaveBeenCalled();
+    await expect
+      .element(page.getByText('Added to your storyline as the next chapter.'))
+      .toBeVisible();
+  });
+
+  test("the server's refusal is shown and the dialog stays", async () => {
+    mocks.refusal = 'This storyline is complete';
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Add chapter' }).click();
+
+    await expect.element(page.getByText('This storyline is complete')).toBeVisible();
+    expect(page.getByText('Added to your storyline as the next chapter.').query()).toBeNull();
   });
 });
