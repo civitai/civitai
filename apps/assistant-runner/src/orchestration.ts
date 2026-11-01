@@ -80,10 +80,7 @@ export class OrchestrationClient {
     return this.#json(tokens, 'POST', WORKFLOWS, template);
   }
 
-  /**
-   * What `template` would cost (orchestration's what-if): submits nothing. `generate_app_cover`
-   * prices its offer with it.
-   */
+  /** What `template` would cost (orchestration's what-if); submits nothing. */
   estimateWorkflow(
     tokens: TokenSource,
     template: AppCoverWorkflow

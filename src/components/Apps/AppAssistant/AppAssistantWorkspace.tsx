@@ -390,9 +390,8 @@ export function AppAssistantWorkspace({
       }),
     []
   );
-  // The store cover (`generate_app_cover`): the tool only offers it with its price; the user's press
-  // on the card makes it, here, as them, whichever side ran the reply (the runner offers it too).
-  // Read through a ref, so a new utils object never rebuilds the gate (and with it, its state).
+  // The store cover's listing refresh after a press attaches one. Read through a ref, so a new utils
+  // object never rebuilds the gate (and with it, its state).
   const utils = trpc.useUtils();
   const trpcUtils = useRef(utils);
   trpcUtils.current = utils;

@@ -6,10 +6,11 @@ import type { AssistantTool, ToolResult } from './tool';
  * (`src/components/Apps/AppAssistant/coverArt.ts`, `assistantCover.ts`) and the server runner
  * (`apps/assistant-runner/src/app-assistant/cover.ts`).
  *
- * The tool spends nothing. It reads the user's listing for the open app (none: nothing more), prices
- * the cover with orchestration's what-if, and returns an OFFER. The page shows the offer as a card
- * with the price and a button, whichever side ran the reply, and only the user's press makes the
- * cover (`makeOfferedCover`), as them, on their Buzz.
+ * THE RULE: a cover costs the user Buzz, so the assistant never makes one. The tool spends nothing:
+ * it reads the user's listing for the open app, prices the fixed recipe with orchestration's
+ * what-if, and returns an OFFER. The page shows the offer as a card with the price and a button,
+ * whichever side (page or runner) ran the reply, and only the user's press makes the cover
+ * (`makeOfferedCover`), as them, on their Buzz. Code elsewhere points here rather than restating it.
  */
 export const GENERATE_APP_COVER = 'generate_app_cover';
 
@@ -168,11 +169,7 @@ export const COVER_ON_LISTING_IN_REVIEW =
   'The cover is on your listing, which is under review: it shows in the store once the listing is approved.';
 export const COVER_SCAN_PENDING = 'The image is still being checked.';
 
-/**
- * `generate_app_cover`: an OFFER of a store cover for the open app's listing, from the one fixed
- * recipe above, with its price. It spends nothing: no listing, no price, no offer, and the cover is
- * made only when the user presses the offer's card (`makeOfferedCover`).
- */
+/** `generate_app_cover`'s offer. No listing (or a locked one) or no price: no offer. */
 export function createCoverArt(deps: CoverArtDeps): Record<string, AssistantTool> {
   const seed = deps.seed ?? (() => Math.floor(Math.random() * 2 ** 31));
 
@@ -244,10 +241,9 @@ export interface CoverPressDeps {
 }
 
 /**
- * The user pressed `offer`'s card: makes the cover, as them. The listing is read again first, and
- * must still be the one offered and editable, or nothing is spent. Then the offered recipe (its
- * prompt and seed, one external id per offer) is generated and attached. Resolves with what the
- * user is told; throws a message for them.
+ * The press. The listing is read again and must still be the offered one and editable, or nothing
+ * is spent; then exactly the offered recipe is generated and attached. Resolves with what the user
+ * is told; throws a message for them.
  */
 export async function makeOfferedCover(
   deps: CoverPressDeps,
@@ -270,11 +266,7 @@ export interface ListingForCover {
   editBlockedReason: string | null;
 }
 
-/**
- * The civitai procedures the cover goes through: the same ones the listing editor uses, which the
- * page calls over tRPC as the signed-in user. Only the listing read is also reached from the
- * runner (`/api/internal/app-assistant/cover/listing`).
- */
+/** The listing editor's procedures the cover goes through; the runner reaches only the read. */
 export interface CoverListingApi {
   getMyListingForApp(input: { slug: string }): Promise<ListingForCover>;
   ingestAssetFromUrl(input: { url: string; kind: 'cover' }): Promise<{ imageId: number }>;

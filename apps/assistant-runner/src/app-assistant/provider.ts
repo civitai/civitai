@@ -110,7 +110,7 @@ const RUNNER_PAGE_TOOLS = [
   // The open app's moderator review and user feedback, read by civitai as the run's user; and the
   // offer to change a feedback item's status, which the page's card, not the runner, carries out.
   ...APP_FEEDBACK_TOOLS,
-  // An offer of a store cover with its price: the page's card, on the user's press, makes it.
+  // Offers a store cover; the page's card makes it.
   GENERATE_APP_COVER,
 ] as const;
 
@@ -125,9 +125,9 @@ export interface AppAssistantToolsOptions {
    */
   devTunnels?(runId: string): DevTunnels;
   /**
-   * `generate_app_cover`'s offer for one run: civitai's listing read with its grant
-   * (`CivitaiCovers.forRun`) and the price on its `chat` token (`runnerCoverEstimator`). It never
-   * generates: the page's card does, on the user's press. Unset, the tool says covers are not set up.
+   * `generate_app_cover` for one run: civitai's listing read with its grant (`CivitaiCovers.forRun`)
+   * and the price on its `chat` token (`runnerCoverEstimator`). Unset, the tool says covers are not
+   * set up.
    */
   covers?(runId: string): { listings: CoverListings; estimator: CoverEstimator };
   /**
@@ -304,7 +304,7 @@ export class AppAssistantTools implements ToolProvider {
           signal,
         });
       const sdkUpgrade = await upgradeSdk();
-      // The store cover, the page's own code (`createCoverArt`): an offer only, which spends nothing.
+      // The store cover: the page's own tool (`createCoverArt`).
       const covers = this.#options.covers?.(runId);
       const coverTools: Record<string, ChatTool> = covers
         ? runnerCoverTools({

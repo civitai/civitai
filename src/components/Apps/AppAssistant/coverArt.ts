@@ -15,9 +15,8 @@ import {
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
 import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 
-// `generate_app_cover` itself (its recipe, the offer, the press, every message) lives in
-// `@civitai/app-assistant`, which the server runner offers it from too; this module is only how the
-// page reaches civitai and orchestration as the signed-in user.
+// `generate_app_cover` itself lives in `@civitai/app-assistant`; this module is only how the page
+// reaches civitai and orchestration as the signed-in user.
 export {
   APP_COVER_HEIGHT,
   APP_COVER_MODEL,
@@ -64,11 +63,9 @@ function isRefusal(error: unknown): boolean {
 }
 
 /**
- * The cover's deps on the page: what the offer reads (the listing, the what-if price) and what a
- * press does. Both run on the user's own chat token (which holds `ai:write:budgeted`, so the run is
- * on their Buzz under the App Assistant's daily cap, as the chat's own requests are) and through
- * the listing editor's procedures, so the image is ingested and scanned like an author's upload and
- * attached by `setCover` with its checks on size, type and scan state.
+ * The cover's deps on the page, the offer's and the press's: the user's own chat token (with
+ * `ai:write:budgeted`, so under the App Assistant's daily Buzz cap) and the listing editor's
+ * procedures, so the image is ingested, scanned and checked by `setCover` like an author's upload.
  */
 export function createBrowserCoverDeps({
   currentApp,

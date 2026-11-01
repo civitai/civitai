@@ -15,11 +15,9 @@ import type { TokenSource } from '../minter';
 import type { OrchestrationClient } from '../orchestration';
 
 /**
- * `generate_app_cover` on the server runner. Like the page's, it only OFFERS a cover: it reads the
- * user's listing for the open app (through civitai, as the run's user) and prices the cover
- * (orchestration's what-if, on the run's `chat` token), and returns the offer. The page shows it as
- * a card, and only the user's press there makes the cover, as them: the runner never generates or
- * attaches one, so a run that ends, stops or is recovered can leave no cover spend behind.
+ * `generate_app_cover` on the server runner (the rule: `@civitai/app-assistant`'s `cover.ts`). The
+ * listing is read through civitai as the run's user, and the price on the run's `chat` token. The
+ * runner never generates or attaches, so a run that ends, stops or is recovered leaves no spend.
  */
 
 /** civitai's endpoint the runner reads the user's listing at, relative to `CIVITAI_URL`. */

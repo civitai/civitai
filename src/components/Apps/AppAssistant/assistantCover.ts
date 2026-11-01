@@ -2,10 +2,10 @@ import type { ChatToolCall, ChatToolResult } from '@civitai/components-chat/civi
 import { coverErrorMessage, coverOfferOf, type CoverOffer } from '@civitai/app-assistant';
 
 /**
- * The card a `generate_app_cover` offer shows, on the page whichever side ran the reply. The tool
- * spends nothing; only the user's press on this card makes the cover (`make`), as them, on their
- * Buzz. Same plumbing as the feedback status card (`assistantFeedback.ts`): a button only for an
- * offer this page heard of live, none for one shown again from a saved chat.
+ * The card a `generate_app_cover` offer shows; its press is the one that makes the cover (the rule:
+ * `@civitai/app-assistant`'s `cover.ts`). Same plumbing as the feedback status card
+ * (`assistantFeedback.ts`): a button only for an offer this page heard of live, none for one shown
+ * again from a saved chat.
  */
 
 /** Makes the cover `offer` names, as the user; resolves with what they are told, throws for them. */

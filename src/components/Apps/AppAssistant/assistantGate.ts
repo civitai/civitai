@@ -93,10 +93,7 @@ export function createAssistantGate({
    * a press on a status card does. Without it, no feedback tools.
    */
   feedback?: { source: AppFeedbackSource; setStatus: SetFeedbackStatus };
-  /**
-   * The store cover: what the tool reads to offer one (the user's listing, the price), and what a
-   * press on its card does (generate and attach, as the user). Without it, no cover tool.
-   */
+  /** The store cover: what its offer reads and what its card's press does. Without it, no tool. */
   cover?: { offer: Omit<CoverArtDeps, 'nextId'>; press: CoverPressDeps };
 } = {}): AssistantGate {
   const submitCards = submit ? createSubmitCards(submit) : null;
@@ -111,8 +108,7 @@ export function createAssistantGate({
       })
     : null;
   const feedbackTools: Record<string, ChatTool> = feedbackSet?.tools ?? {};
-  // The cover tool only offers; the card's press makes the cover. In runner mode the runner's own
-  // tool offers, and this card (heard of through `onToolResult`) still does the press, as the user.
+  // In runner mode the runner's tool offers; this card (told by `onToolResult`) takes the press.
   let coverOffers = 0;
   const coverCards = cover
     ? createCoverCards({ make: (offer, signal) => makeOfferedCover(cover.press, offer, signal) })
