@@ -2029,6 +2029,19 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     await expect(submit(make())).rejects.toMatchObject(refusal);
   });
 
+  it('on estimate, a quoteId does not move the token checks after the input', async () => {
+    givenImage(OTHER_USER, false);
+    h.authorize.mockImplementation(async () =>
+      claims({ ctx: { slotId: 'model.sidebar_top', entityType: 'model', modelId: 5 } })
+    );
+    await expect(
+      estimate({ ...passThroughWith(CDN), quoteId: `sq_${'1'.repeat(32)}` })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'registry steps are page-only',
+    });
+  });
+
   it('refuses registry params too large to read whole, on estimate AND submit', async () => {
     const make = () => ({
       kind: 'step' as const,

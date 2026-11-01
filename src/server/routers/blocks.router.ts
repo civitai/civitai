@@ -6754,7 +6754,12 @@ export const blocksRouter = router({
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
       if (input.body.kind === 'workflow' || input.body.kind === 'step')
-        await assertStepOrWorkflowInputsUsable(input.body, claims);
+        await assertStepOrWorkflowInputsUsable(input.body, claims, {
+          confirmedSubmit:
+            input.body.kind === 'step' &&
+            isPassThroughStepBody(input.body) &&
+            input.body.quoteId !== undefined,
+        });
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -10647,13 +10652,12 @@ function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
 /** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
 async function assertStepOrWorkflowInputsUsable(
   body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
-  claims: BlockClaims
+  claims: BlockClaims,
+  /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
+  { confirmedSubmit = false }: { confirmedSubmit?: boolean } = {}
 ) {
-  // The arm's own token checks first: a caller refused those never pays for the walk below. A
-  // confirmed step (a `quoteId`) has its own, stricter gate and refusal, so it keeps them.
-  const confirmed =
-    body.kind === 'step' && isPassThroughStepBody(body) && body.quoteId !== undefined;
-  const userId = confirmed
+  // The arm's own token checks first: a caller refused those never pays for the walk below.
+  const userId = confirmedSubmit
     ? parseSubjectUserId(claims.sub)
     : await assertStepRequestAllowed(claims);
   if (userId == null) {
