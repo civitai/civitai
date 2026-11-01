@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
   balances: { yellow: 1200, green: 345 } as Record<string, number>,
 }));
 
-vi.mock('~/components/Buzz/useBuzz', () => ({
+vi.mock('~/components/Buzz/useBuzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/components/Buzz/useBuzz')>()),
   useQueryBuzz: (types: string[] = []) => {
     const accounts = types.map((type) => ({ type, balance: mocks.balances[type] ?? 0 }));
     return {
@@ -51,7 +52,7 @@ describe('BuzzDashboardOverview stacking', () => {
     await expect.element(page.getByText('1,545')).toBeInTheDocument();
   });
 
-  test('remembers the choice after a remount, per tab', async () => {
+  test('remembers the choice after a remount', async () => {
     const first = await render('yellow');
     await page.getByRole('switch').click();
     await first.unmount();
@@ -60,20 +61,37 @@ describe('BuzzDashboardOverview stacking', () => {
     await expect.element(page.getByText('Current Yellow + Green Buzz')).toBeInTheDocument();
   });
 
-  test('the Green tab keeps its own choice', async () => {
-    const first = await render('yellow');
+  test('turning it back off restores the single header', async () => {
+    await render('yellow');
     await page.getByRole('switch').click();
-    await first.unmount();
-
-    await render('green');
-    await expect.element(page.getByText('Current Green Buzz')).toBeInTheDocument();
-    await expect.element(page.getByText('345', { exact: true })).toBeInTheDocument();
+    await page.getByRole('switch').click();
+    await expect.element(page.getByText('Current Yellow Buzz')).toBeInTheDocument();
+    expect(localStorage.getItem('buzz-dashboard-stack-yellow')).toBe('false');
   });
 
-  test('a stored choice is ignored on a type with no partner', async () => {
-    localStorage.setItem('buzz-dashboard-stack-blue', 'true');
-    await render('blue');
-    await expect.element(page.getByText('Current Blue Buzz')).toBeInTheDocument();
-    expect(page.getByRole('switch').query()).toBeNull();
+  test('each tab keeps its own choice', async () => {
+    // Yellow stacked, Green not: Green must show its own single header after the storage read.
+    localStorage.setItem('buzz-dashboard-stack-yellow', 'true');
+    const yellow = await render('yellow');
+    await expect.element(page.getByText('Current Yellow + Green Buzz')).toBeInTheDocument();
+    await yellow.unmount();
+
+    const green = await render('green');
+    await expect.element(page.getByText('Current Green Buzz')).toBeInTheDocument();
+    await page.getByRole('switch').click();
+    await expect.element(page.getByText('Current Green + Yellow Buzz')).toBeInTheDocument();
+    await green.unmount();
+
+    // Turning Green on left Yellow's remembered choice alone.
+    expect(localStorage.getItem('buzz-dashboard-stack-yellow')).toBe('true');
+    expect(localStorage.getItem('buzz-dashboard-stack-green')).toBe('true');
+  });
+
+  test('the info popover lists each balance while stacking', async () => {
+    await render('yellow');
+    await page.getByRole('switch').click();
+    await page.getByLabelText('Buzz info').click();
+    await expect.element(page.getByText('Yellow Buzz: 1,200')).toBeInTheDocument();
+    await expect.element(page.getByText('Green Buzz: 345')).toBeInTheDocument();
   });
 });

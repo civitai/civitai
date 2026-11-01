@@ -280,7 +280,11 @@ export const BuzzDashboardOverview = ({
                       />
                       <Popover width={350} withArrow withinPortal shadow="sm">
                         <Popover.Target>
-                          <IconInfoCircle size={20} style={{ cursor: 'pointer' }} />
+                          <IconInfoCircle
+                            size={20}
+                            aria-label="Buzz info"
+                            style={{ cursor: 'pointer' }}
+                          />
                         </Popover.Target>
                         <Popover.Dropdown>
                           <Stack>
