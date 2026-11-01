@@ -826,6 +826,22 @@ describe('opaqueInputUrlsIn', () => {
     expect(opaqueInputUrlsIn({ text }).tooLarge).toBe(false);
   });
 
+  it('reads up to 262,144 lines of split text, and reports more as too large', () => {
+    const lines = (n: number) => `${'x\n'.repeat(n - 1)}a:`;
+    expect(opaqueInputUrlsIn({ text: lines(262_144) }).tooLarge).toBe(false);
+    expect(opaqueInputUrlsIn({ text: lines(262_145) }).tooLarge).toBe(true);
+  });
+
+  it('collects more keys than a call can take as arguments', () => {
+    // Keys overlap: each segment ends one key and its last 8 characters start the next.
+    const segments = Array.from(
+      { length: 140_000 },
+      (_, i) => `-0000-4000-8000-${i.toString(16).padStart(12, '0')}`
+    );
+    const text = `see 00000000${segments.join('')}`;
+    expect(opaqueInputUrlsIn({ text }).urls.length).toBe(140_000);
+  });
+
   it('reports too many values as too large', () => {
     expect(opaqueInputUrlsIn({ list: new Array(1_048_577).fill(0) }).tooLarge).toBe(true);
     expect(opaqueInputUrlsIn({ list: new Array(1000).fill(0) }).tooLarge).toBe(false);
@@ -843,6 +859,7 @@ describe('opaqueInputUrlsIn', () => {
     expect(opaqueInputUrlsIn({ u: ' https://example.com/a.png　', v: `﻿${OCDN}` }).urls).toEqual([
       'https://example.com/a.png',
       OCDN,
+      OKEY,
     ]);
   });
 
@@ -875,7 +892,6 @@ describe('opaqueInputUrlsIn', () => {
 
   it.each([
     [257, '257_512'],
-    [513, '513_1024'],
     [512, '257_512'],
     [513, '513_1024'],
     [1024, '513_1024'],
@@ -951,6 +967,7 @@ describe('opaqueInputUrlsIn', () => {
   it.each([
     ['a decimal entity whose code point runs on into a digit', OCDN.replace('-e', '&#451')],
     ['a hex entity whose code point runs on into a hex letter', OCDN.replace('-', '&#x2d')],
+    ['a hex entity whose code point runs on into a digit', OCDN.replace('-ef56', '&#x2d5678')],
   ])('reads no dash in %s', (_, url) => {
     expect(opaqueInputUrlsIn({ text: `<img src="${url}">` }).urls).toEqual([]);
   });
@@ -958,6 +975,9 @@ describe('opaqueInputUrlsIn', () => {
   it.each([
     ['a line of its own', `\n${OKEY}`],
     ['a line with a tab in it', `\n${OKEY}\tsee`],
+    ['a line after a carriage return', `\r${OKEY}`],
+    ['a tab', `\t${OKEY}`],
+    ['a next-line character', `\u0085${OKEY}`],
   ])('collects a key from %s after an orchestrator url it would rejoin', (_, rest) => {
     const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/a';
     expect(opaqueInputUrlsIn({ text: `${blob}${rest}` }).urls).toContain(OKEY);

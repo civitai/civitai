@@ -385,6 +385,8 @@ const largeKeySetCounter = registerCounterWithLabels({
  */
 const OPAQUE_INPUT_MAX_VISITS = 4 * INLINE_MEDIA_MAX_VISITS;
 const OPAQUE_INPUT_MAX_CHARS = 4 * 1024 * 1024;
+/** Lines of split strings one walk reads: each is parsed as a url, so lines cost the most. */
+const OPAQUE_INPUT_MAX_LINES = INLINE_MEDIA_MAX_VISITS;
 
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
@@ -439,11 +441,17 @@ function isWholeFetchableValue(value: string) {
  * so a caller can refuse rather than pass what it did not read.
  */
 export function opaqueInputUrlsIn(value: unknown) {
+  // Not `walkJsonValues`: this walk splits strings into lines and budgets depth and characters too.
   const urls: string[] = [];
   let tooDeep = false;
   let tooLarge = false;
   let visits = 0;
   let chars = 0;
+  let lines = 0;
+  // A loop, not `push(...keys)`: a spread of ~125k arguments overflows the stack.
+  const pushKeysInText = (text: string) => {
+    for (const key of keysInText(text)) urls.push(key);
+  };
   /** `counted`: a line of a string whose characters were already counted whole. */
   const walk = (item: unknown, depth: number, counted = false) => {
     if (item == null || tooDeep || tooLarge) return;
@@ -465,8 +473,14 @@ export function opaqueInputUrlsIn(value: unknown) {
       // string as a url parser rejoins it too: a key broken across a line is found that way.
       // The rejoined string is not a url to check whole (two listed links would glue into one).
       if (splitsIntoUrlLines(item)) {
-        for (const line of item.split(/[\r\n]+/)) walk(line, depth + 1, true);
-        urls.push(...keysInText(item));
+        const itemLines = item.split(/[\r\n]+/);
+        lines += itemLines.length;
+        if (lines > OPAQUE_INPUT_MAX_LINES) {
+          tooLarge = true;
+          return;
+        }
+        for (const line of itemLines) walk(line, depth + 1, true);
+        pushKeysInText(item);
         return;
       }
       // Unicode spaces too: a consumer trims them (str.strip, Trim) though WHATWG does not.
@@ -478,9 +492,9 @@ export function opaqueInputUrlsIn(value: unknown) {
       if (controlInside && (protocol === 'https:' || protocol === 'http:')) urls.push(parsed);
       else if (isWholeFetchableValue(parsed)) {
         urls.push(parsed);
-        // A url rejoined across a line break: a consumer splitting the lines reads their keys.
-        if (/[\r\n]/.test(item)) urls.push(...keysInText(item));
-      } else urls.push(...keysInText(item));
+        // A url rejoined across a break or space: a consumer splitting on it reads the keys.
+        if (/[^\x21-\x7e]/.test(item)) pushKeysInText(item);
+      } else pushKeysInText(item);
     } else if (Array.isArray(item)) {
       for (const child of item) walk(child, depth + 1);
     } else if (typeof item === 'object') {
@@ -575,10 +589,10 @@ export async function assertGenerationInputsUsable({
   try {
     await assertKeysUsable({ keys: [...keys], urls: keyedUrls, userId, now });
     const imageOnlyKeys = [...externalKeys].filter((key) => !keys.has(key));
-    // Text can carry many unrelated uuids (message and tool call ids). Past the bound a check
-    // would cost too much; an unchecked remainder could be padded around, so it is refused.
     if (imageOnlyKeys.length > IMAGE_ONLY_KEY_SIZE_REPORTED)
       largeKeySetCounter.inc({ entry, size: keySetSizeBucket(imageOnlyKeys.length) });
+    // Text can carry many unrelated uuids (message and tool call ids). Past the bound a check
+    // would cost too much; an unchecked remainder could be padded around, so it is refused.
     if (imageOnlyKeys.length > IMAGE_ONLY_MAX_KEYS)
       throw new TRPCError({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
     await assertKeysUsable({
