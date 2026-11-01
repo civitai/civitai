@@ -416,6 +416,11 @@ describe('assertGenerationInputsUsable', () => {
       'iterateGenerate',
       'imageUpload',
       'appBlocks',
+      'appBlocksStep',
+      'appBlocksPassThrough',
+      'appBlocksWorkflow',
+      'enhancePrompt',
+      'comicPanelJob',
     ] as const)
       expect(await gate([url], entry)).toBe('refused');
   });
@@ -426,6 +431,8 @@ describe('assertGenerationInputsUsable', () => {
       'getIterateCostEstimate',
       'imageUpload',
       'appBlocks',
+      'appBlocksStep',
+      'comicPanelJob',
     ] as const)
       expect(await gate(['https://example.com/a.png'], entry)).toBe('refused');
   });
@@ -452,8 +459,14 @@ describe('assertGenerationInputsUsable', () => {
     expect(await gate([CDN()])).toBe('refused');
   });
 
-  it('allows an external host on the graph paths until the flag is on', async () => {
-    for (const entry of ['generateFromGraph', 'whatIfFromGraph'] as const) {
+  it('allows an external host on the graph and opaque-input paths until the flag is on', async () => {
+    for (const entry of [
+      'generateFromGraph',
+      'whatIfFromGraph',
+      'appBlocksPassThrough',
+      'appBlocksWorkflow',
+      'enhancePrompt',
+    ] as const) {
       holder.refuseExternal = false;
       expect(await gate(['https://example.com/a.png'], entry)).toBe('accepted');
       holder.refuseExternal = true;

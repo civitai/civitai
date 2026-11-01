@@ -15,6 +15,11 @@ import type { SessionUser } from '~/types/session';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { TRPCError } from '@trpc/server';
+import {
+  assertGenerationInputsUsable,
+  GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+} from '~/server/services/generation-input-urls';
 
 const log = createLogger('process-enqueued-comic-panels', 'cyan');
 
@@ -184,6 +189,29 @@ export const processEnqueuedComicPanelsJob = createJob(
 
             // Cap reference images (simple slice)
             const images = (referenceImages || []).slice(0, maxReferenceImages || 3);
+
+            // The stored urls were checked at enqueue; an image may have been blocked or
+            // hidden since.
+            try {
+              await assertGenerationInputsUsable({
+                urls: images.map((image: { url?: string }) => image?.url),
+                userId,
+                entry: 'comicPanelJob',
+                isApiCaller: false,
+              });
+            } catch (error) {
+              if (!(error instanceof TRPCError && error.code === 'BAD_REQUEST')) throw error;
+              log(`Panel ${panel.id}: Reference image no longer usable, marking as failed`);
+              await dbWrite.comicPanel.update({
+                where: { id: panel.id },
+                data: {
+                  status: ComicPanelStatus.Failed,
+                  errorMessage: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+                },
+              });
+              totalFailed++;
+              continue;
+            }
 
             // Determine currencies based on the domain the panel was created on
             const currencies: BuzzSpendType[] = isGreen ? ['green', 'blue'] : ['yellow', 'blue'];

@@ -135,6 +135,7 @@ import { envMock } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { PlatformInternalStepTypeError } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { formatStepTimeout } from '~/server/services/blocks/workflow.service';
+import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 
 // ── An in-memory sysRedis: get/set (NX)/del/incrBy/decrBy. ──────────────────
@@ -1901,6 +1902,78 @@ describe("pass-through arm (kind:'step') — `repeat`", () => {
         'a repeat step needs exactly { for: { $ref, path, as }, template: { $type, name?, input? } }, nested at most 4 deep'
       );
       expect(h.submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
+  const OTHER_USER = 7;
+  const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+  const CDN = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=true`;
+  const BLOB = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
+
+  /** The image row the gate reads for KEY: owner and visibility as given. */
+  function givenImage(owner: number, visible: boolean) {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FROM "Image" i')
+        ? [{ url: KEY, userId: owner, visible, blocked: false }]
+        : []) as never);
+  }
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+  const workflowWith = (url: string) => body({ arguments: { strength: 0.4, image: url } });
+  const passThroughWith = (url: string) => ({
+    kind: 'step' as const,
+    $type: 'imageUpscaler',
+    input: { image: url },
+    maxBuzz: 30,
+  });
+  const registryWith = (url: string) => ({
+    kind: 'step' as const,
+    step: 'convert-image',
+    params: { image: url, output: { format: 'png' } },
+  });
+
+  const ARMS = [
+    ['workflow', workflowWith],
+    ['pass-through step', passThroughWith],
+    ['registry step', registryWith],
+  ] as const;
+
+  it.each(ARMS)(
+    "%s: refuses another user's private image on estimate AND submit, before any orchestrator call",
+    async (_, make) => {
+      givenImage(OTHER_USER, false);
+      await expect(estimate(make(CDN))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+      });
+      await expect(submit(make(CDN))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
+
+  it.each(ARMS.slice(0, 2))(
+    '%s: an external host is counted, not refused, while the external-host flag is off',
+    async (_, make) => {
+      await estimate(make('https://example.com/a.png')).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    }
+  );
+
+  it.each(ARMS)(
+    "POSITIVE CONTROL %s: the caller's own image and an orchestrator blob reach the orchestrator",
+    async (_, make) => {
+      givenImage(VIEWER, false);
+      await estimate(make(CDN)).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+      h.submitWorkflow.mockClear();
+      await estimate(make(BLOB)).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
     }
   );
 });

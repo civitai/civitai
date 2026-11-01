@@ -386,6 +386,10 @@ import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  assertGenerationInputsUsable,
+  generationInputUrlsIn,
+} from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sessionClient } from '~/server/auth/session-client';
@@ -6749,6 +6753,8 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
+      if (input.body.kind === 'workflow' || input.body.kind === 'step')
+        await assertStepOrWorkflowInputsUsable(input.body, parseSubjectUserId(claims.sub) ?? 0);
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -9488,6 +9494,8 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
+  if (input.body.kind === 'workflow' || input.body.kind === 'step')
+    await assertStepOrWorkflowInputsUsable(input.body, parseSubjectUserId(claims.sub) ?? 0);
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -10634,6 +10642,25 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  */
 function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
+}
+
+/** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
+async function assertStepOrWorkflowInputsUsable(
+  body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
+  userId: number
+) {
+  const [entry, inputs] =
+    body.kind === 'workflow'
+      ? (['appBlocksWorkflow', [body.steps.map((step) => step.input), body.arguments]] as const)
+      : isPassThroughStepBody(body)
+      ? (['appBlocksPassThrough', body.input] as const)
+      : (['appBlocksStep', body.params] as const);
+  await assertGenerationInputsUsable({
+    urls: generationInputUrlsIn(inputs),
+    userId,
+    entry,
+    isApiCaller: false,
+  });
 }
 
 /**

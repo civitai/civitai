@@ -139,7 +139,21 @@ export type GenerationInputEntryPoint =
   | 'getIterateCostEstimate'
   | 'imageUpload'
   | 'appBlocks'
-  | 'comicsCostEstimate';
+  | 'appBlocksStep'
+  | 'appBlocksPassThrough'
+  | 'appBlocksWorkflow'
+  | 'enhancePrompt'
+  | 'comicsCostEstimate'
+  | 'comicPanelJob';
+
+/** Entry points where an external host is only counted while the external-host flag is off. */
+const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
+  'generateFromGraph',
+  'whatIfFromGraph',
+  'appBlocksPassThrough',
+  'appBlocksWorkflow',
+  'enhancePrompt',
+]);
 
 const IMAGE_CDN_HOSTS = CIVITAI_IMAGE_HOSTS.map((h) => `image.${h}`);
 
@@ -296,8 +310,8 @@ export function generationInputUrlsIn(value: unknown, out: string[] = [], depth 
  * The one gate on a url a generation reads. Orchestrator blobs pass. A bare key or an image CDN
  * url passes only if every key it carries passes `assertKeysUsable`; a CDN url with no key is
  * refused. Other civitai hosts, non-https and unparseable values are refused. External hosts are
- * refused, except on generateFromGraph / whatIfFromGraph while the external-host flag is off,
- * where they are only counted.
+ * refused, except on `EXTERNAL_COUNTED_ENTRIES` while the external-host flag is off, where they
+ * are only counted.
  */
 export async function assertGenerationInputsUsable({
   urls,
@@ -338,7 +352,7 @@ export async function assertGenerationInputsUsable({
       keyedUrls.push(url);
       continue;
     }
-    if (cls === 'external' && (entry === 'generateFromGraph' || entry === 'whatIfFromGraph')) {
+    if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
       if (await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS))
         throw refuse(cls);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
