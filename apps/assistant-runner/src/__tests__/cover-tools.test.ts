@@ -94,12 +94,47 @@ describe('generate_app_cover on the runner', () => {
     expect(covers.listings.listing.mock.calls[0]![0]).toBe('my-app');
     expect(result).toMatchObject({
       awaitsUser: true,
-      coverOffer: 'run-cover-cover-1',
+      coverOffer: expect.stringMatching(/^run-cover-cover-/),
       app: 'my-app',
       listingId: 'apl_tools',
       prompt: 'a tidy calculator',
       buzz: PRICE,
     });
+  });
+
+  it('names every offer of a run uniquely, across the tool sets a reply opens', async () => {
+    // The runner opens the same provider again for the same run when a result asks for new tools
+    // (`reopenTools`, an app switch mid-reply). An id that restarts with each open would name a
+    // second offer as the first, and the page would show (and press) the first one's card.
+    fake.add('my-app');
+    const covers = fakes({ listingId: 'apl_tools', blockedReason: null, status: 'draft' });
+    const provider = new AppAssistantTools({
+      sandboxUrl: fake.url,
+      tokens: () => async (purpose) => `test-token-${purpose}`,
+      log: quiet,
+      covers: () => covers,
+      wakePollMs: 5,
+      wakeTimeoutMs: 5_000,
+    });
+    const ids: string[] = [];
+    for (const prompt of ['a tidy calculator', 'a sunny desk']) {
+      const tools = await provider.open({
+        userId: 'u-1',
+        runId: 'run-cover',
+        conversationId: 'conv-cover',
+        page: { app: 'my-app' },
+        history: chosenApp('my-app'),
+        signal: new AbortController().signal,
+      });
+      opened.push(tools);
+      const offer = (await call(tools.tools, 'generate_app_cover', { prompt })) as {
+        coverOffer?: string;
+      };
+      ids.push(String(offer.coverOffer));
+    }
+    expect(ids[0]).toMatch(/^run-cover-cover-/);
+    expect(ids[1]).toMatch(/^run-cover-cover-/);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 
   it('offers nothing, and prices nothing, for an app with no store listing', async () => {
