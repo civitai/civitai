@@ -156,10 +156,11 @@ async function awaitWinner(jti: string): Promise<Upgrade | null> {
 /**
  * In host mode, move a browser that reaches the hub with a shared-slot token onto a host-only session; with
  * AUTH_RETIRE_SHARED_SESSION on, also end the shared-slot token and expire its cookies. Requests racing on the
- * same token all get the one session the first of them minted, for 60 seconds after that token is ended. A
- * host-only session the hub honours is kept, whoever it belongs to; the shared-slot token is ended only when it
- * is that same session. An impersonation session, or one whose
- * account may not hold a session, is not moved: it is served from the shared slot until it ends.
+ * same token all get the one session the first of them minted, for UPGRADE_RESULT_TTL_S from that mint. With
+ * retire on, the token is ended then, so a later replay gets no session; with it off, the shared-slot token stays
+ * live by design. A host-only session the hub honours is kept, whoever it belongs to; with retire on, the
+ * shared-slot token is ended when it is that same session. An impersonation session, or one whose account may
+ * not hold a session, is not moved: it is served from the shared slot until it ends.
  * Returns the host-only token, or null when there is none to give.
  */
 export async function upgradeHubSession(
