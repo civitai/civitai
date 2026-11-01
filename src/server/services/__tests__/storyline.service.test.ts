@@ -652,6 +652,20 @@ describe('linkPendingChapter', () => {
       expect(w.storylinePendingChapter.create).not.toHaveBeenCalled();
     });
 
+    // Otherwise trying storyline ids would say which storyline a hidden chapter is in.
+    it('refuses a stranger a chapter of a storyline its chapter 1 hides as no chapter, whatever storyline is named', async () => {
+      const unrated = [
+        { ...shownRootChapters[0], post: { ...shownRootChapters[0].post, nsfwLevel: 0 } },
+      ];
+      parentChapter({ chapters: unrated });
+      for (const storylineId of [10, 11])
+        await expect(
+          link({ storylineId, parentChapterId: 30 }, STRANGER),
+          `storyline ${storylineId}`
+        ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+      expect(w.storylinePendingChapter.create).not.toHaveBeenCalled();
+    });
+
     it('refuses a chapter that does not exist', async () => {
       parentChapter();
       await expect(link({ parentChapterId: 31 })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -1402,6 +1416,7 @@ describe('a storyline whose chapter 1 keeps it from the public', () => {
   // post that is no chapter, the price and the submit would otherwise show it exists.
   describe('continuing it', () => {
     const LIVE_CHAPTER_AUTHOR = 7;
+    const INVITEE = 8;
     const parentFor = (rootOverrides: Record<string, unknown>) => {
       w.storylineChapter.findUnique.mockResolvedValue({
         id: 1005,
@@ -1418,18 +1433,25 @@ describe('a storyline whose chapter 1 keeps it from the public', () => {
           chapters: [root(rootOverrides)],
         },
       } as never);
-      w.storylineCollaborator.findUnique.mockImplementation((({ where }: never) =>
-        Promise.resolve(
-          (where as { storylineId_userId: { userId: number } }).storylineId_userId.userId ===
-            PARTICIPANT
+      w.storylineCollaborator.findUnique.mockImplementation((({ where }: never) => {
+        const { userId } = (where as { storylineId_userId: { userId: number } }).storylineId_userId;
+        return Promise.resolve(
+          userId === PARTICIPANT
             ? { acceptedAt: new Date() }
+            : userId === INVITEE
+            ? { acceptedAt: null }
             : null
-        )) as never);
-      // The query asks for a chapter that is not removed; the fake answers only for its author.
+        );
+      }) as never);
+      // The query asks for this storyline's chapter that is not removed or taken down; the fake
+      // answers only that question, and only for its author.
       w.storylineChapter.findFirst.mockImplementation((({ where }: never) =>
         Promise.resolve(
-          (where as { userId: number; removedAt: null }).userId === LIVE_CHAPTER_AUTHOR &&
-            (where as { removedAt: unknown }).removedAt === null
+          (where as { userId: number }).userId === LIVE_CHAPTER_AUTHOR &&
+            (where as { storylineId: number }).storylineId === 10 &&
+            (where as { removedAt: unknown }).removedAt === null &&
+            (where as { post?: { is?: { tosViolation?: boolean } } }).post?.is?.tosViolation ===
+              false
             ? { id: 1006 }
             : null
         )) as never);
@@ -1442,10 +1464,10 @@ describe('a storyline whose chapter 1 keeps it from the public', () => {
     });
 
     it.each(cases)(
-      'when %s, refuses a stranger or a signed-out price check as no chapter, and not insiders',
+      'when %s, refuses a stranger, an unaccepted invitee or a signed-out price check as no chapter, and not insiders',
       async (_n, overrides) => {
         parentFor(overrides);
-        for (const placerId of [STRANGER, 0])
+        for (const placerId of [STRANGER, INVITEE, 0])
           await expect(attempt(placerId), `user ${placerId}`).rejects.toMatchObject({
             message: STORYLINE_REFUSALS.notAChapter,
           });

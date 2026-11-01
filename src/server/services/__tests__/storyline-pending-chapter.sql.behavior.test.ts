@@ -278,20 +278,26 @@ describe('the storylines feed', () => {
     const INVITEE = 7;
     /** Wrote a chapter a moderator has since removed. */
     const REMOVED_CONTRIBUTOR = 8;
+    /** Wrote a chapter whose post was taken down. */
+    const TAKEN_DOWN_CONTRIBUTOR = 9;
     beforeAll(() =>
       db.pg.exec(`
         INSERT INTO "User" (id, username) VALUES
           (4, 'collaborator'), (5, 'contributor'), (6, 'author'), (7, 'invitee'),
-          (8, 'removed contributor');
+          (8, 'removed contributor'), (9, 'taken-down contributor');
         INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt") VALUES
           (140, 1, 1, now() - interval '1 day'), (141, 5, 1, now() - interval '1 day'),
           (142, 8, 1, now() - interval '1 day');
+        INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt", "tosViolation") VALUES
+          (143, 9, 1, now() - interval '1 day', true);
         INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt") VALUES
           (6, 1, 'Chapter 1 in question', 1, now());
         INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth) VALUES
           (14, 6, 140, 1, 0), (15, 6, 141, 5, 1);
         INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth, "removedAt")
           VALUES (16, 6, 142, 8, 1, now());
+        INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth) VALUES
+          (17, 6, 143, 9, 1);
         INSERT INTO "StorylineCollaborator" ("storylineId", "userId", "acceptedAt") VALUES
           (6, 4, now()), (6, 7, NULL);
       `)
@@ -299,10 +305,10 @@ describe('the storylines feed', () => {
     afterAll(() =>
       db.pg.exec(`
         DELETE FROM "StorylineCollaborator" WHERE "storylineId" = 6;
-        DELETE FROM "StorylineChapter" WHERE id IN (14, 15, 16);
+        DELETE FROM "StorylineChapter" WHERE id IN (14, 15, 16, 17);
         DELETE FROM "Storyline" WHERE id = 6;
-        DELETE FROM "Post" WHERE id IN (140, 141, 142);
-        DELETE FROM "User" WHERE id IN (4, 5, 6, 7, 8);
+        DELETE FROM "Post" WHERE id IN (140, 141, 142, 143);
+        DELETE FROM "User" WHERE id IN (4, 5, 6, 7, 8, 9);
       `)
     );
     afterEach(() =>
@@ -367,6 +373,7 @@ describe('the storylines feed', () => {
       ['stranger', { id: STRANGER }],
       ['invitee who has not accepted', { id: INVITEE }],
       ['author of a removed chapter', { id: REMOVED_CONTRIBUTOR }],
+      ['author of a taken-down chapter', { id: TAKEN_DOWN_CONTRIBUTOR }],
       ['signed-out reader', undefined],
     ] as const;
     const card = async (viewer?: { id: number; isModerator?: boolean }) =>
@@ -443,7 +450,12 @@ describe('the storylines feed', () => {
           assertStorylineVisible(HIDDEN, viewer, NsfwLevel.PG),
           `user ${viewer.id}`
         ).resolves.toBeDefined();
-      for (const viewer of [{ id: INVITEE }, { id: REMOVED_CONTRIBUTOR }, { id: STRANGER }])
+      for (const viewer of [
+        { id: INVITEE },
+        { id: REMOVED_CONTRIBUTOR },
+        { id: TAKEN_DOWN_CONTRIBUTOR },
+        { id: STRANGER },
+      ])
         await expect(
           assertStorylineVisible(HIDDEN, viewer, NsfwLevel.PG),
           `user ${viewer.id}`

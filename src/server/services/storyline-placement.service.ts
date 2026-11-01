@@ -16,6 +16,7 @@ import {
 } from '~/server/services/placement-space.service';
 import {
   assertCanContinueStoryline,
+  StorylineHiddenRefusal,
   continuationPostSelect,
   continuationReadiness,
   writeChapterEdgeForPlacement,
@@ -254,6 +255,15 @@ async function storylineContinuationTerms({
   placerId: number;
   parentPostId: number;
 }) {
+  // Asked first, but its other refusals are said after the space's: a storyline its chapter 1
+  // hides from the placer must be "not a chapter" before "not open" could show that it is one.
+  const assertion = await assertCanContinueStoryline({ parentPostId, placerId }).then(
+    (result) => ({ result }),
+    (error: unknown) => ({ error })
+  );
+  if ('error' in assertion && assertion.error instanceof StorylineHiddenRefusal)
+    throw assertion.error;
+
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -266,7 +276,8 @@ async function storylineContinuationTerms({
 
   if (space.ownerId === placerId) throw throwBadRequestError(STORYLINE_REFUSALS.ownStoryline);
 
-  const { isCollaborator, parent } = await assertCanContinueStoryline({ parentPostId, placerId });
+  if ('error' in assertion) throw assertion.error;
+  const { isCollaborator, parent } = assertion.result;
   const access = storylineContinuationAccess({
     mode: space.mode,
     isCollaborator,
@@ -491,7 +502,17 @@ export async function settleStorylineContinuation({
       if (!parentPostId || !parent || !isAnswerableParentChapter(parent))
         throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
-      if (action === 'decline') return;
+      if (action === 'decline') {
+        // Approving is refused while chapter 1 hides the storyline from the placer, so declining
+        // is too, for the same reason; it waits for chapter 1 or its deadline's refund. The other
+        // refusals approving checks do not stop a decline.
+        await assertCanContinueStoryline({ parentPostId, placerId: pending.placerId }, tx).catch(
+          (error: unknown) => {
+            if (error instanceof StorylineHiddenRefusal) throw error;
+          }
+        );
+        return;
+      }
       if (!postId)
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
 
@@ -711,9 +732,9 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
       });
     } catch (error) {
       // A refusal (taken down, a block, collaborators only) does not pass by
-      // waiting. Anything else might, so the row keeps its deadline and the
-      // next tick retries.
-      if (isRefusal(error)) await refund(row.id);
+      // waiting. Anything else might, as may a chapter 1 that is yet to be published
+      // or rated, so the row keeps its deadline and the next tick retries.
+      if (isRefusal(error) && !(error instanceof StorylineHiddenRefusal)) await refund(row.id);
       continue;
     }
 

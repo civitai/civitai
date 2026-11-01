@@ -195,6 +195,21 @@ const acceptedCollaboratorSql = (alias: string) =>
   Prisma.sql`${Prisma.raw(alias)}."acceptedAt" IS NOT NULL`;
 
 /**
+ * A chapter that makes its author a participant: not removed, its post still there and not taken
+ * down (`isStorylineChapterRemoved`, less the author's own ban, which ends their session anyway).
+ */
+const participantChapterSql = (alias: string) =>
+  Prisma.sql`${Prisma.raw(alias)}."removedAt" IS NULL AND EXISTS (
+    SELECT 1 FROM "Post" pp WHERE pp.id = ${Prisma.raw(
+      alias
+    )}."postId" AND pp."tosViolation" = false
+  )`;
+const participantChapterWhere = {
+  removedAt: null,
+  post: { is: { tosViolation: false } },
+} satisfies Prisma.StorylineChapterWhereInput;
+
+/**
  * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
  * caller inside a transaction reads through it.
  */
@@ -285,8 +300,9 @@ function isStorylineHidden(
 
 /**
  * Of these storylines, the ones this viewer participates in: an accepted collaborator, or the
- * author of a chapter in it that is not removed. Read only for storylines whose chapter 1 would hide them from the
- * viewer, so most reads make no query.
+ * author of a chapter in it that readers are not shown as removed (`participantChapterSql`).
+ * Read only for storylines whose chapter 1 would hide them from the viewer, so most reads make
+ * no query.
  */
 async function getParticipatingStorylineIds(
   storylines: Pick<StorylineVisibilityFields, 'id' | 'userId' | 'chapters'>[],
@@ -308,7 +324,7 @@ async function getParticipatingStorylineIds(
     UNION
     SELECT c."storylineId" FROM "StorylineChapter" c
     WHERE c."userId" = ${viewer.id} AND c."storylineId" = ANY(${ids}::int[])
-      AND c."removedAt" IS NULL
+      AND ${participantChapterSql('c')}
   `;
   return new Set(rows.map((row) => row.storylineId));
 }
@@ -666,7 +682,7 @@ export async function assertCanContinueStoryline(
     }),
     !isOwner && rootHiddenReason(parent.storyline.chapters[0])
       ? db.storylineChapter.findFirst({
-          where: { storylineId: parent.storylineId, userId: placerId, removedAt: null },
+          where: { storylineId: parent.storylineId, userId: placerId, ...participantChapterWhere },
           select: { id: true },
         })
       : null,
@@ -676,13 +692,24 @@ export async function assertCanContinueStoryline(
   // (`isStorylineHidden`): the same refusal as a post that is no chapter, so neither the price
   // nor the submit tells them it exists.
   if (!isOwner && rootHiddenReason(parent.storyline.chapters[0]) && !isCollaborator && !liveChapter)
-    throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+    throw new StorylineHiddenRefusal();
   if (ownerBlocked || authorBlocked)
     throw throwBadRequestError('Continuations are not available on this chapter');
   if (parent.storyline.whoCanContinue === 'Collaborators' && !isOwner && !isCollaborator)
     throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
 
   return { storylineId: parent.storylineId, ownerId, isOwner, isCollaborator, parent };
+}
+
+/**
+ * `assertCanContinueStoryline`'s refusal of a storyline its chapter 1 hides from the placer. Worded
+ * and coded as `notAChapter`, so the placer learns nothing; a distinct class so a caller can tell
+ * it apart from a refusal that waiting cannot lift: chapter 1 may yet be published or rated.
+ */
+export class StorylineHiddenRefusal extends TRPCError {
+  constructor() {
+    super({ code: 'BAD_REQUEST', message: STORYLINE_REFUSALS.notAChapter });
+  }
 }
 
 /** `assertCanContinueStoryline` as a yes/no, for callers that only need to hide an affordance. */
@@ -719,9 +746,11 @@ export async function linkPendingChapter(
     });
     if (!parent || parent.postId == null)
       throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+    // First, so a storyline hidden from this user is refused as no chapter before the id check
+    // could say which storyline the chapter is in.
+    await assertCanContinueStoryline({ parentPostId: parent.postId, placerId: userId }, db);
     if (storylineId && storylineId !== parent.storylineId)
       throw throwBadRequestError('That chapter is not in this storyline');
-    await assertCanContinueStoryline({ parentPostId: parent.postId, placerId: userId }, db);
     linkedStorylineId = parent.storylineId;
   } else {
     if (!storylineId) throw throwBadRequestError('Name the storyline this post starts');
@@ -3992,7 +4021,9 @@ export async function getStorylinesInfinite({
         )
         OR EXISTS (
           SELECT 1 FROM "StorylineChapter" pch
-          WHERE pch."storylineId" = st.id AND pch."userId" = ${viewerId} AND pch."removedAt" IS NULL
+          WHERE pch."storylineId" = st.id AND pch."userId" = ${viewerId} AND ${participantChapterSql(
+      'pch'
+    )}
         ))))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];
