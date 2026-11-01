@@ -692,3 +692,31 @@ export async function checkBlockLLMRateLimit(
     BLOCK_LLM_RATE_LIMIT_WINDOW_SECONDS
   );
 }
+
+// SUBMIT bucket: one call to the bridge `submitWorkflow`, keyed on the install AND the
+// token subject, so one viewer's submits never spend another viewer's allowance on a
+// shared page install. Twice the catalog ceiling `estimateWorkflow` charges, because a
+// block normally estimates before it submits, so an honest block reaches the estimate
+// ceiling first. Same stated limits as every bucket here: a FIXED window and FAIL OPEN
+// on a Redis error. It bounds request volume before any input is resolved; the spend
+// ceilings inside `reserveAppSpend` still bound accepted generations.
+export const BLOCK_SUBMIT_RATE_LIMIT_MAX = 2 * BLOCK_CATALOG_RATE_LIMIT_MAX;
+export const BLOCK_SUBMIT_RATE_LIMIT_WINDOW_SECONDS = BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS;
+
+/**
+ * Records ONE `submitWorkflow` call against the (`blockInstanceId`, `subject`) window.
+ *
+ * @param blockInstanceId the stable per-install identity from the verified token.
+ * @param subject the verified token's `sub` claim (`user:<id>`, or the anon subject,
+ *   which the resolver refuses later anyway).
+ */
+export async function checkBlockSubmitRateLimit(
+  blockInstanceId: string,
+  subject: string
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:submit:${blockInstanceId}:${subject}`,
+    BLOCK_SUBMIT_RATE_LIMIT_MAX,
+    BLOCK_SUBMIT_RATE_LIMIT_WINDOW_SECONDS
+  );
+}

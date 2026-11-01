@@ -17,9 +17,7 @@ import {
  * WHAT THIS GUARD IS FOR, AND WHAT IT IS NOT. It is not "every bridge proc must be rate limited".
  * That would be the wrong rule and the card that produced this file (clawgate #569) says so in its
  * own non-goals: a rate limit on a generation poll loop that is sized too tight breaks generation
- * for honest blocks, and `submitWorkflow` is bounded by a per-app generation VELOCITY ceiling
- * instead (tighter than a request limit on the `standard` tier every app has today — the tier
- * qualifier is load-bearing and is argued at the procedure). The rule is
+ * for honest blocks. The rule is
  * that the DECISION exists and is written down where the next reader will find it. The realistic
  * regression is not someone deleting a limiter — it is the eighteenth bridge proc, written by
  * copying the seventeenth's opening lines, whose author never considered the question at all.
@@ -100,6 +98,7 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockPollRateLimit: 'poll',
   checkBlockEstimateCellsRateLimit: 'estimate-cells',
   checkBlockUploadAppRateLimit: 'upload-app',
+  checkBlockSubmitRateLimit: 'submit',
 });
 
 type Decision = {
@@ -223,8 +222,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     why: 'NONE OF THESE BUCKETS, ON PURPOSE. It is charged the SITE’S own per-user reaction quota through the rateLimit middleware with sharedKey reaction:toggle, so an app’s reactions and the viewer’s clicks share ONE budget instead of the app adding one (maintainer decision, civitai-app-starters#669). That middleware is not one of the primitives this file derives; the shared key is pinned in block-reaction.rate-limit-key.test.ts and blocks.router.appReactions.test.ts.',
   },
   submitWorkflow: {
-    buckets: [],
-    why: 'DELIBERATELY NONE. Bounded by the per-app generation VELOCITY ceiling in reserveAppSpend (120 gens/60 s aggregate on the standard tier — and that tier qualifier is load-bearing: trusted is 600 and platform 3,000) plus the per-user and per-app daily Buzz caps, which unlike every limiter here fail CLOSED. Three stated holes (a pre-reserve rejection loop; the dev-token skip; the velocity counter is app-wide and never refunded) are written out at the procedure.',
+    buckets: ['submit'],
+    why: 'Its own :submit: bucket per (install, token subject), at twice the catalog ceiling estimateWorkflow charges, above every kind branch so a submit refused before reserveAppSpend still counts. reserveAppSpend still bounds accepted generations.',
   },
   updateUserSettings: {
     buckets: [],
@@ -254,8 +253,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
  *       unlimited READS; its `append`, `update`, `vote`, `unvote`, `report` and — as of the shared
  *       REST read surface — `withdraw` all carry their own bucket family.
  *
- * Stated the honest way: across every block-JWT tRPC procedure the figure is **12 unlimited** — the
- * 9 above, plus this file's own three (`submitWorkflow`, `listMyWorkflows`, `updateUserSettings`)
+ * Stated the honest way: across every block-JWT tRPC procedure the figure is **11 unlimited** — the
+ * 9 above, plus this file's own two (`listMyWorkflows`, `updateUserSettings`)
  * — not the 1 that the `blocks.router.ts`-only view suggests. The 9 are named, not fixed;
  * extending this guard across routers is a larger change than #569 asked for.
  *
@@ -431,9 +430,7 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
   it('the UNLIMITED procedures are exactly the ones argued to be unlimited', () => {
     // 🔴 PINNED AS A LITERAL SET rather than derived from the ledger, so that moving a procedure
     // to `buckets: []` is a change to THIS line and cannot pass as bookkeeping — and it earned its
-    // keep immediately: all three members arrived by a DIFFERENT route. `submitWorkflow` was never
-    // limited and is argued from the per-app velocity ceiling; `listMyWorkflows` and
-    // `updateUserSettings` were limited by #569 and UN-limited by its round-0 audit, because each
+    // keep: `listMyWorkflows` and `updateUserSettings` were limited by #569 and UN-limited by its round-0 audit, because each
     // limit's own written justification conceded a margin of 10³–10⁴. Each argument is at its
     // procedure in `blocks.router.ts`. Removing a limit is as much a decision as adding one, and
     // this line is where both kinds have to be declared.
@@ -444,12 +441,7 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
     // `setReactionFromApp` is not unlimited in fact — it is charged the site's per-user reaction
     // quota by the rateLimit middleware, which this file's derivation does not read. It is listed
     // here because that is what `buckets: []` means to this file; its ledger entry says why.
-    expect(unlimited).toEqual([
-      'listMyWorkflows',
-      'setReactionFromApp',
-      'submitWorkflow',
-      'updateUserSettings',
-    ]);
+    expect(unlimited).toEqual(['listMyWorkflows', 'setReactionFromApp', 'updateUserSettings']);
   });
 
   it('pollWorkflow charges a bucket of its OWN — not the catalog one', () => {
