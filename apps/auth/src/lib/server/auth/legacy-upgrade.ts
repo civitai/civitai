@@ -171,8 +171,8 @@ export async function upgradeHubSession(
   // Other hosts can write the shared slot, so it never displaces a host-only session.
   const host = hostToken ? await honouredSession(hostToken) : null;
   if (host) {
-    const shared = await signatureVerifier.verifyToken(sharedToken).catch(() => null);
     if (!retireSharedSession()) return hostToken!;
+    const shared = await signatureVerifier.verifyToken(sharedToken).catch(() => null);
     if (shared?.jti && shared.sub === host.sub && familyId(shared) === familyId(host)) {
       await sessions.invalidateToken(shared.jti, Number(shared.sub)).catch(() => undefined);
     }

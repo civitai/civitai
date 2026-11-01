@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { decodeJwt } from 'jose';
 import type { Cookies } from '@sveltejs/kit';
 import { error } from '@sveltejs/kit';
 import {
@@ -189,11 +190,27 @@ export function setSessionCookie(
     sameSite: 'lax',
     maxAge: getSigner().maxAge,
   });
-  // A host-only copy of an earlier session would win over this one once the hub reads host-only first. It is
+  // A host-only copy of a different session would win over this one once the hub reads host-only first. It is
   // dropped, not rewritten: the next /authorize copies this session afresh.
   const host = hostSessionCookieName();
-  if (slot === 'shared' && host !== name && cookies.get(host) !== undefined) {
+  const copy = slot === 'shared' && host !== name ? cookies.get(host) : undefined;
+  if (copy !== undefined && !isCopyOf(copy, token))
     cookies.delete(host, { path: '/', secure: true });
+}
+
+// Unverified: it only decides whether the hub keeps a cookie of its own, never whether a session is valid.
+function isCopyOf(copy: string, token: string): boolean {
+  try {
+    const a = decodeJwt(copy);
+    const b = decodeJwt(token);
+    return (
+      !!a.sub &&
+      a.sub === b.sub &&
+      familyId(a as Pick<SessionClaims, 'sid' | 'jti'>) ===
+        familyId(b as Pick<SessionClaims, 'sid' | 'jti'>)
+    );
+  } catch {
+    return false;
   }
 }
 

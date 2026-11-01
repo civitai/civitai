@@ -120,7 +120,13 @@ export const handle: Handle = async ({ event, resolve }) => {
   let token = internal ? internal.token : cookieToken;
   let slot = cookieRead?.slot;
   const sharedToken = event.cookies.get(sessionCookieNameForSlot('shared'));
-  if (!internal && sessionCookieMode() === 'host' && sharedToken) {
+  // Only a browser keeps the host-only cookie it is given; any other caller would be moved again on every request.
+  if (
+    !internal &&
+    sessionCookieMode() === 'host' &&
+    sharedToken &&
+    callerShape(event.request, true) === 'browser'
+  ) {
     const upgraded = await upgradeHubSession(event.cookies, sharedToken);
     if (upgraded) [token, slot] = [upgraded, 'host'];
   }

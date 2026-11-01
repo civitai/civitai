@@ -21,7 +21,8 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   maybeCreateSessionSigner: () => ({
     maxAge: 3600,
     mintSessionToken: async (payload: Record<string, unknown>, opts: { jti: string }) => {
-      const token = `tok:${opts.jti}:${payload.signedAt}`;
+      const part = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const token = `${part({ alg: 'none' })}.${part({ ...payload, jti: opts.jti })}.sig`;
       h.tokens.set(token, { ...payload, jti: opts.jti });
       return token;
     },
@@ -116,15 +117,19 @@ async function visit(
     path?: string;
     routeId?: string;
     init?: RequestInit;
+    /** A server-to-server caller: no Origin or Referer. */
+    server?: boolean;
     run?: (event: never) => Promise<Response>;
   } = {}
 ) {
   const path = opts.path ?? '/login';
   const url = new URL(`https://auth.civitai.com${path}`);
+  const headers = new Headers(opts.init?.headers);
+  if (!opts.server && !headers.has('referer')) headers.set('referer', 'https://auth.civitai.com/');
   const event = {
     url,
     route: { id: opts.routeId ?? '/login' },
-    request: new Request(url, opts.init),
+    request: new Request(url, { ...opts.init, headers }),
     cookies,
     locals: {} as Record<string, unknown>,
     getClientAddress: () => '127.0.0.1',
@@ -457,6 +462,74 @@ describe('host mode before the shared-slot session is retired', () => {
     expect(cookies.get(SHARED_DEVICE())).toBe('dev-d');
     expect(h.sys.hashes.get(TOKEN_STATE)?.has('j0')).toBeFalsy();
     expect((await visit(jar({ [SHARED()]: J0 }))).session?.sub).toBe('100');
+  });
+});
+
+describe('a server-to-server caller in host mode before the shared-slot session is retired', () => {
+  beforeEach(() => setMode('host'));
+  const timeline = [0, 30_000, 61_000, 122_000, 183_000];
+
+  it('is served from the shared-slot session and never given a host-only one', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const start = Date.now();
+    sharedSession();
+
+    const sessions = [];
+    for (const at of timeline) {
+      vi.setSystemTime(start + at);
+      sessions.push((await visit(jar({ [SHARED()]: J0 }), { server: true })).session?.jti);
+    }
+
+    expect(mintedJtis().size).toBe(0);
+    expect(sessions).toEqual(timeline.map(() => 'j0'));
+  });
+
+  it('a browser on the same timeline is moved once and keeps that session', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const start = Date.now();
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0 });
+
+    const sessions = [];
+    for (const at of timeline) {
+      vi.setSystemTime(start + at);
+      sessions.push((await visit(cookies)).session?.jti);
+    }
+
+    expect(mintedJtis().size).toBe(1);
+    expect(new Set(sessions)).toEqual(mintedJtis());
+  });
+});
+
+describe('a navigation re-sign in shared mode after /authorize made a host-only copy', () => {
+  it('keeps the copy, so the next /authorize mints nothing new', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0 });
+    await authorize(cookies);
+    const copy = cookies.get(HOST());
+    vi.setSystemTime(Date.now() + 2 * DAY_MS);
+
+    await visit(cookies, { init: { headers: { 'sec-fetch-mode': 'navigate' } } });
+    expect(cookies.get(SHARED())).not.toBe(J0);
+    await authorize(cookies);
+
+    expect(cookies.get(HOST())).toBe(copy);
+    expect(mintedJtis().size).toBe(1);
+  });
+});
+
+describe('a new sign-in of the same account in shared mode after its copied session ended', () => {
+  it('drops the copy of the ended session', async () => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0 });
+    await authorize(cookies);
+    await h.sys.hSet(REDIS_SYS_KEYS.SESSION.FAMILY_STATE, 'j0', 'invalid');
+    cookies.values.delete(SHARED());
+
+    await establishSession(cookies as never, asUser(100));
+
+    expect(cookies.get(HOST())).toBeUndefined();
   });
 });
 
