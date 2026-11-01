@@ -651,6 +651,21 @@ describe('getPendingChapterForPost', () => {
     expect(pending?.storyline).not.toHaveProperty('minorByScan');
   });
 
+  // The editor calls it a branch, not the next chapter, when the parent already has a main path.
+  it('says whether the draft starts a branch, from the parent canon edge', async () => {
+    w.storylineChapterEdge.findFirst.mockResolvedValueOnce(null as never);
+    expect(
+      (await getPendingChapterForPost({ postId: 900, userId: STRANGER }))?.parentChapter
+    ).toMatchObject({ startsBranch: false });
+    w.storylineChapterEdge.findFirst.mockResolvedValueOnce({ chapterId: 31 } as never);
+    expect(
+      (await getPendingChapterForPost({ postId: 900, userId: STRANGER }))?.parentChapter
+    ).toMatchObject({ startsBranch: true });
+    expect(w.storylineChapterEdge.findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { parentChapterId: 30, canon: true } })
+    );
+  });
+
   it('is null for anyone else, and for a post with no link', async () => {
     await expect(getPendingChapterForPost({ postId: 900, userId: OWNER })).resolves.toBeNull();
     await expect(

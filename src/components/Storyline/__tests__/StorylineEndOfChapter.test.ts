@@ -25,7 +25,24 @@ const mocks = vi.hoisted(() => ({
   },
   openContinue: vi.fn(),
   currentUser: null as null | { id: number; isModerator?: boolean },
+  /** The main path after the chapter, as `useStorylineCanonAhead` reads it. */
+  ahead: [] as {
+    chapterId: number;
+    depth: number;
+    tombstone: string | null;
+    post: { id: number; title: string | null } | null;
+  }[],
+  canonAheadFor: vi.fn(),
+  push: vi.fn(),
+  /** Terms per parent post, over `terms`. */
+  termsByPost: {} as Record<number, { open: boolean; price: number; closedReason: null }>,
+  confirm: vi.fn(),
 }));
+vi.mock('@mantine/modals', () => ({
+  openConfirmModal: mocks.confirm,
+  modals: { closeAll: vi.fn() },
+}));
+vi.mock('next/router', () => ({ useRouter: () => ({ push: mocks.push }) }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
@@ -35,7 +52,18 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     isLoading: mocks.isLoading,
   }),
   useStorylineForkShares: () => ({ data: mocks.forkShares }),
-  useStorylineContinueTerms: () => mocks.terms,
+  useStorylineContinueTerms: (parentPostId: number | undefined) => {
+    return parentPostId ? mocks.termsByPost[parentPostId] ?? mocks.terms : null;
+  },
+  useStorylineCanonAhead: (chapterId: number | undefined) => {
+    mocks.canonAheadFor(chapterId);
+    return {
+      ahead: chapterId ? mocks.ahead : [],
+      childrenByChapterId: new Map(),
+      isLoading: false,
+      isSuccess: true,
+    };
+  },
   useStorylineTracking: () => ({
     trackBranchChoice: vi.fn(),
     trackCreateClick: mocks.trackCreateClick,
@@ -106,7 +134,7 @@ function child(
 }
 
 let onContinue = vi.fn();
-function render(props: { parentPostId?: number; isOwner?: boolean } = {}) {
+function render(props: { parentPostId?: number; isOwner?: boolean; onMain?: boolean } = {}) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   act(() => {
@@ -143,6 +171,10 @@ describe('StorylineEndOfChapter', () => {
     mocks.trackCreateClick.mockClear();
     mocks.trigger.mockClear();
     mocks.terms = null;
+    mocks.ahead = [];
+    mocks.push.mockClear();
+    mocks.termsByPost = {};
+    mocks.confirm.mockClear();
     onContinue = vi.fn();
   });
 
@@ -476,6 +508,83 @@ describe('StorylineEndOfChapter', () => {
     ]).toEqual([true, false]);
   });
 
+  // Chapter 4 already has a main-path chapter after it, so writing after it would start a branch.
+  describe('mid-story', () => {
+    const END = {
+      chapterId: 12,
+      depth: 11,
+      tombstone: null,
+      post: { id: 120, title: 'The Bridge' },
+    };
+    const mainWay = (c: HTMLElement) =>
+      c.querySelector<HTMLAnchorElement>('[data-testid="storyline-continue-path-end"]');
+    const branch = (c: HTMLElement) =>
+      c.querySelector<HTMLButtonElement>('[data-testid="storyline-start-branch"]');
+
+    beforeEach(() => {
+      mocks.children = [child(5, 'canon', 'Kept')];
+      mocks.ahead = [
+        { chapterId: 5, depth: 4, tombstone: null, post: { id: 50, title: 'Kept' } },
+        END,
+      ];
+      mocks.terms = { open: true, price: 0, closedReason: null };
+      mocks.openContinue.mockClear();
+    });
+
+    it('keeps reading first, then continues at the real end of the main path, named', () => {
+      const container = render({ parentPostId: 15 });
+      expect(forks(container)).toHaveLength(1);
+      const button = mainWay(container);
+      expect(button?.textContent).toBe('Continue the main path');
+      // Chapter 13, after the end (chapter 12): never after chapter 4.
+      expect(button?.getAttribute('href')).toBe('/posts/create?continues=12&n=13');
+      expect(within(container, 'storyline-path-end-name')?.textContent).toBe(
+        'after Chapter 12 · The Bridge · Free to submit'
+      );
+      expect(within(container, 'storyline-write-next')).toBeNull();
+      act(() => button?.click());
+      expect(mocks.trackCreateClick.mock.calls).toEqual([[{ chapterId: 12 }]]);
+    });
+
+    it("prices the continuation against the end chapter's post, which it is placed on", () => {
+      // This chapter's terms are free; the end's are not. The price shown must be the end's.
+      mocks.termsByPost = { [END.post.id]: { open: true, price: 50, closedReason: null } };
+      const container = render({ parentPostId: 15 });
+      expect(within(container, 'storyline-path-end-name')?.textContent).toBe(
+        'after Chapter 12 · The Bridge · 50 Buzz when you publish'
+      );
+    });
+
+    it("gives the owner's own post to the end as well", () => {
+      const container = render({ parentPostId: 15, isOwner: true });
+      act(() => within(container, 'storyline-add-own-chapter')?.click());
+      expect(mocks.openContinue.mock.calls).toEqual([[{ parentPostId: 120, parentChapterId: 12 }]]);
+    });
+
+    it('says "this path" on a branch', () => {
+      expect(mainWay(render({ parentPostId: 15, onMain: false }))?.textContent).toBe(
+        'Continue this path'
+      );
+    });
+
+    it('starts a branch from this chapter only after a confirm', () => {
+      const container = render({ parentPostId: 15 });
+      act(() => branch(container)?.click());
+      expect(mocks.push).not.toHaveBeenCalled();
+      expect(mocks.confirm).toHaveBeenCalledTimes(1);
+      const { title, labels, onConfirm } = mocks.confirm.mock.calls[0][0];
+      expect([title, labels.confirm]).toEqual(['Start a branch?', 'Write a branch']);
+      act(() => onConfirm());
+      expect(mocks.push.mock.calls).toEqual([['/posts/create?continues=4&n=5']]);
+    });
+
+    it('offers no main-path continue when its end is hidden from the reader, only the branch', () => {
+      mocks.ahead = [{ ...END, tombstone: 'hidden', post: null }];
+      const container = render({ parentPostId: 15 });
+      expect([!!mainWay(container), !!branch(container)]).toEqual([false, true]);
+    });
+  });
+
   describe('writing the next chapter', () => {
     const write = (c: HTMLElement) =>
       c.querySelector<HTMLAnchorElement>('[data-testid="storyline-write-next"]');
@@ -494,6 +603,8 @@ describe('StorylineEndOfChapter', () => {
       const button = write(container);
       expect(button?.textContent).toBe('Write the next chapter');
       expect(button?.getAttribute('href')).toBe('/posts/create?continues=4&n=5');
+      // No main path after it, so writing here is the next chapter, and no branch is offered.
+      expect(container.querySelector('[data-testid="storyline-start-branch"]')).toBeNull();
       expect(mocks.trackCreateClick).not.toHaveBeenCalled();
       act(() => button?.click());
       expect(mocks.trackCreateClick.mock.calls).toEqual([[{ chapterId: 4 }]]);

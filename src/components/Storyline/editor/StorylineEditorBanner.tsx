@@ -21,6 +21,8 @@ export type StorylineEditorBannerProps =
       variant: 'continue';
       storyline: BannerStoryline & { maxNsfwLevel: number };
       chapterNumber: number;
+      /** Its parent already has a main-path chapter: this one starts a side path. */
+      startsBranch?: boolean;
     } & DraftRemoval);
 
 /** What the post editor says about the storyline its post belongs to. */
@@ -39,7 +41,11 @@ export function StorylineEditorBanner(props: StorylineEditorBannerProps) {
           <>
             <div className="flex items-center gap-2">
               <Text size="xs" fw={700} c="violet">
-                Chapter {props.variant === 'start' ? 1 : props.chapterNumber}
+                {props.variant === 'start'
+                  ? 'Chapter 1'
+                  : props.startsBranch
+                  ? `A branch after chapter ${props.chapterNumber - 1}`
+                  : `Chapter ${props.chapterNumber}`}
               </Text>
               {props.variant === 'continue' && (
                 <Badge
