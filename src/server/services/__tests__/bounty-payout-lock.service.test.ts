@@ -1658,7 +1658,7 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
     recordStuckAward();
     buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
     await expect(moderatorDelete()).rejects.toThrow(
-      'are being refunded (the refund is retried automatically)'
+      'are not all refunded yet (failed refunds are retried or logged for follow-up)'
     );
     expect(bounty).toMatchObject({ refunded: true });
     expect(isPayoutPending(bounty!)).toBe(true);
@@ -1709,6 +1709,18 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
     expect(refunded()).toEqual([]);
     expect(modActivityRows).toEqual([]);
     expect(ledgerRows().map(([key]) => key)).toContain('bounty-award-b4-u5-yellow');
+  });
+
+  it('records only a supporter whose lookup came back empty on both passes', async () => {
+    recordStuckAward();
+    let lookupsFor6 = 0;
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => {
+      if (prefix === 'bounty-4-5-1') return [];
+      return ++lookupsFor6 === 1 ? [{ accountType: 'yellow', amount: 50 }] : [];
+    });
+    expect(await releaseStuckBountyAward(4, 99)).toEqual({ unpaidAwards: 1, refundSettled: true });
+    expect(modActivityRows.map((r) => r.userId)).toEqual([5]);
+    expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
   });
 
   it('refunds a legacy supporter who never awarded, once', async () => {

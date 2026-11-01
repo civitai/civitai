@@ -27,10 +27,7 @@ export function isPayoutPending(state: {
 /** How long a payout stays pending before the retry job takes it over. */
 export const BOUNTY_PAYOUT_RETRY_AFTER_MS = 10 * 60 * 1000;
 
-/**
- * A pending payout the retry job has taken over, read from the same `payoutRecordedAt` it selects
- * on. Such a bounty takes no new support or awards.
- */
+/** A pending payout old enough for `retryUnsettledBountyPayouts` to select; it reads the same `payoutRecordedAt`. */
 export function isPayoutOverdue(
   state: { payoutRecordedAt: Date | null; payoutSettledAt: Date | null },
   now = Date.now()

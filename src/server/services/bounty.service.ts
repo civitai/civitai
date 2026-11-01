@@ -846,7 +846,7 @@ export const deleteBountyById = async ({
           message: `The bounty was NOT deleted. Its award could not be paid in full, so it was closed instead: the other awards were paid, supporters who had not awarded ${
             release.refundSettled
               ? 'were refunded'
-              : 'are being refunded (the refund is retried automatically)'
+              : 'are not all refunded yet (failed refunds are retried or logged for follow-up)'
           }, and ${release.unpaidAwards} award(s) were recorded for manual resolution.`,
         });
       throw new TRPCError({
@@ -1280,10 +1280,7 @@ async function refundAwardingSupporter(bountyId: number, supporter: AwardedFunds
   return true;
 }
 
-/**
- * `ok`: every awarding supporter was paid except the `unpriceable` ones. The award is settled only
- * when it is ok and none are unpriceable.
- */
+/** `ok` is false on any failure other than an unpriceable supporter, which is listed in `unpriceable` instead. */
 type AwardOutcome = { ok: boolean; unpriceable: number[] };
 
 /**
@@ -1511,12 +1508,10 @@ const BOUNTY_PAYOUT_RETRY_MAX_BATCHES = 20;
 const STUCK_AWARD_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The moderator exit for an award that a supporter's missing charge keeps from settling, once that
- * supporter's award (`awardedAt`) is a day old. Every other award is paid, the bounty is closed as a
- * refund of the supporters who never awarded, and it is kept. A supporter whose award could not be
- * priced gets neither payment nor refund: each is recorded, with the claim, for a manual ruling after
- * a ledger check. Returns how many awards were recorded and whether the refund settled, or null when
- * the exit does not apply: any other failure is the retry job's.
+ * Moderator exit for an award that a supporter with no charge on record keeps from settling.
+ * Closes the bounty as a refund of the supporters who never awarded, keeps it, and records each
+ * unpriced award (neither paid nor refunded) for a manual ruling. Needs every unpriced award to be a
+ * day old. Returns the recorded count and whether the refund settled, or null when it does not apply.
  */
 export async function releaseStuckBountyAward(
   bountyId: number,
@@ -1552,8 +1547,8 @@ export async function releaseStuckBountyAward(
   )
     return null;
 
-  // Awarding marks are kept (see the invariant above), so the refund leaves every award out. Overdue:
-  // no award was recorded since the retry window, so no award's own settle is still running.
+  // Overdue, so no award's own settle is still running. The awarding marks stay, so the refund
+  // skips every award.
   const claimed = await dbWrite.$transaction(async (tx) => {
     const locked = await lockBountyForPayout(tx, bountyId);
     if (
@@ -1585,7 +1580,7 @@ export async function releaseStuckBountyAward(
     refundDescription: 'Reason: Bounty refund, the bounty was closed by a moderator',
   });
   for (const supporter of unpaid)
-    logToAxiom({
+    await logToAxiom({
       name: 'bounty-award',
       type: 'error',
       message: `Bounty ${bountyId}: award from user ${supporter.userId} has no charge on record; neither paid nor refunded, for a manual ruling`,
