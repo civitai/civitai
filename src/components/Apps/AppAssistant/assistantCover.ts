@@ -55,8 +55,14 @@ const OFFER_BUTTON_STYLE = `${BUTTON_STYLE};margin-right:8px`;
 
 /**
  * The cover offer cards. A press runs once: the button goes as it is pressed, and nothing on the card
- * can start a second run. Leaving the page while a cover is made stops it (its run is cancelled).
- * A press that finds a higher price makes nothing: the card asks again at that price.
+ * can start a second run. A press that finds a higher price makes nothing: the card asks again at
+ * that price.
+ *
+ * While a cover is being made the page asks before it unloads (`beforeunload`). If the user leaves
+ * anyway, `pagehide` aborts the press: nothing is submitted if it is still reading the listing or
+ * the price, and a submitted run is sent a cancel. That cancel is an ordinary request (the SDK's
+ * client takes no `keepalive`), so a page that is already unloading may drop it, and the run then
+ * finishes and is billed.
  */
 export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCards {
   const cards = new Map<string, Card>();
@@ -103,7 +109,13 @@ export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCar
     show(card, line(COVER_MAKING, 'status'));
     const stop = new AbortController();
     const leave = () => stop.abort();
+    // Asks before the page unloads, as leaving mid-run may not stop the run (see above).
+    const ask = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
     window.addEventListener('pagehide', leave, { once: true });
+    window.addEventListener('beforeunload', ask);
     try {
       const said = await make(card.offer, stop.signal);
       card.phase = 'done';
@@ -120,6 +132,7 @@ export function createCoverCards({ make }: { make: MakeOfferedCover }): CoverCar
       show(card, line(coverErrorMessage(error), 'alert'));
     } finally {
       window.removeEventListener('pagehide', leave);
+      window.removeEventListener('beforeunload', ask);
     }
   };
 

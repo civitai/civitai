@@ -163,6 +163,8 @@ export class CoverPriceRoseError extends Error {
 }
 export const COVER_NOT_SET_UP = 'Covers cannot be made here.';
 export const COVER_NOT_GENERATED = 'The cover could not be generated, so nothing was attached.';
+export const COVER_SUBMIT_UNCONFIRMED =
+  'Civitai could not confirm whether your cover was started, so you may have been charged for it. Check your Buzz transactions before you try again; nothing was put on your listing.';
 export const COVER_LISTING_CHANGED =
   'Your app’s store listing changed since this cover was offered, so nothing was generated. Ask App Assistant for a cover again.';
 // Carries the image's URL: it is already paid for, so the user need not generate it again.
@@ -279,6 +281,8 @@ export async function makeOfferedCover(
   }
   if (!Number.isFinite(now) || now < 0) throw new Error(COVER_PRICE_UNCHECKED);
   if (now > offer.buzz) throw new CoverPriceRoseError(now);
+  // Left while the listing or the price was read (a read that ignored the signal): submit nothing.
+  signal?.throwIfAborted();
   const url = await deps.generate(coverWorkflowFor(offer), signal);
   const attached = await deps.attach(listing.listingId, url, offer.app);
   const where = listing.status === 'pending' ? COVER_ON_LISTING_IN_REVIEW : COVER_ON_DRAFT;
@@ -294,7 +298,10 @@ export interface ListingForCover {
 
 /** The listing editor's procedures the cover goes through; the runner reaches only the read. */
 export interface CoverListingApi {
-  getMyListingForApp(input: { slug: string }): Promise<ListingForCover>;
+  getMyListingForApp(
+    input: { slug: string },
+    opts?: { signal?: AbortSignal }
+  ): Promise<ListingForCover>;
   ingestAssetFromUrl(input: { url: string; kind: 'cover' }): Promise<{ imageId: number }>;
   /** Never answers `pending`: `setListingCover` loads with `allowPending`, so it attaches or throws. */
   setCover(input: {
@@ -314,12 +321,16 @@ export function isNoListingError(error: unknown): boolean {
 /** The user's own listing for `app` through `api`; null when they have none. */
 export async function readCoverListing(
   api: Pick<CoverListingApi, 'getMyListingForApp'>,
-  app: string
+  app: string,
+  signal?: AbortSignal
 ): Promise<CoverListing | null> {
   let listing: ListingForCover;
   try {
-    listing = await api.getMyListingForApp({ slug: app });
+    listing = await (signal
+      ? api.getMyListingForApp({ slug: app }, { signal })
+      : api.getMyListingForApp({ slug: app }));
   } catch (error) {
+    if (signal?.aborted) throw error;
     if (isNoListingError(error)) return null;
     throw new Error(COVER_LISTING_UNREADABLE);
   }
@@ -354,7 +365,8 @@ export interface CoverOrchestration {
 /** Orchestration's what-if for a workflow: what it would cost, submitting nothing. */
 export interface CoverEstimator {
   estimateWorkflow(
-    template: AppCoverWorkflow
+    template: AppCoverWorkflow,
+    opts?: { signal?: AbortSignal }
   ): Promise<{ cost?: { total?: number | null } | null }>;
 }
 
@@ -367,9 +379,12 @@ export interface CoverWorkflowResult {
 /** What `workflow` would cost in Buzz, from orchestration's what-if; throws when it gives no price. */
 export async function priceCover(
   client: CoverEstimator,
-  workflow: AppCoverWorkflow
+  workflow: AppCoverWorkflow,
+  signal?: AbortSignal
 ): Promise<number> {
-  const quote = await client.estimateWorkflow(workflow);
+  const quote = await (signal
+    ? client.estimateWorkflow(workflow, { signal })
+    : client.estimateWorkflow(workflow));
   const total = quote?.cost?.total;
   if (typeof total !== 'number' || !Number.isFinite(total) || total < 0)
     throw new Error(COVER_PRICE_UNREADABLE);
@@ -386,7 +401,16 @@ export async function generateCover(
   workflow: AppCoverWorkflow,
   signal?: AbortSignal
 ): Promise<string> {
-  const submitted = await client.submitWorkflow(workflow);
+  let submitted: CoverWorkflowResult;
+  try {
+    submitted = await client.submitWorkflow(workflow);
+  } catch (error) {
+    // Orchestration's own answer (a 4xx: not enough Buzz, the daily cap) charged nothing and says
+    // why. Anything else (no answer, a 5xx) may have come after it accepted the run.
+    const status = (error as { status?: unknown } | null)?.status;
+    if (typeof status === 'number' && status >= 400 && status < 500) throw error;
+    throw new Error(COVER_SUBMIT_UNCONFIRMED);
+  }
   if (!submitted.id) throw new Error(COVER_NOT_GENERATED);
   const id = submitted.id;
   let done: CoverWorkflowResult;

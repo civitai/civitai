@@ -429,7 +429,8 @@ export function AppAssistantWorkspace({
             return app && isAppBlockId(app) ? app : null;
           },
           api: {
-            getMyListingForApp: (input) => trpcVanilla.appListings.getMyListingForApp.query(input),
+            getMyListingForApp: (input, opts) =>
+              trpcVanilla.appListings.getMyListingForApp.query(input, opts),
             ingestAssetFromUrl: (input) => trpcVanilla.appListings.ingestAssetFromUrl.mutate(input),
             setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
           },

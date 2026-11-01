@@ -34,6 +34,7 @@ export {
   COVER_PRICE_UNCHECKED,
   COVER_PRICE_UNREADABLE,
   COVER_SCAN_PENDING,
+  COVER_SUBMIT_UNCONFIRMED,
   CoverPriceRoseError,
   GENERATE_APP_COVER,
   appCoverWorkflow,
@@ -61,9 +62,24 @@ export type {
 /** The page's orchestration client: the cover's what-if and its run. */
 export type PageCoverOrchestration = CoverOrchestration & CoverEstimator;
 
-/** A refusal civitai answered over tRPC (it has a code): the cover is surely not on the listing. */
+/**
+ * tRPC codes that are civitai failing on its own side, not refusing: `setListingCover` commits
+ * before the call that can throw, so after one of these the cover may already be on the listing.
+ */
+const SERVER_SIDE_CODES = new Set([
+  'INTERNAL_SERVER_ERROR',
+  'NOT_IMPLEMENTED',
+  'BAD_GATEWAY',
+  'SERVICE_UNAVAILABLE',
+  'GATEWAY_TIMEOUT',
+  'TIMEOUT',
+  'CLIENT_CLOSED_REQUEST',
+]);
+
+/** A refusal civitai answered over tRPC: the cover is surely not on the listing. */
 function isRefusal(error: unknown): boolean {
-  return typeof (error as { data?: { code?: unknown } } | null)?.data?.code === 'string';
+  const code = (error as { data?: { code?: unknown } } | null)?.data?.code;
+  return typeof code === 'string' && !SERVER_SIDE_CODES.has(code);
 }
 
 /**
@@ -83,9 +99,11 @@ export function createBrowserCoverDeps({
   /** Told only once `setCover` has succeeded. */
   onAttached?: () => void;
 }): { offer: Omit<CoverArtDeps, 'nextId'>; press: CoverPressDeps } {
-  const listing = (app: string) => readCoverListing(api, app);
+  // The press passes its abort to both, so leaving while they are read stops them.
+  const listing = (app: string, signal?: AbortSignal) => readCoverListing(api, app, signal);
   // One what-if for both: the press asks the same question the offer did, as the same user.
-  const price = async (workflow: AppCoverWorkflow) => priceCover(await orchestration(), workflow);
+  const price = async (workflow: AppCoverWorkflow, signal?: AbortSignal) =>
+    priceCover(await orchestration(), workflow, signal);
   return {
     offer: { currentApp, listing, price },
     press: {
