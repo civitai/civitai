@@ -68,6 +68,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   };
 });
 
+const { SearchIndexUpdate } = await import('~/server/search-index/SearchIndexUpdate');
 const { awardBountyEntry, deleteBountyEntry } = await import(
   '~/server/services/bountyEntry.service'
 );
@@ -96,7 +97,7 @@ type Benefactor = {
 };
 type BountyRow = {
   id: number;
-  userId: number;
+  userId: number | null;
   complete: boolean;
   refunded: boolean;
   poi: boolean;
@@ -112,15 +113,24 @@ let benefactors: Benefactor[];
 let entryFiles: { metadata: Record<string, unknown> }[];
 type ModActivityRow = { userId: number; entityType: string; entityId: number; activity: string };
 let modActivityRows: ModActivityRow[];
-// The open-unpaid-award rule, over the rows in order: a resolution counts only after the record.
-const openUnpaidAward = () =>
-  modActivityRows.some(
-    (u, i) =>
-      u.activity === 'bountyAwardUnpaid' &&
-      !modActivityRows
-        .slice(i + 1)
-        .some((r) => r.userId === u.userId && r.activity.startsWith('bountyAwardResolved:'))
-  );
+type UnpaidAward = {
+  bountyId: number;
+  userId: number;
+  unitAmount: number;
+  buzzTransactionIds: string[];
+  winnerUserId: number | null;
+  ownerId: number | null;
+  recordedById?: number | null;
+  ruling?: string | null;
+  ledgerReference?: string | null;
+  resolvedById?: number | null;
+  resolvedAt?: Date | null;
+};
+/** "BountyUnpaidAward", keyed by supporter: every row here is on bounty 4. */
+let unpaidAwards: Map<number, UnpaidAward>;
+/** Whether the hand-applied migration has created "BountyUnpaidAward". */
+let awardTable: boolean;
+const openUnpaidAward = () => [...unpaidAwards.values()].some((a) => !a.resolvedAt);
 const entry = { id: 10, bountyId: 4, userId: 8 };
 // Who owns each entry a supporter may award; entry 11 is a second entrant's.
 const entryOwners: Record<number, number> = { 10: 8, 11: 9 };
@@ -155,15 +165,28 @@ function transactionClient(held: (() => void)[]) {
     $queryRaw: async (strings: TemplateStringsArray) => {
       const sql = strings.join('?');
       // deleteBountyById deletes or keeps the bounty in one statement.
+      // An open unpaid award keeps the bounty, hidden and detached, as Postgres would.
       if (sql.includes('DELETE FROM "Bounty"')) {
         await tick();
+        if (bounty && openUnpaidAward()) {
+          if (!(bounty.meta as { removedWithOwner?: boolean } | undefined)?.removedWithOwner)
+            Object.assign(bounty, {
+              availability: 'Private',
+              userId: null,
+              meta: {
+                removedWithOwner: true,
+                availabilityBeforeRemoval: bounty.availability,
+                userIdBeforeRemoval: bounty.userId,
+              },
+            });
+          events.push('hide');
+          return [{ gone: false }];
+        }
         const gone = !!bounty;
         bounty = null;
         if (gone) events.push('delete');
         return [{ gone }];
       }
-      // The open-unpaid-award check ahead of a delete.
-      if (sql.includes('AS open')) return [{ open: openUnpaidAward() }];
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);
       held.push(await rowLock.acquire());
       return bounty ? [{ meta: null, ...bounty }] : [];
@@ -280,23 +303,47 @@ function transactionClient(held: (() => void)[]) {
         modActivityRows.push(data);
         return data;
       },
-      findFirst: async ({
+      // Only the ModActivity-only record, before the table existed, is read.
+      findFirst: async ({ where }: { where: { userId: number; activity: string } }) => {
+        await tick();
+        const row = modActivityRows.find(
+          (r) => r.userId === where.userId && r.activity === where.activity
+        );
+        return row ? { createdAt: new Date(0) } : null;
+      },
+    },
+    bountyUnpaidAward: {
+      createMany: async ({ data }: { data: UnpaidAward[] }) => {
+        await tick();
+        if (!awardTable) throw new Error('relation "BountyUnpaidAward" does not exist');
+        for (const row of data) {
+          if (unpaidAwards.has(row.userId)) throw new Error('duplicate key');
+          unpaidAwards.set(row.userId, { ...row });
+        }
+        return { count: data.length };
+      },
+      findUnique: async ({ where }: { where: { bountyId_userId: { userId: number } } }) => {
+        await tick();
+        const row = unpaidAwards.get(where.bountyId_userId.userId);
+        return row ? { ...row } : null;
+      },
+      create: async ({ data }: { data: UnpaidAward }) => {
+        await tick();
+        if (unpaidAwards.has(data.userId)) throw new Error('duplicate key');
+        unpaidAwards.set(data.userId, { ...data });
+        return { ...data };
+      },
+      update: async ({
         where,
+        data,
       }: {
-        where: { userId: number; activity: string | { startsWith: string }; id?: { gt: number } };
+        where: { bountyId_userId: { userId: number } };
+        data: Partial<UnpaidAward>;
       }) => {
         await tick();
-        const rows = modActivityRows
-          .map((row, id) => ({ ...row, id }))
-          .filter(
-            (r) =>
-              r.userId === where.userId &&
-              (where.id === undefined || r.id > where.id.gt) &&
-              (typeof where.activity === 'string'
-                ? r.activity === where.activity
-                : r.activity.startsWith(where.activity.startsWith))
-          );
-        return rows.at(-1) ?? null;
+        const row = unpaidAwards.get(where.bountyId_userId.userId)!;
+        Object.assign(row, data);
+        return { ...row };
       },
     },
     imageConnection: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
@@ -311,6 +358,8 @@ beforeEach(() => {
   fileCheck.on = false;
   entryFiles = [];
   modActivityRows = [];
+  unpaidAwards = new Map();
+  awardTable = true;
   bounty = {
     id: 4,
     userId: 5,
@@ -339,6 +388,8 @@ beforeEach(() => {
   ];
 
   loggingMock.logToAxiom.mockResolvedValue(undefined);
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+    strings.join('?').includes('to_regclass') ? [{ present: awardTable }] : []) as never);
   dbMock.dbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
     const held: (() => void)[] = [];
     try {
@@ -1811,40 +1862,60 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
         ledgerReference: 'manual payout to the winner',
         moderatorId: 99,
       });
+    const searchDeletes = () =>
+      vi
+        .mocked(SearchIndexUpdate.queueUpdate)
+        .mock.calls.flatMap(([{ items }]) => items as { id: number; action: string }[]);
     beforeEach(async () => {
       recordStuckAward();
       await expect(moderatorDelete()).rejects.toThrow('NOT deleted');
       vi.clearAllMocks();
     });
 
-    it('refuses a second delete while the award is unresolved, and keeps the supporter rows', async () => {
-      await expect(moderatorDelete()).rejects.toMatchObject({
-        code: 'CONFLICT',
-        message: expect.stringContaining('award recorded for manual resolution'),
+    it('keeps a durable record of the award, which an entry delete cannot reach', async () => {
+      expect([...unpaidAwards.values()]).toEqual([
+        {
+          bountyId: 4,
+          userId: 5,
+          unitAmount: 100,
+          buzzTransactionIds: ['bounty-4-5-1'],
+          winnerUserId: 9,
+          ownerId: 5,
+          recordedById: 99,
+        },
+      ]);
+      await deleteBountyEntry({ id: 10, isModerator: true });
+      expect(unpaidAwards.get(5)).toMatchObject({ unitAmount: 100, winnerUserId: 9 });
+      expect(bounty).toMatchObject({ payoutWinnerUserId: 9 });
+    });
+
+    it('hides and detaches the bounty on a second delete, keeping it and its supporter rows', async () => {
+      expect(await moderatorDelete()).toMatchObject({ id: 4 });
+      expect(bounty).toMatchObject({
+        availability: 'Private',
+        userId: null,
+        meta: { removedWithOwner: true, userIdBeforeRemoval: 5 },
       });
-      expect(bounty).not.toBeNull();
-      expect(events).not.toContain('delete');
+      expect(benefactors.map((b) => b.userId)).toEqual([5, 6, 7]);
+      expect(searchDeletes()).toEqual([{ id: 4, action: 'Delete' }]);
       expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
       expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
     });
 
     it('deletes once the award is resolved', async () => {
       expect(await resolve()).toEqual({ recorded: true });
+      expect(unpaidAwards.get(5)).toMatchObject({
+        ruling: 'paid_winner',
+        ledgerReference: 'manual payout to the winner',
+        resolvedById: 99,
+        resolvedAt: expect.any(Date),
+      });
       expect(modActivityRows.at(-1)).toEqual({
-        userId: 5,
+        userId: 99,
         entityType: 'bounty',
         entityId: 4,
-        activity: 'bountyAwardResolved:paid_winner',
+        activity: 'bountyAwardResolved',
       });
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          bountyId: 4,
-          userId: 5,
-          ruling: 'paid_winner',
-          ledgerReference: 'manual payout to the winner',
-          moderatorId: 99,
-        })
-      );
       await moderatorDelete();
       expect(bounty).toBeNull();
       expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
@@ -1855,18 +1926,57 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       await resolve();
       expect(await resolve()).toEqual({ recorded: false });
       expect(modActivityRows).toHaveLength(2);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     });
 
     it('refuses a different ruling on a resolved award', async () => {
       await resolve();
       await expect(resolve('refunded_supporter')).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(unpaidAwards.get(5)?.ruling).toBe('paid_winner');
+    });
+
+    it('records one of two rulings sent at once', async () => {
+      const results = await Promise.allSettled([resolve(), resolve('refunded_supporter')]);
+      expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
       expect(modActivityRows).toHaveLength(2);
     });
 
     it('refuses to resolve a supporter with no award recorded as unpaid', async () => {
       await expect(resolve('paid_winner', 6)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       expect(modActivityRows).toHaveLength(1);
-      await expect(moderatorDelete()).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(openUnpaidAward()).toBe(true);
     });
+
+    it('resolves an award recorded before the table existed, from its supporter row', async () => {
+      unpaidAwards.clear();
+      expect(await resolve()).toEqual({ recorded: true });
+      expect(unpaidAwards.get(5)).toMatchObject({
+        unitAmount: 100,
+        buzzTransactionIds: ['bounty-4-5-1'],
+        winnerUserId: 9,
+        ownerId: 5,
+        ruling: 'paid_winner',
+        resolvedById: 99,
+      });
+    });
+
+    it('refuses to resolve on a bounty that is gone, unserialised', async () => {
+      bounty = null;
+      await expect(resolve()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(unpaidAwards.get(5)?.resolvedAt).toBeUndefined();
+    });
+
+    it('refuses to resolve while the table is missing', async () => {
+      awardTable = false;
+      await expect(resolve()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      expect(unpaidAwards.get(5)?.resolvedAt).toBeUndefined();
+    });
+  });
+
+  it('refuses the release while the table is missing, and moves no refund', async () => {
+    recordStuckAward();
+    awardTable = false;
+    await refusesAndMovesNoRefund();
+    expect(unpaidAwards.size).toBe(0);
   });
 });

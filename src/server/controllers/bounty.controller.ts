@@ -444,7 +444,14 @@ export const resolveUnpaidBountyAwardHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    return await resolveUnpaidBountyAward({ ...input, moderatorId: ctx.user.id });
+    const { bountyId, userId, ruling, ledgerReference } = input;
+    return await resolveUnpaidBountyAward({
+      bountyId,
+      userId,
+      ruling,
+      ledgerReference,
+      moderatorId: ctx.user.id,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

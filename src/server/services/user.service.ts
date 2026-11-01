@@ -23,7 +23,11 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
-import { openUnpaidBountyAwardSql, payoutPendingSql } from '~/server/services/bounty-payout-lock';
+import {
+  bountyUnpaidAwardTableExists,
+  openUnpaidBountyAwardSql,
+  payoutPendingSql,
+} from '~/server/services/bounty-payout-lock';
 import {
   bountyThreadParents,
   detachHeldThreadsCte,
@@ -1797,8 +1801,9 @@ export const removeAllContent = async ({
       WITH ${detach({ bountyEntryId: doomedEntries })}
       DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
     // A held entrant, or an award recorded for manual resolution, keeps the bounty hidden.
+    const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
     const keepsBounty = Prisma.sql`(${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
-      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'))})`;
+      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)})`;
     const doomedBounties = Prisma.sql`SELECT b.id FROM "Bounty" b
       WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}
         AND NOT ${keepsBounty}`;

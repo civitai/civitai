@@ -251,13 +251,17 @@ beforeAll(async () => {
     CREATE DOMAIN "Availability" AS text;
     ALTER TABLE "Bounty" ADD COLUMN availability "Availability" NOT NULL DEFAULT 'Public',
       ADD COLUMN meta jsonb, ADD COLUMN "payoutSettledAt" timestamp(3),
-      ADD COLUMN "payoutRecordedAt" timestamp(3),
+      ADD COLUMN "payoutRecordedAt" timestamp(3), ADD COLUMN "payoutWinnerUserId" int,
       ADD COLUMN complete boolean NOT NULL DEFAULT false,
       ADD COLUMN refunded boolean NOT NULL DEFAULT false;
     CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);
     CREATE TABLE "ModActivity" (
-      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
+    ALTER TABLE "BountyBenefactor" ADD COLUMN "userId" int,
+      ADD COLUMN "unitAmount" int NOT NULL DEFAULT 0,
+      ADD COLUMN "buzzTransactionId" text[] NOT NULL DEFAULT '{}';
     ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
       ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
       ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
@@ -300,6 +304,15 @@ beforeAll(async () => {
     readFileSync(
       path.resolve(
         __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20261217120000_bounty_unpaid_award/migration.sql'
+      ),
+      'utf8'
+    )
+  );
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
         '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
       ),
       'utf8'
@@ -328,7 +341,7 @@ beforeEach(async () => {
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection", "ModelVersion",
-      "ModActivity",
+      "ModActivity", "BountyUnpaidAward",
       "HeldResourceReview", "HeldAnswer", ${EVIDENCE.map((t) => `"${t}"`).join(
         ', '
       )} RESTART IDENTITY;
@@ -2084,14 +2097,24 @@ describe('an open bounty with supporters, in a content wipe', () => {
   it('keeps it, hidden, while an award on it is recorded for manual resolution', async () => {
     await holder.db.exec(`
       TRUNCATE "BountyBenefactor";
-      INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
-        VALUES (${BYSTANDER}, 'bountyAwardUnpaid', 'bounty', ${BOUNTY});`);
+      INSERT INTO "BountyUnpaidAward" ("bountyId", "userId", "unitAmount", "recordedById")
+        VALUES (${BOUNTY}, ${BYSTANDER}, 100, 1);`);
     await removeAllContent({ id: CLEAN });
 
     expect(await bountyRow()).toEqual({
       availability: 'Private',
       meta: { removedWithOwner: true, availabilityBeforeRemoval: 'Public' },
     });
+  });
+
+  it('deletes it once that award is resolved', async () => {
+    await holder.db.exec(`
+      TRUNCATE "BountyBenefactor";
+      INSERT INTO "BountyUnpaidAward" ("bountyId", "userId", "unitAmount", "recordedById",
+        "resolvedAt") VALUES (${BOUNTY}, ${BYSTANDER}, 100, 1, now());`);
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bountyRow()).toBeUndefined();
   });
 
   it('keeps it, hidden, when its refund throws, and finishes the wipe', async () => {
