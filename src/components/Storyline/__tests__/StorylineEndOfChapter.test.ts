@@ -38,10 +38,11 @@ const mocks = vi.hoisted(() => ({
   /** Terms per parent post, over `terms`. */
   termsByPost: {} as Record<number, { open: boolean; price: number; closedReason: null }>,
   confirm: vi.fn(),
+  openModal: vi.fn(),
 }));
 vi.mock('@mantine/modals', () => ({
   openConfirmModal: mocks.confirm,
-  modals: { closeAll: vi.fn() },
+  modals: { closeAll: vi.fn(), open: mocks.openModal },
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ push: mocks.push }) }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
@@ -179,6 +180,7 @@ describe('StorylineEndOfChapter', () => {
     mocks.aheadLoading = false;
     mocks.canonAheadFor.mockClear();
     mocks.confirm.mockClear();
+    mocks.openModal.mockClear();
     onContinue = vi.fn();
   });
 
@@ -575,7 +577,7 @@ describe('StorylineEndOfChapter', () => {
     const openBranchConfirm = (props: { isOwner?: boolean }) => {
       const container = render({ parentPostId: 15, ...props });
       act(() => branch(container)?.click());
-      const config = mocks.confirm.mock.calls[0][0];
+      const config = mocks.openModal.mock.calls[0][0];
       const body = document.createElement('div');
       document.body.appendChild(body);
       act(() =>
@@ -587,10 +589,10 @@ describe('StorylineEndOfChapter', () => {
     };
 
     it('starts a branch from this chapter only after a confirm, and counts the click', () => {
-      const { config } = openBranchConfirm({});
+      const { body } = openBranchConfirm({});
       expect(mocks.push).not.toHaveBeenCalled();
       expect(mocks.trackCreateClick).not.toHaveBeenCalled();
-      act(() => config.onConfirm());
+      act(() => within(body, 'storyline-branch-write')?.click());
       expect(mocks.push.mock.calls).toEqual([['/posts/create?continues=4&n=5']]);
       expect(mocks.trackCreateClick.mock.calls).toEqual([[{ chapterId: 4 }]]);
     });
@@ -602,7 +604,7 @@ describe('StorylineEndOfChapter', () => {
         [{ parentPostId: 15, parentChapterId: 4, branch: true }],
       ]);
       document.body.innerHTML = '';
-      mocks.confirm.mockClear();
+      mocks.openModal.mockClear();
       mocks.openContinue.mockClear();
       const contributor = openBranchConfirm({});
       act(() => within(contributor.body, 'storyline-branch-use-post')?.click());

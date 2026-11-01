@@ -3,6 +3,8 @@ import {
   Badge,
   Button,
   CloseButton,
+  Divider,
+  Group,
   Kbd,
   Progress,
   Skeleton,
@@ -151,42 +153,55 @@ export function StorylineEndOfChapter({
   const writeReady = children !== undefined && (!midStory || canonAhead.isSuccess);
   // Priced against the chapter the continuation is placed on: the end, not the one on screen.
   const endTerms = useStorylineContinueTerms(isOwner ? undefined : endTarget?.post.id);
+  const mainWay = endTarget && (isOwner || endTerms?.open) ? endTarget : undefined;
   const router = useRouter();
+  // Three actions, so not openConfirmModal: its footer has two.
   const confirmBranch = (postId: number) =>
-    openConfirmModal({
+    modals.open({
       title: 'Start a branch?',
       children: (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-4">
           <Text size="sm">
             Start a side path after chapter {chapterDepth + 1}? Readers will see it as one of the
             other paths.
           </Text>
-          <Anchor
-            component="button"
-            type="button"
-            size="sm"
-            className="self-start"
-            onClick={() => {
-              modals.closeAll();
-              openStorylineContinueModal(
-                isOwner
-                  ? { parentPostId: postId, parentChapterId: chapterId, branch: true }
-                  : { parentPostId: postId, branch: true }
-              );
-            }}
-            data-testid="storyline-branch-use-post"
-          >
-            or use a post you already made
-          </Anchor>
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={() => modals.closeAll()}>
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              onClick={() => {
+                modals.closeAll();
+                openStorylineContinueModal(
+                  isOwner
+                    ? { parentPostId: postId, parentChapterId: chapterId, branch: true }
+                    : { parentPostId: postId, branch: true }
+                );
+              }}
+              data-testid="storyline-branch-use-post"
+            >
+              Use a post
+            </Button>
+            <Button
+              color="violet"
+              onClick={() => {
+                modals.closeAll();
+                tracking.trackCreateClick({ chapterId });
+                router.push(
+                  storylineContinueUrl({
+                    parentChapterId: chapterId,
+                    chapterNumber: chapterDepth + 2,
+                  })
+                );
+              }}
+              data-testid="storyline-branch-write"
+            >
+              Write a branch
+            </Button>
+          </Group>
         </div>
       ),
-      labels: { confirm: 'Write a branch', cancel: 'Cancel' },
-      onConfirm: () => {
-        tracking.trackCreateClick({ chapterId });
-        router.push(
-          storylineContinueUrl({ parentChapterId: chapterId, chapterNumber: chapterDepth + 2 })
-        );
-      },
     });
 
   // With one way on, → takes it. Desktop only: the reader's overlay, never a narrow stage or a touch screen.
@@ -309,26 +324,24 @@ export function StorylineEndOfChapter({
             <div className="flex flex-col items-stretch gap-2 @md:items-start">
               {!writeReady ? null : midStory ? (
                 <>
-                  {endTarget && (isOwner || endTerms?.open) && (
+                  {mainWay && (
                     <div className="flex flex-col items-stretch gap-1 @md:items-start">
                       <Button
                         component={Link}
                         href={storylineContinueUrl({
-                          parentChapterId: endTarget.chapterId,
-                          chapterNumber: endTarget.depth + 2,
+                          parentChapterId: mainWay.chapterId,
+                          chapterNumber: mainWay.depth + 2,
                         })}
                         color="violet"
                         leftSection={<IconPencil size={16} />}
-                        onClick={() =>
-                          tracking.trackCreateClick({ chapterId: endTarget.chapterId })
-                        }
+                        onClick={() => tracking.trackCreateClick({ chapterId: mainWay.chapterId })}
                         data-testid="storyline-continue-path-end"
                       >
                         {onMain ? 'Continue the main path' : 'Continue this path'}
                       </Button>
                       <Text size="xs" c="dimmed" data-testid="storyline-path-end-name">
-                        after Chapter {endTarget.depth + 1}
-                        {endTarget.post.title ? ` · ${endTarget.post.title}` : ''}
+                        after Chapter {mainWay.depth + 1}
+                        {mainWay.post.title ? ` · ${mainWay.post.title}` : ''}
                         {!isOwner && endTerms
                           ? endTerms.price > 0
                             ? ` · ${storylinePriceLabel(endTerms.price)} when you publish`
@@ -342,18 +355,24 @@ export function StorylineEndOfChapter({
                           size="sm"
                           onClick={() =>
                             openStorylineContinueModal({
-                              parentPostId: endTarget.post.id,
-                              parentChapterId: endTarget.chapterId,
+                              parentPostId: mainWay.post.id,
+                              parentChapterId: mainWay.chapterId,
                             })
                           }
                           data-testid="storyline-add-own-chapter"
                         >
-                          or use a post you already made
+                          or use a post you already made (after Chapter {mainWay.depth + 1})
                         </Anchor>
                       ) : (
-                        <StorylineContinueWithPost parentPostId={endTarget.post.id} />
+                        <StorylineContinueWithPost
+                          parentPostId={mainWay.post.id}
+                          afterChapter={mainWay.depth + 1}
+                        />
                       )}
                     </div>
+                  )}
+                  {mainWay && canWrite && parentPostId && (
+                    <Divider label="or" labelPosition="center" className="self-stretch" />
                   )}
                   {canWrite && parentPostId && (
                     <div className="flex flex-col gap-0.5">
@@ -746,7 +765,14 @@ const closedCopy = {
   collaboratorsOnly: 'Collaborators only',
 } as const;
 
-export function StorylineContinueWithPost({ parentPostId }: { parentPostId: number }) {
+export function StorylineContinueWithPost({
+  parentPostId,
+  afterChapter,
+}: {
+  parentPostId: number;
+  /** Names the chapter it continues, where a branch action sits beside it. */
+  afterChapter?: number;
+}) {
   const terms = useStorylineContinueTerms(parentPostId);
   if (!terms) return null;
   if (!terms.open)
@@ -773,6 +799,7 @@ export function StorylineContinueWithPost({ parentPostId }: { parentPostId: numb
       data-testid="storyline-continue-with-post"
     >
       or use a post you already made
+      {afterChapter !== undefined ? ` (after Chapter ${afterChapter})` : ''}
     </Anchor>
   );
 }
