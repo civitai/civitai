@@ -13,7 +13,8 @@ import {
   imageUrlUnavailableError,
   keyIssuers,
   keysIn,
-  keysInText,
+  keysInTextWithin,
+  keysInWithin,
   MAX_KEYS,
 } from '~/server/services/image-url-ownership';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
@@ -287,12 +288,16 @@ function canonicalKey(value: string) {
   ].join('-');
 }
 
+/** A scheme as a url parser reads it: leading C0 and space skipped, tab, CR and LF dropped. */
+// eslint-disable-next-line no-control-regex
+const SCHEME_LED = /^[\x00-\x20]*([a-z][a-z0-9+.\t\r\n-]*):/i;
+
+/** `new URL(value.trim()).protocol`, or undefined where that throws, without building the URL. */
 function parsedProtocol(value: string) {
   const trimmed = value.trim();
-  if (!trimmed.includes(':')) return undefined;
-  // `canParse` first: a thrown parse error costs microseconds per string on a large input.
-  if (!URL.canParse(trimmed)) return undefined;
-  return new URL(trimmed).protocol;
+  const scheme = SCHEME_LED.exec(trimmed)?.[1];
+  if (!scheme || !URL.canParse(trimmed)) return undefined;
+  return `${scheme.replace(/[\t\r\n]/g, '').toLowerCase()}:`;
 }
 
 /**
@@ -382,7 +387,8 @@ const largeKeySetCounter = registerCounterWithLabels({
 /**
  * What one walk reads before it gives up (`tooLarge`), so its cost stays bounded on an input with
  * no byte cap of its own (a registry step's `params`): values (an object entry is two), string
- * characters, lines of split strings, characters of `%XX`-decoded forms, and values collected.
+ * characters, line breaks, characters of `%XX`-decoded forms, url parses, and values collected
+ * (count and total length).
  * 4 MiB of text is above the largest `params` a step schema accepts (a chat completion's messages
  * and tool calls, about 2.3M characters).
  */
@@ -405,6 +411,9 @@ function lineBreaksIn(value: string) {
 }
 const OPAQUE_INPUT_MAX_DECODED_CHARS = 1024 * 1024;
 const OPAQUE_INPUT_MAX_URLS = 4096;
+const OPAQUE_INPUT_MAX_URL_CHARS = 64 * 1024;
+/** Strings that start like a url, each parsed as one. */
+const OPAQUE_INPUT_MAX_PARSES = 32_768;
 
 /** Deeper than any orchestrator input a block may send; past it, `opaqueInputUrlsIn` gives up. */
 const OPAQUE_INPUT_MAX_DEPTH = 64;
@@ -440,15 +449,18 @@ const SCHEMELESS_URL = /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i;
  * http(s) url (no whitespace or control bytes inside, which a url parser would silently drop), or
  * a scheme-less url on one of our hosts carrying a key.
  */
-function isWholeFetchableValue(value: string, budget?: DecodeBudget) {
+function isWholeFetchableValue(
+  value: string,
+  budget?: DecodeBudget,
+  protocol = parsedProtocol(value)
+) {
   // eslint-disable-next-line no-control-regex
   if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
-  const protocol = parsedProtocol(value);
   if (protocol) return protocol === 'https:' || protocol === 'http:';
   return (
     SCHEMELESS_URL.test(value) &&
     isCivitaiHostname(value.split('/')[0]) &&
-    keysIn(value, budget).length > 0
+    keysInWithin(value, budget).length > 0
   );
 }
 
@@ -469,12 +481,17 @@ export function opaqueInputUrlsIn(value: unknown) {
   let chars = 0;
   let lines = 0;
   const decoded: DecodeBudget = { left: OPAQUE_INPUT_MAX_DECODED_CHARS };
+  let urlChars = 0;
+  let parses = 0;
+  // The gate decodes every collected value again, so their total length is bounded too.
   const collect = (url: string) => {
-    if (urls.length >= OPAQUE_INPUT_MAX_URLS) tooLarge = true;
+    urlChars += url.length;
+    if (urls.length >= OPAQUE_INPUT_MAX_URLS || urlChars > OPAQUE_INPUT_MAX_URL_CHARS)
+      tooLarge = true;
     else urls.push(url);
   };
   const pushKeysInText = (text: string) => {
-    for (const key of keysInText(text, decoded)) collect(key);
+    for (const key of keysInTextWithin(text, decoded)) collect(key);
     if (decoded.left < 0) tooLarge = true;
   };
   /** `counted`: a line of a string whose characters were already counted whole. */
@@ -511,10 +528,14 @@ export function opaqueInputUrlsIn(value: unknown) {
       const parsed = asUrlParserReads(item).trim();
       // eslint-disable-next-line no-control-regex
       const controlInside = /[\u0000-\u001f\u007f]/.test(parsed);
+      if (SCHEME_LED.test(parsed) && ++parses > OPAQUE_INPUT_MAX_PARSES) {
+        tooLarge = true;
+        return;
+      }
       const protocol = parsedProtocol(parsed);
       // A url with a control byte left inside: hand it whole to the classifier, which refuses it.
       if (controlInside && (protocol === 'https:' || protocol === 'http:')) collect(parsed);
-      else if (isWholeFetchableValue(parsed, decoded)) {
+      else if (isWholeFetchableValue(parsed, decoded, protocol)) {
         collect(parsed);
         // A url rejoined across a break or space: a consumer splitting on it reads the keys.
         if (/[^\x21-\x7e]/.test(item)) pushKeysInText(item);

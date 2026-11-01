@@ -5,6 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -35,6 +36,19 @@ vi.mock('~/server/clickhouse/client', () => ({
 dbMock.dbWrite.$queryRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
+
+// Counts the gate's `keysIn` calls, so a match's cost is asserted as work, not wall clock.
+const keysInCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageUrlOwnership>();
+  return {
+    ...actual,
+    keysIn: (url: string | null | undefined) => {
+      keysInCalls.count++;
+      return actual.keysIn(url);
+    },
+  };
+});
 
 const {
   assertGenerationInputsUsable,
@@ -303,6 +317,13 @@ describe('assertStoredImageUrlsUnblocked', () => {
     );
   });
 
+  it('reads a later url with a percent escape like the first', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'moderated'`);
+    const escaped = `https://cdn.example/x/${KEY.replace('-', '%2d')}/a%20b.jpeg`;
+    expect(await stored(['https://example.com/a.png', escaped])).toBe('refused');
+  });
+
   it('matches an image stored under the full url', async () => {
     const url = `https://cdn.example/x/${KEY}/original=true`;
     await givenImage({ url, blockedFor: 'moderated' });
@@ -560,7 +581,7 @@ describe('assertGenerationInputsUsable', () => {
       ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
     });
 
-    it('matches 1024 keys to their 1024 images in linear time', async () => {
+    it('matches 1024 keys to their 1024 images reading each image once', async () => {
       await holder.db.query(
         `INSERT INTO "Image" (id, "userId", url, "postId")
          SELECT 1000 + g, $1, lpad(g::text, 8, '0') || '-0000-4000-8000-000000000000', 1
@@ -571,10 +592,11 @@ describe('assertGenerationInputsUsable', () => {
         { length: 1024 },
         (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`
       );
-      const started = performance.now();
+      keysInCalls.count = 0;
       expect(await opaque(keys)).toBe('accepted');
-      // One pass is tens of milliseconds, keys × rows seconds: a wide bound stays clear of load.
-      expect(performance.now() - started).toBeLessThan(750);
+      // A pass over the rows is about a thousand reads; keys × rows is about a million.
+      expect(keysInCalls.count).toBeGreaterThanOrEqual(1024);
+      expect(keysInCalls.count).toBeLessThan(4 * 1024);
     });
 
     it('checks the keys in a later batch, not only the first', async () => {
@@ -770,6 +792,14 @@ describe('generationInputUrlsIn', () => {
     expect(generationInputUrlsIn({ [field]: ['text', url] })).toEqual([]);
   });
 
+  it('reads a scheme as a url parser does: any case, a tab inside dropped', () => {
+    const urls = ['HTTPS:example.com/a.png', 'ht\ttps:example.com/b.png'];
+    expect(generationInputUrlsIn({ a: urls[0], b: urls[1] })).toEqual(urls);
+    expect(opaqueInputUrlsIn({ u: 'HTTPS://example.com/a.png' }).urls).toEqual([
+      'HTTPS://example.com/a.png',
+    ]);
+  });
+
   it('still walks an object or a mixed list under a text field name', () => {
     expect(generationInputUrlsIn({ description: { url: KEY } })).toEqual([KEY]);
     expect(generationInputUrlsIn({ title: ['x', { url: KEY }] })).toEqual([KEY]);
@@ -836,19 +866,21 @@ describe('opaqueInputUrlsIn', () => {
     expect(opaqueInputUrlsIn({ text: `x${'\r\n'.repeat(70_000)}y` }).tooLarge).toBe(false);
   });
 
-  it('collects up to 4,096 values, and reports more as too large', () => {
+  it('collects up to 4,096 values of up to 64 KiB in all, and reports more as too large', () => {
     // Keys overlap: each segment ends one key and its last 8 characters start the next.
     const keys = (n: number) =>
       `see 00000000${Array.from(
         { length: n },
         (_, i) => `-0000-4000-8000-${i.toString(16).padStart(12, '0')}`
       ).join('')}`;
-    expect(opaqueInputUrlsIn({ text: keys(4096) })).toMatchObject({ tooLarge: false });
-    expect(opaqueInputUrlsIn({ text: keys(4096) }).urls).toHaveLength(4096);
-    expect(opaqueInputUrlsIn({ text: keys(4097) }).tooLarge).toBe(true);
+    // As many whole keys as fit in 64 KiB, then one more.
+    expect(opaqueInputUrlsIn({ text: keys(1820) })).toMatchObject({ tooLarge: false });
+    expect(opaqueInputUrlsIn({ text: keys(1820) }).urls).toHaveLength(1820);
+    expect(opaqueInputUrlsIn({ text: keys(1821) }).tooLarge).toBe(true);
     // More keys than a call takes as arguments: refused, not a stack overflow.
     expect(opaqueInputUrlsIn({ text: keys(140_000) }).tooLarge).toBe(true);
-    const list = new Array(4097).fill('https://example.com/a.png');
+    // Short urls, under the length cap in all, but one value too many.
+    const list = new Array(4097).fill('https://a.co/a');
     expect(opaqueInputUrlsIn({ list }).tooLarge).toBe(true);
     expect(opaqueInputUrlsIn({ list: list.slice(1) }).tooLarge).toBe(false);
   });
@@ -861,11 +893,20 @@ describe('opaqueInputUrlsIn', () => {
     const nested = '%2525252525252525252541'.repeat(Math.floor((4 * MiB - 64) / 23));
     expect(opaqueInputUrlsIn({ text: nested }).tooLarge).toBe(true);
     // Split text whose lines are too short to hold a key is still decoded whole.
-    const shortLines = `https://x.y/\n${'h:%25252541xxxxx\n'.repeat(65_000)}`;
+    // A url, then prose lines (no scheme to parse) each shorter than a key: only the budget stops it.
+    const shortLines = `https://x.y/\n${'%2525252541 xxxxxxxxxxxxxxxxxxxxxx\n'.repeat(40_000)}`;
     expect(opaqueInputUrlsIn({ text: shortLines }).tooLarge).toBe(true);
     // The budget is one per walk: two halves of it add up.
     const half = escaped(MiB / 2 + 4);
     expect(opaqueInputUrlsIn({ a: half, b: half }).tooLarge).toBe(true);
+  });
+
+  it('parses up to 32,768 strings that start like a url, and reports more as too large', () => {
+    const list = new Array(32_769).fill('a:b');
+    expect(opaqueInputUrlsIn({ list }).tooLarge).toBe(true);
+    expect(opaqueInputUrlsIn({ list: list.slice(1) }).tooLarge).toBe(false);
+    // Text with no scheme is not parsed, so it does not count.
+    expect(opaqueInputUrlsIn({ list: new Array(40_000).fill('ab') }).tooLarge).toBe(false);
   });
 
   it('reports too many values as too large', () => {
