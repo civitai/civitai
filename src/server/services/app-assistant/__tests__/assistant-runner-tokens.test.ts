@@ -26,6 +26,13 @@ const keys = testKeyPair();
 const GRANT = { userId: 42, conversationId: 'c-1', idempotencyKey: 'k-1' };
 
 /**
+ * What a Restart preview's own calls before its tunnel's start may add to its two waits: listing
+ * and opening the app's sandbox, polling it while it starts, the dev server's status, manifest
+ * reads and its last probe. The old 2-minute pre-start allowance, less the two waits.
+ */
+const SETUP_CALLS_ALLOWANCE_MS = 40_000;
+
+/**
  * An `export const` of the runner's, evaluated from its source (the runner and this app share no
  * code): a numeric literal, or a sum of literals and other such constants.
  */
@@ -103,13 +110,20 @@ describe('the runner’s credentials, as the runner reads them', () => {
 
   it('a preview grant is still good at the end of the slowest Restart preview the runner makes', async () => {
     // Every call of a Restart preview is made with this grant: the steps before the tunnel's
-    // start (waiting for an app the page just started, then maybe its dev server), then the
-    // runner's `TUNNEL_START_BUDGET_MS`. All are read from the runner's own source, so raising
-    // any of them on that side, or shortening the grant on this one, goes red here.
-    const setup = runnerConstant('RESTART_WAIT_MS') + runnerConstant('DEV_SERVER_WAIT_MS');
+    // start (waiting for an app the page just started, then maybe its dev server, plus the
+    // sandbox and service calls around them), then the runner's `TUNNEL_START_BUDGET_MS`. The
+    // waits and the budget are read from the runner's own source, so raising any of them on that
+    // side, or shortening the grant on this one, goes red here. The grant's own life is what is
+    // compared: the verify's clock tolerance is for clocks, not part of the budget.
+    const setup =
+      runnerConstant('RESTART_WAIT_MS') +
+      runnerConstant('DEV_SERVER_WAIT_MS') +
+      SETUP_CALLS_ALLOWANCE_MS;
     const budget = runnerConstant('TUNNEL_START_BUDGET_MS');
     expect(budget).toBeGreaterThan(0);
     const { token } = await signRunGrant({ ...GRANT, use: 'preview' });
+    const { payload } = await jwtVerify(token, keys.publicKey);
+    expect((payload.exp! - payload.iat!) * 1000).toBeGreaterThanOrEqual(setup + budget);
     vi.useFakeTimers({ now: Date.now() + setup + budget, toFake: ['Date'] });
     try {
       expect(await verifyRunGrant(token)).toMatchObject({ userId: 42, use: 'preview' });

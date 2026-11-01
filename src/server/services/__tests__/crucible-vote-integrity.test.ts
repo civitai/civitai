@@ -7,6 +7,7 @@ import {
   MediaType,
 } from '~/shared/utils/prisma/enums';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import { DEL_IF_VALUE_SCRIPT } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { submitVoteSchema } from '~/server/schema/crucible.schema';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
@@ -166,7 +167,7 @@ describe('submitVote — only a pair this judge was served', () => {
   it('claims the served pair for this judge and crucible', async () => {
     await vote(20, 10);
 
-    expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(expect.any(String), {
+    expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(DEL_IF_VALUE_SCRIPT, {
       keys: [expect.stringMatching(new RegExp(`served-pair:1:${JUDGE}$`))],
       arguments: ['10:20'],
     });
@@ -291,7 +292,7 @@ describe('submitVote — per-judge cap on each entry', () => {
 
       await vote(10, 20);
 
-      expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(expect.any(String), {
+      expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(DEL_IF_VALUE_SCRIPT, {
         keys: [expect.stringMatching(/served-pair:1:42$/)],
         arguments: [`10:20|anchor:${anchorId}`],
       });

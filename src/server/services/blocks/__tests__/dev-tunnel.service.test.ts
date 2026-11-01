@@ -13,6 +13,7 @@ const {
   mockUnwrap,
   mockWaitForApplyJob,
   mockRecordTeardown,
+  mockRecordMint,
   mockRecordDnsGc,
   sysRedis,
   luaRef,
@@ -35,6 +36,7 @@ const {
     // don't poll; the failure test overrides it.
     mockWaitForApplyJob: vi.fn(async () => 'succeeded' as const),
     mockRecordTeardown: vi.fn(),
+    mockRecordMint: vi.fn(),
     mockRecordDnsGc: vi.fn(),
     sysRedis: {
       _store: store,
@@ -114,7 +116,7 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newBlockInstanceId: () => mockNewId() }));
 vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
-  recordDevTunnelMint: vi.fn(),
+  recordDevTunnelMint: (...a: unknown[]) => mockRecordMint(...(a as [])),
   recordDevTunnelTeardown: (...a: unknown[]) => mockRecordTeardown(...(a as [])),
   recordDevTunnelDnsGc: (...a: unknown[]) => mockRecordDnsGc(...(a as [])),
 }));
@@ -389,10 +391,14 @@ describe('startDevTunnel', () => {
       return write(k, v);
     });
     try {
-      await expect(startTunnel()).rejects.toThrow();
+      // The write's own error, not another one from the cleanup.
+      await expect(startTunnel()).rejects.toThrow('redis blip');
     } finally {
       sysRedis.set.mockImplementation(write);
     }
+    // One mint and one teardown: the active-tunnel gauge ends where it began.
+    expect(mockRecordMint).toHaveBeenCalledTimes(1);
+    expect(mockRecordTeardown.mock.calls).toEqual([['stop']]);
     expect(
       [...sysRedis._store.keys()].filter((k) => /:(cred|session|host|user):/.test(k)),
       'a partly-written start was left behind'

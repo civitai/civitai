@@ -739,6 +739,31 @@ describe('CivitaiDevTunnels', () => {
         expect(stopsOf(sent)).toHaveLength(3);
       });
 
+      it('asks again 5 s after a stop civitai answered `unavailable`, not sooner', async () => {
+        const { sent, tunnels } = failingStart([unavailable, stopped]);
+        await tunnels
+          .forRun(async () => GRANT)
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stopsOf(sent)).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(stopsOf(sent)).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(stopsOf(sent)).toHaveLength(2);
+      });
+
+      it('a stop that could not reach civitai at all is asked again too', async () => {
+        const { sent, tunnels } = failingStart([
+          () => {
+            throw new TypeError('fetch failed');
+          },
+          stopped,
+        ]);
+        await startAndWait(tunnels);
+        expect(stopsOf(sent)).toHaveLength(2);
+      });
+
       it('a stop civitai refuses (4xx), or answers, is not asked again', async () => {
         for (const answer of [
           stopped,

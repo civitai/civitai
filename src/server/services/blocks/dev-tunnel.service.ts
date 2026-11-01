@@ -931,7 +931,6 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   // Render the Traefik route FIRST — if it fails we never persist state, so a
   // failed mint leaves nothing behind.
   await renderDevTunnelRoute(host, sessionId);
-  recordDevTunnelMint();
 
   // Every write settles before any failure is acted on, so the teardown below runs after the
   // last of them: a credential the sish authz accepts must not outlive a start that failed.
@@ -947,6 +946,8 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
         ]
       : []),
   ]);
+  // Counted before any teardown below, which decrements the same gauge.
+  recordDevTunnelMint();
   const failed = persisted.find((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failed) {
     await teardownSession(session, 'stop');
