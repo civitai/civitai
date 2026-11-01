@@ -374,7 +374,9 @@ describe('freezeRenderState', () => {
   it('does not freeze a function a value points at', async () => {
     const { freezeRenderState } = await import('~/server/utils/freeze-render-state');
     const at = new Date(0);
-    const fn = function probe() {};
+    const fn = function probe() {
+      return 1;
+    };
     freezeRenderState({ at, fn });
 
     expect(Object.isFrozen(at.constructor)).toBe(false);
