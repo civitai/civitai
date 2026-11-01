@@ -3,6 +3,7 @@ import { env as clientEnv } from '~/env/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
+import { recordExternalHost } from '~/server/services/generation-input-hosts';
 import {
   CIVITAI_IMAGE_HOSTS,
   hasUrlAmbiguousBytes,
@@ -677,6 +678,13 @@ export async function assertGenerationInputsUsable({
     }
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
       refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
+      recordExternalHost({
+        url,
+        entry,
+        caller,
+        mode: refuseExternal ? 'refuse' : 'log',
+        userId,
+      });
       if (refuseExternal) throw refuse(cls);
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
       // A proxy or wrapper url may carry one of our image keys.
