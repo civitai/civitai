@@ -1356,9 +1356,13 @@ export function resetFeatureFlagsLazyGateForTests() {
  * Differences a caller could observe, none of which any consumer relies on (audited when this was
  * added): the getters are inherited, not own (`hasOwnProperty`, `Object.getOwnPropertyNames` and
  * `getOwnPropertyDescriptor` see nothing), and the prototype is not `Object.prototype` (so
- * `isPlainObject`-style checks — devalue, Next's props serializer, lodash — reject it). A getter
- * read through an object that is not an instance (`Object.create(instance)`, a prototype-preserving
- * clone) returns `undefined`, as the old object's clone `{}` did.
+ * `isPlainObject`-style checks — devalue, Next's props serializer, lodash — reject it). And a getter
+ * read with a receiver that is not the instance itself returns `undefined`, where the legacy
+ * object's getters — closures that ignore `this` — return the real value: `Object.create(instance).k`
+ * and `new Proxy(instance, {}).k` (a Proxy without a `get` trap passes itself as the receiver) are
+ * `undefined` here and the flag's value on the legacy object. Dormant: no consumer wraps or
+ * inherits from the object today. (A copying clone — spread, lodash `cloneDeep` — reads `undefined`
+ * on both: the legacy object's own getters are non-enumerable, so its copy is `{}`.)
  */
 class LazyFeatureAccess {
   readonly #ctx: FeatureAccessContext;
