@@ -194,15 +194,24 @@ describe('transaction description', () => {
     expect(getTransactionDescription(row, 'User')).toBe('AI chat: ContentWriter');
   });
 
-  it('still names the entity on the reward descriptions the replace was written for', () => {
-    const row = {
-      type: TransactionType.Reward,
-      description: 'Content that you posted was liked by someone else',
-    };
-    expect(getTransactionDescription(row, 'Comment')).toBe(
-      'A comment that you posted was liked by someone else'
-    );
-  });
+  // Stored exactly as the reward producer writes them: base.reward.ts prefixes "Buzz Reward: " to the
+  // reward's description (goodContent.reward.ts / collectedContent.reward.ts). Literals rather than
+  // imports, because those modules pull in the db, redis and clickhouse clients.
+  it.each([
+    ['liked', 'Comment', 'A comment'],
+    ['collected', 'Image', 'A image'],
+  ])(
+    'still names the entity on the stored "%s" reward description',
+    (verb, label, expectedSubject) => {
+      const row = {
+        type: TransactionType.Reward,
+        description: `Buzz Reward: Content that you posted was ${verb} by someone else`,
+      };
+      expect(getTransactionDescription(row, label)).toBe(
+        `Buzz Reward: ${expectedSubject} that you posted was ${verb} by someone else`
+      );
+    }
+  );
 
   it('shows the charge description on a merged row, not the refund one', () => {
     const chat = { ...chargeAlpha, description: 'AI chat: ContentWriter' };
