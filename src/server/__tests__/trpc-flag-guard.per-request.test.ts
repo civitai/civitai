@@ -137,8 +137,15 @@ describe('one HTTP request', () => {
 
     expect(await batch(caller)).toEqual([true, true, true, false, false]);
     // Three procedures on `userHubs` and two on `collectionAiReview` share one request: one
-    // evaluation per distinct flag, plus the switch itself.
-    expect(flipt.calls.map((c) => c.flag).sort()).toEqual([
+    // evaluation per distinct flag, plus the switch itself. `feature-flags-lazy-proto` is left out:
+    // `getFeatureFlagsLazy` reads it at most once per 5 s per PROCESS, not per request, so whether
+    // it lands in this window depends on which test ran first.
+    expect(
+      flipt.calls
+        .map((c) => c.flag)
+        .filter((f) => f !== 'feature-flags-lazy-proto')
+        .sort()
+    ).toEqual([
       'collection-ai-review',
       SWITCH_KEY, // 'trpc-flag-guard-per-request' — the list is sorted
       'user-hubs',
