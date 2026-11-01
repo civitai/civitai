@@ -2,7 +2,7 @@
  * App Blocks mod review — build a store-preview view-model (`ListingCard` +
  * `ListingDetail`) for an UNAPPROVED listing from the data the moderator review
  * surface already has client-side. Pure + React-free so the mapping is unit-tested
- * in the node project (the browser suites are report-only), mirroring
+ * in the node project, mirroring
  * `appListingCardView` / `appListingDetailView`.
  *
  * ROLE — the graceful FALLBACK. The real preview media now comes from the mod-only
@@ -163,6 +163,9 @@ export function buildListingCardPreview(
     // deliberately left alone — out of scope here, and inert (`buildListingStatChips`
     // returns `[]` under `preview`). Do not cite it as precedent for reverting this.
     openCount: null,
+    // `null`: the review row carries no level, and `null` is the side that discloses nothing.
+    // The real moderator preview (`getListingPreviewForReview`) does carry it.
+    restrictedAudience: null,
     kindData: cardKindData(row),
   };
 }
@@ -218,6 +221,12 @@ export function buildListingDetailPreview(
     // Same limitation, same reason, same safe direction as the card builder's `isBeta`.
     isBeta: false,
     betaMessage: null,
+    // Built from an OFF-SITE publish request: an off-site app is never forkable and is never a
+    // fork, so these are the honest values, not placeholders.
+    forkable: false,
+    forkOf: null,
+    // Same as the card builder's `restrictedAudience`.
+    restrictedAudience: null,
     description: null,
     // The mod REVIEW preview intentionally shows no collaborator byline: this row is
     // built from an in-review publish request, not from a live listing, so there is no

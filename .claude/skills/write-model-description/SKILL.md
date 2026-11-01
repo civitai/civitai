@@ -77,7 +77,6 @@ H3 list with: Source (HF/GitHub), project Discord, project funding/Patreon/Ko-fi
 2. **Open 2-3 sibling CivitaiOfficial models** for tone reference (e.g. HappyHorse-1.0, Wan Video 2.7, ACE-Step). Match their structure.
 3. **Confirm what's actually mirrored on Civitai.** Check the model versions on the Civitai page - if upstream ships fp8/bf16/fp16 and we only mirror fp8, say that.
 4. **Draft in markdown first**, then convert to HTML for the editor.
-5. **Get Justin's eyes on it before publishing** for any model that's externally significant or NSFW.
 
 ## Drafting prompt
 

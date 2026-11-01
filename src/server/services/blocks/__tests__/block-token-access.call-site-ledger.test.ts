@@ -83,9 +83,17 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     //   -1  `updateUserSettings`  → user-settings.service.ts          (POST /user-checkpoint/set)
     // Both landed as their own ledger entries below, so net production call sites are
     // unchanged — the count moved between rows, it did not leave the table.
+    // 15 → 16: the shared gate of the quoted-grant entry points (now
+    // `assertQuotedGrantRequestAllowed`). One call site — the helper is the gate.
+    // 16 → 14: `getMyBuzzBalance`'s inline call and the buzz-read helper's call. The four
+    // buzz reads now reach the gate through `authorizeBlockBridgeViewer`'s one call, which
+    // was already counted.
+    // 14 → 15: `authorizeBlockReactionRequest`, the shared preamble of the two app-reaction
+    // procedures (`setReactionFromApp`, `getReactionsForApp`). One call site — the helper is
+    // the gate, as for the post preamble.
     calls: 15,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
-    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
+    why: 'The tRPC bridge procs. Block-JWT-authed procedures (`previewPostFromApp`, `createPostFromApp` and `publishGenerationOutputs` additionally require a session matching the subject), so the flag is evaluated against the token subject, never ctx.user. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
   },
   'src/server/services/blocks/block-gated-images-read.service.ts': {
     calls: 1,
@@ -98,6 +106,12 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     selfBinds:
       'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken — taken by the CALLER (the router proc, or this module’s own token-taking wrapper) and passed in as verified claims, never as a client-supplied id',
     why: 'The per-viewer block-settings write, shared by BOTH transports: the tRPC bridge proc blocks.updateUserSettings and the REST route /api/v1/blocks/user-checkpoint/set. Sharing this exact function is what makes the two doors agree about the kill switch — the same reason me.ts is in this set. The subject it binds to is also the subject the write is KEYED on (block_user_settings.user_id), so a gate evaluated against anything else would be checking a different person than the row belongs to.',
+  },
+  'src/server/services/apps/doc-store-access.ts': {
+    calls: 1,
+    selfBinds:
+      'parseSubjectUserId(claims.sub) on claims stamped by withBlockScope, passed in by the document-store route handler',
+    why: 'The document-store resolver behind /api/v1/blocks/storage: the RUN gate on the viewer whose documents a request reads or writes, the same gate the legacy per-viewer storage path applies. The subject is the one the store keys private documents and authorship on.',
   },
   'src/pages/api/v1/blocks/me.ts': {
     calls: 1,
@@ -183,7 +197,8 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     expect(files.length).toBeGreaterThan(500);
     // 2 → 4: `block-gated-images-read.service.ts` (the extracted gated-image read body)
     // and `user-settings.service.ts` (the extracted viewer-settings write body).
-    expect(consumers.length).toBe(4);
+    // 4 → 5: `apps/doc-store-access.ts` (the document-store resolver).
+    expect(consumers.length).toBe(5);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

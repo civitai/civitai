@@ -212,7 +212,7 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
     expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it('a row with no backing listing (pending first version) → null listing fields, null last action', async () => {
+  it('a row with no backing listing AND no draft (legacy pending first version) → null listing fields, null last action', async () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       {
         id: 'req-p',
@@ -241,10 +241,176 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
       listingStatus: null,
       lastModerationAction: null,
       hasPage: false,
+      problems: [],
     });
-    // No app-block ids on the page → no backing-listing / moderation queries at all.
-    expect(mockDbRead.appListing.findMany).not.toHaveBeenCalled();
+    // No app-block ids on the page → only the pre-approval-draft lookup (which found
+    // nothing here), no keyed backing-listing or moderation queries.
+    expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
     expect(mockDbRead.appListingModerationEvent.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * /apps/mine and this proc must agree: a pending first version's listing is the unkeyed
+ * draft minted at submit. The fixture has no icon/cover/screenshots/description/category,
+ * so the expected list is five specific codes.
+ */
+describe('listMyPublishRequests — a pending first version reports its pre-approval DRAFT', () => {
+  const firstVersionRow = (id: string, slug: string, status: string) => ({
+    id,
+    appBlockId: null,
+    slug,
+    version: '0.1.0',
+    status,
+    submittedAt: new Date('2026-01-01'),
+    reviewedAt: null,
+    rejectionReason: null,
+    approvalNotes: null,
+    deployState: null,
+    deployDetail: null,
+    deployUpdatedAt: null,
+    fileSummary: null,
+    manifestDiffSummary: null,
+    appBlock: null,
+  });
+  const draftListing = (slug: string) => ({
+    id: `draft-${slug}`,
+    appBlockId: null,
+    slug,
+    status: 'draft',
+    kind: 'onsite',
+    iconId: null,
+    coverId: null,
+    description: null,
+    tagline: 'A tagline',
+    category: null,
+    contentRating: 'g',
+    _count: { screenshots: 0 },
+  });
+  const INCOMPLETE_DRAFT_CODES = [
+    'missing-icon',
+    'missing-cover',
+    'no-screenshots',
+    'empty-description',
+    'empty-category',
+  ];
+
+  /** Draft lookups (an `OR` of draft wheres) get the drafts; any keyed lookup gets `keyed`. */
+  function routeListingQueries(drafts: unknown[], keyed: unknown[] = []) {
+    mockDbRead.appListing.findMany.mockImplementation((async (args: {
+      where: { OR?: unknown[] };
+    }) => (args.where.OR ? drafts : keyed)) as never);
+  }
+
+  it('🔴 a PENDING first version gets the draft listing’s problems', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      firstVersionRow('req-1', 'new-app', 'pending'),
+    ]);
+    routeListingQueries([draftListing('new-app')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems.map((p) => p.code)).toEqual(INCOMPLETE_DRAFT_CODES);
+    expect(rows[0].problems.filter((p) => p.severity === 'blocking').map((p) => p.code)).toEqual([
+      'missing-icon',
+      'missing-cover',
+    ]);
+    // The owner-control fields stay the KEYED listing's: a draft is not unpublishable.
+    expect(rows[0]).toMatchObject({ appListingId: null, listingStatus: null });
+  });
+
+  it('🔴 the draft lookup is owner-scoped, unkeyed, draft-only and on-site — the approve-transition where', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      firstVersionRow('req-1', 'new-app', 'pending'),
+    ]);
+    routeListingQueries([]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    await caller.listMyPublishRequests();
+
+    expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+      where: { OR: unknown[] };
+      select: Record<string, unknown>;
+    };
+    expect(args.where.OR).toEqual([
+      { slug: 'new-app', kind: 'onsite', appBlockId: null, status: 'draft', userId: owner.id },
+    ]);
+    expect(args.select.slug).toBe(true);
+  });
+
+  it('a REJECTED first version still reads its kept draft; a WITHDRAWN one does not', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      firstVersionRow('req-r', 'rej-app', 'rejected'),
+      firstVersionRow('req-w', 'wd-app', 'withdrawn'),
+    ]);
+    routeListingQueries([draftListing('rej-app'), draftListing('wd-app')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+
+    expect(byId['req-r'].problems.map((p) => p.code)).toEqual(INCOMPLETE_DRAFT_CODES);
+    expect(byId['req-w'].problems).toEqual([]);
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+      where: { OR: { slug: string }[] };
+    };
+    expect(args.where.OR.map((w) => w.slug)).toEqual(['rej-app']);
+  });
+
+  it('a KEYED row never reads a draft, even when a draft on its slug exists', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        ...firstVersionRow('req-k', 'keyed-app', 'pending'),
+        appBlock: { id: 'blk-k', manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
+      },
+    ]);
+    routeListingQueries(
+      [draftListing('keyed-app')],
+      [
+        {
+          id: 'l-k',
+          appBlockId: 'blk-k',
+          slug: 'keyed-app',
+          status: 'approved',
+          kind: 'onsite',
+          iconId: 41,
+          coverId: 53,
+          description: 'A description.',
+          tagline: 'A tagline',
+          category: 'utility',
+          contentRating: 'g',
+          _count: { screenshots: 7 },
+        },
+      ]
+    );
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
+    expect(rows[0]).toMatchObject({ appListingId: 'l-k', listingStatus: 'approved' });
+    expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as { where: { OR?: unknown } };
+    expect(args.where.OR).toBeUndefined();
+  });
+
+  // Agrees with submitVersion's readiness (null) for an update to an app with no on-site listing.
+  it('a KEYED row whose app has no on-site listing reports no problems', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        ...firstVersionRow('req-n', 'no-listing-app', 'pending'),
+        appBlock: { id: 'blk-n', manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
+      },
+    ]);
+    routeListingQueries([draftListing('no-listing-app')], []);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
+    expect(rows[0]).toMatchObject({ appListingId: null, listingStatus: null });
   });
 });
 
@@ -429,9 +595,8 @@ describe('listMyPublishRequests — OWNER-ONLY scoping (guards the build-failure
  * "spells the constant": it fails iff the value is hardcoded. That is why the router
  * projects the column instead of restating the filter's conclusion.
  *
- * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 3 of the
- * 5 cases below go RED — the on-site label, the `kind` projection, and the narrow-fake
- * degrade. The other 2 PASS at base and are INVARIANT GUARDS, not coverage of this bug:
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 2 of the
+ * 4 cases below go RED — the on-site label and the `kind` projection. The other 2 PASS at base and are INVARIANT GUARDS, not coverage of this bug:
  * at base EVERY listing got the original label, so the off-site discriminating control
  * and the code-invariance case were green by construction. The discriminating control
  * still earns its place — it is the ONLY case that kills a hardcoded `'onsite'` at the
@@ -542,23 +707,94 @@ describe('listMyPublishRequests — the advisory is KIND-AWARE', () => {
     // The filter this projection deliberately does NOT restate at the call site.
     expect(args.where.kind).toBe('onsite');
   });
+});
 
-  it('a narrow fake omitting `kind` degrades to the on-site labels (this query only admits on-site rows)', async () => {
-    // The pre-existing cases in this file use exactly such a fake; this pins that the
-    // fallback is the honest one for THIS caller rather than an accident.
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([requestRow('req-n', 'blk-n')]);
-    mockDbRead.appListing.findMany.mockResolvedValue([
-      {
-        id: 'l-n',
-        appBlockId: 'blk-n',
-        status: 'approved',
-        tagline: null,
-        _count: { screenshots: 7 },
-      },
+describe('listMyPublishRequests — the hidden-mature-rating advisory', () => {
+  const requestRow = (id: string, blockId: string, declared: string) => ({
+    id,
+    appBlockId: null,
+    slug: `app-${id}`,
+    version: '1.0.0',
+    status: 'approved',
+    submittedAt: new Date('2026-01-01'),
+    reviewedAt: new Date('2026-01-02'),
+    rejectionReason: null,
+    approvalNotes: null,
+    deployState: 'live',
+    deployDetail: null,
+    deployUpdatedAt: new Date('2026-01-02'),
+    fileSummary: null,
+    manifestDiffSummary: null,
+    appBlock: {
+      id: blockId,
+      manifest: PAGE_MANIFEST,
+      contentRating: declared,
+      _count: { userSubscriptions: 0 },
+    },
+  });
+  /** Complete in every other dimension, so the rating problem is the only one that can fire. */
+  const listingRow = (id: string, blockId: string, status: string, contentRating: string) => ({
+    id,
+    appBlockId: blockId,
+    status,
+    kind: 'onsite',
+    iconId: 41,
+    coverId: 53,
+    description: 'A description.',
+    tagline: 'A tagline',
+    category: 'utility',
+    contentRating,
+    _count: { screenshots: 7 },
+  });
+
+  it('an approved listing rated above its app’s declared rating is reported hidden, naming both', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      requestRow('req-r', 'blk-r', 'g'),
     ]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-r', 'blk-r', 'approved', 'r')]);
 
     const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
     const rows = await caller.listMyPublishRequests();
-    expect(taglineLabelOf(rows[0])).toBe(MANIFEST_TAGLINE);
+
+    expect(rows[0].problems).toEqual([
+      {
+        code: 'hidden-mature-rating',
+        severity: 'advisory',
+        label:
+          'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+      },
+    ]);
+    const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+      select: Record<string, unknown>;
+    };
+    expect(args.select.contentRating).toBe(true);
+    const requestArgs = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0] as {
+      select: { appBlock: { select: Record<string, unknown> } };
+    };
+    expect(requestArgs.select.appBlock.select.contentRating).toBe(true);
+  });
+
+  it('an app that DECLARED R has nothing to fix, so no problem', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      requestRow('req-d', 'blk-d', 'r'),
+    ]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-d', 'blk-d', 'approved', 'r')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
+  });
+
+  it('a removed listing is not flagged — it is not in the store at all', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      requestRow('req-x', 'blk-x', 'g'),
+    ]);
+    mockDbRead.appListing.findMany.mockResolvedValue([listingRow('l-x', 'blk-x', 'removed', 'r')]);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
   });
 });

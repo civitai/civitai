@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '../hub.graph';
 import { seedanceVersionIds } from '../video/seedance.graph';
-import { klingVersionIds, grokVersionIds } from '~/shared/data-graph/generation/version-ids';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import { klingVersionIds, grokVersionIds } from '~/shared/generation/version-ids';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 /**
  * The reshape-under-sibling class: a field whose def (range / option set /
@@ -57,6 +57,20 @@ describe('seedance: model switch reshapes resolution options and duration range'
     store.set({ model: { id: seedanceVersionIds['v2-mini'], model: { type: 'Checkpoint' } } });
     expect(val(store, 'duration')).toBeLessThanOrEqual(15);
     expectValid(store, 'seedance duration');
+  });
+});
+
+describe('kling: v4 duration range vs v3', () => {
+  it('a 30s duration on v4 does not ride onto v3', () => {
+    const store = makeStore();
+    store.set({ workflow: 'txt2vid', ecosystem: 'Kling', prompt: 'x' });
+    store.set({ model: { id: klingVersionIds.v4, model: { type: 'Checkpoint' } } });
+    store.set({ duration: 30 });
+    expectValid(store, 'kling v4');
+
+    store.set({ model: { id: klingVersionIds.v3, model: { type: 'Checkpoint' } } });
+    expect(val(store, 'duration')).toBeLessThanOrEqual(15);
+    expectValid(store, 'kling v3');
   });
 });
 
@@ -205,5 +219,18 @@ describe('video-enhance: scale factor remembered per source size', () => {
     store.set({ video: video(1000, 562) });
     expect(Number(val(store, 'scaleFactor')) * 1000).toBeLessThanOrEqual(2560);
     expectValid(store, 'larger video');
+  });
+
+  it('refuses a factor that would exceed the ceiling for this source', () => {
+    const store = makeStore();
+    store.set({ workflow: 'vid2vid:upscale' });
+    store.set({
+      video: {
+        url: 'https://example.com/a.mp4',
+        metadata: { width: 1000, height: 562, fps: 30, duration: 5 },
+      },
+    });
+    store.set({ scaleFactor: 3 });
+    expect(store.validate().success).toBe(false);
   });
 });

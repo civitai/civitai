@@ -160,15 +160,20 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
     expect(bad.success).toBe(false);
   });
 
-  it('🔴 the four funnel steps are exactly these', () => {
-    // The rollup query names these strings. Pinned as a SET so adding a fifth step is a
-    // deliberate edit here (and a reminder that `details` is a String column, so a fifth
-    // step needs NO ClickHouse migration — only a new enum VALUE would).
+  it('🔴 the funnel steps are exactly these', () => {
+    // The rollup query names these strings. Pinned as a SET so adding a step is a deliberate
+    // edit here (and a reminder that `details` is a String column, so a new step needs NO
+    // ClickHouse migration — only a new `type` VALUE would).
+    //
+    // `agent_prompt_copy` arrived with `AgentOnboardingCard`. `cli_copy` was removed with the
+    // manual CLI steps it counted: `/apps/build` no longer offers them anywhere. The count is
+    // deliberately NOT in this test's name any more — it was "the four funnel steps" and the
+    // number had to be edited in two places to add one step, which is one place too many.
     const arm = trackActionSchema.options.find(
       (o) => o.shape.type.value === 'AppsBuild_Action'
     ) as never as { shape: { details: { shape: { action: { options: readonly string[] } } } } };
     expect([...arm.shape.details.shape.action.options].sort()).toEqual([
-      'cli_copy',
+      'agent_prompt_copy',
       'create_entry',
       'request_access',
       'view',
@@ -183,20 +188,18 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
  * paragraph explaining that these rows block nothing. A summary line is what a hurried reader
  * takes away, so it was the worst surviving copy of the claim. Nothing here blocks; see below.)
  *
- * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF IS OBSERVED NOWHERE. `/apps/build`'s
- * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project — which
- * `.github/workflows/lint.yml` states plainly is UNGATED: no selector there matches it
- * (`unit*`, `@civitai/*`, `app:*`) and its only CI home is the report-only
- * `preview / component-tests`.
+ * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF WAS OBSERVED NOWHERE. `/apps/build`'s
+ * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project, which CI
+ * did not run at the time.
  *
  * ⚠️ THESE ROWS DO NOT "BLOCK" ANYTHING EITHER, AND SAYING THEY DID WAS THIS FILE'S OWN
  * SECOND FALSE CLAIM. The sentence here read "these eight rows are what actually blocks a
  * regression", two lines under the criterion "a guard that can only report is not a guard
  * against the next PR" — which this suite then failed. `unit` is `continue-on-error` on a
- * pull request (`lint.yml:405`) and `main` requires no status checks at all, so no check in
- * this repository prevents a merge. What these rows buy is that `unit` DOES run on
- * `push: [main]` without that flag, so the regression reds the `main` build after it lands
- * rather than going unobserved. Weaker than blocking, stronger than the browser tier, and
+ * pull request (the `unit` job's `continue-on-error` in `lint.yml`) and `main` requires no status
+ * checks at all, so no check in this repository prevents a merge. What these rows buy is that
+ * `unit` DOES run on `push: [main]` without that flag, so the regression reds the `main` build
+ * after it lands rather than going unobserved. Weaker than blocking, and
  * worth having on those terms — not on the ones first written here.
  *
  * 🔴 THE ROW THAT MATTERS IS `summaryEnabled: false` WITH `isFetched: false`. That is an

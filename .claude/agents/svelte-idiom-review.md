@@ -1,12 +1,14 @@
 ---
 name: svelte-idiom-review
-description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio) for Svelte 5 idiom (runes, async, forms, keys) and the shared UI conventions (shadcn primitives, text-dark-2, panel styling). Use before calling a segment done, alongside svelte-correctness-review and svelte-abstraction-review.
+description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio, apps/training-studio) for Svelte 5 idiom (runes, async, forms, keys) and the shared UI conventions (shadcn primitives, text-dark-2, panel styling). Use before calling a segment done, alongside svelte-correctness-review and svelte-abstraction-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
 # Svelte 5 + UI conventions review — SvelteKit apps
 
-**Scope is the app directory you are given** (`apps/moderator`, `apps/auth`, `apps/creator-studio`).
+**Scope is the app directory you are given** (`apps/moderator`, `apps/auth`, `apps/creator-studio`,
+`apps/training-studio`).
 [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md) is the convention you review
 against; the app's own `CLAUDE.md` records its deltas — read both before starting.
 
@@ -49,6 +51,10 @@ replaces the default handling — if it doesn't `await applyAction(result)`, eve
 and a refused action is indistinguishable from a successful one. Then check the other half: is the
 failure actually **rendered**? A populated `form` nobody displays is the same bug one step later. Where
 several panels share a route, check that a failure from one doesn't render in the others.
+`apps/training-studio` is the exception. Its flow UI also ships as a web component embedded in the
+main app, so it has no form actions. Its mutations go through the `StudioBackend` seam (`$lib/backend.ts`)
+and flow code never imports `$app/*` or `$env/*`. Review those calls as you would a fetch: is the
+failure rendered, and does optimistic state revert?
 
 **Reset.** Local state tied to a subject (an open confirmation, an expanded row, a draft) must reset
 when the subject changes — `{#key}` around it, or derive it. A `?q=` navigation does not remount by

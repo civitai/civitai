@@ -46,8 +46,12 @@ describe('ModelUnpublishedAlert', () => {
     await expect.element(page.getByText(/violation of our/i)).toBeInTheDocument();
     expect(page.getByRole('link', { name: /submit an appeal/i }).elements()).toHaveLength(0);
 
-    await rerender(<ModelUnpublishedAlert reason="spam" showAppeal />);
+    await rerender(
+      <ModelUnpublishedAlert reason="spam" appealHref="/appeal?category=Model&id=5" />
+    );
 
-    await expect.element(page.getByRole('link', { name: /submit an appeal/i })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('link', { name: /submit an appeal/i }))
+      .toHaveAttribute('href', '/appeal?category=Model&id=5');
   });
 });

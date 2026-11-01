@@ -4,8 +4,11 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
+import { detectPrivacyUi } from '~/components/Consent/privacy-ui';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { env } from '~/env/client';
+import { outwardTrafficAllowed } from '~/env/local-origin';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
@@ -72,6 +75,7 @@ const useAdProviderStore = create<{
   consent: boolean;
   browserBlocked: boolean;
   gateBlocked: boolean;
+  pageNsfwLevel?: number;
 }>(() => ({
   ready: false,
   // Tri-state: undefined = detection pending, false = confirmed serving (loader onLoad / direct-ad
@@ -92,6 +96,24 @@ export function useAdGate(blocked: boolean) {
     useAdProviderStore.setState({ gateBlocked: true });
     return () => useAdProviderStore.setState({ gateBlocked: false });
   }, [blocked]);
+}
+
+/**
+ * The rating of the content a page shows, sent with direct ad requests alongside the viewer's
+ * browsing level (the ad server combines the two). Set by `Gated`; a store rather than context
+ * because the adhesive footer renders outside the page tree. Layout effect, so it lands before
+ * any ad unit's first request.
+ */
+export function useSetAdPageNsfwLevel(nsfwLevel: number) {
+  useIsomorphicLayoutEffect(() => {
+    if (!nsfwLevel) return;
+    useAdProviderStore.setState({ pageNsfwLevel: nsfwLevel });
+    return () => useAdProviderStore.setState({ pageNsfwLevel: undefined });
+  }, [nsfwLevel]);
+}
+
+export function useAdPageNsfwLevel() {
+  return useAdProviderStore((state) => state.pageNsfwLevel);
 }
 
 const blockedUrls: string[] = [
@@ -135,7 +157,8 @@ export function AdsProvider({
   // loader (and the prebid/ad-tech cascade behind it) cannot fire until accepted.
   const adsEnabled = isDev
     ? false
-    : !browserBlocked &&
+    : outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_ADS_ENABLED) &&
+      !browserBlocked &&
       consentAllowed &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&
@@ -289,8 +312,14 @@ export function AdsProvider({
         />
       )}
       {adsEnabled && !useDirectAds && <ImpressionTracker />}
+      {adsEnabled && !useDirectAds && <PrivacyUiDetector />}
     </AdsContext.Provider>
   );
+}
+
+function PrivacyUiDetector() {
+  useEffect(() => detectPrivacyUi(), []);
+  return null;
 }
 
 function ImpressionTracker() {

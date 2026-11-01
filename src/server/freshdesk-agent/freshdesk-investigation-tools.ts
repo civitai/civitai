@@ -3,6 +3,8 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
+import { findHandGrantsForDeposit } from '~/server/services/nowpayments-manual-credit';
+import { OPEN_DEPOSIT_STATUSES } from '~/server/common/chain-config';
 import { agentLog } from './freshdesk-debug';
 
 // Helper to safely run a parameterized query and return rows (empty array on error)
@@ -712,7 +714,6 @@ type HealthResponse = {
   read: boolean;
   pgWrite: boolean;
   pgRead: boolean;
-  searchMetrics: boolean;
   redis: boolean;
   sysRedis: boolean;
   clickhouse: boolean;
@@ -767,7 +768,6 @@ export async function checkSiteStatus(): Promise<string> {
       ['PG (write)', healthResult.pgWrite],
       ['Redis', healthResult.redis],
       ['System Redis', healthResult.sysRedis],
-      ['Search/Metrics', healthResult.searchMetrics],
       ['ClickHouse', healthResult.clickhouse],
     ];
     for (const [name, ok] of checks) {
@@ -843,8 +843,32 @@ async function safeCHQuery<T extends object>(query: string, label: string): Prom
   }
 }
 
+async function describeHoldingGrants(userId: number, deposit: CryptoDepositRow) {
+  try {
+    const payment = await nowpaymentsCaller.getPaymentStatus(deposit.paymentId.toString());
+    const { covering } = await findHandGrantsForDeposit(userId, {
+      paymentId: Number(deposit.paymentId),
+      payinHash: payment?.payin_hash ?? null,
+      expectedBuzz: 0,
+      paymentCreatedAt: payment?.created_at ?? deposit.createdAt,
+    });
+    if (covering.length)
+      return covering
+        .map(
+          (m) => `${m.type} of ${m.amount} Buzz on ${formatDate(new Date(m.date))} (ref ${m.ref})`
+        )
+        .join('; ');
+  } catch (e) {
+    agentLog('investigateCryptoPayments: hand grant lookup failed', {
+      paymentId: deposit.paymentId.toString(),
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+  return 'not found now; the "Deposit held" log entry for this payment names it';
+}
+
 export async function investigateCryptoPayments(userId: number): Promise<string> {
-  const [wallets, deposits, buzzTxns] = await Promise.all([
+  const [wallets, deposits, claims, buzzTxns] = await Promise.all([
     safeQuery<CryptoWalletRow>(Prisma.sql`
       SELECT chain, wallet, "smartAccount", "payCurrency"
       FROM "CryptoWallet"
@@ -856,8 +880,18 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
              "feeCurrency", "paidFiat", chain, "createdAt", "updatedAt"
       FROM "CryptoDeposit"
       WHERE "userId" = ${userId}
+        AND status NOT IN ('unverified', 'unverified_exhausted')
       ORDER BY "createdAt" DESC
       LIMIT 10
+    `),
+    // Claims get their own, smaller page so planted ones cannot push real deposits out of view.
+    safeQuery<CryptoDepositRow>(Prisma.sql`
+      SELECT "paymentId", status, "payCurrency", "payAmount", "createdAt", "updatedAt"
+      FROM "CryptoDeposit"
+      WHERE "userId" = ${userId}
+        AND status = 'unverified_exhausted'
+      ORDER BY "createdAt" DESC
+      LIMIT 3
     `),
     safeCHQuery<BuzzTransactionRow>(
       `SELECT type, description, externalTransactionId, amount, date
@@ -922,6 +956,26 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
         }${fees}`
       );
       lines.push(`    Buzz credited: ${buzzTotal}${multiplierStr}`);
+      if (d.status === 'held') {
+        lines.push(
+          '    Already paid by a staff hand grant citing this payment; do not credit by hand'
+        );
+        lines.push(`    Matching grant: ${await describeHoldingGrants(userId, d)}`);
+      }
+      lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
+    }
+  }
+
+  // --- Deposits only claimed in a notification NOWPayments never confirmed ---
+  if (claims.length > 0) {
+    lines.push(`\n--- CLAIMED, NOT CONFIRMED BY NOWPAYMENTS (${claims.length}) ---`);
+    for (const d of claims) {
+      // The currency is whatever the claim said; show it only if it looks like a currency code.
+      const currency = /^[a-z0-9]{2,15}$/i.test(d.payCurrency) ? d.payCurrency : 'unknown';
+      lines.push(
+        `  Payment #${d.paymentId} [${d.status}] - claimed, not confirmed by NOWPayments: do not credit by hand, escalate`
+      );
+      lines.push(`    Claimed currency: ${currency} | Claimed amount: ${d.payAmount ?? 'N/A'}`);
       lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
     }
   }
@@ -930,7 +984,7 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const stuckDeposits = deposits.filter(
     (d) =>
-      ['waiting', 'confirming', 'partially_paid'].includes(d.status) &&
+      [...OPEN_DEPOSIT_STATUSES, 'partially_paid'].includes(d.status) &&
       new Date(d.createdAt) > sevenDaysAgo
   );
 

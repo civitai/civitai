@@ -25,8 +25,6 @@ vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: mockResolveDownl
 
 vi.mock('~/utils/s3-utils', () => ({ getGetUrlByKey: vi.fn() }));
 
-vi.mock('~/env/server', () => ({ env: { S3_VAULT_BUCKET: 'vault-bucket' } }));
-
 const TEST_USER = { id: 4242, isModerator: false };
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -38,6 +36,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 
 import handler from '~/pages/api/download/vault/[vaultItemId]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 // All three reads are on the REPLICA in the route. The old fixture aliased dbRead's keyValue
 // spy onto dbWrite as well, so a read routed to the primary satisfied it silently.
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
@@ -76,6 +75,7 @@ function blocklist(...ips: string[]) {
 describe('/api/download/vault/[vaultItemId] — IP blocklist', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setEnv({ S3_VAULT_BUCKET: 'vault-bucket' });
     mockGetVaultWithStorage.mockResolvedValue({
       updatedAt: new Date(),
       storageKb: 1_000_000,

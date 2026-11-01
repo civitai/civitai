@@ -1,6 +1,7 @@
 ---
 name: docs-drift-review
 description: Given a session's commits or diff, finds the docs that the change made wrong — stale paths and symbols, checklist boxes now done, decisions recorded as open that something already settled, and two docs that now contradict each other. Also cuts padding, judging fact density rather than length. Reports exact replacement text. Use before opening a PR, and after any change that moves a file, renames a script, or closes a tracked item.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -53,6 +54,23 @@ Every one is cheap to catch mechanically and expensive to hit.
 6. **Check the doc's own conventions.** Several files here state how they must be maintained — dated
    feedback rounds carry "the newest file is the only one with open boxes"; the migration checklist
    names itself the tracker and the skill the process. A change that breaks the convention is a finding.
+7. **Keep the indexes in step.** When the change adds, renames or deletes a doc or rule, check the index
+   that lists it:
+   - `docs/features/README.md` — a renamed or deleted doc still listed is a finding. A new doc for a
+     **core system** (one other docs, code comments or agents point at) that is missing from the table is
+     a finding; give the row. The table is curated, not exhaustive — don't flag every unlisted doc.
+   - Root `CLAUDE.md` → "Where knowledge lives" — every file in `.claude/rules/` and `docs/dev/` must be
+     named there, and nothing it names may be gone.
+8. **Question every line added to a `CLAUDE.md`.** The root file loads in every session and subagent.
+   Lines that apply only to some files, explain setup, or record incident history are a finding: name
+   where they belong (a path-scoped `.claude/rules/` file, `docs/dev/`, `docs/features/`, a skill, or the
+   commit message) and give the one-line instruction, if any, that should stay.
+9. **Check the public API reference.** If the diff changes what a `/api/v1` endpoint accepts or returns
+   (params, response fields, auth, rate limits, error statuses, region gates), including through a
+   service that builds the response, the hand-written page in `civitai/civitai-developer-docs`
+   (`site/reference/`) is now wrong. It lives outside this repo, so name the page and what it is
+   missing, and say a docs PR is needed. A new public endpoint with no page is a finding, despite the
+   restraint rule against proposing new docs. Rules: `.claude/rules/public-api.md`.
 
 ## Concision
 

@@ -2,12 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { mockQueueUpdate } = vi.hoisted(() => ({ mockQueueUpdate: vi.fn() }));
+const { mockQueueUpdate, systemTags } = vi.hoisted(() => ({
+  mockQueueUpdate: vi.fn(),
+  systemTags: [] as { id: number; name: string }[],
+}));
 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   articlesSearchIndex: { queueUpdate: mockQueueUpdate },
 }));
+
+vi.mock('~/server/services/system-cache', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getSystemTags: async () => systemTags,
+}));
+
+const OFFICIAL_TAG = { id: 900, name: 'civitai official' };
 
 import { setArticleOfficial } from '~/server/services/article.service';
 
@@ -21,6 +31,9 @@ import { setArticleOfficial } from '~/server/services/article.service';
  */
 describe('setArticleOfficial', () => {
   beforeEach(() => {
+    systemTags.splice(0, systemTags.length, OFFICIAL_TAG);
+    dbMock.dbWrite.tagsOnArticle.createMany.mockReset();
+    dbMock.dbWrite.tagsOnArticle.deleteMany.mockReset();
     mockQueueUpdate.mockReset();
     mockQueueUpdate.mockResolvedValue(undefined);
     dbMock.dbRead.article.findUnique.mockReset();
@@ -35,6 +48,7 @@ describe('setArticleOfficial', () => {
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
 
     expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.tagsOnArticle.createMany).not.toHaveBeenCalled();
     expect(mockQueueUpdate).not.toHaveBeenCalled();
   });
 
@@ -79,5 +93,41 @@ describe('setArticleOfficial', () => {
     await setArticleOfficial({ id: 7, isOfficial: true, isModerator: true });
 
     expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: 7, action: 'Update' }]);
+  });
+
+  // The chip filters on the tag row, not the column; a mark that wrote only the column would
+  // badge the article but leave it out of the chip.
+  it('attaches the civitai official tag when marking', async () => {
+    await setArticleOfficial({ id: 7, isOfficial: true, isModerator: true });
+
+    expect(dbMock.dbWrite.tagsOnArticle.createMany).toHaveBeenCalledWith({
+      data: [{ articleId: 7, tagId: OFFICIAL_TAG.id }],
+      skipDuplicates: true,
+    });
+    expect(dbMock.dbWrite.tagsOnArticle.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('removes the civitai official tag when unmarking', async () => {
+    dbMock.dbWrite.article.update.mockResolvedValue({ id: 7, isOfficial: false });
+
+    await setArticleOfficial({ id: 7, isOfficial: false, isModerator: true });
+
+    expect(dbMock.dbWrite.tagsOnArticle.deleteMany).toHaveBeenCalledWith({
+      where: { articleId: 7, tagId: OFFICIAL_TAG.id },
+    });
+    expect(dbMock.dbWrite.tagsOnArticle.createMany).not.toHaveBeenCalled();
+  });
+
+  // The code can deploy before the tag row is seeded; the mark must still succeed, and the
+  // seed's backfill catches the tag up.
+  it('still writes the column when the tag is not seeded', async () => {
+    systemTags.splice(0, systemTags.length);
+
+    await expect(
+      setArticleOfficial({ id: 7, isOfficial: true, isModerator: true })
+    ).resolves.toEqual({ id: 7, isOfficial: true });
+
+    expect(dbMock.dbWrite.article.update).toHaveBeenCalled();
+    expect(dbMock.dbWrite.tagsOnArticle.createMany).not.toHaveBeenCalled();
   });
 });

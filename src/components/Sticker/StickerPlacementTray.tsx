@@ -13,7 +13,10 @@ import { FilterChip } from '~/components/Filters/FilterChip';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
+import { StickerPreviewToggle } from '~/components/Sticker/StickerPreviewToggle';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
+import { SHELF_TILE_STYLE } from '~/components/Sticker/shelf-tile-style';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import {
   useFreePlacementStanding,
@@ -86,6 +89,7 @@ export function StickerPlacementTray({
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
   const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
+  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
   // Bound to this bar's own image, not merely to "a session exists". The
@@ -164,7 +168,7 @@ export function StickerPlacementTray({
   // The creator's ceiling, not just the global one. Read before the early return
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
-  const { grab, dragging } = useStickerDragOut(maxScale);
+  const { grab, dragging, shelfRef } = useStickerDragOut(maxScale);
 
   /**
    * What the tray actually draws: the collection filtered by what was typed, in
@@ -242,7 +246,7 @@ export function StickerPlacementTray({
   // Before that it is an instruction about nothing.
   const instruction = drafts.length
     ? 'Drag out as many as you like, then pay to place the ones you want.'
-    : 'Drag a sticker onto the image.';
+    : 'Tap or drag a sticker onto the image.';
 
   return (
     // Measured as the obstacle the buy button avoids, and deliberately measured
@@ -254,7 +258,11 @@ export function StickerPlacementTray({
     // side effect of it.
     <div
       ref={trayRef}
+      {...{ [STICKER_EDITOR_ATTR]: '' }}
       className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+      // Hidden, not unmounted: the buy button keeps measuring this box, so its
+      // side does not flip while the controls are hidden.
+      style={previewing ? { visibility: 'hidden' } : undefined}
     >
       <div className="flex w-full max-w-xl flex-col">
         {/* Above the tray, not in place of it: the row of what you own is the
@@ -400,6 +408,7 @@ export function StickerPlacementTray({
                 )}
               </div>
             )}
+            <StickerPreviewToggle imageId={imageId} className="order-2 shrink-0 sm:order-3" />
             <CloseButton
               className="order-2 sm:order-3"
               onClick={closeTray}
@@ -413,6 +422,7 @@ export function StickerPlacementTray({
               came out wider than the visible panel, putting the track's end and the last
               sticker outside the clip. */}
           <div
+            ref={shelfRef}
             className="overflow-y-auto"
             style={{ maxHeight: trayRowsHeight(2), scrollbarWidth: 'thin' }}
           >
@@ -463,7 +473,7 @@ export function StickerPlacementTray({
                     // draft is what left a sticker asking to be bought for a use
                     // another draft had just handed back.
                     onPointerDown={grab(option.id)}
-                    style={{ touchAction: 'none', height: STICKER_TILE_HEIGHT }}
+                    style={{ ...SHELF_TILE_STYLE, height: STICKER_TILE_HEIGHT }}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center justify-center gap-1 rounded border p-2',
                       drafts.some((draft) => draft.cosmeticId === option.id) ||

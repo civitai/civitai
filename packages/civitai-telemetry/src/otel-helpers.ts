@@ -1,6 +1,73 @@
-import { trace, context, propagation, ROOT_CONTEXT, SpanStatusCode } from '@opentelemetry/api';
+import {
+  trace,
+  context,
+  propagation,
+  isSpanContextValid,
+  ROOT_CONTEXT,
+  SpanStatusCode,
+  TraceFlags,
+} from '@opentelemetry/api';
 
 const tracer = trace.getTracer('civitai-app');
+
+// The gate behind `withSpan`'s unsampled-parent shortcut (see `withSpan`). Kept on `globalThis`
+// because this module can be emitted into more than one bundled server chunk, and the app sets
+// the gate ONCE at boot: a module-scope variable would arm only the copy that boot imported and
+// leave every other copy's call sites on the old path, with no error. Enrolled as SHARED_STATE
+// in scripts/server-graph-watchlist.mjs. Unset (the default, and always in tests that do not
+// set it) means withSpan behaves exactly as before the gate existed.
+type WithSpanGateState = { gate: (() => boolean) | undefined };
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiWithSpanSkipUnsampledGate: WithSpanGateState | undefined;
+}
+const withSpanGateState = (globalThis.__civitaiWithSpanSkipUnsampledGate ??= { gate: undefined });
+
+/**
+ * Install (or, with `undefined`, remove) the switch that lets `withSpan` skip opening a span
+ * under an unsampled local parent. The function is called on the hot path, once per `withSpan`
+ * call that has such a parent, so it must be cheap — the app passes a cached flag read.
+ */
+export function setWithSpanSkipUnsampledGate(gate: (() => boolean) | undefined): void {
+  withSpanGateState.gate = gate;
+}
+
+/**
+ * True only when a span opened here could NOT be recorded or exported, so not opening it is
+ * unobservable in trace output: the active span is a valid, LOCAL, non-recording parent whose
+ * sampled flag is clear. Under the app's sampler (ParentBased, default
+ * `localParentNotSampled` = AlwaysOff, see src/instrumentation.node.ts) every child of such a
+ * parent is a NonRecordingSpan.
+ *
+ * Deliberately NOT skipped:
+ *   - no active span: the child would be a new ROOT, ratio-sampled, so some of those spans
+ *     are exported today;
+ *   - a REMOTE parent: conservative. Today an unsampled remote parent's children are AlwaysOff
+ *     too (only `remoteParentSampled` is configured), but excluding remote parents means a
+ *     future `remoteParentNotSampled` change cannot make this drop exportable spans;
+ *   - a parent with the sampled flag set but not recording (e.g. one that has already ENDED,
+ *     as in work that outlives its request): its children ARE recorded today.
+ */
+function shouldSkipUnsampledSpan(): boolean {
+  const gate = withSpanGateState.gate;
+  if (gate === undefined) return false;
+  const parent = trace.getActiveSpan();
+  if (parent === undefined || parent.isRecording()) return false;
+  const parentContext = parent.spanContext();
+  if (
+    parentContext.isRemote ||
+    (parentContext.traceFlags & TraceFlags.SAMPLED) !== 0 ||
+    !isSpanContextValid(parentContext)
+  ) {
+    return false;
+  }
+  try {
+    return gate() === true;
+  } catch {
+    // A failing gate falls back to opening the span, i.e. the behaviour before the gate.
+    return false;
+  }
+}
 
 /**
  * Set attributes on the CURRENTLY ACTIVE span, if there is one. For values only known after the
@@ -22,9 +89,10 @@ export function setActiveSpanAttributes(attrs: Record<string, string | number | 
  * CURRENTLY ACTIVE span, ready to merge into an outbound request's headers.
  *
  * WHY this exists as a manual helper rather than an auto-instrumentation: this app runs
- * `HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })` (instrumentation.node.ts)
- * — outbound client spans, and with them traceparent injection, are deliberately suppressed
- * on Node core http/https for their per-request `async_hooks` cost. The orchestrator and
+ * `HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })` (or none at all, with
+ * `OTEL_HTTP_INSTRUMENTATION=off`; see src/server/otel-instrumentations.ts) — outbound client
+ * spans, and with them traceparent injection, are deliberately suppressed on Node core
+ * http/https for their per-request `async_hooks` cost. The orchestrator and
  * meilisearch clients use fetch/undici and were NEVER auto-instrumented at all, so no
  * outbound call anywhere in the app currently carries a traceparent and no trace crosses a
  * service boundary. Injecting per-call — only at the boundaries we care about — buys the
@@ -55,6 +123,15 @@ export function withSpan<T>(
   attrsOrFn: Record<string, string | number | boolean> | (() => T),
   maybeFn?: () => T
 ): T {
+  // Under an unsampled local parent the span below would be a NonRecordingSpan that is never
+  // exported, yet opening it still pays for span allocation, attribute handling and an extra
+  // context switch. When the gate is on, run the work directly instead: same return value, same
+  // throw, and the active span inside the work is the parent, which shares the trace id. See
+  // `shouldSkipUnsampledSpan` for exactly which parents qualify.
+  if (shouldSkipUnsampledSpan()) {
+    return typeof attrsOrFn === 'function' ? attrsOrFn() : maybeFn!();
+  }
+
   const [attrs, fn] = typeof attrsOrFn === 'function' ? [{}, attrsOrFn] : [attrsOrFn, maybeFn!];
 
   return tracer.startActiveSpan(name, (span) => {

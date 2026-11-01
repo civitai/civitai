@@ -1,8 +1,11 @@
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import { isAppBlocksAuthorFeeEnabled } from '~/server/services/app-blocks-flag';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { APP_AUTHOR_FEE_DESCRIPTION, TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import {
@@ -24,11 +27,11 @@ import type { BlockAuthorFeeComputation, BlockAuthorFeeConfig } from './author-f
 import { blockGenerationCoarseType } from './generation-type';
 
 /**
- * The `workflowLabel` both ESTIMATE call sites pass; the two gating sites pass
+ * The `workflowLabel` every ESTIMATE call site passes; the gating sites pass
  * the block's external id instead. It is what `surface` on
  * `blockAuthorFeeQuotedCounter` is derived from.
  *
- * 🔴 BOTH ESTIMATE SITES IMPORT THIS, AND THAT IMPORT IS THE ONLY THING HOLDING
+ * 🔴 EVERY ESTIMATE SITE IMPORTS THIS, AND THAT IMPORT IS THE ONLY THING HOLDING
  * THE LABEL TOGETHER. An earlier revision left them spelling `'estimate'` and
  * claimed the pairing was "pinned behaviourally by
  * `blocks.router.workflow.test.ts`". It was not: that file never mentions
@@ -37,7 +40,7 @@ import { blockGenerationCoarseType } from './generation-type';
  * unbounded estimate population silently moved onto the `gating` series. A
  * shared import cannot drift that way; a sentence about a test can.
  *
- * The GATING side needs no equivalent: both gating sites pass
+ * The GATING side needs no equivalent: every gating site passes
  * `blockExternalId`, which `composeBlockExternalId` /
  * `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating caller
  * cannot produce this value by construction.
@@ -85,7 +88,7 @@ export const BLOCK_AUTHOR_FEE_ESTIMATE_LABEL = 'estimate';
 // A submit path that reserves nothing passes 0 and can then charge nothing, no
 // matter what the realized base says — so "did this path remember to price the
 // fee in?" has a mechanical answer instead of resting on a reviewer noticing.
-// Two of the four submit paths are in exactly that state on purpose; see
+// Three of the five submit paths are in exactly that state on purpose; see
 // `chargeBlockAuthorFee`.
 //
 // ── THE MONEY SHAPE ─────────────────────────────────────────────────────────
@@ -181,8 +184,9 @@ export async function quoteBlockAuthorFee(args: {
    * So do NOT re-spell it for log readability: an estimate caller that stops
    * passing the estimate label moves its whole population onto the `gating`
    * series. A whatIf has no workflow id, which is why callers pass a stable
-   * label at all; both estimate sites import the constant rather than spelling
-   * it, and both are pinned in `blocks.router.workflow.test.ts`.
+   * label at all; every estimate site imports the constant rather than spelling
+   * it (the txt2img and registered-step ones are pinned in
+   * `blocks.router.workflow.test.ts`).
    */
   workflowLabel: string;
   /**
@@ -241,16 +245,16 @@ export async function quoteBlockAuthorFee(args: {
   //
   // 🔴 `surface` IS DERIVED FROM `workflowLabel`, NOT FROM `suppressQuoteLogs`,
   // AND AN EARLIER REVISION OF THIS LINE GOT IT WRONG IN A WAY THE TESTS COULD
-  // NOT SEE. `suppressQuoteLogs` is set at ONE of the two estimate call sites
-  // (the `kind:'step'` estimate) and NOT at the other (the workflow estimate), so deriving from it
+  // NOT SEE. `suppressQuoteLogs` was then set at ONE of the two estimate call sites
+  // (the `kind:'step'` estimate) and NOT at the other (the txt2img estimate), so deriving from it
   // reported a genuine estimate as `gating`. The tests passed because they
   // asserted the label against the flag the test itself passed — the
   // expectation was taken from the implementation rather than from the router.
-  // `workflowLabel` is `'estimate'` at both estimate sites and the external id at
-  // both gating sites (the two submits), so it discriminates all four.
+  // `workflowLabel` is `'estimate'` at every estimate site and the external id at
+  // every gating site (the submits), so it discriminates them all.
   //
   // ⚠️ THAT MAKES THE LABEL A CLAIM ABOUT A STRING THE ROUTER PASSES, AND THE
-  // ONLY THING ENFORCING IT IS THAT BOTH ESTIMATE SITES NOW IMPORT
+  // ONLY THING ENFORCING IT IS THAT EVERY ESTIMATE SITE NOW IMPORTS
   // `BLOCK_AUTHOR_FEE_ESTIMATE_LABEL` RATHER THAN SPELLING `'estimate'`.
   //
   // 🔴 AN EARLIER REVISION OF THIS COMMENT CLAIMED IT WAS "pinned behaviourally
@@ -263,7 +267,7 @@ export async function quoteBlockAuthorFee(args: {
   // level up. The coupling is now structural (a shared import) instead of a
   // sentence about a test.
   //
-  // The GATING side needs no such pin: both gating sites (the two SUBMIT paths) pass
+  // The GATING side needs no such pin: every gating site (the SUBMIT paths) passes
   // `blockExternalId`, which `composeBlockExternalId` /
   // `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating
   // caller cannot produce `'estimate'` by construction.
@@ -398,14 +402,14 @@ export type ChargeBlockAuthorFeeResult =
  * folded into its budget gate and its reservations. `charged = min(reserved,
  * realized)`, so:
  *   * a path that priced no fee (0) can never take one, whatever the realized
- *     base says. TWO OF THE FOUR SUBMIT PATHS ARE DELIBERATELY IN THIS STATE:
+ *     base says. THREE OF THE SIX SUBMIT PATHS ARE DELIBERATELY IN THIS STATE:
  *     `submitCustomComfyWorkflow` takes no whatIf quote at all (its ceiling IS
- *     the app's declared `maxBuzz`) and `submitPassThroughStepWorkflow`'s quote
- *     helper returns a total only. Neither has a pre-submit `cost.base` to price
- *     a fee from, so neither reserves one, so neither charges one. They still
- *     call this function with 0 so the population of submit paths that route
- *     their fee through one place stays CLOSED and a future path that gains a
- *     base changes one argument rather than re-deriving the rule.
+ *     the app's declared `maxBuzz`) and `submitPassThroughStepWorkflow` reserves
+ *     the app's declared ceiling. Neither reserves a fee, so neither charges one. The third,
+ *     `submitTrainingWorkflow`, prices its step but charges no fee by decision
+ *     (the viewer confirms one exact price). None of the three calls this
+ *     function; the `NO_FEE_PATHS` ledger in `no-divergent-author-fee-base.test.ts`
+ *     keeps the population closed.
  *   * a realized base that moved UP between the whatIf and the submit charges the
  *     RESERVED amount, not the realized one. The viewer is never billed past what
  *     their consent budget was measured against.
@@ -574,7 +578,7 @@ async function chargeBlockAuthorFeeUncounted(
         fromAccountType: buzzType,
         toAccountType: buzzType,
         amount: feeBuzz,
-        description: 'App author fee',
+        description: APP_AUTHOR_FEE_DESCRIPTION,
         type: TransactionType.AppAuthorFee,
         externalTransactionId: blockAuthorFeeChargeKey(workflowId),
       },
@@ -603,6 +607,11 @@ async function chargeBlockAuthorFeeUncounted(
     ).catch(() => undefined);
     return { charged: false, reason: 'debit-failed' };
   }
+
+  // A replay of a fee that already moved can also come back in neither array: Buzz may refuse
+  // the funds check before it spots the duplicate. Only the ledger tells that apart from a real
+  // drop. A failed lookup reports the drop.
+  if (!landed) landed = await feeChargeIsOnLedger(workflowId, viewerUserId).catch(() => false);
 
   if (!landed) {
     logToAxiom(
@@ -1020,7 +1029,7 @@ async function refundBlockAuthorFee(args: {
         fromAccountType: buzzType,
         toAccountType: buzzType,
         amount: feeBuzz,
-        description: 'App author fee refund',
+        description: `${APP_AUTHOR_FEE_DESCRIPTION} refund`,
         type: TransactionType.Refund,
         externalTransactionId: blockAuthorFeeReversalKey(workflowId),
       },
@@ -1058,6 +1067,12 @@ async function refundBlockAuthorFee(args: {
     'civitai-prod'
   ).catch(() => undefined);
   return false;
+}
+
+/** Whether this workflow's fee debit from `viewerUserId` is already on the ledger. */
+async function feeChargeIsOnLedger(workflowId: string, viewerUserId: number) {
+  const existing = await getTransactionByExternalId(blockAuthorFeeChargeKey(workflowId));
+  return existing?.fromAccountId === viewerUserId;
 }
 
 /**

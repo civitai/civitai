@@ -1,6 +1,6 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
-import { legacySessionCookieName, sessionCookieName } from '@civitai/auth';
+import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
@@ -16,9 +16,17 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
-import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
+import {
+  BANNED_ACCOUNT_MESSAGE,
+  isClientAbortError,
+  isDriverAuthoredMessage,
+} from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
   GENERIC_CLIENT_ERROR_BY_STATUS,
@@ -26,6 +34,8 @@ import {
   REST_ERROR_CODE,
   restErrorBody,
 } from '~/server/utils/rest-error-envelope';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 
 /**
  * The normalized route of the request this response belongs to, or `undefined`.
@@ -306,12 +316,52 @@ export function TokenSecuredEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (!token || token.trim() === '') {
+    if (!isConfiguredSecret(token)) {
       res.status(503).json({ error: 'Endpoint not configured' });
       return;
     }
 
-    if (req.query.token !== token) {
+    // `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
+    // `?token=` stays accepted until every caller has moved to the header. Either one passing is
+    // enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
+    // arrives as an array and is refused rather than read.
+    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+    const bearerOk = timingSafeEqualStrings(token, bearer);
+    const queryOk = timingSafeEqualStrings(token, queryToken);
+    if (!bearerOk && !queryOk) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    await handler(req, res);
+  });
+}
+
+const MIN_HEADER_TOKEN_LENGTH = 32;
+
+export function HeaderTokenSecuredEndpoint(
+  getToken: () => string | undefined,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    const token = getToken();
+    if (
+      !isConfiguredSecret(token) ||
+      token !== token.trim() ||
+      token.length < MIN_HEADER_TOKEN_LENGTH
+    ) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
+    if (req.url?.includes('?') || Object.keys(req.query ?? {}).length) {
+      res.status(400).json({ error: 'This endpoint takes no query string' });
+      return;
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (typeof presented !== 'string' || !timingSafeEqualStrings(token, presented)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
@@ -432,10 +482,10 @@ const CREDENTIALED_VARY = 'Authorization, Cookie';
  * Cookie names that can carry a session, hence make a response caller-dependent.
  *
  * 🔴 DERIVED, never spelled out. `@civitai/auth` owns the naming, and it varies
- * along two axes: the current thin-session cookie vs the legacy next-auth one
- * (both are still honoured by `getServerAuthSession`), and the `__Secure-`
- * prefix, which is applied when serving over https and dropped for http dev. All
- * four spellings are enumerated by calling the helpers with an explicit boolean,
+ * along three axes: the host-only `__Host-` session cookie, the shared thin-session
+ * cookie, and the legacy next-auth one (all still honoured by `getServerAuthSession`,
+ * whatever this app's cookie mode), plus the secure prefix, which is applied when
+ * serving over https and dropped for http dev. All five spellings are enumerated by calling the helpers with an explicit boolean,
  * rather than letting the env-derived default pick one — the guard must hold in
  * dev and prod alike, and it must not silently narrow if a deploy's env changes.
  *
@@ -446,6 +496,7 @@ const CREDENTIALED_VARY = 'Authorization, Cookie';
  */
 const SESSION_COOKIE_NAMES = Array.from(
   new Set([
+    hostSessionCookieName(true),
     sessionCookieName(true),
     sessionCookieName(false),
     legacySessionCookieName(true),
@@ -493,22 +544,7 @@ export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
     }
   }
 
-  if (hasNonEmpty((req.query as Record<string, unknown> | undefined)?.token)) return true;
-
-  // Same fallback rationale as the raw `Cookie` header above: `req.query` is
-  // Next's parse, and `getServerAuthSession` reads `req.url` directly, so the two
-  // reads must both be covered or the predicate can silently narrow.
-  const queryString = req.url?.split('?')[1];
-  if (queryString && hasNonEmpty(new URLSearchParams(queryString).get('token'))) return true;
-
-  return false;
-}
-
-/** Truthy for a non-empty string, or an array containing one. */
-function hasNonEmpty(value: unknown): boolean {
-  if (typeof value === 'string') return value.length > 0;
-  if (Array.isArray(value)) return value.some((v) => typeof v === 'string' && v.length > 0);
-  return false;
+  return requestCarriesQueryToken(req);
 }
 
 export function PublicEndpoint(
@@ -545,8 +581,8 @@ export function PublicEndpoint(
     // claim instead of asserting it unconditionally.
     //
     // The fallback is the platform default rather than nothing. `apiCacheMiddleware`
-    // already sets exactly this string, but its matcher covers only `/api/trpc/*`,
-    // `/api/v1/*` and `/api/testing/*` (verified in `src/proxy.ts`) — and this
+    // already sets exactly this string, but it covers only `/api/v1/*` (`/api/trpc/*`
+    // is outside the proxy matcher in `src/proxy.ts`; that route sets it itself) — and this
     // wrapper is used well outside those prefixes (`/api/user/*`, `/api/generation/*`,
     // `/api/track/*`, `/api/download/*`, `/api/internal/*`). Relying on the proxy
     // would leave those with no `Cache-Control` at all, which is a weaker
@@ -606,7 +642,7 @@ export function MixedAuthEndpoint(
     //     so it also runs before any session work.
     //  2. **The credentialed arm now states a header.** It previously stated
     //     nothing and left the response to `apiCacheMiddleware`, whose matcher
-    //     covers `/api/v1/*` and `/api/trpc/*` only. Two of the twelve routes on
+    //     covers `/api/v1/*` only. Two of the twelve routes on
     //     this wrapper sit outside that: `/api/auth/freshdesk`, which answered
     //     with no `Cache-Control` at all, and
     //     `/api/blocks/screenshot/[appBlockId]/[file]`, whose 200 arm sets its
@@ -682,9 +718,26 @@ export function ModEndpoint(
     const session = await getServerAuthSession({ req, res });
     if (!session || !session.user?.isModerator || !!session.user.bannedAt)
       return res.status(401).json({ error: 'Unauthorized' });
+    if (!requireFullScopeSession(req, res)) return;
 
     await handler(req, res, session.user);
   });
+}
+
+/**
+ * A 429 carrying retry metadata: `Retry-After` plus the envelope with `rateLimit`. `message`
+ * (and the legacy `error`) stay the refusal's own prose, so a consumer that only reads text
+ * sees what it saw before.
+ */
+export function sendRestRateLimited(
+  res: NextApiResponse,
+  message: string,
+  rateLimit: RateLimitMeta
+) {
+  res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+  return noStore(res)
+    .status(429)
+    .json({ ...restErrorBody(REST_ERROR_CODE.TOO_MANY_REQUESTS, message), rateLimit });
 }
 
 export function handleEndpointError(res: NextApiResponse, e: unknown) {
@@ -758,6 +811,8 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
       logRestGenericizedClientFault(apiError, res);
       return noStore(res).status(status).json(restErrorBody(generic.code, generic.message));
     }
+    const rateLimit = rateLimitMetaOf(apiError);
+    if (rateLimit) return sendRestRateLimited(res, apiError.message, rateLimit);
     // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
     // `message`; many newer call sites (incl. `withMeili`'s
@@ -813,7 +868,16 @@ export function OrchestratorEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return AuthedEndpoint(async (req, res, user) => {
-    const token = await getOrchestratorToken(user.id, { req, res });
+    if (user.bannedAt) return res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
+    let token: string;
+    try {
+      token = await getOrchestratorToken(user.id, { req, res });
+    } catch (error) {
+      // The mint reads the ban from the primary, so it can refuse a session whose cached user predates the ban.
+      if (error instanceof TRPCError && error.code === 'FORBIDDEN')
+        return res.status(403).json({ error: error.message });
+      throw error;
+    }
     return await handler(req, res, user, token);
   }, allowedMethods);
 }

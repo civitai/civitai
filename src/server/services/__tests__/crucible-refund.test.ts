@@ -1,9 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BuzzApiError } from '@civitai/buzz';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as NotificationService from '~/server/services/notification.service';
+import type * as PostService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
@@ -11,8 +13,17 @@ import { dbMock } from '~/__tests__/mocks';
 const findUnique = dbMock.dbWrite.crucible.findUnique;
 const claim = dbMock.dbWrite.crucible.updateMany;
 const refundMultiAccountTransaction = vi.fn();
+const getMultiAccountTransactionsByPrefix = vi.fn();
+const getTransactionByExternalId = vi.fn();
+const refundTransaction = vi.fn();
 const setTTL = vi.fn();
 const createNotification = vi.fn();
+const afterPostsPublish = vi.fn();
+
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  afterPostsPublish,
+}));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -22,6 +33,9 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
+  refundTransaction,
 }));
 
 vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
@@ -59,13 +73,23 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const REFUNDED = { refundedTransactions: [{ amount: 100 }], totalRefunded: 1 };
+
 beforeEach(() => {
   vi.clearAllMocks();
   findUnique.mockResolvedValue(crucible());
   claim.mockResolvedValue({ count: 1 });
   setTTL.mockResolvedValue(undefined);
-  refundMultiAccountTransaction.mockResolvedValue(undefined);
+  refundMultiAccountTransaction.mockResolvedValue(REFUNDED);
+  // One leg per prefix, already refunded: a 409 then reads as settled.
+  getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+    { transactionId: `${prefix}-leg`, externalTransactionId: `${prefix}-User`, amount: 100 },
+  ]);
+  getTransactionByExternalId.mockResolvedValue({ type: 'Refund' });
+  refundTransaction.mockResolvedValue({ transactionId: 'refunded' });
   createNotification.mockResolvedValue(undefined);
+  afterPostsPublish.mockResolvedValue(undefined);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 });
 
 const MODERATOR_CLAIM = {
@@ -238,6 +262,21 @@ describe('cancelCrucible — refund idempotency', () => {
     expect(result.alreadySettled).toBe(3); // 2 entries + the creator's setup fee
   });
 
+  it('refunds a leg a 409 left behind and counts it as moved money', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
+    getTransactionByExternalId.mockResolvedValue(null);
+
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(result.alreadySettled).toBe(0);
+    expect(result.failedRefunds).toEqual([]);
+    expect(refundTransaction.mock.calls.map(([id]) => id)).toEqual([
+      'entry-1-10-leg',
+      'entry-2-11-leg',
+      'crucible-setup-4-abc-leg',
+    ]);
+  });
+
   it('reports nothing already settled on a first, clean cancel', async () => {
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 
@@ -260,6 +299,31 @@ describe('cancelCrucible — entry refunds', () => {
     expect(result.refundedEntries).toBe(2);
     expect(result.totalRefunded).toBe(200); // 2 entries x 100 entryFee
     expect(result.failedRefunds).toEqual([]);
+  });
+
+  // Entries in one crucible can be paid in green and yellow. Reversing each entry's own charge is
+  // what returns it in the currency it was paid in; a refund that named a currency, or pooled the
+  // entries, would turn one into the other. Do not "simplify" this into a single payout.
+  it('refunds each entry by reversing its own charge, naming no currency', async () => {
+    findUnique.mockResolvedValue(
+      crucible({ entries: [entry(1, 10, 'green-paid-1-10'), entry(2, 11, 'yellow-paid-2-11')] })
+    );
+
+    await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    const entryRefunds = refundMultiAccountTransaction.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => arg.externalTransactionIdPrefix !== 'crucible-setup-4-abc');
+    expect(entryRefunds.map((arg) => arg.externalTransactionIdPrefix)).toEqual([
+      'green-paid-1-10',
+      'yellow-paid-2-11',
+    ]);
+    for (const arg of entryRefunds)
+      expect(Object.keys(arg).sort()).toEqual([
+        'description',
+        'details',
+        'externalTransactionIdPrefix',
+      ]);
   });
 
   it('names and links the crucible on each entry refund', async () => {
@@ -305,7 +369,7 @@ describe('cancelCrucible — entry refunds', () => {
   it('reports a failed entry refund instead of throwing, so the rest still land', async () => {
     refundMultiAccountTransaction.mockImplementation(({ externalTransactionIdPrefix }) => {
       if (externalTransactionIdPrefix === 'entry-1-10') throw new Error('buzz unavailable');
-      return Promise.resolve(undefined);
+      return Promise.resolve(REFUNDED);
     });
 
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
@@ -361,7 +425,7 @@ describe('cancelCrucible — creator setup fee', () => {
   it('completes the cancellation even when the setup fee refund fails', async () => {
     refundMultiAccountTransaction.mockImplementation(({ externalTransactionIdPrefix }) => {
       if (externalTransactionIdPrefix === 'crucible-setup-4-abc') throw new Error('nope');
-      return Promise.resolve(undefined);
+      return Promise.resolve(REFUNDED);
     });
 
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
@@ -410,7 +474,7 @@ describe('cancelCrucible — seeded prize pool', () => {
     findUnique.mockResolvedValue(seeded());
     refundMultiAccountTransaction.mockImplementation(({ externalTransactionIdPrefix }) => {
       if (externalTransactionIdPrefix === 'crucible-seed-4-xyz') throw new Error('buzz down');
-      return Promise.resolve(undefined);
+      return Promise.resolve(REFUNDED);
     });
 
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
@@ -453,7 +517,7 @@ describe('cancelCrucible — entrants are told', () => {
   it('tells an entrant whose refund failed that it is still being processed', async () => {
     refundMultiAccountTransaction.mockImplementation(({ externalTransactionIdPrefix }) => {
       if (externalTransactionIdPrefix === 'entry-1-10') throw new Error('buzz unavailable');
-      return Promise.resolve(undefined);
+      return Promise.resolve(REFUNDED);
     });
 
     await cancelCrucible({ id: 1, userId: 3, isModerator: true });
@@ -515,5 +579,60 @@ describe('transaction prefixes', () => {
     expect(seed).not.toBe(setup);
     expect(seed.startsWith(setup)).toBe(false);
     expect(setup.startsWith(seed)).toBe(false);
+  });
+});
+
+describe('cancelCrucible — entry posts', () => {
+  const revealQuery = () => {
+    const call = dbMock.dbWrite.$queryRaw.mock.calls.find(([strings]) =>
+      (strings as string[]).join('').includes('entry_posts')
+    );
+    if (!call) return undefined;
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    const query = Prisma.sql(strings, ...values);
+    return { sql: query.text, values: query.values };
+  };
+
+  it("publishes this crucible's still-hidden entry posts now and reindexes them", async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 300, userId: 10 }]);
+
+    await cancelCrucible({ id: 1, userId: 99, isModerator: true });
+
+    const query = revealQuery();
+    expect(query?.sql).toMatch(
+      /UPDATE "Post" p SET "publishedAt" = now\(\)\s+FROM entry_posts e\s+WHERE p\.id = e\.id AND e\.hidden/
+    );
+    expect(query?.sql).toMatch(/ce\."crucibleId" = \$\d/);
+    expect(query?.values).toEqual(expect.arrayContaining([1, 'crucibleEntryDraft']));
+    expect(afterPostsPublish).toHaveBeenCalledTimes(1);
+    expect(afterPostsPublish).toHaveBeenCalledWith([{ postId: 300, userId: 10 }]);
+  });
+
+  it('reveals only after every refund has been attempted', async () => {
+    await cancelCrucible({ id: 1, userId: 99, isModerator: true });
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(3);
+    const revealOrder = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder.at(-1)!;
+    for (const refundOrder of refundMultiAccountTransaction.mock.invocationCallOrder)
+      expect(refundOrder).toBeLessThan(revealOrder);
+  });
+
+  it('reveals nothing when the cancel is refused', async () => {
+    claim.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Completed }));
+
+    await expect(cancelCrucible({ id: 1, userId: 99, isModerator: true })).rejects.toThrow();
+    expect(revealQuery()).toBeUndefined();
+  });
+
+  it('still refunds every entry when the reveal fails', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[]) => {
+      if (strings.join('').includes('entry_posts')) throw new Error('db down');
+      return [];
+    });
+
+    const result = await cancelCrucible({ id: 1, userId: 99, isModerator: true });
+
+    expect(result.refundedEntries).toBe(2);
   });
 });

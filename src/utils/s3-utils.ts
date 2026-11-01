@@ -187,7 +187,7 @@ export async function getImageUploadProbeBackend(): Promise<{
  * `NEXT_PUBLIC_IMAGE_LOCATION`) and the image SCANNER actually read from, so a
  * subsequent `createImage({ url: key })` reaches `Scanned`.
  *
- * 🔴 DO NOT reach for Cloudflare Images (`uploadBufferToCF`) to make a SCANNABLE
+ * 🔴 DO NOT reach for Cloudflare Images (the removed `uploadBufferToCF`) to make a SCANNABLE
  * image. CF Images is a DIFFERENT store the edge URL + scanner never resolve — a
  * CF Images id used as `Image.url` yields an edge URL that 404s at scan time, so
  * the row goes terminally `ImageIngestionStatus.NotFound`. (That bug shipped in
@@ -208,12 +208,82 @@ export async function uploadImageBufferToStore(
       ...(opts?.contentType ? { ContentType: opts.contentType } : {}),
     })
   );
-  // Mirror the upload endpoint: register the uuid→backend mapping so the
-  // storage-resolver / edge (and thus the scanner) can locate the object. Awaited
-  // (unlike the endpoint's fire-and-forget) to close the register-vs-scan race —
-  // `registerMediaLocation` swallows its own errors, so this can't throw.
-  await registerMediaLocation(key, backend, bytes.byteLength);
+  await registerStoredImage(key, backend, bytes.byteLength);
   return { key, backend };
+}
+
+/**
+ * The step every server-side image store write ends with, whether the bytes arrived in one PUT
+ * or as a multipart upload: register the uuid→backend mapping so the storage-resolver / edge
+ * (and thus the scanner) can locate the object. Awaited (unlike the upload endpoint's
+ * fire-and-forget) to close the register-vs-scan race — `registerMediaLocation` swallows its own
+ * errors, so this can't throw.
+ */
+async function registerStoredImage(key: string, backend: ImageUploadBackend, bytes: number) {
+  await registerMediaLocation(key, backend, bytes);
+}
+
+/**
+ * Server-side multipart counterpart of {@link uploadImageBufferToStore}, for a caller that
+ * receives the bytes in pieces (the chunked upload relay). Same backend, and the key is minted
+ * HERE, never taken from the caller, for the same overwrite reason.
+ */
+export async function startImageMultipartToStore(opts?: { contentType?: string }) {
+  const { s3, bucket } = await getImageUploadBackend();
+  const key = randomUUID();
+  const uploadId = await createMultipartUpload({ s3, bucket, key, mimeType: opts?.contentType });
+  return { key, uploadId };
+}
+
+/** Upload one part of a {@link startImageMultipartToStore} session. Returns the part's ETag. */
+export async function uploadImagePartToStore(args: {
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  body: Uint8Array;
+}) {
+  const { s3, bucket } = await getImageUploadBackend();
+  return uploadPart({ ...args, bucket, s3 });
+}
+
+/**
+ * Finish a {@link startImageMultipartToStore} session and register it exactly as
+ * {@link uploadImageBufferToStore} registers a single PUT, so the object is servable the same way.
+ * `totalBytes` is the caller's verified sum of the part sizes, which is what the registry records.
+ */
+export async function completeImageMultipartToStore(args: {
+  key: string;
+  uploadId: string;
+  parts: { ETag: string; PartNumber: number }[];
+  totalBytes: number;
+}): Promise<{ key: string; backend: ImageUploadBackend }> {
+  const { s3, bucket, backend } = await getImageUploadBackend();
+  await completeMultipartUpload(bucket, args.key, args.uploadId, args.parts, s3);
+  await registerStoredImage(args.key, backend, args.totalBytes);
+  return { key: args.key, backend };
+}
+
+export async function abortImageMultipartToStore(args: { key: string; uploadId: string }) {
+  const { s3, bucket } = await getImageUploadBackend();
+  await abortMultipartUpload(bucket, args.key, args.uploadId, s3);
+}
+
+/**
+ * Server-side: the first bytes stored under an image key, read from the image upload bucket
+ * directly rather than through the image CDN. Capped by a Range request, and read with the
+ * retry-free probe client so SDK backoff cannot outlast `timeoutMs`.
+ */
+export async function readImageUploadObjectHead(
+  key: string,
+  { maxBytes, timeoutMs = 30_000 }: { maxBytes: number; timeoutMs?: number }
+): Promise<Uint8Array> {
+  const { s3, bucket } = await getImageUploadProbeBackend();
+  const response = await s3.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=0-${maxBytes - 1}` }),
+    { abortSignal: AbortSignal.timeout(timeoutMs) }
+  );
+  if (!response.Body) throw new Error('image upload object has no body');
+  return response.Body.transformToByteArray();
 }
 
 export function getS3Client() {
@@ -387,6 +457,7 @@ export type DeleteModelFileObjectOutcome =
         | 'still-referenced'
         | 'bucket-not-allowed'
         | 'unparseable'
+        | 'non-canonical-url'
         // 🔴 THE THREE BELOW ARE QUARANTINE REFUSALS AND THEY ALL MEAN THE SAME THING TO A
         // CALLER: THE OBJECT IS STILL THERE. They are separated because they need different
         // human responses — `not-configured` is an operator task, `copy-failed` is usually the
@@ -562,9 +633,22 @@ async function copyToQuarantine(args: {
  * a query, so a preview built on this function must say it has not checked rather than imply the
  * delete would succeed.
  */
+/**
+ * Only a plain object url is deleted. A url carrying a query string or fragment is left in place
+ * rather than removed; a later by-key sweep can reclaim an object that nothing references.
+ */
+function urlHasExtraComponents(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.search !== '' || parsed.hash !== '';
+  } catch {
+    return false;
+  }
+}
+
 export type ModelFileDeleteTarget =
   | { ok: true; backend: 'b2' | 'default'; bucket: string; key: string }
-  | { ok: false; reason: 'empty-url' | 'unparseable' }
+  | { ok: false; reason: 'empty-url' | 'unparseable' | 'non-canonical-url' }
   // 🔴 `bucket-not-allowed` CARRIES THE BUCKET, and the other two refusals cannot. A refusal that
   // only says "not allowed" is unqueryable: the field that names WHICH foreign bucket was
   // targeted is the whole value of this event to anyone investigating. An earlier version of this
@@ -575,6 +659,7 @@ export type ModelFileDeleteTarget =
 
 export function resolveModelFileDeleteTarget(url: string): ModelFileDeleteTarget {
   if (!url) return { ok: false, reason: 'empty-url' };
+  if (urlHasExtraComponents(url)) return { ok: false, reason: 'non-canonical-url' };
   const b2 = parseB2Url(url);
   if (b2) {
     if (!isAllowedModelFileBucket(b2.bucket))
@@ -722,6 +807,17 @@ export async function deleteModelFileObjects(urls: string[]) {
   const groups = new Map<string, { backend: 'b2' | 'r2'; bucket: string; keys: string[] }>();
 
   for (const url of safe) {
+    // Only a plain object url is deleted here, as in deleteModelFileObject; a url with a query
+    // string or fragment is left for a by-key sweep.
+    if (urlHasExtraComponents(url)) {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        reason: 'non-canonical-url',
+        url,
+      });
+      continue;
+    }
     const b2 = parseB2Url(url);
     if (b2) {
       // Drop URLs targeting non-civitai buckets before they enter a group, so

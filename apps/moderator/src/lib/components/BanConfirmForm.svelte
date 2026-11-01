@@ -2,13 +2,19 @@
   import type { Snippet } from 'svelte';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { BAN_REASONS, BAN_REASONS_REMOVING_CONTENT, type BanReasonCode } from '$lib/enforcement';
+  import {
+    BAN_REASONS,
+    BAN_REASONS_REMOVING_CONTENT,
+    alwaysRemovesMedia,
+    type BanReasonCode,
+  } from '$lib/enforcement';
   import { num } from '$lib/format';
 
   let {
@@ -17,6 +23,8 @@
     action = '?/ban',
     enhancer,
     busy = false,
+    canConfirm = true,
+    noteRequired = false,
     onCancel,
     prompt,
     hidden,
@@ -26,6 +34,9 @@
     action?: string;
     enhancer: SubmitFunction;
     busy?: boolean;
+    /** False while a field the page added through `prompt` is still unfilled. */
+    canConfirm?: boolean;
+    noteRequired?: boolean;
     onCancel: () => void;
     /** What the ban does on THIS page, beyond the shared consequences. */
     prompt?: Snippet;
@@ -34,6 +45,7 @@
   } = $props();
 
   let reasonCode = $state('');
+  let internalNote = $state('');
   let removeModels = $state(true);
   let removeMedia = $state(false);
   let removeComments = $state(false);
@@ -53,7 +65,11 @@
     if (!commentsTouched) removeComments = removesContent;
   };
 
-  const removesAnything = $derived(removeModels || removeMedia || removeComments);
+  // No opt-out for these: the box shows ticked and locked, and the server removes the media anyway.
+  const mediaLocked = $derived(alwaysRemovesMedia(reasonCode));
+  const mediaRemoved = $derived(removeMedia || mediaLocked);
+
+  const removesAnything = $derived(removeModels || mediaRemoved || removeComments);
 
   // What this ban actually takes down. Derived so opening the form on a different account re-asks, and
   // so a slow count never blocks the form from rendering.
@@ -63,7 +79,7 @@
           if (!r.ok) throw new Error(String(r.status));
           return r.json();
         })
-      : null
+      : SSR_PENDING
   );
 </script>
 
@@ -75,7 +91,7 @@
   <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
     <p class="mb-2 text-sm text-white">
       Ban <strong>{username ?? userId}</strong>? Unpublishes their models and notifies them. Images
-      stay up unless the reason is Sexual Minor, or you tick below.
+      stay up unless the reason is a minor-safety one, or you tick below.
     </p>
     {@render prompt?.()}
 
@@ -104,7 +120,13 @@
       </Select.Content>
     </Select.Root>
 
-    <Textarea name="detailsInternal" rows={2} placeholder="Internal notes (optional)" />
+    <Textarea
+      name="detailsInternal"
+      rows={2}
+      required={noteRequired}
+      placeholder={noteRequired ? 'Internal notes (required)' : 'Internal notes (optional)'}
+      bind:value={internalNote}
+    />
     <!-- Stored on the ban and read back by the appeal flow. Not emailed to the user. -->
     <Textarea
       name="detailsExternal"
@@ -117,10 +139,11 @@
       <Checkbox
         id="ban-remove-media-{uid}"
         name="removeMedia"
-        bind:checked={() => removeMedia, (v) => ((mediaTouched = true), (removeMedia = v))}
+        disabled={mediaLocked}
+        bind:checked={() => mediaRemoved, (v) => ((mediaTouched = true), (removeMedia = v))}
       />
       <Label for="ban-remove-media-{uid}" class="font-normal text-dark-0">
-        Also remove their images
+        {mediaLocked ? 'Their images are always removed for this reason' : 'Also remove their images'}
       </Label>
     </div>
     <div class="mt-2 flex items-center gap-2" data-touch-target>
@@ -151,7 +174,7 @@
           {#if counts}
             {[
               removeModels ? `${num(counts.modelCount)} model${counts.modelCount === 1 ? '' : 's'}` : null,
-              removeMedia ? `${num(counts.imageCount)} image${counts.imageCount === 1 ? '' : 's'}` : null,
+              mediaRemoved ? `${num(counts.imageCount)} image${counts.imageCount === 1 ? '' : 's'}` : null,
               removeComments ? 'every comment' : null,
             ]
               .filter(Boolean)
@@ -172,7 +195,7 @@
     <!-- The single-account ban path. Floored for the same reason as the bulk one on
          `routes/retool/bulk-ban/+page.svelte`, which renders this form on the same page. -->
     <div class="mt-2 flex gap-2">
-      <Button type="submit" size="sm" variant="destructive" disabled={busy} data-touch-target>
+      <Button type="submit" size="sm" variant="destructive" disabled={busy || !canConfirm || (noteRequired && !internalNote.trim())} data-touch-target>
         {busy ? 'Working…' : 'Confirm ban'}
       </Button>
       <Button type="button" size="sm" variant="outline" onclick={onCancel} data-touch-target>

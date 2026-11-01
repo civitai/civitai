@@ -8,9 +8,9 @@ every such citation while leaving all PATHS valid, so no gate can see it. Append
 9, … and leave gaps where something is removed.
 
 🔴 **THESE FACTS NOW HAVE A SECOND HOME, AND IT IS NOT A DUPLICATE — CORRECT BOTH.**
-`<devrc>/scripts/browser-bridge/reference/sites/civit.ai.md` carries the platform half
-of this list, registered so the bridge names it in the `site_notes` field of every
-envelope from a `<slug>.civit.ai` host. The two are different framings, deliberately:
+`<devrc>/scripts/browser-bridge/flows/civit.ai.md` carries the platform half
+of this list, registered so the bridge names it in the `site_flows` field of every
+envelope from a `<slug>.civit.ai` host that has no more specific per-app flow file. The two are different framings, deliberately:
 **here** they are guard *rationale*, numbered as an API and each one a `plan.py`
 refusal; **there** they are orientation for an agent driving a block **by hand**, where
 no guard exists to refuse anything. A fact that turns out to be wrong is wrong in both

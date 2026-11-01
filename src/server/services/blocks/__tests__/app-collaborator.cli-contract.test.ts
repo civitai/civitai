@@ -7,6 +7,7 @@ import {
   removeListingScreenshotSchema,
   reorderListingScreenshotsSchema,
   setListingCoverSchema,
+  setListingRedMediaSchema,
   setListingIconSchema,
   updateListingScreenshotCaptionSchema,
 } from '~/server/schema/blocks/app-listing.schema';
@@ -114,6 +115,7 @@ describe('listing-media input schemas — unchanged for released CLI clients', (
     for (const schema of [
       setListingIconSchema,
       setListingCoverSchema,
+      setListingRedMediaSchema,
       addListingScreenshotSchema,
       removeListingScreenshotSchema,
       reorderListingScreenshotsSchema,
@@ -139,7 +141,7 @@ describe('CLI scope annotations — the reachable set has not shrunk', () => {
     expect(annotations.length).toBeGreaterThan(0);
   });
 
-  it('🔴 all 16 CLI-reachable owner-scoped listing procs remain annotated', () => {
+  it('🔴 all 17 CLI-reachable owner-scoped listing procs remain annotated', () => {
     // An exact count, not a floor: losing one silently 403s every released CLI on that
     // command (an un-annotated proc implicitly requires TokenScope.Full, which the
     // scoped CLI token is not).
@@ -159,12 +161,17 @@ describe('CLI scope annotations — the reachable set has not shrunk', () => {
     // withdrawal (a scoped token is REFUSED by `getAssets`) is pinned in
     // `app-listings.router.cli-scope.test.ts`; a count cannot express a refusal.
     //
+    // 16 → 17 with `setRedMedia`, the civitai.red icon / cover override write behind
+    // `civitai app listing set-icon|set-cover --red` and `clear-red`. Same gate shape as
+    // `setIcon` / `setCover`, and unlike `getAssets` it adds something no annotated proc
+    // carries: the only write to those slots. It reads no override back.
+    //
     // 🔴 THIS IS A COUNT OF DECLARATIONS, WHICH IS NOT A COUNT OF BEHAVIOUR. It fails
     // when the set grows or shrinks, and that is all it can do — a `.meta()` spelled on
     // the wrong proc satisfies it. The behavioural half is
     // `app-listings.router.cli-scope.test.ts`, which drives every one of these procs
     // through `enforceTokenScope` across the four credentials. Change both together.
-    expect(annotations).toHaveLength(16);
+    expect(annotations).toHaveLength(17);
   });
 
   it('the annotation still requires AppBlocksSubmit — the bit the CLI token carries', () => {

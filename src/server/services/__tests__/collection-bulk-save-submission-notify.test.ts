@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -21,6 +22,12 @@ vi.mock('~/server/services/home-block-cache.service', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: mockQueueUpdate },
   imagesSearchIndex: { queueUpdate: vi.fn() },
+}));
+
+// Every image here is one the submitter may see; the visibility rule has its own test.
+vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageVisibility>()),
+  assertImagesVisibleToViewer: vi.fn(async () => undefined),
 }));
 
 const { bulkSaveItems } = await import('~/server/services/collection.service');

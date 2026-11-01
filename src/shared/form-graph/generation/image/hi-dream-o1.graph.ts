@@ -11,13 +11,10 @@ import {
 import { familyResources, familyScope, makeTextBlock, modelIdOf, type FamilyExt } from '../shared';
 
 /**
- * HiDream-O1 (full + dev), ported from `hi-dream-o1-graph.ts`. Both variants
+ * HiDream-O1 (full + dev). Both variants
  * carry LoRAs, a 1K/2K resolution tier, and a negative prompt; dev is the
- * distilled build (cfg 1). v1 omits its snippetsGraph entirely, so there is no
- * snippets key even with the wildcards flag on.
+ * distilled build (cfg 1). No snippets key at all, even with the wildcards flag on.
  */
-
-// ---- copied from hi-dream-o1-graph.ts, which dies with the data-graph engine
 
 export const hiDreamO1VersionIds = {
   full: 2939946,
@@ -62,8 +59,6 @@ const hiDreamO1AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
   ],
 };
 
-// ---- end of hi-dream-o1-graph.ts copies -------------------------------------
-
 type HiDreamO1ModeExt = FamilyExt & { model?: unknown };
 
 const variantOf = (ext: HiDreamO1ModeExt): HiDreamO1Variant => {
@@ -79,7 +74,7 @@ const full = defineGraph<HiDreamO1ModeExt>()
   .field('cfgScale', sliderDef({ min: 1, max: 20, default: 4.5, step: 0.5 }))
   .field('steps', sliderDef({ min: 1, max: 100, default: 50 }));
 
-/** Tagged: v1's `hiDreamO1Variant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `hiDreamO1Variant`. */
 const variants = branch('hiDreamO1Variant', variantOf, { dev, full });
 
 /** Aspect-ratio option sets vary per resolution tier; memoize per key. */
@@ -107,7 +102,6 @@ export const hiDreamO1 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('resolution', enumDef({ options: hiDreamO1ResolutionOptions, default: '1K' }))
   .field('aspectRatio', ({ resolution }) => AR(resolution))
   .field('seed', SEED)
-  // v1 registers negativePrompt at top level but never mounts snippetsGraph
   .use(makeTextBlock({ snippets: false }));
 
 export { hiDreamO1VersionOptions };

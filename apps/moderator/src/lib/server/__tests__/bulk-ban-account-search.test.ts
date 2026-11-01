@@ -37,7 +37,8 @@ vi.mock('$lib/server/clickhouse', () => ({
   }),
 }));
 
-vi.mock('$lib/server/users.service', () => ({
+vi.mock('$lib/server/users.service', async (importOriginal) => ({
+  accountStatus: (await importOriginal<typeof import('../users.service')>()).accountStatus,
   usersByIds: (ids: number[]) =>
     Promise.resolve(
       new Map(

@@ -1,19 +1,19 @@
 ---
 name: add-training-support
-description: Wire an existing ecosystem into the LoRA training system so it appears as a trainable base model in the training form. Adds the base-model entry, schema enums, orchestrator validation, feature flag, and per-ecosystem default params. Use when a model family (already in basemodel.constants.ts) needs training support — e.g. AI-Toolkit ecosystems like Anima, HiDream, Boogu. Always checks @civitai/client for the ecosystem's training input type first.
+description: Wire an existing ecosystem into the LoRA training system so it appears as a trainable base model in the training form. Adds the base-model entry, schema enums, orchestrator validation, feature flag, and per-ecosystem default params. Use when a model family (already in basemodel.constants.ts) needs training support — e.g. AI-Toolkit ecosystems like Anima, HiDream, Boogu. Always checks @civitai/orchestration-client for the ecosystem's training input type first.
 ---
 
 # Add Training Support
 
 Wires an existing ecosystem into the **training** form (the "Train a LoRA" flow), distinct from the generation form. After this, the ecosystem shows up as a selectable base model in Training Step 1 and submits a valid `training` step to the orchestrator.
 
-Training is a **separate subsystem from generation**. The generation handlers/graphs in `src/server/services/orchestrator/ecosystems/*` and `src/shared/data-graph/generation/*` are NOT part of this — do not touch them. The files below are the training path.
+Training is a **separate subsystem from generation**. The generation handlers/graphs in `src/server/services/orchestrator/form-graph/*` and `src/shared/form-graph/generation/*` are NOT part of this — do not touch them. The files below are the training path.
 
 ## When to use
 
 - A new model family was just added via `add-ecosystem` and now needs to be trainable
 - Re-enabling training for an ecosystem that was commented out
-- The orchestrator/`@civitai/client` gained a new `*TrainingInput` type
+- The orchestrator/`@civitai/orchestration-client` gained a new `*TrainingInput` type
 
 ## Prerequisites
 
@@ -26,14 +26,14 @@ mandatory). The worked reference is **`anima`** — it is the simplest complete 
 (image, AI-Toolkit-only, no `modelVariant`). The single highest-leverage move when adding
 a new ecosystem: **grep every file below for `anima` and add a parallel entry.**
 
-## Step 0 — Check `@civitai/client` for the training input type
+## Step 0 — Check `@civitai/orchestration-client` for the training input type
 
 **Always** confirm the SDK ships the ecosystem's training type before wiring. It tells you
 the exact field shape, whether `modelVariant` is required, and any fixed fields.
 
 ```bash
 grep -niE "<Name>AiToolkitTrainingInput|ecosystem: '<name>'" \
-  node_modules/@civitai/client/dist/generated/types.gen.d.ts
+  node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts
 ```
 
 Note from the type:
@@ -44,8 +44,8 @@ Note from the type:
 - **`readonly` outputs** (`defaultSteps`, `storageBuzzPerEpoch`, `maxBatchSize`, …) — server-
   computed; never send them.
 
-If the type is missing in the installed version, check the latest (`npm view @civitai/client
-versions --json | tail`) and bump with `pnpm add @civitai/client@<v>`. If still absent, the
+If the type is missing in the installed version, check the latest (`npm view @civitai/orchestration-client
+versions --json | tail`) and bump with `pnpm add @civitai/orchestration-client@<v>`. If still absent, the
 orchestrator dispatch (`training.orch.ts`) already casts `ecosystem as any`, so it works — but
 prefer a typed SDK.
 
@@ -180,7 +180,9 @@ union), a missing spread in the aggregate array, or a `baseModel` string that is
 ## Step 5 — Verify (optional)
 
 With a dev server running (see `dev-server` skill) and the Flipt flag on for your user:
-- Open the training form → Step 1 shows the new base model under its media type.
+- Open the training form (`/models/train`) → Step 1 shows the new base model under its media type.
+  If it lands on `/training-studio`, the Training Studio is your default trainer (`trainingStudioUi`,
+  on by default for moderators) — click **Use the classic trainer** in the banner there first.
 - Selecting it loads the expected default params in Step 3.
 - The `whatif` submit returns a price without a validation error.
 

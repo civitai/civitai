@@ -27,6 +27,11 @@ import {
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import {
+  collectionItemCoversSql,
+  coverUploadSql,
+  servableCollectionCoverSql,
+} from '~/server/services/collection-cover-visibility';
 
 const READ_BATCH_SIZE = 1000; // 10 items per collection are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -274,13 +279,17 @@ export const pullData = async (
     GROUP BY uc."userId"
   ), images AS MATERIALIZED (
     SELECT
-      i.id,
+      t.id "collectionId",
       ${collectionIndexImageSql}
-    FROM "Image" i
-    WHERE i.id IN (SELECT "imageId" FROM target)
-      AND i."ingestion" = 'Scanned'
-      AND i."needsReview" IS NULL
-    GROUP BY i.id
+    FROM target t
+    JOIN "Image" i ON i.id = t."imageId"
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    WHERE ${servableCollectionCoverSql({
+      postlessAllowed: coverUploadSql({
+        collectionId: Prisma.sql`t.id`,
+        collectionOwnerId: Prisma.sql`t."userId"`,
+      }),
+    })}
   ), metrics as MATERIALIZED (
     SELECT
       cm."collectionId",
@@ -296,7 +305,7 @@ export const pullData = async (
   SELECT
     t.*,
     (SELECT metrics FROM metrics m WHERE m."collectionId" = t.id),
-    (SELECT "image" FROM images i WHERE i.id = t."imageId"),
+    (SELECT "image" FROM images i WHERE i."collectionId" = t.id),
     (SELECT "user" FROM users u WHERE u.id = t."userId"),
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t
@@ -318,86 +327,11 @@ export const pullData = async (
   let itemImages: CollectionImageRaw[] = [];
 
   if (collectionsNeedingImages.length > 0) {
-    itemImages = await db.$queryRaw<CollectionImageRaw[]>`
-    WITH target AS MATERIALIZED (
-      SELECT *
-      FROM (
-        SELECT *,
-        ROW_NUMBER() OVER (
-            PARTITION BY ci."collectionId"
-            ORDER BY ci.id
-          ) AS idx
-        FROM "CollectionItem" ci
-        WHERE ci.status = 'ACCEPTED'
-          AND ci."collectionId" IN (${Prisma.join(collectionsNeedingImages)})
-      ) t
-      WHERE idx <= 10
-    ), imageItemImage AS MATERIALIZED (
-      SELECT
-        i.id,
-        ${collectionIndexImageSql}
-      FROM "Image" i
-      WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
-        AND i."ingestion" = 'Scanned'
-        AND i."needsReview" IS NULL
-    ), postItemImage AS MATERIALIZED (
-      SELECT * FROM (
-          SELECT
-            i."postId" id,
-            ${collectionIndexImageSql},
-            ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
-          FROM "Image" i
-          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
-            AND i."ingestion" = 'Scanned'
-            AND i."needsReview" IS NULL
-      ) t
-      WHERE t.rn = 1
-    ), modelItemImage AS MATERIALIZED (
-      SELECT * FROM (
-          SELECT
-            m.id,
-            ${collectionIndexImageSql},
-            ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
-          FROM "Image" i
-          JOIN "Post" p ON p.id = i."postId"
-          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-          JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
-          WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
-              AND i."ingestion" = 'Scanned'
-              AND i."needsReview" IS NULL
-      ) t
-      WHERE t.rn = 1
-    ), articleItemImage AS MATERIALIZED (
-        SELECT a.id, ${collectionIndexImageSql}
-        FROM "Article" a
-        JOIN "Image" i ON i.id = a."coverId"
-        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
-          AND i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-    ), articleItemSrc AS MATERIALIZED (
-        SELECT a.id, a.cover src FROM "Article" a
-        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
-    ), model3dItemImage AS MATERIALIZED (
-        SELECT m3.id, ${collectionIndexImageSql}
-        FROM "Model3D" m3
-        JOIN "Image" i ON i.id = m3."thumbnailImageId"
-        WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
-          AND i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-    )
-    SELECT
-        target."collectionId" id,
-        COALESCE(
-          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
-          (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
-          (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
-          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
-          (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
-          NULL
-        ) image,
-        (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
-    FROM target
-  `;
+    itemImages = await db.$queryRaw<CollectionImageRaw[]>`${collectionItemCoversSql({
+      collectionIds: collectionsNeedingImages,
+      itemsPerCollection: 10,
+      imageSql: collectionIndexImageSql,
+    })}`;
   }
 
   const collectionImages = collections.map((c) => c.image?.id).filter(isDefined);

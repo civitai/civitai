@@ -33,9 +33,10 @@ import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import chatClasses from './Chat.module.scss';
 import classes from './ChatList.module.css';
 import { clsx } from 'clsx';
-import { stripStickerTokens } from '~/shared/utils/sticker-token';
+import { chatPreviewText } from '~/components/Chat/util';
 
 export default function ChatShareModal(props: { message: string }) {
   const dialog = useDialogContext();
@@ -102,6 +103,7 @@ export default function ChatShareModal(props: { message: string }) {
           thisChat.messages = [
             {
               content: data.content,
+              userId: data.userId,
               contentType: data.contentType,
               createdAt: new Date(data.createdAt),
             },
@@ -133,9 +135,21 @@ export default function ChatShareModal(props: { message: string }) {
   };
 
   return (
-    <Modal {...dialog} title="Send Chat" size="sm">
-      <Stack gap={0} h="100%">
-        <Box p="sm" pt={0}>
+    // The content is capped at the viewport; flexing the body down into it keeps the
+    // list the only scroller, so Message and Send stay on screen at short heights.
+    // Everything but the list is shrink-0: Button is overflow:hidden, so it would
+    // otherwise shrink to nothing once the list fills the cap.
+    <Modal
+      {...dialog}
+      title="Send Chat"
+      size="sm"
+      classNames={{
+        content: clsx(chatClasses.tokens, 'flex flex-col'),
+        body: 'flex min-h-0 flex-1 flex-col',
+      }}
+    >
+      <Stack gap={0} className="min-h-0 flex-1">
+        <Box p="sm" pt={0} className="shrink-0">
           <TextInput
             leftSection={<IconSearch size={16} />}
             placeholder="Filter by user"
@@ -153,8 +167,8 @@ export default function ChatShareModal(props: { message: string }) {
             }
           />
         </Box>
-        <Divider />
-        <Box h="100%" mah={500} style={{ overflowY: 'auto' }}>
+        <Divider className="shrink-0" />
+        <Box mah={500} className="min-h-0 flex-auto overflow-y-auto">
           {isLoading ? (
             <Center h="100%">
               <Loader />
@@ -220,7 +234,11 @@ export default function ChatShareModal(props: { message: string }) {
                             minWidth: 0,
                           }}
                         >
-                          {stripStickerTokens(d.messages[0].content)}
+                          {chatPreviewText({
+                            message: d.messages[0],
+                            viewerId: currentUser?.id,
+                            otherMembers,
+                          })}
                         </Text>
                       )}
                     </Stack>
@@ -241,15 +259,16 @@ export default function ChatShareModal(props: { message: string }) {
             </Stack>
           )}
         </Box>
-        <Divider />
-        <Group py="sm">
+        <Divider className="shrink-0" />
+        <Group py="sm" className="shrink-0">
           <Badge>Message:</Badge>
           <Text size="sm" fs="italic">
             {props.message}
           </Text>
         </Group>
-        <Divider />
+        <Divider className="shrink-0" />
         <Button
+          className="shrink-0"
           loading={isSending}
           disabled={!selectedChat}
           leftSection={<IconSend />}

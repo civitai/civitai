@@ -7,6 +7,7 @@ import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import type { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -273,6 +274,10 @@ const transformData = async ({
 export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor({
+  // Retired (RETIRED_SEARCH_INDEXES). To restore: remove it there, re-add it to the ban purge
+  // targets in meilisearch/util.ts, and re-run a reset before any reader uses it. Until the reset,
+  // the index still holds content of users banned while it was retired.
+  retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,

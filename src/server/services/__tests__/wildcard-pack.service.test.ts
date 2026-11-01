@@ -10,11 +10,9 @@ import type { SessionUser } from '~/types/session';
 // maturity math (getServerBrowsingLevel + Flags + allowMatureContentForCeiling)
 // run, since that's the security-relevant logic.
 
-const { getFileForModelVersionMock } = vi.hoisted(
-  () => ({
-    getFileForModelVersionMock: vi.fn(),
-  })
-);
+const { getFileForModelVersionMock } = vi.hoisted(() => ({
+  getFileForModelVersionMock: vi.fn(),
+}));
 vi.mock('~/server/services/file.service', () => ({
   getFileForModelVersion: getFileForModelVersionMock,
 }));
@@ -115,7 +113,11 @@ describe('resolveWildcardPackForUser — download gate (getFileForModelVersion i
     modelVersionFindFirst.mockResolvedValue(wildcardVersion());
     getFileForModelVersionMock.mockResolvedValue(successGate);
     await resolveWildcardPackForUser({ modelVersionId: 100, user: sfwUser, canViewNsfw: false });
-    expect(getFileForModelVersionMock).toHaveBeenCalledWith({ modelVersionId: 100, user: sfwUser });
+    expect(getFileForModelVersionMock).toHaveBeenCalledWith({
+      modelVersionId: 100,
+      user: sfwUser,
+      attribution: { caller: 'wildcard', actor: 'user' },
+    });
   });
 });
 

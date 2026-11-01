@@ -1,4 +1,5 @@
-import { Button, Center, Loader, Modal, Stack, Text } from '@mantine/core';
+import { Center, Loader, Modal, Stack, Text } from '@mantine/core';
+import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
 import { IconAlertCircle } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -64,14 +65,14 @@ function HiddenModelCommentsContent({ modelId }: { modelId: number }) {
       ))}
       {hasNextPage && (
         <Center>
-          <Button
-            onClick={() => fetchNextPage()}
+          <LoadMoreButton
+            onClick={fetchNextPage}
             loading={isFetchingNextPage}
+            label="Load More Comments"
+            color="blue"
             variant="subtle"
             size="md"
-          >
-            Load More Comments
-          </Button>
+          />
         </Center>
       )}
     </Stack>

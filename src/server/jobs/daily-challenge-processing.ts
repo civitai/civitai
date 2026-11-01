@@ -78,6 +78,8 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  DEFAULT_REVIEW_MODEL,
+  REVIEW_FALLBACK_MODEL,
   estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
@@ -85,6 +87,8 @@ import {
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
+import { reviewWithFallback } from '~/server/games/daily-challenge/review-fallback';
+import { reviewWithShadow } from '~/server/games/daily-challenge/review-shadow';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeCompleted,
@@ -103,12 +107,13 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
+import { createPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
 import {
   refundUserChallengeFunds,
-  buildWinnerPayoutTransactions,
+  buildWinnerPrizes,
   getChallengeBuzzType,
   reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
@@ -607,6 +612,11 @@ export async function createUpcomingChallenge(targetDate?: Date) {
   return challengeToLegacyFormat(challenge);
 }
 
+type ReviewEntriesOptions = {
+  /** Re-run one past tick: review only entries promoted in [from, to) and leave the watermark alone. */
+  replayWindow?: { from: Date; to: Date };
+};
+
 // Indirection seam: reviewEntries() calls reviewEntriesForChallenge() through this object
 // (rather than the bare function reference) so tests can substitute per-challenge processing
 // via `vi.spyOn(challengeReviewInternals, 'reviewEntriesForChallenge')` without needing to mock
@@ -678,7 +688,10 @@ export async function reviewEntries() {
  * Process entries for a single challenge.
  * Extracted from reviewEntries() to support multi-challenge processing.
  */
-async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails) {
+async function reviewEntriesForChallenge(
+  currentChallenge: DailyChallengeDetails,
+  options?: ReviewEntriesOptions
+) {
   log('Processing entries for challenge:', currentChallenge.challengeId);
   // Start of the tick's budget. Measured across the WHOLE function, not just the placement drain:
   // the job lock does not care which phase spent the time.
@@ -939,12 +952,25 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // CollectionItem.tagId, which resets when an entry is removed and re-added — letting
   // users re-roll their score. The judge's comment survives that collection churn.
   const notYetReviewedByJudge = Prisma.sql`NOT EXISTS (
-    SELECT 1 FROM "Thread" th
-    JOIN "CommentV2" cm ON cm."threadId" = th.id
-    WHERE th."imageId" = ci."imageId" AND cm."userId" = ${judgingConfig.userId}
+    SELECT 1 FROM "CommentV3" cm
+    WHERE cm."entityType" = 'image' AND cm."entityId" = ci."imageId" AND cm."parentId" IS NULL
+      AND cm."deletedAt" IS NULL AND cm."userId" = ${judgingConfig.userId}
   )`;
 
-  // Get entries approved since last reviewed
+  // Paid user challenges judge EVERY new entry: entrants paid for a score, so the random
+  // sampling and per-user cap (both sized for free dailies) must not leave one unjudged.
+  const judgeAllEntries =
+    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
+
+  // Paid challenges skip the since-last-review window: the watermark advances even when an
+  // entry's review fails, so a single provider error would otherwise leave it unjudged for good.
+  const replayWindow = options?.replayWindow;
+  const reviewedSince = replayWindow
+    ? Prisma.sql`AND ci."reviewedAt" >= ${replayWindow.from} AND ci."reviewedAt" < ${replayWindow.to}`
+    : judgeAllEntries
+    ? Prisma.empty
+    : Prisma.sql`AND ci."reviewedAt" >= ${lastReviewedAt}`;
+
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
@@ -958,17 +984,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" IS NULL
-    AND ci."reviewedAt" >= ${lastReviewedAt}
+    ${reviewedSince}
     AND ${notYetReviewedByJudge}
   `;
   log('Recent entries:', recentEntries.length);
-
-  // Paid user challenges judge EVERY new entry — participants paid a fee for a score, so the
-  // random sampling and per-user cap (both sized for free dailies) must not leave a paying
-  // entrant unjudged with no chance to win. Entry volume is bounded by maxEntriesPerUser and
-  // the participant cap. Free challenges keep the sampled selection below.
-  const judgeAllEntries =
-    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
 
   let toReview: typeof recentEntries;
   if (judgeAllEntries) {
@@ -1029,9 +1048,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       // double-comment.
       const [alreadyReviewed] = await dbWrite.$queryRaw<[{ exists: boolean }?]>`
         SELECT EXISTS (
-          SELECT 1 FROM "Thread" th
-          JOIN "CommentV2" cm ON cm."threadId" = th.id
-          WHERE th."imageId" = ${entry.imageId} AND cm."userId" = ${judgingConfig.userId}
+          SELECT 1 FROM "CommentV3" cm
+          WHERE cm."entityType" = 'image' AND cm."entityId" = ${entry.imageId} AND cm."parentId" IS NULL
+            AND cm."deletedAt" IS NULL AND cm."userId" = ${judgingConfig.userId}
         ) AS "exists"
       `;
       if (alreadyReviewed?.exists) {
@@ -1039,19 +1058,38 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         return;
       }
 
-      const review = await generateReview({
-        theme: currentChallenge.theme,
-        themeElements,
-        resourceConcept,
-        creator: entry.username,
-        imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-        config: judgingConfig,
-        categories: userCategories?.map((c) => ({
-          key: c.key,
-          name: c.label,
-          criteria: c.criteria,
-        })),
-        nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+      const reviewContext = {
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+        nsfwLevel: entry.nsfwLevel,
+      };
+      const runReview = (model?: string) =>
+        generateReview({
+          theme: currentChallenge.theme,
+          themeElements,
+          resourceConcept,
+          creator: entry.username,
+          imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
+          config: judgingConfig,
+          categories: userCategories?.map((c) => ({
+            key: c.key,
+            name: c.label,
+            criteria: c.criteria,
+          })),
+          nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+          model,
+        });
+      const review = await reviewWithShadow({
+        shadow: config.reviewShadow,
+        context: reviewContext,
+        run: (model) =>
+          model
+            ? runReview(model)
+            : reviewWithFallback({
+                run: runReview,
+                fallbackModel: REVIEW_FALLBACK_MODEL,
+                context: reviewContext,
+              }),
       });
       log('Review prepared', entry.imageId, review);
 
@@ -1087,18 +1125,24 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,
+        eventPoints: false,
       });
       log('Comment sent', entry.imageId);
 
       // Send reaction
       try {
-        await toggleReaction({
+        const reactionResult = await toggleReaction({
           entityType: 'image',
           entityId: entry.imageId,
           reaction: review.reaction,
           userId: judgingConfig.userId,
+          eventPoints: false,
         });
-        log('Reaction sent', entry.imageId);
+        log(
+          reactionResult === 'ignored' ? 'Reaction ignored' : 'Reaction sent',
+          entry.imageId,
+          reactionResult
+        );
       } catch (error) {
         log('Failed to send reaction', entry.imageId, review.reaction);
       }
@@ -1126,7 +1170,13 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       }
     } catch (error) {
       const err = error as Error;
-      logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
+      logToAxiom({
+        type: 'daily-challenge-review-error',
+        message: err.message,
+        model: DEFAULT_REVIEW_MODEL,
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+      });
       log('Failed to review entry', entry.imageId, error);
     }
   });
@@ -1389,7 +1439,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
   // Update last review time in Challenge metadata
   // ----------------------------------------------
-  if (currentChallenge.challengeId) {
+  if (currentChallenge.challengeId && !replayWindow) {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "Challenge"
       SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"reviewedAt": ${reviewing}}'
@@ -1851,14 +1901,13 @@ export async function pickWinnersForChallenge(
     // money, but the builder increments the duplicate-pick counter on its drop branch, and
     // `withRetries` re-invokes up to 4 times — which would record 4x the placements actually
     // dropped on exactly the flaky-payout run where the number matters most.
-    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+    const winnerPrizes = buildWinnerPrizes({
       challengeId: currentChallenge.challengeId,
       title: currentChallenge.title,
-      buzzType: winnerBuzzType,
       winners: winningEntries,
     });
-    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
-    log('Prizes sent');
+    const awardedPrizes = await withRetries(() => createPrizes(winnerPrizes));
+    log('Prizes awarded');
 
     // 6. Distribute entry participation prizes
     const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
@@ -1934,11 +1983,9 @@ export async function pickWinnersForChallenge(
     //
     // Amount mirrors endChallengeAndPickWinners: the sum of the prizes SUBMITTED for the winners
     // paid on this completion (equal to each ChallengeWinner.buzzAwarded), not the configured prize
-    // table — a partial-winner completion pays less and must report less. Note this is prize Buzz
-    // ATTEMPTED, not confirmed-settled: `createBuzzTransactionMany` silently drops any non-success,
-    // non-conflict result (e.g. insufficientFunds) from both of its result arrays, so a leg that did
-    // not move money is invisible here and is still counted. `winnerBuzzType` is the currency
-    // buildWinnerPayoutTransactions actually paid in, and `challengeRecord` is already in scope —
+    // table — a partial-winner completion pays less and must report less. This is prize Buzz
+    // AWARDED, not paid: each winner claims theirs later. `winnerBuzzType` is the currency the
+    // pool was funded in, not the one a winner picks, and `challengeRecord` is already in scope —
     // neither needs a new query.
     recordChallengeCompleted({ source: challengeRecord?.source });
     recordChallengePrizePaidBuzz({
@@ -1962,6 +2009,7 @@ export async function pickWinnersForChallenge(
           challengeName: currentChallenge.title,
           position: entry.position,
           prize: entry.prize,
+          prizeId: awardedPrizes.find((prize) => prize.userId === entry.userId)?.id,
         },
       });
     }

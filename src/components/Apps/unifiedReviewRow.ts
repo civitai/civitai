@@ -2,6 +2,13 @@ import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
+import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
+import {
+  BUILD_STEP_LABELS,
+  isBuildFailureClassSignal,
+  isBuildPipelineStep,
+  type BuildAttemptSignals,
+} from '~/shared/constants/app-block-build.constants';
 
 /**
  * Pure adapters + merge for the UNIFIED moderator review lists (/apps/review).
@@ -38,12 +45,45 @@ export type CombinedReviewPayload = {
   listingRow: OffsitePendingRow;
 };
 
-/** Minimal user chip carried on a unified row (rendered by the list). */
-export type ReviewSubmitterChip = {
+/**
+ * THE user chip the moderator review surfaces project.
+ *
+ * 🔴 `deletedAt` IS LOAD-BEARING, NOT DECORATION. `UserAvatar` BRANCHES on it twice —
+ * `UserProfileLink` suppresses `linkToProfile` for a closed account, and `Username` renders
+ * "[deleted]" instead of a name. Omit it and the value is `undefined` ⇒ falsy ⇒ a deleted
+ * account renders as a live, linked one, on the surface where who submitted a bundle is the
+ * fact being judged. It reached the on-site selects a round before the off-site one, so for a
+ * while the queue disagreed with itself between two adjacent rows; this type is what stops a
+ * narrower projection being type-legal again. The server side is one `reviewUserChipSelect`
+ * in `src/server/selectors/review-user-chip.selector.ts` — a LEAF with a type-only Prisma
+ * import, deliberately not `user.selector.ts`; that file's header says why.
+ *
+ * ⚠️ NO CONSUMER INVENTORY HERE, DELIBERATELY. This docstring used to enumerate the surfaces
+ * and assert that all of them render the chip through `UserAvatar`. The list went stale twice
+ * in three rounds, and the second time it was widened to include a surface that renders plain
+ * text — restating, one file away, the exact claim that same commit was retracting. The set
+ * of consumers is `git grep ReviewUserChip`, which cannot rot; a prose copy of it can, and
+ * did. Not every consumer hands it to `UserAvatar`; the ones that do not carry it for parity,
+ * so the branch is there the moment they adopt the shared component.
+ *
+ * ⚠️ `profilePicture` is deliberately NOT here — the other field `UserAvatar` reads, but a
+ * NESTED select (a joined image row per row on three list paths) for a cosmetic gain that
+ * `UserAvatar` already falls back from. The reasoning lives beside the select.
+ *
+ * 🔴 THIS MODULE IS REACT-FREE ON PURPOSE, which is why the type lives here rather than in
+ * one of the components that render it: a component module cannot be imported by the others
+ * without dragging their trees along.
+ */
+export type ReviewUserChip = {
   id: number;
   username: string | null;
+  /** `null` for a live account; a `Date` for a deleted one (superjson revives it). */
+  deletedAt: Date | null;
   image: string | null;
-} | null;
+};
+
+/** The same chip where the relation is nullable (an undecided request has no reviewer). */
+export type ReviewSubmitterChip = ReviewUserChip | null;
 
 export type UnifiedReviewRow = {
   /** GLOBALLY-unique dedup key, namespaced by SOURCE — `onsite:<id>` (App Block
@@ -124,6 +164,8 @@ export type UnifiedReviewRow = {
   iconUrl: string | null;
   /** CDN cover URL for the app's store listing (`listingCoverUrl`), or null. */
   coverUrl: string | null;
+  /** The listing media with levels (moderator-only), so the row can blur an above-SFW icon. */
+  reviewMedia: ListingReviewMedia | null;
 };
 
 /** The deploy lifecycle projection carried on an on-site approved review row. */
@@ -136,13 +178,27 @@ export type ReviewRowDeploy = {
   reviewedAt: Date | null;
   /** The publish-request id — the ONLY argument `blocks.retriggerBuild` takes. */
   publishRequestId: string;
+  /** The latest build attempt's failed step + class (failed rows only), or null. */
+  buildSignals?: BuildAttemptSignals | null;
 };
-// NOTE: `deployDetail` is deliberately NOT projected here. It carries the
-// TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes) and
-// the moderator queue never renders it — carrying it into this payload would be
-// dead data on a surface where a future renderer would have to re-derive the
-// escaping guarantees. The owner-facing /apps/my-submissions row is where the
-// excerpt is shown, and it reads it straight from its own query.
+
+// NOTE: `deployDetail` is deliberately NOT projected here, and
+// `listApprovedRequests` does not select it either. It carries the
+// TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes), which
+// only the app's own team sees: the listing's History tab reads it from
+// `appListings.listingHistory`.
+
+/**
+ * "security scan · unknown" for a moderator's failed-deploy chip, from the latest build
+ * attempt's structured signals; `null` when the build reported no step (or a value outside
+ * the shared lists). Never derived from the build-log excerpt, which moderators do not get.
+ */
+export function failedBuildSummary(signals: BuildAttemptSignals | null | undefined): string | null {
+  const step = signals?.failedStep;
+  const cls = signals?.failureClass;
+  if (!isBuildPipelineStep(step) || !isBuildFailureClassSignal(cls)) return null;
+  return `${BUILD_STEP_LABELS[step]} · ${cls}`;
+}
 
 function toDate(d: string | Date): Date {
   return typeof d === 'string' ? new Date(d) : d;
@@ -180,6 +236,7 @@ export function onsiteRequestToUnifiedRow(
           ),
           reviewedAt: toOptionalDate(reviewedAt),
           publishRequestId: req.id,
+          buildSignals: (req as { buildSignals?: BuildAttemptSignals | null }).buildSignals ?? null,
         }
       : undefined;
   const mds = (req.manifestDiffSummary ?? {}) as ManifestDiffSummary;
@@ -203,6 +260,7 @@ export function onsiteRequestToUnifiedRow(
     playCount: req.playCount ?? null,
     iconUrl: req.iconUrl ?? null,
     coverUrl: req.coverUrl ?? null,
+    reviewMedia: req.reviewMedia ?? null,
   };
 }
 
@@ -234,12 +292,16 @@ export type OffsiteReviewRequest = {
     connectScopeJustifications?: Record<string, string> | null;
     connectClient?: { name: string | null } | null;
   } | null;
-  submittedBy: { id: number; username: string | null; image: string | null } | null;
+  /** 🔴 THE SHARED CHIP, not a fourth inline spelling. This one omitted `deletedAt` while
+   *  the on-site rows beside it carried it, so the same list rendered a closed account as
+   *  `[deleted]` on one row and as a live, linked profile on the next. */
+  submittedBy: ReviewSubmitterChip;
   /** Lifetime store opens for the backing listing — see `UnifiedReviewRow.playCount` for
    *  the three caveats. Absent on an older payload → treated as unknown (`null`). */
   playCount?: number | null;
   iconUrl?: string | null;
   coverUrl?: string | null;
+  reviewMedia?: ListingReviewMedia | null;
 };
 
 /**
@@ -305,6 +367,7 @@ export function offsiteRequestToUnifiedRow(
     playCount: req.playCount ?? null,
     iconUrl: req.iconUrl ?? null,
     coverUrl: req.coverUrl ?? null,
+    reviewMedia: req.reviewMedia ?? null,
   };
 }
 
@@ -367,6 +430,14 @@ function combineCodeAndMediaRows(
       playCount: code.playCount ?? media.playCount,
       iconUrl: code.iconUrl ?? media.iconUrl,
       coverUrl: code.coverUrl ?? media.coverUrl,
+      // Each image from the SAME side as its url above, so a row never pairs one side's url
+      // with the other side's level.
+      reviewMedia: {
+        icon: (code.iconUrl != null ? code : media).reviewMedia?.icon ?? null,
+        cover: (code.coverUrl != null ? code : media).reviewMedia?.cover ?? null,
+        redIcon: code.reviewMedia?.redIcon ?? media.reviewMedia?.redIcon ?? null,
+        redCover: code.reviewMedia?.redCover ?? media.reviewMedia?.redCover ?? null,
+      },
     });
   }
 

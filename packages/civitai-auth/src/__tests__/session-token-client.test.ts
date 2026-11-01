@@ -25,7 +25,11 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('createSessionTokenClient', () => {
   it('refresh posts the bearer token and returns the fresh token', async () => {
-    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({ token: 'fresh.jwt' }) }));
+    const fetch = stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'fresh.jwt' }),
+    }));
     expect(await createSessionTokenClient().refresh('cur.jwt')).toEqual({ token: 'fresh.jwt' });
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe('https://auth.test/api/auth/refresh');
@@ -34,7 +38,11 @@ describe('createSessionTokenClient', () => {
   });
 
   it('refresh forwards the device cookie when given', async () => {
-    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({ token: 'x' }) }));
+    const fetch = stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'x' }),
+    }));
     await createSessionTokenClient().refresh('cur', { deviceCookie: 'dev-123' });
     const [, init] = fetch.mock.calls[0];
     expect(init.headers.cookie).toContain('dev-123');
@@ -51,6 +59,13 @@ describe('createSessionTokenClient', () => {
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe('https://auth.test/logout');
     expect(init.headers.cookie).toContain('tok');
+  });
+
+  it('revoke forwards the device id so the hub can sign out the whole browser', async () => {
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    await createSessionTokenClient().revoke('tok', { deviceId: 'dev-1' });
+    const [, init] = fetch.mock.calls[0];
+    expect(init.headers.cookie).toContain('civ-device=dev-1');
   });
 
   it('revoke never throws on a hub blip', async () => {
@@ -101,7 +116,9 @@ describe('createSessionTokenClient', () => {
         status: 200,
         json: async () => ({ token: 'civ.jwt', deviceId: 'dev-existing' }),
       }));
-      await createSessionTokenClient().exchangeLegacy('legacy.jwe', { deviceCookie: 'dev-existing' });
+      await createSessionTokenClient().exchangeLegacy('legacy.jwe', {
+        deviceCookie: 'dev-existing',
+      });
       const [, init] = fetch.mock.calls[0];
       expect(init.headers.cookie).toContain('dev-existing');
     });

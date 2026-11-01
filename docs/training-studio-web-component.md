@@ -14,7 +14,7 @@ browser with the injected user token. Minting stays server-side in whichever hos
 ## Why this shape
 
 - The current app's 13 `/api/*` routes are almost all thin wrappers: verify session → mint/read
-  the user's orchestrator token → one `@civitai/client` SDK call. Moving those calls into the
+  the user's orchestrator token → one `@civitai/orchestration-client` SDK call. Moving those calls into the
   browser removes the wrapper tier entirely; nothing of substance is lost.
 - Signals already works exactly this way today (server mints a token at `/api/signals-token`,
   the browser connects to the signals host directly), so the pattern is proven in this app.
@@ -34,6 +34,12 @@ interface TrainingStudioHost {
 
   /** SignalR access token for live workflow updates. Null => component falls back to polling. */
   getSignalsToken(): Promise<string | null>;
+
+  /** The main app's trigger word check for one run, called before anything is submitted
+   *  (`POST /api/training-studio/check-text`). Resolves { ok: false, error } on a refusal and
+   *  rejects when the check could not run. Without it the component refuses to start training. */
+  checkTrainingText(input: { triggerWord: string }):
+    Promise<{ ok: true } | { ok: false; error: string }>;
 
   /** Spendable balances for the header/pricing UI. The buzz service is internal-only (no
    *  browser CORS), so this stays a host call. Null => balances hidden, flow still works. */
@@ -56,10 +62,19 @@ interface TrainingStudioHost {
      *  `pricingUrl`) instead of silently doing nothing. Omit when the host has no membership
      *  knowledge (e.g. the standalone shell) — the affordance then behaves as before. */
     canGenerateUnpublished?: boolean;
-    /** The host's membership-plans page, linked from that explanation. Same URL semantics as
+    /** Whether this user holds a paid membership (tier other than `free`). Without one, Blue Buzz
+     *  can't pay for a mature dataset, and Review warns the run will be charged in full. Omit when
+     *  the host doesn't know. */
+    isPaidMember?: boolean;
+    /** The host's membership-plans page, linked from the `canGenerateUnpublished` explanation. Same URL semantics as
      *  `generateUrl` (relative = same-tab, absolute = new tab). Omit to render the explanation
      *  without a link. */
     pricingUrl?: string;
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see. The standalone shell
+     *  evaluates them server-side in `/new`'s load; the element has no server, so the host must
+     *  evaluate them and pass the enabled keys (the main app maps them in
+     *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model is hidden. */
+    enabledModelFlags?: string[];
   };
 
   /** The host owns the URL space. Flow code describes destinations in studio terms; the host maps
@@ -93,6 +108,14 @@ interface TrainingStudioHost {
    *  render a "View draft" / "View your model page" link through this. Optional — omit to hide
    *  the affordance. Same URL semantics as `generateUrl`. */
   modelPageUrl?(req: { modelId: number }): string;
+
+  /** Whether that model still counts for this user (`GET /api/training-studio/model-status`): false
+   *  once the owner deleted it, since the stamped modelId outlives the delete. The run page asks
+   *  once per modelId; false drops the link (an unpublished run then offers Publish, which makes a
+   *  fresh draft), while pending or a rejection keeps it. A moderator's delete still counts, so
+   *  Publish can't route around it. Should time out on its own. Optional — omit and the link is
+   *  unchecked. */
+  modelLive?(modelId: number): Promise<boolean>;
 
   /** Open the host's own model picker for the Custom training base (the main app's
    *  resource-select modal). The component passes the run's orchestrator ecosystem so a host
@@ -134,6 +157,10 @@ Stays host-side (not orchestrator-backed or not user-token-backed):
   `getOrchestratorToken` (main app).
 - **Signals token minting** — internal signals endpoint.
 - **Buzz balances** — internal buzz service (`BUZZ_ENDPOINT`), no browser CORS.
+- **Trigger word check** — the main app's `POST /api/training-studio/check-text`; the standalone
+  shell's server calls it with the user's session cookie, the embed through `checkTrainingText`.
+- **Model status** — the main app's `GET /api/training-studio/model-status`; the standalone shell's
+  server calls it with the user's session cookie, the embed through `modelLive`.
 
 ## CORS requirement
 
@@ -153,10 +180,11 @@ allowlist before the component works there.
 - **Component**: the four-step flow, My trainings, run detail (live progress, epochs, train
   further, remix), label editor — everything under `src/routes/*.svelte` + `[id]/` today.
 - **Shell (standalone host)**: hooks auth gate, closed-beta page, header chrome (avatar,
-  logout), favicon, and the three host callbacks above backed by the existing
-  `lib/server/{orchestrator-token,signals,buzz}.ts`.
+  logout), favicon, the per-model catalog gates (`allowedModelFlags` in `/new`'s load), and the
+  three host callbacks above backed by the existing `lib/server/{orchestrator-token,signals,buzz}.ts`.
 - **Main app (embedded host)**: implements the same three callbacks with its existing
-  orchestrator/buzz infra; mounts the element on a page/route it owns.
+  orchestrator/buzz infra, evaluates the per-model catalog gates into `config.enabledModelFlags`,
+  and mounts the element on a page/route it owns.
 
 ## Packaging notes
 

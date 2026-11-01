@@ -1,7 +1,6 @@
 import dayjs from '~/shared/utils/dayjs';
 import { uniq } from 'lodash-es';
 import { find as findLinks } from 'linkifyjs';
-import { unfurl } from 'unfurl.js';
 import { linkifyOptions } from '~/components/Chat/util';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
@@ -15,13 +14,16 @@ import {
   latestChat,
   singleChatSelect,
 } from '~/server/selectors/chat.selector';
+import { getChatRedesignRecipients } from '~/server/services/chat-redesign-recipients.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
 import { decideDmRouting } from '~/server/utils/chat';
 import { normalizeChatName, resolveChatIdentity } from '~/server/utils/chat-group';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { truncateAuditValue, type ChatAuditRow } from '~/server/common/chat-audit.constants';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { safeUnfurl } from '~/server/utils/safe-unfurl';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -87,10 +89,24 @@ const evaluateDmPolicies = async ({
   );
   const senderIsNew = !!sender && dayjs().diff(dayjs(sender.createdAt), 'day') < newAccountAgeDays;
 
+  // @ai: delete this gate (and `getChatRedesignRecipients`) when chat-redesign ramps to
+  // public. Until then the `following` default only applies to recipients who can see
+  // Requests; the old list has no such tab and would just lose the badge for strangers.
+  const unsetIds = recipientIds.filter((_, i) => !recipientSettings[i]?.chat?.dmPolicy);
+  const redesignIds = await getChatRedesignRecipients({
+    recipientIds: unsetIds,
+    earlyAdopters: new Set(
+      recipientIds.filter((_, i) => recipientSettings[i]?.isEarlyAdopter === true)
+    ),
+  });
+
   recipientIds.forEach((recipientId, i) => {
     const settings = recipientSettings[i] ?? {};
+    const fallback = redesignIds.has(recipientId)
+      ? DEFAULT_CHAT_SETTINGS.dmPolicy ?? 'following'
+      : 'everyone';
     const routing = decideDmRouting({
-      policy: resolveDmPolicy(settings),
+      policy: resolveDmPolicy(settings, fallback),
       holdNewAccounts:
         settings.chat?.holdNewAccounts ?? DEFAULT_CHAT_SETTINGS.holdNewAccounts ?? false,
       senderIsNew,
@@ -379,6 +395,71 @@ export const upsertChat = async ({
 };
 
 /**
+ * The 1:1 chat for a Creator Services deal, opened when the seller accepts.
+ *
+ * Accepting is the seller's consent to talk to this buyer, so the recipients' DM policies and the
+ * chat caps do not apply to this pair. A block still does: the deal refuses to be requested or
+ * accepted across one, and this refuses again rather than trusting that it was checked.
+ */
+export const upsertDealChat = async ({
+  sellerId,
+  buyerId,
+}: {
+  sellerId: number;
+  buyerId: number;
+}) => {
+  const [blocked, blockedBy] = await Promise.all([
+    BlockedUsers.getCached({ userId: sellerId }),
+    BlockedByUsers.getCached({ userId: sellerId }),
+  ]);
+  if ([...blocked, ...blockedBy].some((user) => user.id === buyerId))
+    throw throwBadRequestError('Unable to open a chat for this deal');
+
+  const userIds = [sellerId, buyerId];
+  const identity = resolveChatIdentity({ userIds, isGroup: false });
+  const existing = identity.hash
+    ? await dbWrite.chat.findFirst({ where: { hash: identity.hash }, select: { id: true } })
+    : null;
+
+  if (existing) {
+    // Lift the Requests filter for both: neither should have to accept a chat the deal opened.
+    await dbWrite.chatMember.updateMany({
+      where: { chatId: existing.id, userId: { in: userIds }, filteredAt: { not: null } },
+      data: { filteredAt: null },
+    });
+    return existing;
+  }
+
+  const created = await dbWrite.$transaction(async (tx) => {
+    const chat = await tx.chat.create({
+      data: { hash: identity.hash, ownerId: sellerId, isGroup: false, name: null },
+      select: { id: true, createdAt: true },
+    });
+    await tx.chatMember.createMany({
+      data: userIds.map((userId) => ({
+        userId,
+        chatId: chat.id,
+        isOwner: userId === sellerId,
+        status: ChatMemberStatus.Joined,
+        joinedAt: chat.createdAt,
+      })),
+    });
+    return chat;
+  });
+
+  for (const userId of userIds)
+    withSignals(() =>
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${created.id}`),
+      })
+    ).catch(() => undefined);
+
+  return { id: created.id };
+};
+
+/**
  * Create a message (direct)
  */
 export const createMessage = async ({
@@ -609,7 +690,7 @@ export const createMessage = async ({
               ).catch(() => undefined);
             });
         } else {
-          unfurl(href)
+          safeUnfurl(href)
             .then(async (hrefData) => {
               const embedData = {
                 title: hrefData.title ?? hrefData.open_graph?.title ?? null,
@@ -641,7 +722,7 @@ export const createMessage = async ({
                 )
               ).catch(() => undefined);
             })
-            .catch();
+            .catch(() => undefined);
         }
       } catch (e: unknown) {
         logToAxiom(
@@ -659,4 +740,94 @@ export const createMessage = async ({
   }
 
   return resp;
+};
+
+/**
+ * Overwrites a message's content and keeps the text it replaced in `ChatMessageEdit`, in ONE statement:
+ * the history row and the edit land together or not at all. The row lock is taken inside it, so two
+ * edits racing on the same message each record the version the other left rather than both recording
+ * the same original. Returns the replaced text, or null when the message is gone or was deleted.
+ */
+export const editChatMessageContent = async ({
+  messageId,
+  editorId,
+  content,
+  editedAt,
+}: {
+  messageId: number;
+  editorId: number;
+  content: string;
+  editedAt: Date;
+}) => {
+  const [row] = await dbWrite.$queryRaw<{ previousContent: string }[]>`
+    WITH prev AS (
+      SELECT id, content FROM "ChatMessage"
+      WHERE id = ${messageId} AND "deletedAt" IS NULL
+      FOR UPDATE
+    ), history AS (
+      INSERT INTO "ChatMessageEdit" ("messageId", "editorId", "previousContent", "createdAt")
+      SELECT id, ${editorId}, content, ${editedAt} FROM prev
+    )
+    UPDATE "ChatMessage" m SET content = ${content}, "editedAt" = ${editedAt}
+    FROM prev WHERE m.id = prev.id
+    RETURNING prev.content AS "previousContent"
+  `;
+  return row?.previousContent ?? null;
+};
+
+/**
+ * Hides a message from everyone in the chat and retains the row: the delete is recorded, so a report
+ * filed against the thread afterwards still resolves to what was actually said. Authors delete their
+ * own; moderators delete anyone's. A message already deleted is returned as is.
+ */
+export const deleteChatMessage = async ({
+  messageId,
+  actorId,
+  isModerator,
+  audit,
+}: {
+  messageId: number;
+  actorId: number;
+  isModerator?: boolean;
+  audit: (event: ChatAuditRow) => Promise<unknown>;
+}) => {
+  const existing = await dbWrite.chatMessage.findFirst({
+    where: { id: messageId },
+    select: { id: true, userId: true, chatId: true, content: true, deletedAt: true },
+  });
+
+  if (!existing || (existing.userId !== actorId && !isModerator)) {
+    throw throwNotFoundError(`No message found for ID (${messageId})`);
+  }
+  if (existing.deletedAt) return { messageId: existing.id, chatId: existing.chatId };
+
+  await dbWrite.chatMessage.update({ where: { id: existing.id }, data: { deletedAt: new Date() } });
+
+  const { value, truncated } = truncateAuditValue(existing.content);
+  await audit({
+    type: 'delete',
+    chatId: existing.chatId,
+    messageId: existing.id,
+    actorId,
+    subjectId: existing.userId,
+    actorRole: existing.userId === actorId ? 'owner' : 'moderator',
+    oldValue: value,
+    newValue: '',
+    truncated,
+  }).catch(() => undefined);
+
+  // Both sides need to drop it; without this the other participant keeps
+  // rendering a message that no longer exists for anyone.
+  withSignals(() =>
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${existing.chatId}/signals/${SignalMessages.ChatMessageDeleted}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: existing.id, chatId: existing.chatId }),
+      }
+    )
+  ).catch(() => undefined);
+
+  return { messageId: existing.id, chatId: existing.chatId };
 };

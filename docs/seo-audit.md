@@ -128,7 +128,7 @@ are SEO-visible.
 - [ ] `/user-id/:userId` — [user-id/[userId].tsx](../src/pages/user-id/[userId].tsx) (confirm canonical points at username URL)
 - [x] `/tag/:tagname` — [tag/[tagname].tsx](../src/pages/tag/[tagname].tsx) (tag aggregation, can include NSFW) *(2026-09-16: green counts and lists safe models only and noindexes mature-only tags; see [seo-improvements.md](seo-improvements.md) §1)*
 - [ ] `/reviews/:reviewId` — [reviews/[reviewId].tsx](../src/pages/reviews/[reviewId].tsx)
-- [ ] `/comments/v2/:id` — [comments/v2/[id].tsx](../src/pages/comments/v2/[id].tsx) (likely should de-index)
+- [ ] `/comments/:id` — [comments/[id].tsx](../src/pages/comments/[id].tsx) (likely should de-index; `/comments/v2/:id` is an alias re-exporting it)
 - [ ] `/challenges/:id/:slug?` — [challenges/[id]/[[...slug]].tsx](../src/pages/challenges/[id]/[[...slug]].tsx)
 - [ ] `/events/:slug` — [events/[slug].tsx](../src/pages/events/[slug].tsx)
 - [ ] `/leaderboard/:id` — [leaderboard/[id].tsx](../src/pages/leaderboard/[id].tsx)
@@ -153,7 +153,6 @@ descriptions, and canonicals are set (not inherited from defaults).
 - [ ] `/comics/browse` — [comics/browse.tsx](../src/pages/comics/browse.tsx)
 - [ ] `/challenges` — [challenges/index.tsx](../src/pages/challenges/index.tsx)
 - [ ] `/challenges/winners` — [challenges/winners.tsx](../src/pages/challenges/winners.tsx)
-- [ ] `/events` — [events/index.tsx](../src/pages/events/index.tsx)
 - [ ] `/tools` — [tools/index.tsx](../src/pages/tools/index.tsx)
 - [ ] `/builds` — [builds/index.tsx](../src/pages/builds/index.tsx)
 - [ ] `/search/models` — [search/models.tsx](../src/pages/search/models.tsx)
@@ -204,7 +203,7 @@ group render `noindex`, tick the group.
 - [ ] Auth / claim / redirect (`login`, `login/token`, `verify-email`, `redirect`, `region-blocked`, `preview-restricted`, `redeem-code`, `claim/buzz/[id]`, `claim/cosmetic/[id]`, `intent/avatar`, `intent/post`, `discord/link-role`, `studio/confirm`, `subscribe/[plan]`, `purchase/buzz`)
 - [ ] Payments (`payment/*`, `tipalti/setup`)
 - [ ] Collections helpers (`collections/[collectionId]/join`, `collections/[collectionId]/review`, `collections/youtube/auth`)
-- [ ] Games / one-offs (`games/chopped`, `games/knights-of-new-order`, `dev/onboarding`, `data-graph-v2`, `images/iterate`)
+- [ ] Games / one-offs (`games/chopped`, `games/knights-of-new-order`, `dev/onboarding`, `images/iterate`)
 - [ ] Moderator / internal (`moderator/*`, `research/*`, `testing/*`)
 
 ---

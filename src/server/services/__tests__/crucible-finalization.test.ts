@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CrucibleIngestionStatus,
@@ -8,7 +9,10 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
-import { loggingMock, dbMock } from '~/__tests__/mocks';
+import type * as PostService from '~/server/services/post.service';
+import type * as PrizeService from '~/server/services/prize.service';
+import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -21,6 +25,14 @@ const createNotification = vi.fn();
 const getAllEntryElos = vi.fn();
 const getAllVoteCounts = vi.fn();
 const setTTL = vi.fn();
+const afterPostsPublish = vi.fn();
+const createPrizes = vi.fn();
+const voidPrizes = vi.fn();
+
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  afterPostsPublish,
+}));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -41,6 +53,24 @@ vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
   ...(await importOriginal<typeof EloService>()),
   getAllEntryElos,
 }));
+
+vi.mock('~/server/services/prize.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrizeService>()),
+  createPrizes,
+  voidPrizes,
+}));
+
+type AwardedPrize = {
+  userId: number;
+  sourceType: string;
+  sourceId: number;
+  subjectId: number;
+  position: number;
+  amount: number;
+  title: string;
+  externalTransactionId: string;
+};
+const awarded = (call = 0) => createPrizes.mock.calls[call][0] as AwardedPrize[];
 
 const { finalizeCrucible } = await import('~/server/services/crucible.service');
 
@@ -104,6 +134,9 @@ const setupCrucible = ({
   elos = { 1: 1600, 2: 1550, 3: 1400 } as Record<number, number>,
   voteCounts = {} as Record<number, number>,
   ingestion = CrucibleIngestionStatus.Scanned,
+  timeAdjustedPlacement = false,
+  startAt = null as Date | null,
+  endAt = new Date(Date.now() - 1000),
 } = {}) => {
   findUnique.mockResolvedValue({
     id: 1,
@@ -111,12 +144,15 @@ const setupCrucible = ({
     ingestion,
     textNsfw: false,
     userId: 4,
+    image: { ingestion: ImageIngestionStatus.Scanned },
     status,
     entryFee,
     seededPrizePool,
     seedTransactionId: null,
     prizePositions: { '1': 50, '2': 30, '3': 20 },
-    endAt: new Date(Date.now() - 1000),
+    startAt,
+    endAt,
+    timeAdjustedPlacement,
     nsfwLevel: 1,
     _count: { entries: entries.length },
   });
@@ -137,8 +173,14 @@ beforeEach(() => {
     transactions,
     conflicts: [],
   }));
+  createPrizes.mockImplementation(async (inputs: AwardedPrize[]) =>
+    inputs.map((input, i) => ({ ...input, id: 100 + i }))
+  );
+  voidPrizes.mockResolvedValue(0);
   createNotification.mockResolvedValue(undefined);
   setTTL.mockResolvedValue(undefined);
+  afterPostsPublish.mockResolvedValue(undefined);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   setupCrucible();
 });
 
@@ -161,26 +203,65 @@ describe('finalizeCrucible — guards', () => {
   it('pays nothing when it refuses', async () => {
     setupCrucible({ status: CrucibleStatus.Completed });
     await finalizeCrucible(1).catch(() => undefined);
+    expect(createPrizes).not.toHaveBeenCalled();
     expect(createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 });
 
 describe('finalizeCrucible — positions', () => {
-  it("ranks every entry except a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
+  it("ranks every entry except a banned entrant's, a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
     await finalizeCrucible(1);
 
     const { where } = findMany.mock.calls[0][0];
-    expect(where).toEqual({
+    expect(where).toMatchObject({
       crucibleId: 1,
+      user: { bannedAt: null },
       image: {
         needsReview: null,
         tosViolation: false,
-        post: { publishedAt: { lte: expect.any(Date) } },
+        post: { publishedAt: { not: null } },
         ingestion: { not: ImageIngestionStatus.Blocked },
         nsfwLevel: { in: expect.arrayContaining([1, 3]) },
       },
     });
     expect(where.image.nsfwLevel.in).not.toContain(2);
+  });
+
+  describe('contest-banned entrants', () => {
+    // The predicate is a nested Prisma.Sql value, so flatten the call the way Prisma would.
+    const sqlOf = (strings: TemplateStringsArray, values: unknown[]) =>
+      Prisma.sql(strings, ...values).sql;
+    const banQuery = (client: typeof dbMock.dbWrite.$queryRaw) =>
+      client.mock.calls.filter(([strings, ...values]) =>
+        sqlOf(strings as TemplateStringsArray, values).includes('contestBanDetails')
+      );
+
+    it("leaves their entries out of the ranking, asking the primary once for this crucible's entrants", async () => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) =>
+          sqlOf(strings, values).includes('contestBanDetails') ? [{ userId: 7 }, { userId: 9 }] : []
+      );
+      pageEntries([[dbEntry(1, 7, 1000)], [dbEntry(2, 8, 2000)]]);
+
+      await finalizeCrucible(1);
+
+      const rankingWheres = findMany.mock.calls
+        .map(([args]) => args.where)
+        .filter((where) => !where.position);
+      expect(rankingWheres.length).toBeGreaterThan(1);
+      for (const where of rankingWheres) expect(where.userId).toEqual({ notIn: [7, 9] });
+
+      const queries = banQuery(dbMock.dbWrite.$queryRaw);
+      expect(queries).toHaveLength(1);
+      const [strings, ...values] = queries[0];
+      const sql = sqlOf(strings as TemplateStringsArray, values);
+      expect(sql).toMatch(/FROM "CrucibleEntry" ce\s+JOIN "User" u ON u\.id = ce\."userId"/);
+      expect(sql).toMatch(
+        /ce\."crucibleId" = \?\s+AND u\.meta ->> 'contestBanDetails' IS NOT NULL/
+      );
+      expect(Prisma.sql(strings as TemplateStringsArray, ...values).values).toEqual([1]);
+      expect(banQuery(dbMock.dbRead.$queryRaw)).toHaveLength(0);
+    });
   });
 
   it('holds the money for review, loudly, when every entry is disqualified', async () => {
@@ -294,21 +375,34 @@ describe('finalizeCrucible — completion', () => {
     });
   });
 
-  it('pays the prizes before it claims Completed', async () => {
+  it('awards nothing for a 0-Buzz place, and still completes', async () => {
+    setupCrucible({ entryFee: 0 });
+
+    await finalizeCrucible(1);
+
+    expect(createPrizes).not.toHaveBeenCalled();
+    expect(claim).toHaveBeenCalledWith({
+      where: { id: 1, status: CrucibleStatus.Active },
+      data: { status: CrucibleStatus.Completed },
+    });
+  });
+
+  it('awards the prizes before it claims Completed, and pays none of them itself', async () => {
     setupCrucible({ entryFee: 100 });
     await finalizeCrucible(1);
 
-    expect(createBuzzTransactionMany).toHaveBeenCalled();
-    expect(createBuzzTransactionMany.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(createPrizes).toHaveBeenCalled();
+    expect(createPrizes.mock.invocationCallOrder[0]).toBeLessThan(
       claim.mock.invocationCallOrder[0]
     );
   });
 
-  it('leaves it Active for the next run when the payout fails, and says so', async () => {
+  it('leaves it Active for the next run when awarding fails, and says so', async () => {
     setupCrucible({ entryFee: 100 });
-    createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
+    createPrizes.mockRejectedValue(new Error('db down'));
 
-    await expect(finalizeCrucible(1)).rejects.toThrow('buzz down');
+    await expect(finalizeCrucible(1)).rejects.toThrow('db down');
 
     expect(claim).not.toHaveBeenCalled();
     expect(setTTL).not.toHaveBeenCalled();
@@ -316,13 +410,13 @@ describe('finalizeCrucible — completion', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'error',
-        name: 'crucible-prize-payout-failed',
+        name: 'crucible-prize-award-failed',
         crucibleId: 1,
       })
     );
   });
 
-  it('pays the same transaction ids on a retry, so the ledger rejects a second payment', async () => {
+  it('awards the same ledger keys on a retry, so a prize is only ever recorded and paid once', async () => {
     setupCrucible({ entryFee: 100 });
     await finalizeCrucible(1);
     // The retry finds the first attempt's ranking stored, with the scores moved since.
@@ -330,8 +424,8 @@ describe('finalizeCrucible — completion', () => {
     dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(3);
     await finalizeCrucible(1);
 
-    const ids = createBuzzTransactionMany.mock.calls.map(([txs]) =>
-      (txs as { externalTransactionId: string }[]).map((tx) => tx.externalTransactionId)
+    const ids = createPrizes.mock.calls.map(([prizes]) =>
+      (prizes as AwardedPrize[]).map((prize) => prize.externalTransactionId)
     );
     expect(ids[0]).toEqual(ids[1]);
     expect(ids[0]).toEqual([
@@ -341,17 +435,69 @@ describe('finalizeCrucible — completion', () => {
     ]);
   });
 
-  it('notifies nobody and logs when it lost the claim after paying', async () => {
+  const buzzWonKey = (id: number) => `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${id}`;
+  // User 13 places 4th, below the three prizes; user 4 is the host.
+  const withUnplacedEntrant = () =>
+    setupCrucible({
+      entryFee: 100,
+      entries: [
+        dbEntry(1, 10, 1_000),
+        dbEntry(2, 11, 2_000),
+        dbEntry(3, 12, 3_000),
+        dbEntry(4, 13, 4_000),
+      ],
+      elos: { 1: 1600, 2: 1550, 3: 1400, 4: 1300 },
+    });
+
+  it("busts exactly the prize winners' cached Buzz Won, not other entrants or the host", async () => {
+    withUnplacedEntrant();
+
+    await finalizeCrucible(1);
+
+    expect(awarded().map((prize) => prize.userId)).toEqual([10, 11, 12]);
+    expect(redisMock.redis.del.mock.calls.map(([key]) => key).sort()).toEqual(
+      [10, 11, 12].map(buzzWonKey).sort()
+    );
+  });
+
+  it('still completes the crucible when busting the cache fails', async () => {
+    setupCrucible({ entryFee: 100 });
+    redisMock.redis.del.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(finalizeCrucible(1)).resolves.toBeDefined();
+
+    expect(claim).toHaveBeenCalled();
+  });
+
+  it('busts nothing when awarding fails', async () => {
+    setupCrucible({ entryFee: 100 });
+    createPrizes.mockRejectedValue(new Error('db down'));
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('db down');
+
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
+  });
+
+  it('voids what it awarded, notifies nobody and logs when it lost the claim', async () => {
     setupCrucible({ entryFee: 100 });
     claim.mockResolvedValue({ count: 0 });
 
     await finalizeCrucible(1);
 
+    expect(voidPrizes).toHaveBeenCalledWith('Crucible', 1);
     expect(createNotification).not.toHaveBeenCalled();
     expect(setTTL).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-finalize-claim-lost', prizesPaid: true })
+      expect.objectContaining({ name: 'crucible-finalize-claim-lost', prizesAwarded: true })
     );
+  });
+
+  it('voids nothing when it wins the claim', async () => {
+    setupCrucible({ entryFee: 100 });
+
+    await finalizeCrucible(1);
+
+    expect(voidPrizes).not.toHaveBeenCalled();
   });
 
   it('on a retry, pays the ranking the earlier attempt wrote rather than ranking again', async () => {
@@ -369,10 +515,7 @@ describe('finalizeCrucible — completion', () => {
 
     const result = await finalizeCrucible(1);
 
-    const [transactions] = createBuzzTransactionMany.mock.calls[0] as [
-      { externalTransactionId: string; toAccountId: number }[]
-    ];
-    expect(transactions.map((tx) => tx.externalTransactionId)).toEqual([
+    expect(awarded().map((prize) => prize.externalTransactionId)).toEqual([
       'crucible-prize-1-2-1',
       'crucible-prize-1-1-2',
     ]);
@@ -384,11 +527,12 @@ describe('finalizeCrucible — completion', () => {
     await finalizeCrucible(1);
 
     expect(entryWrites()).toHaveLength(1);
-    const [lock] = dbMock.dbWrite.$queryRaw.mock.calls.map(([strings]) =>
+    const calls = dbMock.dbWrite.$queryRaw.mock.calls.map(([strings]) =>
       (strings as TemplateStringsArray).join('?').replace(/\s+/g, ' ')
     );
-    expect(lock).toBe('SELECT id FROM "Crucible" WHERE id = ? FOR UPDATE');
-    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+    const lockIndex = calls.findIndex((sql) => sql.includes('FOR UPDATE'));
+    expect(calls[lockIndex]).toBe('SELECT id FROM "Crucible" WHERE id = ? FOR UPDATE');
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[lockIndex]).toBeLessThan(
       executeRaw.mock.invocationCallOrder.at(-1)!
     );
   });
@@ -408,10 +552,7 @@ describe('finalizeCrucible — completion', () => {
     await finalizeCrucible(1);
 
     expect(entryWrites()).toHaveLength(0);
-    const [transactions] = createBuzzTransactionMany.mock.calls[0] as [
-      { externalTransactionId: string }[]
-    ];
-    expect(transactions.map((tx) => tx.externalTransactionId)).toEqual(['crucible-prize-1-1-1']);
+    expect(awarded().map((prize) => prize.externalTransactionId)).toEqual(['crucible-prize-1-1-1']);
   });
 
   it("pays a stored winner whose image stopped ranking, and doesn't hand the seed back", async () => {
@@ -429,37 +570,9 @@ describe('finalizeCrucible — completion', () => {
 
     await finalizeCrucible(1);
 
-    const [transactions] = createBuzzTransactionMany.mock.calls[0] as [
-      { externalTransactionId: string; toAccountId: number }[]
-    ];
-    expect(transactions).toEqual([
-      expect.objectContaining({ externalTransactionId: 'crucible-prize-1-1-1', toAccountId: 10 }),
+    expect(awarded()).toEqual([
+      expect.objectContaining({ externalTransactionId: 'crucible-prize-1-1-1', userId: 10 }),
     ]);
-  });
-
-  it('leaves it Active when the ledger dropped a transfer, so the next run pays it', async () => {
-    setupCrucible({ entryFee: 100 });
-    createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
-      transactions: transactions.slice(1),
-      conflicts: [],
-    }));
-
-    await expect(finalizeCrucible(1)).rejects.toThrow('1 of 3 prize transfers were not made');
-
-    expect(claim).not.toHaveBeenCalled();
-    expect(createNotification).not.toHaveBeenCalled();
-  });
-
-  it('counts a duplicate the ledger rejected as paid', async () => {
-    setupCrucible({ entryFee: 100 });
-    createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
-      transactions: transactions.slice(1),
-      conflicts: transactions.slice(0, 1),
-    }));
-
-    await finalizeCrucible(1);
-
-    expect(claim).toHaveBeenCalled();
   });
 
   it('refuses before the crucible has ended by the database clock, paying nothing', async () => {
@@ -468,7 +581,7 @@ describe('finalizeCrucible — completion', () => {
 
     await expect(finalizeCrucible(1)).rejects.toThrow('not ended');
 
-    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(createPrizes).not.toHaveBeenCalled();
     expect(claim).not.toHaveBeenCalled();
   });
 
@@ -552,6 +665,7 @@ describe('finalizeCrucible — empty crucible', () => {
 
     await finalizeCrucible(1);
 
+    expect(createPrizes).not.toHaveBeenCalled();
     expect(createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 });
@@ -568,21 +682,51 @@ describe('finalizeCrucible — single entry', () => {
     expect(result.finalEntries[0].prizeAmount).toBe(100);
   });
 
-  it('names and links the crucible on the prize transaction', async () => {
+  // The winner picks the currency when claiming, so nothing at award time may fix one.
+  it('awards plain Buzz, for a crucible created on the green site too', async () => {
+    setupCrucible({ entryFee: 100 });
+    findUnique.mockResolvedValue({ ...(await findUnique()), buzzType: 'green' });
+
+    await finalizeCrucible(1);
+
+    expect(awarded()).toHaveLength(3);
+    for (const prize of awarded()) {
+      expect(prize).not.toHaveProperty('buzzType');
+      expect(prize.sourceType).toBe('Crucible');
+    }
+  });
+
+  it('names and links the crucible on the prize', async () => {
     setupCrucible({ entryFee: 100, entries: [dbEntry(1, 10, 1_000)], elos: { 1: 1500 } });
 
     await finalizeCrucible(1);
 
-    expect(createBuzzTransactionMany).toHaveBeenCalledWith([
-      expect.objectContaining({
-        toAccountId: 10,
-        description: 'Crucible prize - 1st place: Test Crucible',
-        details: expect.objectContaining({ entityId: 1, entityType: 'Crucible' }),
-      }),
+    expect(awarded()).toEqual([
+      {
+        userId: 10,
+        sourceType: 'Crucible',
+        sourceId: 1,
+        subjectId: 1,
+        position: 1,
+        amount: 100,
+        title: 'Crucible 1st prize: Test Crucible',
+        externalTransactionId: 'crucible-prize-1-1-1',
+      },
     ]);
   });
 
-  it('leaves a name still under review off the prize transaction', async () => {
+  it("links the winner's notification to the prize it awarded", async () => {
+    setupCrucible({ entryFee: 100, entries: [dbEntry(1, 10, 1_000)], elos: { 1: 1500 } });
+
+    await finalizeCrucible(1);
+
+    const won = createNotification.mock.calls
+      .map(([n]) => n)
+      .find((n) => n.type === 'crucible-won');
+    expect(won.details).toMatchObject({ prizeId: 100, prizeCount: 1 });
+  });
+
+  it('leaves a name still under review off the prize', async () => {
     setupCrucible({
       entryFee: 100,
       entries: [dbEntry(1, 10, 1_000)],
@@ -592,9 +736,7 @@ describe('finalizeCrucible — single entry', () => {
 
     await finalizeCrucible(1);
 
-    expect(createBuzzTransactionMany).toHaveBeenCalledWith([
-      expect.objectContaining({ description: 'Crucible prize - 1st place' }),
-    ]);
+    expect(awarded()).toEqual([expect.objectContaining({ title: 'Crucible 1st prize' })]);
   });
 
   it.each([
@@ -680,6 +822,134 @@ describe('finalizeCrucible — minimum votes to place', () => {
     ]);
   });
 
+  describe('when the bar follows the time each entry was live', () => {
+    const HOUR = 3_600_000;
+    const endAt = new Date(Date.now() - 1000);
+    const startAt = new Date(endAt.getTime() - 100 * HOUR);
+    // Entry 3 is live for the last 10 of 100 hours.
+    const lateEntries = [
+      dbEntry(1, 10, startAt.getTime()),
+      dbEntry(2, 11, startAt.getTime()),
+      dbEntry(3, 12, endAt.getTime() - 10 * HOUR),
+    ];
+    const run = (timeAdjustedPlacement: boolean) => {
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 500, 2: 500, 3: 40 },
+        timeAdjustedPlacement,
+        startAt,
+        endAt,
+      });
+      return finalizeCrucible(1);
+    };
+
+    it('places a late entry that collected the votes expected for its time', async () => {
+      // Expects 1040 × 10/210 ≈ 50 votes, so 38 is enough; the old bar would ask for 260.
+      const result = await run(true);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBe(3);
+    });
+
+    it('keeps the old bar for a crucible that predates the rule', async () => {
+      const result = await run(false);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBeNull();
+    });
+
+    it('still leaves a late entry unplaced when it is under its own bar', async () => {
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 500, 2: 500, 3: 10 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBeNull();
+    });
+
+    it('checks each entry against its own bar, whatever order the entries come in', async () => {
+      const at = (hoursLive: number) => endAt.getTime() - hoursLive * HOUR;
+      // Total 940 votes over 260 live hours, old bar 177. Bars by entry: late 28, early 177 (its
+      // share is 271), mid 136, big 177. Input order differs from the score order late, mid, big, early.
+      setupCrucible({
+        entries: [
+          dbEntry(1, 10, at(10)),
+          dbEntry(2, 11, at(100)),
+          dbEntry(3, 12, at(50)),
+          dbEntry(4, 13, at(100)),
+        ],
+        elos: { 1: 1600, 2: 1500, 3: 1550, 4: 1520 },
+        voteCounts: { 1: 40, 2: 150, 3: 150, 4: 700 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      const positions = Object.fromEntries(result.finalEntries.map((e) => [e.entryId, e.position]));
+      expect(positions).toEqual({ 1: 1, 3: 2, 4: 3, 2: null });
+    });
+
+    it('keeps the old bar when the flag is on but the crucible has no end', async () => {
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 500, 2: 500, 3: 40 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt: null as unknown as Date,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBeNull();
+    });
+
+    it('lets a late entry place at a low-vote crucible only on the old bar', async () => {
+      // 30 votes over 3 entries: old bar 8, so the floor is 8 rather than 25 and 8 votes place.
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 11, 2: 11, 3: 8 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBe(3);
+    });
+
+    it('still places the leader when every entry is under the time-adjusted bar', async () => {
+      // The leader's share of the votes would ask for 38, but the old bar is 15 and it has 32.
+      setupCrucible({
+        entries: [
+          dbEntry(1, 10, startAt.getTime()),
+          dbEntry(2, 11, endAt.getTime() - 10 * HOUR),
+          dbEntry(3, 12, endAt.getTime() - 10 * HOUR),
+        ],
+        elos: { 1: 1600, 2: 1550, 3: 1500 },
+        voteCounts: { 1: 32, 2: 14, 3: 14 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.filter((e) => e.position !== null).map((e) => e.entryId)).toEqual([
+        1,
+      ]);
+    });
+  });
+
   it('writes a null position for the unplaced entry', async () => {
     setupCrucible({
       entries: fourEntries,
@@ -754,5 +1024,262 @@ describe('finalizeCrucible — fewer entries than paid places', () => {
     // 50/30/20 with no third place: 50 and 30 scale to 62.5% and 37.5% of the 200 pool.
     expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([125, 75]);
     expect(result.totalPrizesDistributed).toBe(200);
+  });
+});
+
+// Product decision (2026-10-04): a creator takes at most one prize. Their other entries keep their
+// positions on the leaderboard, and the next creator takes the prize they would have had. Do not
+// "simplify" prizes back to being paid by position.
+describe('finalizeCrucible — one prize per creator', () => {
+  // User 10 holds the top three scores; users 11, 12 and 13 follow.
+  const sweep = [
+    dbEntry(1, 10, 1_000),
+    dbEntry(2, 10, 2_000),
+    dbEntry(3, 10, 3_000),
+    dbEntry(4, 11, 4_000),
+    dbEntry(5, 12, 5_000),
+    dbEntry(6, 13, 6_000),
+  ];
+  const sweepElos = { 1: 1700, 2: 1650, 3: 1600, 4: 1550, 5: 1500, 6: 1450 };
+  const paid = () => awarded().map((prize) => [prize.userId, prize.amount, prize.title]);
+
+  it('pays a creator holding the top three scores one prize, and moves the next creators up', async () => {
+    setupCrucible({ entryFee: 100, entries: sweep, elos: sweepElos });
+
+    const result = await finalizeCrucible(1);
+
+    // 50/30/20 of a 600 pool.
+    expect(paid()).toEqual([
+      [10, 300, 'Crucible 1st prize: Test Crucible'],
+      [11, 180, 'Crucible 2nd prize: Test Crucible'],
+      [12, 120, 'Crucible 3rd prize: Test Crucible'],
+    ]);
+    expect(
+      result.finalEntries.map((e) => [e.entryId, e.position, e.prizePlace, e.prizeAmount])
+    ).toEqual([
+      [1, 1, 1, 300],
+      [2, 2, null, 0],
+      [3, 3, null, 0],
+      [4, 4, 2, 180],
+      [5, 5, 3, 120],
+      [6, 6, null, 0],
+    ]);
+    expect(result.totalPrizesDistributed).toBe(600);
+  });
+
+  it("keeps every position as ranked, including the creator's unpaid entries", async () => {
+    setupCrucible({ entryFee: 100, entries: sweep, elos: sweepElos });
+
+    await finalizeCrucible(1);
+
+    const values = entryWrites().flatMap(([, rows]) => (rows as { values: unknown[] }).values);
+    // (entryId, score, position, voteCount) per entry.
+    const positions = Array.from({ length: 6 }, (_, i) => [values[i * 4], values[i * 4 + 2]]);
+    expect(positions).toEqual([
+      [1, 1],
+      [2, 2],
+      [3, 3],
+      [4, 4],
+      [5, 5],
+      [6, 6],
+    ]);
+  });
+
+  it('tells the creator who moved up which prize they took, alongside their position', async () => {
+    setupCrucible({ entryFee: 100, entries: sweep, elos: sweepElos });
+
+    await finalizeCrucible(1);
+
+    const won = (userId: number) =>
+      createNotification.mock.calls
+        .map(([arg]) => arg)
+        .find((arg) => arg.type === 'crucible-won' && arg.userId === userId)?.details;
+    expect(won(10)).toMatchObject({ position: 1, prizePlace: 1, prizeAmount: 300 });
+    expect(won(11)).toMatchObject({ position: 4, prizePlace: 2, prizeAmount: 180 });
+    expect(won(13)).toMatchObject({ position: 6, prizePlace: null, prizeAmount: 0 });
+  });
+
+  it('gives a lone creator the whole pool once, as when the places go unfilled', async () => {
+    setupCrucible({
+      entryFee: 100,
+      entries: sweep.slice(0, 3),
+      elos: { 1: 1700, 2: 1650, 3: 1600 },
+    });
+
+    await finalizeCrucible(1);
+
+    expect(paid()).toEqual([[10, 300, 'Crucible 1st prize: Test Crucible']]);
+  });
+
+  it('pays from the stored positions on a retry, one prize per creator', async () => {
+    setupCrucible({
+      entryFee: 100,
+      entries: sweep.map((entry, i) => ({ ...entry, position: i + 1 })),
+      elos: { 1: 1400, 2: 1400, 3: 1400, 4: 1700, 5: 1400, 6: 1400 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(6);
+
+    await finalizeCrucible(1);
+
+    expect(paid().map(([userId, amount]) => [userId, amount])).toEqual([
+      [10, 300],
+      [11, 180],
+      [12, 120],
+    ]);
+  });
+});
+
+describe('finalizeCrucible — followers', () => {
+  const follows = dbMock.dbWrite.crucibleEngagement.findMany;
+  const results = () =>
+    createNotification.mock.calls.map(([arg]) => arg).filter((n) => n.type === 'crucible-results');
+
+  beforeEach(() => {
+    follows.mockResolvedValue([]);
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([]);
+  });
+
+  it('tells followers who are neither the host nor an entrant, once, through the opt-out path', async () => {
+    // Host 4 and entrants 10-12 already get crucible-ended / crucible-won.
+    follows.mockResolvedValue([10, 4, 50, 12, 51].map((userId) => ({ userId })));
+
+    await finalizeCrucible(1);
+
+    expect(follows).toHaveBeenCalledWith({
+      where: { crucibleId: 1, type: 'Notify' },
+      select: { userId: true },
+    });
+    expect(results()).toEqual([
+      {
+        type: 'crucible-results',
+        category: 'Update',
+        key: 'crucible-results:1',
+        userIds: [50, 51],
+        details: { crucibleId: 1, crucibleName: 'Test Crucible' },
+      },
+    ]);
+  });
+
+  it('tells followers of a crucible nobody entered', async () => {
+    findUnique.mockResolvedValue({
+      ...(await findUnique()),
+      _count: { entries: 0 },
+    });
+    follows.mockResolvedValue([4, 60].map((userId) => ({ userId })));
+
+    await finalizeCrucible(1);
+
+    expect(results().map((n) => n.userIds)).toEqual([[60]]);
+  });
+
+  it('sends nothing when every follower already heard', async () => {
+    follows.mockResolvedValue([4, 11].map((userId) => ({ userId })));
+
+    await finalizeCrucible(1);
+
+    expect(results()).toEqual([]);
+  });
+
+  it('does not notify followers when awarding fails and the crucible stays Active', async () => {
+    setupCrucible({ entryFee: 100 });
+    createPrizes.mockRejectedValue(new Error('db down'));
+    follows.mockResolvedValue([{ userId: 50 }]);
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('db down');
+
+    expect(createPrizes).toHaveBeenCalled();
+    expect(results()).toEqual([]);
+  });
+
+  it('skips followers on either side of a block with the host, or who hid the host', async () => {
+    follows.mockResolvedValue([50, 51, 52].map((userId) => ({ userId })));
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([
+      { userId: 4, targetUserId: 51 },
+      { userId: 52, targetUserId: 4 },
+    ]);
+
+    await finalizeCrucible(1);
+
+    expect(dbMock.dbWrite.userEngagement.findMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { userId: 4, targetUserId: { in: [50, 51, 52] }, type: 'Block' },
+          { userId: { in: [50, 51, 52] }, targetUserId: 4, type: { in: ['Block', 'Hide'] } },
+        ],
+      },
+      select: { userId: true, targetUserId: true },
+    });
+    expect(results().map((n) => n.userIds)).toEqual([[50]]);
+  });
+
+  it.each([
+    ['its text', { ingestion: CrucibleIngestionStatus.Pending }],
+    ['its cover', { image: { ingestion: ImageIngestionStatus.Pending } }],
+  ])('tells no follower about a crucible hidden because %s is unscanned', async (_, hidden) => {
+    findUnique.mockResolvedValue({ ...(await findUnique()), ...hidden });
+    follows.mockResolvedValue([{ userId: 50 }]);
+
+    await finalizeCrucible(1);
+
+    expect(results()).toEqual([]);
+    expect(createNotification.mock.calls.map(([n]) => n.type)).toContain('crucible-ended');
+  });
+});
+
+describe('finalizeCrucible — entry posts', () => {
+  const revealQuery = () => {
+    const call = dbMock.dbWrite.$queryRaw.mock.calls.find(([strings]) =>
+      (strings as string[]).join('').includes('entry_posts')
+    );
+    if (!call) return undefined;
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    const query = Prisma.sql(strings, ...values);
+    return { sql: query.text, values: query.values };
+  };
+
+  it("reveals this crucible's entry-modal posts and reindexes each one once it completes", async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[]) =>
+      strings.join('').includes('entry_posts')
+        ? [
+            { id: 300, userId: 10 },
+            { id: 301, userId: 11 },
+          ]
+        : []
+    );
+
+    await finalizeCrucible(1);
+
+    const query = revealQuery();
+    expect(query?.sql).toMatch(
+      /UPDATE "Post" p SET "publishedAt" = now\(\)\s+FROM entry_posts e\s+WHERE p\.id = e\.id AND e\.hidden/
+    );
+    expect(query?.sql).toMatch(/"publishedAt" > now\(\)/);
+    expect(query?.sql).toMatch(/ce\."crucibleId" = \$\d/);
+    expect(query?.values).toEqual(expect.arrayContaining([1, 'crucibleEntryDraft']));
+    expect(afterPostsPublish).toHaveBeenCalledTimes(1);
+    expect(afterPostsPublish).toHaveBeenCalledWith([
+      { postId: 300, userId: 10 },
+      { postId: 301, userId: 11 },
+    ]);
+  });
+
+  it('reveals nothing when another run already completed it', async () => {
+    claim.mockResolvedValue({ count: 0 });
+
+    await finalizeCrucible(1);
+
+    expect(revealQuery()).toBeUndefined();
+  });
+
+  it('still completes when the reveal fails, since the clock already published them', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[]) => {
+      if (strings.join('').includes('entry_posts')) throw new Error('db down');
+      return [];
+    });
+
+    await expect(finalizeCrucible(1)).resolves.toMatchObject({ crucibleId: 1 });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'crucible-entry-posts-reveal-failed', crucibleId: 1 })
+    );
   });
 });

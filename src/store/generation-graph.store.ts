@@ -1,7 +1,7 @@
 /**
  * Generation Graph Store
  *
- * Store for passing generation data to the DataGraph-based form.
+ * Store for passing generation data into the generation form.
  * Handles opening the generation sidebar, fetching generation data,
  * and providing graph-compatible data to GenerationFormProvider.
  */
@@ -11,7 +11,7 @@ import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import type { GenerationData } from '~/server/services/generation/generation.service';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { remixStore } from '~/store/remix.store';
 import { trpcVanilla } from '~/utils/trpc';
@@ -54,8 +54,8 @@ export type GenerationGraphOpenInput =
 export interface GenerationGraphData {
   /** Params from step.metadata.params or fetched generation data */
   params: Record<string, unknown>;
-  /** Resources in full GenerationResource format */
-  resources: GenerationResource[];
+  /** Resources as the server handed them out */
+  resources: GenerationResourceValue[];
   /** Type of run (determines reset behavior in form provider) */
   runType: RunType;
   /** Optional remix reference */
@@ -156,7 +156,7 @@ function toEntryAction(runType: RunType): GeneratorEntryAction {
 // =============================================================================
 
 /** Apply resource substitutions (use substitute if original can't generate) */
-function substituteResource(item: GenerationResource): GenerationResource {
+function substituteResource(item: GenerationResourceValue): GenerationResourceValue {
   const { substitute, ...rest } = item;
   if (!rest.canGenerate && substitute?.canGenerate) return { ...item, ...substitute };
   return rest;

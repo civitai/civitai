@@ -8,7 +8,7 @@ import type {
   ComfyStepTemplate,
   ImageGenStepTemplate,
   PreprocessImageStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type {
   ComfySd1CreateImageGenInput,
   ComfySdxlCreateImageGenInput,
@@ -16,6 +16,9 @@ import type {
   SdxlCreateImageGenInput,
 } from '@civitai/orchestration-client';
 import {
+  clampToRange,
+  DRAFT_WORKFLOW,
+  getSdDraftMode,
   samplersToComfySamplers,
   samplersToSdCppSamplers,
   usesComfyEngine,
@@ -23,9 +26,9 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 import { maxRandomSeed } from '~/server/common/constants';
-import { createComfyInput } from '../ecosystems/comfy-input';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
+import { createComfyInput } from '../handlers/comfy-input';
+import { defineHandler } from '../handlers/handler-factory';
+import { buildControlNetSteps } from '../handlers/controlnets.helper';
 import type { EcosystemData } from './types';
 
 const IMAGE_GEN_ECOSYSTEM: Record<string, 'sd1' | 'sdxl' | undefined> = {
@@ -81,9 +84,10 @@ export const createStableDiffusionInput = defineHandler<
   const comfyKey = getComfyKey(workflow, hasImages);
 
   const userResources = data.resources ?? [];
-  const sampler = data.sampler ?? 'Euler';
-  const steps = data.steps ?? 25;
-  const cfgScale = data.cfgScale ?? 7;
+  const draft = workflow === DRAFT_WORKFLOW ? getSdDraftMode(data.ecosystem) : undefined;
+  const sampler = draft ? draft.sampler : data.sampler ?? 'Euler';
+  const steps = draft ? clampToRange(data.steps, draft.steps) : data.steps ?? 25;
+  const cfgScale = draft ? clampToRange(data.cfgScale, draft.cfgScale) : data.cfgScale ?? 7;
   const quantity = data.quantity ?? 1;
 
   const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
@@ -155,11 +159,12 @@ export const createStableDiffusionInput = defineHandler<
     if (r.model?.type === 'TextualInversion') continue;
     loras[ctx.airs.getOrThrow(r.id)] = r.strength ?? 1;
   }
+  if (draft) loras[draft.air] = 1;
 
   const shared = {
     ecosystem,
     operation: 'createImage' as const,
-    model: ctx.airs.getOrThrow(data.model.id),
+    checkpointModel: ctx.airs.getOrThrow(data.model.id),
     prompt: data.prompt ?? '',
     negativePrompt: data.negativePrompt,
     width: data.aspectRatio?.width,

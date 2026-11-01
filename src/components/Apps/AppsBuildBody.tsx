@@ -1,36 +1,43 @@
 import { Alert, Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import {
-  IconArrowRight,
-  IconBrandDiscord,
-  IconChevronDown,
-  IconPlus,
-  IconTerminal2,
-} from '@tabler/icons-react';
+import { IconArrowRight, IconChevronDown, IconPlus, IconTerminal2 } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef } from 'react';
-import {
-  APPS_REQUEST_ACCESS_HREF,
-  CLI_CREATE_SAMPLE_COMMAND,
-  CLI_INSTALL_NPM,
-  CLI_RUN_COMMAND,
-} from '~/components/Apps/cliCommands';
+import { useCallback, useEffect, useId, useRef } from 'react';
+import { AppAccessRequestPanel } from '~/components/Apps/AppAccessRequest/AppAccessRequestPanel';
+import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
-import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
+import { AppDocStoreUsageCard } from '~/components/Apps/AppDocStoreUsageCard';
 import {
   resolveAppsBuildSettled,
   resolveAppsBuildState,
   type AppsBuildState,
 } from '~/components/Apps/appsBuildState';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
+import type { TrackActionInput } from '~/server/schema/track.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * The funnel steps, DERIVED from the schema that validates them rather than retyped.
+ *
+ * 🔴 THIS USED TO BE A HAND-WRITTEN UNION, TWO LINES FROM A SIBLING FIELD THAT WAS ALREADY
+ * DERIVED (`AppsBuildState`). One field of the pair followed its source and the other did
+ * not, which is how they drift. This change paid for it directly: adding `agent_prompt_copy`
+ * meant editing the same set in three places. `track.schema.ts` is the authority — a value
+ * it rejects is dropped with a 200, so a local union that is WIDER than the schema fails
+ * silently in production and nowhere in CI.
+ *
+ * `agent_prompt_copy` fires in `first-app` and `workbench`, never from the pitch, which
+ * offers no build route to a viewer without access. The page no longer offers manual CLI
+ * steps anywhere, so there is no `cli_copy` step any more.
+ */
+type AppsBuildAction = Extract<TrackActionInput, { type: 'AppsBuild_Action' }>['details']['action'];
 
 /** Where both "start an app" affordances go. `/apps/submit` keeps its route. */
 const CREATE_FLOW_HREF = '/apps/submit';
@@ -128,7 +135,7 @@ export function AppsBuildBody() {
   });
 
   const track = useCallback(
-    (action: 'view' | 'request_access' | 'cli_copy' | 'create_entry', forState: AppsBuildState) => {
+    (action: AppsBuildAction, forState: AppsBuildState) => {
       trackAction({ type: 'AppsBuild_Action', details: { action, state: forState } }).catch(
         () => undefined
       );
@@ -172,14 +179,14 @@ export function AppsBuildBody() {
   // and out of scope for it; see the retraction above for the mechanism.
   //
   // 🔴 THE PREDICATE IS `resolveAppsBuildSettled`, IN `./appsBuildState`, so its truth table
-  // can be pinned in the `unit` tier — the browser project that renders THIS file is
-  // report-only everywhere. ⚠️ That is catch-after-landing, NOT block-before-merge: nothing
-  // in this repo blocks a merge on a check (`unit` is `continue-on-error` on a pull request
-  // and `main` requires no status checks). An earlier version of this comment claimed `unit`
-  // was "the BLOCKING tier"; it is not. See `resolveAppsBuildSettled` for the measured detail.
-  // Do not re-inline this expression — and note that nothing ENFORCES that instruction: the
-  // sibling predicates here carry call-site ledger tests, this one deliberately does not,
-  // because a ledger would inherit exactly the same non-enforcement.
+  // can be pinned in the `unit` tier without rendering THIS file. ⚠️ That is catch-after-landing,
+  // NOT block-before-merge: nothing in this repo blocks a merge on a check (`unit` is
+  // `continue-on-error` on a pull request and `main` requires no status checks). An earlier version
+  // of this comment claimed `unit` was "the BLOCKING tier"; it is not. See
+  // `resolveAppsBuildSettled` for the measured detail. Do not re-inline this expression — and note
+  // that nothing ENFORCES that instruction: the sibling predicates here carry call-site ledger
+  // tests, this one deliberately does not, because a ledger would inherit exactly the same
+  // non-enforcement.
   const viewed = useRef(false);
   const settled = resolveAppsBuildSettled({ summaryEnabled, isClient, isFetched });
   useEffect(() => {
@@ -188,7 +195,11 @@ export function AppsBuildBody() {
     track('view', state);
   }, [settled, state, track]);
 
-  const onCopyCommand = useCallback(() => track('cli_copy', state), [track, state]);
+  // 🔴 FIRED FROM HERE, NOT FROM THE CARD. `AgentOnboardingCard` is props-only by
+  // construction (its own suite renders it with no providers), so the tracker cannot live in
+  // it and arrives as a callback. And it cannot fire under the skeleton: every mount of the
+  // card is inside a branch below the `!settled` early return.
+  const onCopyAgentPrompt = useCallback(() => track('agent_prompt_copy', state), [track, state]);
   const onCreateEntry = useCallback(() => track('create_entry', state), [track, state]);
 
   // 🔴 THE UNSETTLED WINDOW RENDERS NEITHER B NOR C, AND THAT IS THE BUG FIX. `state` is
@@ -212,8 +223,8 @@ export function AppsBuildBody() {
   // ⚠️ THE FAILURE MODE THIS BUYS, STATED RATHER THAN DISCOVERED LATER: for an author whose
   // query is ENABLED, nothing bounds the wait. If `getNavSummary` never settles — the client
   // bundle fails to mount, a hang with no rejection — this renders the skeleton indefinitely,
-  // where the old code rendered state B: the wrong screen, but one carrying three copyable
-  // CLI commands and a live `/apps/submit` CTA. There is no timeout to lean on: the tRPC
+  // where the old code rendered state B: the wrong screen, but one carrying the setup steps
+  // and a live `/apps/submit` CTA. There is no timeout to lean on: the tRPC
   // links set no `AbortSignal`, and `queryRetry` only fires on a REJECTION, not on a hang. It
   // is accepted rather than fixed because it needs an already-broken client, and a
   // settle-deadline fallback would put a SECOND predicate in front of the render — the exact
@@ -248,7 +259,8 @@ export function AppsBuildBody() {
           </Button>
         </Group>
         <MyAppsBody />
-        <BuildResourcesStrip onCopyCommand={onCopyCommand} />
+        <AppDocStoreUsageCard />
+        <BuildResourcesStrip onCopyAgentPrompt={onCopyAgentPrompt} />
       </Stack>
     );
   }
@@ -259,21 +271,18 @@ export function AppsBuildBody() {
         <Stack gap="xs">
           <Title order={2}>Ship your first app</Title>
           <Text size="sm" c="dimmed">
-            Build on Civitai&apos;s web + AI infrastructure — a catalog of hundreds of thousands of
-            models, generation paid in Buzz, hosting and identity handled. Three commands and you
-            are running locally.
+            Build on Civitai&apos;s web + AI infrastructure: a catalog of hundreds of thousands of
+            models, generation paid in Buzz, hosting and identity handled. The fastest way in is to
+            hand the prompt below to your coding agent.
           </Text>
         </Stack>
-        <Stack gap="sm">
-          <CopyableCommand command={CLI_INSTALL_NPM} onCopy={onCopyCommand} />
-          <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
-          <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
-        </Stack>
+        <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
         <Group>
           <Button
             component={Link}
             href={CREATE_FLOW_HREF}
             onClick={onCreateEntry}
+            variant="default"
             rightSection={<IconArrowRight size={16} />}
             data-testid="apps-build-create-first"
           >
@@ -285,33 +294,25 @@ export function AppsBuildBody() {
   }
 
   // State A — the pitch. The ONLY public-facing state, and the default: it needs no
-  // session and no query, so it is what a logged-out admitted viewer sees.
+  // session and no query, so it is what a logged-out admitted viewer sees. It carries no
+  // build route (no agent card, no CLI steps): this viewer has no builder access yet, so the
+  // one action offered is Request access.
   return (
     <Stack gap="xl" data-testid="apps-build-pitch">
-      <GetStartedBody onCopyCommand={onCopyCommand} />
+      <GetStartedBody />
       <Alert
         color="blue"
         variant="light"
-        title="Publishing is invite-only right now"
+        title="You don't need to be a developer"
         data-testid="apps-build-request-access"
       >
         <Stack gap="sm" align="flex-start">
           <Text size="sm">
-            Anyone can build and run an app locally with the CLI — the quickstart above works today.
-            Publishing one to the Civitai store is still limited to a curated group while the
-            platform is in beta.
+            You don&apos;t need to be a developer to build an app: describe what you want and the
+            App Assistant builds it with you. It is open to a small group while the platform is in
+            beta — request access and tell us what you&apos;d like to make.
           </Text>
-          <Button
-            component="a"
-            href={APPS_REQUEST_ACCESS_HREF}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => track('request_access', 'pitch')}
-            variant="light"
-            leftSection={<IconBrandDiscord size={16} />}
-          >
-            Ask about access
-          </Button>
+          <AppAccessRequestPanel onRequest={() => track('request_access', 'pitch')} />
         </Stack>
       </Alert>
     </Stack>
@@ -320,13 +321,22 @@ export function AppsBuildBody() {
 
 /**
  * The pitch, DEMOTED for the workbench. An author who already has apps does not need the
- * "what you get" marketing above their app table every visit, but the quickstart commands
- * are the thing they come back for — so the resources live on, collapsed, below the list.
- * Collapsed by default and cheap: `GetStartedBody` is not mounted here at all, only the
- * three commands, so the workbench does not pay for the hero image.
+ * "what you get" marketing above their app table every visit, but the agent prompt is the
+ * thing they come back for — so it lives on, collapsed, below the list. Collapsed by default
+ * and cheap: `GetStartedBody` is not mounted here at all, so the workbench does not pay for
+ * the hero image. (The manual CLI steps that used to sit beside the card here were removed
+ * from `/apps/build` entirely.)
+ *
+ * 🔴 THE AGENT CARD IS MOUNTED HERE WITH `animated={false}`, AND "CHEAP" IS WHY. Mantine's
+ * `Collapse` keeps its children MOUNTED at zero height, so an animated card in here would
+ * run a 4s infinite shimmer and a caret blink behind a panel nobody has opened — and would
+ * have finished its entrance long before the panel revealed it, so the animation could never
+ * be seen even once. Static also means no `LazyMotion`, so the workbench does not pull the
+ * animation chunk at all. See `AgentOnboardingCard`'s `animated` prop.
  */
-function BuildResourcesStrip({ onCopyCommand }: { onCopyCommand: () => void }) {
+function BuildResourcesStrip({ onCopyAgentPrompt }: { onCopyAgentPrompt: () => void }) {
   const [opened, { toggle }] = useDisclosure(false);
+  const regionId = useId();
   return (
     <Stack gap="xs">
       <Divider />
@@ -335,6 +345,7 @@ function BuildResourcesStrip({ onCopyCommand }: { onCopyCommand: () => void }) {
         size="xs"
         onClick={toggle}
         aria-expanded={opened}
+        aria-controls={regionId}
         w="fit-content"
         leftSection={<IconTerminal2 size={16} />}
         data-testid="apps-build-resources-toggle"
@@ -350,12 +361,8 @@ function BuildResourcesStrip({ onCopyCommand }: { onCopyCommand: () => void }) {
       >
         {opened ? 'Hide developer resources' : 'Developer resources'}
       </Button>
-      <Collapse in={opened} data-testid="apps-build-resources">
-        <Stack gap="sm">
-          <CopyableCommand command={CLI_INSTALL_NPM} onCopy={onCopyCommand} />
-          <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
-          <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
-        </Stack>
+      <Collapse in={opened} id={regionId} data-testid="apps-build-resources">
+        <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" animated={false} />
       </Collapse>
     </Stack>
   );

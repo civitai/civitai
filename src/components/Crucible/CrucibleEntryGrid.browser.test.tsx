@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type { CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import type * as EdgeMediaModule from '~/components/EdgeMedia/EdgeMedia';
 import type * as UserAvatarModule from '~/components/UserAvatar/UserAvatar';
@@ -53,7 +54,11 @@ beforeEach(() => {
 describe('CrucibleEntryGrid — removing an entry', () => {
   test('shows no remove control unless the page hands one in', async () => {
     renderWithProviders(
-      <CrucibleEntryGrid entries={[entry(1), entry(2)]} onEntryClick={onEntryClick} />
+      <CrucibleEntryGrid
+        entries={[entry(1), entry(2)]}
+        onEntryClick={onEntryClick}
+        status={CrucibleStatus.Active}
+      />
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -66,6 +71,7 @@ describe('CrucibleEntryGrid — removing an entry', () => {
         entries={[entry(1), entry(2)]}
         onEntryClick={onEntryClick}
         onRemoveEntry={onRemoveEntry}
+        status={CrucibleStatus.Active}
       />
     );
     await expect.poll(() => removeButtons()).toHaveLength(2);

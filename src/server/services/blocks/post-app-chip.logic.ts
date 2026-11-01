@@ -40,7 +40,8 @@
  * `name`. This chip is rendered on an anon-capable public read, so a careless
  * projection is a credential leak. Both halves are pinned: the SELECT names only
  * allowlisted columns ({@link postAppChipQuery}) and the PROJECTOR emits only the
- * three fields of {@link PostAppChip} ({@link projectPostAppChip}). Same posture
+ * three app fields of {@link PostAppChip} ({@link projectPostAppChip}); the optional
+ * `item` is built from its own allowlisted read ({@link postAppChipItemQuery}). Same posture
  * as `public-owner.ts`: adding a field in either place is a deliberate act.
  *
  * 🔴 THE EXPECTED KEY LIST IS NOT EXPORTED FROM HERE, DELIBERATELY. It is written
@@ -100,9 +101,17 @@
  *
  * `OauthClient.logoUrl` is dead weight — NULL for every `appblk-%` client
  * measured. The real app icon is `app_listings.icon_id → Image.url`, projected
- * through the shared `listingIconUrl` so the chip's icon is byte-identical to
- * the one the store renders for the same app. A live app has no icon at all, so
- * `iconUrl: null` is an ordinary case the UI must render gracefully.
+ * through the shared listing-media gate (`listing-media-audience`) so the chip's
+ * icon is the one the store card renders for the same app, to the same viewer, on
+ * the same host. A live app has no icon at all, so `iconUrl: null` is an ordinary
+ * case the UI must render gracefully.
+ *
+ * 🔴 THE CHIP FOLLOWS THE STORE'S LISTING-MEDIA RULE, HOST AND VIEWER INCLUDED.
+ * Off a red host the icon shows only within SFW ∩ the listing's rating; on a red
+ * host it shows within that same ceiling UNION the viewer's opted-in levels
+ * (`listingMediaCeiling`). An icon that is still scanning or flagged renders as
+ * no icon on every host. A caller that passes no viewer level gets the non-red
+ * view on a red host too, which is the fail-closed direction.
  *
  * ## ⚠ THE WORDING TRAP, recorded because it already shipped once
  *
@@ -115,17 +124,33 @@
  * ## 🔴 DO NOT PUT THIS ON A FEED / CARD SURFACE WITHOUT RESHAPING IT FIRST
  *
  * One of the most important properties of this module is what it does NOT touch:
- * `publishedWithApp` is added to `post.get`'s return ONLY — not to `postSelect`,
- * not to `getInfiniteImages` / `getAllImages`, not to `/api/v1/images`. Every
- * cost note here is priced PER PAGE. Surface the chip on a card in a list and all
+ * `publishedWithApp` is added to `post.get`'s return, and the image detail page
+ * reads the same chip through its own single-image query
+ * (`image.getPublishedWithApp`, `image-app-chip.service.ts`) — and NOWHERE else:
+ * not to `postSelect`, not to `getInfiniteImages` / `getAllImages`, not to
+ * `/api/v1/images`. Every cost note here is priced PER PAGE. Surface the chip on a card in a list and all
  * of it becomes PER ROW, multiplied by the page size: the marker read would have
  * to become a batched `IN (…)` and the app row a `createCachedObject` by id array
  * BEFORE that is viable. Say so wherever the chip's reuse is next proposed.
  */
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
-import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
-import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
-import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import {
+  BLOCK_POST_APP_ID_META_KEY,
+  BLOCK_POST_SUB_LISTING_ID_META_KEY,
+} from '~/server/services/blocks/block-post.logic';
+import {
+  gatedListingIconUrl,
+  isModerationFlagSet,
+  listingMediaCeiling,
+  listingMediaImageSelect,
+  type ListingMediaImage,
+} from '~/server/services/blocks/listing-media-audience';
+import { isRedCapableHost, ratingAllowedOnHost } from '~/server/utils/server-domain';
+import {
+  effectiveSubListingRating,
+  subListingExternalHref,
+  subListingRunHref,
+} from '~/shared/constants/app-sub-listing.constants';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import { scopeAdmitsListingKind } from '~/shared/utils/store-visibility-scope';
 
@@ -141,6 +166,15 @@ export type PostAppChip = {
   slug: string | null;
   name: string;
   iconUrl: string | null;
+  /** The app's sub-listing the post was shared from; absent when none resolves. */
+  item?: PostAppChipItem;
+};
+
+/** `href` is null when the item has no valid link; the UI then renders the name unlinked. */
+export type PostAppChipItem = {
+  name: string;
+  href: string | null;
+  external: boolean;
 };
 
 /**
@@ -206,13 +240,31 @@ export function postAppMarkerQuery(postId: number) {
  * treated as absent: it is not addressable and must not trigger a lookup.
  */
 export function readBlockPublishedAppId(metadata: unknown): string | null {
-  if (typeof metadata !== 'object' || metadata === null) return null;
   // 🔴 The key comes from the WRITER's own constant, never a re-spelled literal —
-  // see its declaration in `block-post.logic.ts`. An `Array.isArray` guard used
-  // to sit above this and was removed as dead: indexing an array with a string
-  // key yields `undefined`, which the `typeof` check below already rejects, so
-  // the branch could not be reached and a test over it could not fail.
-  const raw = (metadata as Record<string, unknown>)[BLOCK_POST_APP_ID_META_KEY];
+  // see its declaration in `block-post.logic.ts`.
+  return readAppIdMarker(metadata, BLOCK_POST_APP_ID_META_KEY);
+}
+
+export function readBlockPublishedSubListingId(metadata: unknown): string | null {
+  return readAppIdMarker(metadata, BLOCK_POST_SUB_LISTING_ID_META_KEY);
+}
+
+/**
+ * The shared marker parser behind both surfaces: `Post.metadata` (above) and
+ * `Image.metadata` (`image-app-chip.service.ts`, which passes the IMAGE writer's
+ * own constant). One parser, so "what counts as a marker" cannot drift between
+ * the post page and the image page. The KEY is the caller's, deliberately: each
+ * surface names its own writer's constant, and the provenance-key ledger
+ * (`block-image-provenance-readers.test.ts`) sees each reader at its own site.
+ *
+ * An `Array.isArray` guard used to sit in here and was removed as dead: indexing
+ * an array with a string key yields `undefined`, which the `typeof` check below
+ * already rejects, so the branch could not be reached and a test over it could
+ * not fail.
+ */
+export function readAppIdMarker(metadata: unknown, key: string): string | null {
+  if (typeof metadata !== 'object' || metadata === null) return null;
+  const raw = (metadata as Record<string, unknown>)[key];
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -257,6 +309,17 @@ export function readBlockPublishedAppId(metadata: unknown): string | null {
  * sibling precedent; they are closed here instead of inherited, because unlike
  * that resolver this one already has the host threaded to it.
  */
+const chipListingSelect = {
+  id: true,
+  slug: true,
+  name: true,
+  status: true,
+  kind: true,
+  contentRating: true,
+  revisionOfId: true,
+  icon: { select: listingMediaImageSelect },
+};
+
 export function postAppChipQuery(appId: string) {
   return {
     where: { id: appId },
@@ -266,19 +329,11 @@ export function postAppChipQuery(appId: string) {
         select: {
           status: true,
           currentVersionDeployedAt: true,
-          appListing: {
-            select: {
-              slug: true,
-              name: true,
-              status: true,
-              kind: true,
-              contentRating: true,
-              revisionOfId: true,
-              icon: { select: { url: true } },
-            },
-          },
+          appListing: { select: chipListingSelect },
         },
       },
+      // An offsite Connect listing names its client through `connectClientId` and has no block.
+      connectListings: { where: { kind: 'offsite' }, select: chipListingSelect },
     },
   };
 }
@@ -287,9 +342,23 @@ export function postAppChipQuery(appId: string) {
 export type PostAppChipRow = {
   name?: unknown;
   appBlocks?: unknown;
+  connectListings?: unknown;
 };
 
+/**
+ * The row's blocks plus each offsite Connect listing as a block-shaped candidate. An offsite
+ * listing has no block, so the block-status and deploy terms do not apply and its own status gates.
+ */
+function chipCandidateBlocks(row: PostAppChipRow | null | undefined): unknown[] {
+  const blocks = Array.isArray(row?.appBlocks) ? row.appBlocks : [];
+  const offsite = (Array.isArray(row?.connectListings) ? row.connectListings : [])
+    .filter((l) => (l as { kind?: unknown } | null)?.kind === 'offsite')
+    .map((appListing) => ({ status: APPROVED_STATUS, currentVersionDeployedAt: null, appListing }));
+  return [...blocks, ...offsite];
+}
+
 type ListingCandidate = {
+  id: string | null;
   slug: string;
   name: string;
   iconUrl: string | null;
@@ -322,7 +391,31 @@ type ListingCandidate = {
  * it contributes no candidate at all, and so it can never be "lost to maturity".
  * A refused candidate is a real store row this host may not acknowledge.
  */
-function readListingCandidate(block: unknown, host: string): ListingCandidate | null {
+function readListingCandidate(
+  block: unknown,
+  host: string,
+  /** The viewer's browsing level, for the icon's red-host media ceiling. See {@link projectPostAppChip}. */
+  viewerBrowsingLevel: number | null | undefined,
+  /**
+   * Listing ids the per-listing VISIBILITY LEVEL hides from a general viewer.
+   *
+   * 🔴 THE FOURTH TERM OF THE DESTINATION'S PREDICATE, and without it this chip links a
+   * page that 404s — the exact failure `postAppChipQuery`'s docblock says this module
+   * exists to avoid. `getListingDetail` gained a level gate, so an owner setting
+   * `private`/`moderators`/`testers` on an APPROVED listing makes the store drop it while
+   * every public post made with that app still showed its name, icon and a working-looking
+   * link.
+   *
+   * It is resolved for the `public` floor only — strictly narrower than any real viewer's
+   * floor, so it can only ever UNDER-link, which is the direction this module's docblock
+   * already accepts for the block-status term.
+   *
+   * An EMPTY set reproduces pre-feature behaviour exactly (and is what an unapplied
+   * migration yields), so it is the right default — but it is a default about visibility,
+   * so the one service call site passes it explicitly and a guard pins that.
+   */
+  hiddenListingIds: ReadonlySet<string>
+): ListingCandidate | null {
   if (typeof block !== 'object' || block === null) return null;
   const b = block as Record<string, unknown>;
   const listing = b.appListing;
@@ -345,27 +438,58 @@ function readListingCandidate(block: unknown, host: string): ListingCandidate | 
   // mature app is still recorded as maturity-refused and still disappears on a
   // non-red host, which is what that host's store does with it.
   const deployed = l.kind !== 'onsite' || b.currentVersionDeployedAt != null;
-  const lifecycleOk = b.status === APPROVED_STATUS && l.status === APPROVED_STATUS && deployed;
+  // 🔴 THE LEVEL IS A LIFECYCLE TERM, so a hidden listing degrades to name-unlinked rather
+  // than vanishing — the same treatment a `removed` listing gets, and it is what keeps the
+  // chip from becoming a 404. Grouped here, not with maturity, because it answers "does the
+  // store have a page for this?" and not "may this host acknowledge it?".
+  // 🔴 DEFENSIVE ON THE SET ITSELF, because this runs on a PUBLIC POST PAGE. The parameter
+  // is required by the type so it cannot be forgotten in review, but a JS caller that omits
+  // it must degrade to pre-feature behaviour rather than throw — a chip is cosmetic and must
+  // never be the reason a post 500s. Same posture as the `…ForRender` readers.
+  const levelOk = typeof l.id !== 'string' || !hiddenListingIds?.has(l.id);
+  const lifecycleOk =
+    b.status === APPROVED_STATUS && l.status === APPROVED_STATUS && deployed && levelOk;
   const maturityOk = ratingAllowedOnHost(
     typeof l.contentRating === 'string' ? l.contentRating : null,
     host
   );
   return {
+    id: typeof l.id === 'string' ? l.id : null,
     slug,
     // Publisher-controlled — sanitized at the projection, see projectPostAppChip.
     name: typeof l.name === 'string' ? sanitizeAppChromeName(l.name) ?? '' : '',
-    iconUrl: listingIconUrl(
-      typeof icon === 'object' && icon !== null
-        ? {
-            url:
-              typeof (icon as { url?: unknown }).url === 'string'
-                ? (icon as { url: string }).url
-                : null,
-          }
-        : null
+    iconUrl: gatedListingIconUrl(
+      readChipIcon(icon),
+      listingMediaCeiling(
+        { redCapable: isRedCapableHost(host), viewerBrowsingLevel },
+        typeof l.contentRating === 'string' ? l.contentRating : null
+      )
     ),
     viewable: lifecycleOk && maturityOk,
     maturityRefused: !maturityOk,
+  };
+}
+
+/**
+ * The joined icon row → the shape the listing-media gate reads, or null. Defensive like the rest
+ * of this reader (the row is typed `unknown`): any missing or mistyped field fails CLOSED — an
+ * absent `ingestion` makes no image at all, an absent level reads as unrated (which the gate
+ * refuses), and a moderation flag counts as SET unless it is literally `false` or absent.
+ */
+function readChipIcon(icon: unknown): ListingMediaImage | null {
+  if (typeof icon !== 'object' || icon === null) return null;
+  const i = icon as Record<string, unknown>;
+  if (typeof i.url !== 'string' || typeof i.ingestion !== 'string') return null;
+  return {
+    url: i.url,
+    ingestion: i.ingestion,
+    nsfwLevel: typeof i.nsfwLevel === 'number' ? i.nsfwLevel : 0,
+    needsReview: i.needsReview == null ? null : String(i.needsReview),
+    poi: isModerationFlagSet(i.poi),
+    minor: isModerationFlagSet(i.minor),
+    tosViolation: isModerationFlagSet(i.tosViolation),
+    acceptableMinor: isModerationFlagSet(i.acceptableMinor),
+    blockedFor: i.blockedFor == null ? null : String(i.blockedFor),
   };
 }
 
@@ -437,20 +561,50 @@ function readListingCandidate(block: unknown, host: string): ListingCandidate | 
  * can forget to. A name with nothing legible left is treated as no name at all:
  * the chip is dropped rather than rendered as a bare "Published with".
  */
-export function projectPostAppChip(
+/** The empty hidden-set, frozen so no caller can mutate a shared default. */
+const EMPTY_HIDDEN: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Every candidate listing id in a chip row, for the batched level read.
+ *
+ * Tolerant of shape by design: this module is handed an `unknown`-ish row and every other
+ * reader here narrows defensively rather than trusting it.
+ */
+export function listingIdsInChipRow(row: PostAppChipRow | null): string[] {
+  const blocks = chipCandidateBlocks(row);
+  const ids: string[] = [];
+  for (const b of blocks) {
+    const listing = (b as { appListing?: unknown } | null)?.appListing as
+      | { id?: unknown }
+      | null
+      | undefined;
+    if (listing && typeof listing.id === 'string') ids.push(listing.id);
+  }
+  return [...new Set(ids)];
+}
+
+function projectChipAndListing(
   row: PostAppChipRow | null | undefined,
   /**
    * The REQUEST's host, for the maturity term. Required — it is the only input
    * that decides whether a mature app is viewable here, and a default would make
    * that decision silently. See {@link readListingCandidate}.
    */
-  opts: { host: string }
-): PostAppChip | null {
+  opts: {
+    host: string;
+    /** See {@link readListingCandidate}. Required so the level term cannot be forgotten. */
+    hiddenListingIds: ReadonlySet<string>;
+    /**
+     * The viewer's browsing level, for the icon's media ceiling on a red-capable host (the
+     * store's rule, `listingMediaCeiling`). Absent ⇒ the non-red view on every host.
+     */
+    viewerBrowsingLevel?: number | null;
+  }
+): { chip: PostAppChip; viewableListingIds: string[] } | null {
   if (!row) return null;
   const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
-  const blocks = Array.isArray(row.appBlocks) ? row.appBlocks : [];
-  const candidates = blocks
-    .map((b) => readListingCandidate(b, opts.host))
+  const candidates = chipCandidateBlocks(row)
+    .map((b) => readListingCandidate(b, opts.host, opts.viewerBrowsingLevel, opts.hiddenListingIds))
     .filter((c): c is ListingCandidate => c !== null)
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 
@@ -479,10 +633,88 @@ export function projectPostAppChip(
   if (!name) return null;
 
   return {
-    slug: chosen?.viewable ? chosen.slug : null,
-    name,
-    iconUrl: chosen?.viewable ? chosen.iconUrl : null,
+    chip: {
+      slug: chosen?.viewable ? chosen.slug : null,
+      name,
+      iconUrl: chosen?.viewable ? chosen.iconUrl : null,
+    },
+    // Every viewable listing of the app, not only the chosen one: the item may sit under any.
+    viewableListingIds: chosen?.viewable
+      ? candidates.filter((c) => c.viewable && c.id).map((c) => c.id as string)
+      : [],
   };
+}
+
+/** The chip for the app alone; {@link resolveAppChip} adds the sub-listing. */
+export function projectPostAppChip(
+  row: PostAppChipRow | null | undefined,
+  opts: Parameters<typeof projectChipAndListing>[1]
+): PostAppChip | null {
+  return projectChipAndListing(row, opts)?.chip ?? null;
+}
+
+/**
+ * The sub-listing read for {@link projectPostAppChipItem}: approved now, under one of the app's
+ * own viewable listings, by an author still in good standing. Matching the parent here is what
+ * keeps a marker naming another app's item from rendering.
+ */
+export function postAppChipItemQuery(subListingId: string, parentListingIds: string[]) {
+  return {
+    where: {
+      id: subListingId,
+      parentListingId: { in: parentListingIds },
+      status: APPROVED_STATUS,
+      author: { bannedAt: null, deletedAt: null },
+      parentListing: { subListingParent: { is: { enabled: true } } },
+    },
+    select: {
+      id: true,
+      title: true,
+      subPath: true,
+      contentRating: true,
+      parentListing: {
+        select: {
+          slug: true,
+          kind: true,
+          contentRating: true,
+          subListingParent: { select: { linkTemplate: true } },
+        },
+      },
+    },
+  };
+}
+
+export type PostAppChipItemRow = {
+  id: string;
+  title: string;
+  subPath: string;
+  contentRating: string | null;
+  parentListing: {
+    slug: string;
+    kind: string;
+    contentRating: string | null;
+    subListingParent: { linkTemplate: string | null } | null;
+  };
+};
+
+/** Links where the store card for the same item links; null when this host hides its rating. */
+export function projectPostAppChipItem(
+  row: PostAppChipItemRow | null | undefined,
+  host: string
+): PostAppChipItem | null {
+  if (!row) return null;
+  const parent = row.parentListing;
+  if (
+    !ratingAllowedOnHost(effectiveSubListingRating(parent.contentRating, row.contentRating), host)
+  )
+    return null;
+  const name = sanitizeAppChromeName(row.title);
+  if (!name) return null;
+  if (parent.kind === 'offsite') {
+    const href = subListingExternalHref(parent.subListingParent?.linkTemplate, row.subPath);
+    return { name, href, external: href !== null };
+  }
+  return { name, href: subListingRunHref(parent.slug, row.subPath, row.id), external: false };
 }
 
 /**
@@ -563,23 +795,89 @@ export async function resolvePostAppChip(args: {
   storeScope: StoreVisibilityScope;
   /** The request's host, for the maturity term. See {@link projectPostAppChip}. */
   host: string;
+  /** The viewer's browsing level, for the icon's red-host ceiling. See {@link projectPostAppChip}. */
+  viewerBrowsingLevel?: number | null;
   /** Narrow marker read. Build its args with {@link postAppMarkerQuery}. */
   readPostMetadata: (postId: number) => Promise<unknown>;
   /** Allowlisted app read. Build its args with {@link postAppChipQuery}. */
   readApp: (appId: string) => Promise<PostAppChipRow | null | undefined>;
+  /**
+   * Which of these listing ids the per-listing VISIBILITY LEVEL hides from a general
+   * viewer. REQUIRED, so the fourth term of the destination's predicate cannot be
+   * forgotten — see {@link readListingCandidate}.
+   */
+  readHiddenListingIds: (listingIds: string[]) => Promise<ReadonlySet<string>>;
+}): Promise<PostAppChipResolution> {
+  const { postId, readPostMetadata, ...rest } = args;
+  return resolveAppChip({
+    ...rest,
+    readMarker: async () => readBlockPublishedAppId(await readPostMetadata(postId)),
+  });
+}
+
+/**
+ * The SURFACE-INDEPENDENT core of the chip decision: gate → marker → app →
+ * level → projection. {@link resolvePostAppChip} is this with the marker read
+ * from `Post.metadata`; the image detail page's resolver
+ * (`image-app-chip.service.ts`) is this with the marker read from the AUTHORISED
+ * `Image.metadata`. Every predicate — the scope gate, the four viewability terms,
+ * the maturity silence, the icon gate, the name sanitiser — lives here or below,
+ * ONCE, so the two pages cannot disagree about whether an app may be named.
+ *
+ * 🔴 `readMarker` IS CALLED ONLY AFTER THE GATE, and a caller may put real work in
+ * it (the image surface does its visibility check there), so a gated viewer costs
+ * that surface nothing either. It returns the parsed marker, or `null` for "no
+ * marker / nothing this viewer may see".
+ */
+export async function resolveAppChip(args: {
+  storeScope: StoreVisibilityScope;
+  /** The request's host, for the maturity term. See {@link projectPostAppChip}. */
+  host: string;
+  /** The viewer's browsing level, for the icon's red-host ceiling. See {@link projectPostAppChip}. */
+  viewerBrowsingLevel?: number | null;
+  /** The parsed marker (see {@link readAppIdMarker}), or `null`. Runs only past the gate. */
+  readMarker: () => Promise<string | null>;
+  /** Allowlisted app read. Build its args with {@link postAppChipQuery}. */
+  readApp: (appId: string) => Promise<PostAppChipRow | null | undefined>;
+  /** See {@link resolvePostAppChip}. */
+  readHiddenListingIds: (listingIds: string[]) => Promise<ReadonlySet<string>>;
+  /**
+   * The marked sub-listing under one of the app's viewable listings (build with
+   * {@link postAppChipItemQuery}), or null. Absent on a surface with no sub-listing marker.
+   */
+  readItem?: (viewableListingIds: string[]) => Promise<PostAppChipItemRow | null | undefined>;
 }): Promise<PostAppChipResolution> {
   // 🔒 GATE FIRST — before the marker is read, before anything is queried.
   if (!scopeAdmitsListingKind(args.storeScope, 'onsite')) {
     return { chip: null, outcome: 'gated' };
   }
 
-  const metadata = await args.readPostMetadata(args.postId);
-  const appId = readBlockPublishedAppId(metadata);
+  const appId = await args.readMarker();
   // No marker ⇒ an ordinary hand-made post. NO app lookup: this is the common
   // path and it must cost nothing extra.
   if (!appId) return { chip: null, outcome: 'no-marker' };
 
   const row = await args.readApp(appId);
-  const chip = projectPostAppChip(row ?? null, { host: args.host });
-  return { chip, outcome: chip ? 'chip' : 'unresolved' };
+  // 🔴 THE LEVEL TERM, RESOLVED ONCE FOR EVERY CANDIDATE. Injected like the other two
+  // readers so this module stays DB-free; batched so a post view costs ONE extra statement
+  // regardless of how many blocks the client has, rather than an N+1 on a page-view-rate
+  // path. Skipped entirely when the row carries no listing, which is the common case.
+  const listingIds = listingIdsInChipRow(row ?? null);
+  const hiddenListingIds = listingIds.length
+    ? await args.readHiddenListingIds(listingIds)
+    : EMPTY_HIDDEN;
+  const projected = projectChipAndListing(row ?? null, {
+    host: args.host,
+    hiddenListingIds,
+    viewerBrowsingLevel: args.viewerBrowsingLevel,
+  });
+  if (!projected) return { chip: null, outcome: 'unresolved' };
+  const { chip, viewableListingIds } = projected;
+  if (viewableListingIds.length && args.readItem) {
+    // A failed item read keeps the app's own chip rather than dropping the credit.
+    const itemRow = await args.readItem(viewableListingIds).catch(() => null);
+    const item = projectPostAppChipItem(itemRow, args.host);
+    if (item) chip.item = item;
+  }
+  return { chip, outcome: 'chip' };
 }

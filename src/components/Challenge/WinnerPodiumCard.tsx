@@ -3,6 +3,7 @@ import { Group, Text, useComputedColorScheme } from '@mantine/core';
 import { IconCrown, IconEyeOff, IconPhotoOff, IconSparkles, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
@@ -25,6 +26,8 @@ export type WinnerPodiumData = {
   imageUrl: string | null;
   imageNsfwLevel?: number | null;
   imageHash?: string | null;
+  imageType?: MediaType;
+  imageMetadata?: MixedObject | null;
   buzzAwarded: number;
   reason?: string | null;
   judgeScore?: JudgeScore | Record<string, number> | null;
@@ -170,10 +173,16 @@ export function WinnerPodiumCard({
                   {safe ? (
                     <EdgeMedia2
                       src={winner.imageUrl!}
-                      type={MediaType.image}
+                      type={winner.imageType ?? MediaType.image}
+                      metadata={winner.imageMetadata}
+                      skip={getSkipValue({
+                        type: winner.imageType ?? MediaType.image,
+                        metadata: winner.imageMetadata,
+                      })}
                       imageId={winner.imageId!}
                       width={450}
                       className="size-full object-cover transition-transform duration-300 hover:scale-105"
+                      wrapperProps={{ className: 'size-full' }}
                     />
                   ) : (
                     <MediaHash hash={winner.imageHash ?? null} width={450} height={450} />

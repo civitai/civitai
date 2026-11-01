@@ -294,6 +294,14 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
   'apps:storage:shared:write':
     "Can't be withdrawn. What you contribute to an app's shared data is gated server-side on " +
     'every write instead — a minimum account-trust check, content moderation, and rate limits.',
+  // Sourced from `apps:storage`'s entry in `CONSENT_EXEMPT_SCOPES`: it reaches only this app's
+  // own store, bounded by the app's reviewed declaration. Writing documents OTHER users read is
+  // the separate, consent-gated `apps:storage:publish`, which is why this note can say "your own".
+  // 🔴 Not "reaches only": that phrase is `apps:storage:read`'s discriminating fragment in
+  // `ScopeRevoke.browser.test.tsx`, which must match exactly one note in this map.
+  'apps:storage':
+    "Can't be withdrawn. It is confined to this app's own store: your private data there, and " +
+    'reading — and marking or counting — the entries the app shares with all its users.',
   'models:read:self':
     "Can't be withdrawn. It reads only the model on the page the app is mounted on, which is " +
     'the page you opened — the subject is fixed by where the app runs, not by a permission.',
@@ -320,6 +328,9 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
   'goods:read:self':
     "Can't be withdrawn. It reads only what this app itself has sold you — the query is bound " +
     'server-side to this app, so it cannot see anything you own from anywhere else.',
+  'apps:store:items:write':
+    "Can't be withdrawn. Only items you authored in this app can be listed, and each one is " +
+    'checked server-side and reviewed by a moderator before it appears in the App Store.',
 };
 
 /**

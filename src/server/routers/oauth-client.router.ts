@@ -1,14 +1,19 @@
 import { TRPCError } from '@trpc/server';
-import { v4 as uuidv4 } from 'uuid';
+import { isSystemAccountMeta } from '@civitai/auth';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
-import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { findCatalogParentIdsForClient } from '~/server/services/blocks/app-sub-listing.service';
+import { withdrawCatalogItemsOnClientDelete } from '~/server/services/blocks/oauth-consent-sync.service';
 import {
   createOauthClientSchema,
   deleteOauthClientSchema,
   deriveAllowedOriginsFromRedirectUris,
+  isSkipConsentRedirectUri,
   getOauthClientByIdSchema,
   rotateOauthClientSecretSchema,
   searchOauthClientsForModeratorSchema,
@@ -39,6 +44,36 @@ function rejectAppBlockClient(clientId: string): void {
   }
 }
 
+/**
+ * System accounts own no OAuth apps here: User -1's system apps are managed from the hub admin page, and
+ * an account marked as a system account in its meta is API-key only.
+ */
+async function isSystemAccount(userId: number): Promise<boolean> {
+  if (userId === constants.system.user.id) return true;
+  const user = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
+  return isSystemAccountMeta(user?.meta);
+}
+
+async function rejectSystemAccount(userId: number): Promise<void> {
+  if (await isSystemAccount(userId)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'System accounts cannot register OAuth apps',
+    });
+  }
+}
+
+/** The caller's own client, or NOT_FOUND. A system account owns none here, so it gets the same answer. */
+async function findOwnedClient(
+  userId: number,
+  where: Pick<Prisma.OauthClientWhereInput, 'id' | 'isConfidential'>
+) {
+  if (await isSystemAccount(userId)) throw new TRPCError({ code: 'NOT_FOUND' });
+  const client = await dbWrite.oauthClient.findFirst({ where: { ...where, userId } });
+  if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
+  return client;
+}
+
 export const oauthClientRouter = router({
   // Public: get client info by ID (used by consent page)
   getById: publicProcedure
@@ -64,6 +99,7 @@ export const oauthClientRouter = router({
 
   // Get all clients owned by the current user
   getAll: protectedProcedure.meta({ requiredScope: TokenScope.UserRead }).query(async ({ ctx }) => {
+    if (ctx.user.id === constants.system.user.id) return [];
     return dbRead.oauthClient.findMany({
       where: { userId: ctx.user.id },
       select: {
@@ -107,6 +143,7 @@ export const oauthClientRouter = router({
       let where: Prisma.OauthClientWhereInput;
       if (query.length === 0) {
         // Default (empty search): the mod's OWN clients, same as the non-mod picker.
+        if (ctx.user.id === constants.system.user.id) return { items: [], nextCursor: undefined };
         where = { AND: [{ userId: ctx.user.id }, excludeAppBlocks] };
       } else {
         // Global search: app name OR author username (both case-insensitive ILIKE) OR,
@@ -115,8 +152,7 @@ export const oauthClientRouter = router({
         // Only treat the query as an author id when it's a valid positive
         // Postgres int4 — an all-digits query beyond int32 (e.g. a pasted long
         // number) passes Number.isInteger but would 500 on int4 overflow.
-        const numericIsUserId =
-          Number.isInteger(numeric) && numeric >= 1 && numeric <= 2147483647;
+        const numericIsUserId = Number.isInteger(numeric) && numeric >= 1 && numeric <= 2147483647;
         const or: Prisma.OauthClientWhereInput[] = [
           { name: { contains: query, mode: 'insensitive' } },
           { user: { username: { contains: query, mode: 'insensitive' } } },
@@ -158,7 +194,13 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(createOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
-      const clientId = uuidv4();
+      await rejectSystemAccount(ctx.user.id);
+      // Shown to other users on the consent screen.
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user.isModerator,
+        surface: 'oauth-client',
+      });
+      const clientId = crypto.randomUUID();
       const clientSecret = input.isConfidential ? generateKey(48) : null;
       const hashedSecret = clientSecret ? generateSecretHash(clientSecret) : null;
 
@@ -199,12 +241,32 @@ export const oauthClientRouter = router({
     .input(updateOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
-      const client = await dbWrite.oauthClient.findFirst({
-        where: { id: input.id, userId: ctx.user.id },
+      const client = await findOwnedClient(ctx.user.id, { id: input.id });
+      // An app that skips the consent screen keeps only https, non-loopback redirects.
+      const refused =
+        client.skipConsent && input.redirectUris?.find((uri) => !isSkipConsentRedirectUri(uri));
+      if (refused) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `This app skips the consent screen, so every redirect URI must be https and not localhost: ${refused}`,
+        });
+      }
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user.isModerator,
+        surface: 'oauth-client',
       });
-      if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
 
-      const { id, ...data } = input;
+      const { id, allowedScopes, ...rest } = input;
+      // The owner edits only the bits within `Full`; opt-in bits above it are set by hand and
+      // survive an edit unchanged.
+      const data =
+        allowedScopes === undefined
+          ? rest
+          : {
+              ...rest,
+              allowedScopes:
+                (allowedScopes & TokenScope.Full) | (client.allowedScopes & ~TokenScope.Full),
+            };
       const result = await dbWrite.oauthClient.update({ where: { id }, data });
       logOAuthEvent({ type: 'client.updated', userId: ctx.user.id, clientId: id });
       return result;
@@ -216,10 +278,7 @@ export const oauthClientRouter = router({
     .input(rotateOauthClientSecretSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
-      const client = await dbWrite.oauthClient.findFirst({
-        where: { id: input.id, userId: ctx.user.id, isConfidential: true },
-      });
-      if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
+      await findOwnedClient(ctx.user.id, { id: input.id, isConfidential: true });
 
       const newSecret = generateKey(48);
       const hashedSecret = generateSecretHash(newSecret);
@@ -240,10 +299,7 @@ export const oauthClientRouter = router({
     .input(deleteOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
       rejectAppBlockClient(input.id);
-      const client = await dbWrite.oauthClient.findFirst({
-        where: { id: input.id, userId: ctx.user.id },
-      });
-      if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
+      await findOwnedClient(ctx.user.id, { id: input.id });
 
       // Collect every user who holds a token under this client BEFORE the
       // cascade wipes the rows — we need their ids to expire the orchestrator's
@@ -255,18 +311,25 @@ export const oauthClientRouter = router({
         distinct: ['userId'],
       });
 
+      // Read before the delete: it unlinks the client's store catalog parents (SetNull), after
+      // which nothing can find them by client. A failed read fails the delete rather than
+      // stranding the items; nothing irreversible has happened yet, so a retry is safe.
+      const catalogParentIds = await findCatalogParentIdsForClient(input.id);
+
       // Cascade delete handles tokens and consents
       await dbWrite.oauthClient.delete({ where: { id: input.id } });
 
       logOAuthEvent({ type: 'client.deleted', userId: ctx.user.id, clientId: input.id });
 
-      // The DB cascade revokes the tokens, but the orchestrator caches them
-      // for auth and would keep honoring the deleted tokens until TTL. Expire
-      // each affected user's cache so revocation takes effect immediately.
-      // Best-effort: invalidateCivitaiUser swallows its own errors.
-      await Promise.all(
-        tokenHolders.map(({ userId }) => invalidateCivitaiUser({ userId }))
-      );
+      // The DB cascade revokes the tokens, but the orchestrator caches them for auth.
+      // Best-effort: revokeCivitaiUserTokens swallows its own errors.
+      await Promise.all(tokenHolders.map(({ userId }) => revokeCivitaiUserTokens({ userId })));
+
+      // The platform is gone, so the items it listed in the store go with it. Never throws.
+      await withdrawCatalogItemsOnClientDelete({
+        clientId: input.id,
+        parentListingIds: catalogParentIds,
+      });
 
       return { success: true };
     }),

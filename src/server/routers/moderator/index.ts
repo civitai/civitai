@@ -24,11 +24,7 @@ import {
 import { getModelChangeHistory } from '~/server/services/entity-change.service';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
-import {
-  getModelModerationDetail,
-  getModelModRules,
-  transferModelOwnership,
-} from '~/server/services/model.service';
+import { getModelModerationDetail, transferModelOwnership } from '~/server/services/model.service';
 import {
   confirmMinorHashAutoFlag,
   dismissMinorHashMatch,
@@ -84,11 +80,13 @@ export const modRouter = router({
       .mutation(({ input, ctx }) =>
         confirmMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
       ),
-    revertMinorHashAutoFlag: moderatorProcedure
-      .input(getByIdSchema)
-      .mutation(({ input, ctx }) =>
-        revertMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
-      ),
+    revertMinorHashAutoFlag: moderatorProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
+      revertMinorHashAutoFlag({
+        modelId: input.id,
+        userId: ctx.user.id,
+        recordTextScanRuling: true,
+      })
+    ),
     queryMinorFlagAppeals: moderatorProcedure
       .input(getMinorFlagAppealsSchema)
       .query(({ input }) => getMinorFlagAppealsForReview(input)),

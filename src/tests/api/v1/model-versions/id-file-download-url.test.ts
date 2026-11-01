@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { assertDownloadUrlsResolve } from '~/tests/api/v1/download-url-seam.helper';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -53,8 +53,11 @@ vi.mock('~/server/services/paid-access.service', () => ({
 vi.mock('~/server/services/creator-program.service', () => ({
   hasValidCreatorMembershipCached: async () => false,
 }));
+const mockGetDownloadFilename = vi.hoisted(() =>
+  vi.fn(({ file }: any) => `${file.id}.safetensors`)
+);
 vi.mock('~/server/services/file.service', () => ({
-  getDownloadFilename: ({ file }: any) => `${file.id}.safetensors`,
+  getDownloadFilename: mockGetDownloadFilename,
 }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -62,9 +65,10 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   // by-hash/[hash] is wrapped in PublicEndpoint(handler, ['GET'], {maxAge}).
   PublicEndpoint: (handler: any) => handler,
 }));
+const region = vi.hoisted(() => ({ restricted: false }));
 vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: () => 'US',
-  isRegionRestricted: () => false,
+  isRegionRestricted: () => region.restricted,
 }));
 
 /**
@@ -132,12 +136,21 @@ function modelVersion() {
     name: 'v1',
     baseModel: 'SD 1.5',
     status: 'Published',
+    availability: 'Public',
     nsfwLevel: 1,
     licensingFee: null,
     // getVaeFiles pushes into this array, so hand over a fresh copy per call.
     files: FILES.map((f) => ({ ...f })),
     metrics: [{ downloadCount: 5, thumbsUpCount: 2 }],
-    model: { name: 'Model 77', type: 'Checkpoint', nsfw: false, poi: false, mode: null },
+    model: {
+      name: 'Model 77',
+      type: 'Checkpoint',
+      nsfw: false,
+      poi: false,
+      mode: null,
+      availability: 'Public',
+      userId: 7,
+    },
   } as any;
 }
 
@@ -320,7 +333,9 @@ describe('GET /api/v1/model-versions/by-hash/[hash] — same shaper, same pin', 
     const mod = await import('~/pages/api/v1/model-versions/by-hash/[hash]');
     const handler = mod.default as (req: any, res: any) => Promise<void>;
     const res: any = {
-      setHeader() {
+      headers: {} as Record<string, string>,
+      setHeader(name: string, value: string) {
+        this.headers[name] = value;
         return this;
       },
       status(code: number) {
@@ -338,6 +353,40 @@ describe('GET /api/v1/model-versions/by-hash/[hash] — same shaper, same pin', 
     );
     return res;
   }
+
+  describe('a model with a civitai.com face', () => {
+    beforeEach(() => {
+      const version = modelVersion();
+      version.description = '<p>Red version notes</p>';
+      version.model.sfwName = 'Com title';
+      mockFileFindFirst.mockResolvedValue({ modelVersion: version });
+    });
+    afterEach(() => {
+      region.restricted = false;
+    });
+
+    it('shows a restricted region the face and keeps that response out of the shared cache', async () => {
+      region.restricted = true;
+      const res = await invokeByHash();
+
+      expect(res.body.model.name).toBe('Com title');
+      expect(res.body.model).not.toHaveProperty('sfwName');
+      expect(res.body.description).toBeNull();
+      expect(res.headers['Cache-Control']).toBe('private, no-store');
+      // Download names keep the stored model name, matching the bytes the download route serves.
+      expect(mockGetDownloadFilename).toHaveBeenCalledWith(
+        expect.objectContaining({ model: expect.objectContaining({ name: 'Model 77' }) })
+      );
+    });
+
+    it('shows everyone else the stored listing, cacheable as before', async () => {
+      const res = await invokeByHash();
+
+      expect(res.body.model.name).toBe('Model 77');
+      expect(res.body.description).toBe('<p>Red version notes</p>');
+      expect(res.headers['Cache-Control']).toBeUndefined();
+    });
+  });
 
   it('pins every serialized file to its own id', async () => {
     const res = await invokeByHash();

@@ -2,8 +2,10 @@ import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
+import { isV1Shaped, legacyId } from '~/server/notifications/comment.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { humanizeList } from '~/utils/humanizer';
+import { withDefiniteArticle } from '~/utils/string-helpers';
 
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
 export const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
@@ -27,29 +29,32 @@ export const reactionNotifications = createNotificationProcessor({
       ), affected AS (
         SELECT DISTINCT
           "commentId" affected_id
-        FROM "CommentReaction"
+        FROM "CommentV3Reaction"
         WHERE "createdAt" > '${lastSent}'
       ), affected_value AS (
         SELECT
           a.affected_id,
           COUNT(r."commentId") reaction_count
-        FROM "CommentReaction" r
+        FROM "CommentV3Reaction" r
         JOIN affected a ON a.affected_id = r."commentId"
         GROUP BY a.affected_id
         HAVING COUNT(*) >= ${commentReactionMilestones[0]}
       ), reaction_milestone AS (
+        -- Ids in the key and the permalink are the v1 ids: a comment renumbered by the backfill must
+        -- not re-announce every milestone it already passed under its old id.
         SELECT
           c."userId" "ownerId",
           JSON_BUILD_OBJECT(
             'modelName', m.name,
             'modelId', m.id,
-            'rootCommentId', COALESCE(c."parentId", c.id),
-            'commentId', c.id,
+            'rootCommentId', ${legacyId('rt')},
+            'commentId', ${legacyId('c')},
             'reactionCount', ms.value
           ) "details"
         FROM affected_value a
-        JOIN "Comment" c on c.id = a.affected_id
-        JOIN "Model" m ON m.id = c."modelId"
+        JOIN "CommentV3" c ON c.id = a.affected_id AND ${isV1Shaped('c')} AND c."deletedAt" IS NULL
+        JOIN "CommentV3" rt ON rt.id = c."rootId"
+        JOIN "Model" m ON m.id = c."entityId"
         JOIN milestones ms ON ms.value <= a.reaction_count
         WHERE c."createdAt" > '${milestoneNotificationFix}'
       )
@@ -82,9 +87,11 @@ export const reactionNotifications = createNotificationProcessor({
           details.reactionCount
         } reactions`;
       } else {
-        message = `Your ${details.reviewId ? 'review image' : 'example image'} on the ${
-          details.modelName
-        } model has received ${details.reactionCount} reactions`;
+        message = `Your ${
+          details.reviewId ? 'review image' : 'example image'
+        } on ${withDefiniteArticle(details.modelName)} model has received ${
+          details.reactionCount
+        } reactions`;
       }
 
       // `postId` is null for images that are not in a post (an article cover, for one:

@@ -1,13 +1,5 @@
 # apps/training-studio
 
-> 🔴 **No commit or push without BOTH gates passed, in order:**
-> 1. **Adversarial review** — run the review agents (`/svelte-review`: correctness + idiom + abstraction)
->    over the segment and resolve the findings.
-> 2. **The maintainer's personal review + explicit OK** — a human reads the diff and says commit. This is
->    a separate, required step; passing tests, a green build, or "go on"/"continue" is **not** it.
->
-> Until both are done, leave changes in the working tree and ask. Applies to every commit, on any branch.
-
 **Follow [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md)** — the shared conventions
 for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actions, `@civitai/ui`,
 `text-dark-2`, placement, comments, the three review agents).
@@ -51,7 +43,11 @@ enters the flow.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
 - **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
-  video models can't train it — confirm per-model with Atif before enforcing).
+  video models can't train it — check per model before enforcing).
+
+- **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
+  session cookie, `CIVITAI_URL`); `submitTrainingBatch`/`continueTraining` refuse to run without a
+  `checkText` hook, so outside the dev-login preview a local Studio needs a reachable main app.
 
 ## Model catalog
 
@@ -60,13 +56,22 @@ enters the flow.
 are present, grouped by family with versions. Re-mirror by hand when the trainer's list changes; if
 `trainingModelInfo` ever moves to a `packages/civitai-*`, import it instead.
 
+A card's `flagKey` (its per-model Flipt gate) is evaluated by the shell in `/new`'s load, but the
+main-app embed can't ask Flipt: every key must also be in `studioModelFlagFeatures`
+(`src/utils/training.ts`), or the card is hidden on `/training-studio` for everyone. That is pinned by
+`src/utils/__tests__/new-training-models.test.ts` in the **root** unit suite — this app's own `test`
+does not run it.
+
 ## Tests
 
 Node-env vitest over the plain modules only (`vitest.config.ts`, project `app:training-studio`; run
 with `pnpm --filter @civitai/training-studio-app test`, or from the root `pnpm run test:apps:run`).
 They cover what the UI can't be typechecked into: the flow's param/prompt rules (`trainingFlow.test.ts`),
-the workflow readers and archive entries (`trainingRows.test.ts`), the submit wire shape
-(`train-core.test.ts`), and the trace/loss parsers (`trace.test.ts`, `loss.test.ts`). `@civitai/client` is mocked by hand there — its dist imports a directory, which
+the workflow readers and archive entries (`trainingRows.test.ts`), the submit wire shape and its
+required `checkText` hook (`train-core.test.ts`), the standalone server's call to the main app's text
+check (`src/lib/server/text-check.test.ts`), and the trace/loss parsers (`trace.test.ts`, `loss.test.ts`).
+`$env/dynamic/private` is aliased to `src/test/env.mock.ts` in `vitest.config.ts` (this config doesn't
+load the SvelteKit plugin), so modules importing it can run under test. `@civitai/orchestration-client` is mocked by hand there — its dist imports a directory, which
 Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
 
 ## Previewing the UI without OAuth
@@ -82,13 +87,18 @@ Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
   `hooks.server.ts` sends an unauthenticated request to the hub login and a forbidden one to
   civitai.com.
 
+- **No form actions.** The flow UI also ships as a web component embedded in the main app, so every
+  read and write goes through the `StudioBackend` seam (`$lib/backend.ts`; the shell's `/api` routes
+  or the element host), never `use:enhance`. Flow code imports host concerns from `$lib/host.ts`, never
+  `$app/*` or `$env/*`. The three review agents know this delta.
+
 ## Non-negotiables
 
 Duplicated in every SvelteKit app's `CLAUDE.md` because this file always loads and the standard is one
 link away. Full reasoning: [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md).
 
 - **Derive the promise; never fetch in `$effect` and assign to `$state`.** It gives a stuck spinner, a
-  re-run loop, or a stale response landing on a newer lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : null)`, then `{#await x}`.
+  re-run loop, or a stale response landing on a newer lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : new Promise(() => {}))`, then `{#await x}`. The server half is a promise that never settles, **never `null`**: null renders `{:then}` on the server while the browser hydrates `pending`, and the browser's content then sits outside its block — when a parent `{#key}`/`{#if}` swaps the panel, it stays on the page and the new one renders under it (the model reports "stuck preview" bug, 2026-10-14). `{#if x}{#await x}` with `: null` is also safe.
 - **Every `{#await}` needs a `{:catch}`.** Without one a rejection is silent and the panel never fills in.
 - **Key every `{#each}` on something unique.** An unkeyed or duplicate-keyed loop reuses the wrong DOM
   node, so a row's action button ends up wired to a different row. Correctness, not lint.

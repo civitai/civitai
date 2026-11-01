@@ -15,6 +15,11 @@ import type { SessionUser } from '~/types/session';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { TRPCError } from '@trpc/server';
+import {
+  assertGenerationInputsUsable,
+  GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+} from '~/server/services/generation-input-urls';
 
 const log = createLogger('process-enqueued-comic-panels', 'cyan');
 
@@ -185,6 +190,29 @@ export const processEnqueuedComicPanelsJob = createJob(
             // Cap reference images (simple slice)
             const images = (referenceImages || []).slice(0, maxReferenceImages || 3);
 
+            // The one generation input check on a queued panel's stored reference urls: enqueue
+            // only drops blocked images, and an image may have been blocked or hidden since.
+            try {
+              await assertGenerationInputsUsable({
+                urls: images.map((image: { url?: string }) => image?.url),
+                userId,
+                entry: 'comicPanelJob',
+                isApiCaller: false,
+              });
+            } catch (error) {
+              if (!(error instanceof TRPCError && error.code === 'BAD_REQUEST')) throw error;
+              log(`Panel ${panel.id}: Reference image no longer usable, marking as failed`);
+              await dbWrite.comicPanel.update({
+                where: { id: panel.id },
+                data: {
+                  status: ComicPanelStatus.Failed,
+                  errorMessage: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+                },
+              });
+              totalFailed++;
+              continue;
+            }
+
             // Determine currencies based on the domain the panel was created on
             const currencies: BuzzSpendType[] = isGreen ? ['green', 'blue'] : ['yellow', 'blue'];
             const tags = isGreen ? ['comics', 'green'] : ['comics'];
@@ -204,8 +232,8 @@ export const processEnqueuedComicPanelsJob = createJob(
               // places this job can reach the external classifier per panel: this explicit
               // pre-submit gate, and a second one inside `submitPresetImageGen` →
               // `generateFromGraph`, which labels itself `preset` via the surface mapping. A panel
-              // contributes 0, 1 or 2 observations, NOT a fixed 2 — `auditPromptServer` returns
-              // before reaching the classifier on an empty prompt, and a hard regex block throws
+              // contributes 0, 1 or 2 observations, NOT a fixed 2 — `auditPromptServer` never
+              // reaches the classifier on an empty prompt, and a hard regex block throws
               // ahead of it, which also skips the submit below and with it the second call.
               // Leaving this one undeclared would default it to `other`, moving this job's gate off
               // `preset` and onto a mixture the metric documents as unreadable as any single path.

@@ -1,6 +1,6 @@
 ---
 name: dev-server
-description: Manage Next.js dev servers across worktrees. Start, stop, and read logs from dev servers. Agents can access logs from any running session, regardless of who started it.
+description: Manage Next.js dev servers across worktrees, and the worktrees themselves — create one (`wt new`), find finished ones (`wt stale`), remove them (`wt rm`). Start, stop, and read logs from dev servers. Agents can access logs from any running session, regardless of who started it. Use whenever creating, adding or removing a git worktree in this repo.
 ---
 
 # Dev Server Skill
@@ -39,7 +39,7 @@ supervises. So the node you happened to have on `PATH` the first time you typed 
 node the whole tree runs on, until someone shuts the daemon down — and nothing records which one that was.
 
 That is not academic. Measured on a dev box: the daemon was running on ambient node **26.7.0**, while
-`.nvmrc` pins **24.19.0**, `package.json` declares `engines.node: ">=24.0.0 <25"`, and production is built
+`.nvmrc` pinned **24.19.0**, `package.json` declares `engines.node: ">=24.0.0 <25"`, and production was built
 on `node:24.19.0-alpine3.24`. It had been started from a shell outside the dev shell, and that shell also
 had no `pnpm` at all — which silently disables the daemon's own auto-install path (it shells out to
 `pnpm install` / `pnpm run db:generate` when it sees the lockfile or the schema move).
@@ -48,7 +48,7 @@ had no `pnpm` at all — which silently disables the daemon's own auto-install p
 has `pnpm` on `PATH`.** `nvm use` at the repo root gives you both.
 
 **On NixOS (optional)** the flake wrapper does that for you — it pins node to the same version `.nvmrc`
-names, puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
+names (until nixpkgs ships 24.22.1 it gives 24.19.0; see the note in `flake.nix`), puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
 
 ```bash
 nix run .#dev-server -- status
@@ -143,25 +143,26 @@ Next already separates them on every request line it prints:
 **Two failures are FAST, and both are checked before any timing rule**, because a verdict of `ok` on
 a broken page is worse than no verdict. A stale `node_modules` after a merge or checkout 500s in
 milliseconds (`STALE-DEPS` — the fix is `pnpm install`, and purging the build cache installs
-nothing); and the settings self-fetch case below renders a degraded page quickly.
+nothing); and the settings-bootstrap case below renders a degraded page quickly.
 
-**One case defeats the split, and `probe` checks for it first.** `_app` self-fetches
-`/api/user/settings` on every SSR render and aborts at `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s default).
-That abort is billed to *application-code*, so a server that cannot answer its own API route reads as
-"slow database" on the split alone. The greppable marker `[_app] settings bootstrap fetch failed`
-outranks the timing, and the verdict is `SELF-FETCH-FAILING`; `probe` then requests that endpoint
-directly and tells you which of the two causes you have — a self-fetch aimed at the wrong port
-(`NEXTAUTH_URL_INTERNAL` vs the session's port) or an endpoint that genuinely never answers.
+**One case defeats the split, and `probe` checks for it first.** `_app` reads the settings bootstrap
+(the code behind `/api/user/settings`, called in-process) on every SSR render and gives up at
+`APP_SETTINGS_FETCH_TIMEOUT_MS` (8s default). That wait is billed to *application-code*, so a
+bootstrap that never answers reads as "slow database" on the split alone. The greppable marker
+`[_app] settings bootstrap fetch failed` outranks the timing, and the verdict is `SELF-FETCH-FAILING`
+(named for the HTTP self-fetch this used to be); `probe` then requests that endpoint directly and
+tells you which case you have — a bootstrap that genuinely never answers, or a failure that was
+transient or specific to the page request.
 
 The tell that separates it from any slow dependency: **the page time is a constant equal to a
 configured timeout**, identical warm and cold. A slow dependency varies; a timeout does not. Measured
 2026-08-16 — moving `APP_SETTINGS_FETCH_TIMEOUT_MS` from 8000 to 30000 moved `/home` from 8.1s to
 30.1s in lockstep, and purging `.next` did not help at either value.
 
-Worth knowing when you read that verdict: `updateEnvUrlsForPort` returns early on port 3000, so a
-primary session uses `NEXTAUTH_URL_INTERNAL` exactly as the `.env` writes it while every secondary
-session gets it rewritten to its own port. The value is correct today — this is only why the two
-kinds of session can differ, and why the verdict asks you to compare it against the session's port.
+Worth knowing: `updateEnvUrlsForPort` returns early on port 3000, so a primary session uses
+`NEXTAUTH_URL_INTERNAL` exactly as the `.env` writes it while every secondary session gets it
+rewritten to its own port. The settings bootstrap no longer goes through it, so it cannot cause this
+verdict.
 
 This is why "flat 8s means purge `.next`" is wrong as a rule and cost real time as a habit: measured
 on this repo on 2026-08-16, a flat 8.1s `/home` was **30ms of framework and 8.1s of application
@@ -193,8 +194,11 @@ node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD wa
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR, a prune, and the daemon's home
+node .claude/skills/dev-server/scripts/skill-env.selftest.mjs          # `wt new`/`wt env` never overwrite a credential a tree already has
 node .claude/skills/dev-server/scripts/worktree-remove.integration.selftest.mjs  # `wt rm`'s daemon guard, against a throwaway repo
+node .claude/skills/dev-server/scripts/worktree-create.integration.selftest.mjs  # `wt new`: base, no upstream, refusals
 node .claude/skills/dev-server/scripts/daemon-home.selftest.mjs        # the daemon runs from the primary, never the calling worktree
+node .claude/skills/dev-server/scripts/dev-fs-cache.selftest.mjs       # worktrees start without the Turbopack dev cache; opt-ins win
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
 ```
 
@@ -222,6 +226,8 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 | `app <name> [subcmd] [worktree]` | App control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `auth [subcmd]` | Auth hub control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `test run [worktree]` | Queue a unit-test run; returns position + the command to wait on it |
+| `wt new <name> <branch> [--base origin/<b>] [--no-install]` | Create a worktree the safe way (see Worktrees) |
+| `wt stale` / `wt rm <path>` | Find finished worktrees / remove one |
 | `test wait <run-id>` | Block until that run finishes; exits with the run's exit code |
 | `test list` / `test show <id>` / `test logs <id>` | Queue state, one run, one run's output |
 | `test cancel <id>` | Cancel a queued or running run |
@@ -234,7 +240,9 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 
 A session layers its `.env` files — the primary checkout's as the base, the worktree's own on top —
 and then applies a per-service **overlay** on that. The overlay only restates the keys for the
-services it names, so nothing else in the chain moves.
+services it names, so nothing else in the chain moves. Last, the daemon forces the local mail
+catcher's `EMAIL_*` into every env it spawns (main app, auth hub, sibling apps), so a `.env` value
+for those keys never wins.
 
 **No `env-modes.local` means no overlay at all** — not "everything on dev". The file is gitignored,
 so it never comes with a checkout: until it exists, every start runs on the base `.env` exactly as
@@ -272,7 +280,7 @@ repoint the app at a hub that is not running). `mode: dev` therefore never means
 production".
 
 ⚠️ **Apps have no env modes.** `--prod`/`--dev` apply to the main app only; an app runs on its `.env`
-chain with no overlay. `start --app <name> --prod db` is refused rather than silently ignored.
+chain with no overlay (apart from the forced local-mail `EMAIL_*`). `start --app <name> --prod db` is refused rather than silently ignored.
 
 **Defaults.** Every group defaults to `dev`. Move a default in the skill's own `.env` when a dev
 service is unreliable:
@@ -313,7 +321,7 @@ against.
 `envModeSummary`, and the daemon log prints them next to `Env:` at start:
 
 ```
-Env: C:\Dev\Repos\work\wt-thing\.env
+Env: <repos-root>\worktrees\thing\.env
 Env modes: buzz=dev db=prod redis=dev search=dev signals=dev | always prod (no dev target): ...
 ```
 
@@ -341,6 +349,10 @@ runtime with `test config <n>`. `0` is legal and means *paused* — nothing star
 A caller that queues behind a paused queue is told so explicitly rather than being handed a position
 and left waiting.
 
+**Vitest workers are capped at 4 per queued run** (`DEFAULT_MAX_WORKERS`), so a daemon restart cannot
+bring back an unclamped suite. Change it with `TEST_MAX_WORKERS` in the skill's `.env` or at runtime
+with `test config --max-workers <n>`; `none` removes the cap. A caller's own `--max-workers` wins.
+
 **Each kind of check is its own lane with its own limit**, because they are not the same load: a
 unit run saturates every core, while `tsc` is single-threaded and spends its budget on heap. The
 lanes are `unit` (`test:unit:run`), `typecheck` (`typecheck`) and `typecheckApps`
@@ -360,8 +372,11 @@ Things worth knowing before you rely on it:
   holding nothing. The slot frees when the child process exits.
 - **A queued run whose caller stopped polling is dropped** after 10 minutes, so a dead agent cannot
   hold the queue. `test wait` polls every 2s, so a live waiter never trips this.
-- **A run that overruns 30 minutes is killed** and reported as `timeout`. If the kill produces no
-  exit, the slot is released anyway after a grace period rather than held forever.
+- **A run that overruns 60 minutes is killed** and reported as `timeout`. If the kill produces no
+  exit, the slot is released anyway after a grace period rather than held forever. Tune it with
+  `TEST_RUN_TIMEOUT_MIN` in the skill's `.env` or live with `test config --run-timeout <min>`;
+  the live change reaches runs already running. (30 until 2026-10-20: a full unit suite on a busy
+  shared box overran it on every run, and each kill threw the run away.)
 - **A daemon restart drops the queue.** `test wait` treats an unknown run id as terminal and exits
   nonzero telling you to re-request — it will not poll forever against a daemon that has forgotten
   you.
@@ -373,6 +388,13 @@ Things worth knowing before you rely on it:
   the whole run. A live waiter that has been streaming from the start is unaffected.
 - **The exit code is `exitCodeFor`'s, in both waiters.** `test wait` and `pnpm run test:unit:run`
   read the same rule, so a run killed by a signal reports 1 from either, never a shell 255.
+- **With the result cache on, editing anything every test imports reruns the whole suite, in every
+  tree.** Every unit test inherits `src/__tests__/setup.ts`'s import graph. On 2026-10-07, 32 files
+  were in all 19,197 cache records: setup.ts, `src/__tests__/mocks/*`, `src/env/server*.ts` and the
+  `@civitai/redis` and `@civitai/db` clients among them. The most-edited were
+  `packages/civitai-redis/src/client.ts` (19 commits in two weeks) and `src/env/server-schema.ts`
+  (7). Expect a full run after touching one, and think twice before adding an import to setup.ts
+  or a shared mock. `pnpm-lock.yaml`, `vitest.config.mts` and `tsconfig.json` do the same.
 
 ## Session Object
 
@@ -506,10 +528,18 @@ answers 200s and looks completely healthy — the only thing that contradicts yo
 base, with `<worktree>/apps/<name>/.env` layered on top when the worktree has one. Those files are
 gitignored, so a fresh worktree has neither — the base is what makes it start at all.
 
-⚠️ **That base may point at a production database**, and the fall-through means a fresh worktree
-inherits it without anyone choosing it. The app prints the `DATABASE_URL` **host** (never the
-credential) on startup and carries it as `dbHost` in `app` / `status` output — read it before you
-click anything that writes.
+**Except the database.** In a worktree, `DATABASE_URL` and `DATABASE_REPLICA_URL` never come from
+the primary's app `.env`, which may name a database other than dev: they come from the worktree's own
+app `.env` if it sets them, else from the root `.env` chain (primary root, then the worktree's root).
+A key neither sets is removed from the spawn env, so the app refuses to start rather than inherit
+one. Pointing a worktree app at another database means editing its own `apps/<name>/.env` by hand;
+a replica it does not set then follows that database. Every `CSAM_*` key in the spawn env of a
+worktree app, or of the main app in a worktree, is set empty, wherever it came from, including keys
+only named in the files `vite dev` / `next dev` read themselves (`.env`, `.env.local`,
+`.env.development`, `.env.development.local` in the app's or tree's directory): both loaders let a
+key already in the environment win, an empty one included.
+The app prints the `DATABASE_URL` **host** (never the credential) on startup and carries it as
+`dbHost` in `app` / `status` output — read it before you click anything that writes.
 
 `storage` and `notifications` are **not** here. They were registered and could never start: no
 `vite.config.ts` (their dev script is `tsx watch src/server.ts`) and no `.env`, so every attempt died
@@ -579,7 +609,7 @@ The hub works behind the RGB proxy too. When you browse dev at `https://civitai-
 
 ### Logging in
 
-- **Email magic-link** works out of the box (`EMAIL_*` are set) — no external console changes needed.
+- **Email magic-link** lands in the local Mailpit inbox (http://localhost:1080): the daemon forces every app's `EMAIL_*` to the catcher, so start it with `docker compose -f docker-compose.base.yml up -d mailpit`.
 - **Social providers** (GitHub/Google/Discord/Reddit) additionally require the provider console to allow the hub redirect URI `http://localhost:5173/login/<provider>/callback`. Until that's added they fail with `redirect_uri_mismatch`.
 - Any **legacy** `civitai-token` cookie already in your browser still resolves without the hub (verify-only decode) and upgrades to a `civ-token` on next request once the hub is up.
 
@@ -648,13 +678,33 @@ The first route compiled drags in the whole shared graph — the pages-router `_
 
 So the working set for this app is roughly **2.5-4 GB per branch**, and it is real data, not a leak. It's large because the graph is large (3.4M cache keys, ~210k files in `node_modules`). Source maps are not the driver — they are 0.3% of a sampled segment.
 
-It earns the space: **45.8s cold vs 4.3s warm** on the same route after a restart. Disabling `turbopackFileSystemCacheForDev` trades a 10x slower restart for disk, which is the wrong trade on a machine with room.
+It earns the space in any checkout you restart: **45.8s cold vs 4.3s warm** on the same route after a restart. It also bounds memory. Turbopack only evicts in-memory task data after it has persisted a snapshot (Next documents `turbopackMemoryEviction` as effective only with `turbopackFileSystemCacheForDev` on), so with the cache off the dev server's RSS only climbs. Same commit, `/leaving`, 20 edits: cache off 6.0 to 8.5 GB, cache on 4.2 to 6.4 GB (one run each, whole process tree). **Worktree sessions therefore start with it on**, like the primary checkout. The cost is disk: across 18 worktrees it reached 80 GB. A session stopped soon after compiling (the stop is `taskkill /f`) loses the cache anyway: the next start discards it and rebuilds. Measured on one worktree, first page `/models`: cache on, `.next` 2.5 GB and 17s after a restart (65-73s cold); cache off, 1.1 GB and ~60-70s every start. Turn it off for every worktree with `WORKTREE_DEV_FS_CACHE=false` in the skill `.env`, or for one with `NEXT_DEV_FS_CACHE=false` in that worktree's `.env`; the log line `Turbopack dev FS cache: on|off` says which a session got.
+
+**Idle worktree caches are swept.** When the daemon starts (after a 5s delay) it adds up `.next/dev/cache` (and the per-branch twins under `.next/branches/*`) across every worktree except the primary, and if the total is over `WORKTREE_CACHE_MAX_GB` (default 20, about five working sets; 0 turns it off) it deletes the oldest until it is under. It skips any worktree the daemon has a session or app in, and any cache written in the last 10 minutes (a server the daemon does not know about). Only `.next/dev/cache` goes, so a deleted cache costs one cold first compile. `wt stale` prints each tree's cache size when it is over 100 MB; `wt rm` still deletes the whole tree. A server started outside the daemon in a worktree is protected only by the 10-minute rule.
 
 Dirs are evicted LRU on every start against **both** budgets: the `DIST_CACHE_KEEP` most recent (default 4) and `DIST_CACHE_MAX_GB` total (default 40). The size cap does the real work — with a ~4 GB working set per branch, a count cap alone lets four branches reach ~16 GB. The active branch is never evicted; if it alone blows the budget the daemon logs a warning instead.
 
-Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`.
+Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`, `WORKTREE_DEV_FS_CACHE`, `WORKTREE_CACHE_MAX_GB`.
 
 ## Worktrees
+
+### Create one — always `wt new`
+
+```bash
+node .claude/skills/dev-server/cli.mjs wt new <name> <branch>                    # based on origin/main
+node .claude/skills/dev-server/cli.mjs wt new <name> <branch> --base origin/feat/x  # a feature integration branch
+```
+
+It fetches the base, runs `git worktree add <repos-root>/worktrees/<name> -b <branch> --no-track <base>`,
+initialises `event-engine-common`, writes `.envrc` when the primary has one, copies every `.env`
+file (root and per-app, plus the skills' credentials), runs `pnpm install` (`--no-install` skips it),
+and fails unless `git status -sb` prints `## <branch>` alone. It refuses an
+existing branch or path. Don't hand-roll it, and don't use the `EnterWorktree` tool (it creates outside
+the repos root, tracking `origin/main`). Why each flag matters: `docs/dev/worktrees.md`.
+
+Remove one when its PR merges with `wt stale` / `wt rm` (below).
+
+### Dev servers in worktrees
 
 One session per worktree, each on its own port (3000, 3001, …). Start one with:
 
@@ -664,7 +714,61 @@ node .claude/skills/dev-server/cli.mjs start /path/to/worktree
 
 What's already handled:
 
-- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. So a worktree file needs to restate only what it wants to change, and one that restates nothing is a no-op rather than an outage. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
+- **The skills' own credentials, on `wt new`.** The env layering below is the APP's chain;
+  `.claude/skills/*/.env` is a different thing and nothing copied it until this did. A fresh tree
+  used to start with none — measured 2026-10-05: 7 in the primary, 0 of 47 skill directories in
+  the worktree — and each missing one surfaces as that skill failing to authenticate
+  (`FLIPT_URL and FLIPT_API_TOKEN must be set`, `credentials not configured`, a bare 401), which
+  reads as a bug in the skill rather than a missing file.
+
+  `wt new` copies them, never overwriting one the target already holds, and warns about any skill
+  whose credentials exist in no tree at all. It is non-fatal by construction: a missing credential
+  must not cost you a worktree. For a tree that already exists, `wt env`:
+
+  ```bash
+  node .claude/skills/dev-server/cli.mjs wt env                 # state per skill, never a value
+  node .claude/skills/dev-server/cli.mjs wt env <worktree>      # fill another tree's gaps
+  node .claude/skills/dev-server/cli.mjs wt env <worktree> --refresh  # …and re-copy env files the primary edited since
+  node .claude/skills/dev-server/cli.mjs wt env <worktree> --force    # …and re-copy them over the tree's own edits too
+  node .claude/skills/dev-server/cli.mjs wt env --backup        # copy them OUTSIDE the repo
+  node .claude/skills/dev-server/cli.mjs wt env --restore       # bring back what this tree lacks
+  ```
+
+- **Every app `.env`, on `wt new`.** The root `.env` and each `apps/*/.env` (any untracked
+  `.env` / `.env.*` git finds, minus examples and `.bak` files) are copied in full, except that
+  every `EMAIL_*` line (commented ones too) becomes the local mail catcher's, and every
+  `DATABASE_URL` / `DATABASE_REPLICA_URL` line takes the primary **root** `.env`'s value (commented
+  ones dropped), and every `CSAM_*` line (commented ones too) keeps its key with an empty value, so
+  a tree also works for a bare `pnpm`/`prisma` command that reads `.env` itself, never inherits an
+  app `.env` pointed at another database, and never carries storage credentials for the restricted
+  bucket. A copy is a snapshot: when the primary's file changes, `wt env <worktree> --refresh`
+  re-copies every one the tree has not edited since it was last written, whatever the mtimes say.
+  An edit is a file whose sha256 differs from the one recorded at that write (kept in the tree's
+  git dir, `dev-server-app-env.json`); a tree copied before that record existed counts a file that
+  differs from the primary as edited. `--refresh` skips both and names `--force`, which re-copies
+  them anyway (and implies `--refresh`). Without `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
+  `wt env` (with or without `--refresh`) rewrites in place, mtime kept: run it to repair a tree
+  copied before either existed. Env files only the tree has (a hand-made `.env.local`) get their
+  `CSAM_*` keys emptied too; their database lines stay as written. A hand edit to a tree's app
+  database therefore lasts until the next `wt env`. If the primary root `.env` has no active `DATABASE_URL`
+  while a file to copy has one, `wt new` and `wt env` exit 1 and write none of them.
+
+  It reports three states, because two were misleading. `set` is a skill with its own file.
+  `root` is one with no file whose every declared key the root `.env` supplies — most skills fall
+  back to it, so those are configured and were previously reported as missing. `ABSENT` names the
+  key that is actually blocking. An example carrying `# skill-env: settings-only` is local wiring
+  rather than credentials (ports, timeouts, toggles) and is left out entirely.
+
+  `--backup` exists because these files are one `git clean` from gone and nothing restores them: a
+  skill whose `.gitignore` lists `.env` loses it to `clean -x`, one without a `.gitignore` loses the
+  untracked file to `clean -d`. Both happened; discord's needed an interactive browser login to
+  re-obtain. The store is outside the repo because a backup inside it dies to the same clean.
+
+  It reports presence only. A per-skill credential inventory annotated with what each one unlocks
+  is precisely what must not exist in a public repository.
+
+
+- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. A hand-written worktree file needs to restate only what it wants to change. The full copy `wt new` writes restates everything (with the catcher's `EMAIL_*`), so it masks later edits to the primary until `wt env <worktree> --refresh`. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
 
   Before this they were **not** merged — the worktree file replaced the primary outright, so a two-key override file started the server with no `DATABASE_URL` and no secrets, failing in a way that looked nothing like the edit that caused it.
 
@@ -714,7 +818,7 @@ What's already handled:
   port, it warns and quietly moves to another, so a session started onto a held port would report a
   `url` and pass a health check against a server it does not own.
 
-Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
+Fresh worktrees need a real `pnpm install` (`wt new` does it) and `git submodule update --init event-engine-common`. Never junction `node_modules`, a package's `node_modules` or `event-engine-common` into the primary checkout: `git worktree remove` deletes through a junction, with or without `--force`. If one exists, remove the link itself first with `cmd /c rmdir <link>`.
 
 ### Cache cannot be shared between worktrees
 
@@ -726,7 +830,7 @@ Error [TurbopackInternalError]: failed to create junction point at ".next\dev\no
 Caused by: removal of existing symbolic link or junction point failed: The directory is not empty. (os error 145)
 ```
 
-Two independent blockers: `.next/dev/node_modules` holds junction points that don't survive a copy, and cache keys embed the absolute project path (~3,000 occurrences of `C:/Dev/Repos/work/model-share` in a single 253 MB segment), so most entries would miss even if it did start.
+Two independent blockers: `.next/dev/node_modules` holds junction points that don't survive a copy, and cache keys embed the absolute project path (~3,000 occurrences of the checkout's path in a single 253 MB segment), so most entries would miss even if it did start.
 
 A single `.next` shared by concurrent sessions is worse — two dev servers writing one LSM store corrupts it.
 

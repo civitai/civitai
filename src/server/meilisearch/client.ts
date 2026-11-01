@@ -572,8 +572,8 @@ export async function fetchDocumentsAbortable<T>(
  * Typed error thrown by withMeili() when a wrapped Meilisearch call exceeds
  * MEILI_CALL_TIMEOUT_MS.
  *
- * Hot-path callers (image feed, /api/health.searchMetrics, getImagesFromSearch
- * SDK call) catch this and return a fast 408/probe-failure instead of
+ * Hot-path callers (image feed, getImagesFromSearch SDK call) catch this and
+ * return a fast 408 instead of
  * bleeding event-loop time waiting for Traefik's 30s router timeout — which
  * is what bled api-primary pods to kubelet SIGKILL on 2026-05-29.
  */
@@ -602,30 +602,61 @@ export class MeiliCallTimeoutError extends Error {
  * both. The 2026-05-29 cascade originated in the metrics backend; the feeds
  * backend was healthy. Splitting them isolates the blast radius.
  *
- * Health-probe traffic uses its own tiny limiter so a user-traffic spike on
- * the main limiter can't starve the kubelet probe — exactly the failure mode
- * we just patched out.
- *
  * p-limit is already in use elsewhere (see src/utils/generator-import.ts).
  */
 export type MeiliBackend = 'search' | 'metricsSearch';
-type LimiterKey = MeiliBackend | 'healthProbe' | 'resourceSelect';
+type LimiterKey = MeiliBackend | 'resourceSelect';
 
-const HEALTH_PROBE_CONCURRENCY = 2;
+// 🔴 SHARED_STATE: the limiters and circuits live on globalThis, not in module scope.
+//
+// The production server build emits this module TWICE, once per Turbopack runtime
+// (`chunks/` serves API routes and instrumentation, `chunks/ssr/` serves page SSR). Each
+// runtime has its own module cache, so a module-scope `const` here would be two independent
+// sets of limiters and circuits in one process. prom-client is externalized, so both copies
+// register into ONE default registry. The second copy to evaluate gets the first copy's gauge
+// back from `registerGaugeWithLabels` and reassigns its `collect` below. With private state,
+// the scraped gauges then read whichever copy evaluated last. That was the SSR copy, warmed
+// last via `/`, and it is idle on the API pods that carry the Meili traffic. So
+// meili_call_active, meili_call_queue_depth and meili_circuit_state read 0 on every pod through
+// a six-day brownout that tripped the circuit ~108k times. The counters were unaffected
+// because both copies increment the one shared counter object.
+//
+// One shared object means every copy's withMeili() admits against the same circuit and the same
+// per-backend concurrency cap, and every copy's collect() reads that state, whichever one won.
+// `??=`, not `=`: with `=`, a later copy would REPLACE the state, orphan the first copy's
+// in-flight slots and reopen the bug. Enrolled in scripts/server-graph-watchlist.mjs so the
+// build fails if an emitted copy loses this pin. Vitest loads each module once and cannot see
+// any of this unless it is made to (src/server/meilisearch/__tests__/client-gauges.dual-graph.test.ts).
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiMeiliWrapperState:
+    | {
+        limiters: Record<LimiterKey, ReturnType<typeof pLimit>>;
+        circuits: Record<MeiliBackend, Circuit>;
+      }
+    | undefined;
+}
 
-const limiters: Record<LimiterKey, ReturnType<typeof pLimit>> = {
-  search: pLimit(env.MEILI_CALL_CONCURRENCY),
-  metricsSearch: pLimit(env.MEILI_CALL_CONCURRENCY),
-  healthProbe: pLimit(HEALTH_PROBE_CONCURRENCY),
-  resourceSelect: pLimit(env.MEILI_RESOURCE_SELECT_CONCURRENCY),
-};
+const meiliWrapperState = (globalThis.__civitaiMeiliWrapperState ??= {
+  limiters: {
+    search: pLimit(env.MEILI_CALL_CONCURRENCY),
+    metricsSearch: pLimit(env.MEILI_CALL_CONCURRENCY),
+    resourceSelect: pLimit(env.MEILI_RESOURCE_SELECT_CONCURRENCY),
+  },
+  circuits: {
+    search: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
+    metricsSearch: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
+  },
+});
+
+const limiters = meiliWrapperState.limiters;
 
 // Observability counters & gauge — see N1 in PR description. The active gauge
 // is sampled lazily on Prometheus scrape via a `collect` hook so we don't
 // touch a hot path on every call.
 const meiliCallTimeoutsCounter = registerCounterWithLabels({
   name: 'meili_call_timeouts_total',
-  help: 'Meilisearch wrapped-call timeouts by backend (search|metricsSearch|healthProbe)',
+  help: 'Meilisearch wrapped-call timeouts by backend (search|metricsSearch|resourceSelect)',
   labelNames: ['backend'] as const,
 });
 const meiliCallActiveGauge = registerGaugeWithLabels({
@@ -675,10 +706,6 @@ const meiliCallDurationHistogram = registerHistogram({
 // independently so a brownout on metricsSearch doesn't shed load from
 // search.
 //
-// healthProbe is intentionally NOT under the breaker — health-probe is the
-// canonical signal we need to keep responsive even when the circuit is open.
-// (Failure mode: health-check returns false, not bypassed.)
-//
 // State machine (per backend):
 //   CLOSED → (failures >= TRIP_THRESHOLD in WINDOW_SECONDS) → OPEN
 //   OPEN → (now >= cooldownUntil) → HALF_OPEN
@@ -702,10 +729,8 @@ type Circuit = {
   trialInFlight: boolean;
 };
 
-const circuits: Record<MeiliBackend, Circuit> = {
-  search: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
-  metricsSearch: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
-};
+// Process-wide, shared by every emitted copy of this module (see the SHARED_STATE note above).
+const circuits = meiliWrapperState.circuits;
 
 const meiliCircuitStateGauge = registerGaugeWithLabels({
   name: 'meili_circuit_state',
@@ -871,8 +896,7 @@ async function runWithLimiter<T>(
   const useTimeout = opts.useTimeout ?? true;
   const timeoutMs = opts.timeoutMs ?? env.MEILI_CALL_TIMEOUT_MS;
 
-  // Circuit breaker gate — only for the two user-traffic backends. healthProbe
-  // bypasses the circuit so the kubelet probe always issues a real request.
+  // Circuit breaker gate — only for the two shared user-traffic backends.
   let isTrial = false;
   if (key === 'search' || key === 'metricsSearch') {
     const decision = admitCall(key);
@@ -959,21 +983,11 @@ export function withMeili<T>(backend: MeiliBackend, fn: () => Promise<T>): Promi
 }
 
 /**
- * Health-probe variant of withMeili(). Uses a separate tiny limiter so a
- * user-traffic saturation on the main `metricsSearch` slot can't starve the
- * kubelet probe — that's exactly how /api/health flipped to slow-fail on
- * 2026-05-29.
- */
-export function withMeiliHealthProbe<T>(fn: () => Promise<T>): Promise<T> {
-  return runWithLimiter('healthProbe', 'healthProbe', fn);
-}
-
-/**
  * Resource-select (generation picker) variant of withMeili().
  *
  * Runs on a dedicated limiter and — because the circuit gate in runWithLimiter
  * only admits the two shared user-traffic backends — bypasses the `search`
- * circuit breaker entirely, the same way withMeiliHealthProbe() does.
+ * circuit breaker entirely.
  *
  * WHY the picker is exempt: shedding it is far more costly than shedding its
  * co-tenants. The image feed and the polled orchestrator routes recover on

@@ -1,7 +1,9 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
+import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
+import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
@@ -18,8 +20,13 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   forbidden → signed in, not mod → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated moderator → populate locals.user and continue
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build,
-// where there is no cookie). Everything else is gated.
-const PUBLIC_PATHS = new Set(['/favicon.svg']);
+// where there is no cookie) and the sign-in routes. Everything else is gated.
+const PUBLIC_PATHS = new Set([
+  '/favicon.svg',
+  '/logout',
+  '/api/auth/authorize',
+  '/api/auth/callback',
+]);
 
 /**
  * The `event` string every credential-attribution line carries. One constant so a soak query and the
@@ -75,6 +82,17 @@ function logCredentialAttribution(
   }
 }
 
+// Boot has no session, so no scan can resume here. Releasing this host's dead leases lets runs resume on
+// the next Test sets page load instead of after the lease goes stale.
+export const init: ServerInit = async () => {
+  try {
+    const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');
+    await releaseLeasesAtBoot();
+  } catch (error) {
+    void logAxiomError(error, { event: 'text-scan test run lease release failed' });
+  }
+};
+
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
   // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
@@ -101,11 +119,14 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
+  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href, {
+    navigation: isNavigationRequest(event.request),
+  });
 
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });
   }
+  if (result.status === 'reauth') return spokeReauthResponse(result.authorize);
   if (result.status === 'forbidden') {
     return new Response(null, { status: 303, headers: { location: NON_MODERATOR_REDIRECT } });
   }
@@ -115,6 +136,14 @@ export const handle: Handle = async ({ event, resolve }) => {
   applyGrants(await loadPageAccessGrants());
   // After applyGrants, never before: the resolver reads the store it just populated.
   event.locals.grants = resolvePermissions(result.user);
+
+  const moved = movedViewTarget(event.url);
+  if (moved) {
+    return withSetCookies(
+      new Response(null, { status: 307, headers: { location: moved } }),
+      result.setCookies
+    );
+  }
 
   // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
   // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →
@@ -131,11 +160,15 @@ export const handle: Handle = async ({ event, resolve }) => {
     // Says WHY on arrival. A bare bounce is indistinguishable from the page being broken — it was
     // reported as "bulk image manager tosses you back to dashboard" by a moderator who simply had no
     // grant for it, and there was nothing on screen that could have told them otherwise.
-    const denied = `/?denied=${encodeURIComponent(event.url.pathname)}`;
-    return new Response(null, { status: 303, headers: { location: denied } });
+    // The query string rides along so the dashboard can link back to exactly what was asked for.
+    const denied = `/?denied=${encodeURIComponent(event.url.pathname + event.url.search)}`;
+    return withSetCookies(
+      new Response(null, { status: 303, headers: { location: denied } }),
+      result.setCookies
+    );
   }
 
-  return resolve(event);
+  return withSetCookies(await resolve(event), result.setCookies);
 };
 
 // Without this, an uncaught throw anywhere in a load, action or endpoint is a 500 page and a stack on pod

@@ -3,9 +3,14 @@ import type { BuzzReadOptions, BuzzWriteOptions } from '@civitai/buzz';
 import { createBuzzClient } from '@civitai/buzz';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
-import { v4 as uuid } from 'uuid';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  clickhouseTransactionTypeExclusionPredicate,
+  clickhouseTransactionTypePredicate,
+  fromClickhouseTransactionType,
+  toClickhouseTransactionType,
+} from '~/server/clickhouse/transaction-type';
 import { CacheTTL, specialCosmeticRewards } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -18,6 +23,7 @@ import type {
 } from '~/shared/constants/buzz.constants';
 import type {
   ClaimWatchedAdRewardInput,
+  CompensationSource,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   CreateMultiAccountBuzzTransactionInput,
@@ -57,6 +63,7 @@ import {
 } from '~/shared/constants/buzz.constants';
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -77,6 +84,7 @@ import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { isDev } from '~/env/other';
 import { toPascalCase } from '~/utils/string-helpers';
+import { redactTransactionCounterparty } from '~/server/services/buzz-transaction-redaction';
 // import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
 // import { adWatchedReward } from '~/server/rewards';
 
@@ -311,93 +319,23 @@ export async function getUserBuzzTransactions({
 
   return {
     cursor,
-    transactions: transactions.map((t) => ({
-      ...t,
-      // Assign each user to their corresponding transaction
-      toUser: toUsers.find((u) => u.id === t.toAccountId),
-      fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
-    })),
+    transactions: transactions.map((t) =>
+      redactTransactionCounterparty({
+        ...t,
+        // Assign each user to their corresponding transaction
+        toUser: toUsers.find((u) => u.id === t.toAccountId),
+        fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
+      })
+    ),
   };
 }
 
-// The buzz service caps at 200 transactions per call and takes a single account
-// type, so a multi-account view or an export would need hundreds of sequential
-// round-trips. ClickHouse answers the same question in one query.
-export function toClickhouseTransactionType(type: TransactionType) {
-  const name = TransactionType[type];
-  return name.charAt(0).toLowerCase() + name.slice(1);
-}
-
-/**
- * The inverse, and it MUST also accept a bare number.
- *
- * 🔴 The ingest MV's int→string map enumerates only `0..26` and falls back to
- * `toString(Type)`, so every member above 26 arrives as its DIGITS — today
- * `LicenseFee` (27) and `AppAuthorFee` (28). Capitalising `'28'` is a no-op and
- * `TransactionType['28']` then hits the enum's REVERSE mapping, yielding the
- * NAME as a string where a number is declared; that value renders as the raw
- * `28` in the user's transaction list and in the CSV export instead of its
- * label. `src/server/schema/buzz.schema.ts` already carries this rule for the
- * buzz-service API read path — this is the ClickHouse half of the same rule,
- * which had been open-coded at both call sites without it.
- */
-export function fromClickhouseTransactionType(raw: string): TransactionType {
-  if (/^\d+$/.test(raw)) {
-    const numeric = Number(raw);
-    // A reverse-mapped name proves it is a real member; anything else keeps the
-    // long-standing Tip fallback rather than rendering blank.
-    return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
-  }
-  const name = (raw.charAt(0).toUpperCase() + raw.slice(1)) as keyof typeof TransactionType;
-  // 🔴 A `typeof` test, not `??`. `TransactionType['__proto__']` resolves up the
-  // prototype chain to a non-nullish OBJECT, which `??` accepts — so the obvious
-  // `TransactionType[name] ?? Tip` returns `Object.prototype` typed as a
-  // `TransactionType`.
-  //
-  // Narrowing on the RESULT rejects that, and no input STRING can defeat it: every
-  // `Object.prototype` key that survives the capitalisation above starts with `_`
-  // and holds a function or an accessor. What it does NOT cover — stated because an
-  // earlier revision of this comment claimed nothing could — is a numeric-valued
-  // own property added to `Object.prototype` by something else in the process.
-  // That is prototype pollution, out of scope for this function rather than
-  // impossible; an `Object.hasOwn` check here would catch it and was removed as
-  // untestable by any reachable input.
-  const resolved: unknown = TransactionType[name];
-  return typeof resolved === 'number' ? resolved : TransactionType.Tip;
-}
-
-/**
- * 🔴 BOTH SPELLINGS, for the same `0..26` ingest gap. A name-only `type = '…'`
- * predicate is a SILENT ZERO for a member past the map: the transaction list
- * renders empty and the CSV export answers 200 with a header-only body. This is
- * the `type IN ('licenseFee','27')` shape creator-studio's reads already use,
- * derived instead of hand-written.
- *
- * The numeric arm admitting nothing extra is a premise about what the MV writes,
- * NOT something any test here establishes: `Number(type)` is always a real member
- * integer (both entry points gate `type` through `z.enum(TransactionType)`), so
- * it can only ever match rows of that same type.
- */
-export function clickhouseTransactionTypePredicate(type: TransactionType) {
-  return `type IN ('${toClickhouseTransactionType(type)}','${Number(type)}')`;
-}
-
-/**
- * The exclusion form of the same rule. Inert today — every excluded member is
- * ≤ 26, so the numeric arm can match nothing — but this was the last type
- * predicate in this file not going through a shared builder, which is how the
- * `0..26` bug would have regenerated the next time a member above 26 was added
- * to an exclusion list.
- */
-export function clickhouseTransactionTypeExclusionPredicate(types: TransactionType[]) {
-  // `NOT IN ()` is a syntax error, not an empty exclusion. Today's only caller
-  // passes a non-empty constant, but this is exported, and a caller that filtered
-  // its list down to nothing would take out the whole query rather than excluding
-  // nothing.
-  if (!types.length) return '1 = 1';
-  const spellings = types.flatMap((type) => [toClickhouseTransactionType(type), String(type)]);
-  return `type NOT IN (${spellings.map((s) => `'${s}'`).join(',')})`;
-}
+export {
+  clickhouseTransactionTypeExclusionPredicate,
+  clickhouseTransactionTypePredicate,
+  fromClickhouseTransactionType,
+  toClickhouseTransactionType,
+};
 
 // Lowercase-only: toString(uuid) is always lowercase and ClickHouse compares
 // strings byte-wise, so an uppercase cursor would land on the wrong side of the
@@ -585,7 +523,7 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
     const details = parseDetails(row.details);
     const type = fromClickhouseTransactionType(row.type);
 
-    return {
+    return redactTransactionCounterparty({
       date: new Date(`${row.date.replace(' ', 'T')}Z`),
       type,
       // ClickHouse stores every amount as a positive magnitude; the direction
@@ -600,7 +538,7 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
       externalTransactionId: row.externalTransactionId || null,
       fromUser: usersById.get(row.fromAccountId),
       toUser: usersById.get(row.toAccountId),
-    };
+    });
   });
 }
 
@@ -780,7 +718,8 @@ async function formatExportBatch(
         counterpartyName(row.toAccountId, usernames.get(row.toAccountId)),
         row.description,
         entityUrl,
-        row.externalTransactionId,
+        redactTransactionCounterparty({ type, externalTransactionId: row.externalTransactionId })
+          .externalTransactionId ?? '',
       ];
     })
   );
@@ -966,7 +905,7 @@ export async function upsertBuzzTip({
       type: 'tip-received',
       userId: toAccountId,
       category: NotificationCategory.Buzz,
-      key: `tip-received:${uuid()}`,
+      key: `tip-received:${crypto.randomUUID()}`,
       details: {
         amount: amount,
         user: fromUser?.username,
@@ -1039,6 +978,7 @@ export async function completeStripeBuzzTransaction({
   transactionId: string;
 }> {
   let stage = 'init';
+  let rejected = false;
   try {
     const stripe = await getServerStripe();
     if (!stripe) {
@@ -1056,6 +996,39 @@ export async function completeStripeBuzzTransaction({
 
     const metadata: PaymentIntentMetadataSchema =
       paymentIntent.metadata as PaymentIntentMetadataSchema;
+
+    // Credit what getPaymentIntent recorded on the intent, to the user it was created for.
+    // getPaymentIntent charges buzzAmount / 10 in the currency's minor unit, whatever the currency.
+    stage = 'verifyPurchase';
+    const parsed = paymentIntentMetadataSchema.safeParse(paymentIntent.metadata);
+    const rejection = !parsed.success
+      ? 'not a buzz purchase'
+      : parsed.data.userId !== Number(userId)
+      ? 'user mismatch'
+      : parsed.data.buzzAmount !== Number(amount)
+      ? 'amount mismatch'
+      : paymentIntent.amount * 10 !== parsed.data.buzzAmount
+      ? 'charge mismatch'
+      : null;
+    if (rejection || !parsed.success) {
+      rejected = true;
+      logToAxiom(
+        {
+          name: 'buzz-purchase-completion-rejected',
+          type: 'warning',
+          reason: rejection,
+          userId,
+          stripePaymentIntentId,
+          requestedAmount: amount,
+        },
+        'webhooks'
+      ).catch(() => null);
+      throw throwBadRequestError('Unable to complete this purchase');
+    }
+    const purchaseDetails = { ...parsed.data, stripePaymentIntentId };
+    // The reprocess path passes raw string metadata; carry the parsed numbers from here on.
+    amount = parsed.data.buzzAmount;
+    userId = parsed.data.userId;
 
     if (metadata.transactionId) {
       // Avoid double down on buzz
@@ -1086,7 +1059,7 @@ export async function completeStripeBuzzTransaction({
       }${
         bulkBuzzMultiplier > 1 ? 'Bulk purchase bonus applied. ' : ''
       }A total of ${numberWithCommas(buzzAmount)} Buzz was added to your account.`,
-      details: { ...(details ?? {}), stripePaymentIntentId },
+      details: purchaseDetails,
       externalTransactionId: paymentIntent.id,
     })) as { transactionId: string };
 
@@ -1115,7 +1088,7 @@ export async function completeStripeBuzzTransaction({
         description: `A total of ${numberWithCommas(
           blueBuzzAdded
         )} Blue Buzz was added to your account for Bulk purchase.`,
-        details: { ...(details ?? {}), stripePaymentIntentId },
+        details: purchaseDetails,
       });
       stage = 'stripe.paymentIntents.update:blueBuzzGranted';
       await stripe.paymentIntents.update(stripePaymentIntentId, {
@@ -1144,6 +1117,7 @@ export async function completeStripeBuzzTransaction({
     return data;
   } catch (error) {
     const err = error as Error;
+    if (rejected) throw error;
     const willRetry = retry < MAX_RETRIES;
     logToAxiom(
       {
@@ -1612,6 +1586,14 @@ type Row = {
 // lower-cased variants elsewhere, so both are listed.
 const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
 
+// Compensation is everything that is neither a license fee nor a tip, so one-off sources such as
+// `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
+const COMPENSATION_SOURCE_SQL: Record<CompensationSource, string> = {
+  compensation: "NOT IN ('licenseFee', 'tip')",
+  licenseFee: "= 'licenseFee'",
+  tip: "= 'tip'",
+};
+
 export const getDailyCompensationRewardByUser = async ({
   userId,
   date = new Date(),
@@ -1653,7 +1635,7 @@ export const getDailyCompensationRewardByUser = async ({
       WHERE date BETWEEN ${minDate} AND ${maxDate}
         AND modelVersionId IN (${versionIds})
         AND amount > 0
-        AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
+        AND source ${COMPENSATION_SOURCE_SQL[source]}
         -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
         -- License fees can also settle to CASH, which the caller renders in its own panel rather than under the
         -- buzz selector — so cash rows bypass the filter. The buzz rows must not: summing yellow+blue+green under
@@ -1884,10 +1866,6 @@ export async function getTransactionsReport({
         end: endDate.toDate(),
       });
 
-      // Only these two paths agree on a UTC host. The schema's `z.coerce.date()` reads the buzz
-      // service's bare timestamps as LOCAL and formats them as UTC, while the ClickHouse path is UTC
-      // throughout — so off UTC a fallback also shifts every bar's label by the host offset, and the
-      // degradation looks like a data bug. Production runs UTC.
       return getTransactionsReportResultSchema.parse(data);
     } catch (error) {
       // `mapError` already turns every buzz-service HTTP status into a TRPCError carrying the
@@ -2079,8 +2057,11 @@ export const grantBuzzPurchase = async ({
   return transactionId;
 };
 
-export async function getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix: string) {
-  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix });
+export async function getMultiAccountTransactionsByPrefix(
+  externalTransactionIdPrefix: string,
+  opts?: BuzzReadOptions
+) {
+  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix }, opts);
 
   return data.map((item) => ({
     ...item,

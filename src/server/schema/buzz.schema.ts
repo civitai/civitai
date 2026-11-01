@@ -10,10 +10,13 @@ import {
 } from '~/shared/constants/buzz.constants';
 import { constants } from '~/server/common/constants';
 import { formatDate } from '~/utils/date-helpers';
+import { coerceUtcDate } from '~/utils/zod-helpers';
 
 const buzzAccountTypeFromApiValueSchema = z
   .enum([...buzzApiAccountTypes, ...buzzApiAccountTypes.map((type) => type.toLowerCase())])
   .transform((type) => BuzzTypes.toClientType(type as BuzzApiAccountType));
+
+export const buzzServiceDate = coerceUtcDate();
 
 export function preprocessAccountType(value: unknown) {
   return typeof value === 'string' ? value?.toLowerCase() : undefined;
@@ -81,12 +84,12 @@ export type BuzzTransactionDetails = z.infer<typeof buzzTransactionDetails>;
 
 // export type GetBuzzTransactionResponse = z.infer<typeof getBuzzTransactionResponse>;
 export const getBuzzTransactionResponse = z.object({
-  date: z.coerce.date(),
+  date: buzzServiceDate,
   // The buzz service returns a NAME for the transaction types it knows and the raw enum NUMBER for the
-  // ones it doesn't — LicenseFee (27) and AppAuthorFee (28) are the live cases, and the same numbers
-  // reach ClickHouse (see the `'27'` handling in creator-studio's earnings reads and
-  // `fromClickhouseTransactionType`). Collapsing every numeric value to Tip labelled
-  // each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all a fee-earning creator saw.
+  // ones it doesn't — LicenseFee (27) and AppAuthorFee (28) are the live cases. ClickHouse spells
+  // its unnamed members differently; see `fromClickhouseTransactionType`. Collapsing every numeric
+  // value to Tip labelled each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all
+  // a fee-earning creator saw.
   type: z.any().transform((value): TransactionType => {
     const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
     if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
@@ -106,7 +109,7 @@ export const getBuzzTransactionResponse = z.object({
 
 export type GetUserBuzzTransactionsResponse = z.infer<typeof getUserBuzzTransactionsResponse>;
 export const getUserBuzzTransactionsResponse = z.object({
-  cursor: z.coerce.date().nullish(),
+  cursor: buzzServiceDate.nullish(),
   transactions: getBuzzTransactionResponse.array(),
 });
 
@@ -205,7 +208,7 @@ export const getBuzzAccountTransactionsSchema =
   getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
 export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
 
-export const compensationSources = ['compensation', 'licenseFee'] as const;
+export const compensationSources = ['compensation', 'licenseFee', 'tip'] as const;
 export type CompensationSource = (typeof compensationSources)[number];
 
 export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;
@@ -275,9 +278,9 @@ export const getTransactionsReportSchema = z.object({
 export type GetTransactionsReportResultSchema = z.infer<typeof getTransactionsReportResultSchema>;
 export const getTransactionsReportResultSchema = z.array(
   z.object({
-    date: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
-    start: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
-    end: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    date: buzzServiceDate.transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    start: buzzServiceDate.transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    end: buzzServiceDate.transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
     accounts: z.array(
       z.object({
         accountType: buzzAccountTypeFromApiValueSchema,

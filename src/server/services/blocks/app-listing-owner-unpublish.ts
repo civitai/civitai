@@ -118,6 +118,24 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   // per-app schema in a DIFFERENT DATABASE and records the fact here. So it must
   // never displace the event that explains a removal, exactly like `message-owner`.
   'purge-user-storage',
+  // The per-listing VISIBILITY LEVEL set by a moderator. NEUTRAL, and not a close call:
+  // `applyVisibility` writes the `visibility` column and nothing else — it re-asserts
+  // `status` in its CAS `WHERE` but never assigns it. So this event must never displace the
+  // one that explains a removal, which is what `republishOwnListing`'s last-event guard
+  // reads. (It also cannot BE the newest event on a `removed` listing: `removed` is not
+  // level-eligible, so the write is refused there.)
+  'set-visibility',
+  // Writes `content_rating` only. A go-live that floors the rating records this right AFTER
+  // its own status event, so it is routinely the newest event on a listing — and must not
+  // displace the status event underneath it.
+  'rating-change',
+  // Document-store takedown of ONE user-authored shared document. NEUTRAL, not a close
+  // call: it writes nothing in `app_listings` — it changes a row in the app's document
+  // store, in a different database, and records the fact here.
+  'storage-doc-hide',
+  'storage-doc-unhide',
+  'storage-doc-delete',
+  'storage-doc-dismiss',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

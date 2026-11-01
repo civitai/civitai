@@ -15,11 +15,12 @@ import type { NsfwLevel } from '~/server/common/enums';
 import {
   getBrowsingLevelLabel,
   getIsSafeBrowsingLevel,
-  nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { useImageStore } from '~/store/image.store';
 import classes from './ImageGuard.module.css';
+import { isViewer } from '~/utils/is-viewer';
+import { isImageGuardNsfw } from '~/components/ImageGuard/image-guard-level';
 
 type ImageProps = {
   id: number;
@@ -103,8 +104,8 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   );
 
   const userId = image.userId ?? image.user?.id;
-  const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
-  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, nsfwLevel);
+  const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || isViewer(currentUser, userId));
+  const nsfw = isImageGuardNsfw(nsfwLevel);
   const shouldBlur = blurNsfw && !showUnprocessed;
   const safe = !nsfw ? true : !shouldBlur;
   const show = safe || (showConnect ?? showImage);
@@ -287,7 +288,7 @@ function BlurToggle({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
-  const isOwner = !!userId && currentUser?.id === userId;
+  const isOwner = isViewer(currentUser, userId);
   const ownerCanSeeFlag = isOwner && !needsReview;
   const showImageFlag = (currentUser?.isModerator || ownerCanSeeFlag) && imageFlag;
   const imageFlagRight = showImageFlag ? <ImageFlagSection label={imageFlag} /> : undefined;

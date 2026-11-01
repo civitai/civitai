@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Correctness tests for the SQL statement `updateUserProfile` emits for
 // `creatorCardStatsPreferences`.
@@ -81,6 +82,7 @@ vi.mock('~/server/redis/caches', () => ({
   getUserContentOverviewSfw: vi.fn(async () => ({})),
 }));
 
+import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 import { updateUserProfile } from '~/server/services/user-profile.service';
 
 const USER_ID = 4242;
@@ -120,6 +122,7 @@ beforeEach(() => {
     meta: {},
     settings: {},
     publicSettings: {},
+    cosmetics: [],
     profile: { userId: 1, message: null, coverImage: null },
   });
   mockDb.user.findUnique.mockResolvedValue({ id: 1 });
@@ -192,5 +195,89 @@ describe('updateUserProfile — the creator-card stats preferences statement', (
     await updateUserProfile({ userId: USER_ID });
 
     expect(statements).toHaveLength(0);
+  });
+});
+
+describe('updateUserProfile — a new cover image', () => {
+  it('creates the cover row from client columns only', async () => {
+    redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
+    await updateUserProfile({
+      userId: USER_ID,
+      coverImage: {
+        url: '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33',
+        type: 'image',
+        width: 640,
+        postId: 9_001,
+        index: 2,
+      } as never,
+    });
+
+    const { coverImage } = (tx.userProfile.update.mock.calls[0] as any[])[0].data;
+    expect(coverImage.connectOrCreate.create).toMatchObject({
+      url: '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33',
+      width: 640,
+      userId: USER_ID,
+    });
+    expect(coverImage.connectOrCreate.create).not.toHaveProperty('postId');
+    expect(coverImage.connectOrCreate.create).not.toHaveProperty('index');
+  });
+
+  describe('whose url is owned by another user', () => {
+    const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+    const OTHER = 77;
+    const cover = { url: KEY, type: 'image' } as never;
+
+    for (const slot of ['coverImage', 'sfwCoverImage'] as const) {
+      it(`refuses ${slot} before writing`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: OTHER }]));
+
+        await expect(updateUserProfile({ userId: USER_ID, [slot]: cover })).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+        });
+        expect(tx.userProfile.update).not.toHaveBeenCalled();
+      });
+
+      it(`leaves ${slot} unchecked when it names an existing image by id`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: OTHER }]));
+
+        await updateUserProfile({ userId: USER_ID, [slot]: { id: 5, url: KEY, type: 'image' } });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+
+      it(`writes ${slot} when the caller owns the url`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: USER_ID }]));
+
+        await updateUserProfile({ userId: USER_ID, [slot]: cover });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+    }
+  });
+
+  describe('whose key was issued to another user', () => {
+    const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+    const OTHER = 77;
+    const cover = { url: KEY, type: 'image' } as never;
+    beforeEach(() => {
+      mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
+    });
+    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+
+    for (const slot of ['coverImage', 'sfwCoverImage'] as const) {
+      it(`refuses ${slot} before writing`, async () => {
+        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+
+        await expect(
+          updateUserProfile({ userId: USER_ID, sessionUserId: USER_ID, [slot]: cover })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(tx.userProfile.update).not.toHaveBeenCalled();
+      });
+
+      it(`writes ${slot} when that user saved it for the profile`, async () => {
+        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+
+        await updateUserProfile({ userId: USER_ID, sessionUserId: OTHER, [slot]: cover });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+    }
   });
 });

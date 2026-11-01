@@ -14,7 +14,7 @@ import {
   type WorkflowCallback,
   type WorkflowStepTemplate,
   type WorkflowTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
@@ -23,9 +23,10 @@ import {
   blobIdFromAir,
   describeSubmitError,
   isFlux2,
+  resolveCurrencies,
   type OrchestratorClient,
 } from './orchestrator-core';
-import type { ExtraParamField } from '$lib/data/trainingModels';
+import { isProdigy, MAX_NON_PRODIGY_LR, type ExtraParamField } from '$lib/data/trainingModels';
 import {
   canDeleteRun,
   CIVITAI_TAG,
@@ -36,14 +37,25 @@ import {
   type TrainingStudioMeta,
   workflowToRow,
 } from '$lib/data/trainingRows';
-import { EXTRA_PARAM_FIELDS, TARGET_STEPS } from '$lib/data/trainingModels';
+import {
+  EXTRA_PARAM_FIELDS,
+  TARGET_STEPS,
+  ecosystemAllowsCustomBase,
+  ecosystemTakesSampleImages,
+  ecosystemTrainsPairs,
+  isRetiredBaseAir,
+} from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
+import type { TrainingTextCheck } from '$lib/training-text';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
  *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
 export interface TrainingItem {
   air: string;
   caption: string;
+  /** Edit training only: where the blob sits in the dataset AI-Toolkit reads — `control_1/<name>` for a
+   *  pair's starting image, `main/<name>` (same name, captioned with the instruction) for its result. */
+  path?: string;
 }
 
 /** Everything the client assembles for one training run. Params arrive as the numbers the orchestrator
@@ -80,7 +92,13 @@ export interface TrainingRunInput {
   flipAugmentation?: boolean;
   trigger: string;
   items: TrainingItem[];
+  /** An edit LoRA: `items` are before/after pairs placed by `path`, sent with `isEditTraining`. Only
+   *  for `ecosystemTrainsPairs`. */
+  editTraining?: boolean;
   prompts: string[];
+  /** Input images the samples are rendered from (edit LoRAs), index-aligned to `prompts`. Only for
+   *  `ecosystemTakesSampleImages`; omit for text-only samples. */
+  sourceImages?: string[];
   /** A previous checkpoint's blob-reference AIR to continue training from ("keep training"); omit for fresh. */
   continueFrom?: string;
   /** Which Buzz accounts to charge, in priority order (the user's choice on Review). Validated + defaulted
@@ -98,19 +116,10 @@ export interface SubmitOptions {
   traceMode?: string;
 }
 
-// Real-spend wallets (Buzz), same set the whatif quotes against. Also the default when the client sends
+// Real-spend wallets (Buzz), same set the whatif quotes against. The default when the client sends
 // nothing valid.
 const CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
-// The Buzz accounts a training run may draw from — the caller's `currencies` is filtered to this set so a
-// tampered/garbage body can't send an arbitrary account to the orchestrator.
-const ALLOWED_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue', 'green'];
-
-function resolveCurrencies(input?: string[]): BuzzClientAccount[] {
-  const picked = (input ?? []).filter((c): c is BuzzClientAccount =>
-    ALLOWED_CURRENCIES.includes(c as BuzzClientAccount)
-  );
-  return picked.length ? picked : CURRENCIES;
-}
+const runCurrencies = (input?: string[]) => resolveCurrencies(input, CURRENCIES);
 
 /** Identity of the blob an item's `air` names, for dedupe. Keys are case-insensitive base32. */
 export function trainingBlobKey(air: string): string {
@@ -132,16 +141,22 @@ function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unk
  *  data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
  *  minimal SDK type doesn't declare — the same cast-past-the-type the whatif and the main app's builders use. */
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
-  // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice.
+  // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice. An
+  // edit dataset places items by path instead, where one starting image may serve several pairs.
   const seen = new Set<string>();
   const items = run.items.filter((item) => {
-    const key = trainingBlobKey(item.air);
+    const key = item.path ?? trainingBlobKey(item.air);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
   const trainingData = { type: 'blobs', items };
   const optimizerType = run.optimizer.toLowerCase();
+  // Prodigy finds its own step size and expects lr 1 (the main trainer forces it the same way);
+  // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0: TE off.
+  const prodigy = isProdigy(run.optimizer);
+  const lr = prodigy ? 1 : run.unetLr;
+  const textEncoderLr = prodigy && run.textEncoderLr > 0 ? 1 : run.textEncoderLr;
 
   const step = isFlux2(run.engine)
     ? {
@@ -171,12 +186,13 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           ...(run.customModel || run.model ? { model: run.customModel || run.model } : {}),
           ...(run.modelVariant ? { modelVariant: run.modelVariant } : {}),
           ...(run.version ? { version: run.version } : {}),
+          ...(run.editTraining ? { isEditTraining: true } : {}),
           steps: run.steps,
           epochs: run.epochs,
           batchSize: run.batchSize,
-          lr: run.unetLr,
-          textEncoderLr: run.textEncoderLr,
-          trainTextEncoder: run.textEncoderLr > 0,
+          lr,
+          textEncoderLr,
+          trainTextEncoder: textEncoderLr > 0,
           lrScheduler: run.lrScheduler,
           optimizerType,
           networkDim: run.networkDim,
@@ -191,6 +207,7 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           samples: {
             prompts:
               run.ecosystem === 'yue2' ? run.prompts.map(formatYue2SamplePrompt) : run.prompts,
+            ...(run.sourceImages?.length ? { sourceImages: run.sourceImages } : {}),
           },
         },
       };
@@ -211,7 +228,7 @@ export async function submitTraining(
 ): Promise<string> {
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
-  const { data, error } = await submitWorkflow({
+  const { data, error, response } = await submitWorkflow({
     client,
     body: {
       tags: slug
@@ -219,17 +236,43 @@ export async function submitTraining(
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [buildStep(run, traceMode)],
-      currencies: resolveCurrencies(run.currencies),
+      currencies: runCurrencies(run.currencies),
       ...(callbacks ? { callbacks } : {}),
     },
     query: { wait: 0 },
   });
-  if (!data?.id) throw new Error(`training submit failed: ${describeSubmitError(error)}`);
+  if (!data?.id) throw new TrainingSubmitError(describeSubmitError(error), response?.status);
   return data.id;
+}
+
+// Unauthorized (expired token), request timeout, rate limited.
+const TRANSIENT_CLIENT_STATUSES = new Set([401, 408, 429]);
+
+/** The orchestrator did not accept a submit. `status` is its HTTP status, absent when it never answered. */
+export class TrainingSubmitError extends Error {
+  readonly reason: string;
+  readonly status: number | undefined;
+  constructor(reason: string, status: number | undefined) {
+    super(`training submit failed: ${reason}`);
+    this.reason = reason;
+    this.status = status;
+  }
+
+  /** A 4xx is a refusal of this payload that a retry would repeat — except these, which can clear on retry. */
+  get isRefusal(): boolean {
+    if (this.status === undefined || TRANSIENT_CLIENT_STATUSES.has(this.status)) return false;
+    return this.status >= 400 && this.status < 500;
+  }
 }
 
 /** A batch refused before anything was submitted — callers map it to their 400/"bad request" arm. */
 export class TrainingBatchValidationError extends Error {}
+
+export {
+  TrainingTextCheckError,
+  TrainingTextRefusedError,
+  type TrainingTextCheck,
+} from '$lib/training-text';
 
 function fail(field: string, why: string): never {
   throw new TrainingBatchValidationError(`${field} ${why}`);
@@ -277,6 +320,15 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isNonEmptyString(run.lrScheduler))
     fail(`${field}.lrScheduler`, 'must be a non-empty string.');
   if (!isNonEmptyString(run.optimizer)) fail(`${field}.optimizer`, 'must be a non-empty string.');
+  if (!isProdigy(run.optimizer)) {
+    for (const key of ['unetLr', 'textEncoderLr'] as const) {
+      if (run[key] >= MAX_NON_PRODIGY_LR)
+        fail(
+          `${field}.${key}`,
+          `must be less than ${MAX_NON_PRODIGY_LR} for non-Prodigy optimizers.`
+        );
+    }
+  }
   for (const key of OPTIONAL_NON_NEGATIVE_FIELDS) {
     if (run[key] !== undefined && !(isFiniteNumber(run[key]) && run[key] >= 0))
       fail(`${field}.${key}`, 'must be a non-negative number.');
@@ -290,6 +342,11 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
   if (!Array.isArray(run.items) || run.items.length === 0)
     fail(`${field}.items`, 'must be a non-empty array.');
+  if (run.editTraining !== undefined && typeof run.editTraining !== 'boolean')
+    fail(`${field}.editTraining`, 'must be a boolean.');
+  if (run.editTraining) validatePairs(run, field);
+  else if (run.items.some((item) => typeof item === 'object' && item !== null && 'path' in item))
+    fail(`${field}.items`, 'carry a path only for edit training.');
   run.items.forEach((item, i) => {
     if (!item || typeof item !== 'object') fail(`${field}.items[${i}]`, 'must be an object.');
     if (!isNonEmptyString(item.air))
@@ -298,6 +355,15 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   });
   if (!Array.isArray(run.prompts) || run.prompts.some((p) => !isString(p)))
     fail(`${field}.prompts`, 'must be an array of strings.');
+  if (run.sourceImages !== undefined) {
+    if (!Array.isArray(run.sourceImages) || !run.sourceImages.every(isNonEmptyString))
+      fail(`${field}.sourceImages`, 'must be an array of image URLs.');
+    if (isFlux2(run.engine) || !ecosystemTakesSampleImages(run.ecosystem))
+      fail(`${field}.sourceImages`, 'are not supported for this model.');
+    // The orchestrator pairs them by index; a short list would render some samples from nothing.
+    if (run.sourceImages.length !== run.prompts.length)
+      fail(`${field}.sourceImages`, 'must have one image per sample prompt.');
+  }
   for (const key of OPTIONAL_STRING_FIELDS) {
     if (run[key] !== undefined && !isString(run[key])) fail(`${field}.${key}`, 'must be a string.');
   }
@@ -314,8 +380,39 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!run.meta || typeof run.meta !== 'object') fail(`${field}.meta`, 'must be an object.');
   if (run.meta.name !== undefined && !isString(run.meta.name))
     fail(`${field}.meta.name`, 'must be a string.');
+  // A sweep row or restored selection can still carry one; submitting it would bill a run that
+  // trains on the official base.
+  if (run.customModel !== undefined && !ecosystemAllowsCustomBase(run.ecosystem))
+    fail(`${field}.customModel`, 'is not supported for this model.');
+  // A restored selection or sweep row can still name a retired card's base.
+  if (isNonEmptyString(run.model) && isRetiredBaseAir(run.model))
+    fail(`${field}.model`, 'is no longer offered for training.');
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
+}
+
+// `control_1/pair_0001.png`, `main/pair_0001.jpg`: a folder AI-Toolkit reads, then a plain file name.
+const PAIR_PATH = /^(control_1|main)\/([A-Za-z0-9_-]+)\.[A-Za-z0-9]+$/;
+
+/** An edit dataset is pairs: every `main/` result has a `control_1/` starting image of the same name and
+ *  an instruction, and every starting image has its result — an unmatched half would train as nothing. */
+function validatePairs(run: TrainingRunInput, field: string): void {
+  if (isFlux2(run.engine) || !ecosystemTrainsPairs(run.ecosystem))
+    fail(`${field}.editTraining`, 'is not supported for this model.');
+  const sides = { control_1: new Set<string>(), main: new Set<string>() };
+  run.items.forEach((item, i) => {
+    const match = typeof item?.path === 'string' ? PAIR_PATH.exec(item.path) : null;
+    if (!match) fail(`${field}.items[${i}].path`, 'must be control_1/<name> or main/<name>.');
+    const side = sides[match[1] as keyof typeof sides];
+    if (side.has(match[2]!)) fail(`${field}.items[${i}].path`, 'names a pair twice.');
+    side.add(match[2]!);
+    if (match[1] === 'main' && !(typeof item.caption === 'string' && item.caption.trim()))
+      fail(`${field}.items[${i}].caption`, 'must hold the instruction.');
+  });
+  const unmatched =
+    [...sides.main].find((n) => !sides.control_1.has(n)) ??
+    [...sides.control_1].find((n) => !sides.main.has(n));
+  if (unmatched !== undefined) fail(`${field}.items`, `pair ${unmatched} is missing an image.`);
 }
 
 /** Refuse a custom base model whose weights aren't SafeTensor — the rule the main app's
@@ -340,17 +437,36 @@ async function assertCustomModelTrainable(
     );
 }
 
+export interface SubmittedBatch {
+  workflowIds: string[];
+  /** Why the runs after `workflowIds` did not start; set only when some runs landed and a later one failed. */
+  failure?: string;
+}
+
+/** A submit failure as the user should read it: the orchestrator's own reason when it gave one. */
+export function submitFailureReason(err: unknown): string {
+  return err instanceof TrainingSubmitError ? err.reason : 'the training service did not respond';
+}
+
 /** Submit a batch of runs, one workflow each, in series, stopping at the first failure. If nothing
  *  landed the failure is rethrown (the whole batch is safe to retry); if some runs already landed
- *  their ids are returned instead, so the already-charged runs are never re-submitted. */
+ *  their ids are returned with the failure's reason, so the already-charged runs are never re-submitted. */
 export async function submitTrainingBatch(
   client: OrchestratorClient,
   runs: TrainingRunInput[] | undefined,
-  opts: SubmitOptions & { onRunError?: (err: unknown) => void } = {}
-): Promise<string[]> {
+  opts: SubmitOptions & {
+    checkText: TrainingTextCheck;
+    onRunError?: (err: unknown, runIndex: number) => void;
+  }
+): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+
+  // Every run's trigger word is checked before ANY submit, so a refused batch never part-charges. A
+  // sweep repeats one trigger word across runs; each distinct one is checked once.
+  for (const triggerWord of new Set(runs.map((run) => run.trigger)))
+    await opts.checkText({ triggerWord });
 
   // All custom-model checks happen before ANY submit, so a refused batch never part-charges.
   const customModels = new Map<string, string>();
@@ -364,10 +480,11 @@ export async function submitTrainingBatch(
   try {
     for (const run of runs) workflowIds.push(await submitTraining(client, run, opts));
   } catch (err) {
-    opts.onRunError?.(err);
+    opts.onRunError?.(err, workflowIds.length);
     if (workflowIds.length === 0) throw err;
+    return { workflowIds, failure: submitFailureReason(err) };
   }
-  return workflowIds;
+  return { workflowIds };
 }
 
 type EpochOutput = {
@@ -377,11 +494,25 @@ type EpochOutput = {
 
 // An epoch's trained-LoRA reference (`continueFrom`, the generate hand-off): the orchestrator resolves it
 // as a LoRA only when the AIR carries the `lora` type and the run's real ecosystem — `other:other` is
-// rejected with "continueFrom must reference a LoRA resource". Built with @civitai/client's `Air` (the same
+// rejected with "continueFrom must reference a LoRA resource". Built with @civitai/orchestration-client's `Air` (the same
 // builder the main app's stringifyAIR wraps) for a blob-backed epoch:
 // urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>.
 export const loraBlobAir = (ecosystem: string, blobKey: string) =>
   Air.stringify({ ecosystem, type: 'lora', source: 'orchestrator', id: 'blob', version: blobKey });
+
+// The orchestrator requires `continueFrom`'s AIR ecosystem to equal its own name for the training model's
+// ecosystem, which differs from the step's `ecosystem` input for these — sending the input name fails with
+// "continueFrom ecosystem 'mossImage' must match the training model ecosystem 'moss'". Every other
+// ai-toolkit ecosystem in the catalog passes as-is (checked against the orchestrator's whatif, 2026-10-21).
+const CONTINUE_FROM_ECOSYSTEM: Record<string, string> = {
+  flux2klein: 'flux2',
+  flux3klein: 'flux3',
+  mossImage: 'moss',
+  wan: 'wanvideo',
+};
+
+const continueFromAir = (ecosystem: string, blobKey: string) =>
+  loraBlobAir(CONTINUE_FROM_ECOSYSTEM[ecosystem] ?? ecosystem, blobKey);
 
 export interface ContinueOpts {
   workflowId: string;
@@ -398,7 +529,7 @@ async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
   { callbacks, traceMode = 'events' }: SubmitOptions
-): Promise<{ body: WorkflowTemplate; steps: number | undefined }> {
+): Promise<{ body: WorkflowTemplate; steps: number | undefined; triggerWord: string }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
   const { data: wf, error: getError } = await getWorkflow({
     client,
@@ -422,7 +553,7 @@ async function buildContinuation(
   const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
-  const continueFrom = loraBlobAir(ecosystem, modelKey);
+  const continueFrom = continueFromAir(ecosystem, modelKey);
 
   const origEpochs = Number(input.epochs) || 10;
   const origSteps = Number(input.steps) || 0;
@@ -449,8 +580,13 @@ async function buildContinuation(
   const continuedInput = {
     engine: 'ai-toolkit',
     ecosystem: input.ecosystem,
+    // The source's base pin (see buildStep): without it an Illustrious/Pony/custom-SDXL run continues
+    // on the ecosystem's default base and publishes as that base.
+    ...(input.model ? { model: input.model } : {}),
     ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
     ...(input.version ? { version: input.version } : {}),
+    // Without it the pair dataset would continue as a plain LoRA dataset.
+    ...(input.isEditTraining === true ? { isEditTraining: true } : {}),
     ...(steps ? { steps } : {}),
     epochs: addEpochs,
     batchSize: input.batchSize,
@@ -482,10 +618,11 @@ async function buildContinuation(
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [continuedStep],
-      currencies: resolveCurrencies(opts.currencies),
+      currencies: runCurrencies(opts.currencies),
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
+    triggerWord: String(input.triggerWord ?? ''),
   };
 }
 
@@ -493,11 +630,16 @@ async function buildContinuation(
 export async function continueTraining(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  submitOpts: SubmitOptions = {}
+  submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
-  const { body } = await buildContinuation(client, opts, submitOpts);
-  const { data, error } = await submitWorkflow({ client, body, query: { wait: 0 } });
-  if (!data?.id) throw new Error(`keep training: submit failed (${describeSubmitError(error)})`);
+  const { body, triggerWord } = await buildContinuation(client, opts, submitOpts);
+  // The source run may predate the check, so its trigger word is checked again before it trains again.
+  await submitOpts.checkText({ triggerWord });
+  const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
+  if (!data?.id)
+    throw new Error(
+      `keep training: submit failed (${describeSubmitError(error, response?.status)})`
+    );
   return data.id;
 }
 
@@ -509,8 +651,9 @@ export async function continueTrainingWhatIf(
   submitOpts: SubmitOptions = {}
 ): Promise<{ cost: number | null; steps: number | undefined }> {
   const { body, steps } = await buildContinuation(client, opts, submitOpts);
-  const { data, error } = await submitWorkflow({ client, body, query: { whatif: true } });
-  if (!data) throw new Error(`keep training quote failed: ${describeSubmitError(error)}`);
+  const { data, error, response } = await submitWorkflow({ client, body, query: { whatif: true } });
+  if (!data)
+    throw new Error(`keep training quote failed: ${describeSubmitError(error, response?.status)}`);
   return { cost: data.cost?.total ?? null, steps };
 }
 

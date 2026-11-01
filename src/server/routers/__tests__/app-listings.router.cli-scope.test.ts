@@ -64,6 +64,7 @@ const {
   mockGetAssetScanStatuses,
   mockSetListingIcon,
   mockSetListingCover,
+  mockSetListingRedMedia,
   mockAddListingScreenshot,
   mockReorderListingScreenshots,
   mockUpdateListingScreenshotCaption,
@@ -86,6 +87,7 @@ const {
   mockGetAssetScanStatuses: vi.fn(async () => []),
   mockSetListingIcon: vi.fn(async () => ({ ok: true })),
   mockSetListingCover: vi.fn(async () => ({ ok: true })),
+  mockSetListingRedMedia: vi.fn(async () => ({ ok: true })),
   mockAddListingScreenshot: vi.fn(async () => ({ ok: true })),
   mockReorderListingScreenshots: vi.fn(async () => ({ ok: true })),
   mockUpdateListingScreenshotCaption: vi.fn(async () => ({ ok: true })),
@@ -114,6 +116,7 @@ vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
   getAssetScanStatuses: mockGetAssetScanStatuses,
   setListingIcon: mockSetListingIcon,
   setListingCover: mockSetListingCover,
+  setListingRedMedia: mockSetListingRedMedia,
   addListingScreenshot: mockAddListingScreenshot,
   reorderListingScreenshots: mockReorderListingScreenshots,
   updateListingScreenshotCaption: mockUpdateListingScreenshotCaption,
@@ -176,6 +179,13 @@ const PROCS: { name: string; input: unknown; mock: ReturnType<typeof vi.fn> }[] 
   { name: 'getAssetScanStatuses', input: { imageIds: [1] }, mock: mockGetAssetScanStatuses },
   { name: 'setIcon', input: { listingId: 'lst_1', imageId: 1 }, mock: mockSetListingIcon },
   { name: 'setCover', input: { listingId: 'lst_1', imageId: 1 }, mock: mockSetListingCover },
+  // The civitai.red icon / cover override (`civitai app listing set-icon|set-cover --red`,
+  // `clear-red`). RED at `origin/main` for the CLI-token arm: it was un-annotated there.
+  {
+    name: 'setRedMedia',
+    input: { listingId: 'lst_1', slot: 'cover', imageId: 1 },
+    mock: mockSetListingRedMedia,
+  },
   {
     name: 'addScreenshot',
     input: { listingId: 'lst_1', imageId: 1 },

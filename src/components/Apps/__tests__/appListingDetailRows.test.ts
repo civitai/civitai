@@ -8,9 +8,8 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 /**
  * The listing detail's "Details" accordion ROW MODEL (blocking `unit` project).
  *
- * The browser `component` project is not run by CI and loads no CSS, so nothing there
- * can be the gate for which rows exist, in what order, or which rows the `preview`
- * posture drops. That decision is pure, so it is pinned here.
+ * The browser `component` project loads no CSS, and which rows exist, in what order,
+ * and which rows the `preview` posture drops is a pure decision, so it is pinned here.
  *
  * `formatDate` is INJECTED throughout — a fixed marker rather than the real dayjs
  * formatter — so these assertions are about ORDER and OMISSION and cannot go red on a

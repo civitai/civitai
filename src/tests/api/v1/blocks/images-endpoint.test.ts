@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TRPCError } from '@trpc/server';
 
 import {
   sfwBrowsingLevelsFlag,
@@ -7,6 +8,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
+import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
 
 /**
  * Endpoint-wiring security tests for /api/v1/blocks/images (the sibling of
@@ -22,15 +24,23 @@ import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
  * search service is mocked so no Prisma/Meili/Flipt is loaded.
  */
 
-const { mockRunImageSearch, mockCheckRateLimit } = vi.hoisted(() => ({
-  mockRunImageSearch: vi.fn(),
-  mockCheckRateLimit: vi.fn(),
-}));
+const { mockRunImageSearch, mockCheckRateLimit, mockGetHeldGalleryLevel, mockWithoutHeld } =
+  vi.hoisted(() => ({
+    mockWithoutHeld: vi.fn(),
+    mockRunImageSearch: vi.fn(),
+    mockCheckRateLimit: vi.fn(),
+    mockGetHeldGalleryLevel: vi.fn(),
+  }));
 
 const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined };
 
 vi.mock('~/server/services/image-search.service', () => ({
   runImageSearch: mockRunImageSearch,
+  withoutHeldImages: mockWithoutHeld,
+}));
+
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: mockGetHeldGalleryLevel,
 }));
 
 // Per-token catalog rate limiter — mocked so the existing maturity-clamp tests
@@ -70,7 +80,7 @@ vi.mock('~/server/utils/pagination-helpers', () => ({
 
 // Bulkhead: always grant a slot.
 vi.mock('~/server/utils/request-bulkhead', () => ({
-  acquireBulkheadSlot: () => () => {},
+  acquireBulkheadSlot: () => () => undefined,
   BulkheadFullError: class extends Error {},
   HEAVY_REQUEST_CONCURRENCY: 10,
 }));
@@ -203,6 +213,28 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(input.data).not.toHaveProperty('someJunk');
   });
 
+  it.each([{ ids: '1,2' }, { imageId: '2' }])(
+    'leaves out held images from a search by image id (%o)',
+    async (query) => {
+      claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+      const found = [{ id: 1 }, { id: 2 }];
+      mockRunImageSearch.mockResolvedValue({ items: found, nextCursor: undefined });
+      mockWithoutHeld.mockResolvedValue([{ id: 1 }]);
+
+      const res = await invoke(query);
+
+      expect(mockWithoutHeld).toHaveBeenCalledWith(found);
+      expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
+    }
+  );
+
+  it('does not filter a search that names no image id', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    await invoke({ username: 'someone' });
+
+    expect(mockWithoutHeld).not.toHaveBeenCalled();
+  });
+
   it('forwards the selector params (type/limit/sort/modelId/postId/username)', async () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
     await invoke({
@@ -333,6 +365,63 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     const headers = (res as unknown as { headers: Record<string, unknown> }).headers;
     expect(headers['Retry-After']).toBeUndefined();
   });
+
+  // `runImageSearch` rejects a malformed feed-offset cursor this way; the route must keep the 400.
+  it('[invariant] keeps a BAD_REQUEST from the search (invalid feed cursor) as a 400', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunImageSearch.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid cursor: out of range "-5"' })
+    );
+
+    const res = await invoke({ cursor: '-5' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid cursor: out of range "-5"', code: 'BAD_REQUEST' });
+  });
+});
+
+describe('/api/v1/blocks/images — a held model or version', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, domain: 'red' });
+  });
+  afterEach(() => mockGetHeldGalleryLevel.mockReset());
+
+  it.each([
+    ['modelId', { modelId: '5' }, { modelId: 5 }],
+    ['modelVersionId', { modelVersionId: '50' }, { modelVersionId: 50 }],
+    ['postId', { postId: '500' }, { postId: 500 }],
+  ])('serves ?%s= only at the held level', async (_name, query, selector) => {
+    mockGetHeldGalleryLevel.mockResolvedValue(1);
+
+    const res = await invoke(query);
+
+    expect(res.statusCode).toBe(200);
+    expect(mockGetHeldGalleryLevel).toHaveBeenCalledWith(expect.objectContaining(selector));
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(1);
+  });
+
+  it('returns an empty page, searching nothing, when the token allows no held level', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: 28, domain: 'red' });
+    mockGetHeldGalleryLevel.mockResolvedValue(1);
+
+    const res = await invoke({ modelVersionId: '50' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  it('leaves an unheld model at the token level', async () => {
+    mockGetHeldGalleryLevel.mockResolvedValue(undefined);
+
+    await invoke({ modelId: '5' });
+
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(allBrowsingLevelsFlag);
+  });
 });
 
 // ── Batch by id (`?ids=`) — civitai/civitai-app-starters#429 ────────────────
@@ -427,4 +516,55 @@ describe('/api/v1/blocks/images — ?ids= batch', () => {
     expect(res.statusCode).toBe(429);
     expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
+});
+
+describe('/api/v1/blocks/images — reactTicket (app reactions provenance)', () => {
+  const SECRET = 'images-endpoint-secret';
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('NEXTAUTH_SECRET', SECRET);
+    regionBox.restricted = false;
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    mockRunImageSearch.mockResolvedValue({
+      items: [{ id: 501 }, { id: 502 }],
+      nextCursor: undefined,
+    });
+  });
+
+  it('attaches a ticket per item that verifies for exactly (that image, this app, this viewer)', async () => {
+    claimsBox.claims = fakeClaims({ sub: 'user:42', appBlockId: 'apb_test' });
+    const res = await invoke({});
+    expect(res.statusCode).toBe(200);
+    const items = res.body.items as Array<{ id: number; reactTicket?: string }>;
+    expect(items.map((i) => i.id)).toEqual([501, 502]);
+    for (const item of items) {
+      const subject = {
+        entityType: 'image' as const,
+        entityId: item.id,
+        appBlockId: 'apb_test',
+        sub: 'user:42',
+      };
+      expect(verifyReactTicket(item.reactTicket, subject, { secret: SECRET }).ok).toBe(true);
+      // Bound to the image: the other item's id does not verify with this ticket.
+      expect(
+        verifyReactTicket(
+          item.reactTicket,
+          { ...subject, entityId: item.id === 501 ? 502 : 501 },
+          { secret: SECRET }
+        ).ok
+      ).toBe(false);
+    }
+  });
+
+  it('attaches NO ticket for an anonymous token', async () => {
+    claimsBox.claims = fakeClaims({ sub: 'anon' });
+    const res = await invoke({});
+    expect(res.statusCode).toBe(200);
+    for (const item of res.body.items) expect(item).not.toHaveProperty('reactTicket');
+  });
+});
+
+// The ticket cases stub a signing secret; hand it back so no case added later inherits one.
+afterEach(() => {
+  vi.unstubAllEnvs();
 });

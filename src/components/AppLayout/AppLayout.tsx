@@ -17,7 +17,7 @@ import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
-import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
+import { NavAnnouncementSlot } from '~/components/AppLayout/NavAnnouncementSlot/NavAnnouncementSlot';
 import { VerifyEmailBanner } from '~/components/User/VerifyEmailBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
@@ -26,6 +26,28 @@ import { useTosReacceptancePrompt } from '~/hooks/useTosReacceptancePrompt';
 
 let shownReadonly = false;
 const readonlyAlertCutoff = Date.now() - 1000 * 60 * 30; // 30 minutes
+
+/** Site-wide prompts. A layout that renders without `AppLayout` must call this itself. */
+export function useAppLayoutPrompts() {
+  const isMounted = useIsMounted();
+  const features = useFeatureFlags();
+  useRegionWarning();
+  useRegionRedirectDetection();
+  useToSUpdateModal();
+  useTosReacceptancePrompt();
+
+  useEffect(() => {
+    if (isMounted() && !features.canWrite && !shownReadonly) {
+      const lastReadOnly = Number(localStorage.getItem('lastReadOnlyNotice') ?? '0');
+      if (lastReadOnly < readonlyAlertCutoff) {
+        openReadOnlyModal();
+        localStorage.setItem('lastReadOnlyNotice', Date.now().toString());
+        shownReadonly = true;
+      }
+    }
+  }, [isMounted, features.canWrite]);
+}
+
 export function AppLayout({
   children,
   renderSearchComponent,
@@ -58,23 +80,7 @@ export function AppLayout({
   notFound?: boolean;
   announcements?: boolean;
 }) {
-  const isMounted = useIsMounted();
-  const features = useFeatureFlags();
-  useRegionWarning();
-  useRegionRedirectDetection();
-  useToSUpdateModal();
-  useTosReacceptancePrompt();
-
-  useEffect(() => {
-    if (isMounted() && !features.canWrite && !shownReadonly) {
-      const lastReadOnly = Number(localStorage.getItem('lastReadOnlyNotice') ?? '0');
-      if (lastReadOnly < readonlyAlertCutoff) {
-        openReadOnlyModal();
-        localStorage.setItem('lastReadOnlyNotice', Date.now().toString());
-        shownReadonly = true;
-      }
-    }
-  }, [isMounted, features.canWrite]);
+  useAppLayoutPrompts();
 
   return (
     <div className="flex h-full flex-1 flex-col">
@@ -140,14 +146,14 @@ export function MainContent({
         {subNav || pageNav ? (
           <SubNav>
             <VerifyEmailBanner />
-            <RewardsBonusBanner />
+            <NavAnnouncementSlot />
             {subNav}
             {pageNav}
           </SubNav>
         ) : (
           <>
             <VerifyEmailBanner />
-            <RewardsBonusBanner />
+            <NavAnnouncementSlot />
           </>
         )}
         {announcements && <Announcements className="mb-3" />}
@@ -161,14 +167,14 @@ export function MainContent({
         {subNav || pageNav ? (
           <SubNav>
             <VerifyEmailBanner />
-            <RewardsBonusBanner />
+            <NavAnnouncementSlot />
             {subNav}
             {pageNav}
           </SubNav>
         ) : (
           <>
             <VerifyEmailBanner />
-            <RewardsBonusBanner />
+            <NavAnnouncementSlot />
           </>
         )}
         {children}

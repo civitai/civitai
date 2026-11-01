@@ -1,7 +1,12 @@
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { recordImageDeliveryBustFailure } from '~/server/prom/image-delivery.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { Prisma } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 // The row shape returned by the internal image-delivery endpoint. `hideMeta` gates whether
@@ -49,18 +54,27 @@ const normalizeMimeType = (mimeType: string | null | undefined): string | null =
   return trimmed.length > 0 ? trimmed : null;
 };
 
-// Cache key for the `url -> {id, url, hideMeta, type, mimeType}` lookup. The origin query is
-// `WHERE url = $1`, which is CASE- and WHITESPACE-SENSITIVE, so — unlike the citext tag
+// Cache key for the `url -> {id, url, hideMeta, type, mimeType}` lookup. The origin query
+// matches `url` exactly (CASE- and WHITESPACE-SENSITIVE), so — unlike the citext tag
 // cache — the key must be the EXACT url string, never lowercased or trimmed. Trimming or
 // case-folding here would let a different url collide onto another image's cached row and
 // serve the wrong { id, hideMeta, type, mimeType }.
 const getImageDeliveryMetadataCacheKey = (url: string) =>
   `${REDIS_KEYS.CACHES.IMAGE_DELIVERY_METADATA}:${url}` as `${typeof REDIS_KEYS.CACHES.IMAGE_DELIVERY_METADATA}:${string}`;
 
-// Origin read: the single-row `Image WHERE url = $1` lookup, with the endpoint's existing
-// dbRead -> dbWrite (primary) fallback preserved so a read-replica error still resolves.
-// `type`/`mimeType` are additional COLUMNS on the row already being fetched for `hideMeta` —
-// same single indexed lookup, no extra round-trip.
+const BUST_ATTEMPTS = 2;
+const BUST_DEADLINE_MS = 1_000;
+
+// Omit rows whose source is known gone (ingestion NotFound) so the caller checks the original
+// itself instead of converting it. Rows with hideMeta stay: "no row" makes the caller serve
+// with metadata visible.
+const deliverableSource = Prisma.sql`NOT (
+  ingestion = ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus" AND NOT "hideMeta"
+)`;
+
+// Origin read, with the dbRead -> dbWrite (primary) fallback so a read-replica error still
+// resolves. Several rows can share a url (a copied image keeps its source's url); rows sharing a
+// url resolve to the most restrictive setting, hence the ORDER BY.
 const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
   const [image] = await dbRead.$queryRaw<ImageDeliveryMetadataRow[]>`
       SELECT
@@ -71,6 +85,8 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
         "mimeType"
       FROM "Image"
       WHERE url = ${url}
+        AND ${deliverableSource}
+      ORDER BY "hideMeta" DESC
       LIMIT 1
     `.catch(() => {
     dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
@@ -83,6 +99,8 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
           "mimeType"
         FROM "Image"
         WHERE url = ${url}
+          AND ${deliverableSource}
+        ORDER BY "hideMeta" DESC
         LIMIT 1
       `;
   });
@@ -100,12 +118,12 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 
 // Read-through cache over the near-immutable url -> {id, url, hideMeta, type, mimeType}
 // lookup — the hot caller of the highest-volume DB query in the profile
-// (`Image WHERE url = $1`). Output matches the raw query field-for-field, with the single
-// documented normalization of `mimeType` (see `normalizeMimeType`).
-// Bucket A: DB total-exec-time / call-count reduction only,
-// no behaviour change — the DB runs ~4% CPU, so this is a pod-neutral cost/margin win, NOT a
-// capacity win. This offloads ONLY the image-delivery endpoint's calls; the same query has
-// other callers (feed hydration, scanning) that are untouched.
+// (`Image WHERE url = $1`). The cached value is the origin query's row, with only `mimeType`
+// normalized (see `normalizeMimeType`).
+// Bucket A: the cache reduces DB total-exec-time / call-count only — the DB runs ~4% CPU, so
+// this is a pod-neutral cost/margin win, NOT a capacity win. This offloads ONLY the
+// image-delivery endpoint's calls; the same query has other callers (feed hydration,
+// scanning) that are untouched.
 //
 // Fail-open like `fetchThroughCache`: on any Redis error we degrade to the origin query
 // (this is a hot path — ~9.2 req/s at peak — so a Redis stall must not 500). No distributed
@@ -118,14 +136,15 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 // shrinks invalidation to writers that change an EXISTING image's cached shape.
 //
 // STALENESS: `hideMeta` can flip. The privacy-sensitive direction (false -> true, the owner
-// hiding their prompt) is busted explicitly in `updatePostImage` (co-located with its
-// existing `purgeResizeCache`), so an app-path flip takes effect at once. An out-of-band
+// hiding their prompt) is busted explicitly in `updatePostImage` (first step of
+// `invalidateHiddenImageMetadata`), so an app-path flip takes effect at once. An out-of-band
 // flip (mod tooling / direct DB) lags at most TTL; because the delivered image BYTES are
 // still separately purged/CDN-managed and this value only gates embedded-metadata
 // visibility, a bounded ≤TTL window is acceptable. TTL is deliberately short (3 min) to keep
 // that window tight. `type`/`mimeType` need no bust of their own: they are set when the
 // media row is created and no writer in this repo updates them afterwards, so the existing
 // hideMeta bust plus the TTL already covers every way a cached entry can go stale.
+// `ingestion` moving to NotFound is not busted either; a cached row lingers at most TTL.
 export const getCachedImageDeliveryMetadata = async (
   url: string
 ): Promise<ImageDeliveryMetadata | null> => {
@@ -153,11 +172,37 @@ export const getCachedImageDeliveryMetadata = async (
 
 // Bust a single url key. Hard delete (not a staleness reset): because we never cache
 // negatives, deleting the key means the next read re-queries and re-populates the fresh row.
-// Called by `updatePostImage` when `hideMeta` changes.
+// Called by `updatePostImage` when `hideMeta` changes, inside the user's save: so it is bounded by
+// one deadline across both attempts, and it never throws (the TTL still bounds a missed bust).
 export const bustImageDeliveryMetadataCache = async (url: string) => {
-  try {
-    await redis.del(getImageDeliveryMetadataCacheKey(url));
-  } catch {
-    // Best-effort bust; the TTL bounds any residual staleness.
+  const key = getImageDeliveryMetadataCacheKey(url);
+  const deadline = Date.now() + BUST_DEADLINE_MS;
+  const timedOut = new Error(`bust timed out after ${BUST_DEADLINE_MS}ms`);
+  let lastError: unknown = timedOut;
+  for (let attempt = 1; attempt <= BUST_ATTEMPTS; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    try {
+      const deleted = await withTimeoutFallback(
+        redis.del(key).then(() => true),
+        remaining,
+        false
+      );
+      if (deleted) return;
+      lastError = timedOut;
+    } catch (error) {
+      lastError = error;
+    }
   }
+
+  recordImageDeliveryBustFailure();
+  await logToAxiom({
+    type: 'warning',
+    name: 'image-delivery-metadata-bust',
+    message: 'image-delivery metadata cache bust failed after retry',
+    imageKey: url,
+    error: safeError(lastError),
+  }).catch(() => {
+    // swallow — best effort logging
+  });
 };

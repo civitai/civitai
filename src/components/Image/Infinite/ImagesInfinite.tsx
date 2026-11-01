@@ -49,6 +49,7 @@ type ImagesInfiniteProps = {
   filterType?: 'images' | 'videos';
   showAds?: boolean;
   showEmptyCta?: boolean;
+  emptyMessage?: string;
   disableStoreFilters?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
@@ -68,6 +69,7 @@ export function ImagesInfiniteContent({
   filterType = 'images',
   showAds,
   showEmptyCta,
+  emptyMessage,
   disableStoreFilters = false,
   ...imageProviderProps
 }: ImagesInfiniteProps) {
@@ -210,7 +212,6 @@ export function ImagesInfiniteContent({
       maxAttempts={SEARCH_RETRY_MAX_ATTEMPTS}
       onRetry={handleRetry}
       debugMode={debugRetryActive}
-      browsingLevel={browsingLevel}
       countdownActive={countdownActive}
       isInitialLoad={imagesCount === 0}
       slow={isSlow}
@@ -264,7 +265,7 @@ export function ImagesInfiniteContent({
           {!hasNextPage && !isRetrying && showEof && <EndOfFeed />}
         </div>
       ) : (
-        <NoContent py="lg">
+        <NoContent py="lg" message={emptyMessage}>
           {showEmptyCta && (
             <Group>
               <Link href="/posts/create">

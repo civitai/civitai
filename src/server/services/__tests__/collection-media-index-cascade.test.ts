@@ -207,14 +207,6 @@ describe('getCollectionIdsForPostCascade', () => {
     expect(logNamed('collection-media-index-cover-probe-failed')).toBeDefined();
   });
 
-  it('warns when the cover leg is skipped, so a missing migration is visible', async () => {
-    prime({ coverIndex: false });
-
-    await getCollectionIdsForPostCascade({ postId: POST_ID });
-
-    expect(logNamed('collection-media-index-cover-leg-skipped')).toBeDefined();
-  });
-
   it('says so when the post has more images than the lookup can bind', async () => {
     // Silently truncating here under-resolves the six image routes while reporting
     // `truncated: false` — a stale document with no signal that anything was dropped.

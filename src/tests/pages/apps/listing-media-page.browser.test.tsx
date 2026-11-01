@@ -4,10 +4,11 @@ import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 import { useRouter } from 'next/router';
+import { NsfwLevel } from '~/server/common/enums';
 
 /**
  * On-site listing-media OWNER editor (`ListingMediaEditor`, the "Listing media" tab of
- * `/apps/<appBlockId>/edit`) — render test (browser mode, report-only in Tekton).
+ * `/apps/<appBlockId>/edit`) — render test (browser mode, `Component tests` in CI).
  *
  * Asserts the client wiring: it resolves `appBlockId` → `appListingId`
  * (`getMyListingForApp`), re-hosts the reused `ListingAssetStep` against the
@@ -39,6 +40,9 @@ const state = vi.hoisted(() => ({
     isLoading: false,
     error: null as unknown,
   },
+  // getAssets.useQuery control object: the per-asset levels the rating badges/callout read.
+  // Reset per test to a NO-RAISE read (every level within the declared rating).
+  assets: { data: undefined as unknown, isError: false },
   // submitListingRevision — captured args.
   submit: { calls: [] as unknown[], pending: false },
   // Props the stubbed ListingAssetStep received.
@@ -47,12 +51,14 @@ const state = vi.hoisted(() => ({
       listingId: string;
       contentRating: string;
       initial?: { icon: { imageId: number | null }; cover: { imageId: number | null } };
+      rating?: unknown;
     },
   },
   // Floor state the stubbed step reports up via onCompletenessChange (drives the
   // submit button's disabled binding). Default meets-floor so the happy paths click.
   floor: { meetsFloor: true, complete: false },
   invalidate: vi.fn().mockResolvedValue(undefined),
+  invalidateAssets: vi.fn().mockResolvedValue(undefined),
   flags: { appBlocks: true } as Record<string, boolean>,
   // Drives WHICH live-app notice the editor renders. `useCurrentUser()` throws
   // without a CivitaiSessionProvider (which `renderWithProviders` deliberately does
@@ -101,6 +107,7 @@ vi.mock('~/components/Apps/ListingAssetStep', () => ({
     listingId: string;
     contentRating: string;
     initial?: { icon: { imageId: number | null }; cover: { imageId: number | null } };
+    rating?: unknown;
     onAssetMutated?: () => void;
     onCompletenessChange?: (s: { meetsFloor: boolean; complete: boolean }) => void;
   }) => {
@@ -135,10 +142,14 @@ vi.mock('~/components/Apps/ListingAssetStep', () => ({
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     useUtils: () => ({
-      appListings: { getMyListingForApp: { invalidate: state.invalidate } },
+      appListings: {
+        getMyListingForApp: { invalidate: state.invalidate },
+        getAssets: { invalidate: state.invalidateAssets },
+      },
     }),
     appListings: {
       getMyListingForApp: { useQuery: () => state.query },
+      getAssets: { useQuery: () => state.assets },
       // 🔴 `beginListingRevision` is deliberately ABSENT from this mock. If the editor
       // ever re-adds an on-mount call to it, these tests crash rather than silently
       // re-introducing the write-on-view that this change removed.
@@ -195,6 +206,7 @@ beforeEach(() => {
       // silently test that branch while reading as if it tested the owner one.
       role: 'owner',
       contentRating: 'pg13',
+      declaredContentRating: 'pg13',
       hasPendingRevision: false,
       shadowId: 'apl_shadow',
       editTargetId: 'apl_shadow',
@@ -209,6 +221,19 @@ beforeEach(() => {
     isLoading: false,
     error: null,
   };
+  // The levels of the SAME icon/cover the fixture above attaches, both within pg13.
+  state.assets = {
+    data: {
+      iconId: 137918008,
+      coverId: 137918011,
+      iconNsfwLevel: NsfwLevel.PG,
+      coverNsfwLevel: NsfwLevel.PG,
+      screenshots: [],
+    },
+    isError: false,
+  };
+  state.invalidateAssets.mockReset();
+  state.invalidateAssets.mockResolvedValue(undefined);
   state.submit = { calls: [], pending: false };
   state.floor = { meetsFloor: true, complete: false };
   state.assetProps.last = null;
@@ -312,6 +337,55 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
       icon: { imageId: 137918008 },
       cover: { imageId: 137918011 },
     });
+  });
+
+  test('hands the asset step the image levels from `getAssets` with the declared and current rating', async () => {
+    // The cover is rated above the declared pg13, and the listing already carries that r.
+    // The step itself turns this into the "imagery raised your rating" callout
+    // (covered in `ListingAssetStep.browser.test.tsx`); the editor's job is the wiring.
+    state.query.data = {
+      ...(state.query.data as Record<string, unknown>),
+      contentRating: 'r',
+      declaredContentRating: 'pg13',
+    };
+    const levels = {
+      iconId: 137918008,
+      coverId: 137918011,
+      iconNsfwLevel: NsfwLevel.PG,
+      coverNsfwLevel: NsfwLevel.R,
+      screenshots: [],
+    };
+    state.assets = { data: levels, isError: false };
+    renderWithProviders(<ListingMediaPage />);
+
+    await expect.element(page.getByTestId('asset-step')).toHaveTextContent('assets:apl_shadow:r');
+    expect(state.assetProps.last?.rating).toEqual({
+      declaredRating: 'pg13',
+      listingRating: 'r',
+      stage: 'live-revision',
+      assets: levels,
+      // `getAssets` reported no media split, so the author's rating callout counts every image.
+      mediaSplit: false,
+    });
+  });
+
+  const mediaSplitProp = () =>
+    (state.assetProps.last?.rating as { mediaSplit?: unknown } | undefined)?.mediaSplit;
+  const splitLevels = { iconNsfwLevel: NsfwLevel.PG, coverNsfwLevel: NsfwLevel.R, screenshots: [] };
+
+  test('passes a granted media split through to the asset step', async () => {
+    state.assets = { data: { ...splitLevels, mediaSplitApproved: true }, isError: false };
+    renderWithProviders(<ListingMediaPage />);
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    expect(mediaSplitProp()).toBe(true);
+  });
+
+  test('an unreadable split (`null`) reaches the asset step as unsplit', async () => {
+    // `null` means the split state could not be read: the author's callout treats it as unsplit.
+    state.assets = { data: { ...splitLevels, mediaSplitApproved: null }, isError: false };
+    renderWithProviders(<ListingMediaPage />);
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    expect(mediaSplitProp()).toBe(false);
   });
 
   test('surfaces the honest live-app framing copy', async () => {
@@ -568,6 +642,8 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
     await vi.waitFor(() =>
       expect(state.invalidate).toHaveBeenCalledWith({ appBlockId: 'my-block' })
     );
+    // …and the edit target's image levels, so its rating badges follow the change.
+    expect(state.invalidateAssets).toHaveBeenCalledWith({ listingId: 'apl_shadow' });
   });
 
   test('a re-attached icon survives a tab round-trip: the REMOUNT re-seeds from the refreshed assets', async () => {

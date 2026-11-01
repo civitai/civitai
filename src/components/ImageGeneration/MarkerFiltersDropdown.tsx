@@ -28,7 +28,7 @@ import {
   ecosystems,
   getEcosystemSupport,
 } from '~/shared/constants/basemodel.constants';
-import { workflowConfigsArray } from '~/shared/data-graph/generation/config/workflows';
+import { workflowConfigsArray } from '~/shared/generation/config/workflows';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { titleCase } from '~/utils/string-helpers';
 

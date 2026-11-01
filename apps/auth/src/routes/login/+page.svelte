@@ -315,6 +315,12 @@
 
     {#if data.error === 'BlockedDomain'}
       <p class="error">That email domain isn't allowed. Try a different address.</p>
+    {:else if data.error === 'AccessDenied'}
+      <p class="error">Sign-in was cancelled. Choose a sign-in method to try again.</p>
+    {:else if data.error === 'SystemAccount'}
+      <p class="error">This account can't be used to sign in.</p>
+    {:else if data.error === 'OAuthCallback'}
+      <p class="error">That sign-in provider couldn't complete the login. Please try again.</p>
     {:else if data.error}
       <p class="error">Login error: {data.error}</p>
     {/if}

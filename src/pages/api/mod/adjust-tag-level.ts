@@ -9,6 +9,7 @@ import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 import { tagCache, tagCacheByName } from '~/server/redis/caches';
 import { bustGetTagsCache } from '~/server/services/tag.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 
 const schema = z.object({
   tags: commaDelimitedStringArray(),
@@ -79,6 +80,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           AND NOT i."nsfwLevelLocked" AND i."nsfwLevel" < ${nsfwLevel};
       `);
       await query.result();
+      // Avatars are gated on their cached rating; one raised here must be re-read.
+      await refreshProfilePicturesForImagesLazy(batch);
       console.log(`Updated ${batchNumber} of ${batchCount}`);
     },
   });

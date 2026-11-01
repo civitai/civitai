@@ -1,9 +1,11 @@
 import type {
+  CosmeticShopItemHistoryChange,
   CosmeticShopItemHistoryEntry,
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
-import { CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
+import { CREATOR_OFFSET_LIMIT } from '~/server/schema/creator-shop.schema';
+import { CosmeticShopItemStatus, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
 import {
   CREATOR_GRANT_USES_MULTIPLIER,
@@ -80,6 +82,16 @@ export const appendItemHistory = (
   history: [...(meta.history ?? []), entry].slice(-CREATOR_SHOP_HISTORY_LIMIT),
 });
 
+/**
+ * The version of an item a moderator is reviewing: the time of its last history entry. Every edit
+ * that changes anything appends one, so a verdict pinned to it can't approve artwork, a price or
+ * text the moderator never saw. A refund run's entry moves it too, which costs a reload.
+ */
+export const shopItemReviewVersion = (meta?: CosmeticShopItemMeta | null) => {
+  const history = meta?.history;
+  return history?.length ? history[history.length - 1].at : null;
+};
+
 // Rejection is terminal on every path a creator can reach — edit, list, archive,
 // restore. Only a moderator re-reviewing it can bring one back, so the message
 // says where that happens rather than implying nothing can. One wording, so each
@@ -114,6 +126,54 @@ export const wasLastReviewARejection = (history?: CosmeticShopItemHistoryEntry[]
   const index = lastReviewIndex(history);
   return index >= 0 && history![index].action === 'reject';
 };
+
+// Allowlist: a newly recorded edit field that changes what holders see must be added here, or
+// editing it after approval leaves the item wearable unreviewed.
+const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
+
+// Edges a creator may not set. A value a moderator pushed past the creator range is left alone
+// when it comes back unchanged, so editing anything else is neither refused nor clamped.
+export const edgesBeyondCreatorRange = (next: CosmeticOffsets, stored?: CosmeticOffsets | null) =>
+  (['top', 'right', 'bottom', 'left'] as const).filter(
+    (side) => Math.abs(next[side]) > CREATOR_OFFSET_LIMIT && next[side] !== stored?.[side]
+  );
+
+export const changesDisplay = (changes?: CosmeticShopItemHistoryChange[]) =>
+  !!changes?.some((change) => DISPLAYED_FIELDS.has(change.field));
+
+/**
+ * Whether holders may show this listing's cosmetic: it is live, or a moderator last approved it
+ * and nothing anyone sees has changed since. Not status alone: relisting, restoring and a large
+ * price edit send an approved, unchanged item back to review.
+ */
+export const isListingDisplayable = ({
+  status,
+  meta,
+  rejectionReason,
+}: {
+  status: CosmeticShopItemStatus;
+  meta: CosmeticShopItemMeta | null;
+  rejectionReason: string | null;
+}) => {
+  if (status === CosmeticShopItemStatus.Published) return true;
+  if (meta?.takedown) return false;
+  if (meta?.displayApproved !== undefined) return meta.displayApproved;
+  const history = meta?.history ?? [];
+  const index = lastReviewIndex(history);
+  const approved =
+    index >= 0
+      ? history[index].action === 'approve'
+      : // Pre-history items: approval left lastApprovedAmount and no reason; every other verdict left a reason.
+        meta?.lastApprovedAmount != null && !rejectionReason;
+  return approved && !history.slice(index + 1).some((entry) => changesDisplay(entry.changes));
+};
+
+/**
+ * The display verdict to store on a write that clears `rejectionReason` or adds history. Read from
+ * the state before the write, since the fallback above depends on both.
+ */
+export const recordedDisplayVerdict = (listing: Parameters<typeof isListingDisplayable>[0]) =>
+  listing.meta?.displayApproved ?? isListingDisplayable(listing);
 
 /**
  * Resolves the `Cosmetic.data` write for an edit. Replaced artwork rebuilds the

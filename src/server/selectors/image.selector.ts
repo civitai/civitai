@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 
 import { simpleTagSelect } from './tag.selector';
 
@@ -86,8 +87,55 @@ export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
   typeof imageResourceHelper
 >;
 
+const reviewedImageWhere = { needsReview: null, tosViolation: false } as const;
+
+const publishedPostWhere = (): Prisma.PostWhereInput => ({ publishedAt: { lte: new Date() } });
+
 export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
-  needsReview: null,
-  tosViolation: false,
-  post: { publishedAt: { lte: new Date() } },
+  ...reviewedImageWhere,
+  post: publishedPostWhere(),
+});
+
+/**
+ * `publishedImageWhere`, and the post is not Private: the Prisma form of the App Store's
+ * `IMAGE_POST_PUBLIC_SQL` (`app-sub-listing-store.service.ts`), which a SQL fragment cannot share
+ * code with. Not identical at one instant: this keeps `publishedAt <= now`, the store's fragment
+ * `publishedAt < now()`, so a post published at exactly the instant of this query is listed here
+ * and would be refused by a store check run at that same instant (any later check accepts it).
+ */
+export const publicPostImageWhere = (): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: { ...publishedPostWhere(), availability: { not: Availability.Private } },
+});
+
+/** An entered image's post may be scheduled for its crucible's end; only unpublishing takes it out. */
+export const enteredImageWhere = (): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: { publishedAt: { not: null } },
+});
+
+/** Unpublished media, held to the same review gates as published media. */
+export const draftImageWhere = (post: Prisma.PostWhereInput): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: { ...post, publishedAt: null },
+});
+
+/**
+ * Marks a post the crucible entry modal created, so its unentered media stays pickable later and
+ * `revealCrucibleEntryPosts` can find an entered one's scheduled post.
+ */
+export const CRUCIBLE_ENTRY_DRAFT_METADATA_KEY = 'crucibleEntryDraft';
+
+/** One relation filter rather than an OR of two, so the planner can still semi-join on Post. */
+export const publishedOrEntryDraftImageWhere = (): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: {
+    OR: [
+      publishedPostWhere(),
+      {
+        publishedAt: null,
+        metadata: { path: [CRUCIBLE_ENTRY_DRAFT_METADATA_KEY], equals: true },
+      },
+    ],
+  },
 });

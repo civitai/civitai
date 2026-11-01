@@ -3,8 +3,8 @@ import { SEED, boolDef, imagesDef } from '../defs';
 import { familyScope, type FamilyExt } from '../shared';
 
 /**
- * Pixal3D and Trellis.2, ported from `pixal3d-graph.ts` / `trellis2-graph.ts`.
- * The two v1 graphs are field-for-field identical (Trellis.2 is the base
+ * Pixal3D and Trellis.2.
+ * The two are field-for-field identical (Trellis.2 is the base
  * modelVersion of the pipeline Pixal3D rides), so one factory serves both —
  * each ecosystem still gets its own graph instance for its own family scope.
  */

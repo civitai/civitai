@@ -50,6 +50,8 @@ import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
+  checkSfwFaceSchema,
+  draftSfwFaceSchema,
   copyGallerySettingsSchema,
   declineReviewSchema,
   deleteModelSchema,
@@ -110,6 +112,8 @@ import {
 } from '~/server/services/model.service';
 import { getResourceSelectModels } from '~/server/services/resource-select.service';
 import { rescanModel } from '~/server/services/model-file-scan.service';
+import { getCoverCandidates } from '~/server/services/model-cover.service';
+import { checkSfwFace, draftSfwFace } from '~/server/services/model-sfw-face.service';
 import {
   guardedProcedure,
   middleware,
@@ -118,8 +122,31 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelPoiAndOwnerViaKysely,
+  readModelPoiAndOwnerViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+/** 404s a lookup of a model the viewer may not see. `pick` reads the model id from the input. */
+const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
+  middleware(async ({ ctx, next, input }) => {
+    const id = pick(input ?? {});
+    if (id && !ctx.user?.isModerator) {
+      const model = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+        ? await readModelPoiAndOwnerViaKysely((await loadKyselyDb()).kyselyRead, id)
+        : await readModelPoiAndOwnerViaPrisma(dbRead, id);
+      if (model && !canViewPoiModel(model.poi, model.userId, ctx.user)) throw throwNotFoundError();
+    }
+    return next();
+  });
+const modelByIdVisible = modelVisibleToViewer((input) => input.id);
+const associationSourceVisible = modelVisibleToViewer((input) => input.fromId);
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -208,14 +235,27 @@ const creatorGalleryHiddenUsersRateLimit = rateLimit(
   { sharedKey: 'creator-gallery-hidden-users' }
 );
 
+const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getModelHandler>>>({
+  ownerId: ({ data }) => data.user.id,
+  strip: (data) => ({
+    ...data,
+    modelVersions: data.modelVersions.map((version) => ({
+      ...version,
+      files: withoutFileUrls(version.files) as typeof version.files,
+    })),
+  }),
+});
+
 export const modelRouter = router({
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelByIdSchema)
+    .use(modelFileUrlsForOwner)
     .query(getModelHandler),
   getOwner: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(getModelOwnerHandler),
   getAll: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -240,6 +280,7 @@ export const modelRouter = router({
   getVersions: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsSchema)
+    .use(modelByIdVisible)
     .query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -290,6 +331,21 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(modelUpsertSchema)
     .mutation(upsertModelHandler),
+  checkSfwFace: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(checkSfwFaceSchema)
+    .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) => checkSfwFace({ ...input, userId: ctx.user.id })),
+  getCoverCandidates: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .query(({ input }) => getCoverCandidates({ modelId: input.id })),
+  draftSfwFace: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(draftSfwFaceSchema)
+    .use(rateLimit({ limit: 20, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) => draftSfwFace({ ...input, userId: ctx.user.id })),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsDelete })
     .input(deleteModelSchema)
@@ -323,6 +379,7 @@ export const modelRouter = router({
   getModelDetailsForReview: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(getModelDetailsForReviewHandler),
   restore: moderatorProcedure.input(getByIdSchema).mutation(restoreModelHandler),
   getDownloadCommand: protectedProcedure
@@ -347,6 +404,7 @@ export const modelRouter = router({
   getSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(({ input, ctx }) => getSimpleModelWithVersions({ id: input.id, ctx })),
   requestReview: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
@@ -366,7 +424,7 @@ export const modelRouter = router({
   getWithCategoriesSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelsWithCategoriesSchema)
-    .query(({ input }) => getAllModelsWithCategories(input)),
+    .query(({ input, ctx }) => getAllModelsWithCategories({ ...input, viewer: ctx.user })),
   setCategory: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setModelsCategorySchema)
@@ -378,17 +436,19 @@ export const modelRouter = router({
   getAssociatedResourcesCardData: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
+    .use(associationSourceVisible)
     .query(getAssociatedResourcesCardDataHandler),
   getAssociatedResourcesSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
+    .use(associationSourceVisible)
     .query(({ input }) => getAssociatedResourcesSimple(input)),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setAssociatedResourcesSchema)
     .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
-  getModelsByHash: publicProcedure
+  getModelsByHash: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(modelByHashesInput)
     .mutation(getModelByHashesHandler),
@@ -462,7 +522,9 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(migrateResourceToCollectionSchema)
     .use(isOwnerOrModerator)
-    .mutation(({ input }) => migrateResourceToCollection(input)),
+    .mutation(({ input, ctx }) =>
+      migrateResourceToCollection({ ...input, isModerator: ctx.user.isModerator })
+    ),
   privateModelFromTraining: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(privateModelFromTrainingSchema)

@@ -14,6 +14,9 @@ import {
 } from '~/server/services/collection.service';
 import {
   collectionWithinCeiling,
+  getModelRestrictedImageIds,
+  isPublicCollectionImage,
+  type PublicCollectionImageFields,
   getCollectionPlayableSample,
   getFallbackCoverImages,
   getFollowedCollectionIds,
@@ -24,11 +27,14 @@ import {
   getWindowedCollectionRanking,
   isWindowedPeriod,
 } from '~/server/services/blocks/block-collection-popularity.service';
+import { getServableCoverCollectionIds } from '~/server/services/collection-cover-visibility';
 import { recordBlockCollectionRankingSource } from '~/server/prom/block-collection-ranking.metrics';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionSort } from '~/server/common/enums';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import {
   CollectionItemStatus,
   CollectionReadConfiguration,
@@ -246,6 +252,36 @@ const CH_HYDRATE_MAX = 1000;
  */
 const chHydrateWidth = (limit: number) => Math.min(limit * 24 + 1, CH_HYDRATE_MAX);
 
+type PrimaryCoverImage = { id: number; url: string | null } & PublicCollectionImageFields;
+
+/**
+ * The ids of the collections whose own cover image can be served: it has a url, may be shown
+ * to a stranger (`getServableCoverCollectionIds`), passes `isPublicCollectionImage`, and is not refused by `getAllImages`' restricted base model
+ * condition. That condition only refuses an image whose own level has a mature bit, so
+ * only those candidates are looked up. Every other collection falls back to
+ * `getFallbackCoverImages`, which applies the same rule in SQL.
+ */
+async function getUsablePrimaryCovers(
+  collections: { id: number; userId: number; image?: PrimaryCoverImage | null }[],
+  browsingLevel: number
+): Promise<Set<number>> {
+  const servable = await getServableCoverCollectionIds(
+    collections.flatMap((c) =>
+      c.image?.url ? [{ collectionId: c.id, collectionOwnerId: c.userId, imageId: c.image.id }] : []
+    )
+  );
+  const candidates = collections.filter(
+    (c) => !!c.image?.url && servable.has(c.id) && isPublicCollectionImage(c.image, browsingLevel)
+  );
+  const matureIds = candidates
+    .filter((c) => Flags.intersects(c.image!.nsfwLevel, nsfwBrowsingLevelsFlag))
+    .map((c) => c.image!.id);
+  const restricted = matureIds.length
+    ? await getModelRestrictedImageIds(matureIds)
+    : new Set<number>();
+  return new Set(candidates.filter((c) => !restricted.has(c.image!.id)).map((c) => c.id));
+}
+
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -434,7 +470,21 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           nsfwLevel: true,
           userId: true,
           user: { select: { id: true, username: true } },
-          image: { select: { url: true, type: true, nsfwLevel: true } },
+          image: {
+            select: {
+              id: true,
+              url: true,
+              type: true,
+              nsfwLevel: true,
+              ingestion: true,
+              needsReview: true,
+              poi: true,
+              minor: true,
+              acceptableMinor: true,
+              tosViolation: true,
+              blockedFor: true,
+            },
+          },
         },
       });
 
@@ -566,9 +616,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // on a SFW-domain / region-restricted token. When the primary cover is null
       // OR over the ceiling, fall back to the newest CLAMPED item (same authority
       // the detail path uses).
-      const primaryCoverUsable = (c: (typeof items)[number]) =>
-        !!c.image?.url && collectionWithinCeiling(c.image.nsfwLevel ?? 0, browsingLevel);
-      const missingCoverIds = items.filter((c) => !primaryCoverUsable(c)).map((c) => c.id);
+      const usableCovers = await getUsablePrimaryCovers(items, browsingLevel);
+      const missingCoverIds = items.filter((c) => !usableCovers.has(c.id)).map((c) => c.id);
       const [countRows, followed, fallbackCovers] = await Promise.all([
         // 🔴 THE ADVERTISED (UNCLAMPED) COUNT — the same query, over the same
         // `limit`-sized id list, that this endpoint has always run. It is not a
@@ -591,7 +640,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           // ONE image in, BOTH cover fields out — the url and the level of that
           // same image. Splitting these back into two expressions is how a
           // fallback cover ends up advertising the primary's level.
-          ...toCoverFields(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
+          ...toCoverFields(usableCovers.has(c.id) ? c.image : fallbackCovers.get(c.id)),
           itemCount: countMap.get(c.id) ?? 0,
           curator: { userId: c.userId, username: c.user?.username ?? null },
           isPublic: c.read === CollectionReadConfiguration.Public,
@@ -635,9 +684,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     // Same maturity clamp as public discovery: a primary cover over the ceiling
     // (or null) falls back to the newest CLAMPED item so a SFW-domain / region-
     // restricted token never gets a mature thumbnail — even for own collections.
-    const primaryCoverUsable = (c: (typeof items)[number]) =>
-      !!c.image?.url && collectionWithinCeiling(c.image.nsfwLevel ?? 0, browsingLevel);
-    const missingCoverIds = items.filter((c) => !primaryCoverUsable(c)).map((c) => c.id);
+    const usableCovers = await getUsablePrimaryCovers(items, browsingLevel);
+    const missingCoverIds = items.filter((c) => !usableCovers.has(c.id)).map((c) => c.id);
     const [countRows, followed, fallbackCovers] = await Promise.all([
       // 🔴 THE EXACT CLAMPED COUNT, WHICH THIS BRANCH CAN AFFORD AND PUBLIC
       // DISCOVERY CANNOT. `itemCount` here is the number the player will serve, so
@@ -673,7 +721,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         name: c.name,
         description: c.description ?? null,
         // Same single-image projection as public discovery — see the note there.
-        ...toCoverFields(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
+        ...toCoverFields(usableCovers.has(c.id) ? c.image : fallbackCovers.get(c.id)),
         itemCount: countMap.get(c.id) ?? 0,
         curator: { userId: c.userId, username: subjectUser.username ?? null },
         isPublic: c.read === CollectionReadConfiguration.Public,

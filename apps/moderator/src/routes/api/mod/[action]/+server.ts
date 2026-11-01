@@ -1,4 +1,5 @@
 import { error, json } from '@sveltejs/kit';
+import { modActionResponse } from '@civitai/moderation';
 import type { RequestHandler } from './$types';
 import { WebhookEndpoint } from '$lib/server/webhook-endpoint';
 import { modActions } from '$lib/server/mod-actions/registry';
@@ -17,7 +18,7 @@ export const POST: RequestHandler = WebhookEndpoint(async ({ params, request }) 
 
   try {
     const result = await action.handler(parsed.data);
-    return json({ ok: true, result });
+    return json(modActionResponse(result));
   } catch (e) {
     // A handler can reject a request with a 4xx (e.g. a conflicting moderation verdict); pass that status
     // through. Anything else is a genuine server fault → 500.

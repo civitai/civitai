@@ -26,7 +26,8 @@ import {
  * database with no replica. So every `dbRead` vs `dbWrite` choice in the service is unpinned here:
  * a mutant swapping either direction survives, including `feedbackExists(dbWrite, …)`, which is
  * what decides whether a refusal says "that report is gone" or "someone else already triaged it".
- * Those call sites are verified by reading them, not by this suite.
+ * Those call sites are verified by reading them, not by this suite — except `feedbackRowQuery`'s,
+ * which `feedback-read-your-writes.pglite.test.ts` pins against a separate replica database.
  */
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 

@@ -6,6 +6,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 const refundMultiAccountTransaction = vi.fn();
@@ -106,7 +107,10 @@ describe('voidUnscannedCrucibles', () => {
       entries: [],
     }));
     claim.mockResolvedValue({ count: 1 });
-    refundMultiAccountTransaction.mockResolvedValue(undefined);
+    refundMultiAccountTransaction.mockResolvedValue({
+      refundedTransactions: [{ amount: 100 }],
+      totalRefunded: 1,
+    });
     createNotification.mockResolvedValue(undefined);
   });
 
@@ -184,6 +188,33 @@ describe('voidUnscannedCrucibles', () => {
     );
   });
 
+  it('leaves the creator to the takedown notice when a moderator took it down meanwhile', async () => {
+    findMany.mockResolvedValue([unscanned(1, { text: CrucibleIngestionStatus.Blocked })]);
+    // The void's claim lost to a takedown, which keeps the creator's Buzz under forfeit.
+    claim.mockResolvedValue({ count: 0 });
+    findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => ({
+      id: where.id,
+      userId: CREATOR,
+      status: CrucibleStatus.Cancelled,
+      entryFee: 10,
+      buzzTransactionId: `crucible-setup-${where.id}`,
+      seededPrizePool: 0,
+      seedTransactionId: null,
+      takenDownAt: new Date(),
+      takedownRefundsCreator: false,
+      entries: [],
+    }));
+
+    await voidUnscannedCrucibles(now);
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'crucible-setup-1' })
+    );
+    expect(createNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'crucible-unscanned-cancelled-1' })
+    );
+  });
+
   it("records a refund it couldn't make, and doesn't claim it was made", async () => {
     findMany.mockResolvedValue([unscanned(1, { text: CrucibleIngestionStatus.Blocked })]);
     refundMultiAccountTransaction.mockRejectedValue(new Error('buzz 500'));
@@ -245,6 +276,31 @@ describe('list surfaces — featured and judging suggestions', () => {
       .split('as "prizePool"')[0]
       .split('as "entriesCount"')[1];
     expect(pool).toContain('FILTER (WHERE ce."buzzTransactionId" IS NOT NULL)');
+  });
+
+  it.each([
+    ['featured', (isGreen: boolean) => getFeaturedCrucible({ browsingLevel: 1, isGreen })],
+    [
+      'judging suggestions',
+      (isGreen: boolean) =>
+        getJudgingSuggestions({ userId: 7, browsingLevel: 1, limit: 4, isGreen }),
+    ],
+  ])('%s: lists any currency, and only SFW crucibles on the green site', async (_, run) => {
+    await run(true);
+    const green = sqlText(queryRaw.mock.calls.at(-1)!);
+    expect(green).not.toContain('"buzzType"');
+    expect(green).toContain('AND c."nsfwLevel" = ANY(?::int[]) AND NOT c."textNsfw"');
+    const greenSite = (queryRaw.mock.calls.at(-1)!.slice(1) as { strings?: string[] }[]).find(
+      (value) => value?.strings?.join('?').includes('NOT c."textNsfw"')
+    ) as { values: unknown[] };
+    expect(greenSite.values).toEqual([
+      [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.PG | NsfwLevel.PG13],
+    ]);
+
+    await run(false);
+    const red = sqlText(queryRaw.mock.calls.at(-1)!);
+    expect(red).not.toContain('"buzzType"');
+    expect(red).not.toContain('= ANY(?::int[]) AND NOT c."textNsfw"');
   });
 
   it('suggestions count only entries this judge could be shown', async () => {

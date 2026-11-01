@@ -5,6 +5,8 @@ import { usersByIds } from './users.service';
 import { getImagesForPost, type BulkBatch } from './bulk-image.service';
 import { getReactions, type ImageReactionRow, type ReactionPage } from './image-reactions.service';
 import type { MediaType } from '../media/edge-url';
+import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
+import { approvedAppealOf } from './removal-hold';
 
 // The PAGE LOAD half of Image Lookup (Retool's "Image Lookup" app). Everything here is Postgres and
 // sub-millisecond on the indexes, so it all rides the load; the ClickHouse half lives in
@@ -89,6 +91,7 @@ export type ImageLookupResult = {
   reactions: ReactionPage;
   reports: ImageReportRow[];
   modActivity: { rows: ImageModActivity[]; truncated: boolean };
+  approvedAppeal: ReturnType<typeof approvedAppealOf>;
 };
 
 // Retool had two inputs and two queries — an id box and a separate url box (`GetIdFromUrl`). One
@@ -156,14 +159,16 @@ export async function getImageLookup(imageId: number): Promise<ImageLookupResult
   const image = await getImage(imageId);
   if (!image) return null;
 
-  const [tags, shadowTags, reactions, reports, modActivity] = await Promise.all([
+  const [tags, shadowTags, reactions, reports, modActivity, appeals] = await Promise.all([
     getTags(imageId),
     getShadowTags(imageId),
     getReactions(imageId),
     getReports(imageId),
     getModActivity(imageId),
+    getLatestApprovedImageAppeals(dbRead, [imageId]),
   ]);
-  return { image, tags, shadowTags, reactions, reports, modActivity };
+  const approvedAppeal = approvedAppealOf(appeals.get(imageId));
+  return { image, tags, shadowTags, reactions, reports, modActivity, approvedAppeal };
 }
 
 // Post detail for Image Lookup's `?post=` view. There was no Retool "Post Lookup" app: its "Lookup Post"
@@ -179,6 +184,7 @@ export type PostDetail = {
   userId: number;
   username: string | null;
   userBannedAt: Date | null;
+  userCreatedAt: Date | null;
   createdAt: Date;
   publishedAt: Date | null;
   nsfwLevel: number;
@@ -213,6 +219,7 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
       'p.modelVersionId',
       'u.username',
       'u.bannedAt as userBannedAt',
+      'u.createdAt as userCreatedAt',
     ])
     .where('p.id', '=', postId)
     .executeTakeFirst();
@@ -231,6 +238,19 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
     truncated: batch.truncated,
     total: batch.total,
   };
+}
+
+/** An account's newest images outside one post. Not `getImagesForUser`: its count walks every image
+ *  the account has. */
+export async function getRecentImagesOutsidePost(userId: number, postId: number, limit = 12) {
+  return dbRead
+    .selectFrom('Image as i')
+    .where('i.userId', '=', userId)
+    .where((eb) => eb.or([eb('i.postId', 'is', null), eb('i.postId', '!=', postId)]))
+    .select(['i.id', 'i.url', 'i.type', 'i.createdAt'])
+    .orderBy('i.id', 'desc')
+    .limit(limit)
+    .execute();
 }
 
 export type PostSummary = {

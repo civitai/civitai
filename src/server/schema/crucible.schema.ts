@@ -4,10 +4,20 @@ import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
 import {
+  CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH,
+  crucibleOwnerRemovalReasonKeys,
+} from '~/utils/crucible-helpers';
+import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
+import { baseModelByName } from '~/shared/constants/basemodel.constants';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
+  CRUCIBLE_ENTRY_CUTOFF_PERCENT,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+  CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
   CRUCIBLE_MAX_ENTRY_FEE,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_PRIZE_POSITIONS,
@@ -16,11 +26,14 @@ import {
   CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
+  CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_MAX_START_LEAD_DAYS,
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+  CRUCIBLE_TAKEDOWN_REASON_LENGTH,
   getMaxCrucibleStartAt,
   getPrizeDistributionTotal,
 } from '~/shared/constants/crucible.constants';
@@ -42,6 +55,12 @@ export const getCruciblesInfiniteSchema = infiniteQuerySchema.extend({
 export type GetCrucibleByIdSchema = z.infer<typeof getCrucibleByIdSchema>;
 export const getCrucibleByIdSchema = z.object({
   id: z.number(),
+});
+
+export type ToggleCrucibleFollowInput = z.infer<typeof toggleCrucibleFollowSchema>;
+export const toggleCrucibleFollowSchema = z.object({
+  crucibleId: z.number(),
+  setTo: z.boolean().optional(),
 });
 
 export const getCrucibleRequiredModelsSchema = z.object({
@@ -90,6 +109,11 @@ export function calculateCrucibleSetupCost(
   return durationCost + prizeCustomizationCost + resourceRequirementsCost;
 }
 
+const allowedBaseModelsSchema = z
+  .array(z.string().refine((name) => baseModelByName.has(name), { message: 'Unknown base model' }))
+  .max(CRUCIBLE_MAX_ALLOWED_BASE_MODELS)
+  .transform((names) => [...new Set(names)]);
+
 // Schema for creating a new crucible
 export type CreateCrucibleInputSchema = z.infer<typeof createCrucibleInputSchema>;
 const prizePositionsSchema = z
@@ -111,13 +135,20 @@ const prizePositionsSchema = z
     'Prize percentages must add up to exactly 100%'
   );
 
+// Blank stores NULL; an absent key leaves the stored description unchanged on update.
+const crucibleDescriptionSchema = z
+  .string()
+  .trim()
+  .max(CRUCIBLE_DESCRIPTION_MAX_LENGTH)
+  .nullish()
+  .transform((value) => (value === undefined ? undefined : value || null));
+
 export const createCrucibleInputBaseSchema = z.object({
-  buzzType: z.enum(['green', 'yellow']).optional(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
-  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
+  description: crucibleDescriptionSchema,
   coverImage: crucibleImageSchema,
   heroImage: crucibleImageSchema.optional(),
-  nsfwLevel: z.number(),
+  nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).default(0),
@@ -129,8 +160,21 @@ export const createCrucibleInputBaseSchema = z.object({
     .min(CRUCIBLE_MIN_TOTAL_ENTRIES)
     .max(CRUCIBLE_MAX_TOTAL_ENTRIES)
     .optional(),
+  entryWarningPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_WARNING_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_WARNING_PERCENT.max)
+    .default(CRUCIBLE_ENTRY_WARNING_PERCENT.default),
+  entryCutoffPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_CUTOFF_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_CUTOFF_PERCENT.max)
+    .default(CRUCIBLE_ENTRY_CUTOFF_PERCENT.default),
   prizePositions: prizePositionsSchema,
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  allowedBaseModels: allowedBaseModelsSchema.optional(),
   duration: z.number().refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
     message: 'Unsupported crucible duration',
   }), // duration in hours
@@ -163,6 +207,8 @@ type CrucibleSettings = {
   entryLimit: number;
   freeEntriesPerUser?: number;
   maxTotalEntries?: number | null;
+  entryWarningPercent?: number;
+  entryCutoffPercent?: number;
   prizePositions: Record<string, number>;
 };
 
@@ -189,6 +235,15 @@ export function checkCrucibleSettings(settings: CrucibleSettings) {
     return {
       message: 'Entries per user cannot exceed the maximum total entries',
       path: 'entryLimit',
+    };
+  if (
+    settings.entryWarningPercent != null &&
+    settings.entryCutoffPercent != null &&
+    settings.entryCutoffPercent >= settings.entryWarningPercent
+  )
+    return {
+      message: CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
+      path: 'entryCutoffPercent',
     };
   if (maxTotalEntries != null && Object.keys(settings.prizePositions).length > maxTotalEntries)
     return {
@@ -233,6 +288,13 @@ export const checkCrucibleEntryEligibilitySchema = z.object({
 });
 
 // Schema for submitting a vote
+// Minted by the judge page on entry. Absent (an older client) means no session, so every clip
+// needs the full watch. Charset-limited because it becomes part of a Redis key.
+const judgingSessionIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9-]{8,64}$/)
+  .optional();
+
 export type SubmitVoteSchema = z.infer<typeof submitVoteSchema>;
 export const submitVoteSchema = z
   .object({
@@ -248,6 +310,7 @@ export const submitVoteSchema = z
     // test that passed a round number passed.
     winnerWatchedMs: z.number().min(0).finite().optional(),
     loserWatchedMs: z.number().min(0).finite().optional(),
+    judgingSessionId: judgingSessionIdSchema,
   })
   .refine(({ winnerEntryId, loserEntryId }) => winnerEntryId !== loserEntryId, {
     message: 'A vote needs two different entries',
@@ -262,12 +325,39 @@ export const getJudgingProgressSchema = z.object({
   browsingLevel: z.number().int().min(0).optional(),
 });
 
+export type CrucibleJudgingStatus = {
+  crucibleId: number;
+  judged: boolean;
+  available: boolean;
+  votesUsedUp: boolean;
+};
+
+export type GetJudgingStatusesSchema = z.infer<typeof getJudgingStatusesSchema>;
+export const getJudgingStatusesSchema = z.object({
+  crucibleIds: z.array(z.number().int()).min(1).max(100),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
 export const getJudgingPairSchema = z.object({
   crucibleId: z.number(),
-  // Entry IDs to exclude from pair selection (e.g., recently skipped entries)
-  // These entries won't appear in the returned pair
+  // Superseded by `skippedPairs`; still read from clients loaded before it shipped.
   excludeEntryIds: z.array(z.number()).max(50).optional(),
+  // Recently skipped pairs, oldest first. Their entries are avoided while anything else is left,
+  // and the pairs themselves for as long as another pair is left.
+  skippedPairs: z
+    .array(z.tuple([z.number().int(), z.number().int()]))
+    .max(25)
+    .optional(),
   browsingLevel: z.number().int().min(0).optional(),
+  judgingSessionId: judgingSessionIdSchema,
+});
+
+export const crucibleEventTagSchema = eventTagSchema;
+
+export type SetCrucibleEventTagsSchema = z.infer<typeof setCrucibleEventTagsSchema>;
+export const setCrucibleEventTagsSchema = z.object({
+  id: z.number(),
+  eventTags: eventTagsSchema,
 });
 
 // Not `createCrucibleInputBaseSchema.partial()`: Zod 4 still applies its `.default()`s to omitted
@@ -276,10 +366,10 @@ export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
 export const updateCrucibleSchema = z.object({
   id: z.number(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH).optional(),
-  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
+  description: crucibleDescriptionSchema,
   coverImage: crucibleImageSchema.optional(),
   heroImage: crucibleImageSchema.nullish(),
-  nsfwLevel: z.number().int().positive().optional(),
+  nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag).optional(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE).optional(),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).optional(),
@@ -291,8 +381,21 @@ export const updateCrucibleSchema = z.object({
     .min(CRUCIBLE_MIN_TOTAL_ENTRIES)
     .max(CRUCIBLE_MAX_TOTAL_ENTRIES)
     .nullish(),
+  entryWarningPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_WARNING_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_WARNING_PERCENT.max)
+    .optional(),
+  entryCutoffPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_CUTOFF_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_CUTOFF_PERCENT.max)
+    .optional(),
   prizePositions: prizePositionsSchema.optional(),
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  allowedBaseModels: allowedBaseModelsSchema.optional(),
   duration: z
     .number()
     .refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
@@ -321,10 +424,36 @@ export const cancelCrucibleSchema = z.object({
   id: z.number(),
 });
 
+export type TakeDownCrucibleSchema = z.infer<typeof takeDownCrucibleSchema>;
+export const takeDownCrucibleSchema = z.object({
+  id: z.number(),
+  reason: z
+    .string()
+    .trim()
+    .min(CRUCIBLE_TAKEDOWN_REASON_LENGTH.min)
+    .max(CRUCIBLE_TAKEDOWN_REASON_LENGTH.max),
+  releaseCreatorFunds: z.boolean().optional(),
+});
+
 export type RemoveCrucibleEntrySchema = z.infer<typeof removeCrucibleEntrySchema>;
 export const removeCrucibleEntrySchema = z.object({
   entryId: z.number(),
 });
+
+export type WithdrawCrucibleEntrySchema = z.infer<typeof withdrawCrucibleEntrySchema>;
+export const withdrawCrucibleEntrySchema = removeCrucibleEntrySchema;
+
+export type OwnerRemoveCrucibleEntrySchema = z.infer<typeof ownerRemoveCrucibleEntrySchema>;
+export const ownerRemoveCrucibleEntrySchema = z
+  .object({
+    entryId: z.number(),
+    reason: z.enum(crucibleOwnerRemovalReasonKeys),
+    note: z.string().trim().max(CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH).optional(),
+  })
+  .refine((input) => input.reason !== 'other' || !!input.note, {
+    message: 'Say why you are removing this entry',
+    path: ['note'],
+  });
 
 // Schema for user crucible stats (no input needed - uses authenticated user)
 export type GetUserCrucibleStatsSchema = z.infer<typeof getUserCrucibleStatsSchema>;
@@ -332,10 +461,19 @@ export const getUserCrucibleStatsSchema = z.object({});
 
 // User crucible stats response type
 export type UserCrucibleStats = {
-  totalCrucibles: number;
+  /** Crucibles entered while running or ended; cancelled ones are left out. */
+  cruciblesEntered: number;
+  /** Ended crucibles entered: the denominator of the win rate. */
+  cruciblesEnded: number;
+  /** Ended crucibles in which the user took a prize of more than 0 Buzz. */
+  cruciblesWon: number;
+  /** Gross prize Buzz, including prizes awarded but not yet claimed. */
   buzzWon: number;
-  bestPlacement: number | null;
-  winRate: number;
+  /** Best rank among creators, with how many creators placed in that crucible. */
+  bestFinish: { position: number; fieldSize: number } | null;
+  /** Average finish as the top percent of the field; null until enough crucibles count. */
+  avgFinishTopPercent: number | null;
+  votesCast: number;
 };
 
 // Schema for getting user's active crucibles (no input needed - uses authenticated user)
@@ -384,7 +522,7 @@ export const getJudgeStatsSchema = z.object({
 export type GetJudgingSuggestionsSchema = z.infer<typeof getJudgingSuggestionsSchema>;
 export const getJudgingSuggestionsSchema = baseQuerySchema.extend({
   excludeCrucibleId: z.number().optional(),
-  limit: z.number().int().min(1).max(12).default(4),
+  limit: z.number().int().min(1).max(CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES).default(4),
 });
 
 // Judge stats response type

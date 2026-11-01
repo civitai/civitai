@@ -3,6 +3,7 @@ import { IconArrowUpRight, IconCircleCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';
 
+import { slugifyAnchor } from '~/components/Account/setting-links';
 import { NextLink } from '~/components/NextLink/NextLink';
 
 /**
@@ -16,15 +17,21 @@ export function SettingsSection({
   action,
   children,
   className,
+  id,
 }: {
   title?: React.ReactNode;
   description?: React.ReactNode;
   action?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  /** The deep-link anchor. Defaults to the slug of a string `title`. */
+  id?: string;
 }) {
   return (
-    <section className={clsx('flex flex-col', className)}>
+    <section
+      id={id ?? (typeof title === 'string' ? slugifyAnchor(title) : undefined)}
+      className={clsx('flex flex-col', className)}
+    >
       {(title || description || action) && (
         <div className="flex flex-col gap-0.5 pb-2">
           {(title || action) && (
@@ -174,15 +181,18 @@ export function CardOrSection({
 }) {
   if (flat)
     return (
-      <div id={id}>
-        <SettingsSection title={title} description={description} action={action}>
+      <div>
+        <SettingsSection title={title} description={description} action={action} id={id}>
           <Stack>{children}</Stack>
         </SettingsSection>
       </div>
     );
 
   return (
-    <MantineCard withBorder id={id}>
+    <MantineCard
+      withBorder
+      id={id ?? (typeof title === 'string' ? slugifyAnchor(title) : undefined)}
+    >
       <Stack>
         {title && <Title order={2}>{title}</Title>}
         {children}
@@ -216,7 +226,9 @@ export function PointerCard({
   href,
   action,
   tone = 'default',
+  id,
 }: {
+  id?: string;
   icon: React.ReactNode;
   title: string;
   description?: React.ReactNode;
@@ -266,12 +278,20 @@ export function PointerCard({
 
   if (href)
     return (
-      <NextLink href={href} className={clsx(className, 'hover:bg-gray-0 dark:hover:bg-dark-5')}>
+      <NextLink
+        id={id}
+        href={href}
+        className={clsx(className, 'hover:bg-gray-0 dark:hover:bg-dark-5')}
+      >
         {body}
       </NextLink>
     );
 
-  return <div className={className}>{body}</div>;
+  return (
+    <div id={id} className={className}>
+      {body}
+    </div>
+  );
 }
 
 /**

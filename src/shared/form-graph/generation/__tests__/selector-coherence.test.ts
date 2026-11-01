@@ -4,10 +4,10 @@ import {
   getEcosystemsForWorkflow,
   getOutputTypeForWorkflow,
   workflowOptions,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 import { generationHub } from '../hub.graph';
 import { resolveCompatibleEcosystem } from '../ecosystem-gates';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 const EXT: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 9, vidQuantity: 4 },
@@ -56,7 +56,7 @@ describe('selector coherence rules', () => {
   });
 
   it('a same-output workflow switch keeps the DISPLAYED ecosystem, default-derived or not', () => {
-    // the field-report case: v1 migration carried only the workflow; Qwen is
+    // the field-report case: the migration carried only the workflow; Qwen is
     // merely img2img:edit's default — switching to txt2img must keep it
     const store = generationHub.createStore({
       ext: EXT,

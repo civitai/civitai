@@ -38,6 +38,11 @@ describe('getPaginatedCosmeticShopItems archived filter', () => {
     expect(where.status).toEqual({ not: 'Archived' });
   });
 
+  it('leaves out mystery box listings, which would read as packs here', async () => {
+    await getPaginatedCosmeticShopItems({ page: 1, limit: 60 });
+    expect(capturedWhere().itemDefinitionId).toBeNull();
+  });
+
   it('shows only archived listings when archived is true', async () => {
     await getPaginatedCosmeticShopItems({ archived: true, page: 1, limit: 60 });
 

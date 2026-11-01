@@ -130,12 +130,16 @@ const storedModel = {
 
 const entityChanges = vi.fn(() => Promise.resolve());
 
+let storedRow: Record<string, unknown> = storedModel;
+
 /**
- * The type the WRITER reports before the update. Read inside the transaction, so it is a separate
- * call from `dbRead.model.findUnique` and has to be declared separately.
+ * Both stored-model reads hit the primary: the first is the snapshot the save acts on, the second
+ * is the type read inside the transaction. The snapshot's `type` is whatever `storedRow` says; the
+ * transaction read reports `type`, so the two can disagree the way a stale snapshot would.
  */
 function storedTypeOnWriter(type: ModelType) {
-  mockDbWrite.model.findUnique.mockResolvedValue({ type });
+  mockDbWrite.model.findUnique.mockReset();
+  mockDbWrite.model.findUnique.mockResolvedValueOnce(storedRow).mockResolvedValue({ type });
 }
 
 function upsert(input: Partial<ModelUpsertInput> & { userId: number }) {
@@ -197,7 +201,7 @@ beforeEach(() => {
     matchedWords: [] as string[],
   });
   mockGetHighestTierSubscription.mockResolvedValue({ tier: 'gold' });
-  mockDbRead.model.findUnique.mockResolvedValue(storedModel);
+  storedRow = storedModel;
   mockDbRead.model.count.mockResolvedValue(0);
   mockDbWrite.$queryRaw.mockResolvedValue([]);
   storedTypeOnWriter(ModelType.Checkpoint);
@@ -257,7 +261,7 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     // from the shared `storedModel`. Normalising that fixture to LORA would have left this assertion
     // passing AND the mutation passing, with no other case in the file noticing, since nothing else
     // reads `storedModel.type`. Pinned locally so a distant edit cannot reach it.
-    mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, type: ModelType.Checkpoint });
+    storedRow = { ...storedModel, type: ModelType.Checkpoint };
     storedTypeOnWriter(ModelType.LORA);
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
@@ -418,6 +422,13 @@ describe('upsertModel — licensing lineage on a model type change', () => {
         {},
         {
           get(_t, model: string) {
+            if (model.startsWith('$'))
+              return (...args: unknown[]) => {
+                calledOnTx.push(model);
+                return (mockDbWrite as unknown as Record<string, (...a: unknown[]) => unknown>)[
+                  model
+                ](...args);
+              };
             return new Proxy(
               {},
               {

@@ -24,7 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the REAL guard runs end-to-end.
  */
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   handleError: vi.fn((e: unknown) => (typeof e === 'string' ? e : undefined)),
   submitWorkflow: vi.fn(),
 }));

@@ -15,7 +15,6 @@
   import { loraBlobAir } from '$lib/train-core';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { locationHref } from '$lib/actions/locationHref';
-  import JSZip from 'jszip';
   import { onSignal } from '$lib/signals';
   import { WORKFLOW_UPDATE_SIGNAL } from '$lib/signal-events';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -46,15 +45,20 @@
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
+    epochWeightsFileName,
+    namedDownloadUrl,
     overallProgressPct,
+    runFileStem,
+    type ArchiveKind,
     type TrainingDetail,
     type TrainingDetailEpoch,
   } from '$lib/data/trainingRows';
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
-  import { extOfAir, extOfMime } from '$lib/media';
+  import { extOfAir } from '$lib/media';
+  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
-  import { RETENTION_DAYS } from '$lib/orchestrator-core';
+  import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
@@ -275,23 +279,12 @@
     return directDatasetUrl(air) ?? datasetSrcs[air] ?? null;
   }
 
-  // The blob's own extension (the air ends in one, e.g. `…-0.png`), falling back to the fetched
-  // mime — both answered by $lib/media's one table, which the Data step's zip IMPORT reads too, so
-  // a downloaded zip's names always round-trip.
-  function fileExt(air: string, mime: string): string {
+  // The air ends in the blob's own extension (`…-0.png`); anything longer isn't one, so the fetched
+  // mime decides.
+  function airExt(air: string): string | undefined {
     const fromAir = extOfAir(air);
-    if (fromAir && fromAir.length <= 4) return fromAir;
-    return extOfMime(mime) ?? 'png';
+    return fromAir && fromAir.length <= 4 ? fromAir : undefined;
   }
-  function saveBlob(blob: Blob, fileName: string) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   async function fetchDatasetBlob(air: string): Promise<Blob> {
     const direct = directDatasetUrl(air);
     if (!direct) return backend().datasetBlob(air, d.workflowId);
@@ -300,8 +293,6 @@
     return res.blob();
   }
 
-  // Download the training data as a standard LoRA-layout zip: each image plus a same-named .txt caption,
-  // so it round-trips with the Data step's "Import .zip" and works in other trainers.
   let downloading = $state(false);
   let downloadError = $state('');
   async function downloadDataset() {
@@ -309,57 +300,71 @@
     downloading = true;
     downloadError = '';
     try {
-      const zip = new JSZip();
       const pad = Math.max(2, String(d.dataset.length).length);
-      let fetched = 0;
-      await Promise.all(
-        d.dataset.map(async (item, i) => {
-          let blob: Blob;
-          try {
-            blob = await fetchDatasetBlob(item.air);
-          } catch {
-            return;
-          }
-          fetched += 1;
-          const base = String(i + 1).padStart(pad, '0');
-          zip.file(`${base}.${fileExt(item.air, blob.type)}`, blob);
-          if (item.caption.trim()) zip.file(`${base}.txt`, item.caption.trim());
-        })
+      const { blob } = await buildDatasetZip(
+        d.dataset.map((item, i) => ({
+          base: String(i + 1).padStart(pad, '0'),
+          ext: airExt(item.air),
+          caption: item.caption,
+          load: () => fetchDatasetBlob(item.air),
+        }))
       );
-      // An all-skips zip would download EMPTY and read as success.
-      if (fetched === 0) {
+      if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
         return;
       }
-      saveBlob(await zip.generateAsync({ type: 'blob' }), `${slugify(d.name, 'dataset')}-dataset.zip`);
+      saveBlob(blob, `${slugify(d.name, 'dataset')}-dataset.zip`);
     } finally {
       downloading = false;
     }
   }
 
-  let archiving = $state(false);
+  let archiving = $state<ArchiveKind | null>(null);
   let archiveError = $state('');
+  // Set when one kind had to be split into several zips: browsers block all but the first of several
+  // scripted opens, so each part is offered as its own link instead.
+  let archiveParts = $state<EpochArchive[]>([]);
   // A blob KEY, not a URL: a legacy run's epochs download one by one from signed URLs but name no
   // blob the archive could include.
   const archivableEpochs = $derived(d.epochs.filter((e) => e.modelKey).length);
-  async function downloadAllCheckpoints() {
+  const hasSamples = $derived(
+    archivableEpochs > 0 && d.epochs.some((e) => e.samples.some((s) => s !== null))
+  );
+  async function downloadArchive(kind: ArchiveKind) {
     if (archiving) return;
-    archiving = true;
+    archiving = kind;
     archiveError = '';
+    archiveParts = [];
+    // A /[id]→/[id'] navigation reuses this component; a result for the run we left must not land here.
+    const runId = d.workflowId;
     try {
-      const { url } = await backend().epochArchive(d.workflowId);
-      const a = document.createElement('a');
-      a.href = url;
-      // New tab: an attachment response downloads there; a failed one can't replace the run page.
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.click();
+      const parts = await backend().epochArchive(runId, kind);
+      if (runId !== d.workflowId) return;
+      if (parts.length === 1) {
+        const a = document.createElement('a');
+        a.href = parts[0].url;
+        // New tab: an attachment response downloads there; a failed one can't replace the run page.
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.click();
+      } else {
+        archiveParts = parts;
+      }
     } catch (e) {
-      archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
+      if (runId === d.workflowId)
+        archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
     } finally {
-      archiving = false;
+      if (runId === d.workflowId) archiving = null;
     }
   }
+
+  // Epoch weights download as `<run>-<base>-epoch-NN…`, not by their opaque blob id.
+  const fileStem = $derived(runFileStem(d.name, d.base));
+  const maxEpoch = $derived(Math.max(0, ...d.epochs.map((e) => e.number)));
+  const weightsHref = (e: TrainingDetailEpoch) =>
+    e.modelUrl
+      ? namedDownloadUrl(e.modelUrl, epochWeightsFileName(fileStem, e.number, maxEpoch, e.modelKey))
+      : undefined;
 
   function downloadSettings() {
     saveBlob(
@@ -444,7 +449,7 @@
   const continueQuoteKey = $derived.by(() => {
     const epochs = Number(furtherEpochs) || 0;
     if (!browser || !runComplete || quoteFromEpoch === null || epochs < 1) return null;
-    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}`;
+    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}`;
   });
   $effect(() => {
     // A stale "could not price" must not linger after the panel closes or the input empties.
@@ -457,7 +462,8 @@
         const q = await backend().continueQuote(
           workflowIdKey,
           quoteFromEpoch!,
-          Number(furtherEpochs) || 0
+          Number(furtherEpochs) || 0,
+          buzzMode.currencies
         );
         quoteError = '';
         return {
@@ -481,7 +487,8 @@
       const id = await backend().continueRun(
         d.workflowId,
         publishTarget.number,
-        Number(furtherEpochs) || 5
+        Number(furtherEpochs) || 5,
+        buzzMode.currencies
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
@@ -512,6 +519,17 @@
     if (!toUrl || d.modelId == null) return null;
     return hostLink(toUrl({ modelId: d.modelId }));
   });
+  // The run keeps its modelId after the owner deletes the model, so ask once per id (a primitive,
+  // so the training poll's fresh `d` doesn't re-ask), and only when there's a link to drop. Never
+  // settles on the server: SSR and hydration both render the pending branch.
+  const runModelId = $derived(modelLink ? d.modelId : undefined);
+  const modelLive = $derived(
+    runModelId == null
+      ? null
+      : browser
+        ? backend().modelLive(runModelId)
+        : new Promise<boolean>(() => {})
+  );
 
   let mode = $state<'epoch' | 'compare'>('epoch');
   // A single-epoch continuation still has ancestors worth comparing against, so lineage alone
@@ -539,9 +557,22 @@
     // The quote itself blanks via debouncedQuote (workflowIdKey is part of its key).
     quoteError = '';
     downloadError = '';
+    archiving = null;
+    archiveError = '';
+    archiveParts = [];
     showLineage = false;
   });
 </script>
+
+<!-- An edit run's samples are only readable next to the image they were rendered from. -->
+{#snippet sourceThumb(index: number)}
+  {@const url = d.sourceImages?.[index]}
+  {#if url}
+    <a href={url} target="_blank" rel="noopener noreferrer" class="shrink-0" title="Input image">
+      <img src={url} alt="Input for sample {index + 1}" class="size-10 rounded border border-dark-4 object-cover" />
+    </a>
+  {/if}
+{/snippet}
 
 <!-- The one place the Generate affordance decides gated vs in-place action vs deep link — a render
      site that skipped the gate would silently un-gate non-members. When the host says this user
@@ -694,12 +725,21 @@
     <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-dark-4 pt-3">
       <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Download</span>
       {#if archivableEpochs > 0}
-        <Button size="sm" variant="outline" disabled={archiving} onclick={downloadAllCheckpoints}
-          title="One zip with every ready checkpoint's weights and sample images">
+        <Button size="sm" variant="outline" disabled={archiving !== null}
+          onclick={() => downloadArchive('weights')}
+          title="One zip with every ready checkpoint's weights">
           <IconPackages size={14} stroke={2} />
-          {archiving
+          {archiving === 'weights'
             ? 'Building archive…'
             : `All ${archivableEpochs} checkpoint${archivableEpochs === 1 ? '' : 's'} (.zip)`}
+        </Button>
+      {/if}
+      {#if hasSamples}
+        <Button size="sm" variant="ghost" disabled={archiving !== null}
+          onclick={() => downloadArchive('samples')}
+          title="Every checkpoint's sample images">
+          <IconPhoto size={14} stroke={2} />
+          {archiving === 'samples' ? 'Building archive…' : 'Samples (.zip)'}
         </Button>
       {/if}
       <Button size="sm" variant="ghost" onclick={downloadSettings} title="The run's effective training configuration as JSON">
@@ -707,6 +747,16 @@
       </Button>
       {#if archiveError}
         <span class="font-mono text-xs text-red-400">{archiveError}</span>
+      {/if}
+      {#if archiveParts.length}
+        <span class="basis-full font-mono text-xs text-dark-2">
+          Too many files for one zip — download each part:
+          {#each archiveParts as part, i (part.url)}
+            <a href={part.url} target="_blank" rel="noopener" class="ml-2 text-primary hover:underline"
+              >{i + 1} of {archiveParts.length}</a
+            >
+          {/each}
+        </span>
       {/if}
     </div>
   </header>
@@ -844,9 +894,10 @@
 
             {#each promptLabels as prompt, r (r)}
               <div
-                class="flex items-center pr-2 text-xs leading-relaxed text-dark-2"
+                class="flex items-center gap-2 pr-2 text-xs leading-relaxed text-dark-2"
                 title={prompt}
               >
+                {@render sourceThumb(r)}
                 <span class="line-clamp-4">{prompt}</span>
               </div>
               {#each ancestorCols as col (`${col.run.workflowId}:${col.epoch.id}`)}
@@ -950,7 +1001,7 @@
                 )}
               {/if}
               <a
-                href={featured.modelUrl}
+                href={weightsHref(featured)}
                 download
                 class="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
               >
@@ -989,8 +1040,9 @@
               {:else}
                 <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} pending={samplesPending} />
               {/if}
-              <figcaption class="text-xs leading-relaxed text-dark-2" title={prompt}>
-                {prompt}
+              <figcaption class="flex items-start gap-2 text-xs leading-relaxed text-dark-2" title={prompt}>
+                {@render sourceThumb(i)}
+                <span>{prompt}</span>
               </figcaption>
             </figure>
           {/each}
@@ -1153,55 +1205,69 @@
       </div>
     {/if}
 
-    {#if publishUrl() || modelLink}
-      <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
-        {#if d.state === 'published'}
-          <!-- State first, link second: a published run must never fall through to a Publish CTA —
-               older runs carry `published` without `modelId`, and a host may omit modelPageUrl. -->
-          {#if modelLink}
-            <Button size="sm" {...modelLink}>
-              <IconExternalLink size={14} stroke={2} />View your model page
+    {#snippet publishPanel(link: ReturnType<typeof hostLink> | null)}
+      {#if publishUrl() || link}
+        <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
+          {#if d.state === 'published'}
+            <!-- State first, link second: a published run must never fall through to a Publish CTA —
+                 older runs carry `published` without `modelId`, and a host may omit modelPageUrl. -->
+            {#if link}
+              <Button size="sm" {...link}>
+                <IconExternalLink size={14} stroke={2} />View your model page
+              </Button>
+            {/if}
+            <p class="m-0 font-mono text-xs text-dark-2">
+              This run was published as a model on Civitai.
+            </p>
+          {:else if publishLink && publishEpoch}
+            <Button size="sm" {...publishLink}>
+              <IconUpload size={14} stroke={2} />Publish a model page
             </Button>
-          {/if}
-          <p class="m-0 font-mono text-xs text-dark-2">
-            This run was published as a model on Civitai.
-          </p>
-        {:else if publishLink && publishEpoch}
-          <Button size="sm" {...publishLink}>
-            <IconUpload size={14} stroke={2} />Publish a model page
-          </Button>
-          {#if modelLink}
-            <Button size="sm" variant="outline" {...modelLink}>
+            {#if link}
+              <Button size="sm" variant="outline" {...link}>
+                <IconExternalLink size={14} stroke={2} />View draft
+              </Button>
+              <p class="m-0 font-mono text-xs text-dark-2">
+                You already have a draft model page for this run — publishing picks up where you left
+                off, or open the draft directly.
+              </p>
+            {:else}
+              <p class="m-0 font-mono text-xs text-dark-2">
+                Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
+                recommended
+                  ? ' (recommended)'
+                  : ''} — you review, finish, and publish it there. Nothing goes public until you do.
+              </p>
+            {/if}
+          {:else if link}
+            <!-- A draft exists but there's nothing to publish from here — the weights expired, or
+                 this host has no publish surface. The draft link must not hide behind either. -->
+            <Button size="sm" variant="outline" {...link}>
               <IconExternalLink size={14} stroke={2} />View draft
             </Button>
             <p class="m-0 font-mono text-xs text-dark-2">
-              You already have a draft model page for this run — publishing picks up where you left
-              off, or open the draft directly.
+              You have a draft model page for this run on Civitai.
             </p>
           {:else}
+            <Button size="sm" disabled>Publish a model page</Button>
             <p class="m-0 font-mono text-xs text-dark-2">
-              Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
-              recommended
-                ? ' (recommended)'
-                : ''} — you review, finish, and publish it there. Nothing goes public until you do.
+              Available once a checkpoint with downloadable weights is ready.
             </p>
           {/if}
-        {:else if modelLink}
-          <!-- A draft exists but there's nothing to publish from here — the weights expired, or
-               this host has no publish surface. The draft link must not hide behind either. -->
-          <Button size="sm" variant="outline" {...modelLink}>
-            <IconExternalLink size={14} stroke={2} />View draft
-          </Button>
-          <p class="m-0 font-mono text-xs text-dark-2">
-            You have a draft model page for this run on Civitai.
-          </p>
-        {:else}
-          <Button size="sm" disabled>Publish a model page</Button>
-          <p class="m-0 font-mono text-xs text-dark-2">
-            Available once a checkpoint with downloadable weights is ready.
-          </p>
-        {/if}
-      </div>
+        </div>
+      {/if}
+    {/snippet}
+    <!-- Pending or a failed check keeps the link: hiding a real draft is worse than a stale one. -->
+    {#if modelLive}
+      {#await modelLive}
+        {@render publishPanel(modelLink)}
+      {:then live}
+        {@render publishPanel(live ? modelLink : null)}
+      {:catch}
+        {@render publishPanel(modelLink)}
+      {/await}
+    {:else}
+      {@render publishPanel(modelLink)}
     {/if}
   {/if}
 

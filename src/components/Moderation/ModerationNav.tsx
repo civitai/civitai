@@ -5,6 +5,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { APP_ACCESS_REQUESTS_REVIEW_HREF } from '~/shared/constants/app-access-request.constants';
 import { isMigratedModeratorHref } from '~/shared/constants/migrated-moderator-routes';
 
 export function ModerationNav() {
@@ -22,6 +23,8 @@ export function ModerationNav() {
         },
         { label: 'Models', href: '/moderator/models' },
         { label: 'HuggingFace Import', href: '/moderator/huggingface-import' },
+        // Lives as a tab on /apps/review; the old /moderator route only redirects there.
+        { label: 'App Access Requests', href: APP_ACCESS_REQUESTS_REVIEW_HREF },
         { label: 'Training Models', href: '/moderator/training-models' },
         { label: 'Training Data Review', href: '/moderator/review/training-data' },
         // Migrated to the moderator app — the /moderator/* route redirects there (see the moderator
@@ -33,6 +36,7 @@ export function ModerationNav() {
           href: '/moderator/service-status',
           hidden: !features.serviceStatus,
         },
+        { label: 'Site Alerts', href: '/moderator/site-alerts' },
         // { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         {
           label: 'Cash Management',
@@ -45,10 +49,11 @@ export function ModerationNav() {
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
         // Migrated to the moderator app (redirects via the moderator catchall page).
-        { label: 'Article Ratings Review', href: '/moderator/article-rating-review' },
+        { label: 'Rating Disputes', href: '/moderator/article-rating-review' },
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Minor Hash Matches', href: '/moderator/minor-hash-matches' },
+        { label: 'Model Flag Appeals', href: '/moderator/minor-hash-matches/appeals' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
         {
           label: 'Creator Shop Review',

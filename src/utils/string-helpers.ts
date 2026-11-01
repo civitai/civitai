@@ -1,4 +1,4 @@
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 
@@ -217,6 +217,15 @@ export function slugit(value: string) {
 }
 
 /**
+ * `slugit` strips everything outside ASCII, so a name written only in CJK (or emoji)
+ * comes back empty. In a path that leaves `//` — use this wherever a slug is a path
+ * segment that must not be empty.
+ */
+export function slugitOr(value: string | null | undefined, fallback: string) {
+  return (value ? slugit(value) : '') || fallback;
+}
+
+/**
  * Build a canonical model detail URL. Includes the slugified name when
  * provided so links match the canonical form Google indexes; falls back
  * gracefully when the name is missing/null/empty.
@@ -386,6 +395,12 @@ export function capitalize(str: string) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+/** "the Flux model", but "The Weirdies model" rather than "the The Weirdies model". */
+export function withDefiniteArticle(name: string, article: 'the' | 'The' = 'the') {
+  if (!/^the\s/i.test(name)) return `${article} ${name}`;
+  return article === 'The' ? capitalize(name) : name;
+}
+
 export function toKebabCase(str: string) {
   return str
     .split('')
@@ -395,4 +410,12 @@ export function toKebabCase(str: string) {
         : letter;
     })
     .join('');
+}
+
+/**
+ * Removes NUL and replaces lone surrogates, which Postgres rejects in text and jsonb. It scrubs rather
+ * than rejects, unlike the validators in `platform-feedback.schema.ts` and `apps/doc-store.ts`.
+ */
+export function sanitizeForPostgres(value: string) {
+  return value.replace(/\u0000/g, '').toWellFormed();
 }

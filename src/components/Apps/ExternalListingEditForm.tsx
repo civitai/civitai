@@ -53,6 +53,7 @@ import {
 } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -232,7 +233,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         ? 'Sent for review — your current version stays live until a moderator re-approves.'
         : 'Your changes are saved.',
     });
-    void router.push('/apps/build');
+    void router.push(MY_APPS_HREF);
   }
 
   async function handleSave() {
@@ -275,7 +276,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
             title: 'No changes',
             message: 'Nothing to submit for review.',
           });
-          void router.push('/apps/build');
+          void router.push(MY_APPS_HREF);
           return;
         }
         if (scalarChanged) {
@@ -709,6 +710,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 onRepull={autofill.repull}
                 repullLoading={autofill.loading}
                 initial={edit.assets}
+                // Set through `setRedMedia` against the same effective target as every other
+                // asset here (the revision for an approved listing), so Save submits it too.
+                redMedia={edit.redMedia}
                 allowRemove
                 onAssetMutated={() => setAssetsDirty(true)}
               />
@@ -725,7 +729,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       </Stepper>
 
       <Group justify="space-between">
-        <Button variant="default" component={Link} href="/apps/build" disabled={saving}>
+        <Button variant="default" component={Link} href={MY_APPS_HREF} disabled={saving}>
           Cancel
         </Button>
         <Button

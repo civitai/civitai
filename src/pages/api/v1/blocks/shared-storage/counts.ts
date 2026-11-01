@@ -7,6 +7,7 @@ import {
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
+import { withLegacyStoreGate } from '~/server/services/apps/legacy-store-shutdown';
 import {
   getSharedCounts,
   SHARED_COUNTS_KEYS_MAX,
@@ -90,7 +91,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // origin (`Origin: null`), so it needs `ACAO: null` to clear the CORS preflight;
 // the Bearer block-JWT (no cookies) remains the sole authz gate — mirrors
 // images.ts; see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, {
+export default withBlockScope(withLegacyStoreGate('shared', baseHandler), {
   endpoint: 'shared_storage_counts',
   requiredScope: 'apps:storage:shared:read',
   allowOpaqueOrigin: true,

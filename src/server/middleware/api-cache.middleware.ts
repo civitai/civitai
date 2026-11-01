@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
-import { createMiddleware, PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import { getApiDefaultResponseHeaders } from '~/server/middleware/api-request-policy';
+import { createMiddleware } from '~/server/middleware/middleware-utils';
 
 export const apiCacheMiddleware = createMiddleware({
-  matcher: ['/api/trpc/:path*', '/api/v1/:path*'],
+  matcher: ['/api/v1/:path*'],
   handler: async () => {
     const response = NextResponse.next();
-    response.headers.set('Cache-Control', PRIVATE_CACHE_CONTROL); // Default cache control
-    if (process.env.PODNAME) response.headers.set('X-Handled-By', process.env.PODNAME);
+    // Default Cache-Control (+ X-Handled-By). `/api/trpc` is outside the proxy matcher; that
+    // route applies the same headers itself (`applyApiRequestPolicy`).
+    for (const [name, value] of getApiDefaultResponseHeaders()) response.headers.set(name, value);
 
     return response;
   },

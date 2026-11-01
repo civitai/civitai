@@ -498,9 +498,8 @@ describe('assertBlockWorkflowTaggedForApp reaches the wire', () => {
 describe('the rate-limit postures reach the wire unchanged', () => {
   /**
    * The poll limiter deliberately RETURNS a non-terminal snapshot rather than
-   * throwing: the SDK host turns a throw into a TERMINAL failure snapshot, so a 429
-   * here would tell the block that a running, PAID generation had finished and stop
-   * its watch loop. A route that re-mapped this resolve to a 429 would re-introduce
+   * throwing: a 429 here can be read by a block as a TERMINAL failure, telling it
+   * that a running, PAID generation had finished and stopping its watch loop. A route that re-mapped this resolve to a 429 would re-introduce
    * exactly that, and only a test that spans both halves can see it.
    */
   it('a shed poll is a 200 non-terminal snapshot, not a 429', async () => {
@@ -570,6 +569,11 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
       tags: [APP_TAG],
     });
     mockReserveAppSpend.mockResolvedValue({ allowed: true, dailyKey: 'appspend:key' });
+    // LAYER 2 drives the per-viewer reservation past its cap. Restored HERE rather
+    // than at the end of that test: a restore placed after its assertions never runs
+    // when one of them fails, and the leaked over-cap total then refuses every later
+    // submit in this block with the wrong layer's message.
+    redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
   });
 
   it('LAYER 1 — over the per-call buzzBudget: 200, priced, and no orchestrator submit', async () => {
@@ -584,7 +588,12 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     expect(out.json.snapshot.status).toBe('failed');
     // 🔴 THE PRICE IS PRESENT AND NUMERIC. This single field is what makes the
     // outcome recoverable for the block — it is the number a top-up CTA quotes.
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    // `authorFee: 0` rides along because this route returns the procedure's
+    // snapshot byte-for-byte (`BlockWorkflowSnapshot`, the bridge's shape): a priced
+    // refusal itemises the author's fee, and `0` means it was looked up and none
+    // applies — this fixture's app charges none. LAYERS 2 and 3 pin the same
+    // literal, so dropping the field on this transport goes red here.
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     expect(out.json.snapshot.error).toContain('insufficient buzz budget');
     // Only the whatIf ran. A REAL submit would have been a charge.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(1);
@@ -607,14 +616,13 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     expect(out.status).toBe(200);
     expect(out.json.snapshot.status).toBe('failed');
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     // The LAYER, named: this is the per-user platform ceiling, not the per-call
     // budget above it and not the per-app aggregate below it.
     expect(out.json.snapshot.error).toContain('daily Buzz cap reached');
     expect(out.json.snapshot.error).toContain(String(BLOCK_BUZZ_CAP_PER_DAY));
     // Still no real submit — the reservation is taken BEFORE the orchestrator call.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(1);
-    redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
   });
 
   it('LAYER 3 — over the PER-APP aggregate cap (G8): 200, priced, refused by reserveAppSpend', async () => {
@@ -629,7 +637,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     expect(out.status).toBe(200);
     expect(out.json.snapshot.status).toBe('failed');
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     expect(out.json.snapshot.error).toContain('app daily spend cap reached');
     // 🔴 The aggregate ceiling is deliberately number-free on the wire — a
     // (potentially hostile) app must not learn it. Pinned so a later "helpful"
@@ -686,6 +694,112 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     expect(out.json.snapshot.status).not.toBe('failed');
     // whatIf THEN the real submit — two calls, and the second carries no `whatif`.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * 🔴 AN UNRUNNABLE INLINE GRAPH IS REFUSED ON THE WIRE WITH ITS CODE
+ * (civitai-app-starters#774). The inline `customComfy` estimate and submit refuse
+ * a graph that is certain to fail with a failed snapshot carrying `errorCode`
+ * (`not-api-format`, `model-filenames`, the codes of `checkComfyGraph` in
+ * `@civitai/app-sdk/blocks`). Through REST that must arrive as a 200 carrying the
+ * snapshot, so an app reads the same `errorCode` it would read over the bridge,
+ * and nothing may reach the orchestrator or the spend reservation.
+ *
+ * Red on the pre-change code: the wire schema refused a UI graph, which this route
+ * answers as `400 Invalid request body` with no code, and a filename graph was
+ * quoted like any other.
+ */
+describe('an unrunnable inline customComfy graph is refused on the wire with its errorCode', () => {
+  const UI_GRAPH = {
+    last_node_id: 2,
+    last_link_id: 1,
+    nodes: [
+      { id: 1, type: 'CheckpointLoaderSimple', widgets_values: ['sd_xl_base_1.0.safetensors'] },
+      { id: 2, type: 'CLIPTextEncode', widgets_values: ['a brass astrolabe on slate'] },
+    ],
+    links: [[1, 1, 1, 2, 0, 'CLIP']],
+    groups: [],
+    config: {},
+    extra: {},
+    version: 0.4,
+  };
+  const FILENAME_GRAPH = {
+    '1': {
+      class_type: 'CheckpointLoaderSimple',
+      inputs: { ckpt_name: 'sd_xl_base_1.0.safetensors' },
+    },
+    '2': { class_type: 'CLIPTextEncode', inputs: { clip: ['1', 1], text: 'a brass astrolabe' } },
+  };
+
+  function inlineBody(workflow: unknown) {
+    return { kind: 'customComfy', mode: 'inline', workflow, resources: [], maxBuzz: 40 };
+  }
+
+  function expectNoOrchestratorOrSpend() {
+    expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+    expect(mockOrchSubmitWorkflow).not.toHaveBeenCalled();
+    expect(mockReserveAppSpend).not.toHaveBeenCalled();
+  }
+
+  it('estimate: a UI graph is a 200 failed snapshot with errorCode not-api-format', async () => {
+    const out = await call(
+      estimateHandler,
+      { body: inlineBody(UI_GRAPH) },
+      '/api/v1/blocks/workflows/estimate'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: expect.stringContaining('(detected: ui)'),
+      errorCode: 'not-api-format',
+    });
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('submit: a UI graph is a 200 failed snapshot with errorCode not-api-format, nothing reserved', async () => {
+    const out = await call(
+      submitHandler,
+      { body: inlineBody(UI_GRAPH), idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: expect.stringContaining('(detected: ui)'),
+      errorCode: 'not-api-format',
+    });
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('estimate: a model filename is a 200 failed snapshot with errorCode model-filenames', async () => {
+    const out = await call(
+      estimateHandler,
+      { body: inlineBody(FILENAME_GRAPH) },
+      '/api/v1/blocks/workflows/estimate'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toMatchObject({
+      workflowId: 'failed',
+      status: 'failed',
+      errorCode: 'model-filenames',
+    });
+    expect(out.json.snapshot.error).toContain("ckpt_name = 'sd_xl_base_1.0.safetensors'");
+    expect(out.json.snapshot).not.toHaveProperty('cost');
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('submit: a model filename is a 200 failed snapshot with errorCode model-filenames, nothing reserved', async () => {
+    const out = await call(
+      submitHandler,
+      { body: inlineBody(FILENAME_GRAPH), idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toMatchObject({ status: 'failed', errorCode: 'model-filenames' });
+    expectNoOrchestratorOrSpend();
   });
 });
 

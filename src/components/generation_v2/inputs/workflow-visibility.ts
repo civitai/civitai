@@ -6,12 +6,8 @@ import {
   filterWorkflowsByFeatureFlags,
   filterWorkflowsByGatedEcosystems,
   getAllWorkflowsGrouped,
-} from '~/shared/data-graph/generation/config/workflows';
-import {
-  mergeGateStates,
-  rulesToStates,
-  type GateItemState,
-} from '~/shared/data-graph/generation/gates';
+} from '~/shared/generation/config/workflows';
+import { mergeGateStates, rulesToStates, type GateItemState } from '~/shared/generation/gates';
 
 /**
  * Who may see which workflow. Mirrors the server-side resolver, so a gate rule

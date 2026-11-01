@@ -6,6 +6,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 
+// eslint-disable-next-line local-rules/no-module-scope-cache -- exported and used by many callers; making it lazy is out of scope here
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   cacheNotFound: false,
@@ -40,12 +41,14 @@ export const resourceDataCache = createCachedArray({
             SELECT
               m."id",
               m."name",
+              m."sfwName",
               m."type",
               m."nsfw",
               m."poi",
               m."minor",
               m."userId",
-              m."sfwOnly"
+              m."sfwOnly",
+              (SELECT u."flags" FROM "User" u WHERE u.id = m."userId") AS "userFlags"
             FROM "Model" m
             WHERE m.id = mv."modelId"
           ) as obj
@@ -93,11 +96,14 @@ export type GenerationResourceDataModel = {
   model: {
     id: number;
     name: string;
+    /** The .com title; resolved per viewer in `getResourceData` and never sent on. */
+    sfwName?: string | null;
     type: ModelType;
     nsfw: boolean;
     poi: boolean;
     userId: number;
     minor?: boolean;
     sfwOnly?: boolean;
+    userFlags?: number | null;
   };
 };

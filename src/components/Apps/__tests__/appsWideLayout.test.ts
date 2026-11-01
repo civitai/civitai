@@ -12,6 +12,7 @@ import { APPS_CARD_LIST_GAP, APPS_CARD_LIST_MIN_COLUMN } from '~/components/Apps
 import {
   APPS_ACTIVE_PREVIEWS_COLUMNS,
   APPS_AGENT_REPORT_SCOPE_COLUMNS,
+  APPS_CUSTOM_EVENTS_COLUMNS,
   APPS_FULL_MEASURE_CONTENT_WIDTH,
   APPS_LEGACY_CONTENT_WIDTH,
   APPS_MINE_COLUMNS,
@@ -136,7 +137,7 @@ describe('appsTableColumnProblems — the rule, on inputs it must REJECT', () =>
 describe('every shipped ledger is valid', () => {
   test('the sweep found the ledgers (guards a vacuous loop)', () => {
     // A loop over an empty record passes having checked nothing.
-    expect(Object.keys(APPS_TABLE_COLUMN_LEDGERS)).toHaveLength(8);
+    expect(Object.keys(APPS_TABLE_COLUMN_LEDGERS)).toHaveLength(9);
   });
 
   test('no ledger has a problem', () => {
@@ -162,6 +163,7 @@ describe('every shipped ledger is valid', () => {
     expect(APPS_REVENUE_COLUMNS.scoped).toHaveLength(6); // …minus App
     expect(APPS_ACTIVE_PREVIEWS_COLUMNS).toHaveLength(5); // App Version State Age actions
     expect(APPS_AGENT_REPORT_SCOPE_COLUMNS).toHaveLength(6); // Scope Used Justified Sensitive Evidence Notes
+    expect(APPS_CUSTOM_EVENTS_COLUMNS).toHaveLength(4); // Event Events Signed-in Signed-out
   });
 
   test('🔴 the two-shape ledgers differ by exactly one column', () => {
@@ -191,6 +193,7 @@ describe('every shipped ledger is valid', () => {
       'revenue (scoped)': 1, // Scope — there is no App column
       'active previews': 4, // actions — case (b), no cell can use the room
       'agent report scopes': 5, // Notes — uncapped reviewer prose
+      'custom events': 0, // Event — the only non-numeric column
     };
     // The map and the ledger record must name the SAME set, or a ledger added without a
     // decision would simply be skipped.
@@ -234,8 +237,8 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
    * is exactly the shape of over-claim the guard itself exists to stop. It is a list of the
    * ones known TODAY, not a proof of completeness:
    *   · a table with NO header row is out of scope (there is no column ledger to attach
-   *     and no header cell to count against one) — `AppAnalyticsPanel`'s two key/value
-   *     tables are the live examples;
+   *     and no header cell to count against one) — `AppAnalyticsPanel`'s key/value tables
+   *     are the live examples;
    *   · it reads `src/components/Apps` and `src/components/AppBlocks` only, so a table
    *     defined outside those directories and rendered on an apps route is invisible;
    *   · the walk matches the literal tag `Table`, so a NEW file that imports it under
@@ -295,15 +298,10 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       component: 'OffsiteReviewQueue',
       why: 'dead — superseded by the unified queue; nothing renders it (the LIVE table in this file is OffsiteReportsQueue, which does carry a ledger)',
     },
-    'src/components/Apps/MySubmissionsList.tsx#0': {
-      kind: 'unrendered',
-      component: 'MySubmissionsList',
-      why: 'dead — /apps/my-submissions merged into /apps/mine and 301s there',
-    },
     'src/components/Apps/OffsiteSubmissionsList.tsx#0': {
       kind: 'unrendered',
       component: 'OffsiteSubmissionsList',
-      why: 'dead — same merge as MySubmissionsList',
+      why: 'dead — /apps/my-submissions merged into /apps/mine and 301s there',
     },
     'src/components/Apps/OffsiteReviewQueue.tsx#1': {
       kind: 'no-surplus',
@@ -478,12 +476,12 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
     // meant to fail here and be classified deliberately.
     expect(scanFiles().length).toBeGreaterThan(40);
     expect(SITES.map((s) => s.id)).toEqual([
+      'src/components/AppBlocks/AppAnalyticsPanel.tsx#0',
       'src/components/AppBlocks/RevenuePanel.tsx#0',
       'src/components/Apps/ActivePreviewsPanel.tsx#0',
       'src/components/Apps/AppActivityPanel.tsx#0',
       'src/components/Apps/AppListingsModerationTable.tsx#0',
       'src/components/Apps/MyAppsBody.tsx#0',
-      'src/components/Apps/MySubmissionsList.tsx#0',
       // 🔴 TWO ENTRIES FOR ONE FILE, and this is the row that proves the walk is
       // per-TABLE rather than per-file: `#0` is the dead `OffsiteReviewQueue` and `#1` is
       // the live `OffsiteReportsQueue`. A per-file guard cannot express "one of these
@@ -493,6 +491,7 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       'src/components/Apps/OffsiteReviewQueue.tsx#1',
       'src/components/Apps/OffsiteSubmissionsList.tsx#0',
       'src/components/Apps/ReportTabs.tsx#0',
+      'src/components/Apps/SubListingReviewQueue.tsx#0',
       'src/components/Apps/UnifiedReviewList.tsx#0',
     ]);
   });

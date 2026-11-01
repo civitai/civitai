@@ -33,10 +33,11 @@ import {
   getEcosystemDisplayItems,
   type EcosystemDisplayItem,
 } from '~/shared/constants/basemodel.constants';
-import { getWorkflowsForEcosystem } from '~/shared/data-graph/generation/config/workflows';
-import type { GateItemState } from '~/shared/data-graph/generation/gates';
+import { getWorkflowsForEcosystem } from '~/shared/generation/config/workflows';
+import type { GateItemState } from '~/shared/generation/gates';
 import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
+import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 
 // Badge + default tooltip per shown-but-disabled state. A rule's `message`
 // (when present) overrides only the tooltip copy, layered on the same badge.
@@ -47,6 +48,12 @@ const GATE_BADGE: Record<
   memberOnly: { label: 'Members only', color: 'yellow', tooltip: 'Members-only generation' },
   disabled: { label: 'Disabled', color: 'gray', tooltip: 'Temporarily unavailable' },
 };
+
+function getItemEcosystemIds(item: EcosystemDisplayItem): number[] {
+  if (item.type === 'group') return item.ecosystemIds ?? [];
+  const eco = ecosystemByKey.get(item.key);
+  return eco ? [eco.id] : [];
+}
 
 // =============================================================================
 // Types
@@ -353,6 +360,7 @@ export function BaseModelListContent({
             {item.name}
           </Text>
           <ExperimentalFlask target={{ kind: 'ecosystem', key: disabledCheckKey }} size={16} />
+          <SfwOnlyBadge ecosystemIds={getItemEcosystemIds(item)} />
         </div>
         {badge ? (
           <Badge size="xs" color={badge.color} variant="light">

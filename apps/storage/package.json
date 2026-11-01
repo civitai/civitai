@@ -1,6 +1,6 @@
 {
   "name": "@civitai/storage-app",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -16,7 +16,7 @@
     "@aws-sdk/client-s3": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@civitai/storage": "workspace:*",
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.6",
     "prom-client": "^14.2.0",
     "zod": "^4.0.17"
   },

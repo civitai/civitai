@@ -8,6 +8,14 @@ const TRAIL_PARAM = 'cursors';
 /** Distinct from the queue's own `page`: on User Reports both are live at once. */
 export const IMAGE_PAGE_PARAM = 'imgPage';
 
+/** The URL minus the image page. A selection that spans image pages is keyed on it, so anything
+ *  else — a filter, a tab, the queue beside the grid — clears the selection. */
+export function selectionKey(url: URL): string {
+  const params = new URLSearchParams(url.search);
+  params.delete(IMAGE_PAGE_PARAM);
+  return `${url.pathname}?${params}`;
+}
+
 /**
  * The second half of a COMPOUND keyset — the boundary row's value in the sorted column, where
  * `cursor` carries its id. Only `/feedback` writes it today (`$lib/feedback-sort.ts`).
@@ -45,11 +53,4 @@ export function clearPaging(params: URLSearchParams) {
   params.delete(CURSOR_VALUE_PARAM);
   params.delete(TRAIL_PARAM);
   params.delete(IMAGE_PAGE_PARAM);
-}
-
-/** Query string minus paging — a batch key that survives page turns. */
-export function nonPagingSearch(search: string): string {
-  const params = new URLSearchParams(search);
-  clearPaging(params);
-  return params.toString();
 }

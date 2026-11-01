@@ -3,8 +3,7 @@
  *
  * The kind-aware badge / CTA / recommend-label logic for `AppListingCard`,
  * extracted into pure functions so the correctness gate lives in the node `unit`
- * project (the civitai browser-mode component suites are REPORT-ONLY / non-
- * blocking — so the real, blocking test coverage for this behaviour is here).
+ * project, which needs no browser.
  *
  * LIVE (P2d cut over): this view-model now backs the DEFAULT `/apps` store grid
  * (`AppListingsMarketplaceBody` → `AppListingCard`), reading the unified
@@ -133,13 +132,11 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
  *
  * 🔴 THE DECISION LIVES HERE RATHER THAN IN THE COMPONENT ON PURPOSE, and it is the
  * same reasoning `appListingStatChips.ts` was extracted for. `AppListingCard` is
- * only covered by the browser `component` project, which is REPORT-ONLY; the node
- * `unit` project is the one that reddens a `main` push. A rule expressed as JSX
- * (`card.openCount ? … : null`) would be invisible to the only tier that ever goes
- * red on its own. Expressed as this function's return type it is pinned in
- * `__tests__/appListingCardView.test.ts` — with `null`, `0` and `>0` as three
- * separately-named cases — and the component is left with a branch that has nothing
- * to get wrong.
+ * only covered by the browser `component` project. A rule expressed as JSX
+ * (`card.openCount ? … : null`) would be invisible to the node `unit` tier. Expressed as this
+ * function's return type it is pinned in `__tests__/appListingCardView.test.ts` — with `null`, `0`
+ * and `>0` as three separately-named cases — and the component is left with a branch that has
+ * nothing to get wrong.
  *
  * 🔴 ABBREVIATED, NOT `toLocaleString()`-ED, which is a deliberate DIVERGENCE from
  * `getRecommendLabel` above rather than an inconsistency. A review count is an
@@ -237,7 +234,7 @@ export function getListingCta(
 // ---------------------------------------------------------------------------
 // Owner "Edit" deep-link (Item 2) — pure gating + href builders, shared by the
 // store card + detail. Mirrors the my-submissions edit gating
-// (`MySubmissionsList` `showEdit` / `OffsiteSubmissionsList` `canEdit`): the
+// (`OffsiteSubmissionsList` `canEdit`): the
 // owner can edit an app that is still editable (NOT mod-removed / rejected).
 // ---------------------------------------------------------------------------
 
@@ -306,12 +303,6 @@ export function getOwnerEditHref(
 //     `LISTING_ROLLUP_HIDE_BELOW_PX`(264) — the derived container-query threshold
 //     `listingRollupHideThreshold()`      — the function that derived it
 //
-//   MOVED, same name, new home:
-//     `LISTING_ACTION_ROW_GAP_PX`   (10) → `~/components/Apps/appListingCardGeometry.ts`,
-//     where the card reads it as the action row's `gap`. It is still live geometry;
-//     it just is not rollup-threshold arithmetic any more. 🔴 IF YOU CAME HERE
-//     LOOKING FOR THE ROW GAP, IMPORT IT FROM THERE — do NOT mint a second copy,
-//     which is exactly the two-copies drift the geometry module exists to remove.
 //
 // Also deleted, though it was never an export: the spelling guard in
 // `__tests__/appListingCardView.test.ts` that asserted the component's `@[264px]`
@@ -321,15 +312,15 @@ export function getOwnerEditHref(
 // action row: a floor so a growing CTA could not starve the rollup, a container
 // query hiding the rollup where even the floor did not fit, a measured
 // action-cluster width to derive that threshold from, and a drift guard because a
-// Tailwind arbitrary variant cannot read a JS constant. Moving the rollup up into
-// the card's meta block removed the competition, and with it the entire
+// Tailwind arbitrary variant cannot read a JS constant. Moving the rollup out of
+// the action row removed the competition, and with it the entire
 // apparatus. Deleting a derived number and its guard TOGETHER is the point — a
 // surviving constant with no consumer is the shape that gets "fixed" back into
 // use later.
 //
-// The geometry this card DOES still have — cover ratio, icon size, reserved title
-// lines, action-row height / padding / gap / control size — lives in
-// `~/components/Apps/appListingCardGeometry.ts`, which exists so the (later)
+// The geometry this card DOES have — cover ratio, icon size and overlap, title font and
+// line height, CTA / menu / footer / avatar sizes — lives in
+// `~/components/Apps/appListingCardGeometry.ts`, which exists so
 // `AppListingCardSkeleton` reserves the same numbers by import rather than by
 // copy. This module is back to being the pure kind/CTA/label view-model its
 // header describes.

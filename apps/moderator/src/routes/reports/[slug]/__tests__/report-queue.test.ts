@@ -14,7 +14,7 @@ import {
  */
 
 const getReports = vi.fn(async (_params: unknown) => ({
-  items: [],
+  items: [] as { id: number; entityId: number | null }[],
   totalItems: 0,
   page: 1,
   limit: 20,
@@ -22,18 +22,39 @@ const getReports = vi.fn(async (_params: unknown) => ({
 
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
+  getReportStatusCounts: vi.fn(async () => ({})),
   setReportStatus: vi.fn(),
   updateReportNotes: vi.fn(),
+  getReportedGame: vi.fn(),
+  getGameMirrors: vi.fn(async () => []),
 }));
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement: vi.fn() }));
+vi.mock('$lib/server/game-frame', () => ({ delistGame: vi.fn(), delistReason: vi.fn() }));
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+const getStorylineReportHolds = vi.fn(async (_reportIds: number[]) => [] as unknown[]);
+vi.mock('$lib/server/storyline-takedown.service', () => ({
+  getReportedStorylines: vi.fn(async () => []),
+  getStorylineReportHolds,
+  getReportStorylineId: vi.fn(),
+  setStorylineTakedown: vi.fn(),
+}));
+vi.mock('$lib/server/service-offering-takedown.service', () => ({
+  getReportedServiceOfferings: vi.fn(async () => []),
+  getReportServiceOfferingId: vi.fn(),
+  takedownServiceOffering: vi.fn(),
+}));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
 
 const { load } = await import('../+page.server');
 
 /** `load` for one slug and query string. `redirect()`/`error()` throw, so callers that expect one catch. */
 const run = (slug: string, query = '?status=Pending') =>
-  load({ params: { slug }, url: new URL(`https://mod.example/reports/${slug}${query}`) } as never);
+  load({
+    params: { slug },
+    url: new URL(`https://mod.example/reports/${slug}${query}`),
+    locals: { user: { id: 1 } },
+  } as never);
 
 const caught = async (slug: string, query?: string) => {
   try {
@@ -106,6 +127,41 @@ describe('report queue load', () => {
 
     expect(asked()).toMatchObject({ page: 1, reportedBy: 'alice', type: 'image' });
   });
+});
+
+describe('the storyline queue', () => {
+  it('shows the chapters removed while each of its reports was open', async () => {
+    const holds = [{ postId: 602, reportIds: [80] }];
+    getReports.mockResolvedValueOnce({
+      items: [
+        { id: 80, entityId: 2 },
+        { id: 81, entityId: 3 },
+      ],
+      totalItems: 2,
+      page: 1,
+      limit: 20,
+    });
+    getStorylineReportHolds.mockResolvedValueOnce(holds);
+
+    const data = (await run('storyline')) as { storylineHolds: unknown };
+
+    expect(getStorylineReportHolds).toHaveBeenCalledWith([80, 81]);
+    expect(data.storylineHolds).toBe(holds);
+  });
+
+  for (const slug of ['game', 'service'])
+    it(`is not read for the ${slug} queue`, async () => {
+      getReports.mockResolvedValueOnce({
+        items: [{ id: 80, entityId: 2 }],
+        totalItems: 1,
+        page: 1,
+        limit: 20,
+      });
+      const data = (await run(slug)) as { storylineHolds: unknown };
+
+      expect(getStorylineReportHolds).not.toHaveBeenCalled();
+      expect(data.storylineHolds).toEqual([]);
+    });
 });
 
 describe('the default reason set', () => {

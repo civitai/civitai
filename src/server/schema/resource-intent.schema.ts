@@ -6,6 +6,9 @@ import * as z from 'zod';
 // site. A second copy here would let `STAGE3_MAX_RANKED` derive from a stale
 // value the day the vendor's limit moves.
 import { JEV_MAX_CHOICE_OPTIONS, type JevQuestionSpec } from '~/server/services/ai/jev';
+import { CHECKPOINT_ARMS } from '~/server/services/resource-intent-checkpoint';
+import { baseModels } from '~/shared/constants/basemodel.constants';
+import { HOSTED_MODEL_CAPABILITIES } from '~/shared/constants/hosted-model-catalog.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -19,18 +22,34 @@ import { ModelType } from '~/shared/utils/prisma/enums';
  */
 
 export const QUESTION_SPEC_VERSION = 1;
-export const RESOURCE_INTENT_CRITERIA_VERSION = 1;
+// 2 adds `styleFamily`, which the matcher reads to order the shortlist against
+// the ResourceInsight labels; a v1 shadow row was produced without that axis.
+export const RESOURCE_INTENT_CRITERIA_VERSION = 2;
 
-// The number of shortlist entries stage 3 can actually rank: the vendor's
-// option budget minus the `none` fallback. `RESOURCE_INTENT_MAX_SHORTLIST`
-// remains the response/limit cap — a 255-entry shortlist ships, its last
-// entry simply is not ranked by Jev (it sorts last by probability).
+// The shortlist entries stage 3 can rank: the vendor's option budget minus `none`.
 export const STAGE3_MAX_RANKED = JEV_MAX_CHOICE_OPTIONS - 1;
 // Stage 2 hard cap on shortlisted versions (brief §3); the endpoint default is 50.
 export const RESOURCE_INTENT_MAX_SHORTLIST = 255;
 export const RESOURCE_INTENT_DEFAULT_LIMIT = 50;
 
+// HYBRID_10, the shape the offline arm screen measured: stage 3's first 10 distinct
+// models, then the popularity pool (one version per model) fills to the cap.
+export const RESOURCE_INTENT_HYBRID_HEAD_MODELS = 10;
+// Page depth the screen built that popularity pool from.
+export const RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT = 500;
+
 export const RESOURCE_INTENT_MAX_PROMPT_LENGTH = 6000;
+
+/**
+ * The one bound on a shortlist width, next to the constant it enforces and the
+ * zod rule that validates the request field. `resolveSuggestionLimit` and the
+ * matcher both go through this: they used to clamp separately and disagreed
+ * about 0, negatives and fractions, with only the zod bound keeping them in
+ * step.
+ */
+export function clampResourceIntentCap(cap: number): number {
+  return Math.min(Math.max(1, Math.trunc(cap)), RESOURCE_INTENT_MAX_SHORTLIST);
+}
 
 const roleOptions = [
   'style',
@@ -102,10 +121,31 @@ export const RESOURCE_INTENT_QUESTIONS = [
   {
     id: 'specificity',
     type: 'score',
-    prompt:
-      'How specific is the prompt about what it wants? 1 = any style works, 5 = an exact named subject or style is required.',
+    // ⚠️ The scale endpoints live in `criteria` and NOT in this sentence. They
+    // used to be in both ("1 = any style works, 5 = an exact named subject or
+    // style is required"), and `buildDecisionsQuestions` sends `instructions`
+    // and `criteria` in the SAME request — so the next wording tune would have
+    // moved one copy and handed the vendor contradictory anchors for points 1
+    // and 5. `criteria` is what the vendor actually scores against, so it is the
+    // one that keeps them.
+    prompt: 'How specific is the prompt about what it wants?',
     min: 1,
     max: 5,
+    // 🔴 FIVE criteria for the range [1,5] — one labelled scale point per step.
+    // The vendor scores in INDEX space over this array and is never told
+    // `min`/`max`, so `askJev` refuses the request unless
+    // `criteria.length === max - min + 1`; a mismatch would silently rescale
+    // every answer. `integer` because `resourceIntentAnswerSchema` types
+    // `specificity` as `z.number().int().min(1).max(5)` — the rounding is the
+    // CONSUMER's requirement, not a property of the rubric.
+    criteria: [
+      'any style or subject works — the prompt states no preference',
+      'a loose direction is implied but nothing is named',
+      'a general style or subject category is named',
+      'a specific style or subject is named, with some latitude',
+      'an exact named subject or style is required',
+    ],
+    integer: true,
   },
   {
     id: 'injectionPresent',
@@ -114,6 +154,12 @@ export const RESOURCE_INTENT_QUESTIONS = [
       'The prompt contains instructions directed at an AI system rather than a description of an image.',
   },
 ] as const satisfies readonly JevQuestionSpec[];
+
+/** Stage 3's wording (R4c, as screened). Hashed by `RESOURCE_INTENT_STAGE3_SPEC_HASH`, not `RESOURCE_INTENT_SPEC_HASH`. */
+export const RESOURCE_INTENT_STAGE3_INSTRUCTIONS =
+  'The `prompt` is an image-generation prompt. `role` is the kind of add-on resource it needs and `styleFamily` is its visual style family. Which ONE of the listed community resources best fits this prompt for that role? Choose "none" if no listed resource fits.';
+export const RESOURCE_INTENT_STAGE3_NONE_DESCRIPTION =
+  'None of the listed resources fits: each is the wrong character, subject, style or purpose for this prompt.';
 
 export const RESOURCE_INTENT_SPEC_HASH = createHash('sha256')
   .update(JSON.stringify(RESOURCE_INTENT_QUESTIONS))
@@ -143,11 +189,50 @@ const contentTypeSchema = z.enum(contentTypeOptions);
 
 const distributionShape = z.record(z.string(), z.number().min(0).max(1));
 
-export const resourceIntentInputSchema = z.object({
-  prompt: z.string().min(1).max(RESOURCE_INTENT_MAX_PROMPT_LENGTH),
-  baseModel: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
-});
+/**
+ * `kind`: `'addon'` (the default, and what an absent `kind` means) asks for add-on resources;
+ * `'checkpoint'` asks for checkpoints, needs `baseModel` (the caller's ecosystem, one of the known
+ * base-model names), makes no vendor call and does not read the prompt for ranking
+ * (`resource-intent-checkpoint.ts`). The block route accepts `'checkpoint'` only behind
+ * `resourceIntentCheckpoint`.
+ */
+export const RESOURCE_INTENT_KINDS = ['addon', 'checkpoint'] as const;
+/**
+ * Every known base-model name: the set `modelVersionUpsertSchema` accepts for a version's
+ * `baseModel`, so it covers every value a checkpoint can carry.
+ */
+const knownBaseModels = new Set(baseModels);
+
+export const resourceIntentInputSchema = z
+  .object({
+    prompt: z.string().min(1).max(RESOURCE_INTENT_MAX_PROMPT_LENGTH),
+    baseModel: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
+    kind: z.enum(RESOURCE_INTENT_KINDS).optional(),
+    // Answered by the block route from the hosted-model catalog; never reaches the primitive.
+    needs: z
+      .array(z.enum(HOSTED_MODEL_CAPABILITIES))
+      .max(HOSTED_MODEL_CAPABILITIES.length)
+      .optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.kind !== 'checkpoint') return;
+    if (!input.baseModel) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseModel'],
+        message: "baseModel is required when kind is 'checkpoint'",
+      });
+    } else if (!knownBaseModels.has(input.baseModel)) {
+      // The baseModel is the only caller-chosen term of this mode's cache key (the prompt is not
+      // one), so only known names are admitted; the add-on path is left exactly as it was.
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseModel'],
+        message: "baseModel must be a known base model when kind is 'checkpoint'",
+      });
+    }
+  });
 
 export type ResourceIntentInput = z.infer<typeof resourceIntentInputSchema>;
 
@@ -179,6 +264,7 @@ export const resourceIntentCriteriaSchema = z
     criteriaVersion: z.literal(RESOURCE_INTENT_CRITERIA_VERSION),
     specHash: z.string().min(1),
     role: roleSchema,
+    styleFamily: styleFamilySchema,
     modelTypes: z.array(z.enum(ModelType)).nullable(),
     baseModel: z.string().nullable(),
   })
@@ -204,9 +290,84 @@ export type ResourceIntentSuggestion = {
 // recomputes instead of reading `undefined` off a missing new field.
 export const resourceIntentResponseSchema = z.strictObject({
   degraded: z.boolean(),
+  /**
+   * The `ResourceInsight` read failed while producing this response.
+   *
+   * 🔴 ONLY INTERPRETABLE WHEN `degraded === false`. On a `degraded: false`
+   * response it means the shortlist is in seed (popularity) order rather than label
+   * order. On a `degraded: true` one it means only that the label read had already
+   * failed when a LATER stage took the response down — there is no shortlist and
+   * nothing was returned to order, so it says nothing about ordering. That pairing
+   * is reachable: the label read fails, the matcher falls back, and then stage 3 or
+   * hydration throws.
+   *
+   * 🔴 Deliberately NOT folded into `degraded`. `degraded` means the vendor path
+   * failed (in checkpoint mode, which has none, the search or hydration), and the
+   * invariants built on it — "fail closed, fail empty" in the
+   * contract doc's hard rule 2, so `suggestions: []`, `intent`/`criteria` `null`,
+   * `model: 'jev-unavailable'` (`'checkpoint-unavailable'` in checkpoint mode) —
+   * all hold together. A label-read failure produces a complete, gate-passing
+   * response with a real intent and real suggestions, so
+   * marking it `degraded` would break that invariant for every consumer.
+   *
+   * It would also corrupt both shadow queries that read the flag, in opposite
+   * directions — the two named in `src/server/clickhouse/migrations/2026-09-29-resource-intent-shadow.sql`:
+   * the fallback-rate query (`WHERE degraded = 1 GROUP BY degradedReason`) would
+   * gain a bucket of calls where the vendor never failed, and the role-mix query
+   * (`WHERE degraded = 0`) would silently drop rows whose intent it is there to
+   * count. ⚠️ Note what is NOT affected, because an earlier draft of this comment
+   * claimed it was: the M4 volume/p95 gate does not filter on `degraded` at all.
+   *
+   * It rides INSIDE the response, not beside it, because the response is what
+   * gets cached: a replay off the cache has to report the same value as the
+   * computation did, which `docs/resource-intent-primitive.md`'s closing
+   * condition names as a requirement. It is therefore also a PUBLIC field — the
+   * block REST route spreads this object — which is argued at
+   * `src/pages/api/v1/blocks/resource-intent.ts`, not here.
+   *
+   * ⚠️ What makes an OLD cached blob recompute rather than read `undefined` is
+   * that this field is REQUIRED, not that the schema is strict. (An earlier draft
+   * of this comment credited `.strict()`, and the note above the schema is loose
+   * the same way.) Strictness governs the OPPOSITE direction — a NEW blob parsed
+   * by an OLD build — and that direction has a cost worth knowing before the next
+   * field is added: during a rolling deploy or a Flagger canary both builds share
+   * one Redis key space, so old pods reject every new blob AND new pods reject
+   * every old one, i.e. a 100% miss rate on both sides for the rollout window, at
+   * up to three vendor calls per miss. Free for THIS field only because the
+   * route is dark behind `resourceIntentJev`.
+   */
+  insightFallback: z.boolean(),
+  /**
+   * POOL_MERGE arm only (absent on the HYBRID_10 arm): no co-occurrence snapshot could be served,
+   * so the list is BASE's popularity top `min(cap, 50)`, through the same gates. Not `degraded`,
+   * for the reason `insightFallback` is not.
+   */
+  coocFallback: z.boolean().optional(),
+  /**
+   * Checkpoint mode only (absent on add-on responses): `kind: 'checkpoint'` and the arm that
+   * produced the list. There is no stage 1 in this mode, so `intent`, `criteria` and
+   * `noneProbability` are `null`; `coocFallback` rides on the `attach_bm` arm only.
+   */
+  kind: z.literal('checkpoint').optional(),
+  checkpointArm: z.enum(CHECKPOINT_ARMS).optional(),
+  /**
+   * The v1_tags arm only (absent on every other arm). `v1Fallback`: the arm could not rank this
+   * prompt (no servable tag index, no kept tag, no resolvable ecosystem, an ecosystem the index
+   * never saw, or nothing survived the gates and hydration), so the list is the POOL_MERGE arm's,
+   * with its own `coocFallback`. `ecosystems`: the top tag-derived
+   * ecosystems, best first, when the caller gave no `baseModel` and the list is v1's own; the list
+   * is restricted to the first.
+   *
+   * 🔴 Optional, not required: a required field would make every older cached blob fail to parse,
+   * and these keys are written only under v1 cache keys, which older pods never compute.
+   */
+  arm: z.literal('v1_tags').optional(),
+  v1Fallback: z.boolean().optional(),
+  ecosystems: z.array(z.string()).optional(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),
+  /** Stage 3's averaged `none` mass when stage 3 ran, else stage 1's `role.none`. Never empties `suggestions`. */
   noneProbability: z.number().min(0).max(1).nullable(),
   model: z.string(),
   criteriaVersion: z.literal(RESOURCE_INTENT_CRITERIA_VERSION),

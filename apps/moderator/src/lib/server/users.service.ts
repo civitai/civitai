@@ -14,6 +14,26 @@ export const MAX_INT4 = 2_147_483_647;
 export const isInt4Id = (value: number) =>
   Number.isInteger(value) && value > 0 && value <= MAX_INT4;
 
+export type AccountStatus = 'active' | 'banned' | 'deleted' | 'gone';
+
+/** `gone`: no `User` row, so a hard-deleted account or an id that never existed. */
+export const accountStatus = (
+  user: Pick<UserSummary, 'bannedAt' | 'deletedAt'> | null | undefined
+): AccountStatus =>
+  !user ? 'gone' : user.bannedAt ? 'banned' : user.deletedAt ? 'deleted' : 'active';
+
+const INSTANT_VERIFY_SECONDS = 120;
+
+/** Email verified within `INSTANT_VERIFY_SECONDS` of signup. Null when either timestamp is missing,
+ *  which is not the same as false. */
+export const isInstantVerify = (
+  createdAt: Date | string | null,
+  verifiedAt: Date | string | null
+): boolean | null =>
+  createdAt && verifiedAt
+    ? new Date(verifiedAt).getTime() - new Date(createdAt).getTime() < INSTANT_VERIFY_SECONDS * 1000
+    : null;
+
 export type UserSearchResult = { id: number; username: string | null; image: string | null };
 
 export type UserSummary = {
@@ -23,6 +43,7 @@ export type UserSummary = {
    *  flag, so testing the timestamp badges accounts as muted that every other surface shows as not. */
   muted: boolean | null;
   deletedAt: Date | null;
+  isModerator: boolean | null;
 };
 
 // Rows from ClickHouse and from aggregate queries carry user ids and no names; four places were each
@@ -34,13 +55,19 @@ export async function usersByIds(ids: number[]): Promise<Map<number, UserSummary
 
   const rows = await dbRead
     .selectFrom('User')
-    .select(['id', 'username', 'bannedAt', 'muted', 'deletedAt'])
+    .select(['id', 'username', 'bannedAt', 'muted', 'deletedAt', 'isModerator'])
     .where('id', 'in', unique)
     .execute();
   return new Map(
     rows.map((r) => [
       r.id,
-      { username: r.username, bannedAt: r.bannedAt, muted: r.muted, deletedAt: r.deletedAt },
+      {
+        username: r.username,
+        bannedAt: r.bannedAt,
+        muted: r.muted,
+        deletedAt: r.deletedAt,
+        isModerator: r.isModerator,
+      },
     ])
   );
 }
@@ -76,4 +103,15 @@ export async function usernameExists(username: string): Promise<boolean> {
     .where('username', '=', username)
     .executeTakeFirst();
   return !!row;
+}
+
+/** citext: matches case-insensitively via the unique index. */
+export async function userIdByUsername(username: string): Promise<number | null> {
+  const row = await dbRead
+    .selectFrom('User')
+    .select('id')
+    .where('username', '=', username)
+    .where('deletedAt', 'is', null)
+    .executeTakeFirst();
+  return row?.id ?? null;
 }

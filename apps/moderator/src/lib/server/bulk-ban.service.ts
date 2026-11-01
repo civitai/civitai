@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
-import { usersByIds } from './users.service';
+import { accountStatus, usersByIds, type AccountStatus } from './users.service';
 
 // Retool's Bulk Ban. Two halves: a preflight + ban loop, and the ban-evasion queries that build the
 // list in the first place (registration IPs, email-domain clustering, accounts sharing an IP).
@@ -184,7 +184,7 @@ export type IpAccount = {
   username: string | null;
   /** `gone` is an id ClickHouse still holds a registration for and Postgres has no account for.
    *  Only `active` can be banned, and the panel adds only those to the list. */
-  status: 'active' | 'banned' | 'deleted' | 'gone';
+  status: AccountStatus;
 };
 
 /** `total` is what the IPs actually carry, which `accounts.length` cannot say once the cap bites;
@@ -247,13 +247,7 @@ export async function getAccountsOnIps(
         userId,
         registeredAt: r.time ? clickhouseDate(r.time) : null,
         username: user?.username ?? null,
-        status: !user
-          ? ('gone' as const)
-          : user.bannedAt
-          ? ('banned' as const)
-          : user.deletedAt
-          ? ('deleted' as const)
-          : ('active' as const),
+        status: accountStatus(user),
       };
     }),
     total: Number(totals[0]?.total ?? 0),

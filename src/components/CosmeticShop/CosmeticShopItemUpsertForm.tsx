@@ -2,6 +2,7 @@ import type { ComboboxItem } from '@mantine/core';
 import {
   Box,
   Button,
+  ColorInput,
   Divider,
   Group,
   Input,
@@ -9,6 +10,7 @@ import {
   LoadingOverlay,
   Paper,
   Select,
+  Slider,
   Stack,
   Switch,
   Tabs,
@@ -93,6 +95,7 @@ const cosmeticTypeOptions: { value: CosmeticType; label: string }[] = [
   { value: CosmeticType.ProfileBackground, label: 'Profile Background' },
   { value: CosmeticType.NamePlate, label: 'Name Plate' },
   { value: CosmeticType.Sticker, label: 'Sticker' },
+  { value: CosmeticType.CardDecoration, label: 'Creator Card Glow' },
 ];
 
 const cosmeticSourceOptions: { value: CosmeticSource; label: string }[] = [
@@ -127,6 +130,8 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
   const [slug, setSlug] = useState('');
   const [imageId, setImageId] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [glowColor, setGlowColor] = useState('#22b8cf');
+  const [glowIntensity, setGlowIntensity] = useState(0.6);
 
   const features = useFeatureFlags();
   // Mirrors the server gate on upsertCosmetic.
@@ -212,6 +217,8 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
       data = { url: imageId, type: MediaType.image };
     } else if (type === CosmeticType.Sticker) {
       data = { url: imageId, slug, animated };
+    } else if (type === CosmeticType.CardDecoration) {
+      data = { glow: { color: glowColor, intensity: glowIntensity, animated } };
     }
     // NamePlate gets `data: {}` — moderator can fill styling later via DB tools.
 
@@ -353,6 +360,34 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
               </Dropzone>
             )}
           </div>
+        ) : type === CosmeticType.CardDecoration ? (
+          <Stack gap="sm">
+            <ColorInput
+              label="Glow colour"
+              format="hex"
+              value={glowColor}
+              onChange={setGlowColor}
+              withAsterisk
+            />
+            <Input.Wrapper label="Intensity">
+              <Slider
+                min={0}
+                max={1}
+                step={0.05}
+                value={glowIntensity}
+                onChange={setGlowIntensity}
+              />
+            </Input.Wrapper>
+            <CosmeticSample
+              cosmetic={{
+                id: 0,
+                name,
+                type,
+                data: { glow: { color: glowColor, intensity: glowIntensity, animated } },
+              }}
+              size="md"
+            />
+          </Stack>
         ) : (
           <Text size="sm" c="dimmed">
             Name plates do not have an image — additional styling fields can be added later via the
@@ -362,12 +397,15 @@ const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: numbe
 
         {(type === CosmeticType.Badge ||
           type === CosmeticType.ProfileDecoration ||
-          type === CosmeticType.Sticker) && (
+          type === CosmeticType.Sticker ||
+          type === CosmeticType.CardDecoration) && (
           <Switch
             label="Animated"
             description={
               type === CosmeticType.Sticker
                 ? 'Toggle on for animated WebP sources. Animated PNG is accepted but its frame count and rate are not checked.'
+                : type === CosmeticType.CardDecoration
+                ? 'Pulses the glow'
                 : 'Toggle on for animated GIF/APNG sources'
             }
             checked={animated}
@@ -565,15 +603,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             description="This description will be shown in the shop"
             label="Content"
             editorSize="xl"
-            includeControls={[
-              'heading',
-              'formatting',
-              'list',
-              'link',
-              'media',
-              'colors',
-              'blurb',
-            ]}
+            includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors', 'blurb']}
             withAsterisk
             stickyToolbar
           />

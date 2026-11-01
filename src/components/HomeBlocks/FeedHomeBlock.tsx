@@ -12,14 +12,19 @@ import {
 } from '@mantine/core';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
+import { CrucibleCard } from '~/components/Cards/CrucibleCard';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { HostCrucibleTile } from '~/components/HomeBlocks/HostCrucibleTile';
+import { layoutCrucibleRow, useGridSlots } from '~/components/HomeBlocks/useGridSlots';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -32,25 +37,37 @@ import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 
 type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; blockIndex: number };
 
-export const FeedHomeBlock = (props: Props) => (
-  <HomeBlockWrapper py={32}>
-    <FeedHomeBlockContent {...props} />
-  </HomeBlockWrapper>
-);
+export const FeedHomeBlock = (props: Props) => {
+  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
+    { id: props.homeBlockId },
+    { trpc: { context: { skipBatch: true } } }
+  );
+
+  // An event's crucibles block is configured ahead of the event and has nothing to show until a
+  // moderator tags one, so it hides rather than showing an empty shelf. A block with no tag set
+  // resolves no items at all, and hides the same way.
+  const isCrucibles = props.metadata.feed?.entity === 'crucibles';
+  if (isCrucibles && !isLoading && !homeBlock?.feedItems?.items.length) return null;
+
+  return (
+    <HomeBlockWrapper py={32}>
+      <FeedHomeBlockContent {...props} feedItems={homeBlock?.feedItems} isLoading={isLoading} />
+    </HomeBlockWrapper>
+  );
+};
 
 /**
  * Renders a slice of an existing feed under the block's saved filters. Presentation
  * mirrors CollectionHomeBlock (same grid, rows and per-user cap) — the difference is
  * only where the items come from.
  */
-const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
-  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
-    { id: homeBlockId },
-    { trpc: { context: { skipBatch: true } } }
-  );
-
+const FeedHomeBlockContent = ({
+  metadata,
+  blockIndex,
+  feedItems,
+  isLoading,
+}: Props & { feedItems?: FeedBlockItems; isLoading: boolean }) => {
   const rows = metadata.feed?.rows ?? 2;
-  const feedItems = homeBlock?.feedItems;
   const currentUser = useCurrentUser();
   const title = metadata.title ?? 'Feed';
 
@@ -64,7 +81,7 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
           <Title className={classes.title} order={1} lineClamp={1}>
             {title}{' '}
           </Title>
-          {currentUser && metadata.description && (
+          {currentUser && (metadata.description || metadata.selectionNote) && (
             <Popover withArrow width={380}>
               <Popover.Target>
                 <Box
@@ -82,11 +99,13 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
                 <Text fw={500} size="lg" mb="xs">
                   {title}
                 </Text>
-                <Text component="div" size="sm" mb="xs">
-                  <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
-                    {metadata.description}
-                  </CustomMarkdown>
-                </Text>
+                {metadata.description && (
+                  <Text component="div" size="sm" mb="xs">
+                    <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+                      {metadata.description}
+                    </CustomMarkdown>
+                  </Text>
+                )}
                 {metadata.link && (
                   <Link legacyBehavior href={metadata.link} passHref>
                     <Anchor size="sm">
@@ -97,6 +116,7 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
                     </Anchor>
                   </Link>
                 )}
+                <SelectionNote note={metadata.selectionNote} />
               </Popover.Dropdown>
             </Popover>
           )}
@@ -129,6 +149,8 @@ const FeedHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
   const grid =
     isLoading || !feedItems ? (
       <FeedSkeleton rows={rows} />
+    ) : feedItems.entity === 'crucibles' ? (
+      <CrucibleFeedGrid items={feedItems.items} rows={rows} eventTag={metadata.feed?.eventTag} />
     ) : feedItems.entity === 'images' ? (
       <ImageFeedGrid
         items={feedItems.items}
@@ -205,12 +227,17 @@ function ImageFeedGrid({
   // so it changes as they resolve — hydrating after it re-keyed the query and stranded the answer.
   // It does NOT buy the detail dialog anything: the dialog browses the capped list, which is
   // hydrated wherever this sits.
-  const visible = useDedupedCappedItems(useHydratedImageReactions(filtered, { entity: 'image' }), {
-    order,
-    entity: 'image',
-    rows,
-    maxPerUser,
-  });
+  const visible = useDedupedCappedItems(
+    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: 'image' }), {
+      entity: 'image',
+    }),
+    {
+      order,
+      entity: 'image',
+      rows,
+      maxPerUser,
+    }
+  );
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 
@@ -240,7 +267,7 @@ function ModelFeedGrid({
     type: 'models',
     data: rotated,
   });
-  const visible = useDedupedCappedItems(filtered, {
+  const visible = useDedupedCappedItems(useViewerEventDecorations(filtered, { entity: 'model' }), {
     order,
     entity: 'model',
     rows,
@@ -256,6 +283,46 @@ function ModelFeedGrid({
           <ModelCard data={item} forceInView />
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Already in the server's order (running first, then by prize pool), so it is not shuffled. */
+function CrucibleFeedGrid({
+  items,
+  rows,
+  eventTag,
+}: Omit<
+  GridProps<Extract<FeedBlockItems, { entity: 'crucibles' }>['items']>,
+  'maxPerUser' | 'order'
+> & { eventTag?: string }) {
+  const currentUser = useCurrentUser();
+  const { loadingPreferences, items: hiddenFiltered } = useApplyHiddenPreferences({
+    type: 'crucibles',
+    data: items,
+  });
+  const { gridRef, slots } = useGridSlots(rows, !!eventTag, loadingPreferences);
+
+  if (loadingPreferences) return <FeedSkeleton rows={rows} />;
+
+  const { cards: visible, showTile } = layoutCrucibleRow(hiddenFiltered, eventTag, slots);
+
+  return (
+    <div
+      ref={gridRef}
+      className={classes.grid}
+      style={{ '--count': visible.length + (showTile ? 1 : 0) } as React.CSSProperties}
+    >
+      {visible.map((item) => (
+        <div key={item.id} className="p-2">
+          <CrucibleCard data={item} />
+        </div>
+      ))}
+      {showTile && eventTag && (
+        <div className="p-2">
+          <HostCrucibleTile eventTag={eventTag} signedIn={!!currentUser} />
+        </div>
+      )}
     </div>
   );
 }

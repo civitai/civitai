@@ -392,10 +392,16 @@ that worked before. Eight had already been loaded — free at today's pricing, s
 than anyone's Buzz.
 
 That is worth stating precisely, because several of the 738 look official and are not:
-`wan2.1_t2v_1.3B_fp16` (1500646), `Hunyuan Video 720_cfgdistill_bf16` (1313562) and
-`Lightricks LTXV 2b 0.9.1` (1182093) are all CivitaiOfficial or vendor uploads. Each is a **sibling**
-of the version its ecosystem actually runs — Hunyuan's `EcosystemCheckpoints` row is the fp8 build
-(1314512), not the bf16 one — and each already read `covered = false`. 1500646 appears in
+`wan2.1_t2v_1.3B_fp16` (1500646) and `Lightricks LTXV 2b 0.9.1` (1182093) are CivitaiOfficial or
+vendor uploads. Each is a **sibling** of the version its ecosystem actually runs, and each already
+read `covered = false`.
+
+🔴 **Hunyuan was the exception, and the measurement got it wrong.** The handler named no model, so
+the orchestrator ran its own default, `720_cfgdistill_bf16` (1313562), while the site's default and
+`EcosystemCheckpoints` row were the fp8 build (1314512), which never ran a job. bf16 was covered only
+as a top weekly earner in `CoveredCheckpoint`. When it dropped out, around 2026-09-24, every Hunyuan
+submit failed with "not enabled for generation". Fixed 2026-10-08: bf16 has its own
+`EcosystemCheckpoints` row, is the ecosystem default, and the handler sends its AIR. 1500646 appears in
 `wanBaseModelGroupIdMap`, which `getMetaResources` uses to attribute the implied Wan checkpoint on an
 image; that is a display path and was already operating against an uncovered version.
 

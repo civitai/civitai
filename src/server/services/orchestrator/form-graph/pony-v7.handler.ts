@@ -1,12 +1,12 @@
 /** Pony V7 handler for the form-graph lane — Euler-fixed. */
 
-import type { ImageGenStepTemplate } from '@civitai/client';
+import type { ImageGenStepTemplate } from '@civitai/orchestration-client';
 import type { ComfyPonyV7CreateImageGenInput } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import { samplersToComfySamplers } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras, type EcosystemData } from './types';
 
 export const createPonyV7Input = defineHandler<EcosystemData<'PonyV7'>, [ImageGenStepTemplate]>(

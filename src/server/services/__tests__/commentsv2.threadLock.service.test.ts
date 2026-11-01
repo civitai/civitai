@@ -57,7 +57,7 @@ beforeEach(() => {
   db.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
     // The block check's owner walk, which shares this client. Rooted, so it never refuses first.
-    if (sql.includes('muteable_threads')) return [{ id: 0, rooted: true }];
+    if (sql.includes('thread_ancestors')) return [{ id: 0, rooted: true }];
     if (!sql.includes('RECURSIVE chain')) return [];
     queriedSql.push(sql);
     const seed = values.find((v) => typeof v === 'number') as number;
@@ -135,6 +135,45 @@ describe('upsertComment — thread lock on edit', () => {
 
     await expect(edit({ isModerator: true })).rejects.toThrow('comment thread locked');
     expect(db.commentV2.update).not.toHaveBeenCalled();
+  });
+});
+
+// An author's own delete can keep a comment for a hold by hiding it. An edit racing that delete must
+// fail as it would against a deleted comment, and cannot unhide it.
+describe('upsertComment — an edit of a comment hidden since the read', () => {
+  beforeEach(() => {
+    db.commentV2.findUnique.mockResolvedValue({ threadId: 42, content: 'old' });
+    threads.set(42, { locked: false, rooted: true });
+  });
+
+  it("a member's edit touches only a comment still shown, and cannot set the flag", async () => {
+    await edit({ tosViolation: true });
+    const [args] = db.commentV2.update.mock.calls[0] as [{ where: object; data: object }];
+    expect(args.where).toEqual({ id: 5, tosViolation: false });
+    expect(args.data).not.toMatchObject({ tosViolation: true });
+  });
+
+  it('answers a member as for a missing comment when the comment was hidden meanwhile', async () => {
+    db.commentV2.update.mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'P2025' }));
+    await expect(edit()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('lets an includeHidden edit reach a hidden comment, without setting the flag', async () => {
+    await edit({ includeHidden: true, tosViolation: true });
+    const [args] = db.commentV2.update.mock.calls[0] as [{ where: object; data: object }];
+    expect(args.where).toEqual({ id: 5 });
+    expect(args.data).not.toMatchObject({ tosViolation: true });
+    expect(args.data).not.toHaveProperty('includeHidden');
+  });
+
+  it("leaves a moderator's edit as it was (control)", async () => {
+    await edit({ isModerator: true, tosViolation: true });
+    expect(db.commentV2.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 5 },
+        data: expect.objectContaining({ tosViolation: true }),
+      })
+    );
   });
 });
 

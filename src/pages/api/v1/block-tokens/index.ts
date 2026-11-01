@@ -16,6 +16,7 @@ export const config = {
   },
 };
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
@@ -34,6 +35,8 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import {
+  resolvePerCallBuzzBudget,
+  isAppStorageScope,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -111,6 +114,9 @@ function resolveEffectiveBrowsingLevel(args: {
  * authenticated subject (buzz:read:self, social:tip:self, user:read:self)
  * are rejected downstream by the block-scope middleware.
  *
+ * A bearer credential must be a full-access personal API key
+ * (`requireFullScopeSession`); any other bearer credential gets 403.
+ *
  * CSRF posture: SAME-ORIGIN ONLY with EXACT host equality. The host page on
  * civitai.com fetches the token here and passes it into the iframe via
  * BLOCK_INIT — the iframe at blocks.civitai.com never calls this endpoint
@@ -165,6 +171,12 @@ const requestSchema = z.object({
   // a block's iframe JS can never self-declare/widen its own scopes. (The bearer
   // `/api/v1/blocks/dev-token` localhost path legitimately body-sources; this
   // cookie-authed page-host path does not.)
+  //
+  // `devTunnel` — sent by `DevTunnelBlockHost`. It can only NARROW a token: the
+  // ordinary mint drops every document-store scope when it is set, and the
+  // tunnel-only branches ignore it. A client-asserted flag is therefore safe —
+  // omitting it yields exactly what `/apps/run/<slug>` already mints for this viewer.
+  devTunnel: z.boolean().optional(),
 });
 
 // W10 — synthetic block-instance id prefix for a stateless full-page app. The
@@ -180,11 +192,13 @@ const PAGE_INSTANCE_PREFIX = 'page_';
 // is therefore `page_ephemeral-<slug>`.
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
-const BUZZ_BUDGET_DEFAULT = 10;
-const BUZZ_BUDGET_CAP = 1000;
-
 const PER_IP_RATE_LIMIT_WINDOW_SECONDS = 60;
 const PER_IP_RATE_LIMIT_MAX = 120;
+
+/** `scopes` minus the whole `isAppStorageScope` family, legacy scopes included. */
+function withoutDocumentStoreScopes(scopes: readonly string[]): string[] {
+  return scopes.filter((s) => !isAppStorageScope(s));
+}
 
 function projectClientCtx(slotContext: Record<string, unknown>): Record<string, unknown> {
   // What goes in the JWT ctx claim is ONLY what a downstream scope might
@@ -346,17 +360,10 @@ function resolveBuzzBudget(
   publisherSettings: Record<string, unknown>
 ): number | null {
   if (!scopes.includes('ai:write:budgeted')) return null;
-  const raw = publisherSettings?.buzz_budget_per_gen;
-  // Defense-in-depth (audit should-fix): require an INTEGER, not merely a
-  // finite number. A fractional / Infinity / NaN / non-number value falls back
-  // to the platform default rather than flowing through to a fractional Buzz
-  // budget. This treats model slots and pages identically — both arrive here as
-  // `buzz_budget_per_gen` (the model path from install settings, the page path
-  // mapped from manifest `page.buzzBudgetPerGen`) and both clamp+gate the same
-  // way. A valid positive integer (the model-slot common case) is unchanged.
-  const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : BUZZ_BUDGET_DEFAULT;
-  if (candidate <= 0) return 0; // sentinel — caller rejects with 422
-  return Math.min(candidate, BUZZ_BUDGET_CAP);
+  // Model slots and pages arrive here identically, as `buzz_budget_per_gen` (install
+  // settings, or mapped from manifest `page.buzzBudgetPerGen`). 0 is the sentinel the
+  // caller rejects with 422.
+  return resolvePerCallBuzzBudget(publisherSettings?.buzz_budget_per_gen);
 }
 
 type OauthMintOutcome =
@@ -595,6 +602,7 @@ async function tryDevTunnelScopedMint(args: {
     token: result.token,
     expiresAt: result.expiresAt,
     kind: oauth ? 'oauth' : 'block',
+    buzzBudget,
     // Dev tokens are self-bound + mod/author-gated; there is no per-user consent
     // ledger for a synthetic pre-approval app, so no consent signal is surfaced.
     needsConsent: false,
@@ -796,6 +804,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     expiresAt: result.expiresAt,
     kind: oauth ? 'oauth' : 'block',
     scopes: granted,
+    buzzBudget,
     needsConsent: false,
     missingScopes: [],
     domain: null,
@@ -1062,6 +1071,7 @@ async function tryPrivateRunMint(args: {
     expiresAt: result.expiresAt,
     kind: 'block',
     scopes: granted,
+    buzzBudget,
     // No consent round-trip on this surface: the scope set is the prior approval
     // snapshot, not a consent-gated request, and a grant would re-mint a WIDER token at
     // the request of code the platform has taken down.
@@ -1107,7 +1117,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(400).json({ error: 'Invalid request body', details: parsed.error.flatten() });
     return;
   }
-  const { blockInstanceId, slotContext } = parsed.data;
+  const { blockInstanceId, slotContext, devTunnel } = parsed.data;
 
   // H3 order: per-IP rate limit FIRST (before any DB read). The per-(subject,
   // instance) limit runs after the session lookup but BEFORE findUnique.
@@ -1119,6 +1129,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   const session = await getServerAuthSession({ req, res });
+  if (!requireFullScopeSession(req, res)) return;
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
@@ -1483,9 +1494,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // (allowed through the mint gate once the appBlocks flag is public) are handled
   // by the anon-scope strip immediately below — they have no grant ledger. The
   // grant lookup is keyed on (userId, appBlockId); a missing grant row → empty
-  // set → every consent-gated scope is withheld (fail-closed). Publisher/ambient
-  // scopes (block:settings:*, apps:storage:*) are consent-exempt and always pass
-  // through — see partitionByConsent.
+  // set → every consent-gated scope is withheld (fail-closed). The consent-exempt
+  // scopes (CONSENT_EXEMPT_SCOPES — among them the four legacy `apps:storage:*`
+  // scopes and `apps:storage`) always pass through — see partitionByConsent.
+  // NOT the whole storage family: `apps:storage:publish` is consent-gated, so an
+  // ungranted one is withheld here and reported as `needs_consent`.
   let manifestScopes = requestedScopes;
   let needsConsent = false;
   let missingScopes: string[] = [];
@@ -1506,9 +1519,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // single source of truth for "requires a per-user grant"; an anon viewer has
   // no grant and never can, so the entire consent-gated set is withheld.
   //
-  // What remains for anon is only the consent-exempt scopes
-  // (`apps:storage:*`; `block:settings:*` is additionally installer-only and
-  // gets rejected just below for anon). For generate-from-model the manifest is
+  // What remains for anon is only the consent-exempt scopes (the four legacy
+  // `apps:storage:*` scopes, `apps:storage`, and the other CONSENT_EXEMPT_SCOPES
+  // members; `apps:storage:publish` is consent-gated and so stripped here;
+  // `block:settings:*` is additionally installer-only and gets rejected just
+  // below for anon). For generate-from-model the manifest is
   // `models:read:self` + `ai:write:budgeted`, so the anon subset is empty — the
   // block renders from the (scope-free) BLOCK_INIT context (showcase + form),
   // and Generate stays server-gated: with no `ai:write:budgeted` scope the
@@ -1526,6 +1541,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // into a sign-in prompt, not a re-consent flow.
     missingScopes = [];
     needsConsent = false;
+  }
+
+  // civitai#2989 Decision 1: a tunnel preview's token carries no document-store
+  // scopes, whatever the app's approval state (the tunnel-only branches enforce it
+  // for non-approved apps through their allowlists). Stripped from the consent
+  // signal too, so the preview is never prompted for a scope it cannot receive.
+  if (devTunnel === true) {
+    manifestScopes = withoutDocumentStoreScopes(manifestScopes);
+    missingScopes = withoutDocumentStoreScopes(missingScopes);
+    needsConsent = missingScopes.length > 0;
   }
 
   // C8 (now INERT — retained as fail-safe): settings scopes were publisher-only,
@@ -1685,6 +1710,15 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
           maxBrowsingLevel,
         });
 
+  // An OAuth token is not signed here: its budget is resolved when it is verified,
+  // from the manifest alone (`resolveHubTokenClaims`), never from install settings.
+  const reportedBuzzBudget =
+    oauth?.outcome === 'minted' && buzzBudget !== undefined
+      ? resolvePerCallBuzzBudget(
+          (block.manifest as { page?: { buzzBudgetPerGen?: unknown } }).page?.buzzBudgetPerGen
+        )
+      : buzzBudget;
+
   // A6: surface the consent signal alongside the token. The token carries only
   // the granted subset; `needsConsent` + `missingScopes` tell the host to prompt
   // the user to re-consent for the scopes the app's approved manifest declares
@@ -1696,6 +1730,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     expiresAt: result.expiresAt,
     kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
     scopes: manifestScopes,
+    // The per-call budget this token carries, so the host forwards it to the block
+    // instead of deriving its own: an install setting it can resolve from is not
+    // always visible to the client. Absent when the token carries no spend scope.
+    buzzBudget: reportedBuzzBudget,
     needsConsent,
     missingScopes,
     // Advisory maturity signal for the host → BLOCK_INIT. The AUTHORITATIVE

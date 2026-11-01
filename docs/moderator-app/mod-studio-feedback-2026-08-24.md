@@ -61,6 +61,8 @@ accurate, but four of the seven have a cause that is not what the symptom sugges
       **Reviews has the same shape and was left alone** — its panel is the other one that bulk-actions a
       list and refreshes the account behind it. Not reported, so not changed; the component it would
       reuse now exists.
+      **Update 2026-10-26:** Reviews now has its own paged endpoint (`/api/user-reviews`) and uses the
+      shared `SelectionBar`.
 
 - [x] **Ban and Bulk Ban cannot purge comments.** They can now — **"Remove their comments"**, opt-in
       like "remove their images", on both the ban panel and Bulk Ban. There was nothing to add at the
@@ -755,6 +757,11 @@ there is still exactly one list with open boxes; each item carries the date it w
       Manager)*. The reporter had already narrowed it themselves: the user-report removal tool keeps its
       selection correctly and the User Lookup one did not, which is where to look when this shape
       recurs.
+      **Reversed 2026-10-16** by the owner: a selection holds only what is on screen (`ImageActionBar`),
+      so a bulk action can never reach images nobody is looking at. **Partly reversed back 2026-10-19:**
+      User Reports (`/reports/user`) and the collection report queue keep the selection across page
+      turns (`keepOffScreen`; the bar shows "N on other pages"). Bulk Image Manager, the one this item
+      is about, still holds only what is on screen, so a sweep there is one page at a time.
 
 - [x] **Actioned reports come back on the dashboard.** *(08-27)* "I action, hit refresh, see something
       else — refresh again and the ones I initially actioned are back." Fixed in **89e18fe73a**

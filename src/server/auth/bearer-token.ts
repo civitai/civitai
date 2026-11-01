@@ -4,35 +4,75 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { Subject } from '~/server/http/orchestrator/api-key-spend';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
+import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
+import { CLIENT_CREDENTIALS_ONLY_SCOPES } from '~/shared/constants/token-scope.constants';
+import {
+  cacheApiKey,
+  claimLastUsedWrite,
+  readCachedApiKey,
+  releaseLastUsedWrite,
+  startLookup,
+} from './api-key-principal-cache';
 
-const LAST_USED_DEBOUNCE_MS = 60 * 60 * 1000; // 1 hour — don't update more frequently than this
+export type BearerTokenOptions = {
+  /** Accept a client-credentials token; only the catalog endpoints pass this. */
+  allowClientCredentialsOnly?: boolean;
+};
 
-export async function getSessionFromBearerToken(key: string) {
+/**
+ * The session a bearer credential stands for, or null. A client-credentials token is
+ * single-purpose: it resolves to no session unless the caller opts in.
+ */
+export async function getSessionFromBearerToken(key: string, options: BearerTokenOptions = {}) {
   const token = generateSecretHash(key.trim());
 
-  // Look up the API key to get userId, tokenScope, and buzzLimit
   const now = new Date();
-  const apiKey = await dbWrite.apiKey.findFirst({
-    where: { key: token, OR: [{ expiresAt: { gte: now } }, { expiresAt: null }] },
-    select: {
-      id: true,
-      userId: true,
-      tokenScope: true,
-      lastUsedAt: true,
-      buzzLimit: true,
-      clientId: true,
-    },
-  });
+  const lookup = startLookup();
+  // Personal and system keys are served from a short-lived Redis copy of this row; see
+  // api-key-principal-cache.ts for what may be cached and how a revocation evicts it. A miss, a
+  // revoked or expired entry, or any Redis error reads the primary exactly as before.
+  const cached = await readCachedApiKey(token, now);
+  let apiKey = cached.apiKey;
+  if (!apiKey) {
+    apiKey = await dbWrite.apiKey.findFirst({
+      where: {
+        key: token,
+        // Refresh tokens share this table and scope with their access token but are not bearer
+        // credentials. Allowlisted so a new key type is refused until deliberately added.
+        type: { in: [ApiKeyType.System, ApiKeyType.User, ApiKeyType.Access] },
+        OR: [{ expiresAt: { gte: now } }, { expiresAt: null }],
+      },
+      select: {
+        id: true,
+        userId: true,
+        tokenScope: true,
+        lastUsedAt: true,
+        buzzLimit: true,
+        clientId: true,
+        type: true,
+        expiresAt: true,
+      },
+    });
+    if (apiKey && cached.fill) await cacheApiKey(token, apiKey, lookup);
+  }
   if (!apiKey) return null;
-
-  // Update lastUsedAt (debounced — at most once per hour, fire-and-forget)
-  if (!apiKey.lastUsedAt || now.getTime() - apiKey.lastUsedAt.getTime() > LAST_USED_DEBOUNCE_MS) {
-    dbWrite.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: now } }).catch(() => {});
+  if (
+    !options.allowClientCredentialsOnly &&
+    ((apiKey.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0
+  ) {
+    return null;
   }
 
-  const user = (await sessionClient.getSessionUserById(
-    apiKey.userId
-  )) as Session['user'] | null;
+  // Update lastUsedAt (debounced — at most once per hour per key, fire-and-forget)
+  if (await claimLastUsedWrite(apiKey, now)) {
+    const id = apiKey.id;
+    dbWrite.apiKey
+      .update({ where: { id }, data: { lastUsedAt: now } })
+      .catch(() => releaseLastUsedWrite(id));
+  }
+
+  const user = (await sessionClient.getSessionUserById(apiKey.userId)) as Session['user'] | null;
   if (!user) return null;
 
   // Banned users get NO API/bearer access. Deleted users are already excluded by the hub producer (deletedAt
@@ -41,11 +81,11 @@ export async function getSessionFromBearerToken(key: string) {
   // bearer/API path must reject it CENTRALLY here, mirroring tRPC's isAuthed ban check, so a banned user's
   // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
   if (user.bannedAt) return null;
+  if (refuseModerationAccountSession(user, 'bearer-token')) return null;
 
-  // Resolve subject + buzzLimit. OAuth-issued tokens use the consent
-  // (userId + clientId) as the stable identifier across access-token rotations
-  // and read their limit from OauthConsent. User-type API keys use the
-  // ApiKey row's own id and buzzLimit.
+  // OAuth-issued tokens key their subject on clientId (stable across access-token
+  // rotations) and read their limit from the user's OauthConsent. Other keys use
+  // the ApiKey row's own id and buzzLimit.
   let subject: Subject;
   let buzzLimit: BuzzLimit | null;
   if (apiKey.clientId) {
@@ -63,11 +103,13 @@ export async function getSessionFromBearerToken(key: string) {
   return {
     user,
     apiKeyId: apiKey.id,
+    apiKeyType: apiKey.type,
     subject,
     tokenScope: apiKey.tokenScope,
     buzzLimit,
   } as Session & {
     apiKeyId: number;
+    apiKeyType: ApiKeyType;
     subject: Subject;
     tokenScope: number;
     buzzLimit: BuzzLimit | null;

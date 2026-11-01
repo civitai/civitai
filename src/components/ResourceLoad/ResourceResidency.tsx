@@ -42,7 +42,7 @@ export function useResourceResidency(modelVersionId: number | undefined) {
 type Residency = { loaded: boolean; label: string; color: string; description: string };
 
 const WAIT_NOTE =
-  'You can still generate with it — the job waits in your queue until the download finishes, and you can boost it from there.';
+  'You can still generate with it — the job waits in your queue until the download finishes.';
 
 export function describeResidency(availability: ResourceLoadAvailability): Residency | null {
   const eta = (source: { progress?: number | null; etaSeconds?: number | null }) => {
@@ -175,7 +175,15 @@ function StatusDot({ color, filled }: { color: string; filled: boolean }) {
   );
 }
 
-const LOADED = describeResidency({ status: 'available', workers: 1 }) as Residency;
+const STORED_NOTE = 'The generator shows the live status.';
+
+/** From `ModelVersion.generatorLoaded`, which trails the orchestrator, so it never claims a live state. */
+const LOADED: Residency = {
+  loaded: true,
+  label: 'Recently loaded',
+  color: 'green',
+  description: `Loaded in the generator when last checked. ${STORED_NOTE}`,
+};
 
 /** No live read — the caller supplies what it knows. */
 export function LoadedMark({ readiness }: { readiness: ResidencyReadiness }) {
@@ -189,7 +197,12 @@ export function LoadedMark({ readiness }: { readiness: ResidencyReadiness }) {
   );
 }
 
-const NOT_LOADED = describeResidency({ status: 'unavailable' }) as Residency;
+const NOT_LOADED: Residency = {
+  loaded: false,
+  label: 'Not recently loaded',
+  color: 'yellow',
+  description: `Not loaded in the generator when last checked, so generating with it may download it first, which can take a while. ${STORED_NOTE}`,
+};
 const EXTERNAL = describeResidency({ status: 'external' }) as Residency;
 
 /** Ready, without saying which kind — all the indexed field knows, since it carries readiness. */
@@ -197,7 +210,7 @@ const READY: Residency = {
   loaded: true,
   label: 'Ready',
   color: 'green',
-  description: 'Ready in the generator — generations start right away.',
+  description: `Ready in the generator when last checked. ${STORED_NOTE}`,
 };
 
 /** The indexed field cannot tell a resident model from an external one; the DB fields can. */
@@ -210,11 +223,7 @@ const RESIDENCY_BY_READINESS: Record<ResidencyReadiness, Residency> = {
   ready: READY,
 };
 
-/**
- * Top-left because `GenerateButton` owns the right corner for its price badge. Shows no download
- * progress: a download already running still means Create will not start now, and the version
- * details row names that state.
- */
+/** Top-left because `GenerateButton` owns the right corner for its price badge. */
 export function LoadedCornerBadge({ readiness }: { readiness: GeneratorReadiness }) {
   const residency = RESIDENCY_BY_READINESS[readiness];
   return (

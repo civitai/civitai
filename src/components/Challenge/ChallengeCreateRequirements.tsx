@@ -1,12 +1,13 @@
-import { Anchor, Button, Divider, Modal, Stack, Text } from '@mantine/core';
+import { Button, Divider, Modal, Stack, Text } from '@mantine/core';
 import { IconArrowLeft, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
-import { NextLink } from '~/components/NextLink/NextLink';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
+import { describeActiveLimitsByTier } from '~/shared/constants/challenge.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import type { RouterOutput } from '~/types/router';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 type Eligibility = RouterOutput['challenge']['getCreateEligibility'];
 type Requirement = Eligibility['requirements'][number];
@@ -15,18 +16,10 @@ function renderRequirement(req: Requirement, noun: string): { title: string; con
   switch (req.key) {
     case 'score':
       return {
-        title: `Have a creator score of at least ${abbreviateNumber(req.min)}`,
+        title: `Have a Creator Score of at least ${numberWithCommas(req.min)}`,
         content: (
           <Text size="sm" c="dimmed">
-            Your current{' '}
-            <Anchor component={NextLink} href="/user/account#creator-score" inherit>
-              Creator Score
-            </Anchor>{' '}
-            is{' '}
-            <Anchor component={NextLink} href="/user/account#creator-score" inherit>
-              {abbreviateNumber(req.current)}
-            </Anchor>
-            .
+            <CreatorScoreGateMessage score={req.current} required={req.min} />
           </Text>
         ),
       };
@@ -47,21 +40,20 @@ function renderRequirement(req: Requirement, noun: string): { title: string; con
       };
     case 'dailyLimit':
       return {
-        title: 'Stay under the daily create limit',
+        title: `Create at most ${req.limit} ${noun}s in any 24 hours`,
         content: (
           <Text size="sm" c="dimmed">
-            You&apos;ve created {req.recentCount} of {req.limit} {noun}s allowed in the last 24
-            hours.
+            You&apos;ve created {req.recentCount} in the last 24 hours.
           </Text>
         ),
       };
     case 'activeLimit':
       return {
-        title: `Stay under your active ${noun} limit`,
+        title: `Stay under your limit of ${noun}s running at once`,
         content: (
           <Text size="sm" c="dimmed">
-            You have {req.activeCount} of {req.limit} active {noun}
-            {req.limit === 1 ? '' : 's'} allowed for your membership tier.
+            You have {req.activeCount} of {req.limit} running or scheduled. How many can run at once
+            depends on membership: {describeActiveLimitsByTier()}.
           </Text>
         ),
       };

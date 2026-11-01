@@ -43,6 +43,14 @@ export const JOB_QUEUE_OVERDUE_MINUTES: Record<JobQueueType, number> = {
   ImageScan: MINUTES_PER_DAY,
   // Waits REPLACED_IMAGE_RETENTION_DAYS, then a once-daily job.
   ReplacedImageDelete: (REPLACED_IMAGE_RETENTION_DAYS + 1) * MINUTES_PER_DAY,
+  // `retry-image-storage-deletes`, every 15 minutes; a failed retry keeps its `createdAt`, so a row
+  // this old has failed for a day.
+  ImageStorageDelete: MINUTES_PER_DAY,
+  // `cdn-access-sync`, every minute; a failed call keeps its row and retries next run. While the
+  // `cdn-access-sync` flag is off nothing drains, so rows read overdue until it is turned on.
+  CdnAccessSync: 15,
+  // `cdn-access-sync`, every minute; each row gets one attempt and is removed whatever happens.
+  ImageCdnPersistRetry: 15,
 };
 
 /** Types nothing drains: a row of one of these is stranded on arrival, not merely waiting. */

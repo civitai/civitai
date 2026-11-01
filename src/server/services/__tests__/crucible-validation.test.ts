@@ -1,16 +1,19 @@
 import { BuzzApiError } from '@civitai/buzz';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-flags-find-many';
 import {
   calculateCrucibleSetupCost,
   cancelCrucibleSchema,
   createCrucibleInputSchema,
   crucibleImageSchema,
+  updateCrucibleSchema,
   getCruciblesInfiniteSchema,
   getJudgingPairSchema,
   submitEntrySchema,
   submitVoteSchema,
 } from '~/server/schema/crucible.schema';
 import { constants } from '~/server/common/constants';
+import { baseModelRecords } from '~/shared/constants/basemodel.constants';
 import { CrucibleSort } from '~/server/common/enums';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock, redisMock } from '~/__tests__/mocks';
@@ -20,6 +23,7 @@ import type * as PostService from '~/server/services/post.service';
 import type * as Caches from '~/server/redis/caches';
 import {
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
+  CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_ENTRIES,
@@ -30,6 +34,7 @@ import {
   CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
@@ -39,16 +44,23 @@ import {
 
 const createNotification = vi.fn();
 const createPost = vi.fn();
+const afterPostPublish = vi.fn().mockResolvedValue(undefined);
 const fetchImageResources = vi.fn();
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
+const getMultiAccountTransactionsByPrefix = vi.fn();
+const getTransactionByExternalId = vi.fn();
+const refundTransaction = vi.fn();
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   getUserBuzzAccount,
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
+  refundTransaction,
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -59,6 +71,7 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   createPost,
+  afterPostPublish,
 }));
 
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
@@ -88,6 +101,17 @@ const validCreateInput = {
   prizePositions: { '1': 50, '2': 30, '3': 20 },
   duration: 24,
 };
+
+const REFUNDED = { refundedTransactions: [{ amount: 50 }], totalRefunded: 1 };
+
+/** One leg per prefix, already refunded: a 409 then reads as settled. */
+function legsAlreadyRefunded() {
+  getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+    { transactionId: `${prefix}-leg`, externalTransactionId: `${prefix}-User`, amount: 50 },
+  ]);
+  getTransactionByExternalId.mockResolvedValue({ type: 'Refund' });
+  refundTransaction.mockResolvedValue({ transactionId: 'refunded' });
+}
 
 describe('crucibleImageSchema', () => {
   it('accepts a Cloudflare id whose variant nibble is not RFC-4122 conformant', () => {
@@ -126,16 +150,56 @@ describe('createCrucibleInputSchema', () => {
     expect(createCrucibleInputSchema.safeParse(validCreateInput).success).toBe(true);
   });
 
+  it.each([0, -1, 1.5, 32, 33, 64])('rejects content level %s', (nsfwLevel) => {
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, nsfwLevel }).success).toBe(
+      false
+    );
+  });
+
+  it.each([1, 7, 31])('accepts content mask %s', (nsfwLevel) => {
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, nsfwLevel }).success).toBe(
+      true
+    );
+  });
+
+  it.each([
+    [7, true],
+    [31, true],
+    [32, false],
+    [39, false],
+  ])('bounds an update mask of %s (valid: %s)', (nsfwLevel, valid) => {
+    expect(updateCrucibleSchema.safeParse({ id: 1, nsfwLevel }).success).toBe(valid);
+  });
+
   it('rejects an empty name', () => {
     expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, name: '   ' }).success).toBe(
       false
     );
   });
 
-  it('rejects a missing description', () => {
+  it.each([
+    ['omitted', undefined],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['null', null],
+  ])('stores no description when it is %s', (_, description) => {
+    const result = createCrucibleInputSchema.safeParse({ ...validCreateInput, description });
+    expect(result.success).toBe(true);
+    expect(result.data?.description ?? null).toBeNull();
+  });
+
+  it('trims the description', () => {
     expect(
-      createCrucibleInputSchema.safeParse({ ...validCreateInput, description: '' }).success
-    ).toBe(false);
+      createCrucibleInputSchema.parse({ ...validCreateInput, description: '  A theme  ' })
+        .description
+    ).toBe('A theme');
+  });
+
+  it('clears a blank description on update and leaves an absent one unchanged', () => {
+    expect(updateCrucibleSchema.parse({ id: 1, description: '  ' }).description).toBeNull();
+    expect(updateCrucibleSchema.parse({ id: 1, description: null }).description).toBeNull();
+    expect(updateCrucibleSchema.parse({ id: 1, description: ' New ' }).description).toBe('New');
+    expect(updateCrucibleSchema.parse({ id: 1 })).not.toHaveProperty('description');
   });
 
   it('rejects a negative entry fee', () => {
@@ -540,6 +604,7 @@ const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = nul
   minViewSeconds: null,
   maxClipSeconds,
   allowedResources: null as number[] | null,
+  allowedBaseModels: [] as string[],
   startAt: CRUCIBLE_STARTED_AT,
   createdAt: CRUCIBLE_STARTED_AT,
   endAt: new Date(Date.now() + 60_000),
@@ -610,13 +675,113 @@ describe('submitEntry — content type', () => {
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
-  it('rejects an image that is not published', async () => {
+  it('rejects an image that is neither published nor a draft of the caller', async () => {
     dbMock.dbRead.image.count.mockResolvedValue(0);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
 
     await expect(submit()).rejects.toThrow(/Only published images can be entered/);
     expect(dbMock.dbRead.image.count).toHaveBeenCalledWith({
       where: expect.objectContaining({ id: 7, post: { publishedAt: { lte: expect.any(Date) } } }),
     });
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  const draftOf = (post: { images?: number; metadata?: Record<string, unknown> | null } = {}) => {
+    dbMock.dbRead.image.count.mockResolvedValue(0);
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      postId: 300,
+      post: {
+        metadata: 'metadata' in post ? post.metadata : { crucibleEntryDraft: true },
+        _count: { images: post.images ?? 1 },
+      },
+    });
+    dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
+  };
+
+  it("enters the caller's own draft image and schedules its post for the crucible's end", async () => {
+    const endAt = new Date(Date.now() + 3 * 24 * 60 * 60_000);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      endAt,
+    });
+    draftOf();
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    expect(dbMock.dbRead.image.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 7,
+        needsReview: null,
+        tosViolation: false,
+        post: { userId: 42, publishedAt: null },
+      },
+      select: {
+        postId: true,
+        post: { select: { metadata: true, _count: { select: { images: true } } } },
+      },
+    });
+    expect(dbMock.dbWrite.post.updateMany).toHaveBeenCalledWith({
+      where: { id: 300, userId: 42, publishedAt: null },
+      data: { publishedAt: endAt },
+    });
+    expect(afterPostPublish).toHaveBeenCalledWith({ postId: 300, userId: 42 });
+  });
+
+  it('leaves the draft unpublished when the crucible closed before the entry was saved', async () => {
+    draftOf();
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+
+    await expect(submit()).rejects.toThrow(/not accepting entries/);
+    expect(dbMock.dbWrite.post.updateMany).not.toHaveBeenCalled();
+    expect(afterPostPublish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['holds other images, which entering one would publish', { images: 2 }],
+    [
+      'was unpublished with its model, so it keeps its original date',
+      { metadata: { crucibleEntryDraft: true, prevPublishedAt: '2026-01-01' } },
+    ],
+    // A collection or model-showcase draft would skip the checks its own publish path runs.
+    ['the entry modal did not create', { metadata: null }],
+    ['carries other metadata but not the entry-modal marker', { metadata: { other: true } }],
+  ])('refuses a draft that %s', async (_, post) => {
+    draftOf(post);
+
+    await expect(submit()).rejects.toThrow(/Only published images can be entered/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('leaves an already published post alone', async () => {
+    await submit();
+
+    expect(dbMock.dbWrite.post.updateMany).not.toHaveBeenCalled();
+    expect(afterPostPublish).not.toHaveBeenCalled();
+  });
+
+  it('saves no entry when the draft was published or moved meanwhile', async () => {
+    draftOf();
+    dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(submit()).rejects.toThrow(/changed while it was being entered/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses an R entry once a required model is held to PG and PG-13', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      nsfwLevel: 1 | 2 | 4,
+      allowedResources: [12],
+    });
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      nsfwLevel: 4,
+    });
+    fetchImageResources.mockResolvedValue({ 7: { resources: [{ modelVersionId: 12 }] } });
+    dbMock.dbRead.modelVersion.findMany.mockImplementation(
+      modelFlagsFindMany((id) => (id === 12 ? { minor: false, sfwOnly: true } : undefined))
+    );
+
+    await expect(submit()).rejects.toThrow(/can only be PG or PG-13/);
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
@@ -752,30 +917,52 @@ describe('createCrucibleInputSchema — video settings', () => {
 });
 
 describe('submitEntry — site', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  const row = (overrides: Record<string, unknown>) =>
     dbMock.dbRead.crucible.findUnique.mockResolvedValue({
       ...crucibleRow(MediaType.image),
-      buzzType: 'green',
+      textNsfw: false,
+      ...overrides,
     });
+  const outcomeOn = (isGreen: boolean) =>
+    submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen }).catch((error: Error) => error);
+  const message = (outcome: unknown) => (outcome instanceof Error ? outcome.message : '');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
   });
 
-  it("refuses a crucible from the other site before charging, as its pages don't show it", async () => {
-    await expect(
-      submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen: false })
-    ).rejects.toThrow('Crucible not found');
+  it('refuses a crucible that accepts mature entries on the green site, before charging', async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1 | 4 });
+    expect(message(await outcomeOn(true))).toContain('Crucible not found');
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
-  it('gets past the site check on its own site', async () => {
+  it('refuses an SFW-rated crucible with adult text on the green site, before charging', async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1, textNsfw: true });
+    expect(message(await outcomeOn(true))).toContain('Crucible not found');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it("charges no moderator's green Buzz into a crucible the green site doesn't list", async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1 | 4, entryFee: 50 });
     const outcome = await submitEntry({
       crucibleId: 1,
       imageId: 7,
       userId: 42,
       isGreen: true,
+      isModerator: true,
     }).catch((error: Error) => error);
-    expect(outcome instanceof Error ? outcome.message : '').not.toContain('Crucible not found');
+    expect(message(outcome)).toBe('Enter this crucible on civitai.red.');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['created in yellow, on the green site', 'yellow', true],
+    ['created in green, on the mature site', 'green', false],
+  ] as const)('lets an SFW crucible %s be entered', async (_, buzzType, isGreen) => {
+    row({ buzzType, nsfwLevel: 1 });
+    expect(message(await outcomeOn(isGreen))).not.toContain('Crucible not found');
   });
 });
 
@@ -867,6 +1054,33 @@ describe('submitEntry — entry fee', () => {
     );
   });
 
+  // The entrant pays in the currency of the site they enter on, never the creator's.
+  it.each([
+    ['green on the green site, for a crucible created in yellow', true, 'yellow', 'green'],
+    ['yellow on the mature site, for a crucible created in green', false, 'green', 'yellow'],
+  ] as const)('charges %s, and pools the fee', async (_, isGreen, createdIn, charged) => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      buzzType: createdIn,
+      textNsfw: false,
+    });
+
+    await expect(
+      submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen })
+    ).resolves.toMatchObject({ id: 5 });
+
+    expect(getUserBuzzAccount).toHaveBeenCalledWith({ accountId: 42, accountTypes: [charged] });
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(createMultiAccountBuzzTransaction.mock.calls[0][0]).toMatchObject({
+      fromAccountId: 42,
+      fromAccountTypes: [charged],
+      amount: 50,
+    });
+    const [, poolIncrement] = dbMock.dbWrite.$executeRaw.mock.calls.at(-1) as [unknown, number];
+    expect(poolIncrement).toBe(50);
+  });
+
   it('refunds the fee when the entry write fails, and logs a refund that also fails', async () => {
     dbMock.dbWrite.crucibleEntry.create.mockRejectedValue(new Error('db down'));
     refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
@@ -955,7 +1169,8 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
     getUserBuzzAccount.mockResolvedValue([{ balance: 500 }]);
     createMultiAccountBuzzTransaction.mockResolvedValue(undefined);
-    refundMultiAccountTransaction.mockResolvedValue(undefined);
+    refundMultiAccountTransaction.mockResolvedValue(REFUNDED);
+    legsAlreadyRefunded();
   });
 
   const lockedCheck = () => {
@@ -970,7 +1185,7 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     await submit();
 
     expect(lockedCheck().sql).toContain(
-      'UPDATE "Crucible" SET "prizePool" = "prizePool" + ? WHERE id = ? AND status = ?::"CrucibleStatus" AND ("endAt" IS NULL OR "endAt" > statement_timestamp())'
+      'UPDATE "Crucible" SET "prizePool" = "prizePool" + ? WHERE id = ? AND status = ?::"CrucibleStatus" AND ("endAt" IS NULL OR "endAt" > statement_timestamp()) AND ( "startAt" IS NULL OR "endAt" IS NULL OR statement_timestamp() < "endAt" - ("endAt" - "startAt") * ("entryCutoffPercent" / 100.0) )'
     );
     expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       dbMock.dbWrite.crucibleEntry.create.mock.invocationCallOrder[0]
@@ -1007,6 +1222,73 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-fee-refund-failed' })
     );
+  });
+
+  const paidDraft = () => {
+    dbMock.dbRead.image.count.mockResolvedValue(0);
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      postId: 300,
+      post: { metadata: { crucibleEntryDraft: true }, _count: { images: 1 } },
+    });
+    dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
+  };
+
+  // The entry and its fee are committed by then: a refund here would make it a free entry.
+  it('keeps a paid draft entry and its fee when the post refresh after commit fails', async () => {
+    paidDraft();
+    afterPostPublish.mockRejectedValueOnce(new Error('reindex down'));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'crucible-entry-post-refresh-failed', postId: 300 })
+    );
+  });
+
+  it('refunds a paid draft entry when its post was published or moved meanwhile', async () => {
+    paidDraft();
+    dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(submit()).rejects.toThrow(/changed while it was being entered/);
+
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: expect.stringMatching(/^crucible-entry-1-42-/),
+      })
+    );
+  });
+
+  it('says entries closed, and refunds the fee, when the cutoff passes during the charge', async () => {
+    const HOUR = 60 * 60_000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // A 10h run with 1h left and a 5% cutoff: entries close in 30 minutes.
+      dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+        ...crucibleRow(MediaType.image),
+        entryFee: 50,
+        startAt: new Date(Date.now() - 9 * HOUR),
+        endAt: new Date(Date.now() + HOUR),
+        entryCutoffPercent: 5,
+      });
+      createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+        vi.setSystemTime(Date.now() + 31 * 60_000);
+      });
+      dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+
+      await expect(submit()).rejects.toThrow(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
+
+      expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+      expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          externalTransactionIdPrefix: expect.stringMatching(/^crucible-entry-1-42-/),
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refuses the entry and refunds its fee when the crucible closed after the checks', async () => {
@@ -1122,10 +1404,83 @@ describe('submitEntry — free entries', () => {
       where: { crucibleId: 1, userId: 42 },
     });
   });
+
+  // Entries whose image is gone (deleted or withdrawn), counted per the where clause.
+  const withGoneEntries = ({ all, live }: { all: number; live: number }) =>
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { imageId?: unknown };
+    }) => ('imageId' in args.where ? live : all)) as never);
+
+  it('reopens the slot of an entry whose image is gone, and charges the entry made in it', async () => {
+    withGoneEntries({ all: 3, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+  });
+
+  it('still charges a re-entry when the gone entry was the free one', async () => {
+    withGoneEntries({ all: 1, live: 0 });
+
+    await submit();
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+  });
+
+  it('accepts while live entries are under the limit, however many entries were made', async () => {
+    withGoneEntries({ all: 5, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses once the live entries reach the limit', async () => {
+    withGoneEntries({ all: 4, live: 3 });
+
+    await expect(submit()).rejects.toThrow(/maximum of 3 entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("doesn't count entries whose image is gone toward the crucible's total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      entryLimit: 3,
+      freeEntriesPerUser: 1,
+      maxTotalEntries: 10,
+      _count: { entries: 10 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 9)) as never);
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    expect(dbMock.dbWrite.crucibleEntry.count).toHaveBeenCalledWith({
+      where: { crucibleId: 1, imageId: { not: null } },
+    });
+  });
+
+  it("refuses once the crucible's live entries reach its total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryLimit: 3,
+      maxTotalEntries: 10,
+      _count: { entries: 12 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 10)) as never);
+
+    await expect(submit()).rejects.toThrow(/reached its maximum number of entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('createCrucibleEntryPost', () => {
-  const create = (viewer: { isGreen?: boolean; blockedByUserIds?: number[] } = {}) =>
+  const create = (viewer: { isGreen?: boolean; blockedCreatorIds?: number[] } = {}) =>
     createCrucibleEntryPost({ crucibleId: 1, userId: 42, ...viewer });
   const arena = (overrides: Record<string, unknown> = {}) => ({
     name: 'Open Arena',
@@ -1133,6 +1488,7 @@ describe('createCrucibleEntryPost', () => {
     endAt: new Date(Date.now() + 60_000),
     userId: 99,
     buzzType: 'yellow',
+    nsfwLevel: 1,
     ingestion: 'Scanned',
     textNsfw: false,
     image: { ingestion: 'Scanned' },
@@ -1145,12 +1501,12 @@ describe('createCrucibleEntryPost', () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena());
   });
 
-  it('creates a published post for the caller, so what they add can be entered', async () => {
+  it('creates an unpublished post for the caller, marked so the picker lists it in a later session', async () => {
     await expect(create()).resolves.toEqual({ id: 900 });
     expect(createPost).toHaveBeenCalledWith({
       userId: 42,
       title: 'Open Arena',
-      publishedAt: expect.any(Date),
+      metadata: { crucibleEntryDraft: true },
     });
   });
 
@@ -1183,8 +1539,8 @@ describe('createCrucibleEntryPost', () => {
 
   it.each([
     ['still under review', { ingestion: 'Pending' }, {}],
-    ['on the other site', { buzzType: 'green' }, {}],
-    ['whose creator blocked the caller', {}, { blockedByUserIds: [99] }],
+    ['accepting mature entries, on the green site', { nsfwLevel: 1 | 4 }, { isGreen: true }],
+    ['whose creator blocked the caller', {}, { blockedCreatorIds: [99] }],
   ])('is not found for a crucible %s, and creates no post', async (_, crucible, viewer) => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena(crucible));
 
@@ -1266,6 +1622,18 @@ describe('submitEntry — who and what may enter', () => {
 
     await expect(submit()).resolves.toMatchObject({ id: 5 });
   });
+
+  it('refuses a user on the contest-ban list', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValueOnce({
+      meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
+    });
+
+    await expect(submit()).rejects.toThrow('You are banned from participating in contests');
+    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 42 } })
+    );
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('checkCrucibleEntryEligibility', () => {
@@ -1280,6 +1648,7 @@ describe('checkCrucibleEntryEligibility', () => {
       startAt: CRUCIBLE_STARTED_AT,
       createdAt: CRUCIBLE_STARTED_AT,
       allowedResources: [500],
+      allowedBaseModels: [],
     });
     dbMock.dbRead.image.findMany.mockResolvedValue([
       { id: 1, createdAt: after },
@@ -1303,11 +1672,59 @@ describe('checkCrucibleEntryEligibility', () => {
     ]);
   });
 
+  describe('once a required model is held to PG and PG-13', () => {
+    const withRequiredModel = (flagged: boolean) => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([
+        { id: 1, createdAt: after, nsfwLevel: 1 },
+        { id: 5, createdAt: after, nsfwLevel: 4 },
+      ]);
+      fetchImageResources.mockResolvedValue({
+        1: { resources: [{ modelVersionId: 500 }] },
+        5: { resources: [{ modelVersionId: 500 }] },
+      });
+      dbMock.dbRead.modelVersion.findMany.mockImplementation(
+        modelFlagsFindMany((id) => (id === 500 ? { minor: false, sfwOnly: flagged } : undefined))
+      );
+    };
+
+    it('refuses the mature images and keeps the PG ones', async () => {
+      withRequiredModel(true);
+
+      await expect(check([1, 5])).resolves.toEqual([
+        { imageId: 1, eligible: true, reasons: [] },
+        { imageId: 5, eligible: false, reasons: ['required-model-level'] },
+      ]);
+    });
+
+    it('leaves mature images alone while no required model is held there', async () => {
+      withRequiredModel(false);
+
+      await expect(check([5])).resolves.toEqual([{ imageId: 5, eligible: true, reasons: [] }]);
+    });
+  });
+
   it("only looks at the caller's own images", async () => {
     await check([1]);
 
     expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [1] }, userId: 42 } })
+      expect.objectContaining({
+        where: { id: { in: [1] }, userId: 42 },
+        select: expect.objectContaining({ nsfwLevel: true }),
+      })
+    );
+  });
+
+  it('marks every image ineligible for a contest-banned user', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValueOnce({
+      meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
+    });
+
+    await expect(check([1, 2])).resolves.toEqual([
+      { imageId: 1, eligible: false, reasons: ['contest-banned'] },
+      { imageId: 2, eligible: false, reasons: ['contest-banned', 'created-before-start'] },
+    ]);
+    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 42 } })
     );
   });
 
@@ -1322,9 +1739,299 @@ describe('checkCrucibleEntryEligibility', () => {
       startAt: CRUCIBLE_STARTED_AT,
       createdAt: CRUCIBLE_STARTED_AT,
       allowedResources: null,
+      allowedBaseModels: [],
     });
 
     await expect(check([3])).resolves.toEqual([{ imageId: 3, eligible: true, reasons: [] }]);
     expect(fetchImageResources).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitEntry — base model requirements', () => {
+  const H3_API = 3183239;
+  const H3_COMFY = 3216500;
+  const resource = (modelVersionId: number, modelType: string, baseModel: string) => ({
+    modelVersionId,
+    modelType,
+    baseModel,
+  });
+  const h3FineTune = resource(9001, 'Checkpoint', 'MiniMax H3');
+  const requiring = (overrides: { allowedResources?: number[]; allowedBaseModels?: string[] }) =>
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.video),
+      ...overrides,
+    });
+  const madeWith = (...resources: ReturnType<typeof resource>[]) =>
+    fetchImageResources.mockResolvedValue({ 7: { resources } });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it('accepts an entry made with a fine-tuned checkpoint of an allowed base model', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(h3FineTune);
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses an entry made with a checkpoint of another base model', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'));
+
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an allowed base model's LoRA on another base model's checkpoint", async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(
+      resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'),
+      resource(9003, 'LORA', 'MiniMax H3')
+    );
+
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+  });
+
+  it('accepts an allowed checkpoint alongside resources of other base models', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(
+      resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'),
+      h3FineTune,
+      resource(9003, 'LORA', 'SDXL 1.0')
+    );
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses an entry with no detected resources', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith();
+
+    await expect(submit()).rejects.toThrow(/no detected resources/);
+  });
+
+  it('a version list still refuses a fine-tune of the same base model, exactly as before', async () => {
+    requiring({ allowedResources: [H3_API, H3_COMFY] });
+    madeWith(h3FineTune);
+
+    await expect(submit()).rejects.toThrow(/does not use any of the required resources/);
+  });
+
+  it('a version list still accepts a listed version, exactly as before', async () => {
+    requiring({ allowedResources: [H3_API, H3_COMFY] });
+    madeWith(resource(H3_COMFY, 'Checkpoint', 'MiniMax H3'));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('requires both when a crucible sets a version list and base models', async () => {
+    requiring({ allowedResources: [H3_API], allowedBaseModels: ['MiniMax H3'] });
+    madeWith(h3FineTune);
+    await expect(submit()).rejects.toThrow(/does not use any of the required resources/);
+
+    madeWith(resource(9002, 'Checkpoint', 'SDXL 1.0'), resource(H3_API, 'LORA', 'SDXL 1.0'));
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+
+    madeWith(resource(H3_API, 'Checkpoint', 'MiniMax H3'));
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+});
+
+describe('checkCrucibleEntryEligibility — base model requirements', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      startAt: CRUCIBLE_STARTED_AT,
+      createdAt: CRUCIBLE_STARTED_AT,
+      allowedResources: null,
+      allowedBaseModels: ['MiniMax H3'],
+    });
+    const after = new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000);
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 1, createdAt: after },
+      { id: 2, createdAt: after },
+    ]);
+    fetchImageResources.mockResolvedValue({
+      1: {
+        resources: [{ modelVersionId: 9001, modelType: 'Checkpoint', baseModel: 'MiniMax H3' }],
+      },
+      2: { resources: [{ modelVersionId: 9002, modelType: 'Checkpoint', baseModel: 'SDXL 1.0' }] },
+    });
+  });
+
+  it('tells the submit modal which images were made with the wrong base model', async () => {
+    await expect(
+      checkCrucibleEntryEligibility({ crucibleId: 1, imageIds: [1, 2], userId: 42 })
+    ).resolves.toEqual([
+      { imageId: 1, eligible: true, reasons: [] },
+      { imageId: 2, eligible: false, reasons: ['wrong-base-model'] },
+    ]);
+  });
+});
+
+describe('createCrucibleInputSchema — base models', () => {
+  const parse = (allowedBaseModels: string[]) =>
+    createCrucibleInputSchema.safeParse({ ...validCreateInput, allowedBaseModels });
+
+  it('accepts a known base model and drops repeats', () => {
+    const result = parse(['MiniMax H3', 'MiniMax H3']);
+    expect(result.success && result.data.allowedBaseModels).toEqual(['MiniMax H3']);
+  });
+
+  it('refuses a name that is not a base model, on create and on edit', () => {
+    expect(parse(['MiniMax H4']).success).toBe(false);
+    expect(
+      updateCrucibleSchema.safeParse({ id: 1, allowedBaseModels: ['MiniMax H4'] }).success
+    ).toBe(false);
+    expect(
+      updateCrucibleSchema.safeParse({ id: 1, allowedBaseModels: ['MiniMax H3'] }).success
+    ).toBe(true);
+  });
+
+  it('caps how many base models a crucible can require', () => {
+    const names = baseModelRecords
+      .slice(0, CRUCIBLE_MAX_ALLOWED_BASE_MODELS + 1)
+      .map((m) => m.name);
+    expect(parse(names.slice(0, CRUCIBLE_MAX_ALLOWED_BASE_MODELS)).success).toBe(true);
+    expect(parse(names).success).toBe(false);
+  });
+});
+
+describe('createCrucibleInputSchema — late entries', () => {
+  it('defaults to warning in the last 20% and closing entries in the last 10%', () => {
+    const result = createCrucibleInputSchema.parse(validCreateInput);
+    expect([result.entryWarningPercent, result.entryCutoffPercent]).toEqual([20, 10]);
+  });
+
+  it('accepts entries open to the very end', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, entryCutoffPercent: 0 }).success
+    ).toBe(true);
+  });
+
+  it.each([
+    [20, 20],
+    [15, 30],
+  ])(
+    'refuses a %s%% warning with entries closing at %s%%',
+    (entryWarningPercent, entryCutoffPercent) => {
+      const result = createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        entryWarningPercent,
+        entryCutoffPercent,
+      });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(['entryCutoffPercent']);
+    }
+  );
+
+  // Each pairs the value under test with a partner that satisfies cutoff < warning, so only the
+  // range can refuse it.
+  it.each([
+    [
+      'warning below its minimum',
+      { entryWarningPercent: 9, entryCutoffPercent: 0 },
+      'entryWarningPercent',
+    ],
+    [
+      'warning above its maximum',
+      { entryWarningPercent: 51, entryCutoffPercent: 10 },
+      'entryWarningPercent',
+    ],
+    [
+      'cutoff above its maximum',
+      { entryWarningPercent: 50, entryCutoffPercent: 41 },
+      'entryCutoffPercent',
+    ],
+    ['negative cutoff', { entryWarningPercent: 20, entryCutoffPercent: -1 }, 'entryCutoffPercent'],
+  ])('refuses a %s', (_, overrides, field) => {
+    const result = createCrucibleInputSchema.safeParse({ ...validCreateInput, ...overrides });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path)).toEqual([[field]]);
+  });
+
+  it.each([
+    { entryWarningPercent: 10, entryCutoffPercent: 0 },
+    { entryWarningPercent: 50, entryCutoffPercent: 40 },
+  ])('accepts the edges of both ranges: %o', (overrides) => {
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, ...overrides }).success).toBe(
+      true
+    );
+  });
+});
+
+describe('submitEntry — entries close before the end', () => {
+  const HOUR = 60 * 60_000;
+  // A 10h run with 1h left: the last 10% of it.
+  const lastTenth = (entryCutoffPercent: number) => ({
+    ...crucibleRow(MediaType.image),
+    startAt: new Date(Date.now() - 9 * HOUR),
+    endAt: new Date(Date.now() + HOUR),
+    entryCutoffPercent,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it('refuses an entry once the crucible is inside its closing share', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(lastTenth(20));
+
+    await expect(submit()).rejects.toThrow(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  // The mocks hand back whatever the fixture holds, so only this sees a select that stopped asking
+  // for the window: entries would then stay open to the end.
+  it('reads the window it gates on', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(lastTenth(0));
+    await submit();
+    expect(dbMock.dbRead.crucible.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ startAt: true, endAt: true, entryCutoffPercent: true }),
+      })
+    );
+
+    vi.mocked(dbMock.dbRead.crucible.findUnique).mockClear();
+    createPost.mockResolvedValue({ id: 900 });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({ ...lastTenth(0), name: 'Open Arena' });
+    await createCrucibleEntryPost({ crucibleId: 1, userId: 42 });
+    expect(dbMock.dbRead.crucible.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ startAt: true, endAt: true, entryCutoffPercent: true }),
+      })
+    );
+  });
+
+  it.each([0, 5])(
+    'accepts an entry with a %s%% cutoff and 10%% of the run left',
+    async (cutoff) => {
+      dbMock.dbRead.crucible.findUnique.mockResolvedValue(lastTenth(cutoff));
+
+      await expect(submit()).resolves.toMatchObject({ id: 5 });
+    }
+  );
+
+  it('refuses to start an entry upload once entries are closed', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({ ...lastTenth(20), name: 'Open Arena' });
+    createPost.mockResolvedValue({ id: 900 });
+
+    await expect(createCrucibleEntryPost({ crucibleId: 1, userId: 42 })).rejects.toThrow(
+      CRUCIBLE_ENTRIES_CLOSED_MESSAGE
+    );
+    expect(createPost).not.toHaveBeenCalled();
   });
 });

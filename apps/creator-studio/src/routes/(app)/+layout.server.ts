@@ -1,4 +1,3 @@
-import { hubLogoutUrl } from '@civitai/auth';
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
 import { resolveMembership, TEST_MEMBERSHIP_COOKIE } from '$lib/server/membership';
@@ -6,11 +5,11 @@ import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { TEST_MODELS_SCORE_COOKIE } from '$lib/server/creator-score';
 import { ANNOUNCEMENTS_FLAG, announcementsEnabled } from '$lib/server/announcements';
 import { isStudioAdmin } from '$lib/server/admin/access';
-import { SALES_FLAG } from '$lib/nav';
+import { POST_PLANNER_FLAG, SALES_FLAG } from '$lib/nav';
+import { postPlannerEnabled } from '$lib/server/post-planner';
 
-// Resolve membership once for the whole layout — nav, chrome, and per-page gating all key off it. The logout
-// URL points at the hub because a spoke can't clear the shared cookie itself.
-export const load: LayoutServerLoad = async ({ locals, url, cookies }) => {
+// Resolve membership once for the whole layout — nav, chrome, and per-page gating all key off it.
+export const load: LayoutServerLoad = async ({ locals, cookies }) => {
   // Every route in this (app) group is gated — the guard (hooks.server.ts) redirects unauthenticated requests
   // before this runs, so `user` is always present here. (The public landing lives outside the group.)
   const user = locals.user;
@@ -18,13 +17,15 @@ export const load: LayoutServerLoad = async ({ locals, url, cookies }) => {
   const testMembership = cookies.get(TEST_MEMBERSHIP_COOKIE) ?? null;
   const membership = resolveMembership(user, testMembership ?? undefined);
   // Resolved here rather than per page: the nav has to know, and flag reads are cached in-process.
-  const [announcements, sales] = await Promise.all([
+  const [announcements, sales, postPlanner] = await Promise.all([
     announcementsEnabled(user),
     getFlipt().isEnabled(SALES_FLAG, String(user.id), fliptContext(user)),
+    postPlannerEnabled(user),
   ]);
   const enabledFlags = [
     ...(announcements ? [ANNOUNCEMENTS_FLAG] : []),
     ...(sales ? [SALES_FLAG] : []),
+    ...(postPlanner ? [POST_PLANNER_FLAG] : []),
   ];
 
   return {
@@ -35,6 +36,6 @@ export const load: LayoutServerLoad = async ({ locals, url, cookies }) => {
     testMembership,
     testModelsScore: cookies.get(TEST_MODELS_SCORE_COOKIE) ?? null,
     membership,
-    logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
+    logoutUrl: env.AUTH_JWT_ISSUER ? '/logout' : null,
   };
 };

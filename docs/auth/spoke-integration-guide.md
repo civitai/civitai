@@ -218,12 +218,36 @@ actually-served hosts) and the hub's CORS allowlist (`AUTH_CORS_ORIGINS`, env) r
 The framework-agnostic core now covers **both** the session-read side and the login bridge, so a spoke is thin
 per-framework wiring over the package:
 
-- **Session gate (read side):** `createSpokeGuard({ require?, isRevoked?, loginPath? })` — cookie header →
-  `{ status: 'ok' | 'login' | 'forbidden' }`. Resolves the rich user (so `require: u => u.isModerator` works)
-  and builds the hub login redirect. The Next adapter is `apps/moderator/proxy.ts`; the SvelteKit adapter is a
-  `handle` hook. **NOTE:** `createSpokeGuard` omits revocation by default (signature-only) — fine for a
-  redis-less POC, but a production spoke should pass `isRevoked` (the shared sysRedis `TOKEN_STATE` check, as
-  the main app does) so a banned/logged-out token is rejected before its TTL.
+- **Session gate (read side):** `createSpokeGuard({ isRevoked, require?, loginPath? })` — cookie header →
+  `{ status: 'ok' | 'login' | 'reauth' | 'forbidden' }`. Resolves the rich user (so
+  `require: u => u.isModerator` works) and builds the sign-in redirect. `isRevoked` is required (it throws
+  without it): build it with `createRevocationCheck` over the shared sys redis, so a sign-out, ban or
+  force-logout written anywhere ends the session here too. The check allows the request when the store can't
+  be reached, so pass `onError` and log it. The SvelteKit adapter is a `handle` hook; the reference wiring is
+  `apps/moderator/src/lib/server/auth.ts`:
+
+  ```ts
+  import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+  import { logToAxiom, safeError } from './axiom'; // the app's Axiom logger
+  import { getSysRedis } from './redis';
+
+  // A sign-out, ban or force-logout written anywhere ends the session here. When the store can't be reached the
+  // check allows the request, so log each time it does.
+  export const isRevoked = createRevocationCheck({
+    redis: () => getSysRedis() as unknown as SessionRegistryRedis,
+    onError: (err) => {
+      logToAxiom({
+        ...safeError(err),
+        name: 'sysredis-fail-open',
+        type: 'warning',
+        subtype: 'read-degraded',
+        fn: 'spoke isRevoked',
+      }).catch(() => undefined);
+    },
+  });
+
+  export const guard = createSpokeGuard({ require: (u) => u.isModerator === true, isRevoked });
+  ```
 - **Login bridge (cross-domain):** `buildAuthorizeRedirect({ selfOrigin, returnUrl })` → `{ location, setCookie }`
   and `completeFirstPartyCallback({ selfOrigin, query, bridgeCookieValue })` → `{ token, returnUrl } | { error }`
   (+ `generatePkce`, `randomState`, `safePath`, `clearBridgeCookie`, `OAUTH_BRIDGE_COOKIE`). The main app's

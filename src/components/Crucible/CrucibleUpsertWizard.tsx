@@ -63,8 +63,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputDateTimePicker,
+  InputMultiSelect,
   InputNumber,
-  InputSegmentedControl,
   InputSelect,
   InputText,
   InputTextArea,
@@ -74,11 +74,19 @@ import { withController } from '~/libs/form/hoc/withController';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  exceedsModelBrowsingLevelLimit,
+  matureBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import {
   CRUCIBLE_DEFAULT_PRIZE_POSITIONS,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_ENTRIES,
+  CRUCIBLE_ENTRY_CUTOFF_PERCENT,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+  CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
   CRUCIBLE_MAX_ENTRY_FEE,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_TOTAL_ENTRIES,
@@ -94,14 +102,32 @@ import {
   isCustomPrizeDistribution,
   type CrucibleContentType,
 } from '~/shared/constants/crucible.constants';
+import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
+import {
+  CHALLENGE_CREATE_DAILY_LIMIT,
+  describeActiveLimitsByTier,
+} from '~/shared/constants/challenge.constants';
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
+import { Flags } from '~/shared/utils/flags';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
-import { getCrucibleUrl, getFreeEntriesLabel, toCrucibleBuzzType } from '~/utils/crucible-helpers';
+import {
+  baseModelMakesMediaType,
+  CRUCIBLE_PRIZE_BUZZ_TYPE,
+  getCrucibleUrl,
+  getFreeEntriesLabel,
+  toCrucibleBuzzType,
+} from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { capitalize } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 const InputContentRatingSelect = withController(ContentRatingSelect);
+
+const getCrucibleBaseModelSelectData = (contentType: CrucibleContentType) =>
+  baseModelSelectData.flatMap(({ items }) =>
+    items.filter(({ value }) => baseModelMakesMediaType(value, contentType))
+  );
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputCrucibleImage = withController(CrucibleImageUpload);
 
@@ -137,6 +163,9 @@ const toTotalEntriesCap = (maxTotalEntries: number | undefined) => maxTotalEntri
 
 const countLabel = (count: number, singular: string, plural: string) =>
   `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
+/** A share of a run in hours, e.g. 10% of 24h is "2.4h". */
+const hoursOf = (durationHours: number, percent: number) =>
+  `${Number(((durationHours * percent) / 100).toFixed(1))}h`;
 const entriesLabel = (count: number) => countLabel(count, 'entry', 'entries');
 const placesLabel = (count: number) => countLabel(count, 'place', 'places');
 
@@ -148,6 +177,8 @@ const stepFields: Record<number, (keyof CrucibleCreateFormValues)[]> = {
     'entryLimit',
     'freeEntriesPerUser',
     'maxTotalEntries',
+    'entryWarningPercent',
+    'entryCutoffPercent',
     'minViewSeconds',
     'maxClipSeconds',
   ],
@@ -179,15 +210,9 @@ export function CrucibleUpsertWizard(props: Props) {
   const values = form.watch();
 
   const [domainBuzzType] = useAvailableBuzz();
-  // Stored on the crucible, and a moderator can edit from the other domain.
-  const buzzType = toCrucibleBuzzType(
-    crucible ? crucible.buzzType : values.buzzType ?? domainBuzzType
-  );
-
-  useEffect(() => {
-    if (!crucible && !values.buzzType)
-      form.setValue('buzzType', toCrucibleBuzzType(domainBuzzType));
-  }, [crucible, values.buzzType, domainBuzzType]); // eslint-disable-line react-hooks/exhaustive-deps
+  // What the creator pays setup and seed in. An edit settles in the currency first paid, which a
+  // moderator may be editing from the other site.
+  const buzzType = toCrucibleBuzzType(crucible ? crucible.buzzType : domainBuzzType);
 
   const isModerator = !!currentUser?.isModerator;
   const hasStarted = !!crucible && hasCrucibleStarted(crucible);
@@ -232,23 +257,53 @@ export function CrucibleUpsertWizard(props: Props) {
     freeEntriesPerUser > values.entryLimit
       ? 'Free entries cannot exceed the entry limit per user'
       : null;
-  // Moderators only (official contests); anyone else sees it just to read a value already set.
-  const showFreeEntries = isModerator || freeEntriesPerUser > 0;
+  const entryWindowError =
+    values.entryCutoffPercent >= values.entryWarningPercent
+      ? CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE
+      : null;
   const freeEntriesLabel = getFreeEntriesLabel({
     freeEntriesPerUser,
     entryLimit: values.entryLimit,
   });
 
+  const requiredVersionIds = values.allowedResources ?? [];
+  // Mirrors the server's `assertRequiredModelsAllowContentLevel`, which stops checking once the
+  // level and models are locked.
+  const allowsMatureContent =
+    canEditContentLevels && Flags.intersects(values.nsfwLevel, matureBrowsingLevelsFlag);
+  const { data: requiredVersions } = trpc.modelVersion.getVersionsByIds.useQuery(
+    { ids: requiredVersionIds },
+    { enabled: allowsMatureContent && requiredVersionIds.length > 0 }
+  );
+  const heldToSfwModels = allowsMatureContent
+    ? (requiredVersions ?? [])
+        .filter(
+          (version) =>
+            requiredVersionIds.includes(version.id) &&
+            exceedsModelBrowsingLevelLimit(values.nsfwLevel, version)
+        )
+        .map((version) => version.modelName)
+    : [];
+  const contentLevelError = heldToSfwModels.length
+    ? `${[...new Set(heldToSfwModels)].join(
+        ', '
+      )} can only be required for PG and PG-13 content. Allow only PG and PG-13, or remove ${
+        heldToSfwModels.length === 1 ? 'it' : 'them'
+      }.`
+    : null;
+
   const isStep2Valid = () =>
-    rulesLocked ||
-    (values.entryFee != null &&
-      values.entryFee >= CRUCIBLE_MIN_ENTRY_FEE &&
-      values.entryFee <= CRUCIBLE_MAX_ENTRY_FEE &&
-      values.entryLimit >= 1 &&
-      values.entryLimit <= CRUCIBLE_MAX_ENTRIES &&
-      !entryLimitError &&
-      !freeEntriesError &&
-      !videoSettingsError);
+    !contentLevelError &&
+    (rulesLocked ||
+      (values.entryFee != null &&
+        values.entryFee >= CRUCIBLE_MIN_ENTRY_FEE &&
+        values.entryFee <= CRUCIBLE_MAX_ENTRY_FEE &&
+        values.entryLimit >= 1 &&
+        values.entryLimit <= CRUCIBLE_MAX_ENTRIES &&
+        !entryLimitError &&
+        !freeEntriesError &&
+        !entryWindowError &&
+        !videoSettingsError));
 
   const totalPrizePercentage = getPrizeDistributionTotal(values.prizePositions);
   const prizeDistributionError =
@@ -325,14 +380,20 @@ export function CrucibleUpsertWizard(props: Props) {
     freeEntriesPerUser,
   });
   const prizePoolNote = (
-    <Text size="xs" c="dimmed" mt="xs">
-      {freeEntriesPerUser > 0
-        ? 'The prize pool is your seed plus every paid entry fee; free entries add nothing.'
-        : 'The prize pool is your seed plus every entry fee, so what each place wins grows with the number of entries.'}
-      {freeEntriesPerUser > 0 &&
-        !values.seededPrizePool &&
-        ' With no seed, winners only share what paid entries bring in.'}
-    </Text>
+    <>
+      <Text size="xs" c="dimmed" mt="xs">
+        {freeEntriesPerUser > 0
+          ? 'The prize pool is your seed plus every paid entry fee; free entries add nothing.'
+          : 'The prize pool is your seed plus every entry fee, so what each place wins grows with the number of entries.'}
+        {freeEntriesPerUser > 0 &&
+          !values.seededPrizePool &&
+          ' With no seed, winners only share what paid entries bring in.'}
+      </Text>
+      <Text size="xs" c="dimmed" mt={4}>
+        Each creator can win at most one prize. A creator who places more than once is paid for
+        their best entry, and the next creator moves up.
+      </Text>
+    </>
   );
 
   const canAddPrizePosition = placeCount < placeLimit;
@@ -395,6 +456,11 @@ export function CrucibleUpsertWizard(props: Props) {
 
   const renderStep1 = () => (
     <Stack gap="xl">
+      {!crucible && (
+        <Text size="sm" c="dimmed">
+          {`How many crucibles you can have running or scheduled at once depends on membership (${describeActiveLimitsByTier()}). Anyone can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} in any 24 hours.`}
+        </Text>
+      )}
       <InputCrucibleImage
         name="coverImage"
         label="Cover Image"
@@ -478,38 +544,17 @@ export function CrucibleUpsertWizard(props: Props) {
         clearable
       />
 
-      {!crucible && (
-        <Input.Wrapper
-          label="Buzz Type"
-          description="Green Buzz crucibles are Safe-For-Work (PG / PG-13) and run on civitai.com; Yellow Buzz crucibles run on civitai.red. It can't be changed after creation."
-        >
-          <InputSegmentedControl
-            name="buzzType"
-            fullWidth
-            mt={5}
-            data={(['yellow', 'green'] as const).map((type) => ({
-              value: type,
-              label: (
-                <Group gap={6} justify="center" wrap="nowrap">
-                  <CurrencyIcon currency={Currency.BUZZ} type={type} size={16} />
-                  <span>{type === 'green' ? 'Green Buzz' : 'Yellow Buzz'}</span>
-                </Group>
-              ),
-            }))}
-          />
-        </Input.Wrapper>
-      )}
-
       <InputContentRatingSelect
         name="nsfwLevel"
         label="Allowed Content Levels"
         description={
           buzzType === 'green'
-            ? 'Users can only submit content matching these levels. Green Buzz crucibles are SFW only.'
+            ? 'Users can only submit content matching these levels. Crucibles created on civitai.com are SFW only.'
             : 'Users can only submit content matching these levels'
         }
         sfwOnly={buzzType === 'green'}
         disabled={!canEditContentLevels}
+        error={contentLevelError}
       />
     </Stack>
   );
@@ -537,6 +582,12 @@ export function CrucibleUpsertWizard(props: Props) {
                   ? undefined
                   : () => {
                       form.setValue('contentType', value);
+                      form.setValue(
+                        'allowedBaseModels',
+                        (form.getValues('allowedBaseModels') ?? []).filter((baseModel) =>
+                          baseModelMakesMediaType(baseModel, value)
+                        )
+                      );
                       if (value !== MediaType.video) {
                         form.setValue('minViewSeconds', undefined);
                         form.setValue('maxClipSeconds', undefined);
@@ -560,7 +611,7 @@ export function CrucibleUpsertWizard(props: Props) {
         label="Entry Fee per User"
         description={`How much Buzz users pay to enter their ${
           values.contentType === MediaType.video ? 'video' : 'image'
-        } (${entryFeeRangeLabel}). Entry fees fund the prize pool.`}
+        } (${entryFeeRangeLabel}). Entrants pay in green Buzz on civitai.com and yellow on civitai.red; prizes are paid in yellow.`}
         leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />}
         min={CRUCIBLE_MIN_ENTRY_FEE}
         max={CRUCIBLE_MAX_ENTRY_FEE}
@@ -588,21 +639,19 @@ export function CrucibleUpsertWizard(props: Props) {
         withAsterisk
       />
 
-      {showFreeEntries && (
-        <InputNumber
-          name="freeEntriesPerUser"
-          label="Free Entries per User"
-          description="Each user's first entries skip the fee and add nothing to the prize pool. Official contests only."
-          min={0}
-          max={values.entryLimit}
-          clampToMax
-          allowNegative={false}
-          allowDecimal={false}
-          clampBehavior="blur"
-          error={freeEntriesError}
-          disabled={rulesLocked || !isModerator}
-        />
-      )}
+      <InputNumber
+        name="freeEntriesPerUser"
+        label="Free Entries per User"
+        description="Each user's first entries skip the fee and add nothing to the prize pool."
+        min={0}
+        max={values.entryLimit}
+        clampToMax
+        allowNegative={false}
+        allowDecimal={false}
+        clampBehavior="blur"
+        error={freeEntriesError}
+        disabled={rulesLocked}
+      />
 
       <div>
         <InputNumber
@@ -635,6 +684,51 @@ export function CrucibleUpsertWizard(props: Props) {
           </Text>
         </Group>
       </div>
+
+      <Input.Wrapper
+        label="Late Entries"
+        description={`A late entry has less time to be judged and may not get enough votes to place. Shares are of the crucible's ${values.duration}h run, counted back from the end.`}
+      >
+        <Stack gap="md" mt={8}>
+          <InputNumber
+            name="entryWarningPercent"
+            label="Warn entrants"
+            description={`Entrants are warned their entry may not place in the last ${hoursOf(
+              values.duration,
+              values.entryWarningPercent
+            )} (${CRUCIBLE_ENTRY_WARNING_PERCENT.min}–${CRUCIBLE_ENTRY_WARNING_PERCENT.max}%)`}
+            suffix="%"
+            min={CRUCIBLE_ENTRY_WARNING_PERCENT.min}
+            max={CRUCIBLE_ENTRY_WARNING_PERCENT.max}
+            clampToMax
+            allowNegative={false}
+            allowDecimal={false}
+            clampBehavior="blur"
+            disabled={rulesLocked}
+          />
+          <InputNumber
+            name="entryCutoffPercent"
+            label="Close entries"
+            description={
+              values.entryCutoffPercent
+                ? `No new entries in the last ${hoursOf(
+                    values.duration,
+                    values.entryCutoffPercent
+                  )} (0–${CRUCIBLE_ENTRY_CUTOFF_PERCENT.max}%)`
+                : `0% takes entries until the very end (0–${CRUCIBLE_ENTRY_CUTOFF_PERCENT.max}%)`
+            }
+            suffix="%"
+            min={CRUCIBLE_ENTRY_CUTOFF_PERCENT.min}
+            max={CRUCIBLE_ENTRY_CUTOFF_PERCENT.max}
+            clampToMax
+            allowNegative={false}
+            allowDecimal={false}
+            clampBehavior="blur"
+            error={entryWindowError}
+            disabled={rulesLocked}
+          />
+        </Stack>
+      </Input.Wrapper>
 
       {values.contentType === MediaType.video && (
         <Input.Wrapper
@@ -695,6 +789,19 @@ export function CrucibleUpsertWizard(props: Props) {
         disabled={rulesLocked}
         generatableOnly={false}
         mediaType={values.contentType}
+        error={contentLevelError}
+      />
+
+      <InputMultiSelect
+        name="allowedBaseModels"
+        label="Base Model Requirements"
+        description="Entries must be made with a checkpoint of one of these base models. Leave empty to allow any base model."
+        placeholder="Any base model"
+        data={getCrucibleBaseModelSelectData(values.contentType)}
+        maxValues={CRUCIBLE_MAX_ALLOWED_BASE_MODELS}
+        searchable
+        clearable
+        disabled={rulesLocked}
       />
     </Stack>
   );
@@ -736,11 +843,7 @@ export function CrucibleUpsertWizard(props: Props) {
             <Text size="xs" c="dimmed" fw={600} mb={8}>
               {prizeCustomized ? 'Custom Distribution' : 'Default Distribution'}
             </Text>
-            <PrizeDistributionChart
-              prizePositions={values.prizePositions}
-              placeBuzz={placeBuzz}
-              buzzType={buzzType}
-            />
+            <PrizeDistributionChart prizePositions={values.prizePositions} placeBuzz={placeBuzz} />
             {prizePoolNote}
           </div>
 
@@ -811,7 +914,7 @@ export function CrucibleUpsertWizard(props: Props) {
                   <Text size="sm" fw={600}>
                     {formatPlace(position)}
                   </Text>
-                  <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
+                  <PlaceBuzzText amount={placeBuzz[position]} buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE} />
                 </div>
                 <Group gap="xs" wrap="nowrap">
                   <NumberInput
@@ -1022,6 +1125,16 @@ export function CrucibleUpsertWizard(props: Props) {
             </Text>
           </Group>
           <Group justify="space-between">
+            <Text c="dimmed">Entries Close</Text>
+            <Text fw={500}>
+              {values.entryCutoffPercent
+                ? `Last ${hoursOf(values.duration, values.entryCutoffPercent)} (${
+                    values.entryCutoffPercent
+                  }%)`
+                : 'At the end'}
+            </Text>
+          </Group>
+          <Group justify="space-between">
             <Text c="dimmed">Required Resources</Text>
             <Text fw={500}>
               {values.allowedResources?.length
@@ -1029,6 +1142,14 @@ export function CrucibleUpsertWizard(props: Props) {
                     values.allowedResources.length === 1 ? 'model' : 'models'
                   }`
                 : 'Any model'}
+            </Text>
+          </Group>
+          <Group justify="space-between" wrap="nowrap">
+            <Text c="dimmed">Base Models</Text>
+            <Text fw={500} ta="right">
+              {values.allowedBaseModels?.length
+                ? values.allowedBaseModels.join(', ')
+                : 'Any base model'}
             </Text>
           </Group>
           {values.contentType === MediaType.video && (
@@ -1064,11 +1185,7 @@ export function CrucibleUpsertWizard(props: Props) {
               <Text fw={500}>None</Text>
             )}
           </Group>
-          <PrizeDistributionChart
-            prizePositions={values.prizePositions}
-            placeBuzz={placeBuzz}
-            buzzType={buzzType}
-          />
+          <PrizeDistributionChart prizePositions={values.prizePositions} placeBuzz={placeBuzz} />
         </Stack>
       </Paper>
     </Stack>
@@ -1125,6 +1242,7 @@ export function CrucibleUpsertWizard(props: Props) {
         : null,
     _count: { entries: crucible?._count.entries ?? 0 },
     paidEntryCount: crucible?.paidEntryCount ?? 0,
+    entrantCount: crucible?.entrantCount ?? 0,
   };
 
   const submitLabel = crucible ? 'Save Changes' : 'Create Crucible';
@@ -1409,11 +1527,9 @@ function PlaceBuzzText({ amount, buzzType }: { amount?: PlaceBuzz; buzzType: Cru
 function PrizeDistributionChart({
   prizePositions,
   placeBuzz,
-  buzzType,
 }: {
   prizePositions: Record<string, number>;
   placeBuzz: Record<string, PlaceBuzz>;
-  buzzType: CrucibleBuzzType;
 }) {
   const sortedPositions = Object.entries(prizePositions).sort(
     ([a], [b]) => parseInt(a) - parseInt(b)
@@ -1455,7 +1571,7 @@ function PrizeDistributionChart({
               {percentage}%
             </Text>
             <Group justify="center">
-              <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
+              <PlaceBuzzText amount={placeBuzz[position]} buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE} />
             </Group>
           </Paper>
         ))}
@@ -1477,7 +1593,10 @@ function PrizeDistributionChart({
                       <Text size="sm" c="dimmed">
                         {formatPlace(position)}
                       </Text>
-                      <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
+                      <PlaceBuzzText
+                        amount={placeBuzz[position]}
+                        buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
+                      />
                     </div>
                   </Group>
                   <Text size="sm" fw={600} c={`${color}.4`}>

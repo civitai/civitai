@@ -242,6 +242,8 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
+    // Not a moderator: the service's owner gate applies to them.
+    expect(mockSubmitVersion.mock.calls[0][0].submitterIsModerator).toBe(false);
   });
 
   it('403 when the resolved user is banned even if isModerator', async () => {
@@ -417,6 +419,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     const callArg = mockSubmitVersion.mock.calls[0][0];
     expect(callArg.submittedByUserId).toBe(7);
+    expect(callArg.submitterIsModerator).toBe(true);
     expect(Buffer.isBuffer(callArg.bundleBuffer)).toBe(true);
     // Stable CLI response contract.
     expect(res._getJSONData()).toEqual({
@@ -424,6 +427,51 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       slug: 'my-block',
       version: '1.2.3',
       status: 'pending',
+      listing: null,
+    });
+  });
+
+  it('🔴 the CLI contract carries the listing readiness, so `civitai app submit` can say what approval waits on', async () => {
+    const listing = {
+      approvalBlocked: true,
+      missing: ['icon', 'cover'],
+      nextStep:
+        "Add an icon and a cover on your listing's Media tab before a moderator can approve it.",
+      problems: [
+        {
+          code: 'missing-icon',
+          label: 'Missing icon (required before publishing)',
+          severity: 'blocking',
+        },
+        {
+          code: 'no-screenshots',
+          label: 'No screenshots (recommended, optional)',
+          severity: 'advisory',
+        },
+      ],
+    };
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockResolvedValueOnce({
+      publishRequestId: 'pubreq_abc',
+      slug: 'my-block',
+      version: '1.2.3',
+      bundleSha256: 'deadbeef',
+      fileSummary: {},
+      manifestDiffSummary: {},
+      listing,
+    });
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      publishRequestId: 'pubreq_abc',
+      slug: 'my-block',
+      version: '1.2.3',
+      status: 'pending',
+      listing,
     });
   });
 

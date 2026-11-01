@@ -26,7 +26,7 @@ import {
   IconWand,
   IconZoomIn,
 } from '@tabler/icons-react';
-import type { WorkflowStepEvent } from '@civitai/client';
+import type { WorkflowStepEvent } from '@civitai/orchestration-client';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -917,6 +917,7 @@ export function IterativeImageEditor({
       uploadFn: uploadToCF,
       ImageSelectModal,
       maxSelections: 20,
+      outputUse: 'derive',
       onLoadingChange: (loading) =>
         setUploadingCount((c) => (loading ? c + 1 : Math.max(0, c - 1))),
       onSuccess: async (cfId: string) => {

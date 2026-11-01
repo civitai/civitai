@@ -58,7 +58,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
  * `ModActivity.userId` when the caller asserts no acting moderator — the same sentinel
- * `autoMuteScam` uses (`~/server/jobs/entity-moderation.ts`). The moderator app's board filters
+ * `autoMuteScam` uses (`~/server/services/scam-auto-mute.service.ts`). The moderator app's board filters
  * `userId > 0`, so a sentinel row can never be mistaken for a person working a queue.
  */
 const SYSTEM_ACTOR_ID = -1;

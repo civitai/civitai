@@ -1,0 +1,134 @@
+import { familyId, type SessionClaims } from '@civitai/auth';
+import { REDIS_SYS_KEYS } from '@civitai/redis';
+import { evalSys, getSysRedis } from '../redis';
+import { sessions } from './registry';
+
+// A family is every session descended from one sign-in on one browser (see @civitai/auth `familyClaims`).
+// These records let the hub tell a family is still in use, and end every family a browser signed in with.
+
+const DAY_S = 24 * 60 * 60;
+const FAMILY_LIVE_TTL_MS = 30 * DAY_S * 1000;
+// Outlasts the 90-day session limit, so a family's membership can't lapse while its sessions are accepted.
+export const DEVICE_FAMILIES_TTL_S = 91 * DAY_S;
+
+export const deviceFamiliesKey = (deviceId: string) =>
+  `${REDIS_SYS_KEYS.SESSION.DEVICE_FAMILIES}:${deviceId}` as const;
+const deviceAccountsKey = (deviceId: string) =>
+  `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}` as const;
+
+const MARK_LIVE_SCRIPT = `
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  redis.call('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', '1', ARGV[1])
+  return 1
+`;
+
+/** Record that `family` was just used. Best-effort. */
+export async function markFamilyLive(family: string | undefined): Promise<void> {
+  if (!family) return;
+  await evalSys(
+    MARK_LIVE_SCRIPT,
+    [REDIS_SYS_KEYS.SESSION.FAMILY_LIVE],
+    [family, String(Date.now()), String(FAMILY_LIVE_TTL_MS)]
+  ).catch(() => undefined);
+}
+
+/**
+ * Whether the hub keeps honouring its own session cookie: the family was used on some host, or the token itself
+ * was signed, within FAMILY_LIVE_TTL_MS. Records the use when it does. Unknown liveness (no redis, or an error)
+ * counts as live; the 90-day limit still bounds the session.
+ */
+export async function acceptHubSession(claims: SessionClaims): Promise<boolean> {
+  const family = familyId(claims);
+  if (!family) return true;
+  const recent = claims.signedAt != null && Date.now() - claims.signedAt < FAMILY_LIVE_TTL_MS;
+  if (!recent && !(await isFamilyLive(family))) return false;
+  await markFamilyLive(family);
+  return true;
+}
+
+async function isFamilyLive(family: string): Promise<boolean> {
+  const sys = getSysRedis();
+  if (!sys) return true;
+  try {
+    return (await sys.hGet<string>(REDIS_SYS_KEYS.SESSION.FAMILY_LIVE, family)) != null;
+  } catch {
+    return true;
+  }
+}
+
+// A browser's family record is joined only with proof that the browser is signed in to it: a family already in
+// it (the browser's prior hub session). A new record also takes the proof family, so a session from before these
+// records existed is ended by a sign-out here too. A browser with an account list but no record yet gets none:
+// a sign-out from it would forget that list. 0: created; 1: joined; -1: refused.
+const ADD_FAMILY_SCRIPT = `
+  if redis.call('EXISTS', KEYS[1]) == 0 then
+    if redis.call('EXISTS', KEYS[2]) == 1 then return -1 end
+    if ARGV[2] ~= '' then redis.call('SADD', KEYS[1], ARGV[2]) end
+    redis.call('SADD', KEYS[1], ARGV[1])
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    return 0
+  end
+  if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1
+    or (ARGV[2] ~= '' and redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1) then
+    redis.call('SADD', KEYS[1], ARGV[1])
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    return 1
+  end
+  return -1
+`;
+
+/**
+ * Remember that `family` signed in on this browser, so signing out here ends it too. `proofFamily` is the family
+ * of the verified hub session the same request carries. Returns `'rotate'` when the browser has a record (or an account list) this
+ * request can't show it belongs to: the caller moves the browser to a new device id. Best-effort.
+ */
+export async function addDeviceFamily(
+  deviceId: string | undefined,
+  family: string | undefined,
+  opts: { proofFamily?: string } = {}
+): Promise<'added' | 'rotate'> {
+  if (!deviceId || !family) return 'added';
+  try {
+    const result = await evalSys(
+      ADD_FAMILY_SCRIPT,
+      [deviceFamiliesKey(deviceId), deviceAccountsKey(deviceId)],
+      [family, opts.proofFamily ?? '', String(DEVICE_FAMILIES_TTL_S)]
+    );
+    return Number(result) === -1 ? 'rotate' : 'added';
+  } catch {
+    return 'added';
+  }
+}
+
+/**
+ * Sign-out: end the caller's family. When that family belongs to this browser's device record, also end every
+ * other family signed in on it and forget its account list, so nothing signed in here survives. A device id the
+ * caller's family is not part of is left alone.
+ */
+export async function endDeviceSessions(
+  caller: SessionClaims | undefined,
+  deviceId: string | undefined
+): Promise<void> {
+  const family = caller ? familyId(caller) : undefined;
+  if (!family) return;
+  await sessions.invalidateFamily(family).catch(() => undefined);
+
+  const sys = getSysRedis();
+  if (!sys || !deviceId) return;
+  let members: string[];
+  try {
+    members = (await sys.sMembers<unknown>(deviceFamiliesKey(deviceId))).map(String);
+  } catch {
+    return;
+  }
+  if (!members.includes(family)) return;
+  try {
+    for (const other of members) {
+      if (other !== family) await sessions.invalidateFamily(other).catch(() => undefined);
+    }
+  } finally {
+    await sys
+      .del([deviceFamiliesKey(deviceId), deviceAccountsKey(deviceId)])
+      .catch(() => undefined);
+  }
+}

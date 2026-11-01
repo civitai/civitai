@@ -3,14 +3,17 @@
  * imageGen steps, with optional ControlNet preprocess steps.
  */
 
-import type { ImageGenStepTemplate, PreprocessImageStepTemplate } from '@civitai/client';
+import type {
+  ImageGenStepTemplate,
+  PreprocessImageStepTemplate,
+} from '@civitai/orchestration-client';
 import type {
   ComfyZImageBaseCreateImageGenInput,
   ComfyZImageTurboCreateImageGenInput,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
+import { defineHandler } from '../handlers/handler-factory';
+import { buildControlNetSteps } from '../handlers/controlnets.helper';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
@@ -57,7 +60,7 @@ export const createZImageInput = defineHandler<
       quantity,
       seed: data.seed,
       loras,
-      diffuserModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
+      diffusionModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
       ...(controlNets.length ? { controlNets } : {}),
     }) as ZImageInput,
   };

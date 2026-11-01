@@ -4,14 +4,30 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
+  import WalkPager from './WalkPager.svelte';
+  import { fetchJson } from '$lib/fetch-json';
   import { dateTime, num } from '$lib/format';
   import { denied } from '$lib/permissions';
-  import type { GeneratedWorkflowPage, WorkflowSource } from '$lib/server/user-workflows.service';
+  import type {
+    GeneratedWorkflowPage,
+    WorkflowOrigin,
+    WorkflowSource,
+  } from '$lib/server/user-workflows.service';
 
   const SOURCES: { value: WorkflowSource; label: string }[] = [
+    { value: 'all', label: 'All' },
     { value: 'onsite', label: 'On-site generator' },
     { value: 'comfy', label: 'Comfy Cloud' },
   ];
+
+  // A fact about the row's tags, not a guess at how it was submitted.
+  const ORIGIN_LABEL: Record<WorkflowOrigin, string> = {
+    appblock: 'app block',
+    onsite: 'site generator',
+    comfy: 'Comfy Cloud (sends no prompt)',
+    untagged: 'no source tag',
+    other: 'other source',
+  };
 
   let {
     userId,
@@ -40,7 +56,7 @@
   let toggled = $state<boolean | null>(null);
   const shown = $derived(toggled ?? open);
 
-  let source = $state<WorkflowSource>('onsite');
+  let source = $state<WorkflowSource>('all');
 
   // A stack of the cursors walked so far, so Previous is an index move rather than a second query the
   // orchestrator cannot answer (its paging is forward-only). `''` is the first page.
@@ -53,7 +69,7 @@
     userId;
     untrack(() => {
       toggled = null;
-      source = 'onsite';
+      source = 'all';
     });
   });
 
@@ -70,15 +86,11 @@
 
   const page = $derived(
     browser && shown && canView
-      ? fetch(
+      ? fetchJson<GeneratedWorkflowPage>(
           `/api/user-workflows/${userId}?take=20&source=${source}${
             cursors[index] ? `&cursor=${encodeURIComponent(cursors[index])}` : ''
           }`
-        ).then(async (r): Promise<GeneratedWorkflowPage> => {
-          const body = await r.json();
-          if (!r.ok) throw new Error(body?.error ?? String(r.status));
-          return body;
-        })
+        )
       : null
   );
 
@@ -141,7 +153,7 @@
         {#if result.items.length === 0}
           <p class="mt-3 text-sm text-dark-2">
             No successful generations on record for this account
-            {source === 'comfy' ? ' in Comfy Cloud' : ' on-site'}.
+            {source === 'comfy' ? ' in Comfy Cloud' : source === 'onsite' ? ' on-site' : ''}.
           </p>
         {:else}
           <ul class="mt-3 space-y-3">
@@ -149,6 +161,12 @@
               <li class="rounded-md border border-dark-4 p-3">
                 <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
                   <span>{dateTime(workflow.createdAt)}</span>
+                  <!-- On a filtered tab, a row from elsewhere (app blocks also tag `gen`) must say so. -->
+                  {#if source === 'all' || workflow.origin !== source}
+                    <Badge variant="outline"
+                      >{workflow.sourceTag ?? ORIGIN_LABEL[workflow.origin]}</Badge
+                    >
+                  {/if}
                   {#if workflow.workflow}
                     <Badge variant="secondary">{workflow.workflow}</Badge>
                   {/if}
@@ -165,6 +183,8 @@
 
                 {#if workflow.prompt}
                   <p class="mt-1 wrap-break-word text-sm text-dark-0">{workflow.prompt}</p>
+                {:else if workflow.paramsMissing}
+                  <p class="mt-1 text-xs text-dark-2">No generation params recorded.</p>
                 {/if}
                 {#if workflow.negativePrompt}
                   <p class="mt-1 wrap-break-word text-xs text-dark-2">
@@ -190,25 +210,12 @@
             {/each}
           </ul>
 
-          <div class="mt-3 flex items-center gap-2">
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={index === 0}
-              onclick={() => (index = Math.max(0, index - 1))}
-            >
-              Previous
-            </Button>
-            <span class="text-xs text-dark-2">Page {num(index + 1)}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!result.nextCursor}
-              onclick={() => result.nextCursor && advance(result.nextCursor)}
-            >
-              Next
-            </Button>
-          </div>
+          <WalkPager
+            {index}
+            hasNext={!!result.nextCursor}
+            onBack={() => (index = Math.max(0, index - 1))}
+            onNext={() => result.nextCursor && advance(result.nextCursor)}
+          />
         {/if}
       {/if}
     {:catch e}

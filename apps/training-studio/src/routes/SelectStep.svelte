@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     IconBoltFilled,
+    IconSparkles,
     IconStarFilled,
     IconCheck,
     IconStack2,
@@ -18,6 +19,8 @@
   import {
     MEDIA_OPTIONS,
     cardsForMedia,
+    editCards,
+    loraTypeById,
     releasedLabel,
     typesForMedia,
     type Media,
@@ -30,7 +33,6 @@
     isCustom,
     isValidAir,
     labelNoun,
-    labelOptions,
     newRun,
     nextRunId,
     recommendedCardFor,
@@ -38,6 +40,8 @@
     runVersion,
     runVersionLabel,
     selectionFromTotal,
+    sweepCompatible,
+    versionOptions,
     type Run,
     type Selection,
   } from './trainingFlow';
@@ -50,16 +54,15 @@
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
-    /** Per-model catalog gates this user may see (`ModelCard.flagKey`), resolved server-side in `/new`'s
-     *  load. Cards whose gate isn't in this set are hidden from every offer surface below. */
+    /** Per-model catalog gates this user may see (`ModelCard.flagKey`). Cards whose gate isn't in
+     *  this set are hidden from every offer surface below. */
     enabledModelFlags?: string[];
     /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
      *  remount doesn't lose the chosen model(s). */
     initial?: Selection | null;
   } = $props();
 
-  // The resolved gate set from the page load. Used by every card-offering surface (seed, recommendation,
-  // featured/other lists). Derived so the seed and lists reflect the prop rather than a captured snapshot.
+  // Derived so the seed and lists reflect the prop rather than a captured snapshot.
   const enabledFlags = $derived(new Set(enabledModelFlags));
 
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
@@ -83,9 +86,23 @@
   // change keeps their pick. Silently swapping a hand-picked SDXL for the recommended model on a
   // Character→Style click is how a tester started (and paid for) a run on a model they never chose.
   let userPickedModel = $state(untrack(() => initial?.userPickedModel ?? false));
+  // "Image edit" is its own section beside the media: edit LoRAs train on before/after pairs through a
+  // different Data step, so their models are never mixed into the Image list. The selection still says
+  // media 'image'; the section is read back from the run's card.
+  const EDIT_SECTION = 'image-edit';
+  let editSection = $state(untrack(() => !!initial && runCard(initial.runs[0]!).pairs === true));
+  const visibleEditCards = $derived(editCards(enabledFlags));
+  const sections = $derived([
+    ...MEDIA_OPTIONS.slice(0, 1),
+    ...(visibleEditCards.length ? [{ id: EDIT_SECTION, name: 'Image edit' }] : []),
+    ...MEDIA_OPTIONS.slice(1),
+  ]);
+  const activeSection = $derived(editSection ? EDIT_SECTION : media);
 
   const types = $derived(typesForMedia(media));
-  const type = $derived(types.find((t) => t.id === loraType) ?? types[0]!);
+  const type = $derived(
+    editSection ? loraTypeById('edit') : (types.find((t) => t.id === loraType) ?? types[0]!)
+  );
   const multi = $derived(runs.length > 1);
   const primary = $derived(runs[0]!);
   const focused = $derived(runs[focus] ?? primary);
@@ -94,7 +111,7 @@
   // Undefined when the type has no recommendation for this media, or when the recommended model is gated
   // off for this user — the banner then simply doesn't show.
   const recommendedCard = $derived(
-    recommendedType
+    recommendedType && !editSection
       ? cardsForMedia(media, enabledFlags).find((c) => c.type === recommendedType)
       : undefined
   );
@@ -102,10 +119,11 @@
   // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
   // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
   const FEATURED: Partial<Record<Media, string[]>> = {
-    image: ['zimage', 'anima', 'krea2'],
+    image: ['zimage', 'mossimage', 'flux3klein', 'anima', 'krea2'],
     video: ['minimaxh3', 'wan', 'ltx'],
   };
   const featuredCards = $derived.by(() => {
+    if (editSection) return visibleEditCards;
     const cards = cardsForMedia(media, enabledFlags);
     const featured = FEATURED[media];
     if (!featured) return cards;
@@ -114,6 +132,7 @@
       .filter((c): c is (typeof cards)[number] => c !== undefined);
   });
   const otherCards = $derived.by(() => {
+    if (editSection) return [];
     const featured = FEATURED[media];
     if (!featured) return [];
     const featuredSet = new Set(featured);
@@ -126,14 +145,34 @@
   const visibleCards = $derived(modelsExpanded ? [...featuredCards, ...otherCards] : featuredCards);
   const labelMode = $derived(runCard(primary).label);
   const labelModeNoun = $derived(labelNoun(runCard(primary)));
+  const primaryPairs = $derived(runCard(primary).pairs === true);
+  /** Why `card` can't join this sweep — the dataset is shared, so its shape must match. */
+  function sweepLockReason(card: ModelCard): string {
+    if (!!card.pairs !== primaryPairs)
+      return `${card.name} ${card.pairs ? 'trains on before/after pairs' : 'trains on single images'}; your other run doesn't. One dataset can't mix — remove the other run to switch.`;
+    return `${card.name} uses ${labelNoun(card)}; your other run uses ${labelModeNoun}. One dataset can't mix — remove the other run to switch.`;
+  }
   // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
   const total = $derived(selectionFromTotal(prices, runs));
   const keptOverRecommendation = $derived(
     !multi && userPickedModel && !!recommendedCard && recommendedCard.type !== primary.cardType
   );
 
+  function pickSection(id: string) {
+    if (id !== EDIT_SECTION) return pickMedia(id as Media);
+    if (editSection || !visibleEditCards[0]) return;
+    editSection = true;
+    media = 'image';
+    loraType = 'edit';
+    runs = [newRun(visibleEditCards[0])];
+    userPickedModel = false;
+    focus = 0;
+    sweepOpen = false;
+  }
+
   function pickMedia(m: Media) {
-    if (m === media) return;
+    if (m === media && !editSection) return;
+    editSection = false;
     media = m;
     // A dataset can't span media, so the MODEL always resets. The type carries over when the new media
     // offers it — switching Image→Video with Style chosen should stay Style, not silently become Character.
@@ -155,7 +194,7 @@
   }
 
   function pickBase(card: ModelCard) {
-    if (multi && !labelOptions(card).includes(labelMode)) return; // label-type lock
+    if (multi && !sweepCompatible(card, runCard(primary))) return; // dataset-shape lock
     runs = runs.map((r, i) => (i === focus ? { ...newRun(card), id: r.id } : r));
     userPickedModel = true;
   }
@@ -229,13 +268,6 @@
     if (i < focus) focus -= 1;
     if (focus >= runs.length) focus = runs.length - 1;
     if (runs.length === 1) sweepOpen = false;
-  }
-
-  function versionsFor(card: ModelCard) {
-    return [
-      ...card.versions.map((v) => ({ key: v.key, label: v.label })),
-      { key: CUSTOM_VERSION_KEY, label: 'Custom' },
-    ];
   }
 
   // Radiogroup arrow-key nav (media/type/base model): Tab enters at the checked radio (roving tabindex on
@@ -341,19 +373,19 @@
           tabindex="-1"
           onkeydown={radioKeydown}
         >
-          {#each MEDIA_OPTIONS as m (m.id)}
+          {#each sections as m (m.id)}
             <button
               type="button"
               role="radio"
-              aria-checked={m.id === media}
-              tabindex={m.id === media ? 0 : -1}
-              onclick={() => pickMedia(m.id)}
+              aria-checked={m.id === activeSection}
+              tabindex={m.id === activeSection ? 0 : -1}
+              onclick={() => pickSection(m.id)}
               class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition
-                {m.id === media
+                {m.id === activeSection
                 ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
                 : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
             >
-              {#if m.id === media}
+              {#if m.id === activeSection}
                 <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
               {/if}
               {m.name}
@@ -362,6 +394,13 @@
         </div>
       </div>
 
+      {#if editSection}
+        <p class="m-0 rounded-md border border-dark-4 bg-dark-6 px-3.5 py-2.5 text-sm text-dark-2">
+          <span class="font-semibold text-dark-0">Teach an edit, not a subject.</span> You'll give it
+          before/after image pairs, each with the instruction that turns one into the other — like
+          "turn the person 90°" or "put the logo on the shirt".
+        </p>
+      {:else}
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <div id="type-group-label" class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">
           Type
@@ -393,6 +432,7 @@
           {/each}
         </div>
       </div>
+      {/if}
     </div>
 
     <!-- base model: every model visible as an equal peer, recommended first; no disclosure -->
@@ -400,7 +440,11 @@
       <div class="mb-1 flex items-baseline justify-between gap-2">
         <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Base model</div>
         <div class="font-mono text-xs text-dark-2">
-          {labelMode === 'tag' ? 'auto-labeled with tags' : 'auto-labeled with captions'}
+          {primaryPairs
+            ? 'before/after pairs + instructions'
+            : labelMode === 'tag'
+              ? 'auto-labeled with tags'
+              : 'auto-labeled with captions'}
         </div>
       </div>
       {#if recommendedCard}
@@ -433,7 +477,7 @@
       >
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
-          {@const disabled = multi && !selected && !labelOptions(card).includes(labelMode)}
+          {@const disabled = multi && !selected && !sweepCompatible(card, runCard(primary))}
           {@const cardPrice = price(card.type)}
           <button
             type="button"
@@ -446,10 +490,8 @@
               cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.'
             } ${card.flag ? `${card.flag}. ` : ''}${
               card.versions.length > 1 ? `${card.versions.length} versions. ` : ''
-            }${disabled ? `Unavailable — uses ${labelNoun(card)}, your sweep uses ${labelModeNoun}.` : ''}`}
-            title={disabled
-              ? `${card.name} uses ${labelNoun(card)}; your other run uses ${labelModeNoun}. One dataset can't mix — remove the other run to switch.`
-              : undefined}
+            }${disabled ? `Unavailable. ${sweepLockReason(card)}` : ''}`}
+            title={disabled ? sweepLockReason(card) : undefined}
             class="group relative flex flex-col rounded-md border p-3 text-left transition
               {selected
               ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40'
@@ -471,7 +513,7 @@
             {#if card.flag}
               <div class="mt-1">
                 <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
-                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} />{/if}{card.flag}
                 </span>
               </div>
             {/if}
@@ -534,6 +576,7 @@
       {#if !multi}
         {@const card = selectedCard}
         {@const runPrice = price(primary.cardType)}
+        {@const versions = versionOptions(card)}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0">
@@ -547,14 +590,14 @@
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
-          {#if versionsFor(card).length > 1}
+          {#if versions.length > 1}
             <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
               class="mt-1.5 flex flex-wrap gap-2"
               role="radiogroup"
               aria-label={`${card.name} version`}
             >
-              {#each versionsFor(card) as v (v.key)}
+              {#each versions as v (v.key)}
                 <button
                   type="button"
                   role="radio"
@@ -649,7 +692,7 @@
                 {/if}
               </div>
               <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
-                {#each versionsFor(card) as v (v.key)}
+                {#each versionOptions(card) as v (v.key)}
                   <button
                     type="button"
                     role="radio"
@@ -690,7 +733,9 @@
   <aside class="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Your training</h3>
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
-      <span class="text-dark-2">Media</span><span class="font-semibold capitalize text-dark-0">{media}</span>
+      <span class="text-dark-2">Media</span><span class="font-semibold capitalize text-dark-0">
+        {editSection ? 'Image edit' : media}
+      </span>
     </div>
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Type</span><span class="font-semibold text-dark-0">{type.name}</span>
@@ -705,8 +750,10 @@
       </div>
     {/each}
     <div class="flex justify-between gap-2.5 py-2 text-sm">
-      <span class="text-dark-2">Labeling</span>
-      <span class="font-semibold text-dark-0">{labelMode === 'tag' ? 'Tags' : 'Captions'}</span>
+      <span class="text-dark-2">{primaryPairs ? 'Dataset' : 'Labeling'}</span>
+      <span class="font-semibold text-dark-0">
+        {primaryPairs ? 'Edit pairs' : labelMode === 'tag' ? 'Tags' : 'Captions'}
+      </span>
     </div>
     <div class="mt-1.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm font-semibold text-white">Starting at</span>

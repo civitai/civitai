@@ -180,10 +180,10 @@ Video workflows (`txt2vid`, `img2vid`, `vid2vid:*`) in the historic format have 
 
 These would need to be accessed from the raw `metadata.params` as a fallback.
 
-### 6. `params.draft` Is Retired on the Image Side
+### 6. Image Draft Is Named by Workflow Key, Not `params.draft`
 **Impact: Low**
 
-Image draft mode is gone: `txt2img:draft` and `image:draft` no longer exist, and an old `image:draft` key migrates to plain `txt2img`. `params.draft: true` on an image workflow no longer selects a workflow, and `mapDataToGraphInput` **drops the stored `steps` / `cfgScale` / `sampler`** for those rows — draft pinned them to values that only cohere with a draft LoRA the remix strips (`allInjectableResourceIds`), so carrying them through would bill the ordinary rate for a generation that cannot come out right. Video draft (`txt2vid`/`img2vid`/`vid2vid*`, incl. Wan's `turbo`) is untouched and still maps to the `draft` node.
+An image draft is stored as `workflow: 'txt2img:draft'` (or the newer `image:draft`), with no `draft` field. For the SD family and Flux1 it remixes back into the `txt2img:draft` workflow (SD gets its accelerator LoRA re-added server-side; Flux is put on its draft build), so the stored `steps` / `cfgScale` / `sampler` are kept. When the stored row names no inferable ecosystem, the draft key and the three params also stand, and the form's current ecosystem decides whether the draft workflow survives. A draft that lands on an ecosystem without a draft workflow resolves to plain `txt2img` and has the three **dropped**: they only cohere with the draft accelerator, so carrying them through would bill the ordinary rate for a generation that cannot come out right. The legacy form's `params.draft: true` on an image row selects no workflow and is dropped the same way. Video draft (`txt2vid`/`img2vid`/`vid2vid*`, incl. Wan's `turbo`) is untouched and still maps to the `draft` node.
 
 ### 7. Aspect Ratio Precision
 **Impact: Low**

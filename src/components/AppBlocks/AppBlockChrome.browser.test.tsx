@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // AppBlockChrome now calls useCurrentUser() (moderator gate for the platform-nav
 // "Review" item). This suite renders it WITHOUT a CivitaiSessionProvider, and
@@ -19,11 +21,38 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => null,
 }));
 
+/**
+ * The "Recently run" rows read each app's icon live from `appListings.getAppDetail`
+ * (`ChromeRecentAppIcon`). `mocks.detailBySlug` is what that read answers per slug — a slug
+ * absent from it settles like a 404. Every other procedure falls through to the shared inert
+ * proxy (`test/trpcProxyStub.ts`).
+ */
+const mocks = vi.hoisted(() => ({
+  detailBySlug: new Map<
+    string,
+    { data?: { iconUrl: string | null }; isLoading?: boolean; error?: unknown }
+  >(),
+}));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy({
+    'appListings.getAppDetail': {
+      useQuery: ({ slug }: { slug: string }) => {
+        const r = mocks.detailBySlug.get(slug);
+        if (!r) return { data: undefined, isLoading: false, error: new Error('NOT_FOUND') };
+        return { data: r.data, isLoading: r.isLoading ?? false, error: r.error ?? null };
+      },
+    },
+  }),
+}));
+
 // eslint-disable-next-line import/first
 import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import {
   clearRecentlyOpenedApps,
+  RECENTLY_OPENED_APPS_KEY,
+  RECENTS_ENVELOPE_VERSION,
   recordRecentlyOpenedApp,
 } from '~/components/Apps/recentlyOpenedAppsStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -362,9 +391,9 @@ describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => 
 
 // "Recently run" section in the platform-nav ("Civitai Apps") dropdown — a
 // 1-click return to recently-run apps, sourced from the localStorage recents
-// store. Icon + name per entry, links to `/apps/run/<blockId>`, EXCLUDES the
-// current app, and the whole label+section is omitted when there are no other
-// recents. The store is real localStorage in browser mode, so seed it directly.
+// store. Icon (read live, gated by the server) + name per entry, links to
+// `/apps/run/<blockId>`, EXCLUDES the current app, and the whole label+section is
+// omitted when there are no other recents. The store is real localStorage in browser mode, so seed it directly.
 //
 // 🔴 EVERY RENDER IN THIS BLOCK MUST PASS `canOpenPage` — the prop carries the
 // run route's `appBlocks && appBlocksPages` gate and it FAILS CLOSED (defaults
@@ -377,6 +406,7 @@ describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => 
 describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => {
   beforeEach(() => {
     clearRecentlyOpenedApps();
+    mocks.detailBySlug.clear();
   });
 
   // The platform-nav Menu mounts its dropdown lazily — open it first (its trigger
@@ -386,25 +416,35 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
   }
 
-  test('renders recents (icon + name), EXCLUDES the current app, links to /apps/run/<blockId>', async () => {
-    // Seed newest-last so the resulting order is [other, noicon, current].
-    recordRecentlyOpenedApp(
-      { id: 'current', blockId: 'current-block', name: 'Current App' },
-      SESSION_OWNER_ID
+  test('renders recents (gated listing icon or generic glyph + name), EXCLUDES the current app, links to /apps/run/<blockId>', async () => {
+    // A url that must NEVER render: an old-format entry written before the gate, carrying an
+    // R icon url straight into localStorage. The store drops it on read; the menu draws only
+    // what the live, gated listing read returns.
+    const STORED_R_ICON = 'https://stored.example/r-icon.png';
+    window.localStorage.setItem(
+      RECENTLY_OPENED_APPS_KEY,
+      JSON.stringify({
+        v: RECENTS_ENVELOPE_VERSION,
+        ownerId: SESSION_OWNER_ID,
+        apps: [
+          { id: 'other', blockId: 'other-block', name: 'Other App', iconUrl: STORED_R_ICON },
+          {
+            id: 'hidden',
+            blockId: 'hidden-block',
+            name: 'Hidden Icon App',
+            iconUrl: STORED_R_ICON,
+          },
+          { id: 'noicon', blockId: 'noicon-block', name: 'No Icon App' },
+          { id: 'loading', blockId: 'loading-block', name: 'Loading App' },
+          { id: 'current', blockId: 'current-block', name: 'Current App' },
+        ],
+      })
     );
-    recordRecentlyOpenedApp(
-      { id: 'noicon', blockId: 'noicon-block', name: 'No Icon App' },
-      SESSION_OWNER_ID
-    );
-    recordRecentlyOpenedApp(
-      {
-        id: 'other',
-        blockId: 'other-block',
-        name: 'Other App',
-        iconUrl: LOADABLE_IMAGE_DATA_URI,
-      },
-      SESSION_OWNER_ID
-    );
+    // The gate admits `other-block`'s icon; it hides `hidden-block`'s (the server returns null,
+    // e.g. an R icon on a non-red host); `noicon-block` 404s; `loading-block` is in flight.
+    mocks.detailBySlug.set('other-block', { data: { iconUrl: LOADABLE_IMAGE_DATA_URI } });
+    mocks.detailBySlug.set('hidden-block', { data: { iconUrl: null } });
+    mocks.detailBySlug.set('loading-block', { isLoading: true });
 
     renderWithProviders(
       <AppBlockChrome
@@ -420,18 +460,27 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     // Section label present.
     await expect.element(page.getByText('Recently run', { exact: true })).toBeInTheDocument();
 
-    // Rich entry: icon (Avatar <img>) + name, links to the run route.
-    const other = page.getByRole('menuitem', { name: 'Other App' }).element() as HTMLElement;
-    expect(other.getAttribute('href')).toBe('/apps/run/other-block');
-    const otherImg = other.querySelector('img');
-    expect(otherImg).not.toBeNull();
-    expect(otherImg?.getAttribute('src')).toBe(LOADABLE_IMAGE_DATA_URI);
+    const item = (name: string) => page.getByRole('menuitem', { name }).element() as HTMLElement;
 
-    // Icon-less entry falls back to a generic app icon (an <svg>, no <img>).
-    const noicon = page.getByRole('menuitem', { name: 'No Icon App' }).element() as HTMLElement;
-    expect(noicon.getAttribute('href')).toBe('/apps/run/noicon-block');
-    expect(noicon.querySelector('img')).toBeNull();
-    expect(noicon.querySelector('svg')).not.toBeNull();
+    // The gated icon the listing read returned.
+    const other = item('Other App');
+    expect(other.getAttribute('href')).toBe('/apps/run/other-block');
+    expect(other.querySelector('img')?.getAttribute('src')).toBe(LOADABLE_IMAGE_DATA_URI);
+
+    // Gate hides it / 404 / loading ⇒ the generic glyph (an <svg>, no <img>).
+    for (const [name, href] of [
+      ['Hidden Icon App', '/apps/run/hidden-block'],
+      ['No Icon App', '/apps/run/noicon-block'],
+      ['Loading App', '/apps/run/loading-block'],
+    ] as const) {
+      const el = item(name);
+      expect(el.getAttribute('href'), name).toBe(href);
+      expect(el.querySelector('img'), name).toBeNull();
+      expect(el.querySelector('svg'), name).not.toBeNull();
+    }
+
+    // The stored url never reaches the DOM.
+    expect(document.body.innerHTML).not.toContain(STORED_R_ICON);
 
     // The current app is EXCLUDED — no menuitem links to its run route.
     const currentLinks = page

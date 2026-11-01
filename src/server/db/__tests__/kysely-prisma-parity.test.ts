@@ -1,10 +1,10 @@
-import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 import type { Kysely } from 'kysely';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { listImageReactionsMany } from '@civitai/db-queries/image';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import {
   listImageTagVotes,
@@ -13,6 +13,7 @@ import {
 } from '@civitai/db-queries/tag';
 import { compileHarness } from '@civitai/db-queries/test-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { loadParitySchema } from './parity-schema';
 
 /**
  * Behaviour-parity gate for the hot read queries ported from Prisma to Kysely-over-pg.
@@ -33,22 +34,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  */
 const parityUrl = process.env.KYSELY_PARITY_DATABASE_URL;
 
-// `$executeRawUnsafe` sends one prepared statement, so the DDL script is applied statement by
-// statement. A naive split on `;` is safe for this fixture: it is plain DDL with no function bodies,
-// dollar-quoting or semicolons inside literals.
-const schemaStatements = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/kysely-parity-schema.sql'),
-  'utf-8'
-)
-  .split(';')
-  .map((statement) =>
-    statement
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('--'))
-      .join('\n')
-      .trim()
-  )
-  .filter(Boolean);
+const schemaStatements = loadParitySchema(
+  resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/kysely-parity-schema.sql')
+);
 
 // Row order is unspecified on both paths (neither query has an ORDER BY, matching the source), so
 // parity is a multiset comparison: sort both sides by a total key before comparing.
@@ -84,7 +72,18 @@ const PORTED_QUERIES: Array<
   ['listImageTagVotesMany', 1, (db) => listImageTagVotesMany(db, { imageIds: [1], userId: 1 })],
   ['listModelTagVotes', 1, (db) => listModelTagVotes(db, { modelId: 1, userId: 1 })],
   ['listModelEngagements', 1, (db) => listModelEngagements(db, { userId: 1, modelIds: [1] })],
+  ['listImageReactionsMany', 1, (db) => listImageReactionsMany(db, { imageIds: [1], userId: 1 })],
 ];
+// Not listed: `getImageGenerationFields` (@civitai/db-queries/image; `listImageReactionsMany` IS). Its correlated json subqueries
+// are outside what `selectedColumns` parses. Instead, its raw row (every selected column) is
+// compared to the Prisma row in the "the raw row matches Prisma" cases of
+// src/server/services/__tests__/image-generation-data.kysely-parity.test.ts. It selects no array
+// column today. If one is added with a non-empty fixture value, that comparison is what fails.
+// Also not listed: the placement read family (@civitai/db-queries/placement). Its ports join, alias
+// and select expressions, all outside `selectedColumns`. Every column they select is scalar or JSONB
+// (no array type), and their rows are compared to Prisma's, `toStrictEqual`, in
+// src/server/services/__tests__/placement-reads.kysely-parity.test.ts — opt-in like this suite, so
+// it does NOT run in CI.
 
 /**
  * The (table, column) pairs a compiled single-table SELECT reads.
@@ -148,6 +147,20 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
         { userId: USER, modelId: 32, type: 'Mute' },
         { userId: USER, modelId: 33, type: 'Notify' },
         { userId: OTHER_USER, modelId: 30, type: 'Favorite' },
+      ],
+    });
+    // Several reactions on one image, every enum value, and another user's reactions on the same
+    // images. Row order is intentionally NOT compared (`expectParity` sorts both sides): neither
+    // path has an ORDER BY, so neither promises the within-image order the caller groups in.
+    await prisma.imageReaction.createMany({
+      data: [
+        { imageId: 40, userId: USER, reaction: 'Like' },
+        { imageId: 40, userId: USER, reaction: 'Heart' },
+        { imageId: 40, userId: USER, reaction: 'Laugh' },
+        { imageId: 41, userId: USER, reaction: 'Cry' },
+        { imageId: 42, userId: USER, reaction: 'Dislike' },
+        { imageId: 40, userId: OTHER_USER, reaction: 'Like' },
+        { imageId: 43, userId: OTHER_USER, reaction: 'Heart' },
       ],
     });
   });
@@ -324,6 +337,65 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
     });
   });
 
+  describe('listImageReactionsMany', () => {
+    // The exact Prisma read `getUserReactionsForImages` issues when the flag is off.
+    const viaPrisma = (imageIds: number[], userId: number) =>
+      prisma.imageReaction.findMany({
+        where: { imageId: { in: imageIds }, userId },
+        select: { imageId: true, reaction: true },
+      });
+
+    it('matches Prisma across several images, several reactions per image', async () => {
+      const [k, p] = await Promise.all([
+        listImageReactionsMany(kysely, { imageIds: [40, 41, 42, 43], userId: USER }),
+        viaPrisma([40, 41, 42, 43], USER),
+      ]);
+      expect(k).toHaveLength(5); // positive control: the comparison is not two empty arrays
+      expectParity(k, p);
+    });
+
+    it('returns the scalar enum as its string value and imageId as a number, as Prisma did', async () => {
+      const rows = await listImageReactionsMany(kysely, { imageIds: [41], userId: USER });
+      expect(rows).toEqual([{ imageId: 41, reaction: 'Cry' }]);
+      expect(typeof rows[0].reaction).toBe('string');
+      expect(typeof rows[0].imageId).toBe('number');
+      // Exactly the two selected keys: no `id`/`userId` leaking into the payload either path builds.
+      expect(Object.keys(rows[0])).toEqual(Object.keys((await viaPrisma([41], USER))[0]));
+    });
+
+    it('excludes another users reactions on the same images, exactly as Prisma did', async () => {
+      const [k, p] = await Promise.all([
+        listImageReactionsMany(kysely, { imageIds: [40, 41, 42, 43], userId: OTHER_USER }),
+        viaPrisma([40, 41, 42, 43], OTHER_USER),
+      ]);
+      expect(sortRows(k)).toEqual(
+        sortRows([
+          { imageId: 40, reaction: 'Like' },
+          { imageId: 43, reaction: 'Heart' },
+        ])
+      );
+      expectParity(k, p);
+    });
+
+    it('matches Prisma (empty) for an empty imageIds array instead of raising IN ()', async () => {
+      const [k, p] = await Promise.all([
+        listImageReactionsMany(kysely, { imageIds: [], userId: USER }),
+        viaPrisma([], USER),
+      ]);
+      expect(k).toEqual([]);
+      expectParity(k, p);
+    });
+
+    it('matches Prisma (empty) for images the user has not reacted to', async () => {
+      const [k, p] = await Promise.all([
+        listImageReactionsMany(kysely, { imageIds: [43, 900], userId: USER }),
+        viaPrisma([43, 900], USER),
+      ]);
+      expect(k).toEqual([]);
+      expectParity(k, p);
+    });
+  });
+
   // Seam guard. The Kysely-over-pg path has no parser for an ARRAY of a user-defined enum unless
   // registerEnumArrayTypeParsers has run, so such a column silently arrives as the raw Postgres
   // literal `{a,b}` where the inferred type promises string[]. None of the columns these ports
@@ -338,7 +410,7 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
   //
   // What it is checked against is the catalog of the FIXTURE database this suite creates from
   // `fixtures/kysely-parity-schema.sql` — not the production catalog. The fixture mirrors the
-  // real column types for these three tables, so it answers the array-vs-scalar question; it is
+  // real column types for these tables, so it answers the array-vs-scalar question; it is
   // not evidence about any column the fixture does not declare.
   it('no ported query selects an array-typed column, so no enum-array parser is required', async () => {
     // Compiled offline against DummyDriver — the SQL is real, nothing executes.
@@ -349,9 +421,9 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
       await run(harness.db);
 
       // PER-PORT control, not a fleet-wide one. The floor below is a TOTAL, so it can only see a
-      // shortfall big enough to drop the total under it: with the four ports here it does catch one
-      // of them compiling nothing (6 < 8), but it cannot see a NEWLY ADDED port compiling fewer
-      // statements than intended — those four already satisfy the floor on their own, so the new
+      // shortfall big enough to drop the total under it: with the five ports here it does catch one
+      // of them compiling nothing (8 < 10), but it cannot see a NEWLY ADDED port compiling fewer
+      // statements than intended — the existing ports already satisfy the floor on their own, so the new
       // port's shortfall is hidden. That is the case this assertion exists for.
       expect(
         harness.queries.length,
@@ -378,10 +450,10 @@ describe.skipIf(!parityUrl)('Kysely ports return exactly what Prisma returned', 
       selected.push(...derived);
     }
 
-    // Fleet-wide floor, kept as a coarse second net: 4 queries × 2 columns today. The per-port
+    // Fleet-wide floor, kept as a coarse second net: 5 queries × 2 columns today. The per-port
     // controls above are what make a single port's shortfall fail; this one only catches a
     // collapse across all of them.
-    expect(selected.length).toBeGreaterThanOrEqual(8);
+    expect(selected.length).toBeGreaterThanOrEqual(10);
 
     const tables = [...new Set(selected.map(([table]) => table))];
     // Every attribute of the named relations, with whether its type is an array (typcategory 'A').

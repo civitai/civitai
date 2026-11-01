@@ -1,14 +1,32 @@
 // The data half of the host seam ($lib/host): every read/write the flow UI performs, so the same
 // components run against the SvelteKit shell (relative /api routes — $lib/shell-backend) or the
-// web-component host (direct @civitai/client calls — $lib/element/backend).
+// web-component host (direct @civitai/orchestration-client calls — $lib/element/backend).
 import type { FromPrices, Media } from '$lib/data/trainingModels';
-import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type {
+  ArchiveKind,
+  GenerationItem,
+  TrainingDetail,
+  TrainingRow,
+} from '$lib/data/trainingRows';
 import type { EpochArchive, TrainingWhatIfInput } from '$lib/orchestrator-core';
-import type { TrainingRunInput } from '$lib/train-core';
+import type {
+  EditGenerationItem,
+  EditImageOption,
+  EditImageRequest,
+  SuggestRequest,
+} from '$lib/edit-helpers-core';
+import type { TrainingServiceStatus } from '$lib/service-status-core';
+import type { SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
 export type { TrainingWhatIfInput } from '$lib/orchestrator-core';
+export type {
+  EditGenerationItem,
+  EditImageOption,
+  EditImageRequest,
+  SuggestRequest,
+} from '$lib/edit-helpers-core';
 
-export type { TrainingItem } from '$lib/train-core';
+export type { SubmittedBatch, TrainingItem } from '$lib/train-core';
 export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
 
@@ -22,6 +40,9 @@ export type TrainingRunPayload = Omit<TrainingRunInput, 'continueFrom' | 'curren
 export interface StudioBackend {
   listTrainings(): Promise<TrainingRow[]>;
   getRunDetail(workflowId: string): Promise<TrainingDetail>;
+  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
+   *  answered by the main app. Rejects when it can't tell. */
+  modelLive(modelId: number): Promise<boolean>;
   getRunDataset(workflowId: string): Promise<{ air: string; caption: string }[]>;
   /** One dataset image/video/audio blob. Blobs need auth (shell: the session-gated proxy; element: a
    *  Bearer fetch against the orchestrator), so views turn these into object URLs — a bare URL for a
@@ -40,22 +61,41 @@ export interface StudioBackend {
     workflowId: string,
     signal: AbortSignal
   ): Promise<{ done: boolean; results: AutoLabelResult[] }>;
-  submitTraining(runs: TrainingRunPayload[]): Promise<string[]>;
+  submitTraining(runs: TrainingRunPayload[]): Promise<SubmittedBatch>;
+  /** The caller's recent single-image edits, one per result — the edit Data step's "From my edit
+   *  generations". */
+  listEditGenerations(): Promise<EditGenerationItem[]>;
+  /** What one "create the after image" run costs; null when unpriced. */
+  editImageQuote(): Promise<number | null>;
+  /** Generates after-image options from a starting image. Charges the caller, so the prompt goes
+   *  through the main app's prompt check first and a refusal rejects with its reason. */
+  editImageSubmit(req: EditImageRequest): Promise<{ workflowId: string }>;
+  editImagePoll(
+    workflowId: string,
+    signal: AbortSignal
+  ): Promise<{ done: boolean; options: EditImageOption[] }>;
+  /** What one suggested instruction costs; null when unpriced. */
+  suggestQuote(): Promise<number | null>;
+  /** Asks a vision model for a pair's instruction. Charges the caller. */
+  suggestSubmit(req: SuggestRequest): Promise<{ workflowId: string }>;
+  suggestPoll(workflowId: string, signal: AbortSignal): Promise<{ done: boolean; text?: string }>;
   rename(workflowId: string, name: string): Promise<void>;
-  /** A signed streaming URL for a zip of every ready checkpoint (weights + samples). */
-  epochArchive(workflowId: string): Promise<EpochArchive>;
+  /** Signed streaming URLs for zips of every ready checkpoint's weights, or its sample images — usually
+   *  one zip, more when one would overflow the archive URL. */
+  epochArchive(workflowId: string, kind: ArchiveKind): Promise<EpochArchive[]>;
   /** Refused unless `canDeleteRun` holds for the run's current state. */
   deleteTraining(workflowId: string): Promise<void>;
   continueQuote(
     workflowId: string,
     fromEpoch: number,
-    addEpochs: number
+    addEpochs: number,
+    currencies: string[]
   ): Promise<{ cost: number | null; steps?: number }>;
   continueRun(
     workflowId: string,
     fromEpoch: number,
     addEpochs: number,
-    currencies?: string[]
+    currencies: string[]
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;
@@ -65,4 +105,6 @@ export interface StudioBackend {
   quoteRun(input: TrainingWhatIfInput): Promise<number | null>;
   /** Spendable balances; null when unavailable (the header keeps its last value). */
   getBuzz(): Promise<{ yellow: number; green: number; blue: number } | null>;
+  /** The training service status moderators set on the main app; null when the host can't read it. */
+  getServiceStatus(): Promise<TrainingServiceStatus | null>;
 }

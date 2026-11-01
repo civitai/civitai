@@ -13,7 +13,7 @@ import {
  * The CORRECTNESS CORE of the unified /apps/review queues: the pure adapters that
  * map each proc's row → a unified row + the merge/sort/dedup. A mis-routed, dropped,
  * or duplicated row here means a moderator reviews/approves the wrong thing, so this
- * is the BLOCKING unit gate (the list's browser suite is report-only). Pins:
+ * is the node-tier gate. Pins:
  *  - globally-unique, kind-namespaced keys (on-site + off-site never collide);
  *  - correct field mapping + the manifest-name / listing-name → slug fallbacks;
  *  - `onReview` routes to the CORRECT modal opener with the CORRECT payload;
@@ -40,7 +40,7 @@ function onsite(over: Partial<OnsiteReviewRequest> & { id: string }): OnsiteRevi
     fileSummary: {},
     manifestDiffSummary: {},
     reviewRepoUrl: 'https://forgejo.example/repo',
-    submittedBy: { id: 7, username: 'onsite-dev', image: null },
+    submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
     ...over,
   } as OnsiteReviewRequest;
 }
@@ -59,7 +59,7 @@ function offsite(over: Partial<OffsiteReviewRequest> & { id: string }): OffsiteR
       category: 'utility',
       contentRating: 'g',
     },
-    submittedBy: { id: 9, username: 'offsite-dev', image: null },
+    submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -78,7 +78,7 @@ describe('onsiteRequestToUnifiedRow', () => {
     expect(row.badgeColor).toBe('blue');
     expect(row.title).toBe('My Block');
     expect(row.slug).toBe('my-block');
-    expect(row.submitter).toEqual({ id: 7, username: 'onsite-dev', image: null });
+    expect(row.submitter).toEqual({ id: 7, username: 'onsite-dev', deletedAt: null, image: null });
   });
 
   it('falls back to the slug when the manifest has no usable name', () => {
@@ -115,6 +115,26 @@ describe('onsiteRequestToUnifiedRow', () => {
     expect(approved.submittedAt.toISOString()).toBe('2026-03-05T00:00:00.000Z');
   });
 
+  it('projects the approved row’s build signals onto deploy, and null when absent', () => {
+    const withSignals = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'f',
+        deployState: 'failed',
+        buildSignals: { failedStep: 'clone', failureClass: 'platform' },
+      } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    expect(withSignals.deploy?.buildSignals).toEqual({
+      failedStep: 'clone',
+      failureClass: 'platform',
+    });
+    const without = onsiteRequestToUnifiedRow(
+      onsite({ id: 'g', deployState: 'failed' } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    expect(without.deploy?.buildSignals).toBeNull();
+  });
+
   it('wires onReview to the on-site opener with the ORIGINAL request', () => {
     const open = vi.fn();
     const req = onsite({ id: 'r1' });
@@ -140,7 +160,7 @@ describe('offsiteRequestToUnifiedRow', () => {
     expect(row.badgeColor).toBe('grape');
     expect(row.title).toBe('External App');
     expect(row.slug).toBe('ext-app');
-    expect(row.submitter).toEqual({ id: 9, username: 'offsite-dev', image: null });
+    expect(row.submitter).toEqual({ id: 9, username: 'offsite-dev', deletedAt: null, image: null });
   });
 
   it('falls back to the slug when the listing (or its name) is absent', () => {
@@ -207,7 +227,12 @@ describe('offsiteRequestToUnifiedRow', () => {
       connectScopeJustifications: { READ: 'why' },
       connectClient: { name: 'Client' },
     });
-    expect(passed.submittedBy).toEqual({ id: 9, username: 'offsite-dev', image: null });
+    expect(passed.submittedBy).toEqual({
+      id: 9,
+      username: 'offsite-dev',
+      deletedAt: null,
+      image: null,
+    });
   });
 
   it('defaults absent connect fields to null (external-link listing)', () => {
@@ -318,6 +343,7 @@ function row(key: string, iso: string): UnifiedReviewRow {
     playCount: null,
     iconUrl: null,
     coverUrl: null,
+    reviewMedia: null,
   };
 }
 
@@ -638,6 +664,55 @@ describe('offsiteRequestToUnifiedRow — a listing revision has no code version'
     expect(row.playCount).toBeNull();
     expect(row.iconUrl).toBeNull();
     expect(row.coverUrl).toBeNull();
+  });
+});
+
+describe('the moderator review media rides with each image’s own url', () => {
+  const image = (imageId: number, nsfwLevel: number) => ({
+    imageId,
+    url: `https://cdn.example/${imageId}.png`,
+    nsfwLevel,
+  });
+
+  it('a row carries the review media of its request', () => {
+    const reviewMedia = { icon: image(401, 4), cover: null, redIcon: null, redCover: null };
+    const row = offsiteRequestToUnifiedRow(
+      offsite({ id: 'rm-1', iconUrl: 'https://cdn.example/401.png', reviewMedia }),
+      vi.fn()
+    );
+    expect(row.reviewMedia).toEqual(reviewMedia);
+    expect(offsiteRequestToUnifiedRow(offsite({ id: 'rm-2' }), vi.fn()).reviewMedia).toBeNull();
+  });
+
+  it('🔴 a combined row takes each image’s level from the side its url came from', () => {
+    // Code half: an icon (R); listing half: an icon (PG) and a cover (XXX). The icon url is the
+    // code side's, the cover url the listing side's — and so must be their levels.
+    const code = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'code-rm',
+        slug: 'app-rm',
+        appBlockId: 'blk-rm',
+        iconUrl: 'https://cdn.example/402.png',
+        reviewMedia: { icon: image(402, 4), cover: null, redIcon: null, redCover: null },
+      } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    const media = offsiteRequestToUnifiedRow(
+      offsite({
+        id: 'media-rm',
+        slug: 'app-rm',
+        kind: 'onsite',
+        iconUrl: 'https://cdn.example/403.png',
+        coverUrl: 'https://cdn.example/404.png',
+        reviewMedia: { icon: image(403, 1), cover: image(404, 16), redIcon: null, redCover: null },
+      }),
+      vi.fn()
+    );
+    const [combined] = mergeReviewRows([code], [media], 'asc', vi.fn());
+    expect(combined.iconUrl).toBe('https://cdn.example/402.png');
+    expect(combined.reviewMedia?.icon).toEqual(image(402, 4));
+    expect(combined.coverUrl).toBe('https://cdn.example/404.png');
+    expect(combined.reviewMedia?.cover).toEqual(image(404, 16));
   });
 });
 

@@ -350,11 +350,17 @@ describe('the board executes nothing', () => {
       '$lib/abuse-verdicts',
       // Number formatting, and nothing else: `format.ts` imports nothing at all.
       '$lib/format',
+      // The shared classifier for WHY a moderator-database read failed — a pure function over an
+      // error, no imports.
+      '$lib/moderator-db-status',
       '$lib/server/abuse-detection.service',
       '$lib/server/query',
       './$types',
       './abuse-detection-tables',
       './abuse-verdicts',
+      // The shared `Decision` shape and `collapseRulings`, which `abuse-decisions.ts` now builds on
+      // — a pure module with no imports at all.
+      './decisions',
       './moderator-db',
       '@civitai/moderation',
       // A TYPE, and only a type: `BadgeVariant` is `VariantProps<typeof badgeVariants>['variant']`,

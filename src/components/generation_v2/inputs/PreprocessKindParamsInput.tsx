@@ -8,7 +8,7 @@
  */
 
 import { Select, Switch } from '@mantine/core';
-import type { ParamSpec } from '~/shared/data-graph/generation/image-preprocess-graph';
+import type { ParamSpec } from '~/shared/generation/preprocess-specs';
 import { SliderInput } from './SliderInput';
 
 export interface PreprocessKindParamsInputProps {

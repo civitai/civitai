@@ -8,43 +8,35 @@ import {
   IconWifiOff,
   IconSettings,
 } from '@tabler/icons-react';
-import { Feed } from './Feed';
-import { Queue } from './Queue';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { ForwardRefExoticComponent, RefAttributes } from 'react';
-import React, { useDeferredValue, useEffect, useMemo, useRef } from 'react';
+import type { ForwardRefExoticComponent, ReactNode } from 'react';
+import React, { useDeferredValue, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
-import { GeneratedRequestsProvider } from '~/components/ImageGeneration/GeneratedRequestsProvider';
+import { GenerationResults } from '~/components/ImageGeneration/GenerationResults';
 import {
   SelectionProvider,
   generatedImageSelectStore,
 } from '~/components/ImageGeneration/utils/generationImage.select';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import dynamic from 'next/dynamic';
-import type { GenerationFormV2Props } from '~/components/generation_v2';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { PresetHeaderButton } from '~/components/generation_v2/preset/PresetHeaderButton';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import type { GenerationPanelView } from '~/store/generation-panel.store';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-import { getAllEcosystemVersionIdsForPrefetch } from '~/components/generation_v2/GenerationFormProvider';
+import { getAllEcosystemVersionIdsForPrefetch } from '~/components/Generation/form-helpers';
 import { ResourceDataProvider } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useRemixStore } from '~/store/remix.store';
 import { WorkflowLookup } from '~/components/generation_v2/WorkflowLookup';
-import type { GenerationPanelView } from '~/components/ImageGeneration/generation-tabs-layout';
-import { getGenerationPanelLayout } from '~/components/ImageGeneration/generation-tabs-layout';
 
 // Each form lane pulls in its whole engine (~50 graph modules for form-graph,
 // the data-graph tree for v1), so load only the lane the flag selects.
-const GenerationFormV2 = dynamic<GenerationFormV2Props>(() =>
-  import('~/components/generation_v2').then((m) => m.GenerationFormV2)
-);
 const FormGraphGenerator = dynamic(() =>
   import('~/components/form-graph/generation/FormGraphGenerator').then((m) => m.FormGraphGenerator)
 );
@@ -52,150 +44,136 @@ const FormGraphGenerator = dynamic(() =>
 // Exported so `tour-steps.test.ts` can check `gen:<key>` step targets against the tabs
 // that actually render. The `data-tour` is built by template literal below, so no
 // source file holds the whole string for the orphan guard to grep.
-export const GENERATION_TAB_KEYS = ['generate', 'queue', 'feed'] as const;
+export const GENERATION_TAB_KEYS = [
+  'generate',
+  'queue',
+  'feed',
+] as const satisfies readonly GenerationPanelView[];
 
-// Keep in sync with GENERATION_TAB_KEYS above, or this fails to compile.
-type _EveryViewListed = Exclude<
+const TABS: Record<
   GenerationPanelView,
-  (typeof GENERATION_TAB_KEYS)[number]
-> extends never
-  ? true
-  : never;
-const _everyViewListed: _EveryViewListed = true;
+  { Icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>; label: string }
+> = {
+  generate: { Icon: IconBrush, label: 'Generate' },
+  queue: { Icon: IconClockHour9, label: 'Queue' },
+  feed: { Icon: IconGridDots, label: 'Feed' },
+};
 
-export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
+type CloseProps = {
+  onClose: () => void;
+  closeLabel: string;
+  /** Omit where the generator already fills the page. */
+  onMaximize?: () => void;
+};
+
+/** The generator as one panel: a header whose tabs switch between the form and the results. */
+export default function GenerationPanel(props: CloseProps) {
+  const features = useFeatureFlags();
+  const view = useGenerationPanelStore((state) => state.view);
+
+  // Experiment (genTabDeferView): swapping form <-> results remounts the whole form tree
+  // inside the tap handler, which dominated mobile INP; defer it so the tab highlight stays
+  // instant. startTransition can't do this — zustand's useSyncExternalStore updates are
+  // always urgent. RUM attr: `session_attr_exp_gen_tab_defer_view`.
+  const deferredView = useDeferredValue(view);
+  const contentView = features.genTabDeferView ? deferredView : view;
+
+  return (
+    <GenerationShell>
+      <GenerationHeader tabs={GENERATION_TAB_KEYS} {...props}>
+        {contentView !== 'generate' && <GeneratedImageActions />}
+      </GenerationHeader>
+      {contentView === 'generate' ? <GenerationForm /> : <GenerationResults view={contentView} />}
+    </GenerationShell>
+  );
+}
+
+/** Its queue/feed tabs drive the results the page renders beside it, not anything in this pane. */
+export function GenerationFormPane(props: CloseProps) {
+  return (
+    <GenerationShell>
+      <GenerationHeader tabs={['queue', 'feed']} {...props} />
+      <GenerationForm />
+    </GenerationShell>
+  );
+}
+
+function GenerationShell({ children }: { children: ReactNode }) {
   // Pre-seed the ResourceDataProvider with ecosystem defaults + last-used models.
   // The provider keeps resources alive across tab switches and fires the initial
   // query before form IDs are added — giving the compatibility modal a cache hit.
   const initialIds = useMemo(() => getAllEcosystemVersionIdsForPrefetch(), []);
+  const isClient = useIsClient();
+  if (!isClient) return null;
+
   return (
     <ResourceDataProvider initialIds={initialIds}>
-      <GenerationTabsContent fullScreen={fullScreen} />
+      <SelectionProvider store={generatedImageSelectStore}>
+        <SignalStatusNotification icon={<IconWifiOff size={20} stroke={2} />} radius={0}>
+          {(status) => (
+            <p className="leading-4">
+              <span className="font-medium">
+                {status === 'reconnecting' ? 'Reconnecting' : 'Disconnected'}
+              </span>
+              : image generation results paused
+            </p>
+          )}
+        </SignalStatusNotification>
+        {children}
+      </SelectionProvider>
     </ResourceDataProvider>
   );
 }
 
-function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
+function GenerationForm() {
+  return <FormGraphGenerator />;
+}
+
+function GenerationHeader({
+  tabs,
+  onClose,
+  closeLabel,
+  onMaximize,
+  children,
+}: CloseProps & { tabs: readonly GenerationPanelView[]; children?: ReactNode }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { runTour } = useTourContext();
   const remixOfId = useRemixStore((state) => state.data?.remixOfId);
-
-  const isGeneratePage = router.pathname.startsWith('/generate');
   const view = useGenerationPanelStore((state) => state.view);
 
-  // Perf experiment: defer the generation-tab-switch remount to fix mobile INP.
-  // Switching tabs swaps `View` to a DIFFERENT component, so React synchronously
-  // unmounts the whole generation-form tree and mounts Queue/Feed inside the tap's
-  // onChange handler (~1s of processing_duration counted against INP). `useDeferredValue`
-  // moves that heavy remount off the urgent path; the SegmentedControl highlight stays on
-  // the live `view` for instant tap feedback. startTransition does NOT work here — zustand
-  // external-store updates via useSyncExternalStore are always urgent and can't be deferred.
-  // Flag OFF => contentView === view => behavior is byte-identical to today.
-  // Measured via RUM `session_attr_exp_gen_tab_defer_view` mobile-INP A/B.
-  const deferGenTabView = features.genTabDeferView;
-  const deferredView = useDeferredValue(view);
-  const contentView = deferGenTabView ? deferredView : view;
-
-  const { imageFeedSeparate, showResults } = getGenerationPanelLayout({
-    isGeneratePage,
-    fullScreen: !!fullScreen,
-    view: contentView,
-  });
-
-  // In the separate-feed layout 'generate' has no tab of its own, so a tool that
-  // sets it has to be bounced back — to whichever panel the user was on, not 'queue'.
-  const lastPanelViewRef = useRef<Exclude<GenerationPanelView, 'generate'>>('queue');
-  useEffect(() => {
-    if (view !== 'generate') {
-      lastPanelViewRef.current = view;
-      return;
-    }
-    if (imageFeedSeparate) generationGraphPanel.setView(lastPanelViewRef.current);
-  }, [imageFeedSeparate, view]);
-
-  // form-graph cutover: the new lane behind its flag; OFF is byte-identical
-  const GenerationFormComponent = features.formGraphGenerator
-    ? FormGraphGenerator
-    : GenerationFormV2;
-
-  const tabs = useMemo<Tabs>(
-    () => ({
-      generate: {
-        Icon: IconBrush,
-        label: 'Generate',
-        Component: GenerationFormComponent,
-      },
-      queue: {
-        Icon: IconClockHour9,
-        label: 'Queue',
-        Component: ScrollableQueue,
-      },
-      feed: {
-        Icon: IconGridDots,
-        label: 'Feed',
-        Component: ScrollableFeed,
-      },
-    }),
-    [GenerationFormComponent]
-  );
-
-  const View = imageFeedSeparate ? tabs.generate.Component : tabs[contentView].Component;
-  const tabEntries = Object.entries(tabs).filter(([key]) =>
-    imageFeedSeparate ? key !== 'generate' : true
-  );
-
-  const isClient = useIsClient();
-
-  if (!isClient) return null;
-
   return (
-    <SelectionProvider store={generatedImageSelectStore}>
-      <SignalStatusNotification
-        icon={<IconWifiOff size={20} stroke={2} />}
-        // title={(status) => `Connection status: ${status}`}
-        radius={0}
-      >
-        {(status) => (
-          <p className="leading-4">
-            <span className="font-medium">
-              {status === 'reconnecting' ? 'Reconnecting' : 'Disconnected'}
-            </span>
-            : image generation results paused
-          </p>
-        )}
-      </SignalStatusNotification>
-      <div className="flex w-full flex-col gap-2 p-3">
-        <div className="flex w-full items-center justify-between gap-2">
-          <div className="relative flex flex-1 flex-nowrap items-center gap-2">
-            {currentUser?.isModerator && <WorkflowLookup />}
-            {features.challengePlatform && <ChallengeIndicator />}
-            {features.generationPresets && <PresetHeaderButton />}
-            {features.appTour && (
-              <HelpButton
-                data-tour="gen:reset"
-                tooltip="Need help? Start the tour!"
-                onClick={async () => {
-                  generationGraphPanel.setView('generate');
-                  runTour({
-                    key: remixOfId ? 'remix-content-generation' : 'content-generation',
-                    step: 0,
-                    forceRun: true,
-                    trigger: 'help',
-                  });
-                }}
-              />
-            )}
-          </div>
-          {currentUser && tabEntries.length > 1 && (
-            <SegmentedControl
-              // TODO.briant: this fixes the issue with rendering the SegmentedControl
-              key={tabEntries.map(([, item]) => item.label).join('-')}
-              className="shrink-0"
-              style={{ overflow: 'visible' }}
-              data-tour="gen:results"
-              data={tabEntries.map(([key, { Icon, label }]) => ({
+    <div className="flex w-full flex-col gap-2 p-3">
+      <div className="flex w-full items-center justify-between gap-2">
+        <div className="relative flex flex-1 flex-nowrap items-center gap-2">
+          {currentUser?.isModerator && <WorkflowLookup />}
+          {features.challengePlatform && <ChallengeIndicator />}
+          {features.generationPresets && <PresetHeaderButton />}
+          {features.appTour && (
+            <HelpButton
+              data-tour="gen:reset"
+              tooltip="Need help? Start the tour!"
+              onClick={async () => {
+                generationGraphPanel.setView('generate');
+                runTour({
+                  key: remixOfId ? 'remix-content-generation' : 'content-generation',
+                  step: 0,
+                  forceRun: true,
+                  trigger: 'help',
+                });
+              }}
+            />
+          )}
+        </div>
+        {currentUser && (
+          <SegmentedControl
+            className="shrink-0"
+            style={{ overflow: 'visible' }}
+            data-tour="gen:results"
+            data={tabs.map((key) => {
+              const { Icon, label } = TABS[key];
+              return {
                 label: (
                   <>
                     <Tooltip label={label} position="bottom" openDelay={200} offset={10}>
@@ -208,79 +186,37 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
                   </>
                 ),
                 value: key,
-              }))}
-              onChange={(key) => {
-                generationGraphPanel.setView(key as GenerationPanelView);
-              }}
-              value={view}
-            />
+              };
+            })}
+            onChange={(key) => {
+              generationGraphPanel.setView(key as GenerationPanelView);
+            }}
+            value={view}
+          />
+        )}
+        <div className="flex flex-1 justify-end">
+          {currentUser?.isModerator && (
+            <Tooltip label="Generation config (mods)">
+              <LegacyActionIcon
+                size="lg"
+                variant="transparent"
+                onClick={() => router.push('/moderator/generation-config')}
+              >
+                <IconSettings size={20} />
+              </LegacyActionIcon>
+            </Tooltip>
           )}
-          <div className="flex flex-1 justify-end">
-            {currentUser?.isModerator && (
-              <Tooltip label="Generation config (mods)">
-                <LegacyActionIcon
-                  size="lg"
-                  variant="transparent"
-                  onClick={() => router.push('/moderator/generation-config')}
-                >
-                  <IconSettings size={20} />
-                </LegacyActionIcon>
-              </Tooltip>
-            )}
-            {!fullScreen && !isGeneratePage && (
-              <Tooltip label="Maximize">
-                <LegacyActionIcon
-                  size="lg"
-                  onClick={() => router.push('/generate')}
-                  variant="transparent"
-                >
-                  <IconArrowsDiagonal size={20} />
-                </LegacyActionIcon>
-              </Tooltip>
-            )}
-            <CloseButton
-              aria-label={isGeneratePage ? 'Go back' : 'Close generation panel'}
-              onClick={isGeneratePage ? () => history.go(-1) : generationGraphPanel.close}
-              size="lg"
-              variant="transparent"
-            />
-          </div>
+          {onMaximize && (
+            <Tooltip label="Maximize">
+              <LegacyActionIcon size="lg" onClick={onMaximize} variant="transparent">
+                <IconArrowsDiagonal size={20} />
+              </LegacyActionIcon>
+            </Tooltip>
+          )}
+          <CloseButton aria-label={closeLabel} onClick={onClose} size="lg" variant="transparent" />
         </div>
-        {showResults && <GeneratedImageActions />}
       </div>
-      {showResults ? (
-        // Queue and Feed share one workflow fetch + selection order via the provider.
-        <GeneratedRequestsProvider>
-          <View />
-        </GeneratedRequestsProvider>
-      ) : (
-        <View />
-      )}
-    </SelectionProvider>
-  );
-}
-
-type Tabs = Record<
-  GenerationPanelView,
-  {
-    Icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
-    label: string;
-    Component: React.ComponentType;
-  }
->;
-
-function ScrollableQueue() {
-  return (
-    <ScrollArea scrollRestore={{ key: 'queue' }}>
-      <Queue />
-    </ScrollArea>
-  );
-}
-
-function ScrollableFeed() {
-  return (
-    <ScrollArea scrollRestore={{ key: 'feed' }}>
-      <Feed />
-    </ScrollArea>
+      {children}
+    </div>
   );
 }

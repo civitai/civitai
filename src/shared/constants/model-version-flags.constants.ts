@@ -6,5 +6,6 @@ export {
   getModelVersionFlagLabels,
   isGenerationDisabled,
   isEvictable,
+  isAdditionalResourceFeeWaived,
   type ModelVersionFlagValue,
 } from '@civitai/shared';

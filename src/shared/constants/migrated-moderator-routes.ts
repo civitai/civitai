@@ -15,7 +15,7 @@
 export const MIGRATED_ROUTES: Record<string, string> = {
   reports: 'reports',
   articles: 'articles',
-  'article-rating-review': 'articles/ratings',
+  'article-rating-review': 'ratings',
   'cosmetics/grant': 'cosmetics/grant',
   'comics-review': 'comics-review',
   blocklists: 'blocklists',
@@ -32,6 +32,12 @@ export const MIGRATED_ROUTES: Record<string, string> = {
   'image-rating-review': 'images/ratings',
   'downleveled-review': 'images/downleveled',
   'ingestion-error-review': 'images/ingestion-errors',
+  // Model Flags: the old page's tabs became routes. The catchall drops the query string, so each
+  // tab is its own key (longest wins) and a bare `?tab=` bookmark lands on the file matches in
+  // Needs review.
+  'minor-hash-matches': 'models/flags/needs-review?source=hash',
+  'minor-hash-matches/appeals': 'models/flags/appeals',
+  'minor-hash-matches/auto': 'models/flags/auto?source=hash',
 };
 
 const MODERATOR_PREFIX = '/moderator/';

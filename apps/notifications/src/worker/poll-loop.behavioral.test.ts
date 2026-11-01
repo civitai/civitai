@@ -13,7 +13,9 @@ const h = vi.hoisted(() => {
     connectClient: any;
     connectError: Error | null;
     pendingRows: any[];
-  } = { connectClient: null, connectError: null, pendingRows: [] };
+    // When set, the batch-claim answers per claim SQL instead of always returning pendingRows.
+    claim: ((sql: string) => object[]) | null;
+  } = { connectClient: null, connectError: null, pendingRows: [], claim: null };
   return { state };
 });
 
@@ -25,7 +27,9 @@ vi.mock('../lib/server/clients/db', () => ({
       if (h.state.connectError) throw h.state.connectError;
       return h.state.connectClient;
     },
-    cancellableQuery: async (_sql: string) => ({ result: async () => h.state.pendingRows }),
+    cancellableQuery: async (sql: string) => ({
+      result: async () => (h.state.claim ? h.state.claim(sql) : h.state.pendingRows),
+    }),
     totalCount: 0,
     idleCount: 0,
   }),
@@ -38,6 +42,8 @@ vi.mock('../lib/server/clients/axiom', () => ({
   logAxiomError: vi.fn(() => {}),
   safeError: (e: unknown) => ({ message: String(e) }),
 }));
+
+vi.mock('./email', () => ({ dispatchEmail: vi.fn(async () => undefined) }));
 
 vi.mock('../lib/server/cache', () => ({
   notificationCache: {
@@ -61,12 +67,14 @@ vi.mock('../lib/server/metrics', () => ({
 vi.mock('../env', async (importOriginal) => ({
   ...(await importOriginal<typeof EnvModule>()),
   signalsEndpoint: 'http://signals.test',
+  counterBumpTimeoutMs: 20,
   // Push stays off in this suite — dispatchPush is covered by push.test.ts.
   pushEnabled: false,
 }));
 
-import { create, handleDebounce, handleNormal, run } from './poll-loop';
+import { create, handleDebounce, handleNormal, run, startWorker } from './poll-loop';
 import { notificationCache } from '../lib/server/cache';
+import { dispatchEmail } from './email';
 import { notificationsFannedOutTotal, workerPendingProcessedTotal } from '../lib/server/metrics';
 
 // ---- Fake PoolClient -------------------------------------------------------------------------------------
@@ -137,6 +145,7 @@ beforeEach(() => {
   h.state.connectClient = null;
   h.state.connectError = null;
   h.state.pendingRows = [];
+  h.state.claim = null;
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => ({ ok: true } as any))
@@ -450,6 +459,34 @@ describe('run (poll pass)', () => {
     expect(body).toMatchObject({ type: 'comment', category: 'Comment', id: 9, read: false });
   });
 
+  it('hands email only the recipients this pass newly delivered to', async () => {
+    const client = makeClient({
+      notifSelect: { rows: [{ id: 1 }] },
+      // 22 already held the row (ON CONFLICT DO NOTHING): absent from RETURNING.
+      userInsert: { rows: [{ id: 9, userId: 11, createdAt: 'q' }] },
+    });
+    h.state.connectClient = client;
+    h.state.pendingRows = [
+      { ...baseRow, type: 'service-deal-requested', users: [11, 22], debounceSeconds: null },
+    ];
+
+    await run();
+
+    expect(dispatchEmail).toHaveBeenCalledTimes(1);
+    expect(dispatchEmail).toHaveBeenCalledWith('service-deal-requested', baseRow.details, [11]);
+  });
+
+  it('a repeated key hands email nobody', async () => {
+    const client = makeClient({ notifSelect: { rows: [{ id: 1 }] }, userInsert: { rows: [] } });
+    h.state.connectClient = client;
+    h.state.pendingRows = [{ ...baseRow, type: 'service-deal-requested', debounceSeconds: null }];
+
+    await run();
+
+    const recipients = vi.mocked(dispatchEmail).mock.calls.flatMap(([, , ids]) => ids);
+    expect(recipients).toEqual([]);
+  });
+
   it('still bumps and signals the remaining recipients when one counter bump fails', async () => {
     const client = makeClient({
       notifSelect: { rows: [{ id: 1 }] },
@@ -475,6 +512,30 @@ describe('run (poll pass)', () => {
       expect.stringContaining('/users/11/signals/'),
       expect.stringContaining('/users/12/signals/'),
     ]);
+  });
+
+  it('bounds a counter bump that never settles, and stops bumping for the tick after 3 such failures', async () => {
+    const users = [11, 12, 13, 14, 15, 16];
+    const client = makeClient({
+      notifSelect: { rows: [{ id: 1 }] },
+      userInsert: { rows: users.map((userId, i) => ({ id: 100 + i, userId, createdAt: 'q' })) },
+    });
+    h.state.connectClient = client;
+    h.state.pendingRows = [{ ...baseRow, users, debounceSeconds: null }];
+    vi.mocked(notificationCache.incrementUser).mockImplementation(
+      () => new Promise(() => undefined)
+    );
+
+    // Race against a sentinel so a regression fails this assertion instead of hanging the test.
+    const outcome = await Promise.race([
+      run().then(() => 'finished'),
+      new Promise((resolve) => setTimeout(() => resolve('stalled'), 2_000)),
+    ]);
+
+    expect(outcome).toBe('finished');
+    expect(notificationCache.incrementUser).toHaveBeenCalledTimes(3);
+    // Every recipient still gets a signal.
+    expect((globalThis.fetch as any).mock.calls).toHaveLength(users.length);
   });
 
   it('does no work when there are no pending rows', async () => {
@@ -569,5 +630,133 @@ describe('handleDebounce — dedupeKey', () => {
     expect(userSql).not.toContain('"dedupeKey"');
     expect(userSql).not.toContain('comment:v2:1');
     expect(userSql).toContain('ON CONFLICT ("notificationId", "userId")');
+  });
+});
+
+// =========================================================================================================
+// Head-of-line blocking. A follower fan-out row carries tens of thousands of recipients and its signal loop
+// paces at signalBatchSize per signalDelay, so it takes minutes. Rows queued behind it (every other type,
+// for every user) must not wait for it.
+describe('startWorker — a big fan-out does not delay other notifications', () => {
+  const BIG_KEY = 'new-model-from-following:1';
+  const SMALL_USER = 999_999;
+
+  // A fake pending table: every row is claimed at most once, by whichever claim SQL selects it. The size
+  // split is read from the SQL itself, so on a worker without lanes the single claim takes everything.
+  function pendingTable<T extends { users: number[] }>(rows: T[]) {
+    const left = [...rows];
+    return (sql: string) => {
+      const bulkOnly = /cardinality\(users\) >/.test(sql);
+      const smallOnly = /cardinality\(users\) <=/.test(sql);
+      const limit = Number(/LIMIT (\d+)/.exec(sql)?.[1] ?? Infinity);
+      const picked = left
+        .filter((r) =>
+          bulkOnly ? r.users.length > 1000 : smallOnly ? r.users.length <= 1000 : true
+        )
+        .slice(0, limit);
+      for (const r of picked) left.splice(left.indexOf(r), 1);
+      return picked;
+    };
+  }
+
+  // Every UserNotification insert is new: RETURNING echoes back the recipients in the VALUES list.
+  function echoClient() {
+    return {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT id FROM "Notification"')) return { rows: [{ id: 1 }] };
+        if (sql.includes('INSERT INTO "UserNotification"')) {
+          const rows = [...sql.matchAll(/\('\d+', '(\d+)'/g)].map((m) => ({
+            id: Number(m[1]),
+            userId: Number(m[1]),
+            createdAt: 'now',
+          }));
+          return { rows };
+        }
+        return { rows: [] };
+      }),
+      on: vi.fn(),
+      removeListener: vi.fn(),
+      release: vi.fn(),
+    };
+  }
+
+  const signalUrls = () => vi.mocked(globalThis.fetch).mock.calls.map(([url]) => String(url));
+  const signalled = (userId: number) =>
+    signalUrls().some((url) => url.includes(`/users/${userId}/`));
+  const bigSignals = () =>
+    signalUrls().filter((url) => !url.includes(`/users/${SMALL_USER}/`)).length;
+
+  let worker: { stop: () => void } | null = null;
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    worker?.stop();
+    worker = null;
+    vi.useRealTimers();
+  });
+
+  function queue(bigRecipients: number) {
+    h.state.connectClient = echoClient();
+    h.state.claim = pendingTable([
+      {
+        ...baseRow,
+        id: 1,
+        type: 'new-model-from-following',
+        category: 'Update',
+        key: BIG_KEY,
+        users: Array.from({ length: bigRecipients }, (_, i) => i + 1),
+        debounceSeconds: null,
+      },
+      { ...baseRow, id: 2, users: [SMALL_USER], debounceSeconds: null },
+    ]);
+  }
+
+  it('signals a small row queued behind a big fan-out while the fan-out is still draining', async () => {
+    queue(5000);
+    worker = startWorker();
+
+    // One poll interval plus a little: the big row has had time for its first signal batch only.
+    await vi.advanceTimersByTimeAsync(5_100);
+
+    expect(bigSignals()).toBeLessThan(5000);
+    expect(signalled(SMALL_USER)).toBe(true);
+  });
+
+  it('control: a row behind a fan-out that fits one signal batch is signalled in the same window', async () => {
+    queue(500);
+    worker = startWorker();
+
+    await vi.advanceTimersByTimeAsync(5_100);
+
+    expect(bigSignals()).toBe(500);
+    expect(signalled(SMALL_USER)).toBe(true);
+  });
+
+  it('drains a backlog of bulk rows back to back, not one per poll interval', async () => {
+    h.state.connectClient = echoClient();
+    h.state.claim = pendingTable(
+      [1, 2, 3].map((n) => ({
+        ...baseRow,
+        id: n,
+        key: `new-model-from-following:${n}`,
+        users: Array.from({ length: 1001 }, (_, i) => n * 10_000 + i),
+        debounceSeconds: null,
+      }))
+    );
+    worker = startWorker();
+
+    // Each row needs two 500 ms signal pauses; three rows fit well inside one more poll interval.
+    await vi.advanceTimersByTimeAsync(9_000);
+
+    expect(bigSignals()).toBe(3 * 1001);
+  });
+
+  it('stop() halts every lane', async () => {
+    queue(5000);
+    worker = startWorker();
+    worker.stop();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });

@@ -57,7 +57,10 @@ const EXPECTED: [string, string, string][] = [
   ['model3dReview', 'Model3DReviewReport', 'model3dReviewId'],
   ['announcement', 'AnnouncementReport', 'announcementId'],
   ['crucible', 'CrucibleReport', 'crucibleId'],
+  ['storyline', 'StorylineReport', 'storylineId'],
+  ['serviceOffering', 'ServiceOfferingReport', 'serviceOfferingId'],
   ['challenge', 'ChallengeReport', 'challengeId'],
+  ['gameFrameGame', 'GameFrameGameReport', 'gameFrameGameId'],
   ['chat', 'ChatReport', 'chatId'],
   ['reportedUser', 'UserReport', 'userId'],
 ];
@@ -132,6 +135,34 @@ describe('the queries that fan out over every entity at once', () => {
     for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
   });
 
+  it('getReportLastActioned names every report table and keeps the index predicate literal', async () => {
+    await service.getReportLastActioned();
+
+    const [sql] = emitted();
+    noBareSubquery(sql);
+    for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
+    // Report_human_statusSetAt_idx is partial on exactly this; a bound parameter cannot match it.
+    expect(sql).toContain(`"statusSetBy" <> -1`);
+    // Only a review outcome counts; a move to Processing must not freshen the badge.
+    expect(sql).toMatch(/"status" in \('Actioned', 'Unactioned'\)/);
+  });
+
+  it('getReportOldestOpen names every report table and ages the same set the badge counts', async () => {
+    await service.getReportOldestOpen();
+
+    const [sql] = emitted();
+    noBareSubquery(sql);
+    for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
+    // An oldest-waiting age over a different set from the count beside it describes other reports.
+    await service.getReportCounts();
+    const counts = h.queries.at(-1)!.sql;
+    // The CTE's whole predicate: up to the paren that closes it, just before the first branch.
+    const where = (s: string) =>
+      s.match(/\bwhere\s([\s\S]*?)\)\s*select\b/i)?.[1].replace(/\s+/g, ' ');
+    expect(where(sql)).toMatch(/"status" in .* and "reason" in /);
+    expect(where(sql)).toBe(where(counts));
+  });
+
   it('getMostReported keeps every entity subselect parenthesised', async () => {
     await service.getMostReported({ limit: 10 });
 
@@ -157,10 +188,12 @@ describe('getMostReportedPage', () => {
         sql.includes('array_length(t."alsoreportedby", 1), 0) + 1'),
         sql.includes('make_interval(days'),
         sql.includes('i."blockedfor" is null'),
+        // Guest reports beyond the first live in details.guestCount, not alsoReportedBy.
+        sql.includes(`'guestcount'`),
       ].join()
     );
     expect(predicates[0]).toBe(predicates[1]);
-    expect(predicates[0]).toBe('true,true,true,true');
+    expect(predicates[0]).toBe('true,true,true,true,true');
   });
 
   it('pages inside the CTE, where the LIMIT already is', async () => {
@@ -191,8 +224,18 @@ describe('report rows link to what was reported', () => {
       'context:model3dReview',
       'context:reportedUser',
       'context:announcement',
+      'context:serviceOffering',
     ])
       expect(statements.some((sql) => sql.includes('AS "' + column + '"'))).toBe(true);
+  });
+
+  it("links a service offering report to its seller's shop", async () => {
+    await service.getMostReported({ limit: 10 });
+
+    const sql = emitted().find((s) => s.includes('context:serviceOffering'))!;
+    expect(flat(sql)).toContain(
+      `SELECT '/user/' || u.username || '/shop' FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"`
+    );
   });
 
   it('falls back to the main app resolver for a commentV2 whose thread names no entity', async () => {
@@ -206,7 +249,43 @@ describe('report rows link to what was reported', () => {
   });
 });
 
+/** Whitespace-collapsed, so a reflow of the template does not read as a change in the SQL. */
+const flat = (sql: string) => sql.replace(/\s+/g, ' ');
+// Spelled out whole: a bare `contains 'guestCount'` survived dropping the `- 1` (the first guest is
+// already the filer or in alsoReportedBy), the `greatest`, and the regex guard that keeps a malformed
+// value from failing the cast and the whole queue with it.
+const guestCount = (alias: string) =>
+  `(CASE WHEN "${alias}"."details"->>'guestCount' ~ '^[0-9]{1,6}$' THEN greatest(("${alias}"."details"->>'guestCount')::int - 1, 0) ELSE 0 END)`;
+
+describe('game report reads', () => {
+  it("finds the game through the report's own join row", async () => {
+    await service.getReportedGame(991);
+    const sql = flat(emitted()[0]);
+    expect(sql).toContain('inner join "GameFrameGameReport" as "j" on "j"."reportId" = "r"."id"');
+    expect(sql).toContain('inner join "GameFrameGame" as "g" on "g"."id" = "j"."gameFrameGameId"');
+    expect(sql).toContain('where "r"."id" = $1');
+  });
+
+  it('reads mirrors by id, and skips the query for an empty page', async () => {
+    await service.getGameMirrors([]);
+    expect(h.queries).toHaveLength(0);
+    await service.getGameMirrors([1, 2]);
+    expect(flat(emitted()[0])).toContain('from "GameFrameGame" where "id" in ($1, $2)');
+  });
+});
+
 describe('the filtered queue', () => {
+  it("counts a game report's extra guests as reporters", async () => {
+    await service.getReports({ type: 'gameFrameGame', statuses: 'all', reasons: 'all' });
+    expect(emitted().map(flat).join(' ')).toContain(guestCount('Report'));
+  });
+
+  it('adds the same guest term to both Most Reported statements', async () => {
+    await service.getMostReportedPage({ page: 1, limit: 25, days: 7 });
+    expect(emitted()).toHaveLength(2);
+    for (const sql of emitted().map(flat)) expect(sql).toContain(guestCount('t'));
+  });
+
   it('compiles with every filter applied at once', async () => {
     await service.getReports({
       type: 'image',

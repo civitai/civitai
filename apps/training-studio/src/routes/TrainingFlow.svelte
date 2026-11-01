@@ -3,10 +3,13 @@
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
   import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
+  import { submitNotice } from '$lib/submit-notice.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
+  import EditDataStep from './EditDataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
+  import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
     defaultRunParams,
@@ -15,6 +18,7 @@
     labelString,
     runCard,
     runParamsKey,
+    runTrainsPairs,
     seedPrompts,
     type DatasetFilter,
     type Img,
@@ -25,6 +29,7 @@
   } from './trainingFlow';
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
   import type { ReuseItem } from '$lib/reuse';
+  import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
 
   let {
     prices,
@@ -44,6 +49,9 @@
   // Dataset + trigger + label mode are owned here so they survive Back/Continue between steps. `labelMode`
   // defaults to the chosen model's default label and is only user-changeable for a `bothLabels` model.
   let images = $state<Img[]>([]);
+  // An edit LoRA's dataset: before/after pairs instead of `images`. Kept apart so switching model
+  // type on Select never mixes the two.
+  let pairs = $state<EditPair[]>([]);
   let trigger = $state('');
   let labelMode = $state<LabelType>('tag');
   // Auto-label behavior, owned here like labelMode/trigger so it survives Back/Continue:
@@ -59,6 +67,8 @@
   let samplePrompts = $state<SamplePrompt[]>([]);
   let promptsSeed: { labels: string; prompts: string } | null = null;
   let runParams = $state<Record<string, RunParams>>({});
+  // The trigger the current Review params were seeded with.
+  let paramsSeedTrigger = '';
   let presetType = $state('');
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
@@ -76,10 +86,21 @@
       // Malformed hand-off — ignore and start empty.
     }
   });
+  const trainsPairs = $derived(!!selection && runTrainsPairs(selection.runs[0]!));
+  const readyPairs = $derived(pairs.filter(isPairReady));
+  // The plain Data step's trigger word, unless this is an edit run: that step never shows one, so a word
+  // typed before switching to an edit model must not ride along.
+  const runTrigger = $derived(trainsPairs ? '' : trigger);
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
-  const trainableCount = $derived(images.filter(isTrainable).length);
+  const trainableCount = $derived(
+    trainsPairs ? readyPairs.length : images.filter(isTrainable).length
+  );
   const matureCount = $derived(
-    images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
+    trainsPairs
+      ? readyPairs.filter(
+          (p) => isMatureNsfwLevel(p.before.nsfwLevel) || isMatureNsfwLevel(p.after?.nsfwLevel)
+        ).length
+      : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
   );
 
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
@@ -99,6 +120,10 @@
   $effect(() => () => {
     for (const img of images) URL.revokeObjectURL(img.previewUrl);
     images = [];
+    for (const pair of pairs)
+      for (const img of pairImgs(pair))
+        if (img.previewUrl.startsWith('blob:')) URL.revokeObjectURL(img.previewUrl);
+    pairs = [];
   });
 
   // Leaving Data drops its filter; only Review's "see which" hands one across a step change.
@@ -114,25 +139,34 @@
 
   function enterReview() {
     if (!selection) return;
-    const t = trigger.trim();
+    const t = runTrigger.trim();
     if (reviewNameSeed === null || reviewName === reviewNameSeed) {
       reviewName = t;
       reviewNameSeed = t;
     }
     // The seed key covers the trigger too: an unedited prompt list follows a trigger change, so the
     // samples always carry the word the run is being taught.
-    const labels = JSON.stringify([t, ...datasetLabels]);
+    const labels = trainsPairs
+      ? JSON.stringify(readyPairs.map((p) => [p.id, p.instruction]))
+      : JSON.stringify([t, ...datasetLabels]);
     const untouched = promptsSeed !== null && JSON.stringify(samplePrompts) === promptsSeed.prompts;
     if (samplePrompts.length === 0 || (untouched && labels !== promptsSeed!.labels)) {
-      samplePrompts = seedPrompts(datasetLabels, t);
+      const seeded = trainsPairs ? seedEditPrompts(readyPairs) : [];
+      samplePrompts = seeded.length ? seeded : seedPrompts(datasetLabels, t);
       promptsSeed = { labels, prompts: JSON.stringify(samplePrompts) };
     }
     runParams = Object.fromEntries(
       selection.runs.map((run) => {
         const key = runParamsKey(run);
-        return [key, runParams[key] ?? defaultRunParams(run)];
+        const existing = runParams[key];
+        // Params still at the previous trigger's defaults follow a trigger change (shuffle/keep).
+        const untouched =
+          existing &&
+          JSON.stringify(existing) === JSON.stringify(defaultRunParams(run, paramsSeedTrigger));
+        return [key, existing && !untouched ? existing : defaultRunParams(run, t)];
       })
     );
+    paramsSeedTrigger = t;
     leaveData();
     step = 3;
   }
@@ -142,22 +176,29 @@
   // ReviewStep, which shows them on the Start button.
   async function start(
     launched: LaunchedRun[],
-    prompts: string[],
+    prompts: SamplePrompt[],
     name: string,
     currencies: string[]
   ) {
     if (!selection) return;
+    // An edit run's pairs go as blobs placed by path — each image was uploaded and scanned on its own.
+    const edit = trainsPairs ? { items: pairItems(pairs), pairs: readyPairs.length } : undefined;
     const runs = buildTrainingRuns(
       selection,
       images,
-      trigger,
+      runTrigger,
       name,
       launched,
       prompts,
       currencies,
-      labelMode
+      labelMode,
+      edit
     );
-    const ids = await backend().submitTraining(runs);
+    const { workflowIds: ids, failure } = await backend().submitTraining(runs);
+    if (failure)
+      submitNotice.set(
+        `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
+      );
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
     await navigate(
@@ -203,6 +244,8 @@
     </Button>
   </div>
 
+  <ServiceStatusBanner />
+
   {#if step === 1}
     <SelectStep
       {prices}
@@ -218,6 +261,15 @@
         const card = runCard(sel.runs[0]!);
         if (!labelOptions(card).includes(labelMode)) labelMode = card.label;
         step = 2;
+      }}
+    />
+  {:else if step === 2 && selection && trainsPairs}
+    <EditDataStep
+      bind:pairs
+      onContinue={enterReview}
+      onBack={() => {
+        leaveData();
+        step = 1;
       }}
     />
   {:else if step === 2 && selection}
@@ -240,13 +292,14 @@
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}
-      {trigger}
+      trigger={runTrigger}
       {labelMode}
       bind:name={reviewName}
       bind:prompts={samplePrompts}
       bind:params={runParams}
       bind:presetType
       imageCount={trainableCount}
+      {trainsPairs}
       {matureCount}
       onStart={start}
       onBack={() => (step = 2)}

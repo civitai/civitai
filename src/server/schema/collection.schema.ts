@@ -6,7 +6,7 @@ import {
   infiniteQuerySchema,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageInputSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { SELECTABLE_REJECTION_REASONS } from '~/shared/constants/collection-rejection.constants';
@@ -80,11 +80,18 @@ export const saveCollectionItemInputSchema = collectionItemSchema
     { error: 'Please pass a valid item type.' }
   );
 
+export const BULK_SAVE_MAX_IMAGES = 100;
 export type BulkSaveCollectionItemsInput = z.infer<typeof bulkSaveCollectionItemsInput>;
 export const bulkSaveCollectionItemsInput = z
   .object({
     collectionId: z.coerce.number(),
-    imageIds: z.coerce.number().array().optional(),
+    imageIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_IMAGES, {
+        error: `You can add up to ${BULK_SAVE_MAX_IMAGES} images at a time`,
+      })
+      .optional(),
     articleIds: z.coerce.number().array().optional(),
     postIds: z.coerce.number().array().optional(),
     modelIds: z.coerce.number().array().optional(),
@@ -229,7 +236,7 @@ export const upsertCollectionInput = z
     id: z.number().optional(),
     name: z.string().max(30).nonempty(),
     description: z.string().max(300).nullish(),
-    image: imageSchema.nullish(),
+    image: imageReferenceInputSchema.nullish(),
     imageId: z.number().optional(),
     nsfw: z.boolean().optional(),
     read: z.enum(CollectionReadConfiguration).optional(),
@@ -300,7 +307,7 @@ export const updateCollectionItemsStatusInput = z
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
 export const addSimpleImagePostInput = z.object({
   collectionId: z.number(),
-  images: z.array(imageSchema).min(1, 'At least one image must be uploaded'),
+  images: z.array(imageInputSchema).min(1, 'At least one image must be uploaded'),
 });
 
 export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;

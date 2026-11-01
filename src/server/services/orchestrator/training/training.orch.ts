@@ -1,6 +1,7 @@
 import type { YuE2SampleOverride, YuE2AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 import { yue2SampleOverrideSchema } from '~/server/schema/model-version.schema';
+import type { TrainingDetailsBaseModelList } from '~/server/schema/model-version.schema';
 import type {
   FluxDevFastImageResourceTrainingInput,
   ImageResourceTrainingStep,
@@ -13,7 +14,7 @@ import type {
   SdxlAiToolkitTrainingInput,
   Sd1AiToolkitTrainingInput,
   AnimaAiToolkitTrainingInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
@@ -36,9 +37,11 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
@@ -51,6 +54,7 @@ import {
   isInvalidAiToolkit,
   isAiToolkitEnabled,
   isAudioTrainingBaseType,
+  isKohyaEnabled,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -142,7 +146,7 @@ const createTrainingStep_Run = (
     };
   } else if (engine === 'flux-dev-fast' || engine === 'flux2-dev' || engine === 'flux2-dev-edit') {
     // All rapid/fast training engines use the same input structure
-    // Type assertion needed because flux2 engine types aren't in @civitai/client yet
+    // Type assertion needed because flux2 engine types aren't in @civitai/orchestration-client yet
     const input = {
       ...inputBase,
       engine,
@@ -166,35 +170,55 @@ const createTrainingStep_Run = (
   }
 };
 
-// NEW: Create training step using the new TrainingStep format (for ai-toolkit)
-const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+/**
+ * The dataset an ai-toolkit step trains on: a zip (the training form's upload) or a
+ * list of individually uploaded orchestrator blobs with per-item captions (the
+ * Training Studio's shape, and the App Blocks `kind:'training'` shape).
+ */
+export type AiToolkitTrainingData =
+  | ZipTrainingData
+  | { type: 'blobs'; items: Array<{ air: string; caption: string }> };
+
+export type AiToolkitTrainingStepInput = {
+  model: string;
+  priority: ImageTrainingStepSchema['priority'];
+  triggerWord: string;
+  trainingData: AiToolkitTrainingData;
+  samplePrompts: string[];
+  samplesOverrides?: ImageTrainingStepSchema['samplesOverrides'];
+  params: AiToolkitTrainingParams;
+  /** Step metadata. Omitted from the step entirely when absent. */
+  metadata?: Record<string, unknown>;
+};
+
+/**
+ * Build the ai-toolkit `training` step. PURE: no I/O, no clock, no randomness, so
+ * a whatif quote and the real submit built from the same input describe the same
+ * work. Shared by the training form (zip dataset, via `createTrainingStep_AiToolkit`)
+ * and the App Blocks `kind:'training'` bridge (blob dataset).
+ *
+ * Stamps no `timeout` and no `name`; callers add them.
+ */
+export const buildAiToolkitTrainingStep = (
+  input: AiToolkitTrainingStepInput
+): TrainingStepTemplate => {
   const {
     model,
     priority,
-    loraName,
     triggerWord,
     trainingData,
-    trainingDataImagesCount,
     samplePrompts,
     samplesOverrides,
-    negativePrompt,
-    modelFileId,
-    params,
+    params: aiToolkitParams,
+    metadata,
   } = input;
-
-  // Params are already in AI Toolkit format from the database
-  const aiToolkitParams = params as AiToolkitTrainingParams;
 
   let trainingInput: AiToolkitTrainingInput | YuE2AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem,
 
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
-    trainingData: {
-      type: 'zip',
-      sourceUrl: trainingData,
-      count: trainingDataImagesCount,
-    } as ZipTrainingData,
+    trainingData,
     samples: {
       prompts:
         aiToolkitParams.ecosystem === 'yue2'
@@ -273,11 +297,42 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
 
   return {
     $type: 'training',
-    metadata: { modelFileId },
+    ...(metadata ? { metadata } : {}),
     priority,
     retries: constants.maxTrainingRetries,
     input: trainingInput,
   };
+};
+
+// The training form's ai-toolkit step: a zip dataset plus the version's ModelFile id.
+const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+  const {
+    model,
+    priority,
+    triggerWord,
+    trainingData,
+    trainingDataImagesCount,
+    samplePrompts,
+    samplesOverrides,
+    modelFileId,
+    params,
+  } = input;
+
+  return buildAiToolkitTrainingStep({
+    model,
+    priority,
+    triggerWord,
+    trainingData: {
+      type: 'zip',
+      sourceUrl: trainingData,
+      count: trainingDataImagesCount,
+    },
+    samplePrompts,
+    samplesOverrides,
+    // Params are already in AI Toolkit format from the database
+    params: params as AiToolkitTrainingParams,
+    metadata: { modelFileId },
+  });
 };
 
 // Dispatcher to route to the correct training step creator
@@ -314,9 +369,13 @@ export const createTrainingWorkflow = async ({
   if (!status.available && !isModerator)
     throw throwBadRequestError(status.message ?? 'Training is currently disabled');
 
-  const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
+  const modelVersions = await dbWrite.$queryRaw<
+    (TrainingRequest & { modelId: number; modelMeta: ModelMeta | null })[]
+  >`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           m.id        "modelId",
+           m.meta      "modelMeta",
            mv."trainedWords",
            m."userId",
            mf.url      "trainingUrl",
@@ -348,6 +407,8 @@ export const createTrainingWorkflow = async ({
     throw throwBadRequestError(
       'This model has been blocked from training - please try another one.'
     );
+  if (trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.disabled)
+    throw throwBadRequestError('This base model is not available for training.');
 
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
@@ -377,6 +438,31 @@ export const createTrainingWorkflow = async ({
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
+  // The ecosystem/variant in params is what gets trained, so for a catalog base model it must be
+  // the one that base maps to. A missing variant is tolerated: versions saved before the form sent
+  // one still resubmit (the same rule publish-from-workflow.ts uses to match a run to its base).
+  if (
+    trainingParams.engine === 'ai-toolkit' &&
+    Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
+  ) {
+    const expected = trainingModelInfo[baseModel as TrainingDetailsBaseModelList].aiToolkit;
+    if (
+      !expected ||
+      trainingParams.ecosystem !== expected.ecosystem ||
+      (trainingParams.modelVariant != null && trainingParams.modelVariant !== expected.modelVariant)
+    )
+      throw throwBadRequestError(
+        'The training settings do not match the selected base model. Please reselect the base model and submit again.'
+      );
+  }
+
+  // The form stops offering Kohya when the flag is off, but a version saved earlier or a direct
+  // API caller can still carry it, and no worker would claim the step.
+  if (trainingParams.engine === 'kohya' && !isKohyaEnabled(features))
+    throw throwBadRequestError(
+      'Kohya training is no longer available. Please switch this run to AI Toolkit and submit again.'
+    );
+
   // Audio base types are marked `isAiToolkitMandatory`, so the check above
   // short-circuits to true regardless of feature flags. Enforce the rollout
   // flag here so API callers can't submit ACE-Step training when the
@@ -401,6 +487,16 @@ export const createTrainingWorkflow = async ({
   const loraName = modelVersion.modelName;
   const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
+
+  await assertTrainingTriggerWordAllowed({
+    triggerWord,
+    log: { userId, source: 'trainer', modelVersionId },
+    model: {
+      id: modelVersion.modelId,
+      versionId: modelVersion.modelVersionId,
+      meta: modelVersion.modelMeta,
+    },
+  });
 
   // Don't override the engine field in params - it needs to remain as the literal type
   // from the database for the discriminated union to work properly.
@@ -460,6 +556,20 @@ export const createTrainingWorkflow = async ({
     data: { trainingStatus: TrainingStatus.Submitted },
   });
   if (claimed === 0) throw throwBadRequestError('This model was already submitted for training.');
+
+  // A new dataset upload replaces the training-data record (a new id) and is refused once the claim
+  // above lands. One that landed between the read above and the claim would leave this run
+  // reporting to a record that no longer exists, so confirm it is still there before paying.
+  const datasetUnchanged = await dbWrite.modelFile.count({
+    where: { id: modelFileId, url: modelVersion.trainingUrl },
+  });
+  if (!datasetUnchanged) {
+    await dbWrite.modelVersion.updateMany({
+      where: { id: modelVersionId, trainingStatus: TrainingStatus.Submitted },
+      data: { trainingStatus: TrainingStatus.Pending },
+    });
+    throw throwBadRequestError('Your training data changed while submitting. Please try again.');
+  }
 
   let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
   try {

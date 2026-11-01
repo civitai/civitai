@@ -4,6 +4,7 @@ import React from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
+import { CatalogItemsCard } from '~/components/Account/CatalogItemsCard';
 import { ConnectedAppsCard } from '~/components/Account/ConnectedAppsCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
@@ -62,6 +63,7 @@ export function LegacyAccountPage() {
         {features.apiKeys && <ApiKeysCard />}
         {features.oauthApps && <OAuthAppsCard />}
         {features.oauthApps && <ConnectedAppsCard />}
+        {features.oauthApps && <CatalogItemsCard />}
         {features.strikes && <StrikesCard />}
         <RefreshSessionCard />
         <DeleteCard />

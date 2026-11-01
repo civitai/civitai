@@ -6,6 +6,7 @@
   import {
     IconSparkles,
     IconArchive,
+    IconDownload,
     IconRepeat,
     IconUpload,
     IconPhoto,
@@ -25,11 +26,11 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import { backend, hostConfig, portalProps } from '$lib/host';
+  import { hostConfig, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
-  import { directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
-  import { extOfAir, mediaOfExt, mimeOfExt } from '$lib/media';
+  import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
   import {
     ToggleGroup,
     ToggleGroupItem,
@@ -37,20 +38,27 @@
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
-  import { isAbort, uploadFile, UploadError } from '$lib/upload';
+  import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
+  import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
   import {
     blobAirFromUrl,
     captionTriggerHit,
+    compareFileNames,
     defaultStepsForRun,
+    imgBytes,
     selectionFromTotal,
+    isFailed,
     isTrainable,
     isTriggerTag,
     labelOptions,
     labelString,
+    nextImgId,
     parseLabel,
+    plural,
     runCard,
     splitTags,
+    startLabelPass,
     tagsHaveTrigger,
     type DatasetFilter,
     type Img,
@@ -58,6 +66,8 @@
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
+  import { fileDrop, isZip, pickedFiles } from './fileDrop';
+  import { inFlight, uploadedFields, uploadTile } from './tileUpload';
   import ReuseDatasetModal from './ReuseDatasetModal.svelte';
   import ManageTagsModal from './ManageTagsModal.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
@@ -179,6 +189,7 @@
       img.tags = parsed.tags;
       img.caption = parsed.caption;
       img.labelTried = text.length > 0;
+      img.labelError = undefined;
       // The aborted drain's catch skips flag-clearing on abort — without this, mid-flight tiles
       // stay `labeling` forever and the whole step wedges (toggle disabled, Continue blocked).
       img.labeling = false;
@@ -198,6 +209,8 @@
   const mixedStepBudgets = $derived(new Set(stepBudgets).size > 1);
   const busy = $derived(images.some((i) => i.status === 'uploading'));
   const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
+  const errorCount = $derived(images.filter((i) => i.status === 'error').length);
+  const failedTotal = $derived(blockedCount + errorCount);
   // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).
   // Auto-labeling fills these for the whole set; an unlabeled dataset must not reach Review.
   const isLabeled = (i: Img) => i.tags.length > 0 || i.caption.trim().length > 0;
@@ -206,7 +219,7 @@
   const labelingActive = $derived(images.some((i) => i.labeling));
   // Uploaded images with no label, not already being labeled, and not already auto-label-attempted —
   // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
-  // returned nothing (a failed step clears the flag, so genuine failures stay retryable).
+  // returned nothing (failed steps go to the editor's Re-run).
   const unlabeled = $derived(
     images.filter((i) => isTrainable(i) && !isLabeled(i) && !i.labeling && !i.labelTried && !!i.blobUrl)
   );
@@ -221,23 +234,34 @@
   // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
   const isMature = (i: Img) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel);
   const matureTotal = $derived(images.filter(isMature).length);
-  const shownImages = $derived(
+  // "Show images" from Manage tags: the images that carried the tag when it was picked — a snapshot,
+  // so removing the tag from one while reviewing doesn't hide it.
+  let tagFilter = $state<{ tag: string; ids: number[] } | null>(null);
+  function showTag(tag: string) {
+    tagFilter = { tag, ids: images.filter((i) => i.tags.includes(tag)).map((i) => i.id) };
+  }
+  const statusShownImages = $derived(
     filter === 'labeled'
       ? images.filter(isLabeled)
       : filter === 'unlabeled'
         ? images.filter((i) => !isLabeled(i))
         : filter === 'mature'
           ? images.filter(isMature)
-          : images
+          : filter === 'failed'
+            ? images.filter(isFailed)
+            : images
   );
-  // Mirrors Review's `blueExcluded`: unknown membership is warned too.
-  const matureChargesYellow = hostConfig().isPaidMember !== true;
+  const shownImages = $derived.by(() => {
+    if (!tagFilter) return statusShownImages;
+    const ids = new Set(tagFilter.ids);
+    return statusShownImages.filter((i) => ids.has(i.id));
+  });
+  // Unknown membership is treated as not a member, as on Review.
+  const isMember = hostConfig().isPaidMember === true;
 
-  let seq = 0;
   let dragging = $state(false);
   let fileInput: HTMLInputElement;
-  // In-flight uploads, so removing a tile (or leaving) aborts its request.
-  const controllers = new Map<number, AbortController>();
+  const uploads = inFlight<number>();
 
   // Mutate the tile through `images` (the state proxy) rather than the captured ref, so the change
   // is reactive.
@@ -253,7 +277,7 @@
       .filter((x): x is { file: File; fileMediaType: Media } => !!x.fileMediaType);
     if (matched.length === 0) return;
     const added: Img[] = matched.map(({ file, fileMediaType }) => ({
-      id: ++seq,
+      id: nextImgId(),
       file,
       name: file.name,
       previewUrl: URL.createObjectURL(file),
@@ -270,43 +294,24 @@
   }
 
   async function uploadOne(id: number, file: File) {
-    const controller = new AbortController();
-    controllers.set(id, controller);
-    patch(id, { status: 'uploading', progress: 0, message: undefined });
-    try {
-      const blob = await uploadFile(file, (fraction) => patch(id, { progress: fraction }), controller.signal);
-      const owner = ownerOf(trainingBlobKey(blob.id), id);
-      if (owner) {
-        // Whichever copy finishes first is kept, so a zip's caption can sit on the dropped one.
-        const dropped = images.find((i) => i.id === id);
-        if (dropped?.sourceLabel && !owner.sourceLabel && !isLabeled(owner))
-          patch(owner.id, {
-            tags: dropped.tags,
-            caption: dropped.caption,
-            sourceLabel: dropped.sourceLabel,
-            labelTried: dropped.labelTried,
-          });
-        dupOwnerIds = [...dupOwnerIds, owner.id];
-        remove(id);
-        return;
-      }
-      patch(id, {
-        status: 'uploaded',
-        progress: 1,
-        blobId: blob.id,
-        blobUrl: blob.url ?? undefined,
-        nsfwLevel: blob.nsfwLevel ?? undefined,
-      });
-    } catch (err) {
-      if (isAbort(err)) return;
-      const permanent = err instanceof UploadError && err.permanent;
-      patch(id, {
-        status: permanent ? 'blocked' : 'error',
-        message: err instanceof Error ? err.message : 'Upload failed',
-      });
-    } finally {
-      controllers.delete(id);
+    const blob = await uploads.run(id, (signal) => uploadTile(file, (values) => patch(id, values), signal));
+    if (!blob) return;
+    const owner = ownerOf(trainingBlobKey(blob.id), id);
+    if (owner) {
+      // Whichever copy finishes first is kept, so a zip's caption can sit on the dropped one.
+      const dropped = images.find((i) => i.id === id);
+      if (dropped?.sourceLabel && !owner.sourceLabel && !isLabeled(owner))
+        patch(owner.id, {
+          tags: dropped.tags,
+          caption: dropped.caption,
+          sourceLabel: dropped.sourceLabel,
+          labelTried: dropped.labelTried,
+        });
+      dupOwnerIds = [...dupOwnerIds, owner.id];
+      remove(id);
+      return;
     }
+    patch(id, uploadedFields(blob));
   }
 
   function retry(id: number) {
@@ -346,7 +351,7 @@
         skipped.push(owner);
         continue;
       }
-      const id = ++seq;
+      const id = nextImgId();
       have.set(key, id);
       fresh.push({ ...item, id });
     }
@@ -389,12 +394,7 @@
     if (targets.length === 0) return;
     await pool(targets, 4, async (t) => {
       const direct = directDatasetUrl(t.air);
-      const url =
-        direct ??
-        (await backend()
-          .datasetBlob(t.air, t.workflowId)
-          .then((blob) => URL.createObjectURL(blob))
-          .catch(() => ''));
+      const url = direct ?? (await blobPreviewUrl(t.air, t.workflowId));
       if (!url) return;
       // Tile removed mid-fetch — or the whole flow unmounted (its cleanup empties `images`, so
       // this same guard catches a late resolve after teardown and the URL never leaks).
@@ -415,6 +415,11 @@
   // files; each tile carries its OWN mediaType so previews and labeling treat it correctly.
   // Classification itself (ext↔media↔mime) lives in $lib/media — this is only the acceptance policy.
   const acceptedMedia = $derived<Media[]>(media === 'video' ? ['video', 'image'] : [media]);
+  const acceptedExtsText = $derived(
+    extsOfMedia(acceptedMedia)
+      .map((ext) => ext.toUpperCase())
+      .join(', ')
+  );
   const fileMedia = (mime: string): Media | undefined =>
     acceptedMedia.find((m) => mime.startsWith(`${m}/`));
   const extMedia = (ext: string): Media | undefined => {
@@ -435,7 +440,8 @@
       const captions = new Map<string, string>();
       const mediaFiles: { name: string; base: string; ext: string; entry: (typeof zip.files)[string] }[] =
         [];
-      for (const entry of Object.values(zip.files)) {
+      const ordered = Object.values(zip.files).sort((a, b) => compareFileNames(a.name, b.name));
+      for (const entry of ordered) {
         if (entry.dir) continue;
         const name = entry.name.split('/').pop() ?? entry.name;
         if (name.startsWith('.')) continue; // skip __MACOSX / dotfiles
@@ -451,6 +457,9 @@
             type: mimeOfExt(m.ext) ?? `${media}/${m.ext}`,
           }),
           caption: captions.get(m.base) ?? '',
+          // The tile shows the in-zip path: the grid is sorted by it, and two `img.png`s in different
+          // folders must be told apart.
+          path: m.entry.name,
         }))
       );
       await addImported(entries);
@@ -459,16 +468,65 @@
     }
   }
 
+  // Exports the current labels so a dataset can be tagged across sessions: nothing in this step
+  // persists, and the run page's Download only exists after Start.
+  let exporting = $state(false);
+  let exportNotice = $state('');
+  async function exportZip() {
+    if (exporting) return;
+    // A tile still uploading or that failed to upload keeps its File and labels — the work this exists
+    // to save. Blocked ones failed the scan and stay out.
+    const items = images.filter((i) => i.status !== 'blocked');
+    const blocked = images.length - items.length;
+    if (items.length === 0) return;
+    exporting = true;
+    exportNotice = '';
+    try {
+      const splitExt = (name: string) => {
+        const dot = name.lastIndexOf('.');
+        const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+        return mediaOfExt(ext) ? { base: name.slice(0, dot), ext } : { base: name, ext: undefined };
+      };
+      const named = items.map((img) => splitExt(img.name));
+      const bases = uniqueBaseNames(named.map((n) => n.base));
+      const { blob, failed } = await buildDatasetZip(
+        items.map((img, i) => {
+          const airExt = img.blobId ? extOfAir(img.blobId) : undefined;
+          return {
+            base: bases[i]!,
+            ext: named[i]!.ext ?? (airExt && mediaOfExt(airExt) ? airExt : undefined),
+            caption: labelString(img, labelMode),
+            load: () => imgBytes(img),
+          };
+        })
+      );
+      if (!blob) {
+        exportNotice = "Couldn't fetch any of the files — nothing to download.";
+        return;
+      }
+      saveBlob(blob, 'training-dataset.zip');
+      exportNotice = [
+        failed > 0 && `${plural(failed, 'file')} couldn't be fetched`,
+        blocked > 0 && `${plural(blocked, 'file')} blocked by the scan`,
+      ]
+        .filter(Boolean)
+        .join(' and ');
+      if (exportNotice) exportNotice += ' — left out of the zip.';
+    } finally {
+      exporting = false;
+    }
+  }
+
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
-  async function addImported(entries: { file: File; caption: string }[]) {
+  async function addImported(entries: { file: File; caption: string; path: string }[]) {
     if (entries.length === 0) return;
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
-        id: ++seq,
+        id: nextImgId(),
         file: e.file,
-        name: e.file.name,
+        name: e.path,
         previewUrl: URL.createObjectURL(e.file),
         mediaType: fileMedia(e.file.type) ?? media,
         status: 'uploading' as const,
@@ -484,15 +542,12 @@
     void maybeAutoLabel();
   }
   function onPickZip(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
+    const [file] = pickedFiles(e);
     if (file) void importZip(file);
-    input.value = '';
   }
 
   function remove(id: number) {
-    controllers.get(id)?.abort();
-    controllers.delete(id);
+    uploads.abort(id);
     const tile = images.find((x) => x.id === id);
     if (tile) URL.revokeObjectURL(tile.previewUrl);
     images = images.filter((x) => x.id !== id);
@@ -521,25 +576,28 @@
     try {
       while (unlabeled.length > 0) {
         const targets = unlabeled;
-        const items = targets.map((t) => ({ key: String(t.id), mediaUrl: t.blobUrl! }));
-        labelRun = { total: targets.length, done: 0, keys: new Set(items.map((i) => i.key)) };
-        for (const t of targets) patch(t.id, { labeling: true });
+        const { byKey, items } = startLabelPass(targets);
+        labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
         // A result that resolves between abort and delivery must be dropped — post-switch it
         // would write an OLD-mode label into a freshly reset tile and mark it done.
-        await runAutoLabel(
+        const sent = await runAutoLabel(
           labelMode,
           media,
           items,
           (r) => {
-            if (!controller.signal.aborted) applyLabel(r);
+            const img = byKey.get(r.key);
+            if (img && !controller.signal.aborted) applyLabel(img, r);
           },
           controller.signal
         );
+        // Every target was over the per-image cap: re-selecting them again would spin without end.
+        if (sent === 0) break;
         // In manual mode label only the pass the user asked for — draining uploads that settled
         // mid-run is the automatic behavior the toggle opts out of.
         if (autoLabel !== 'auto') break;
       }
     } catch (err) {
+      // labelTried stays set: these tiles may already be submitted (and charged) — Re-run is the retry.
       if (!isAbort(err)) for (const i of images) if (i.labeling) patch(i.id, { labeling: false });
     } finally {
       // Only release the slot/progress if they're still OURS — an aborted drain's finally runs
@@ -552,12 +610,11 @@
     }
   }
 
-  function applyLabel(r: AutoLabelResult) {
-    const img = images.find((x) => String(x.id) === r.key);
-    if (!img) return;
+  function applyLabel(img: Img, r: AutoLabelResult) {
     img.labeling = false;
     img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
     if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
+    img.labelError = r.status === 'failed' ? r.error : undefined;
     if (r.status === 'failed') return;
     if (r.tags?.length) {
       // The user's exclude list: auto-label results never apply these (case-insensitive exact tag).
@@ -567,43 +624,20 @@
     if (r.caption) img.caption = r.caption;
   }
 
-  const ZIP_MIMES = new Set(['application/zip', 'application/x-zip-compressed']);
-  const isZip = (f: File) => ZIP_MIMES.has(f.type) || f.name.toLowerCase().endsWith('.zip');
   // One drop target's worth of handlers, shared by the empty-state dropzone and the populated
-  // dataset area (dropping used to work only before the first upload). `dragDepth` is the standard
-  // enter/leave counter — leave fires for every child crossed, so a plain boolean flickers.
-  let dragDepth = 0;
-  // File drags only: the populated area contains draggable content (preview <img>s, selectable
-  // caption text) whose in-page drags would otherwise summon the drop overlay.
-  const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
-  function onDragEnter(e: DragEvent) {
-    if (!hasFiles(e)) return;
-    e.preventDefault();
-    dragDepth += 1;
-    dragging = true;
-  }
-  function onDragOver(e: DragEvent) {
-    if (hasFiles(e)) e.preventDefault();
-  }
-  function onDragLeave() {
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) dragging = false;
-  }
-  function onDrop(e: DragEvent) {
-    e.preventDefault();
-    dragDepth = 0;
-    dragging = false;
-    const files = [...(e.dataTransfer?.files ?? [])];
-    // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
-    // before. One zip per drop: `find` imports the first and the filter below discards the rest.
-    const zip = files.find(isZip);
-    if (zip) void importZip(zip);
-    void addFiles(files.filter((f) => !isZip(f)));
-  }
+  // dataset area (dropping used to work only before the first upload).
+  const drop = fileDrop(
+    (v) => (dragging = v),
+    (files) => {
+      // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
+      // before. One zip per drop: `find` imports the first and the filter below discards the rest.
+      const zip = files.find(isZip);
+      if (zip) void importZip(zip);
+      void addFiles(files.filter((f) => !isZip(f)));
+    }
+  );
   function onPick(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    void addFiles(input.files);
-    input.value = ''; // let the same file be re-picked after a remove
+    void addFiles(pickedFiles(e));
   }
 
   let genPickerOpen = $state(false);
@@ -628,9 +662,22 @@
   let editorId = $state(0);
   const editing = $derived(images.find((x) => x.id === editorId));
 
+  // Prev/next walk the grid as it was when the editor opened, so labeling an image under "Unlabeled"
+  // doesn't pull it out of the sequence mid-pass.
+  let editorSequence = $state<number[]>([]);
+  const editorSteps = $derived(
+    editorSequence.filter((id) => images.some((x) => x.id === id && x.status === 'uploaded'))
+  );
+  const editorIndex = $derived(editorSteps.indexOf(editorId));
+
   function openEditor(id: number) {
+    editorSequence = shownImages.filter((i) => i.status === 'uploaded').map((i) => i.id);
     editorId = id;
     editorOpen = true;
+  }
+  function stepEditor(delta: -1 | 1) {
+    const next = editorSteps[editorIndex + delta];
+    if (next !== undefined) editorId = next;
   }
 
   // This dataset's tags with occurrence counts, frequency-ranked — feeds the editor's autocomplete
@@ -663,10 +710,11 @@
   async function relabelOne(id: number) {
     const img = images.find((x) => x.id === id);
     if (!img || !img.blobUrl || img.labeling) return;
-    patch(id, { labeling: true, labelTried: false, tags: [], caption: '' });
+    patch(id, { labeling: true, labelTried: false, labelError: undefined, tags: [], caption: '' });
     try {
-      const item = [{ key: String(id), mediaUrl: img.blobUrl }];
-      await runAutoLabel(labelMode, media, item, applyLabel, new AbortController().signal);
+      // Not a drain-pass index, so the drain's progress counter never counts it.
+      const item = [{ key: 'relabel', mediaUrl: img.blobUrl }];
+      await runAutoLabel(labelMode, media, item, (r) => applyLabel(img, r), new AbortController().signal);
     } catch (err) {
       if (!isAbort(err)) patch(id, { labeling: false });
     }
@@ -680,15 +728,20 @@
   {@const rating = nsfwLevelLabel(img.nsfwLevel)}
   {#if rating}
     {@const badgeClass = 'absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-xs font-semibold'}
-    {#if isMature(img) && matureChargesYellow}
+    {#if isMature(img)}
       <Tooltip.Provider>
         <Tooltip.Root>
           <Tooltip.Trigger class="{badgeClass} bg-buzz text-black" aria-label="Rated {rating}">
             {rating}
           </Tooltip.Trigger>
           <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-            Rated {rating}. Without a membership, one mature image charges the whole run in Yellow
-            Buzz — remove it to pay in Blue.
+            {#if isMember}
+              Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
+              Blue Buzz is charged in Yellow.
+            {:else}
+              Rated {rating}. Without a membership, one mature image charges the whole run in Yellow
+              Buzz. Remove it to pay in Blue.
+            {/if}
           </Tooltip.Content>
         </Tooltip.Root>
       </Tooltip.Provider>
@@ -774,10 +827,22 @@
     <Button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
       <IconArchive size={15} stroke={2} class="mr-1.5 inline" />{importing ? 'Importing…' : 'Import .zip'}
     </Button>
+    <Button
+      variant="outline"
+      onclick={exportZip}
+      disabled={exporting || images.every((i) => i.status === 'blocked')}
+      title="Download your {media} files with their {noun} as same-named .txt files"
+    >
+      <IconDownload size={15} stroke={2} class="mr-1.5 inline" />{exporting ? 'Zipping…' : 'Download .zip'}
+    </Button>
     <Button variant="outline" onclick={() => (reuseOpen = true)}>
       <IconRepeat size={15} stroke={2} class="mr-1.5 inline" />Reuse a dataset
     </Button>
   </div>
+
+  {#if exportNotice}
+    <p class="text-sm text-amber-400" role="status">{exportNotice}</p>
+  {/if}
 
   {#if dupNotice.count > 0}
     <Alert.Root class="flex items-start justify-between gap-3 border-dark-4 bg-dark-6 text-dark-2">
@@ -935,10 +1000,7 @@
     <button
       type="button"
       onclick={() => fileInput.click()}
-      ondragenter={onDragEnter}
-      ondragover={onDragOver}
-      ondragleave={onDragLeave}
-      ondrop={onDrop}
+      {...drop}
       class="rounded-xl border-2 border-dashed p-9 text-center transition
         {dragging ? 'border-primary bg-primary/[0.06]' : 'border-dark-4 bg-dark-6 hover:border-primary'}"
     >
@@ -961,16 +1023,16 @@
       <div class="mt-2 text-base font-semibold text-dark-0">
         Drop your {media} files or a .zip here, or click to browse
       </div>
+      <div class="mt-1 text-sm text-dark-2">
+        Accepts {acceptedExtsText}, or a .zip of them with matching .txt labels
+      </div>
       <div class="mt-2 font-mono text-xs text-dark-2">Uploaded one by one · scanned on upload</div>
     </button>
   {:else}
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-      ondragenter={onDragEnter}
-      ondragover={onDragOver}
-      ondragleave={onDragLeave}
-      ondrop={onDrop}
+      {...drop}
       class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
     >
       {#if dragging}
@@ -1012,6 +1074,7 @@
                 {labeledCount}/{uploadedCount} labeled
               </span>{/if}
             {#if blockedCount > 0}· <span class="text-red-400">{blockedCount} blocked</span>{/if}
+            {#if errorCount > 0}· <span class="text-buzz">{errorCount} failed</span>{/if}
           </b>
           <div class="flex items-center gap-2">
             {#if unlabeled.length > 0 || labelRun}
@@ -1019,7 +1082,12 @@
                 <IconSparkles size={13} stroke={2} class="mr-1 inline" />{#if labelRun}Labeling… {labelRun.done}/{labelRun.total}{:else}Auto-label {unlabeled.length}{/if}
               </Button>
             {/if}
-            <Button variant="outline" size="xs" onclick={() => fileInput.click()}>
+            <Button
+              variant="outline"
+              size="xs"
+              onclick={() => fileInput.click()}
+              title="Accepts {acceptedExtsText}"
+            >
               <IconPlus size={13} stroke={2} class="mr-1 inline" />Add more
             </Button>
           </div>
@@ -1030,7 +1098,8 @@
             type="single"
             value={filter}
             onValueChange={(v) => {
-              if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature') filter = v;
+              if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
+                filter = v;
             }}
             variant="outline"
             size="sm"
@@ -1050,7 +1119,23 @@
                 Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
               </ToggleGroupItem>
             {/if}
+            {#if failedTotal > 0 || filter === 'failed'}
+              <ToggleGroupItem value="failed" aria-label="Show files that failed to upload">
+                Failed <span class={failedTotal > 0 ? 'ml-1 font-semibold text-red-400' : 'ml-1'}>{failedTotal}</span>
+              </ToggleGroupItem>
+            {/if}
           </ToggleGroup>
+          {#if tagFilter}
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2">
+              <span>Showing {mediaCount(shownImages.length, media)} tagged</span>
+              <span class="rounded border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-dark-0">
+                {tagFilter.tag}
+              </span>
+              <Button variant="ghost" size="xs" onclick={() => (tagFilter = null)}>
+                <IconX size={12} stroke={2} class="mr-1 inline" />Clear
+              </Button>
+            </div>
+          {/if}
         </div>
 
         {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !i.nsfwLevel)}
@@ -1070,7 +1155,9 @@
                 ? 'No labeled images yet.'
                 : filter === 'mature'
                   ? 'No images rated mature.'
-                  : 'No images.'}
+                  : filter === 'failed'
+                    ? 'No failed uploads.'
+                    : 'No images.'}
           </div>
         {/if}
 
@@ -1166,14 +1253,19 @@
 
               <div class="min-h-[44px] p-2.5">
                 {#if img.status !== 'uploaded'}
+                  <!-- The failure overlay covers the preview, so the filename is how the user finds it. -->
                   <div class="font-mono text-xs text-dark-2">
                     {img.status === 'uploading' ? 'uploading…' : img.status === 'blocked' ? 'blocked' : 'failed'}
                   </div>
+                  <div class="truncate font-mono text-xs text-dark-0" title={img.name}>{img.name}</div>
                 {:else if img.labeling}
                   <div class="flex items-center justify-center gap-1 font-mono text-xs text-primary">
                     <IconSparkles size={12} stroke={2} /> labeling…
                   </div>
                 {:else if img.tags.length === 0 && !img.caption}
+                  {#if img.labelError}
+                    <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
+                  {/if}
                   <button
                     type="button"
                     onclick={() => openEditor(img.id)}
@@ -1259,12 +1351,14 @@
   {trigger}
   {tagVocab}
   onRelabel={relabelOne}
+  position={{ index: editorIndex, total: editorSteps.length }}
+  onStep={stepEditor}
 />
 
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
 
-<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} />
+<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} onShowTag={showTag} />
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

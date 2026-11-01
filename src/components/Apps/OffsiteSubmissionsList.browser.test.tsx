@@ -8,9 +8,8 @@ import { renderWithProviders } from '../../../test/component-setup';
  * W13 post-approval-mgmt OWNER controls (Phase 3): unpublish/republish, the
  * moderation-history modal, and the surfaced shadow-revision Edit link.
  *
- * The list transitively imports `MySubmissionsList` (for `ReviewerNotesButton`),
- * which pulls in the analytics inline stat → `~/utils/trpc`, mocked so this stays
- * network-free. Per the documented gotcha, the wholesale `~/utils/trpc` mock
+ * The list reaches `~/utils/trpc` (owner-control mutations, the history query),
+ * mocked so this stays network-free. Per the documented gotcha, the wholesale `~/utils/trpc` mock
  * includes `setTrpcBatchingEnabled` (a graph-reachable module imports it). Phase 3
  * added the owner-control mutations (`unpublishOwnListing`/`republishOwnListing`),
  * the owner history query (`listMyListingModerationEvents`), and `trpc.useUtils()`
@@ -39,7 +38,10 @@ vi.mock('~/utils/trpc', () => {
   // notification paths run.
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: (data?: unknown) => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: {
+      onSuccess?: (data?: unknown) => void;
+      onError?: (e: { message: string }) => void;
+    }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         // Realistic mutation payload — the republish handler derives its message from
@@ -158,7 +160,13 @@ const modRemoved = () =>
 
 const oneOfEach = (): OffsiteSubmission[] => [
   live(),
-  makeOffsite({ id: 'b', slug: 'pending-off', appListingId: 'l-b', status: 'pending', reviewedAt: null }),
+  makeOffsite({
+    id: 'b',
+    slug: 'pending-off',
+    appListingId: 'l-b',
+    status: 'pending',
+    reviewedAt: null,
+  }),
   makeOffsite({ id: 'c', slug: 'rejected-off', appListingId: null, status: 'rejected' }),
   makeOffsite({ id: 'd', slug: 'withdrawn-off', appListingId: null, status: 'withdrawn' }),
 ];
@@ -206,7 +214,13 @@ describe('OffsiteSubmissionsList — status sections', () => {
     renderWithProviders(
       <OffsiteSubmissionsList
         submissions={[
-          makeOffsite({ id: 'b', slug: 'pending-off', appListingId: 'l-b', status: 'pending', reviewedAt: null }),
+          makeOffsite({
+            id: 'b',
+            slug: 'pending-off',
+            appListingId: 'l-b',
+            status: 'pending',
+            reviewedAt: null,
+          }),
         ]}
         onWithdraw={vi.fn()}
         withdrawing={false}
@@ -216,17 +230,17 @@ describe('OffsiteSubmissionsList — status sections', () => {
       .element(page.getByTestId('apps-offsite-submissions-section-pending'))
       .toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-submissions-section-live').elements()).toHaveLength(0);
-    expect(page.getByTestId('apps-offsite-submissions-section-rejected').elements()).toHaveLength(0);
-    expect(page.getByTestId('apps-offsite-submissions-section-withdrawn').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-submissions-section-rejected').elements()).toHaveLength(
+      0
+    );
+    expect(page.getByTestId('apps-offsite-submissions-section-withdrawn').elements()).toHaveLength(
+      0
+    );
   });
 
   test('an editable row renders an Edit link to the submit wizard in edit mode', async () => {
     renderWithProviders(
-      <OffsiteSubmissionsList
-        submissions={[live()]}
-        onWithdraw={vi.fn()}
-        withdrawing={false}
-      />
+      <OffsiteSubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
     const editLink = page.getByTestId('apps-offsite-edit-live-off');
     await expect.element(editLink).toBeInTheDocument();
@@ -264,7 +278,11 @@ describe('OffsiteSubmissionsList — status sections', () => {
 
   test('an OWNER-hidden listing stays in Live (never swept into the mod-removed section)', async () => {
     renderWithProviders(
-      <OffsiteSubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+      <OffsiteSubmissionsList
+        submissions={[ownerHidden()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
     );
     await expect.element(page.getByText('hidden-off', { exact: false })).toBeInTheDocument();
     expect(
@@ -336,7 +354,11 @@ describe('OffsiteSubmissionsList — owner unpublish (live listing)', () => {
 describe('OffsiteSubmissionsList — owner republish vs moderator takedown (load-bearing)', () => {
   test('an OWNER-hidden listing shows Republish → fires republishOwnListing (no Unpublish)', async () => {
     renderWithProviders(
-      <OffsiteSubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+      <OffsiteSubmissionsList
+        submissions={[ownerHidden()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
     );
     const republish = page.getByTestId('apps-offsite-republish-hidden-off');
     await expect.element(republish).toBeInTheDocument();
@@ -351,7 +373,11 @@ describe('OffsiteSubmissionsList — owner republish vs moderator takedown (load
 
   test('a MODERATOR-removed listing shows "Removed by a moderator" and NO republish button', async () => {
     renderWithProviders(
-      <OffsiteSubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
+      <OffsiteSubmissionsList
+        submissions={[modRemoved()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
     );
     // A mod-removed listing now lives in its own default-collapsed section — expand it.
     await page.getByTestId('apps-offsite-submissions-section-mod-removed-toggle').click();
@@ -379,7 +405,11 @@ describe('OffsiteSubmissionsList — moderation history modal', () => {
       },
     ];
     renderWithProviders(
-      <OffsiteSubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
+      <OffsiteSubmissionsList
+        submissions={[modRemoved()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
     );
     // Expand the default-collapsed moderator-removed section to reach the row.
     await page.getByTestId('apps-offsite-submissions-section-mod-removed-toggle').click();
@@ -388,7 +418,9 @@ describe('OffsiteSubmissionsList — moderation history modal', () => {
     await expect.element(page.getByText('Reported for spam')).toBeInTheDocument();
     await expect.element(page.getByText('Delisted')).toBeInTheDocument();
     await expect.element(page.getByText('Unpublished by you')).toBeInTheDocument();
-    expect(page.getByTestId('apps-offsite-history-entry').elements().length).toBeGreaterThanOrEqual(2);
+    expect(page.getByTestId('apps-offsite-history-entry').elements().length).toBeGreaterThanOrEqual(
+      2
+    );
   });
 
   test('an empty history shows the empty-state copy', async () => {
@@ -397,7 +429,11 @@ describe('OffsiteSubmissionsList — moderation history modal', () => {
     // history query returns [].
     mocks.historyItems = [];
     renderWithProviders(
-      <OffsiteSubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+      <OffsiteSubmissionsList
+        submissions={[ownerHidden()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
     );
     await page.getByTestId('apps-offsite-history-hidden-off').click();
     await expect.element(page.getByTestId('apps-offsite-history-empty')).toBeInTheDocument();
@@ -445,9 +481,9 @@ describe('OffsiteSubmissionsList — advisory listing-problems warning', () => {
 });
 
 /**
- * S3 — same scroll wrapper as the on-site list (they share
- * `SUBMISSIONS_TABLE_MIN_WIDTH`). Structural assertion only; see the note on the
- * matching test in `MySubmissionsList.browser.test.tsx`.
+ * S3 — the table scrolls inside `SUBMISSIONS_TABLE_MIN_WIDTH`. Structural assertion
+ * only: the `component` project loads no CSS, so layout is pinned by the source-level
+ * checks in `__tests__/submissionsTable.test.ts`.
  */
 describe('OffsiteSubmissionsList — row actions scroll rather than clip (S3)', () => {
   test('the table renders inside the Table.ScrollContainer wrapper', async () => {
@@ -463,5 +499,51 @@ describe('OffsiteSubmissionsList — row actions scroll rather than clip (S3)', 
     const card = scrollEl.closest('.mantine-Card-root');
     expect(card).not.toBeNull();
     expect(table?.closest('.mantine-Card-root')).toBe(card);
+  });
+});
+
+describe('OffsiteSubmissionsList — reviewer notes open in a modal, only when there are notes', () => {
+  test('approval notes are not inline; the button opens them under "Reviewer notes"', async () => {
+    const notes = 'Please tighten the manifest scopes before next version.';
+    renderWithProviders(
+      <OffsiteSubmissionsList
+        submissions={[live({ approvalNotes: notes })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('live-off', { exact: false })).toBeInTheDocument();
+    expect(page.getByText(notes, { exact: false }).elements()).toHaveLength(0);
+    await page.getByRole('button', { name: /see reviewer notes/i }).click();
+    await expect.element(page.getByText(notes, { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('Reviewer notes', { exact: true })).toBeInTheDocument();
+  });
+
+  test('a rejection reason opens under "Reviewer feedback"', async () => {
+    const reason = 'Rejected: the external URL does not load.';
+    renderWithProviders(
+      <OffsiteSubmissionsList
+        submissions={[
+          makeOffsite({ id: 'r', slug: 'rej-off', status: 'rejected', rejectionReason: reason }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await page.getByTestId('apps-offsite-submissions-section-rejected-toggle').click();
+    const btn = page.getByRole('button', { name: /see reviewer notes/i });
+    await expect.element(btn).toBeInTheDocument();
+    expect(page.getByText(reason, { exact: false }).elements()).toHaveLength(0);
+    await btn.click();
+    await expect.element(page.getByText(reason, { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('Reviewer feedback', { exact: true })).toBeInTheDocument();
+  });
+
+  test('no notes, no button', async () => {
+    renderWithProviders(
+      <OffsiteSubmissionsList submissions={[live({})]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await expect.element(page.getByText('live-off', { exact: false })).toBeInTheDocument();
+    expect(page.getByRole('button', { name: /see reviewer notes/i }).elements()).toHaveLength(0);
   });
 });

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PrepaidToken, SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
 import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
@@ -9,8 +10,9 @@ vi.unmock('~/server/utils/subscription.utils');
 vi.mock('~/server/services/buzz.service', () => ({
   getMultipliersForUser: vi.fn().mockResolvedValue(undefined),
 }));
+const { mockCapBust } = vi.hoisted(() => ({ mockCapBust: vi.fn() }));
 vi.mock('~/server/services/creator-program.service', () => ({
-  getUserCapCache: vi.fn(() => ({ bust: vi.fn().mockResolvedValue(undefined) })),
+  getUserCapCache: vi.fn(() => ({ bust: mockCapBust })),
 }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn().mockResolvedValue(undefined),
@@ -321,6 +323,7 @@ describe('getNextTokenUnlockDate', () => {
 describe('invalidateSubscriptionCaches', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCapBust.mockResolvedValue(undefined);
   });
 
   it('logs the failing step to Axiom when refreshSession rejects', async () => {
@@ -330,7 +333,7 @@ describe('invalidateSubscriptionCaches', () => {
 
     vi.mocked(refreshSession).mockRejectedValueOnce(new Error('sysRedis down'));
 
-    await invalidateSubscriptionCaches(42);
+    await expect(invalidateSubscriptionCaches(42)).resolves.toBeUndefined();
 
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -361,6 +364,48 @@ describe('invalidateSubscriptionCaches', () => {
       }),
       'webhooks'
     );
+  });
+
+  it('runs every other step when the first one rejects', async () => {
+    const { refreshSession } = await import('~/server/auth/session-invalidation');
+    const { getMultipliersForUser } = await import('~/server/services/buzz.service');
+    const { setVaultFromSubscription } = await import('~/server/services/vault.service');
+    const { invalidateCivitaiUser } = await import('~/server/services/orchestrator/civitai');
+    const { bustCreatorMembershipValidCache } = await import(
+      '~/server/services/creator-membership.service'
+    );
+    const { dbMock } = await import('~/__tests__/mocks/db.mock');
+    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(0);
+
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('sysRedis down'));
+
+    await invalidateSubscriptionCaches(42);
+
+    expect(getMultipliersForUser).toHaveBeenCalledWith(42, true);
+    expect(setVaultFromSubscription).toHaveBeenCalledWith({ userId: 42 });
+    expect(mockCapBust).toHaveBeenCalledWith(42);
+    expect(invalidateCivitaiUser).toHaveBeenCalledWith({ userId: 42 });
+    expect(bustCreatorMembershipValidCache).toHaveBeenCalledWith(42);
+    const reopen = vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.map(([sql]) => sql as Prisma.Sql)
+      .find((sql) => sql.sql?.includes('"collaborationDisabledAt" = NULL'));
+    expect(reopen?.values).toContain(42);
+  });
+
+  it("reopens the user's lapsed collections, so a new membership doesn't wait for the nightly job", async () => {
+    const { dbMock } = await import('~/__tests__/mocks/db.mock');
+    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(0);
+
+    await invalidateSubscriptionCaches(4527785);
+
+    const reopen = vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.map(([sql]) => sql as Prisma.Sql)
+      .find((sql) => sql.sql?.includes('"collaborationDisabledAt" = NULL'));
+    expect(reopen?.values).toContain(4527785);
   });
 
   it('does not log when every step resolves', async () => {

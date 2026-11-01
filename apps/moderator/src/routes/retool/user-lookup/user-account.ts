@@ -1,5 +1,8 @@
+import type { GrantableBox } from '$lib/server/mystery-box-builder.service';
 import type {
+  GrantedBox as GrantedBoxRow,
   UserReview,
+  ReviewPage as ReviewPageRow,
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
   UserBountyEntry,
@@ -14,6 +17,8 @@ import type { Jsonified } from '$lib/format';
 // invisible to the panel. A `import type` is erased at build, so no server code reaches the bundle.
 
 export type Review = Jsonified<UserReview>;
+
+export type ReviewPage = Jsonified<ReviewPageRow>;
 
 export type ReceivedReview = Jsonified<ReceivedReviewRow>;
 
@@ -118,10 +123,11 @@ export type ShopPurchase = {
 
 export type AvailableCosmetic = { id: number; name: string };
 
+export type GrantedBox = Jsonified<GrantedBoxRow>;
+
 export type Capped<T> = { items: T[]; truncated: boolean };
 
 export type Account = {
-  reviews: Capped<Review>;
   receivedReviews: Capped<ReceivedReview>;
   comments: Capped<Comment>;
   commentsV2: Capped<CommentV2>;
@@ -131,12 +137,37 @@ export type Account = {
   bountyEntries: Capped<BountyEntry>;
   shopPurchases: Capped<ShopPurchase>;
   availableBadges: AvailableCosmetic[];
+  grantedBoxes: Capped<GrantedBox>;
+  grantableBoxes: GrantableBox[];
 };
 
 /** `version` is part of the URL so bumping it rebuilds the derived promise — a Buzz send has to move
  *  the balance above the form, and this data does not come from `load`. */
 export async function fetchAccount(userId: number, version = 0): Promise<Account> {
   const r = await fetch(`/api/user-account/${userId}?v=${version}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+
+/** `query` is the page and filters, as `parseReviewQuery` reads them. `version` is in the URL for the
+ *  same reason as `fetchAccount`'s. */
+export async function fetchReviews(
+  userId: number,
+  query: URLSearchParams,
+  version: number
+): Promise<ReviewPage> {
+  const r = await fetch(`/api/user-reviews/${userId}?${query}&v=${version}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+
+/** Review id → image count for the same page. Its own endpoint — see `/api/user-review-image-counts`. */
+export async function fetchReviewImageCounts(
+  userId: number,
+  query: URLSearchParams,
+  version: number
+): Promise<Record<number, number>> {
+  const r = await fetch(`/api/user-review-image-counts/${userId}?${query}&v=${version}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

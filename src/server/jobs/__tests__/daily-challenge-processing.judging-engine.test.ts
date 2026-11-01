@@ -144,6 +144,7 @@ vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
 }));
 
 vi.mock('~/server/games/daily-challenge/generative-content', () => ({
+  REVIEW_FALLBACK_MODEL: 'fallback-model',
   estimateBuzzCost: vi.fn().mockReturnValue(0),
   generateArticle: vi.fn(),
   generateCollectionDetails: vi.fn(),
@@ -170,7 +171,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   getChallengeBuzzType: vi.fn().mockResolvedValue('yellow'),
   reportPoolFundingShortfall: vi.fn(),
 }));

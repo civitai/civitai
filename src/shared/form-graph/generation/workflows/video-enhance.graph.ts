@@ -1,21 +1,22 @@
 import { z } from 'zod';
-import { defineGraph } from 'form-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { VIDEO, sliderDef } from '../defs';
+import { cachedFactory, defineGraph } from 'form-graph';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { clampCorrect, optionFallback, VIDEO, sliderDef } from '../defs';
 import {
   videoPreprocessKindParamSpecs,
   videoPreprocessKinds,
-} from '~/shared/data-graph/generation/video-preprocess-graph';
+} from '~/shared/generation/preprocess-specs';
 
 const videoKindParamsSchema = z.record(z.string(), z.unknown());
+const videoKindParamsInput = videoKindParamsSchema.optional();
+
+const interpolationFactorInput = z.coerce.number().int().min(2).max(4).optional();
+const interpolationFactorOutput = z.number().int().min(2).max(4);
 
 /**
- * The video enhancement workflows, ported from `video-upscale-graph.ts` and
- * `video-interpolation-graph.ts`. Standalone — no ecosystem; they operate on
- * an existing video, and the option sets derive from its metadata.
+ * The video enhancement workflows. Standalone — no ecosystem; they operate on an
+ * existing video, and the option sets derive from its metadata.
  */
-
-// ---- copied from the v1 graphs, which die with the data-graph engine --------
 
 const MAX_OUTPUT_RESOLUTION = 2560;
 const UPSCALE_MULTIPLIERS = [2, 3] as const;
@@ -38,7 +39,26 @@ export type ScaleFactorOption = {
   targetHeight: number;
 };
 
-// ---- end of v1 copies -------------------------------------------------------
+const SCALE_FACTOR_MIN = Math.min(...UPSCALE_MULTIPLIERS);
+const SCALE_FACTOR_MAX = Math.max(...UPSCALE_MULTIPLIERS);
+const SCALE_FACTOR_INPUT = z.coerce
+  .number()
+  .int()
+  .min(SCALE_FACTOR_MIN)
+  .max(SCALE_FACTOR_MAX)
+  .optional();
+// Keyed on the largest factor the source allows, not its raw size: the size is
+// request-supplied, and a cache keyed on it would grow without bound on the server.
+const scaleFactorOutput = cachedFactory((ceiling: number | null) =>
+  z
+    .number()
+    .int()
+    .min(SCALE_FACTOR_MIN)
+    .max(SCALE_FACTOR_MAX)
+    .refine((val) => ceiling == null || val <= ceiling, {
+      message: `Scale factor would exceed maximum output resolution of ${MAX_OUTPUT_RESOLUTION}px`,
+    })
+);
 
 export const videoUpscale = defineGraph<GenerationCtx>()
   .field('video', VIDEO)
@@ -59,23 +79,18 @@ export const videoUpscale = defineGraph<GenerationCtx>()
       ? maxDimension * Math.min(...UPSCALE_MULTIPLIERS) <= MAX_OUTPUT_RESOLUTION
       : true;
 
-    const min = Math.min(...UPSCALE_MULTIPLIERS);
-    const max = Math.max(...UPSCALE_MULTIPLIERS);
     return {
-      input: z.coerce.number().int().min(min).max(max).optional(),
-      output: z
-        .number()
-        .int()
-        .min(min)
-        .max(max)
-        .refine((val) => !maxDimension || val * maxDimension <= MAX_OUTPUT_RESOLUTION, {
-          message: `Scale factor would exceed maximum output resolution of ${MAX_OUTPUT_RESOLUTION}px`,
-        }),
+      input: SCALE_FACTOR_INPUT,
+      output: scaleFactorOutput(
+        maxDimension && maxDimension > 0
+          ? Math.min(Math.floor(MAX_OUTPUT_RESOLUTION / maxDimension), SCALE_FACTOR_MAX)
+          : null
+      ),
       default: defaultValue,
       // remembered per source size: a factor picked for a smaller video would
       // otherwise stick as a trusted value on a larger one and fail the
       // refine (dead submit). Scope, not correct — the parse boundary must
-      // keep REFUSING an over-ceiling raw value exactly like v1 does.
+      // REFUSE an over-ceiling raw value rather than clamping it.
       scope: maxDimension != null ? String(maxDimension) : undefined,
       meta: {
         options,
@@ -110,9 +125,13 @@ export const videoInterpolation = defineGraph<GenerationCtx>()
       : true;
 
     return {
-      input: z.coerce.number().int().min(2).max(4).optional(),
-      output: z.number().int().min(2).max(4),
+      input: interpolationFactorInput,
+      output: interpolationFactorOutput,
       default: defaultValue,
+      // Unlike `scaleFactor` above, the fps ceiling is advisory here — it disables an
+      // option in meta but the output does not refuse on it. So the only refusal is an
+      // out-of-range factor, and clamping is safe rather than scope-per-source.
+      correct: clampCorrect({ min: 2, max: 4, fallback: defaultValue }),
       meta: { options, canInterpolate, sourceFps: fps, maxOutputFps: MAX_OUTPUT_FPS },
     };
   })
@@ -123,8 +142,8 @@ export const videoInterpolation = defineGraph<GenerationCtx>()
   });
 
 /**
- * The standalone control-preprocessor workflow for video (vid2vid:preprocess),
- * ported from `video-preprocess-graph.ts`. Same field names as the image
+ * The standalone control-preprocessor workflow for video (vid2vid:preprocess).
+ * Same field names as the image
  * preprocess arm — they sit in different branch arms, so the narrower video
  * kind enum does not collide with the image one.
  */
@@ -134,11 +153,12 @@ export const videoPreprocess = defineGraph<GenerationCtx>()
     input: z.enum(videoPreprocessKinds).optional(),
     output: z.enum(videoPreprocessKinds),
     default: videoPreprocessKinds[0],
+    correct: optionFallback(videoPreprocessKinds, videoPreprocessKinds[0]),
     meta: { options: videoPreprocessKinds.map((value) => ({ label: value, value })) },
   })
   .field('preprocessResolution', sliderDef({ min: 64, max: 2048, step: 8, default: 512 }))
   .field('kindParams', ({ preprocessKind }) => ({
-    input: videoKindParamsSchema.optional(),
+    input: videoKindParamsInput,
     output: videoKindParamsSchema,
     default: {} as Record<string, unknown>,
     meta: {

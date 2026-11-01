@@ -6,11 +6,20 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
+// Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
+// cached for a minute).
+import '~/server/prom/resource-intent-cooc.metrics';
+// Side-effect import: registers the v1 tag index's metrics: the holder's load counters (seeded at 0)
+// and held-snapshot gauges, and the weekly job's persisted heartbeats (KeyValue) and the newest
+// ready snapshot's createdAt, both cached for a minute and read only while the build flag is on.
+import '~/server/prom/resource-intent-tags.metrics';
 // Side-effect import: registers the session-resolution metrics, including the UNLABELLED
 // session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
 // the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
 // which is the exact ambiguity that counter exists to remove.
 import '~/server/auth/session-metrics';
+// Side-effect import: registers auth_internal_parity (collect()-based, probed at most every ten minutes).
+import '~/server/prom/auth-internal-parity.metrics';
 // Side-effect import: registers the Flipt eval-cache counters (collect()-based), so the
 // series exist from the first scrape rather than only after some other module happens to
 // pull them in. Same reasoning as the neighbours — an absent series here would read as
@@ -47,11 +56,40 @@ import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-uploa
 // this counter was added to end, so leaving it unseeded would reproduce the defect one
 // level down.
 import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
+// Same reason as the three neighbours above, for the App Blocks KV storage counters: two of
+// the four were absent in production purely because nothing had ever incremented them, and one
+// of those exists to be alerted on. Called from the handler rather than here because it must
+// await a read of the latency histogram's existing children before zeroing any of them.
+// Same reason (#3665 again, one level down): seeds one zero-valued series per surface of
+// generation_validation_refused_total. That counter replaces the only signal a hub refusal
+// had — the removed data-graph shadow comparison — and its alarm is "any sustained
+// non-zero". Every caller that can increment it is non-browser (the on-site footer returns
+// before the network call), so absent is the expected reading for long stretches and is
+// otherwise indistinguishable from an unloaded module.
+import { seedGenerationValidationMetrics } from '~/server/prom/generation-validation.metrics';
+import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
+import { seedAppBlockSharedStorageMetrics } from '~/server/prom/app-block-shared-storage.metrics';
+// The App Blocks document store: its review-storage counters and server-fault error series are
+// published at 0, and its enabled gauge is evaluated from the store's own predicate on every
+// scrape, so an alert on it fires on a pod that has served no storage traffic.
+import { seedAppBlockDocStoreMetrics } from '~/server/metrics/app-block-runtime.metrics';
+import { refreshDocStoreEnabled } from '~/server/services/apps/doc-store.instance';
+// Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
+// as zeros rather than as an absent series on every pod that has not received a callback.
+import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
+// Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
+// Without it every process runs those queries itself. Here rather than in ~/server/prom/client so
+// that module's graph never loads the redis client.
+import '~/server/prom/ingestion-gauge-store';
+import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
+seedGenerationValidationMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
+ensureRegisterAppBlockBuildMetrics();
+ensureRegisterThreadCpuMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
@@ -184,6 +222,11 @@ async function collectRegistryMetrics(
 }
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
+  await seedAppBlockStorageMetrics();
+  await seedAppBlockSharedStorageMetrics();
+  seedAppBlockDocStoreMetrics();
+  await refreshDocStoreEnabled();
+
   const metrics = await collectRegistryMetrics(client.register, 'default');
 
   // Metrics emitted from the instrumentation webpack graph (e.g. the event-loop

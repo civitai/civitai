@@ -69,9 +69,11 @@ export type AppsBuildFeatureFlags =
 /**
  * App Blocks — the `/apps/build` (BUILD) surface gate.
  *
- * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer reach the build surface", and it
- * is consumed by exactly TWO callers that MUST agree: the `Build` row in
- * `appsSections` (`~/components/Apps/apps-sections`) and the page's own SSR gate
+ * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer reach the build surface". Since
+ * `/apps/build` also hosts the App Assistant, callers reach it through
+ * {@link resolveAppsBuildPageMode}, which composes it with {@link canAccessAppAssistant} —
+ * and that is consumed by exactly TWO callers that MUST agree: the `Build` row in
+ * `appsSections` (via `~/components/Apps/useAppsNavSections`) and the page's own SSR gate
  * (`~/components/Apps/resolveBuildPageAccess`, called from `pages/apps/build.tsx`).
  *
  * ## Why one predicate, in one place
@@ -160,7 +162,7 @@ export function canAccessAppsBuild(
  * `FeatureAccess` turns that silent degradation into a compile error here.
  *
  * The import is TYPE-ONLY, so nothing from the server module reaches a runtime
- * bundle (the established pattern — see `src/shared/data-graph/generation/context.ts`).
+ * bundle (the established pattern — see `src/shared/generation/context.ts`).
  */
 export type AppsStoreFeatureFlags =
   | Partial<Pick<FeatureAccess, 'appBlocks' | 'appListings' | 'appListingsPublicExternal'>>
@@ -306,6 +308,54 @@ export type AppsActivityFeatureFlags =
  */
 export function canAccessAppsActivity(features: AppsActivityFeatureFlags): boolean {
   return !!features?.appBlocks || !!features?.appBlocksPages;
+}
+
+export type AppAssistantFeatureFlags =
+  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appAssistant'>>
+  | null
+  | undefined;
+
+/**
+ * The App Assistant gate, shared by `/apps/build` (through {@link resolveAppsBuildPageMode}), the
+ * Fork action and the token routes so they cannot drift. Neither flag is `toggleable`, so the SSR
+ * and first-client values agree. Sign-in is the caller's.
+ */
+export function canAccessAppAssistant(features: AppAssistantFeatureFlags): boolean {
+  return !!features?.appBlocks && !!features?.appAssistant;
+}
+
+/**
+ * What `/apps/build` renders for a viewer — the ONE page that both gates above lead to.
+ *
+ * - `assistant` — {@link canAccessAppAssistant} admits them and they are signed in: the App
+ *   Assistant workspace. It used to live at `/apps/assistant`, which now 301s here.
+ * - `build` — {@link canAccessAppsBuild} admits them: pitch / first app / workbench.
+ * - `null` — neither: `notFound`.
+ *
+ * There is no signed-out assistant mode. `appAssistant` is `availability: []` with Flipt as its
+ * only on-switch, and every rollout on `app-assistant` is a segment matched on `isModerator` /
+ * `userId` / `appBuilderApproved` — properties an anonymous context does not carry — over
+ * `enabled: false` (which flipt-state's flag-shape gate enforces for segment-only flags). So the
+ * assistant gate cannot admit a signed-out viewer, and one falls through to the build gate.
+ *
+ * Composed from the two predicates, never restated: the page resolver and the rail's Build row
+ * both call THIS, so the tab and the page cannot disagree (#3899, PR #4668).
+ *
+ * Hydration-safe for the reasons both predicates give: every input is SSR-seeded and frozen.
+ */
+export type AppsBuildPageMode = 'assistant' | 'build' | null;
+
+export type AppsBuildPageFeatureFlags =
+  | (NonNullable<AppsBuildFeatureFlags> & NonNullable<AppAssistantFeatureFlags>)
+  | null
+  | undefined;
+
+export function resolveAppsBuildPageMode(
+  user: { isModerator?: boolean | null } | null | undefined,
+  features: AppsBuildPageFeatureFlags
+): AppsBuildPageMode {
+  if (user && canAccessAppAssistant(features)) return 'assistant';
+  return canAccessAppsBuild(user, features) ? 'build' : null;
 }
 
 /**

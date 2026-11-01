@@ -6,12 +6,13 @@ import {
   Loader,
   Stack,
   Text,
+  TextInput,
   Title,
   Tooltip,
   SimpleGrid,
 } from '@mantine/core';
-import { IconBell, IconBellOff, IconPencilMinus } from '@tabler/icons-react';
-import { useState } from 'react';
+import { IconBell, IconBellOff, IconPencilMinus, IconSearch } from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -30,6 +31,7 @@ import { NotificationToggle } from '~/components/Notifications/NotificationToggl
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { OfficialShopSection } from '~/components/Shop/OfficialShopSection';
 import { ShopBrowseControls } from '~/components/Shop/ShopBrowseControls';
+import { browseShopItems } from '~/components/Shop/shop-browse';
 import Image from 'next/image';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 
@@ -40,6 +42,7 @@ import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-prof
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import { CommunityCosmeticsSection } from '~/components/CosmeticShop/CommunityCosmeticsSection';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
+import { useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { CosmeticShopSort } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -76,6 +79,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CosmeticShopMain() {
   const { query } = useCosmeticShopQueryParams();
+  const subnavBottom = useSubnavBottom();
   const [filters, setFilters] = useState<ShopFilters>({
     ...(query ?? {}),
   });
@@ -90,11 +94,37 @@ export default function CosmeticShopMain() {
   const { wishlistedIds } = useQueryWishlistedShopItems();
   const features = useFeatureFlags();
 
+  // The sections mount only after the owned-cosmetics query settles, past the browser's own
+  // hash scroll, so a /shop#shop-section-<id> link has to scroll once they exist.
+  const sectionsReady = !isLoading && !loadingOwnedCosmetics;
+  useEffect(() => {
+    if (!sectionsReady) return;
+    document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
+  }, [sectionsReady]);
+
   const { updateLastViewed, isFetched } = useShopLastViewed();
 
   useEffect(() => {
-    setFilters(query);
+    setFilters((prev) => ({ ...query, search: prev.search }));
   }, [query]);
+
+  const communityHubShown =
+    features.creatorShop &&
+    cosmeticShopSections.some((section) => (section.meta as CosmeticShopSectionMeta).communityHub);
+  // Each official section hides itself when nothing in it matches, so with the
+  // hub off a search that finds nothing would otherwise leave a blank page.
+  const officialMatchCount = useMemo(
+    () =>
+      browseShopItems({
+        entries: cosmeticShopSections.flatMap((section) => section.items),
+        shopItemOf: (entry) => entry.shopItem,
+        filters,
+        sort,
+        ownedCosmeticIds,
+        wishlistedIds,
+      }).length,
+    [cosmeticShopSections, filters, sort, ownedCosmeticIds, wishlistedIds]
+  );
 
   useEffect(() => {
     if (isFetched) {
@@ -150,7 +180,22 @@ export default function CosmeticShopMain() {
               Any cosmetic purchases directly contributes to Civitai ❤️
             </Text>
           </Stack>
-          <div className="ml-auto">
+          <div
+            className="sticky z-40 -mx-2 flex flex-wrap items-center justify-end gap-2 bg-gray-0 p-2 dark:bg-dark-7"
+            style={{ top: subnavBottom }}
+          >
+            <TextInput
+              className="w-full sm:mr-auto sm:w-80"
+              radius="xl"
+              placeholder="Search names, descriptions, :sticker:"
+              aria-label="Search the shop"
+              leftSection={<IconSearch size={16} />}
+              value={filters.search ?? ''}
+              onChange={(event) => {
+                const search = event.currentTarget.value;
+                setFilters((prev) => ({ ...prev, search }));
+              }}
+            />
             <ShopBrowseControls
               sort={sort}
               onSortChange={setSort}
@@ -165,6 +210,8 @@ export default function CosmeticShopMain() {
               <Center p="xl">
                 <Loader />
               </Center>
+            ) : cosmeticShopSections?.length > 0 && !communityHubShown && !officialMatchCount ? (
+              <NoContent message="No items match your search and filters." />
             ) : cosmeticShopSections?.length > 0 ? (
               cosmeticShopSections.map((section, index) => {
                 const meta = section.meta as CosmeticShopSectionMeta;

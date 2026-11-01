@@ -23,6 +23,8 @@ import {
 import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.service';
 import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
 import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
@@ -1286,7 +1288,14 @@ const ownerModerationEventSelect = {
  * The MOD-facing per-listing history (`listModerationEvents`) is unaffected and
  * still shows these events in place.
  */
-const OWNER_HIDDEN_MODERATION_ACTIONS = ['purge-user-storage'] as const;
+const OWNER_HIDDEN_MODERATION_ACTIONS = [
+  'purge-user-storage',
+  // Same reasoning: an act against a document ANOTHER user authored in this app.
+  'storage-doc-hide',
+  'storage-doc-unhide',
+  'storage-doc-delete',
+  'storage-doc-dismiss',
+] as const;
 
 /**
  * Per-listing moderation history, NEWEST-first, keyset-paginated. The cursor is the
@@ -1310,9 +1319,7 @@ async function queryModerationEvents(opts: {
       // See OWNER_HIDDEN_MODERATION_ACTIONS: an action about a THIRD PARTY's data
       // is withheld from the owner's history outright, because the owner select
       // keeps `reason` and the reason is about someone else.
-      ...(opts.ownerScoped
-        ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } }
-        : {}),
+      ...(opts.ownerScoped ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } } : {}),
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
@@ -1924,7 +1931,7 @@ export async function republishOwnListing(opts: {
   // Set by the REVIEW arm; `null` means the republish went live immediately.
   let reviewReason: RepublishReviewReason | null = null;
 
-  await dbWrite.$transaction(async (tx) => {
+  const rating = await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
     if (listing.status !== 'removed') {
       throw new OffsiteModerationError(
@@ -2005,11 +2012,21 @@ export async function republishOwnListing(opts: {
     // the derived ceiling is strictly higher — so writing the result UNCONDITIONALLY is
     // safe: tame media can never lower a deliberately higher declaration, and an
     // unchanged rating writes its own value back. Same shape as `approveRequest`'s.
+    // An owner republish never grants a split; it keeps one a moderator granted, exactly as
+    // an image re-rate does. An icon or cover raised above PG-13 since then does not end it:
+    // civitai.com shows the placeholder / another image and `sfw-slot-mature` tells the
+    // author, and the listing stays on civitai.com.
     const flooredRating = await resolveListingRatingFloorInTx(
       tx,
       input.appListingId,
-      listing.contentRating
+      listing.contentRating,
+      await readListingMediaSplit(tx, input.appListingId)
     );
+    const ratingChange = {
+      slug: listing.slug,
+      before: listing.contentRating,
+      after: flooredRating,
+    };
 
     // 🔴 THE ASSET-CHANGE REVIEW GATE. Compare the listing's CURRENT reviewable asset
     // surface against the one recorded when the owner unpublished it (= the one a
@@ -2041,7 +2058,7 @@ export async function republishOwnListing(opts: {
         reviewReason,
         flooredRating,
       });
-      return;
+      return ratingChange;
     }
 
     const flipped = await tx.appListing.updateMany({
@@ -2083,6 +2100,12 @@ export async function republishOwnListing(opts: {
         after: { status: 'approved' },
       },
     });
+    return ratingChange;
+  });
+  await recordListingRatingChangeAfterCommit({
+    appListingId: input.appListingId,
+    ...rating,
+    actorUserId: userId,
   });
 
   // Post-commit, best-effort: warn when an on-site owner-republish restored the LISTING
@@ -2161,10 +2184,10 @@ export async function republishOwnListing(opts: {
  *
  * 🔴 THE ICON+COVER FLOOR IS PRE-CHECKED HERE, BEFORE ANYTHING IS WRITTEN, and it is not
  * decoration. `approveExternalRequest` asserts the floor and does NOT exempt on-site, while
- * the on-site FIRST-publish path (`approveRequest`) never asserts it — so an approved
- * on-site listing is genuinely allowed to have no icon or no cover. Routing such a listing
- * to review without this check strands it: it sits `pending`, its app is suspended, and the
- * moderator's approve fails on the floor every time, with no owner-reachable way out.
+ * a listing can have reached `removed` without art (ungated paths: see
+ * `listing-publish-floor.ts`). Routing such a listing to review without this check strands
+ * it: it sits `pending`, its app is suspended, and the moderator's approve fails on the floor
+ * every time, with no owner-reachable way out.
  * Failing HERE turns that into an ordinary, actionable "add an icon and a cover" error and
  * leaves the listing `removed` where the owner can still edit it.
  *

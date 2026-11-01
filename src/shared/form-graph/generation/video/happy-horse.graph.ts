@@ -3,8 +3,8 @@ import {
   getAspectRatioOptions,
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
-import { happyHorseVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
+import { happyHorseVersionIds } from '~/shared/generation/version-ids';
 import { checkpointDef } from '../checkpoint';
 import {
   SEED,
@@ -18,13 +18,11 @@ import {
 import { familyScope, modelIdOf, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * HappyHorse (v1.0 + v1.1), ported from `happy-horse-graph.ts`. Version picks
+ * HappyHorse (v1.0 + v1.1). Version picks
  * widen the aspect-ratio set for v1.1; ref2vid takes up to 9 references,
  * vid2vid:edit takes a source video plus an audio setting. No negative
  * prompt.
  */
-
-// ---- copied from happy-horse-graph.ts, which dies with the data-graph engine
 
 const happyHorseAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
@@ -53,8 +51,6 @@ const happyHorseAudioSettings = [
   { label: 'Auto', value: 'auto' },
   { label: 'Origin', value: 'origin' },
 ] as const;
-
-// ---- end of happy-horse-graph.ts copies -------------------------------------
 
 const AR = defFamily((key: string) => {
   const [resolution, tier] = key.split('|') as ['720p' | '1080p', 'v11' | 'v10'];

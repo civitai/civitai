@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
-import type { WorkflowEvent } from '@civitai/client';
-import { getWorkflow } from '@civitai/client';
+import type { WorkflowEvent } from '@civitai/orchestration-client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -16,9 +16,14 @@ import {
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
+import { checkPoiHashOnScan } from '~/server/services/poi-hash.service';
+import { checkDuplicateHashOnScan } from '~/server/services/duplicate-model-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import {
+  bustOrchestratorModelCache,
+  bustOrchestratorScannedFileCache,
+} from '~/server/services/orchestrator/models';
 import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
@@ -27,7 +32,6 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -129,6 +133,19 @@ export function examinePickleImports({
 // Keeping all DB writes here guarantees zero behavioral drift between paths.
 // -----------------------------------------------------------------------------
 
+// Postgres rejects U+0000 in both text and jsonb (22P05), and safetensors headers can carry it,
+// so one NUL in a trainer's metadata would fail the whole update and leave the file Pending.
+function stripNul<T>(value: T): T {
+  if (typeof value === 'string') return value.replace(/\u0000/g, '') as T;
+  if (Array.isArray(value)) return value.map(stripNul) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k.replace(/\u0000/g, ''), stripNul(v)])
+    ) as T;
+  }
+  return value;
+}
+
 export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   const { fileId } = outcome;
 
@@ -141,7 +158,14 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
       headerData: true,
-      modelVersion: { select: { modelId: true, model: { select: { userId: true } } } },
+      sizeKB: true,
+      modelVersion: {
+        select: {
+          modelId: true,
+          baseModel: true,
+          model: { select: { userId: true, status: true, meta: true, type: true } },
+        },
+      },
     },
   });
   if (!file) {
@@ -168,11 +192,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       where: { id: fileId },
       data: { scanRequestedAt: new Date() },
     });
+    await bustAfterFailedScan(outcome.modelVersionId ?? file.modelVersionId, file);
     return;
   }
 
-  // Capture pre-existing AutoV2 BEFORE any hash deletion. Used for hash-fix
-  // notification (D3). SHA256 capture goes here too if we ever re-enable D2.
+  // Capture pre-existing hashes BEFORE any hash deletion: AutoV2 for the hash-fix
+  // notification (D3), SHA256 so the duplicate-hash check skips unchanged rescans.
   const existingHashes = outcome.hashes
     ? await dbWrite.modelFileHash.findMany({
         where: { fileId, type: { in: [ModelHashType.SHA256, ModelHashType.AutoV2] } },
@@ -190,20 +215,22 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
   if (outcome.virusScan) {
     data.virusScanResult = outcome.virusScan.result;
-    data.virusScanMessage = outcome.virusScan.message;
+    data.virusScanMessage = stripNul(outcome.virusScan.message);
   }
 
   if (outcome.pickleScan) {
     data.pickleScanResult = outcome.pickleScan.result;
-    data.pickleScanMessage = outcome.pickleScan.message;
+    data.pickleScanMessage = stripNul(outcome.pickleScan.message);
   }
 
-  if (outcome.headerData !== undefined) {
-    data.headerData = outcome.headerData as Prisma.InputJsonValue;
+  // Stripped once: SSHS_12 below is derived from this header and lands in a text column too.
+  const headerData = stripNul(outcome.headerData);
+  if (headerData !== undefined) {
+    data.headerData = headerData as Prisma.InputJsonValue;
   }
 
   if (outcome.rawScanResult !== undefined) {
-    data.rawScanResult = outcome.rawScanResult as Prisma.InputJsonValue;
+    data.rawScanResult = stripNul(outcome.rawScanResult) as Prisma.InputJsonValue;
   }
 
   await dbWrite.modelFile.update({ where: { id: fileId }, data });
@@ -214,7 +241,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       Object.entries(
         // outcome.headerData is absent on a hash-only rescan, and this rebuild deletes every row
         // for the file — so the stored column is what keeps SSHS_12 from being dropped.
-        normalizeScanHashes(outcome.hashes, outcome.headerData ?? file.headerData)
+        normalizeScanHashes(outcome.hashes, headerData ?? file.headerData)
       ) as Array<[ModelHashType, string]>
     )
       .filter(([, hash]) => Boolean(hash))
@@ -268,6 +295,44 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         userId: scannedUserId,
         sha256: scannedSha256,
       });
+    }
+    if (
+      scannedSha256 &&
+      scannedModelId &&
+      scannedUserId &&
+      file.type === MINOR_HASH_FILE_TYPE &&
+      (await isFlipt(FLIPT_FEATURE_FLAGS.POI_HASH_AUTO_FLAG))
+    ) {
+      await checkPoiHashOnScan({
+        fileId,
+        modelId: scannedModelId,
+        userId: scannedUserId,
+        sha256: scannedSha256,
+      });
+    }
+
+    const scannedModel = file.modelVersion?.model;
+    if (scannedSha256 && scannedModelId && scannedModel) {
+      await checkDuplicateHashOnScan({
+        fileId,
+        fileType: file.type,
+        sizeKB: file.sizeKB,
+        sha256: scannedSha256,
+        previousSha256: existingHashes.find((h) => h.type === ModelHashType.SHA256)?.hash,
+        modelId: scannedModelId,
+        ownerId: scannedModel.userId,
+        modelStatus: scannedModel.status,
+      }).catch((e) =>
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'duplicate-model-hash',
+            message: (e as Error).message,
+            fileId,
+          },
+          'webhooks'
+        ).catch(() => null)
+      );
     }
   }
 
@@ -348,8 +413,8 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
   // A first scan of a weight file can make a version coverable (`scannedAt` gates the uploaded-file
   // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
-  // expiry, resourceDataCache for an hour. Last and logged, not thrown: the callback's dedupe key
-  // is already taken, so a 500 here drops the redelivery.
+  // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
+  // already written, and a throw would make the orchestrator redeliver the whole workflow.
   if (ranScan && LOADABLE_FILE_TYPES.includes(file.type))
     await Promise.all([
       resourceDataCache.bust([modelVersionId]),
@@ -365,6 +430,49 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         'webhooks'
       ).catch(() => undefined)
     );
+}
+
+const FAILURE_BUST_TTL_SECONDS = 60 * 60;
+
+type FailedScanFile = {
+  id: number;
+  modelVersionId: number;
+  modelVersion: { modelId: number; baseModel: string; model: { type: ModelType } };
+};
+
+// The orchestrator caches answers for hours per exact AIR, so one cached during an outage fails
+// every retry until busted. The scan's file-pinned AIR is a separate entry from the version's.
+// Logged, not thrown, so the retry bump already written stands.
+async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile) {
+  try {
+    const prefix = REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
+    const [bustVersion, bustFile] = await Promise.all([
+      sysRedis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
+      sysRedis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
+    ]);
+    await Promise.all([
+      bustVersion && bustOrchestratorModelCache(modelVersionId),
+      bustFile &&
+        bustOrchestratorScannedFileCache({
+          fileId: file.id,
+          modelVersionId: file.modelVersionId,
+          modelId: file.modelVersion.modelId,
+          modelType: file.modelVersion.model.type,
+          baseModel: file.modelVersion.baseModel,
+        }),
+    ]);
+  } catch (e) {
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'model-file-scan',
+        message: `failed-scan bust failed: ${String(e)}`,
+        modelVersionId,
+        fileId: file.id,
+      },
+      'webhooks'
+    ).catch(() => undefined);
+  }
 }
 
 async function notifyHashFix(modelVersionId: number, fileId: number) {
@@ -487,7 +595,7 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
  *
  * Two adjustments, both idempotent so re-running over already-normalized values is a no-op:
  *
- *   AutoV3     arrives full-length (per @civitai/client: "SHA256 of the file with safetensors
+ *   AutoV3     arrives full-length (per @civitai/orchestration-client: "SHA256 of the file with safetensors
  *              header metadata stripped"). We store 12 chars, the width A1111 writes.
  *   SHA256_12  is sent by nothing. It is sha256[0:12] — the width A1111/Forge write for LoRAs,
  *              which no other stored hash matches, so resource detection fails without it.
@@ -601,8 +709,32 @@ export async function processModelFileScanResult(req: NextApiRequest) {
       ).catch();
       return;
     }
+
+    // A throw becomes a 500 and the orchestrator redelivers, but the key taken above would
+    // suppress that redelivery as a duplicate and the result would be lost for good.
+    try {
+      await handleScanWorkflow(event);
+    } catch (error) {
+      await sysRedis.del(dedupeKey).catch((e) =>
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'model-file-scan-result',
+            message: `Failed to release dedupe key: ${String(e)}`,
+            workflowId: event.workflowId,
+          },
+          'webhooks'
+        ).catch(() => undefined)
+      );
+      throw error;
+    }
+    return;
   }
 
+  await handleScanWorkflow(event);
+}
+
+async function handleScanWorkflow(event: WorkflowEvent) {
   const { data } = await getWorkflow({
     client: internalOrchestratorClient,
     path: { workflowId: event.workflowId },
@@ -757,7 +889,7 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
         modelType: file.modelVersion.model.type as ModelType,
         baseModel: file.modelVersion.baseModel,
         url: file.url,
-        priority: 'low',
+        priority: 'normal',
       });
       sent.push(file.id);
     } catch (err) {
@@ -795,15 +927,13 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
 export async function unpublishBlockedModel(modelVersionId: number) {
   const version = await dbWrite.modelVersion.findUnique({
     where: { id: modelVersionId },
-    select: { id: true, model: { select: { id: true, meta: true } } },
+    select: { id: true, model: { select: { id: true } } },
   });
   if (!version?.model?.id) return;
 
-  const meta = (version.model.meta as ModelMeta | null) || {};
   await unpublishModelById({
     id: version.model.id,
     reason: 'duplicate',
-    meta,
     customMessage: 'Model has been unpublished due to matching a blocked hash',
     userId: -1,
     isModerator: true,

@@ -1,5 +1,8 @@
 import * as z from 'zod';
+import { BLOCK_SLUG } from '@civitai/app-assistant';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
+import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
+import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -14,7 +17,8 @@ import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderatio
  * 33% base64 overhead becomes a bottleneck. v0 prioritizes shipping.
  */
 
-export const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$/;
+// One rule for a block slug, which App Assistant's app keys (`@civitai/app-assistant`) follow too.
+export const SLUG_REGEX = BLOCK_SLUG;
 export const SEMVER_REGEX = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 export const MAX_BUNDLE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MiB
 export const MAX_FILES_IN_BUNDLE = 2000;
@@ -209,6 +213,7 @@ export type ListVersionHistoryInput = z.infer<typeof listVersionHistorySchema>;
 export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),
+  mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
 });
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;
@@ -298,11 +303,37 @@ export const mintReviewBlockTokenSchema = z.object({
 
 export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
 
+/**
+ * 🔴 THE ZOD ENUM IS BUILT FROM THE SHARED LEDGER, not a fourth hand-typed copy.
+ * `AGENT_REVIEW_SECTIONS` lives in `~/shared/constants/agent-review-section.constants`
+ * (zod-free, Prisma-free, React-free) so this schema, the provisioning service and the
+ * client renderer cannot disagree about which analyses exist.
+ */
+
 /** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
- *  dispatches an ephemeral review agent for a PENDING request. Same shape as
- *  previewRequest (the pending request id). */
+ *  dispatches an ephemeral review agent for a PENDING request. */
 export const startAgentReviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
+  /**
+   * Re-run only these analyses.
+   *
+   * 🔴 OMITTED MEANS ALL THREE, AND THAT IS THE DEFAULT PATH — a first dispatch and the
+   * whole-report "Re-run all analyses" both leave this out, and the provisioned Job is then
+   * byte-identical to what it was before this field existed.
+   *
+   * 🔴 WHAT A SUBSET BUYS TODAY, STATED PLAINLY SO NOBODY OVER-READS IT. Civitai-side it
+   * (a) carries the list to the agent as a contract env var, and (b) SEEDS the new report
+   * row with the previous report's surviving sections, so a targeted retry can never lose a
+   * completed analysis no matter what the runner does. Whether the runner actually SKIPS the
+   * other two — the part that saves money — depends on the agent template consuming that
+   * env var, which ships separately. Until it does, a targeted re-run costs the same as a
+   * full one; it is never WORSE than today's only option, which is a full re-run.
+   */
+  sections: z
+    .array(z.enum(AGENT_REVIEW_SECTIONS))
+    .min(1)
+    .max(AGENT_REVIEW_SECTIONS.length)
+    .optional(),
 });
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;

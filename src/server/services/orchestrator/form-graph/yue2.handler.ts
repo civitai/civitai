@@ -2,8 +2,8 @@ import type { YuE2StepTemplate } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import { yue2Steps } from '~/shared/constants/yue2.constants';
 import { createMusicConceptStep } from '../music-concept';
-import { defineHandler } from '../ecosystems/handler-factory';
-import type { StepInput } from '../ecosystems';
+import { defineHandler } from '../handlers/handler-factory';
+import type { StepInput } from '../handlers';
 import type { EcosystemData } from './types';
 
 export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>((data) => {

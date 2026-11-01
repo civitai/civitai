@@ -9,12 +9,17 @@
     IconX,
     IconArrowLeft,
     IconInfoCircle,
+    IconPhotoPlus,
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
+  import { isAbort, uploadFile } from '$lib/upload';
+  import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -35,18 +40,25 @@
     type ParamBound,
   } from '$lib/data/trainingModels';
   import {
+    addSamplePrompt,
     defaultRunParams,
     isCustom,
+    MAX_SAMPLE_PROMPTS,
     PARAM_HELP,
     PARAM_LABELS,
+    optimizerLrParams,
     paramDeviations,
     paramDisplay,
     promptHasTrigger,
     runCard,
     runExtraCapabilities,
     runParamsKey,
+    runTakesSampleImages,
+    runTrainsPairs,
     runVersion,
+    sampleImagesProblem,
     runVersionLabel,
+    filledPrompts,
     teLocked,
     withTrigger,
     type LaunchedRun,
@@ -67,6 +79,7 @@
     params = $bindable(),
     presetType = $bindable(),
     imageCount,
+    trainsPairs = false,
     matureCount,
     onStart,
     onBack,
@@ -83,11 +96,13 @@
     params: Record<string, RunParams>;
     presetType: string;
     imageCount: number;
+    /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
+    trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
     matureCount: number;
     onStart: (
       launched: LaunchedRun[],
-      prompts: string[],
+      prompts: SamplePrompt[],
       name: string,
       currencies: string[]
     ) => Promise<void>;
@@ -96,8 +111,17 @@
     onShowMature: () => void;
   } = $props();
 
+  const datasetCount = $derived(
+    trainsPairs
+      ? `${imageCount.toLocaleString()} ${imageCount === 1 ? 'pair' : 'pairs'}`
+      : mediaCount(imageCount, selection.media)
+  );
+
   let starting = $state(false);
   let startError = $state('');
+
+  // Moderators can switch training off on the main app; the flow's banner carries their message.
+  const trainingDisabled = $derived(serviceStatus.value?.available === false);
 
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
@@ -106,11 +130,11 @@
     if (!needsAttestation) attestSfw = false;
   });
 
-  // Blue can't pay for mature content without a paid membership: the orchestrator takes Blue, refunds
-  // it seconds after submit, and charges the whole price in Yellow. Users read that silent switch as a
-  // billing bug, so it is warned here and confirmed at Start. Unknown membership warns too, hedged.
+  // A mature dataset is never charged in Green: the orchestrator refunds that part seconds after submit and
+  // charges Yellow instead (and Blue too, without a membership). Users read that silent switch as a billing
+  // bug, so it is warned here and confirmed with a tick before Start. Unknown membership warns, hedged.
   const membership = hostConfig().isPaidMember;
-  const blueExcluded = $derived(matureCount > 0 && membership !== true);
+  const mature = $derived(matureCount > 0);
 
 
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
@@ -122,6 +146,14 @@
 
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
   let openAdv = $state(-1);
+
+  // Support refuses refunds on a poor result once advanced params were edited, so editing them needs
+  // the same acknowledgement as the in-app trainer — per run, and again when its model changes.
+  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
+  const advancedAcknowledged = (i: number) =>
+    acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
+  const fieldLocked = (i: number, field: ParamField) =>
+    field !== 'epochs' && !advancedAcknowledged(i);
 
   const presetSeen = $derived(seenFor(presetType, selection.media));
   const GUIDANCE_HELP =
@@ -145,6 +177,7 @@
       steps: p.steps,
       epochs: p.epochs > 0 ? p.epochs : undefined,
       imageCount: imageCount > 0 ? imageCount : undefined,
+      editTraining: runTrainsPairs(run) || undefined,
     };
   };
   // An out-of-range Steps field is UNQUOTABLE, never "quote the default budget": the orchestrator
@@ -187,6 +220,12 @@
     return sum;
   });
   const total = $derived(runTotal);
+  const spend = $derived(
+    nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
+  );
+  const ackKey = $derived(matureAckKey(spend, matureCount));
+  let ackedFor = $state<string | null>(null);
+  const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
     const cost = runCostAt(i);
     return cost == null ? null : cost.toLocaleString();
@@ -254,10 +293,10 @@
   const isExtra = (field: ParamField): field is ExtraParamField =>
     EXTRA_PARAM_FIELDS.includes(field as ExtraParamField);
 
-  const defaultsAt = (i: number) => defaultRunParams(selection.runs[i]!);
+  const defaultsAt = (i: number) => defaultRunParams(selection.runs[i]!, trigger);
   const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
   const deviationsByRun = $derived(
-    selection.runs.map((run, i) => paramDeviations(run, paramsAt(i), labelMode))
+    selection.runs.map((run, i) => paramDeviations(run, paramsAt(i), labelMode, trigger))
   );
   const deviationsAt = (i: number) => deviationsByRun[i] ?? [];
   // The Advanced panel's own count — Steps lives in the header, Checkpoints in the panel.
@@ -301,6 +340,7 @@
       return;
     }
     (p as unknown as Record<string, NumericInput | boolean>)[field] = value;
+    if (field === 'optimizer') Object.assign(p, optimizerLrParams(selection.runs[i]!, p));
     // Shuffling with nothing kept would move the trigger word away from the front of every
     // caption — keep one, as the main trainer does when a trigger is set.
     if (field === 'shuffleTokens' && value === true && trigger.trim() && Number(p.keepTokens) === 0)
@@ -318,19 +358,60 @@
     if (clamped !== n) p[field] = clamped;
   }
   function addPrompt() {
-    const id = Math.max(-1, ...prompts.map((p) => p.id)) + 1;
-    if (prompts.length < 6) prompts = [...prompts, { id, text: 'new scene' }];
+    prompts = addSamplePrompt(prompts);
   }
   function removePrompt(i: number) {
-    if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
+    if (prompts.length <= 1) return;
+    clearImage(prompts[i]!.id);
+    prompts = prompts.filter((_, k) => k !== i);
   }
   function insertTrigger(i: number) {
     prompts[i]!.text = withTrigger(trigger, prompts[i]!.text);
   }
+  // Edit LoRAs are judged by how they change an input image, so their sample rows take one.
+  const takesImages = $derived(selection.runs.some(runTakesSampleImages));
+  const someRunsTextOnly = $derived(takesImages && !selection.runs.every(runTakesSampleImages));
+  const imagesProblem = $derived(takesImages ? sampleImagesProblem(prompts) : null);
+  // Keyed by prompt id. An upload outliving its row (removed mid-upload) is aborted.
+  let imageUploads = $state<Record<number, AbortController>>({});
+  let imageErrors = $state<Record<number, string>>({});
+  const uploadingImage = $derived(Object.keys(imageUploads).length > 0);
+
+  async function attachImage(id: number, file: File | undefined) {
+    if (!file) return;
+    imageUploads[id]?.abort();
+    const controller = new AbortController();
+    imageUploads[id] = controller;
+    delete imageErrors[id];
+    try {
+      const { url } = await uploadFile(file, () => {}, controller.signal);
+      if (!url) throw new Error('Upload finished but the image is not ready yet — retry.');
+      const row = prompts.find((p) => p.id === id);
+      if (row) row.image = { url, name: file.name };
+    } catch (e) {
+      if (!isAbort(e)) imageErrors[id] = e instanceof Error ? e.message : 'Upload failed';
+    } finally {
+      if (imageUploads[id] === controller) delete imageUploads[id];
+    }
+  }
+  function clearImage(id: number) {
+    imageUploads[id]?.abort();
+    const row = prompts.find((p) => p.id === id);
+    if (row) row.image = undefined;
+    delete imageErrors[id];
+  }
+  $effect(() => () => {
+    for (const controller of Object.values(imageUploads)) controller.abort();
+  });
+
   const triggerText = $derived(trigger.trim());
   const promptsMissingTrigger = $derived(
-    triggerText ? prompts.filter((p) => !promptHasTrigger(triggerText, p.text)).length : 0
+    triggerText
+      ? prompts.filter((p) => p.text.trim() && !promptHasTrigger(triggerText, p.text)).length
+      : 0
   );
+  // Blank rows generate no sample image, so they are not counted.
+  const filledCount = $derived(filledPrompts(prompts.map((p) => p.text)).length);
   // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
   // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
@@ -349,9 +430,17 @@
   function start() {
     // total == null means a quote is in flight or failed — never submit without a shown price
     // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (starting || total == null || (needsAttestation && !attestSfw)) return;
-    const spend = nonBlueSpend(total, buzzMode.value, !blueExcluded);
-    if (spend) {
+    if (
+      starting ||
+      trainingDisabled ||
+      total == null ||
+      (needsAttestation && !attestSfw) ||
+      ackMissing ||
+      imagesProblem ||
+      uploadingImage
+    )
+      return;
+    if (spend && !spend.matureYellow) {
       confirmSpend = spend;
       spendDialogOpen = true;
       return;
@@ -360,14 +449,14 @@
   }
 
   async function reallyStart() {
-    if (starting) return;
+    if (starting || trainingDisabled) return;
     spendDialogOpen = false;
     starting = true;
     startError = '';
     try {
       await onStart(
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
-        prompts.map((p) => p.text),
+        prompts,
         name,
         buzzMode.currencies
       );
@@ -397,6 +486,49 @@
   </Tooltip.Provider>
 {/snippet}
 
+{#snippet sampleImage(p: SamplePrompt)}
+  {#if imageUploads[p.id]}
+    <div class="grid size-9 shrink-0 place-items-center rounded-md border border-dark-4 bg-dark-7">
+      <Spinner class="size-4" />
+    </div>
+  {:else if p.image}
+    <div class="group relative size-9 shrink-0">
+      <img
+        src={p.image.url}
+        alt="Input for sample: {p.image.name}"
+        title={p.image.name}
+        class="size-9 rounded-md border border-dark-4 object-cover"
+      />
+      <button
+        type="button"
+        aria-label="Remove input image"
+        onclick={() => clearImage(p.id)}
+        class="absolute -right-1.5 -top-1.5 grid size-4 place-items-center rounded-full border border-dark-4 bg-dark-6 text-dark-1 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
+      >
+        <IconX size={10} stroke={2.5} />
+      </button>
+    </div>
+  {:else}
+    <label
+      class="grid size-9 shrink-0 cursor-pointer place-items-center rounded-md border border-dashed border-dark-4 text-dark-2 transition-colors hover:border-primary hover:text-primary"
+      title="Add an input image"
+    >
+      <IconPhotoPlus size={16} stroke={2} />
+      <input
+        type="file"
+        accept="image/*"
+        class="sr-only"
+        aria-label="Add an input image"
+        onchange={(e) => {
+          const input = e.currentTarget;
+          void attachImage(p.id, input.files?.[0]);
+          input.value = '';
+        }}
+      />
+    </label>
+  {/if}
+{/snippet}
+
 {#snippet recommendedHint(i: number, field: ParamField, display: string)}
   <span class="font-mono text-[11px] text-buzz">
     recommended {display}
@@ -414,6 +546,7 @@
   {@const locked = f.field === 'textEncoderLr' && teLocked(selection.runs[i]!)}
   {@const changed = deviates(i, f.field)}
   {@const bound = fieldBound(i, f.field)}
+  {@const unacknowledged = fieldLocked(i, f.field)}
   <div
     class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm {last
       ? ''
@@ -434,11 +567,13 @@
         <Checkbox
           aria-label={PARAM_LABELS[f.field]}
           bind:checked={() => Boolean(paramsAt(i)[f.field]), (v) => setField(i, f.field, v === true)}
+          disabled={unacknowledged}
         />
       </div>
     {:else if f.kind === 'select'}
       <Select.Root
         type="single"
+        disabled={unacknowledged}
         bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
       >
         <Select.Trigger class="h-7 font-mono" aria-label={PARAM_LABELS[f.field]}>
@@ -459,7 +594,7 @@
         aria-label={PARAM_LABELS[f.field]}
         bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
-        disabled={locked}
+        disabled={locked || unacknowledged}
         class="h-7 font-mono"
       />
     {/if}
@@ -496,7 +631,8 @@
 
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
-      <div class="flex items-center gap-1.5">
+      <!-- The Character/Style/Concept exposure targets are about subjects; an edit run has none. -->
+      <div class="flex items-center gap-1.5" class:hidden={trainsPairs}>
         <span class="inline-flex items-center gap-1 font-mono text-xs text-dark-2">
           exposure guidance {@render help(GUIDANCE_HELP, 'exposure guidance')}
         </span>
@@ -572,6 +708,11 @@
             </span>
           </div>
 
+          {#if trainsPairs}
+            <div class="bg-dark-6 px-4 pb-3 font-mono text-xs text-dark-2">
+              each pair seen ~{seen(i)}×
+            </div>
+          {:else}
           <div class="flex items-center gap-1 bg-dark-6 px-4 pb-3 font-mono text-xs {low(i) ? 'text-buzz' : 'text-emerald-400'}">
             {#if low(i)}<IconAlertTriangle size={13} stroke={2} class="shrink-0" />{:else}<IconCheck
                 size={13}
@@ -581,6 +722,7 @@
               ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
               : `good for a ${presetType}, target ~${presetSeen}×`})
           </div>
+          {/if}
 
           {#if openAdv === i && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
@@ -593,6 +735,34 @@
                 <span class="font-mono text-xs text-dark-2">
                   seeded with {card.name}'s recommended values — hover (i) for what each does
                 </span>
+              </div>
+              <div class="mb-3 flex items-start gap-2.5 rounded-lg border border-buzz/30 bg-buzz/5 p-3">
+                <IconAlertTriangle size={16} stroke={2} class="mt-0.5 shrink-0 text-buzz" />
+                <div class="flex flex-col gap-1.5">
+                  <span class="text-sm font-semibold text-dark-0">
+                    Editing advanced parameters forfeits your refund
+                  </span>
+                  <span class="text-xs leading-snug text-dark-2">
+                    These defaults are tuned for your selected model. If you change them and the
+                    result is poor, the training is non-refundable. Steps and Checkpoints are not
+                    affected.
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <Checkbox
+                      id="acknowledge-advanced-{run.id}"
+                      bind:checked={
+                        () => advancedAcknowledged(i),
+                        (v) => (acknowledgedAdvanced[runParamsKey(run)] = v === true)
+                      }
+                    />
+                    <label
+                      for="acknowledge-advanced-{run.id}"
+                      class="cursor-pointer text-xs text-dark-1"
+                    >
+                      I understand and want to edit the advanced parameters
+                    </label>
+                  </div>
+                </div>
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
                 {#each CORE_FIELDS as f, k (f.field)}
@@ -622,14 +792,26 @@
       <div class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <div class="flex flex-col gap-2">
           {#each prompts as p, i (p.id)}
-            {@const missing = triggerText !== '' && !promptHasTrigger(triggerText, p.text)}
+            {@const missing =
+              triggerText !== '' && p.text.trim() !== '' && !promptHasTrigger(triggerText, p.text)}
             <div class="flex flex-col gap-1">
               <div class="flex items-center gap-2">
-                <Input bind:value={prompts[i]!.text} aria-invalid={missing} class="flex-1" />
+                {#if takesImages}
+                  {@render sampleImage(p)}
+                {/if}
+                <Input
+                  bind:value={prompts[i]!.text}
+                  placeholder="Describe a test scene, e.g. standing in a forest at dusk"
+                  aria-invalid={missing}
+                  class="flex-1"
+                />
                 {#if prompts.length > 1}
                   <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}><IconX size={14} stroke={2} /></Button>
                 {/if}
               </div>
+              {#if imageErrors[p.id]}
+                <div class="font-mono text-[11px] text-red-400">{imageErrors[p.id]}</div>
+              {/if}
               {#if missing}
                 <div class="flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-buzz">
                   <IconAlertTriangle size={12} stroke={2} class="shrink-0" />
@@ -646,11 +828,19 @@
             </div>
           {/each}
         </div>
-        {#if prompts.length < 6}
+        {#if prompts.length < MAX_SAMPLE_PROMPTS}
           <Button variant="outline" class="mt-2 w-full border-dashed" onclick={addPrompt}>+ Add sample prompt</Button>
         {/if}
         <p class="mt-2.5 font-mono text-xs text-dark-2">
+          {#if filledCount === 0}
+            <span class="text-buzz">No sample prompt filled in: no test images will be generated.</span>
+          {/if}
           Applied to every run.
+          {#if takesImages}
+            Add an input image to each prompt to render the samples as edits of it{someRunsTextOnly
+              ? ' (on the runs whose model supports it; the others sample from text)'
+              : ''}, or leave them all empty for text-only samples.
+          {/if}
           {#if triggerText}
             Each sample starts with your trigger word "{triggerText}", so the images test what the
             LoRA is learning.
@@ -670,7 +860,7 @@
       <div class="flex justify-between gap-2.5">
         <dt class="text-dark-2">Dataset</dt>
         <dd class="m-0 font-semibold text-dark-0">
-          {mediaCount(imageCount, selection.media)} · {labelMode === 'tag' ? 'tags' : 'captions'}
+          {datasetCount} · {trainsPairs ? 'instructions' : labelMode === 'tag' ? 'tags' : 'captions'}
         </dd>
       </div>
       <div class="flex justify-between gap-2.5">
@@ -682,7 +872,7 @@
       <div class="flex justify-between gap-2.5">
         <dt class="text-dark-2">Sample prompts</dt>
         <dd class="m-0 font-semibold {promptsMissingTrigger > 0 ? 'text-buzz' : 'text-dark-0'}">
-          {prompts.length}{promptsMissingTrigger > 0 ? ` · ${promptsMissingTrigger} without trigger` : ''}
+          {filledCount}{promptsMissingTrigger > 0 ? ` · ${promptsMissingTrigger} without trigger` : ''}
         </dd>
       </div>
     </dl>
@@ -749,28 +939,53 @@
       </span>
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
-      ~{etaMin} min{multi ? ' · parallel' : ''} · {mediaCount(imageCount, selection.media)}
+      ~{etaMin} min{multi ? ' · parallel' : ''} · {datasetCount}
     </div>
 
-    {#if blueExcluded}
+    {#if mature}
       <div
         role="note"
-        class="mt-3 flex items-start gap-2 rounded-lg border border-buzz/30 bg-buzz/5 p-3 text-xs leading-snug text-dark-1"
+        class="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
       >
-        <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-buzz" />
+        <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-amber-400" />
         <span>
           {matureCount}
           {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
-          <strong>mature</strong> (R or above) —
+          <strong>mature</strong> (R or above).
           <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
-            see which
+            See which
           </button>.
-          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
-          membership, so {membership === undefined ? 'unless you have one, ' : ''}this
-          {multi ? 'training' : 'run'} is charged in full in <span class="text-buzz">Yellow</span> Buzz.
-          {@render membershipLink()}
+          {#if membership === true}
+            Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
+            <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is charged
+            in <span class="text-yellow-400">Yellow</span> Buzz.
+          {:else}
+            <span class="text-blue-400">Blue</span> and <span class="text-emerald-400">Green</span> Buzz
+            can't pay for mature content without a membership, so {membership === undefined
+              ? 'unless you have one, '
+              : ''}this {multi ? 'training' : 'run'} is charged in full in
+            <span class="text-yellow-400">Yellow</span> Buzz.
+            {@render membershipLink()}
+          {/if}
         </span>
       </div>
+      {#if ackKey}
+        <div
+          class="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
+        >
+          <Checkbox
+            id="ack-mature-yellow"
+            bind:checked={() => ackedFor === ackKey, (v) => (ackedFor = v ? ackKey : null)}
+            class="mt-0.5 shrink-0"
+          />
+          <label for="ack-mature-yellow" class="cursor-pointer">
+            I understand {spend?.uncertain ? 'up to ' : ''}<strong
+              >{spend?.amount.toLocaleString()} Yellow Buzz</strong
+            >
+            will be charged because this dataset has mature images.
+          </label>
+        </div>
+      {/if}
     {:else}
       <BlueFirstNote class="mt-3" />
     {/if}
@@ -790,7 +1005,13 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting || total == null || (needsAttestation && !attestSfw)}
+      disabled={starting ||
+        trainingDisabled ||
+        total == null ||
+        (needsAttestation && !attestSfw) ||
+        ackMissing ||
+        !!imagesProblem ||
+        uploadingImage}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -799,8 +1020,18 @@
         {multi ? `Start ${selection.runs.length} runs` : 'Start training'}
       {/if}
     </Button>
-    {#if startError}
+    {#if trainingDisabled}
+      <p class="mt-2 text-center font-mono text-xs text-dark-2">
+        Training is currently disabled — see the notice above.
+      </p>
+    {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
+    {:else if imagesProblem}
+      <p class="mt-2 text-center font-mono text-xs text-buzz">{imagesProblem}</p>
+    {:else if total == null && !quoting}
+      <p class="mt-2 text-center font-mono text-xs text-dark-2">
+        We couldn't price every run right now — start is disabled until each run shows a cost.
+      </p>
     {/if}
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails
@@ -823,13 +1054,7 @@
         {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
       </Dialog.Title>
       <Dialog.Description>
-        {#if blueExcluded}
-          Your dataset was rated mature, and
-          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
-          membership{membership === undefined ? ' — unless you have one, the' : '. The'} full
-          <strong>{confirmSpend?.amount.toLocaleString()}</strong> will come out of your Yellow Buzz.
-          {@render membershipLink()}
-        {:else if confirmSpend?.uncertain}
+        {#if confirmSpend?.uncertain}
           Blue Buzz spends first, but your balance couldn't be read — up to
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your
           {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.

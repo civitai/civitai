@@ -6,6 +6,7 @@ import {
   recordStoreScopeResolution,
 } from '~/server/prom/store-scope.metrics';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
+import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
 import {
   narrowStoreScope,
   type StoreVisibilityScope as StoreVisibilityScopeValue,
@@ -433,6 +434,21 @@ export async function isAppBlocksAuthorEnabled(opts: { user: SessionUser }): Pro
  */
 export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
   return isFlipt(APP_BLOCKS_PIPELINE_FLAG);
+}
+
+/**
+ * GLOBAL rollback switch for the per-app serving objects (Deployment, Service, IngressRoute,
+ * Middleware) that a production app deploy used to create in the apps namespace.
+ *
+ * Apps are served by the shared static server, so by default a deploy publishes there and creates
+ * none of them. This flag turns them back on without a code revert. OFF is the default on purpose:
+ * an absent flag or an unreachable Flipt evaluates `false`, which is the intended production state.
+ * Evaluated globally (no user), so it must be a plain base-`enabled` boolean to turn on.
+ */
+export const APP_BLOCKS_PER_APP_OBJECTS_FLAG = 'app-blocks-per-app-objects';
+
+export async function isAppBlocksPerAppObjectsEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_PER_APP_OBJECTS_FLAG);
 }
 
 /**
@@ -980,6 +996,42 @@ export async function isAppBlocksAgenticReviewEnabled(opts?: {
 }
 
 /**
+ * FORKABLE APPS rollout flag. Gates the fork surfaces a VIEWER reaches — the fork count and list
+ * on a parent's store page, the author's "Let others fork this app's source" setting, and (with
+ * `canAccessAppAssistant`) the Fork action. Fork ATTRIBUTION ("Forked from …") is provenance and
+ * is shown regardless of this flag.
+ *
+ * Mirrors `appBlocksFork` in `feature-flags.service.ts`, which is what carries it to the client.
+ */
+export const APP_BLOCKS_FORK_FLAG = 'app-blocks-fork';
+
+/**
+ * Whether the fork surfaces are on for `user`.
+ *
+ * 🔴 FAIL-CLOSED FOR EVERYONE, MODERATORS INCLUDED: there is deliberately no moderator floor. An
+ * absent flag and an unreachable Flipt both evaluate `false`, so the feature is inert until the
+ * flag is created (mods first, via its segment).
+ *
+ * 🔴 NO SUBJECT → `false`, ANSWERED HERE rather than by a no-user eval, which would return the
+ * flag's BASE value (see GLOBAL-EVAL SEMANTICS at the top of this file) — so a future base-`true`
+ * flip could not open it to anonymous callers by accident.
+ *
+ * The eval is wrapped so that even a throwing client reads as `false`; `isFlipt` already returns
+ * `false` on its own failure paths, so this only matters if that ever changes.
+ */
+export async function isAppBlocksForkEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (await isFlipt(APP_BLOCKS_FORK_FLAG, String(user.id), buildFliptContext(user))) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Dedicated fail-closed flag for App Blocks SHARED (app-global / cross-user)
  * storage — the FIRST surface that opens the per-app datastore to PUBLIC
  * cross-user writes (previously mod + app-dev-tester only). Mirrors
@@ -1056,6 +1108,78 @@ export async function isAppBlocksPostCreationEnabled(opts?: {
   if (!opts?.user) return isFlipt(APP_BLOCKS_POST_CREATION_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_POST_CREATION_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Dedicated fail-closed flag for APP REACTIONS — `social:react:self` /
+ * `blocks.setReactionFromApp` / `blocks.getReactionsForApp` / `SET_ENTITY_REACTION`.
+ *
+ * Same posture as `app-blocks-post-creation`, and for the same reason: a reaction pays Buzz to
+ * the reactor and the content owner and moves public rankings, so it must not arm the day the
+ * runtime flag widens. It is also the per-capability kill switch named by the design
+ * (civitai-app-starters#669): flip it off and both procedures refuse at once, without touching
+ * any other block capability.
+ *
+ * NO moderator static floor: an ABSENT flag resolves `false` for everyone, mods included.
+ * Evaluated with the TOKEN SUBJECT'S hydrated `SessionUser`, which `blocks.setReactionFromApp`
+ * has already proven is the signed-in session user.
+ *
+ * 🔴 SHIPS OFF. The flag does not exist in Flipt when this merges; it is created separately, as
+ * base `enabled: false` with the `moderators` segment, like `app-blocks-post-creation`.
+ */
+export const APP_BLOCKS_APP_REACTIONS_FLAG = 'app-blocks-app-reactions';
+
+export async function isAppBlocksAppReactionsEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_APP_REACTIONS_FLAG, String(opts.user.id), buildFliptContext(opts.user));
+}
+
+/**
+ * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind — the
+ * training estimate/submit arm of
+ * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's
+ * `RUN_TRAINING` consent pair (`blocks.previewTrainingQuote` /
+ * `blocks.consentTrainingQuote`).
+ *
+ * Same posture as `app-blocks-post-creation`: independent of the runtime flag so a
+ * GA widening of `app-blocks-enabled` does not arm training on the same day; an
+ * ABSENT flag resolves `false` for everyone. Evaluated with the TOKEN SUBJECT'S
+ * hydrated `SessionUser`, never `ctx.user`.
+ */
+export const APP_BLOCKS_TRAINING_KIND_FLAG = 'app-blocks-training-kind';
+
+export async function isAppBlocksTrainingKindEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_TRAINING_KIND_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Dedicated fail-closed flag for the CONFIRMED pass-through step — a `kind:'step'`
+ * `$type` job whose FIXED orchestrator price exceeds the token's per-call budget, run
+ * only once the viewer confirms that exact price in host chrome. Gates the estimate's
+ * grant (`stepQuote`), the host's `RUN_CONFIRMED_STEP` consent pair
+ * (`blocks.previewQuoteGrant` / `blocks.consentQuoteGrant` for an `sq_` quote) and the confirmed submit.
+ * With it off, the pass-through arm is exactly what it was: a job above the per-call
+ * budget is refused.
+ *
+ * Same posture as `app-blocks-training-kind`: independent of the runtime flag so a GA
+ * widening of `app-blocks-enabled` does not arm it on the same day; an ABSENT flag
+ * resolves `false` for everyone, moderators included. Evaluated with the TOKEN
+ * SUBJECT'S hydrated `SessionUser`, never `ctx.user`.
+ *
+ * 🔴 SHIPS OFF. Create it in Flipt as base `enabled: false` with the `moderators`
+ * segment first.
+ */
+export const APP_BLOCKS_CONFIRMED_STEP_FLAG = 'app-blocks-confirmed-step';
+
+export async function isAppBlocksConfirmedStepEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_CONFIRMED_STEP_FLAG, String(user.id), buildFliptContext(user));
 }
 
 /**
@@ -1233,6 +1357,99 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
   if (await isExternalListingsPublicEnabled(opts)) return 'public-external';
   // Fail-closed: neither flag → dark.
   return 'none';
+}
+
+/**
+ * Dedicated flag for the App Blocks TESTER COHORT — the audience a listing at the
+ * `testers` visibility level admits ("users with app testing enabled").
+ *
+ * 🔴 WHY A DEDICATED FLAG, AND WHY IT MUST NEVER WIDEN TO EVERYONE. The cohort used to be
+ * read off `app-blocks-enabled`, on the assumption that the runtime gate stays
+ * cohort-segmented. It does not: civitai/flipt-state#263 widens `app-blocks-enabled` (and
+ * `app-listings`) to every user for the public apps launch, and from that moment every
+ * signed-in viewer would floor at `testers` and see listings their owner restricted to
+ * testers. Membership is a COHORT question, so it gets a flag whose only job is to answer
+ * it; the capability and surface flags can then widen freely without touching it. Widening
+ * THIS flag to all users is the same leak by another route — its rollout should only ever
+ * name tester segments.
+ *
+ * 🔴 FAIL-CLOSED, AND THAT IS DELIBERATE. When the flag is absent or Flipt is unreachable,
+ * `isFlipt` returns `false`, so a non-moderator is NOT a tester and floors at `public`.
+ * There is deliberately no fallback to `app-blocks-enabled` (the pattern
+ * `isAppListingsEnabled` uses): that fallback is exactly the signal that widens. The cost
+ * is borne only by the window between this code deploying and the flag existing — real
+ * testers temporarily stop seeing `testers`-level listings (moderators are unaffected).
+ * Create the flag in flipt-state first to avoid that window.
+ *
+ * Evaluated per-user only; see {@link resolveViewerAudienceFloor} for why there is no
+ * no-user branch.
+ */
+export const APP_BLOCKS_TESTERS_FLAG = 'app-blocks-testers';
+
+/**
+ * Is this SIGNED-IN viewer in the App Blocks tester cohort? Per-user eval of
+ * {@link APP_BLOCKS_TESTERS_FLAG} with the same entityId + context shape as every other
+ * per-user app flag. `user` is required: "is THIS subject a tester" has no subject-less
+ * answer, and a no-user eval would return the flag's BASE value rather than denying (see
+ * GLOBAL-EVAL SEMANTICS at the top of this file).
+ */
+export async function isAppBlocksTester(opts: { user: SessionUser }): Promise<boolean> {
+  const { user } = opts;
+  return (
+    (await isFlipt(APP_BLOCKS_TESTERS_FLAG, String(user.id), buildFliptContext(user))) === true
+  );
+}
+
+/**
+ * Resolve the viewer's LISTING AUDIENCE FLOOR — the narrowest per-listing visibility level
+ * that still admits them.
+ *
+ * 🔴 THIS IS A SECOND AXIS, NOT A REPLACEMENT FOR {@link resolveStoreVisibilityScope}, and
+ * the two are ANDed by the caller. The scope answers "may this viewer see the store at
+ * all, and which KINDS" — a surface question. This answers "which per-listing levels admit
+ * this viewer" — a cohort question. A listing at `public` is still invisible to a viewer
+ * whose scope is `none`; nothing here can lift that.
+ *
+ * 🔴 THE TESTER COHORT IS READ OFF {@link APP_BLOCKS_TESTERS_FLAG}, AND ONLY THAT. It
+ * was previously read off `app-blocks-enabled`, which was safe only while that runtime gate
+ * stayed segmented to the tester cohorts; the public apps launch (civitai/flipt-state#263)
+ * widens it to every user. A level stores an ENUM and is mapped to a cohort here,
+ * server-side, so no flag state is created, widened or referenced by key from the
+ * database. The flags now partition the population the way the levels need:
+ *   · `app-listings` is the SURFACE flag (who sees the store);
+ *   · `app-blocks-enabled` is the RUNTIME gate (who may run blocks);
+ *   · `app-blocks-testers` is the COHORT flag (who counts as a tester) — the only one of
+ *     the three this function reads, and the only one that must stay narrow.
+ *
+ * ⚠️ ALL FOUR LEVELS ARE ALREADY DISTINGUISHABLE — an earlier revision of this paragraph
+ * claimed `testers` and `public` "admit the same population pre-GA", and that was false in
+ * the REASSURING direction. A live floor-`public` population exists today: both public
+ * `/api/v1/apps` endpoints pass `floor: 'public'` explicitly while
+ * `resolvePublicAppsCatalogScope` grants an anonymous caller `full` SURFACE scope, so a
+ * `testers` listing is hidden there while a `public` one is served. The two axes are
+ * independent, which is the whole reason they are resolved separately.
+ *
+ * 🔴 FAIL-CLOSED IS `public`, WHICH READS BACKWARDS AND IS CORRECT. The floor is the
+ * NARROWEST level that admits the viewer, so the least-privileged answer is the WIDEST
+ * level — `public`, which admits them to nothing a level has restricted. An absent tester
+ * flag or an unreachable Flipt makes `isFlipt` return `false`, so an unknown viewer floors
+ * at `public` and sees only listings their owner marked public.
+ *
+ * Moderators short-circuit on the server-stamped session flag rather than on a flag eval,
+ * for the same reason the private-run predicate does: a moderator is typically outside
+ * every cohort segment, and requiring a flag for them would refuse the audience the
+ * `moderators` level exists for.
+ */
+export async function resolveViewerAudienceFloor(opts?: {
+  user?: SessionUser;
+}): Promise<ListingAudienceFloor> {
+  const user = opts?.user;
+  if (user?.isModerator === true) return 'moderators';
+  // Anonymous: no cohort to resolve, and a no-user eval would return the flag's BASE value
+  // rather than denying (see GLOBAL-EVAL SEMANTICS at the top of this file). Answer the
+  // least-privileged floor directly instead of asking a question that cannot refuse.
+  if (!user) return 'public';
+  return (await isAppBlocksTester({ user })) ? 'testers' : 'public';
 }
 
 /** The three flags a `full` / `public-external` scope can come from. */

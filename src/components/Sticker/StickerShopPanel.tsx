@@ -24,6 +24,7 @@ import { browseShopItems } from '~/components/Shop/shop-browse';
 import { STICKER_HOVER_CARD_WIDTH } from '~/components/Sticker/StickerPlacementHoverCard';
 import { HOVER_DELAY_MS } from '~/components/UserAvatar/hover-card.constants';
 import { StickerPriceBadge } from '~/components/Sticker/StickerPriceBadge';
+import { SHELF_TILE_STYLE } from '~/components/Sticker/shelf-tile-style';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constants';
@@ -50,9 +51,6 @@ const SKELETON_TILES = 12;
 
 /** The single page of the community catalog this panel holds client-side. */
 const COMMUNITY_PAGE_SIZE = 100;
-
-const matches = (query: string, ...fields: (string | null | undefined)[]) =>
-  !query || fields.some((field) => field?.toLowerCase().includes(query));
 
 type Tile = {
   shopItemId: number;
@@ -86,7 +84,7 @@ export function StickerShopPanel({
   maxScale: number;
   imageNsfwLevel: number;
 }) {
-  const { grab, dragging } = useStickerDragOut(maxScale);
+  const { grab, dragging, shelfRef } = useStickerDragOut(maxScale);
   const [search, setSearch] = useState('');
   // The community half searches server-side, so this is a request per keystroke
   // without the debounce. The official half is already in memory and filters
@@ -115,7 +113,6 @@ export function StickerShopPanel({
   });
 
   const isLoading = loadingOfficial || loadingCommunity;
-  const query = search.trim().toLowerCase();
 
   const tiles = useMemo(() => {
     // Official first, then community, each most-sold first. Not interleaved: the
@@ -125,29 +122,26 @@ export function StickerShopPanel({
       entries: (cosmeticShopSections ?? []).flatMap((section) => section.items),
       shopItemOf: (entry) => entry.shopItem,
       listedAtOf: (entry) => entry.createdAt,
-      // `getShop` already filtered the types server-side; this is the owned rule.
-      filters: { modifier: 'notOwned' },
+      // `getShop` already filtered the types server-side; this is the owned rule
+      // and the search. Only this half is searched here: the community half got
+      // back what the server matched.
+      filters: { modifier: 'notOwned', search },
       sort: CosmeticShopSort.MostPopular,
       ownedCosmeticIds,
       wishlistedIds: new Set<number>(),
-    })
-      // Only this half is filtered here. The community half asked the server for
-      // the search and got back what matched — re-testing those titles locally
-      // would drop the ones that matched on the cosmetic's own name.
-      .filter(({ shopItem }) => matches(query, shopItem.title, shopItem.cosmetic?.name))
-      .map(({ shopItem }) => ({
-        shopItemId: shopItem.id,
-        cosmeticId: shopItem.cosmeticId,
-        title: shopItem.title,
-        unitAmount: shopItem.unitAmount,
-        cosmeticData: shopItem.cosmetic?.data,
-        cosmeticFlags: shopItem.cosmetic?.flags,
-        meta: shopItem.meta,
-        creatorUsername: shopItem.cosmetic?.creator?.username ?? null,
-        creator: shopItem.cosmetic?.creator ?? null,
-        description: shopItem.description,
-        viaShopUserId: CIVITAI_SHOP_ATTRIBUTION,
-      }));
+    }).map(({ shopItem }) => ({
+      shopItemId: shopItem.id,
+      cosmeticId: shopItem.cosmeticId,
+      title: shopItem.title,
+      unitAmount: shopItem.unitAmount,
+      cosmeticData: shopItem.cosmetic?.data,
+      cosmeticFlags: shopItem.cosmetic?.flags,
+      meta: shopItem.meta,
+      creatorUsername: shopItem.cosmetic?.creator?.username ?? null,
+      creator: shopItem.cosmetic?.creator ?? null,
+      description: shopItem.description,
+      viaShopUserId: CIVITAI_SHOP_ATTRIBUTION,
+    }));
 
     const community = communityItems.map((item) => ({
       shopItemId: item.id,
@@ -193,7 +187,7 @@ export function StickerShopPanel({
       });
       return acc;
     }, []);
-  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, query, imageNsfwLevel]);
+  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, search, imageNsfwLevel]);
 
   return (
     <div className="mb-2 w-full overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
@@ -221,7 +215,7 @@ export function StickerShopPanel({
       </div>
 
       <ScrollArea.Autosize mah={260} type="auto" scrollbarSize={6}>
-        <div className="flex flex-wrap gap-2 p-2">
+        <div ref={shelfRef} className="flex flex-wrap gap-2 p-2">
           {/* Two rows of them, which is what the shelf holds before it scrolls —
               so the panel opens at the height it will keep, instead of growing
               under the cursor as the stickers land. */}
@@ -276,7 +270,7 @@ export function StickerShopPanel({
                       'relative flex shrink-0 cursor-grab flex-col items-center rounded border p-2',
                       dragging === tile.cosmeticId ? 'border-blue-5' : 'border-transparent'
                     )}
-                    style={{ touchAction: 'none' }}
+                    style={SHELF_TILE_STYLE}
                     onPointerDown={grab(tile.cosmeticId, {
                       pack: {
                         shopItemId: tile.shopItemId,

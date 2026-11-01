@@ -5,6 +5,8 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   bustAppListingCatalogCache,
   listingQueueFacts,
@@ -33,6 +35,13 @@ import {
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
 import {
+  FORKABLE_OFFSITE_MESSAGE,
+  FORKABLE_ON_REVISION_MESSAGE,
+  assertForkableWritable,
+  readListingForkable,
+  writeListingForkable,
+} from '~/server/services/blocks/app-fork.service';
+import {
   BETA_MESSAGE_MAX,
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
@@ -45,6 +54,7 @@ import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabiliti
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import {
   connectScopesSubsetOfCeiling,
+  consentableScopes,
   validateConnectScopeJustifications,
   SENSITIVE_TOKEN_SCOPES,
   tokenScopeMaskToList,
@@ -55,6 +65,20 @@ import {
   resolveListingRatingFloorInTx,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import {
+  applyListingMediaSplitDecision,
+  applyRevisionRedSlots,
+  cloneListingRedSlots,
+  readListingRedMediaManyForRender,
+  readListingRedSlotAssets,
+  readListingRedSlots,
+  type ListingRedMediaImages,
+} from '~/server/services/blocks/listing-media-split.service';
+import {
+  ratingFloorAssets,
+  type ListingMediaSplitDecision,
+} from '~/shared/utils/listing-media-split';
 import {
   isOwnerUnpublishedListing,
   readLastModerationAction,
@@ -64,8 +88,11 @@ import {
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import {
   computeListingProblems,
+  listingProblemInput,
+  type ListingAssetScan,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
@@ -154,6 +181,24 @@ function slugTakenError(slug: string): TRPCError {
  */
 export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
 
+/**
+ * The author-written text a submission or patch carries. Tagline and description edits on a
+ * live listing apply in place without review, so this is scanned on every path that writes them.
+ */
+function listingAuthorText(
+  fields: Pick<UpdateListingPatch, 'name' | 'tagline' | 'description' | 'betaMessage'> & {
+    scopeJustifications?: Record<string, string> | null;
+  }
+) {
+  return [
+    fields.name,
+    fields.tagline,
+    fields.description,
+    fields.betaMessage,
+    ...Object.values(fields.scopeJustifications ?? {}),
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // submitExternalListing (author).
 // ---------------------------------------------------------------------------
@@ -211,6 +256,11 @@ export async function submitExternalListing(opts: {
 }): Promise<SubmitExternalListingResult> {
   const { input, userId, isModerator = false } = opts;
 
+  await throwOnBlockedUserContent([input.slug, input.changelog, ...listingAuthorText(input)], {
+    isModerator,
+    surface: 'offsite-listing',
+  });
+
   // Defense-in-depth: re-run the shared URL validator — but ONLY when a URL is
   // provided (externalUrl is now optional; a connect-only listing omits it). This fn
   // is exported + unit-tested directly, not only reached through the schema.
@@ -265,7 +315,7 @@ export async function submitExternalListing(opts: {
 
   // Load + gate the caller's OAuth client (exists / owned / not-app-block). The
   // listing's requested scopes are AUTO-DERIVED from the client's CURRENT
-  // `allowedScopes` — the client already declares its scopes at creation, so a
+  // consentable scopes — the client already declares its scopes at creation, so a
   // form-supplied `input.requestedScopes` mask is IGNORED (server-authoritative
   // snapshot). This snapshots the reviewed set: a later widening of the client's
   // allowedScopes does NOT silently expand a live/approved listing (a re-submit /
@@ -394,7 +444,8 @@ export async function submitExternalListing(opts: {
  * Load an OAuth client and assert it is eligible to back an external listing: it must
  * EXIST and NOT be an App-Block client (`isAppBlockOauthClientId` — those are managed
  * by the App Blocks flow, not hand-listed). By default it must also be OWNED by
- * `userId` (IDOR). Returns the client's `allowedScopes` ceiling. An external listing
+ * `userId` (IDOR). Returns the client's consentable scopes as its
+ * `allowedScopes` ceiling. An external listing
  * does NOT require the client to be `isVerified` (decision Q4). All failures are
  * friendly TRPCErrors (parity with `submitExternalListing`'s validation style).
  *
@@ -432,7 +483,8 @@ export async function loadConnectClientForListing(
       message: 'you can only list an OAuth client you own',
     });
   }
-  return { id: client.id, allowedScopes: client.allowedScopes };
+  // A client_credentials-only bit is never something a user is asked to consent to.
+  return { id: client.id, allowedScopes: consentableScopes(client.allowedScopes) };
 }
 
 /**
@@ -466,7 +518,7 @@ function assertConnectScopesValid(opts: {
  * For an EDIT patch that touches the OAuth-connect scope disclosure (carries
  * `requestedScopes` and/or `scopeJustifications`), resolve the listing's connect
  * client and return an `effectivePatch` whose `requestedScopes` is DERIVED from the
- * client's CURRENT `allowedScopes` (server-authoritative — a form-supplied mask is
+ * client's CURRENT consentable scopes (server-authoritative — a form-supplied mask is
  * ignored) plus that ceiling. A non-scope patch is passed through unchanged.
  *
  * Re-asserts the caller still OWNS the client (mirrors `loadConnectClientForListing`):
@@ -479,7 +531,7 @@ function assertConnectScopesValid(opts: {
  * `isModerator`: when true, that owner re-assertion is intentionally BYPASSED — a mod
  * may edit a listing that links a client they don't own (mirroring the mod-only
  * client search on submit). The existence check + scope-subset / justification
- * validation (server-authoritative snapshot from the client's CURRENT allowedScopes)
+ * validation (server-authoritative snapshot from the client's CURRENT consentable scopes)
  * are UNCHANGED. A non-mod is still refused a foreign client.
  */
 export async function deriveScopePatch(opts: {
@@ -514,9 +566,9 @@ export async function deriveScopePatch(opts: {
       message: 'you can only list an OAuth client you own',
     });
   }
-  const connectAllowedScopes = client.allowedScopes;
+  const connectAllowedScopes = consentableScopes(client.allowedScopes);
   // SERVER-AUTHORITATIVE snapshot: the disclosed set is ALWAYS the client's CURRENT
-  // allowedScopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
+  // consentable scopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
   // from the stored snapshot is then a MATERIAL change (patchHasMaterialChange) → the
   // approved edit re-enters mod review via a shadow revision.
   const effectivePatch: UpdateListingPatch = { ...patch, requestedScopes: connectAllowedScopes };
@@ -1377,6 +1429,11 @@ export async function updateListing(opts: {
       'this listing is an internal revision draft and cannot be edited directly'
     );
   }
+  // Before any branch below can open a shadow revision, for the reason the hoists below give.
+  await throwOnBlockedUserContent(listingAuthorText(patch), {
+    isModerator,
+    surface: 'offsite-listing',
+  });
 
   // If the patch touches the disclosed OAuth scopes, resolve the client's ceiling
   // and DERIVE the requested-scope snapshot from it (server-authoritative — a
@@ -1410,6 +1467,22 @@ export async function updateListing(opts: {
   if (effectivePatch.isBeta !== undefined || effectivePatch.betaMessage !== undefined) {
     assertBetaWritable(listing.betaAvailable);
   }
+  // FORK OPT-IN ("Let others fork this app's source"). TRIVIAL like beta — never material, never
+  // staged on a shadow — so it is written to the LIVE listing after whichever branch below
+  // applies the rest of the patch. Its refusals are hoisted here with the others, so nothing has
+  // been written when one throws.
+  //
+  // `buildListingPatchData` does not know this key, so it never reaches a Prisma `data` object —
+  // which is required, not incidental: the column is no-type and does not exist on the delegate.
+  const forkable = effectivePatch.forkable;
+  if (forkable !== undefined) {
+    // An off-site app has no source on the platform, so there is nothing to fork.
+    if (listing.kind !== 'onsite') {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_OFFSITE_MESSAGE });
+    }
+    // Read only when the patch names the key, so no other edit pays for it.
+    assertForkableWritable((await readListingForkable(listingId, dbRead)).available);
+  }
   const patchOpts = {
     connectAllowedScopes,
     sourceRepoAvailable: listing.sourceRepoAvailable,
@@ -1422,6 +1495,9 @@ export async function updateListing(opts: {
   // anyway, so it applies the whole patch in one update exactly as before.
   const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
 
+  // Every non-throwing branch assigns this and `break`s, so the fork opt-in below has ONE write
+  // site after whichever branch ran.
+  let result: UpdateListingResult;
   switch (listing.status) {
     case 'removed': {
       // 🔴 `removed` IS TWO DIFFERENT STATES WEARING ONE STATUS STRING. An owner who
@@ -1519,7 +1595,8 @@ export async function updateListing(opts: {
       // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
       await bustAppListingCatalogCache().catch(() => undefined);
 
-      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      break;
     }
     case 'rejected':
       // reject() deletes the draft, so this row usually doesn't exist (→ NOT_FOUND
@@ -1539,7 +1616,8 @@ export async function updateListing(opts: {
       // the `removed` branch above, including the part about the rule not being uniform.
       await bustAppListingCatalogCache().catch(() => undefined);
 
-      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      break;
     }
     case 'approved': {
       const material = patchHasMaterialChange(effectivePatch, {
@@ -1561,7 +1639,8 @@ export async function updateListing(opts: {
         // are hydrated live and could never be stale; only `category` needs this.)
         await bustAppListingCatalogCache().catch(() => undefined);
 
-        return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+        result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+        break;
       }
       // MATERIAL change → stage on a shadow. The parent stays LIVE untouched; the
       // patch (material + trivial) is written to the shadow. Assets are edited
@@ -1613,7 +1692,8 @@ export async function updateListing(opts: {
       // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
       await bustAppListingCatalogCache().catch(() => undefined);
 
-      return { listingId, status: listing.status, requiresReview: true, shadowId };
+      result = { listingId, status: listing.status, requiresReview: true, shadowId };
+      break;
     }
     default:
       throw new OffsiteRequestError(
@@ -1621,6 +1701,16 @@ export async function updateListing(opts: {
         `cannot edit a listing in status ${listing.status}`
       );
   }
+
+  // FORK OPT-IN, onto the LIVE listing — `listingId`, never the shadow the material branch may
+  // have just minted (a shadow's opt-in would be read by nothing). Reached only after a branch
+  // succeeded, so a refused edit never changes it. Not atomic with that branch's write: a failure
+  // here leaves the rest of the patch applied and surfaces the error, and re-saving converges
+  // (both writes are idempotent). Not a catalog axis, so no bust.
+  if (forkable !== undefined) {
+    await writeListingForkable(dbWrite, listingId, forkable);
+  }
+  return result;
 }
 
 export type BeginListingRevisionResult = { shadowId: string; created: boolean };
@@ -1633,7 +1723,8 @@ export type BeginListingRevisionResult = { shadowId: string; created: boolean };
  * shadow). Otherwise the approved parent is cloned into a hidden DRAFT AppListing
  * — scalars copied, appBlockId NULL, a synthetic unique slug (`rev-<ulid>`, never
  * public), revisionOfId = parentId, owned by the parent's owner — and each of the
- * parent's screenshots is copied (imageId/order/caption). The author then edits
+ * parent's screenshots is copied (imageId/order/caption), as are its civitai.red icon /
+ * cover overrides (`cloneListingRedSlots`). The author then edits
  * the shadow's ASSETS via the EXISTING setIcon/setCover/addScreenshot procs by
  * passing the shadow id (no new asset procs).
  */
@@ -1755,6 +1846,10 @@ export async function beginListingRevision(opts: {
           ),
         });
       }
+      // 🔴 The civitai.red icon / cover overrides are carried onto the shadow too, for the same
+      // reason as the source link above: `applyApprovedRevision` applies the shadow's overrides
+      // to the parent, so a revision that does not touch them must hold them already.
+      await cloneListingRedSlots(tx, { fromListingId: listingId, toListingId: shadowId });
     });
   } catch (err) {
     // A concurrent creator committed its shadow between our in-tx read-check and
@@ -1803,6 +1898,7 @@ export async function submitListingRevision(opts: {
 }): Promise<SubmitListingRevisionResult> {
   const { shadowId, userId } = opts;
   const changelog = opts.changelog ?? null;
+  await throwOnBlockedUserContent(changelog, { surface: 'offsite-listing' });
 
   const shadow = (await dbRead.appListing.findUnique({
     where: { id: shadowId },
@@ -1964,6 +2060,62 @@ export type ListingEditScalars = {
 };
 
 export type ListingEditAsset = { imageId: number | null; url: string | null };
+
+/**
+ * The edit target's civitai.red icon / cover overrides, for the author's editor. `available:
+ * false` while the environment does not have the slot columns (or this role cannot read them):
+ * the editor then offers no picker, matching `setListingRedMedia`'s refusal.
+ */
+export type ListingEditRedMedia = {
+  available: boolean;
+  icon: ListingEditAsset;
+  cover: ListingEditAsset;
+};
+
+/**
+ * {@link ListingEditRedMedia} of `listingId` — the same edit target whose `assets` the editor is
+ * handed. Read through the WRITE client, like `getListingAssets`' read of the same slots: the
+ * editor re-reads after every slot write, and a slot set on a shadow minted milliseconds ago must
+ * not read back empty off a lagging replica.
+ *
+ * NEVER THROWS, like the store's read of the same slots (`readListingRedMediaManyForRender`): the
+ * editor must not fail to open because of the manual-apply slot table. A failed read reads as
+ * "not available" (no picker), and is logged.
+ */
+export async function loadListingEditRedMedia(listingId: string): Promise<ListingEditRedMedia> {
+  try {
+    return await readListingEditRedMedia(listingId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[offsite-listing] civitai.red slot read for the editor failed; offering no picker: ' +
+        (err instanceof Error ? err.message : String(err))
+    );
+    return { available: false, icon: NO_EDIT_ASSET, cover: NO_EDIT_ASSET };
+  }
+}
+
+const NO_EDIT_ASSET: ListingEditAsset = Object.freeze({ imageId: null, url: null });
+
+async function readListingEditRedMedia(listingId: string): Promise<ListingEditRedMedia> {
+  const red = await readListingRedSlots(dbWrite, listingId);
+  const ids = [red.redIconId, red.redCoverId].filter((v): v is number => v != null);
+  const images = ids.length
+    ? await dbWrite.image.findMany({ where: { id: { in: ids } }, select: { id: true, url: true } })
+    : [];
+  const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  const urlOf = (id: number | null, width: number) => {
+    const url = id == null ? null : images.find((i) => i.id === id)?.url;
+    return url ? getEdgeUrl(url, { width }) : null;
+  };
+  return {
+    available: red.available,
+    // The same preview widths as the regular icon / cover in `loadListingEditView`.
+    icon: { imageId: red.redIconId, url: urlOf(red.redIconId, 256) },
+    cover: { imageId: red.redCoverId, url: urlOf(red.redCoverId, 1200) },
+  };
+}
+
 export type ListingEditScreenshot = {
   id: string;
   imageId: number | null;
@@ -2020,10 +2172,12 @@ export type GetMyListingForEditResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The effective source's civitai.red icon / cover overrides, edge-resolved. */
+  redMedia: ListingEditRedMedia;
   /** The linked OAuth client id (null for a non-connect listing — none in the merged model). */
   connectClientId: string | null;
   /**
-   * The client's CURRENT `allowedScopes` (null when no client / not found). This IS
+   * The client's CURRENT consentable scopes (null when no client / not found). This IS
    * the derived requested-scope set the edit form displays read-only + submits — the
    * server re-snapshots `requestedScopes` from it on save.
    */
@@ -2280,7 +2434,7 @@ export async function getMyListingForEdit(opts: {
     listingId
   );
 
-  // Resolve the connect client's CURRENT allowedScopes — this is the derived
+  // Resolve the connect client's CURRENT consentable scopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
   // re-snapshots `requestedScopes` from it on save). null when the listing has no
   // client or the client no longer exists.
@@ -2290,7 +2444,7 @@ export async function getMyListingForEdit(opts: {
       where: { id: listing.connectClientId },
       select: { allowedScopes: true },
     });
-    connectAllowedScopes = client?.allowedScopes ?? null;
+    connectAllowedScopes = client ? consentableScopes(client.allowedScopes) : null;
   }
 
   return {
@@ -2303,6 +2457,7 @@ export async function getMyListingForEdit(opts: {
     shadowId,
     scalars: view.scalars,
     assets: view.assets,
+    redMedia: await loadListingEditRedMedia(effectiveId),
     connectClientId: listing.connectClientId,
     connectAllowedScopes,
     connectRequestedScopes: view.connectRequestedScopes,
@@ -2338,6 +2493,8 @@ export type GetMyListingForAppResult = {
    * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
    */
   shadowId: string | null;
+  /** The rating the author declared, which approval may have raised `contentRating` above. */
+  declaredContentRating: string | null;
   /**
    * The id the client hands to the asset procs: `shadowId` when a shadow already
    * exists, else `appListingId`. Under LAZY shadow creation the first asset mutation
@@ -2375,6 +2532,8 @@ export type GetMyListingForAppResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The same EFFECTIVE edit target's civitai.red icon / cover overrides, edge-resolved. */
+  redMedia: ListingEditRedMedia;
 };
 
 /**
@@ -2430,9 +2589,11 @@ export async function getMyListingForApp(opts: {
   // an access check is an invitation to compare against it again.
   const entrySelect = {
     id: true,
+    kind: true,
     status: true,
     contentRating: true,
     revisionOfId: true,
+    appBlock: { select: { contentRating: true } },
   } as const;
   let listing = appBlockId
     ? await dbRead.appListing.findUnique({
@@ -2571,11 +2732,17 @@ export async function getMyListingForApp(opts: {
     // Nullable column; fall back to the safest rating so the asset step's scan
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',
+    declaredContentRating: declaredListingRating({
+      kind: listing.kind,
+      appRating: listing.appBlock?.contentRating,
+      listingRating: listing.contentRating,
+    }),
     hasPendingRevision: !!pendingRevisionReq,
     shadowId,
     editTargetId: effectiveId,
     editBlockedReason: listingMediaEditBlockedReason(listing, ownerUnpublished),
     assets,
+    redMedia: await loadListingEditRedMedia(effectiveId),
   };
 }
 
@@ -2696,10 +2863,20 @@ export async function updateRevisionDraft(opts: {
       `a revision draft can only be edited while draft (status is ${shadow.status})`
     );
   }
+  // 🔴 THE FORK OPT-IN IS NEVER STAGED, and this path cannot write it: `buildListingPatchData`
+  // does not know the key, so accepting it here would DROP it silently and report success. It is
+  // refused instead, before anything is written; `updateListing` writes it to the live listing.
+  if (patch.forkable !== undefined) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_ON_REVISION_MESSAGE });
+  }
+  await throwOnBlockedUserContent(listingAuthorText(patch), {
+    isModerator,
+    surface: 'offsite-listing',
+  });
   // Derive the requested-scope snapshot from the shadow's connect client (the shadow
   // carries the parent's connectClientId) when the patch touches scopes — same
   // server-authoritative rule as updateListing, so a scope justification staged on a
-  // shadow re-snapshots against the client's CURRENT allowedScopes.
+  // shadow re-snapshots against the client's CURRENT consentable scopes.
   const { effectivePatch, connectAllowedScopes } = await deriveScopePatch({
     connectClientId: shadow.connectClientId,
     patch,
@@ -2858,14 +3035,19 @@ export type ApproveExternalRequestResult = {
  * Compute the content rating to STAMP on an off-site listing at approve. The
  * scanner's per-image rating is imprecise, so the AUTHOR is never blocked on it +
  * the author's declared rating is only a hint — the authoritative rating is DERIVED
- * from the assets' MAX detected `nsfwLevel` (icon + cover + real screenshots) at
- * review, with an optional mod OVERRIDE.
+ * from the assets' MAX detected `nsfwLevel` (icon + cover + real screenshots + the
+ * civitai.red icon / cover overrides) at review, with an optional mod OVERRIDE.
  *
  * 🔴 SAFETY (floor-at-derived): an override whose ceiling is BELOW the derived value
  * would publish mature assets under a too-low rating — so it is clamped UP to the
  * derived rating (never silently under-rated). An override AT or ABOVE the derived
  * value is honoured (a mod may always rate UP). Reads the backing Image levels from
  * the PRIMARY (`tx`) so the derived rating is row-consistent with the approve flip.
+ * With `mediaSplit` the derive reads only the civitai.com-eligible assets (never an override).
+ *
+ * `redSlotsListingId` names the listing whose civitai.red overrides go live with this approve,
+ * when that is not `appListingId`: a revision that staged no overrides keeps the LIVE listing's
+ * (`applyRevisionRedSlots`), so its approve must be floored by those, not by the shadow's none.
  */
 async function resolveApprovalContentRating(
   tx: Prisma.TransactionClient,
@@ -2874,6 +3056,8 @@ async function resolveApprovalContentRating(
     iconId: number | null;
     coverId: number | null;
     override?: OffsiteContentRating | null;
+    mediaSplit: boolean;
+    redSlotsListingId?: string;
   }
 ): Promise<OffsiteContentRating> {
   const shots = await tx.appListingScreenshot.findMany({
@@ -2886,7 +3070,14 @@ async function resolveApprovalContentRating(
   const images = imageIds.length
     ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
     : [];
-  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  // The civitai.red overrides floor it too, unless the listing is split (`ratingFloorAssets`).
+  const redSlots = await readListingRedSlotAssets(tx, args.redSlotsListingId ?? args.appListingId);
+  const derived = deriveContentRatingFromAssets(
+    ratingFloorAssets(
+      [...images.map((i) => ({ nsfwLevel: i.nsfwLevel })), ...redSlots],
+      args.mediaSplit
+    )
+  );
   const override = args.override ?? null;
   if (override == null) return derived;
   return nsfwLevelFromContentRating(override) < nsfwLevelFromContentRating(derived)
@@ -2933,9 +3124,15 @@ async function resolveOnsiteApprovalContentRating(
     appListingId: string;
     declared: string | null;
     override?: OffsiteContentRating | null;
+    mediaSplit: boolean;
   }
 ): Promise<string | null> {
-  const floored = await resolveListingRatingFloorInTx(tx, args.appListingId, args.declared);
+  const floored = await resolveListingRatingFloorInTx(
+    tx,
+    args.appListingId,
+    args.declared,
+    args.mediaSplit
+  );
   const override = args.override ?? null;
   if (override == null) return floored;
   return nsfwLevelFromContentRating(override) > nsfwLevelFromContentRating(floored)
@@ -3025,6 +3222,8 @@ export async function approveExternalRequest(opts: {
   approvalNotes?: string | null;
   /** Optional mod override of the final content rating (floored at the derived value). */
   contentRating?: OffsiteContentRating | null;
+  /** The moderator's media-split decision; omitted means `rate-mature`. */
+  mediaSplit?: ListingMediaSplitDecision | null;
 }): Promise<ApproveExternalRequestResult> {
   const { publishRequestId, reviewerUserId } = opts;
   const approvalNotes = opts.approvalNotes ?? null;
@@ -3105,6 +3304,7 @@ export async function approveExternalRequest(opts: {
       reviewerUserId,
       approvalNotes,
       contentRating: opts.contentRating,
+      mediaSplit: opts.mediaSplit,
     });
   }
 
@@ -3131,8 +3331,15 @@ export async function approveExternalRequest(opts: {
   // replica; re-asserted AUTHORITATIVELY on the primary/tx in (5) (TOCTOU: a scan
   // can flip between these reads — the in-tx one is the authority). This is the
   // QUALITY gate that lets attach + submit stay permissive with an in-flight scan.
+  const replicaRedSlots = await readListingRedSlots(dbRead, appListingId);
   await assertAssetsScanClean(
-    { iconId: listing.iconId, coverId: listing.coverId, screenshotImageIds },
+    {
+      iconId: listing.iconId,
+      coverId: listing.coverId,
+      screenshotImageIds,
+      redIconId: replicaRedSlots.redIconId,
+      redCoverId: replicaRedSlots.redCoverId,
+    },
     dbRead
   );
 
@@ -3172,7 +3379,7 @@ export async function approveExternalRequest(opts: {
 
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
-  await dbWrite.$transaction(async (tx) => {
+  const rating = await dbWrite.$transaction(async (tx) => {
     // AUTHORITATIVE asset gate — re-read from the PRIMARY (`tx`), not the replica.
     // The sibling asset mutators (add/reorder/removeListingScreenshot,
     // setListingIcon/Cover) deliberately read+write dbWrite to avoid replica-lag
@@ -3225,11 +3432,14 @@ export async function approveExternalRequest(opts: {
     // Pending/Blocked on the primary is caught HERE and rolls the whole tx back
     // before anything is approved. Upholds the invariant: no approved listing may
     // ever reference a non-`Scanned` / `Blocked` image.
+    const primaryRedSlots = await readListingRedSlots(tx, appListingId);
     await assertAssetsScanClean(
       {
         iconId: primaryListing.iconId,
         coverId: primaryListing.coverId,
         screenshotImageIds: primaryScreenshotImageIds,
+        redIconId: primaryRedSlots.redIconId,
+        redCoverId: primaryRedSlots.redCoverId,
       },
       tx
     );
@@ -3318,18 +3528,26 @@ export async function approveExternalRequest(opts: {
     // returns above via `applyApprovedRevision`. An on-site listing's `contentRating`
     // describes the APP (manifest-declared), so it must be raised by mature media and
     // never lowered by tame media. See {@link resolveOnsiteApprovalContentRating}.
+    const mediaSplit = await applyListingMediaSplitDecision(tx, {
+      appListingId,
+      face: { iconId: primaryListing.iconId, coverId: primaryListing.coverId },
+      decision: opts.mediaSplit,
+      actorUserId: reviewerUserId,
+    });
     const finalRating =
       request.kind === 'onsite'
         ? await resolveOnsiteApprovalContentRating(tx, {
             appListingId,
             declared: primaryListing.contentRating,
             override: opts.contentRating,
+            mediaSplit,
           })
         : await resolveApprovalContentRating(tx, {
             appListingId,
             iconId: primaryListing.iconId,
             coverId: primaryListing.coverId,
             override: opts.contentRating,
+            mediaSplit,
           });
     // Guard flips a `draft` OR a `pending` listing → approved. `pending` is the W13
     // post-approval-mgmt REOPEN path: `resetListingToPending` bounces an approved
@@ -3394,6 +3612,13 @@ export async function approveExternalRequest(opts: {
       },
       data: { status: 'withdrawn' },
     });
+    return { before: primaryListing.contentRating, after: finalRating };
+  });
+  await recordListingRatingChangeAfterCommit({
+    appListingId,
+    slug: listing.slug,
+    ...rating,
+    actorUserId: reviewerUserId,
   });
 
   // Post-commit, best-effort: notify the listing OWNER their app went live. Emitted
@@ -3434,7 +3659,9 @@ export async function approveExternalRequest(opts: {
  *   4. REPARENT the shadow's screenshots onto the parent: delete the parent's
  *      existing screenshot rows, then UPDATE the shadow's screenshots'
  *      appListingId → parent BEFORE deleting the shadow, so the CASCADE on the
- *      shadow delete drops nothing (the rows have already left the shadow).
+ *      shadow delete drops nothing (the rows have already left the shadow). Then apply the
+ *      shadow's civitai.red icon / cover overrides to the parent (`applyRevisionRedSlots`),
+ *      also before the delete, which cascades the shadow's overrides row away.
  *   5. Delete the shadow (guarded to a revision row so it can never remove a real
  *      listing). Its screenshots are gone (moved) and its only request is re-pointed
  *      at the parent, so the cascade is a no-op.
@@ -3447,6 +3674,7 @@ async function applyApprovedRevision(opts: {
   approvalNotes: string | null;
   /** Optional mod override of the final content rating (floored at the derived value). */
   contentRating?: OffsiteContentRating | null;
+  mediaSplit?: ListingMediaSplitDecision | null;
 }): Promise<ApproveExternalRequestResult> {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
@@ -3456,7 +3684,7 @@ async function applyApprovedRevision(opts: {
   // asset columns and leaves name/tagline/description/category/contentRating untouched.
   const parent = await dbRead.appListing.findUnique({
     where: { id: parentId },
-    select: { id: true, slug: true, status: true, kind: true },
+    select: { id: true, slug: true, status: true, kind: true, contentRating: true },
   });
   if (!parent) {
     throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
@@ -3485,7 +3713,18 @@ async function applyApprovedRevision(opts: {
   // of this path rather than merely intended.
   const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
 
-  await dbWrite.$transaction(async (tx) => {
+  const appliedRating = await dbWrite.$transaction(async (tx) => {
+    // 🔴 LOCK THE PARENT FIRST — before ANY statement, and in particular before any on the
+    // split / civitai.red-override table. Unlike the first-time approves, this writes the
+    // split, the overrides and the media of a listing that is ALREADY `approved`, which a
+    // moderator's image re-rate (`reDeriveListingRatingInTx`) can re-rate concurrently: it
+    // takes `FOR UPDATE` on this row and then reads the split and the media. Without this lock
+    // the re-rate could read them as they stood before this apply and commit a rating floored
+    // by the wrong set of media. With it, the re-rate waits for this transaction and reads
+    // what it committed.
+    await tx.$queryRaw`SELECT "id" FROM "app_listings" WHERE "id" = ${parentId} FOR UPDATE`;
+    // Set by the off-site branch only; the on-site one leaves the rating alone.
+    let appliedOffsiteRating: OffsiteContentRating | null = null;
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
     // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
     // gate could pass on stale-complete state — re-assert here.
@@ -3546,11 +3785,23 @@ async function applyApprovedRevision(opts: {
     // AUTHORITATIVE scan-clean gate on the PRIMARY (`tx`) — a revision cannot go
     // live while any of its media is still scanning or was `Blocked`. Rolls the
     // whole apply back (parent stays exactly as it was) on any non-`Scanned` asset.
+    //
+    // The civitai.red overrides it checks are the ones live AFTER step (4b): the shadow's when
+    // it staged a row (a row of nulls included, which clears them), otherwise the parent's,
+    // which `applyRevisionRedSlots` leaves in place. Both kinds. The rating floor below reads
+    // the same listing (`redSlotsListingId`), so the two cannot disagree about which overrides
+    // go live.
+    const shadowRedSlots = await readListingRedSlots(tx, shadowId);
+    const redSlotsListingId = shadowRedSlots.staged ? shadowId : parentId;
+    const liveRedSlots =
+      redSlotsListingId === shadowId ? shadowRedSlots : await readListingRedSlots(tx, parentId);
     await assertAssetsScanClean(
       {
         iconId: shadow.iconId,
         coverId: shadow.coverId,
         screenshotImageIds: shadowScreenshotImageIds,
+        redIconId: liveRedSlots.redIconId,
+        redCoverId: liveRedSlots.redCoverId,
       },
       tx
     );
@@ -3633,6 +3884,16 @@ async function applyApprovedRevision(opts: {
       connectClientId: shadow.connectClientId,
     });
 
+    // The decision belongs to the live parent; the face it is checked against is the
+    // shadow's, which is what goes live. (The parent is already locked: see the top of this
+    // transaction.)
+    const mediaSplit = await applyListingMediaSplitDecision(tx, {
+      appListingId: parentId,
+      face: { iconId: shadow.iconId, coverId: shadow.coverId },
+      decision: opts.mediaSplit,
+      actorUserId: reviewerUserId,
+    });
+
     // (3) Copy the shadow's contents onto the parent (id / slug / appBlockId / status
     // untouched). KIND-AWARE:
     if (parent.kind === 'onsite') {
@@ -3643,7 +3904,9 @@ async function applyApprovedRevision(opts: {
       // and leaves ALL manifest-governed scalars untouched. CAP-AT-APP-RATING:
       // `resolveApprovalContentRating`'s asset-floor is deliberately NOT applied here —
       // the listing rating stays the app's manifest rating; over-rated media is a
-      // mod-reject at review, never an auto-raise. The connect fields are also left
+      // mod-reject at review, never an auto-raise. If such media IS approved, the store's
+      // per-image gate (`listing-media-audience`) still keeps it off any card or gallery
+      // whose host and rating do not allow its level. The connect fields are also left
       // untouched (an onsite listing has no OAuth-connect client — always null).
       //
       // 🔴 AND THAT INCLUDES THE BETA COLUMNS, WHICH ARE **NOT** COPIED HERE — deliberately,
@@ -3683,7 +3946,11 @@ async function applyApprovedRevision(opts: {
         iconId: shadow.iconId,
         coverId: shadow.coverId,
         override: opts.contentRating,
+        mediaSplit,
+        // The overrides live AFTER step (4b) — the same listing the scan gate above checked.
+        redSlotsListingId,
       });
+      appliedOffsiteRating = finalRating;
       await tx.appListing.update({
         where: { id: parentId },
         data: {
@@ -3731,13 +3998,28 @@ async function applyApprovedRevision(opts: {
       where: { appListingId: shadowId },
       data: { appListingId: parentId },
     });
+    // (4b) The civitai.red icon / cover overrides, BOTH KINDS (they are assets, so an on-site
+    // assets-only apply carries them too). Also before the shadow delete: the shadow's row goes
+    // with it. The shadow's overrides replace the parent's; a shadow that staged none (no row)
+    // leaves the parent's alone — see `applyRevisionRedSlots`.
+    await applyRevisionRedSlots(tx, { shadowId, parentId });
 
     // (5) Retire the shadow (guarded to a revision row). Screenshots already moved;
     // the request already re-pointed — the cascade drops nothing.
     await tx.appListing.deleteMany({
       where: { id: shadowId, revisionOfId: { not: null } },
     });
+    return appliedOffsiteRating;
   });
+  if (appliedRating != null) {
+    await recordListingRatingChangeAfterCommit({
+      appListingId: parentId,
+      slug: parent.slug,
+      before: parent.contentRating ?? null,
+      after: appliedRating,
+      actorUserId: reviewerUserId,
+    });
+  }
 
   // 🔴 Catalog bust. THIS PATH IS NOT COVERED BY THE ONE IN `approveExternalRequest` —
   // that caller `return`s into this function BEFORE reaching its bust, and it does so
@@ -3965,6 +4247,7 @@ export async function persistListingAssetImage(opts: {
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
+    clientUrl: true,
     name: input.name ?? undefined,
     type: 'image',
     width: measured.width,
@@ -4053,6 +4336,7 @@ const mySubmissionSelect = {
        * read); the mod queues that spread the base `submissionSelect` are untouched.
        */
       kind: true,
+      appBlock: { select: { contentRating: true } },
       iconId: true,
       coverId: true,
       description: true,
@@ -4076,7 +4360,17 @@ const mySubmissionSelect = {
   },
 } as const;
 
-const submitterChip = { select: { id: true, username: true, image: true } } as const;
+/**
+ * The user chip the moderator queue renders for an OFF-SITE row.
+ *
+ * 🔴 THE SAME SELECT AS EVERY ON-SITE READER, from the one declaration, and that matters
+ * because the two render SIDE BY SIDE in one list. `UnifiedReviewList` hands both to the
+ * same `UserAvatar` with `linkToProfile`, so while this chip omitted `deletedAt` and the
+ * on-site ones carried it, a closed account read as `[deleted]` on one row and as a live,
+ * clickable profile on the row beneath — two rows on one screen disagreeing about the
+ * identity a moderator is judging.
+ */
+const submitterChip = { select: reviewUserChipSelect } as const;
 
 /**
  * `submissionSelect` PLUS the store-listing facts the MODERATOR queue shows beside each
@@ -4099,8 +4393,10 @@ const modQueueSubmissionSelect = {
       // discriminates on the listing's, and says in capitals never to substitute
       // `appBlockId` nullness for it.
       kind: true,
-      icon: { select: { url: true } },
-      cover: { select: { url: true } },
+      // `id` + `nsfwLevel` beside the url: the review holds an above-SFW image behind a
+      // click-to-reveal on civitai.com (moderator-only, like the rest of this select).
+      icon: { select: { id: true, url: true, nsfwLevel: true } },
+      cover: { select: { id: true, url: true, nsfwLevel: true } },
       metric: { select: { openCount: true } },
     },
   },
@@ -4117,14 +4413,15 @@ const modQueueSubmissionSelect = {
  */
 function withModQueueListingFacts<
   T extends {
+    appListingId?: string | null;
     appListing: {
       kind?: string | null;
-      icon?: { url: string | null } | null;
-      cover?: { url: string | null } | null;
+      icon?: { id: number; url: string | null; nsfwLevel: number } | null;
+      cover?: { id: number; url: string | null; nsfwLevel: number } | null;
       metric?: { openCount: number } | null;
     } | null;
   }
->(row: T) {
+>(row: T, red?: Map<string, ListingRedMediaImages>) {
   const { appListing, ...rest } = row;
   // The three relation objects are stripped so the derived strings are the payload, which
   // is the on-site path's shape. ⚠️ A DENYLIST, so it is not a guarantee about keys added
@@ -4136,8 +4433,22 @@ function withModQueueListingFacts<
     appListing: appListing
       ? (listingRest as Omit<NonNullable<T['appListing']>, 'icon' | 'cover' | 'metric'>)
       : null,
-    ...(appListing ? listingQueueFacts(appListing) : NO_LISTING_QUEUE_FACTS),
+    ...(appListing
+      ? listingQueueFacts(appListing, row.appListingId ? red?.get(row.appListingId) : null)
+      : NO_LISTING_QUEUE_FACTS),
   };
+}
+
+/**
+ * {@link withModQueueListingFacts} for a whole page, with ONE batched read of the page's
+ * civitai.red overrides (each row's own listing — a revision's shadow carries its own).
+ */
+async function withModQueueListingFactsPage<
+  T extends Parameters<typeof withModQueueListingFacts>[0]
+>(rows: T[]) {
+  const ids = rows.flatMap((r) => (r.appListingId ? [r.appListingId] : []));
+  const red = await readListingRedMediaManyForRender(dbRead, ids);
+  return rows.map((r) => withModQueueListingFacts(r, red));
 }
 
 export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
@@ -4276,31 +4587,28 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
   const ingestionRows = assetImageIds.length
     ? await dbRead.image.findMany({
         where: { id: { in: assetImageIds } },
-        select: { id: true, ingestion: true },
+        select: { id: true, ingestion: true, nsfwLevel: true },
       })
     : [];
   const ingestionByImageId = new Map(ingestionRows.map((i) => [i.id, i.ingestion ?? null]));
+  const levelByImageId = new Map(ingestionRows.map((i) => [i.id, i.nsfwLevel ?? null]));
   const scanStatusOf = (ingestion: string | null | undefined): 'scanned' | 'pending' | 'blocked' =>
     ingestion === 'Scanned' ? 'scanned' : ingestion === 'Blocked' ? 'blocked' : 'pending';
   const assetScansFor = (listing: {
     iconId: number | null;
     coverId: number | null;
     screenshots?: { imageId: number | null }[] | null;
-  }): { kind: 'icon' | 'cover' | 'screenshot'; status: 'scanned' | 'pending' | 'blocked' }[] => {
-    const scans: {
-      kind: 'icon' | 'cover' | 'screenshot';
-      status: 'scanned' | 'pending' | 'blocked';
-    }[] = [];
-    if (listing.iconId != null)
-      scans.push({ kind: 'icon', status: scanStatusOf(ingestionByImageId.get(listing.iconId)) });
-    if (listing.coverId != null)
-      scans.push({ kind: 'cover', status: scanStatusOf(ingestionByImageId.get(listing.coverId)) });
+  }): ListingAssetScan[] => {
+    const scans: ListingAssetScan[] = [];
+    const scanOf = (kind: ListingAssetScan['kind'], imageId: number): ListingAssetScan => ({
+      kind,
+      status: scanStatusOf(ingestionByImageId.get(imageId)),
+      nsfwLevel: levelByImageId.get(imageId) ?? null,
+    });
+    if (listing.iconId != null) scans.push(scanOf('icon', listing.iconId));
+    if (listing.coverId != null) scans.push(scanOf('cover', listing.coverId));
     for (const s of listing.screenshots ?? [])
-      if (s.imageId != null)
-        scans.push({
-          kind: 'screenshot',
-          status: scanStatusOf(ingestionByImageId.get(s.imageId)),
-        });
+      if (s.imageId != null) scans.push(scanOf('screenshot', s.imageId));
     return scans;
   };
 
@@ -4315,22 +4623,14 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
     // Empty when there's no backing listing (a rejected/withdrawn row whose listing
     // was deleted) — nothing to flag.
     problems: r.appListing
-      ? computeListingProblems({
-          // 🔴 `listMySubmissions` IS NOT AN OFF-SITE-ONLY READ despite this file's name:
-          // its `where` has an explicit `{ kind: 'onsite' }` OR-branch so on-site MEDIA
-          // REVISIONS appear on /apps/my-submissions. A hardcoded 'offsite' here would
-          // therefore give manifest-governed listings the author-surface advice — exactly
-          // the defect being fixed. A fake that ignores `select` degrades to the original
-          // labels rather than throwing.
-          kind: (r.appListing.kind ?? 'offsite') as ListingProblemKind,
-          iconId: r.appListing.iconId,
-          coverId: r.appListing.coverId,
-          screenshotCount: r.appListing._count.screenshots,
-          description: r.appListing.description,
-          tagline: r.appListing.tagline,
-          category: r.appListing.category,
-          assetScans: assetScansFor(r.appListing),
-        }).problems
+      ? computeListingProblems(
+          listingProblemInput(r.appListing, {
+            // Not off-site-only: the where includes on-site media revisions, so use the row's own kind.
+            kind: (r.appListing.kind ?? 'offsite') as ListingProblemKind,
+            appRating: r.appListing.appBlock?.contentRating,
+            assetScans: assetScansFor(r.appListing),
+          })
+        ).problems
       : [],
   }));
 
@@ -4352,7 +4652,7 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
     select: { ...modQueueSubmissionSelect, submittedBy: submitterChip },
   });
   const hasNext = rows.length > limit;
-  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -4371,7 +4671,7 @@ export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptio
     },
   });
   const hasNext = rows.length > limit;
-  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -4390,6 +4690,6 @@ export async function listRejectedOffsiteRequests(opts: ListOffsiteRequestsOptio
     },
   });
   const hasNext = rows.length > limit;
-  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

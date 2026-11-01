@@ -33,6 +33,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -63,7 +64,7 @@ import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import { SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getBaseModelGenerationConfig } from '~/shared/constants/basemodel.constants';
 import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
@@ -257,9 +258,11 @@ export const AuctionTopSection = ({
                   <Badge color="green" mr="xs">
                     Generation
                   </Badge>
-                  Every eligible checkpoint can be generated with, so winning no longer unlocks
-                  that. A winning checkpoint is marked for priority when the generator has to
-                  download it.
+                  Members can already generate with every eligible checkpoint, so winning adds
+                  nothing there. For free accounts, a winning checkpoint can be generated with even
+                  when it isn&apos;t loaded on the generator. Outside of winners and the week&apos;s
+                  top 20 earning checkpoints, free accounts can only use checkpoints that are
+                  already loaded.
                 </Text>
               </Stack>
             </Stack>
@@ -467,7 +470,7 @@ export const AuctionInfo = () => {
   placeBidInViewRef.current = placeBidInView;
 
   const addBidFn = useCallback(
-    (entity: GenerationResource) => {
+    (entity: GenerationResourceValue) => {
       setSelectedModel(entity);
 
       if (!placeBidInViewRef.current) {
@@ -651,7 +654,7 @@ export const AuctionInfo = () => {
                   value={selectedModel}
                   onChange={(gVal) => {
                     if (gVal) {
-                      setSelectedModel(gVal);
+                      setSelectedModel(asResourceValue(gVal));
                     }
                   }}
                   style={{

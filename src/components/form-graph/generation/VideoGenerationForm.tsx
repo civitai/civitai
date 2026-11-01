@@ -32,6 +32,7 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
+import { FieldCorrectionNote } from './FieldCorrectionNote';
 import {
   ControllerLabel,
   PromptLabel,
@@ -39,6 +40,7 @@ import {
   useWildcardHandlers,
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
+import { Flux3KeyframesInput } from './inputs/Flux3KeyframesInput';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
@@ -140,10 +142,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         name="mode"
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
-            <ControllerLabel
-              label="Mode"
-              info="Standard mode is faster to generate and more cost-effective. Professional takes longer to generate and has higher quality output."
-            />
+            <ControllerLabel label="Mode" info={meta?.info} />
             <SegmentedControlWrapper
               value={value}
               onChange={(v) => onChange(v as typeof value)}
@@ -330,17 +329,20 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={videoHub}
         name="duration"
-        render={({ value, meta, onChange }) => {
+        render={({ value, meta, onChange, note }) => {
           if (meta && 'min' in meta) {
             return (
-              <SliderInput
-                label="Duration (seconds)"
-                value={typeof value === 'number' ? value : Number(value)}
-                onChange={onChange}
-                min={meta.min}
-                max={meta.max}
-                step={meta.step ?? 1}
-              />
+              <div className="flex flex-col gap-1">
+                <SliderInput
+                  label="Duration (seconds)"
+                  value={typeof value === 'number' ? value : Number(value)}
+                  onChange={onChange}
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step ?? 1}
+                />
+                <FieldCorrectionNote note={note} />
+              </div>
             );
           }
           return (
@@ -360,6 +362,18 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
             </div>
           );
         }}
+      />
+      <Controller
+        graph={videoHub}
+        name="keyframes"
+        render={({ value, meta, onChange, error }) => (
+          <Flux3KeyframesInput
+            value={value}
+            onChange={onChange}
+            meta={meta}
+            error={error?.message}
+          />
+        )}
       />
       <Controller
         graph={videoHub}
@@ -399,6 +413,23 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={(meta?.options ?? []).map((o) => ({ label: o.label, value: String(o.value) }))}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={videoHub}
+        name="reasoningLevel"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <ControllerLabel
+              label="Reasoning"
+              info="High reasoning follows the prompt more closely but takes longer to generate."
+            />
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
             />
           </div>
         )}
@@ -584,20 +615,11 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={videoHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
-          )}
-        />
-        <Controller
-          graph={videoHub}
-          name="usePro"
-          render={({ value, onChange }) => (
-            <Checkbox
-              label="Pro Mode"
-              description="Generate with higher quality (uses more credits)"
-              checked={value}
-              onChange={(e) => onChange(e.currentTarget.checked)}
-            />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
         <Controller
@@ -630,7 +652,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
           render={({ value, onChange }) => (
             <Checkbox
               label="Turbo"
-              description="Use the turbo LoRA — converges in fewer steps"
+              description="Faster generation, at some cost to quality"
               checked={value}
               onChange={(e) => onChange(e.currentTarget.checked)}
             />

@@ -227,15 +227,17 @@ export function GeneratedOutputWrapper({
               onToggleFavorite={handleToggleFavorite}
               onToggleFeedback={handleToggleFeedback}
               infoSlot={
-                <ImageMetaPopover
-                  meta={step.params as any}
-                  zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
-                  hideSoftware
-                >
-                  <LegacyActionIcon size="md" variant="subtle" color="gray">
-                    <IconInfoCircle size={16} />
-                  </LegacyActionIcon>
-                </ImageMetaPopover>
+                !image.hideDetails && (
+                  <ImageMetaPopover
+                    meta={step.params as any}
+                    zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
+                    hideSoftware
+                  >
+                    <LegacyActionIcon size="md" variant="subtle" color="gray">
+                      <IconInfoCircle size={16} />
+                    </LegacyActionIcon>
+                  </ImageMetaPopover>
+                )
               }
             />
           )}

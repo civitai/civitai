@@ -30,12 +30,20 @@ import { PROM_PREFIX } from '@civitai/telemetry/client';
  * "what is production actually resolving for a logged-in viewer?" — the question
  * that previously required an instrumented deploy to ask.
  *
- * `civitai_app_store_scope_applied_total{scope, entrypoint}` — what each entry point
- * actually BRANCHED on, recorded before its own `??` default. Its extra `absent`
+ * `civitai_app_store_scope_applied_total{scope, entrypoint, floor}` — what each entry
+ * point actually BRANCHED on, recorded before its own `??` default. Its extra `absent`
  * value is the one thing a response can never tell you: whether a scope arrived at
  * all. Read as a PAIR with the resolution counter — agreement means the answer is
  * simply wrong, disagreement means the answer is being lost in transit. Those two
  * faults need opposite fixes and were indistinguishable for the whole of #3983.
+ *
+ * 🔴 `floor` IS THE W14 AUDIENCE FLOOR, ON THIS COUNTER RATHER THAN A PARALLEL PAIR. The
+ * per-listing visibility level is a SECOND silent gate on the same reads, with exactly the
+ * failure mode this file was built for: a cohort that resolves the wrong floor sees an
+ * ordinary, successful, short grid, and `public` (the fail-closed default) is
+ * indistinguishable from "no floor ever arrived" from outside. Same `absent` convention,
+ * same read-as-a-pair discipline. `absent` on an entry point that consumes no floor (the
+ * review writes) is correct rather than missing data — they genuinely branch on no floor.
  *
  * `civitai_app_store_scope_divergence_total{flag}` — the IMPOSSIBLE COMBINATION: a
  * LOGGED-IN principal for whom the async read path resolved `none`, while a
@@ -97,7 +105,7 @@ const metrics =
         'caller would silently erase (every such default now fails CLOSED via narrowStoreScope). ' +
         'Compare against store_scope_resolutions_total: a resolution mix that disagrees with ' +
         'the applied mix means the scope is being LOST between the resolver and the branch.',
-      labelNames: ['scope', 'entrypoint'],
+      labelNames: ['scope', 'entrypoint', 'floor'],
     }),
     divergence: new client.Counter({
       name: PROM_PREFIX + 'store_scope_divergence_total',
@@ -145,6 +153,12 @@ export type StoreScopeEntrypoint =
   | 'trpc-reviews'
   | 'trpc-review-write'
   | 'trpc-my-review'
+  // The fork list on a parent's store page (`appListings.listForks`) — a store read with its own
+  // label so a scope mix on it is distinguishable from the detail read beside it.
+  | 'trpc-forks'
+  // Starting a fork (`appListings.startFork`): the parent must be a store listing the viewer could
+  // open, under this scope.
+  | 'trpc-fork-start'
   | 'rest-list'
   | 'rest-detail'
   // 🔴 NOT A STORE SURFACE, and the first entry here that isn't. The post-detail
@@ -158,7 +172,12 @@ export type StoreScopeEntrypoint =
   // side, which is precisely the "scope lost in transit" signature the two
   // counters exist to distinguish. Slice by this label before reading either as
   // a statement about the store.
-  | 'post-detail';
+  | 'post-detail'
+  // The same "Published with <app>" chip on the IMAGE detail page
+  // (`image.getPublishedWithApp`). A separate label from `post-detail` for the same
+  // reason that one is separate from `trpc-detail`: two non-store surfaces folded
+  // into one label could not show a scope lost on only one of them.
+  | 'image-detail';
 
 /**
  * Record the scope an entry point actually branched on.
@@ -174,10 +193,11 @@ export type StoreScopeEntrypoint =
  */
 export function recordStoreScopeApplied(
   scope: string | undefined,
-  entrypoint: StoreScopeEntrypoint
+  entrypoint: StoreScopeEntrypoint,
+  floor?: string | undefined
 ): void {
   try {
-    metrics.applied.inc({ scope: scope ?? 'absent', entrypoint });
+    metrics.applied.inc({ scope: scope ?? 'absent', entrypoint, floor: floor ?? 'absent' });
   } catch {
     /* never throw from telemetry */
   }

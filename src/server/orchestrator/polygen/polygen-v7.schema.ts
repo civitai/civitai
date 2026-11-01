@@ -10,7 +10,7 @@
  * picked by the user: Meshy exposes the two as separate endpoints, but from
  * the form's point of view they are one "image(s) to 3D" control.
  *
- * v7 is selected via the `polygenVersion` control inside the PolyGen
+ * v7 is selected via the `version` control inside the PolyGen
  * ecosystem, not as an ecosystem of its own.
  *
  * The shared Meshy fields (targetPolycount, topology, symmetryMode,
@@ -23,7 +23,7 @@
 import type {
   MeshyV7ImageTo3dFalPolyGenInput,
   MeshyV7MultiImageTo3dFalPolyGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import {

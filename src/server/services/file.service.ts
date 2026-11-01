@@ -9,19 +9,30 @@ import { isPaidAccessActive } from '@civitai/buzz';
 import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import {
-  ModelFileVisibility,
-  ModelModifier,
-  ModelStatus,
-  ModelUsageControl,
-} from '~/shared/utils/prisma/enums';
+import { ModelModifier, ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import type { ResolveAttribution } from '~/utils/resolve-attribution';
 import type { NameableFile, NameableModel, NameableVersion } from '~/utils/model-file-naming';
 import { resolveModelFileName } from '~/utils/model-file-naming';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelVersionForFileViaKysely,
+  readModelVersionForFileViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
+import {
+  downloadFileSelect,
+  downloadFilesWhere,
+  readDownloadFilesViaKysely,
+  readDownloadFilesViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
+import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
@@ -40,6 +51,25 @@ export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema
   }));
 };
 
+/** File metadata only the bounty entry file check and its moderator override write. Never taken from a caller. */
+export const SERVER_FILE_METADATA_KEYS = [
+  'sha256Server',
+  'hashCheckedAt',
+  'hashAttemptedAt',
+  'hashFailCount',
+  'hashLastError',
+  'blockedReason',
+  'checkOverride',
+] as const;
+
+function callerMetadata(metadata: unknown) {
+  return Object.fromEntries(
+    Object.entries((metadata ?? {}) as Record<string, unknown>).filter(
+      ([key]) => !(SERVER_FILE_METADATA_KEYS as readonly string[]).includes(key)
+    )
+  );
+}
+
 export const updateEntityFiles = async ({
   tx,
   entityId,
@@ -55,18 +85,27 @@ export const updateEntityFiles = async ({
 }) => {
   const updatedFiles = files.filter((f) => f.id);
 
-  if (updatedFiles.length > 0) {
-    await Promise.all(
-      updatedFiles.map((file) => {
-        return tx.file.update({
-          where: { id: file.id },
-          data: {
-            ...file,
-            metadata: { ...(file.metadata ?? {}), ownRights },
-          },
-        });
-      })
-    );
+  // A file saved again at the same url keeps its check result; a new url is checked afresh. The
+  // result is read inside this UPDATE, from the row as it is written, so a moderator's change to it
+  // is never written back over; read it in an earlier statement and that guarantee is gone. The
+  // server keys must be read from `f`, the row being updated, not a joined or sub-selected copy. In
+  // id order, so two saves of one item take the row locks in the same order.
+  for (const file of [...updatedFiles].sort((a, b) => (a.id as number) - (b.id as number))) {
+    const metadata = { ...callerMetadata(file.metadata), ownRights };
+    const count = await tx.$executeRaw`
+      UPDATE "File" f
+      SET name = ${file.name}, url = ${file.url}, "sizeKB" = ${file.sizeKB},
+        metadata = ${JSON.stringify(metadata)}::jsonb || CASE
+          WHEN f.url = ${file.url} AND jsonb_typeof(f.metadata) = 'object' THEN COALESCE(
+            (SELECT jsonb_object_agg(key, value) FROM jsonb_each(f.metadata)
+              WHERE key = ANY(${[...SERVER_FILE_METADATA_KEYS]}::text[])),
+            '{}'::jsonb
+          )
+          ELSE '{}'::jsonb
+        END
+      WHERE f.id = ${file.id} AND f."entityId" = ${entityId} AND f."entityType" = ${entityType}
+    `;
+    if (count !== 1) throw throwBadRequestError('A file to update is not part of this item.');
   }
 
   // Delete any files that were removed.
@@ -91,7 +130,7 @@ export const updateEntityFiles = async ({
         ...file,
         entityId,
         entityType,
-        metadata: { ...(file.metadata ?? {}), ownRights },
+        metadata: { ...callerMetadata(file.metadata), ownRights },
       })),
     });
   }
@@ -161,6 +200,7 @@ export const getFileForModelVersion = async ({
   noAuth,
   fileId,
   direct,
+  attribution,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -182,47 +222,23 @@ export const getFileForModelVersion = async ({
    * this flag is read after all of them.
    */
   direct?: boolean;
+  /**
+   * Which code path and actor this resolve is for, forwarded to the storage
+   * resolver for attribution only. Required so every caller names itself.
+   */
+  attribution: ResolveAttribution;
 }): Promise<ModelVersionFileResult> => {
-  const modelVersion = await dbRead.modelVersion.findFirst({
-    // `model: { is: {} }` requires the (required) `model` relation to exist.
-    // Without it, a ModelVersion whose `model` was hard-deleted (orphaned FK)
-    // makes Prisma throw "Inconsistent query result: Field model is required to
-    // return data, got null" at query execution → caught upstream → 500 on every
-    // download lookup for that version. With the filter the DB drops the orphan
-    // row, findFirst returns null, and we fall through to the `not-found` (404)
-    // branch below — a model-less version is genuinely not downloadable. Same
-    // class/fix as #2637 (relation-existence filter on orphaned required
-    // relations).
-    where: { id: modelVersionId, model: { is: {} } },
-    select: {
-      id: true,
-      status: true,
-      model: {
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          publishedAt: true,
-          status: true,
-          userId: true,
-          mode: true,
-          nsfw: true,
-          availability: true,
-          poi: true,
-        },
-      },
-      name: true,
-      trainedWords: true,
-      createdAt: true,
-      requireAuth: true,
-      usageControl: true,
-    },
-  });
+  // The version and its model (readModelVersionForFileViaPrisma, hot-reads-5.reads.ts, keeps the
+  // `model: { is: {} }` orphan filter and why it exists). The Kysely read's inner join stands in
+  // for that filter.
+  const modelVersion = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    ? await readModelVersionForFileViaKysely((await loadKyselyDb()).kyselyRead, modelVersionId)
+    : await readModelVersionForFileViaPrisma(dbRead, modelVersionId);
 
   if (!modelVersion) return { status: 'not-found' };
 
   // disablePoi - Disables downloads for POI resources.
-  if (modelVersion.model.poi && modelVersion.model.userId !== user?.id && !user?.isModerator) {
+  if (!canViewPoiModel(modelVersion.model.poi, modelVersion.model.userId, user)) {
     return { status: 'not-found' };
   }
 
@@ -290,34 +306,28 @@ export const getFileForModelVersion = async ({
   }
 
   // Get the correct file
-  const fileSelect = {
-    id: true,
-    url: true,
-    name: true,
-    overrideName: true,
-    type: true,
-    metadata: true,
-    hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
-  };
-
   let file: FileResult | null = null;
   // The files `file` sits beside, so the name it gets can be made distinct from theirs.
   let versionFiles: FileResult[] = [];
+  const readFiles = async (where: DownloadFilesWhere) =>
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+      ? readDownloadFilesViaKysely((await loadKyselyDb()).kyselyRead, where)
+      : readDownloadFilesViaPrisma(dbRead, downloadFilesWhere(where));
   if (fileId) {
     // Direct file lookup by ID — bypasses type-based resolution. Fetched as the whole version's
     // files rather than the one row so the siblings come along; it is the same single query.
-    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
-    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const found = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    const found = await readFiles({ modelVersionId, publicOnly: !isOwner && !isMod });
     versionFiles = found as FileResult[];
     file = versionFiles.find((candidate) => candidate.id === fileId) ?? null;
   } else {
     // Try local files on this model version first. A replaced file is a quarantined component whose
     // linked replacement is the fallback below, so it must not win here.
-    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId, replacedAt: null };
-    if (type) fileWhere.type = type;
-    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    const files = await readFiles({
+      modelVersionId,
+      notReplaced: true,
+      type,
+      publicOnly: !isOwner && !isMod,
+    });
     versionFiles = files as FileResult[];
     const metadata = {
       ...user?.filePreferences,
@@ -342,7 +352,7 @@ export const getFileForModelVersion = async ({
         // Fetch the primary 'Model' file from the linked version
         const linkedFile = await dbRead.modelFile.findFirst({
           where: { modelVersionId: linked.resourceId, type: 'Model' },
-          select: fileSelect,
+          select: downloadFileSelect,
           orderBy: { id: 'asc' },
         });
         if (linkedFile) {
@@ -362,11 +372,17 @@ export const getFileForModelVersion = async ({
     versionFiles,
   });
   try {
-    const { url } = await resolveDownloadUrl(file.id, file.url, filename, { direct });
+    const { url, urlExpiryDate } = await resolveDownloadUrl(file.id, file.url, filename, {
+      direct,
+      ...attribution,
+    });
     return {
       status: 'success',
       url,
+      // The legacy delivery-worker path hands this back as JSON text, not a Date.
+      urlExpiresAt: new Date(urlExpiryDate),
       fileId: file.id,
+      sizeKB: file.sizeKB,
       modelId: modelVersion.model.id,
       modelVersionId,
       nsfw: modelVersion.model.nsfw,
@@ -449,7 +465,9 @@ type ModelVersionFileResult =
   | {
       status: 'success';
       url: string;
+      urlExpiresAt: Date;
       fileId: number;
+      sizeKB: number;
       modelId: number;
       modelVersionId: number;
       nsfw: boolean;
@@ -465,6 +483,7 @@ type FileResult = {
   name: string;
   overrideName?: string | null;
   metadata: Prisma.JsonValue;
+  sizeKB: number;
   hashes: {
     hash: string;
   }[];

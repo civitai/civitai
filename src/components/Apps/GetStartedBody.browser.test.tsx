@@ -5,19 +5,26 @@ import {
   APP_SDK_NPM_URL,
   BLOCKS_REACT_NPM_URL,
   CIVITAI_CLI_GITHUB_URL,
-  CLI_CREATE_SAMPLE_COMMAND,
-  CLI_INSTALL_BREW,
-  CLI_INSTALL_GO,
-  CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-// GetStartedBody is the PUBLIC "App builders" landing body. Pure presentational
-// (props-only, no tRPC / no network) so it renders in isolation.
+// GetStartedBody is the PUBLIC "App builders" landing body — what a viewer WITHOUT builder
+// access sees. Pure presentational (no props, no tRPC / no network) so it renders in isolation.
 //
 // NOTE: this env does not load `@mantine/core/styles.css`, so we assert
 // presence / hrefs / accessible names / text — never computed styles.
+
+// Literal on purpose: these are the contract the page's other suites and the stories share,
+// and importing them from the component would let a rename pass unnoticed.
+const AGENT_CARD = 'apps-agent-onboarding';
+const MANUAL_TOGGLE = 'apps-manual-setup-toggle';
+const MANUAL_REGION = 'apps-manual-setup';
+
+/** True when `b` comes after `a` in document order. */
+const follows = (a: Element, b: Element) =>
+  Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
 describe('GetStartedBody (public App builders landing)', () => {
   test('renders the hero heading', async () => {
     renderWithProviders(<GetStartedBody />);
@@ -26,66 +33,49 @@ describe('GetStartedBody (public App builders landing)', () => {
       .toBeInTheDocument();
   });
 
-  test('renders the two section headings (quickstart / what you get) and NOT publish', async () => {
+  test('renders the "What you get" heading and NOT publish', async () => {
     renderWithProviders(<GetStartedBody />);
-    await expect.element(page.getByRole('heading', { name: 'Quickstart' })).toBeInTheDocument();
     await expect.element(page.getByRole('heading', { name: 'What you get' })).toBeInTheDocument();
     // Publishing was removed from this page entirely.
     expect(page.getByRole('heading', { name: 'Publish' }).elements()).toHaveLength(0);
   });
 
-  test('the Quickstart section renders BELOW the "What you get" content in DOM order', async () => {
-    renderWithProviders(<GetStartedBody />);
-    const whatYouGet = page.getByRole('heading', { name: 'What you get' });
-    const quickstart = page.getByRole('heading', { name: 'Quickstart' });
-    await expect.element(whatYouGet).toBeInTheDocument();
-    await expect.element(quickstart).toBeInTheDocument();
-    // Quickstart moved to the bottom — its heading must FOLLOW the "What you get"
-    // heading in document order.
-    const position = whatYouGet.element().compareDocumentPosition(quickstart.element());
-    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
+  test('🔴 the order is hero, banner, "What you get"', async () => {
+    await renderWithProviders(<GetStartedBody />);
+    const located = [
+      page.getByRole('heading', { name: 'Build on Civitai', level: 1 }),
+      page.getByRole('img', { name: 'Build apps on Civitai' }),
+      page.getByRole('heading', { name: 'What you get' }),
+    ];
+    for (const locator of located) await expect.element(locator).toBeInTheDocument();
 
-  test('the quickstart commands are collapsed (not visible) by default', async () => {
-    renderWithProviders(<GetStartedBody />);
-    // The heading + subtitle lead; the commands sit inside a collapsed section
-    // fronted by a "Show commands" toggle.
-    await expect.element(page.getByRole('heading', { name: 'Quickstart' })).toBeInTheDocument();
-    await expect.element(page.getByRole('button', { name: 'Show commands' })).toBeInTheDocument();
-    // The commands live inside a Mantine <Collapse> which renders a height:0
-    // wrapper when closed — assert THAT region is not visible (the closed
-    // wrapper has a zero-height box). Asserting the inner <pre> directly is
-    // unreliable: the browser matcher ignores the wrapper's opacity:0 and the
-    // clipped child keeps its own bounding box.
-    await expect.element(page.getByTestId('quickstart-commands')).not.toBeVisible();
-  });
-
-  test('clicking "Show commands" reveals the quickstart commands (brew install, scaffold, run)', async () => {
-    renderWithProviders(<GetStartedBody />);
-    await page.getByRole('button', { name: 'Show commands' }).click();
-    // Toggle label flips once opened.
-    await expect.element(page.getByRole('button', { name: 'Hide commands' })).toBeInTheDocument();
-    await expect.element(page.getByTestId('quickstart-commands')).toBeVisible();
-    // Copyable commands render prefixed with a shell prompt ("$ "), now visible.
-    for (const command of [CLI_INSTALL_BREW, CLI_CREATE_SAMPLE_COMMAND, CLI_RUN_COMMAND]) {
-      await expect.element(page.getByText(`$ ${command}`)).toBeVisible();
+    const order = located.map((locator) => locator.element());
+    for (let i = 1; i < order.length; i++) {
+      expect(follows(order[i - 1], order[i]), `element ${i} must follow element ${i - 1}`).toBe(
+        true
+      );
     }
-    // The Go install is shown inline (secondary option), not as a copyable block.
-    await expect.element(page.getByText(CLI_INSTALL_GO)).toBeVisible();
   });
 
-  test('the run command installs deps before dev:harness (the CLI does not auto-install)', () => {
-    // Guards the correctness fix: `create` does NOT install deps, so the run step
-    // MUST include `npm install`, and uses `dev:harness` (mock host), not `dev`.
-    expect(CLI_RUN_COMMAND).toContain('npm install');
-    expect(CLI_RUN_COMMAND).toContain('npm run dev:harness');
-  });
+  /**
+   * 🔴 NO BUILD ROUTE BEFORE ACCESS. This body is the pitch a viewer without builder access
+   * sees; the agent prompt and the CLI steps both need access, so neither is offered here.
+   *
+   * Asserted on PRESENCE in the DOM, not visibility: Mantine's `Collapse` keeps its children
+   * mounted while closed, so a collapsed manual setup would still be in the tree and a
+   * visibility check would miss it. `Copy command: …` is `CopyableCommand`'s `aria-label`
+   * contract, so it catches the CLI steps in ANY wrapper, not just the old collapse's test ids
+   * — queried on the raw DOM because `getByRole` skips what a closed `Collapse` hides.
+   */
+  test('🔴 renders NO agent card and NO manual CLI setup', async () => {
+    await renderWithProviders(<GetStartedBody />);
+    // Render barrier: an absence assertion before the commit would read an empty container.
+    await expect.element(page.getByRole('heading', { name: 'What you get' })).toBeInTheDocument();
 
-  test('command constants are the real, verified one-liners', () => {
-    expect(CLI_INSTALL_BREW).toBe('brew install civitai/tap/civitai');
-    expect(CLI_INSTALL_GO).toBe('go install github.com/civitai/cli/cmd/civitai@latest');
-    expect(CLI_CREATE_SAMPLE_COMMAND).toBe('civitai app create my-app');
-    expect(CLI_RUN_COMMAND).toBe('cd my-app && npm install && npm run dev:harness');
+    expect(page.getByTestId(AGENT_CARD).elements()).toHaveLength(0);
+    expect(page.getByTestId(MANUAL_TOGGLE).elements()).toHaveLength(0);
+    expect(page.getByTestId(MANUAL_REGION).elements()).toHaveLength(0);
+    expect(document.querySelectorAll('[aria-label^="Copy command: "]')).toHaveLength(0);
   });
 
   test('renders the platform-capabilities grid (catalog / hosting / identity)', async () => {
@@ -96,17 +86,14 @@ describe('GetStartedBody (public App builders landing)', () => {
   });
 
   test('links to the real CLI repo and both npm packages', async () => {
-    renderWithProviders(<GetStartedBody />);
-    // Two "Civitai CLI" links render now (the quickstart subtitle Anchor + the
-    // toolkit Button) — both point at the same repo. Assert the toolkit one
-    // (the second match) via the retrying element API, then confirm every
-    // rendered "Civitai CLI" link targets the CLI repo.
-    const toolkitCli = page.getByRole('link', { name: 'Civitai CLI' }).nth(1);
-    await expect.element(toolkitCli).toBeInTheDocument();
-    expect(toolkitCli.element().getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
-    for (const link of page.getByRole('link', { name: 'Civitai CLI' }).elements()) {
-      expect(link.getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
-    }
+    await renderWithProviders(<GetStartedBody />);
+
+    // One "Civitai CLI" link: the toolkit button. The manual setup's intro line, which held
+    // the second, is no longer on this page.
+    const cliLinks = page.getByRole('link', { name: 'Civitai CLI' });
+    await expect.element(cliLinks.first()).toBeVisible();
+    const hrefs = cliLinks.elements().map((link) => link.getAttribute('href'));
+    expect(hrefs).toEqual([CIVITAI_CLI_GITHUB_URL]);
 
     const blocksReact = page.getByRole('link', { name: '@civitai/blocks-react' });
     await expect.element(blocksReact).toBeInTheDocument();
@@ -115,15 +102,5 @@ describe('GetStartedBody (public App builders landing)', () => {
     const appSdk = page.getByRole('link', { name: '@civitai/app-sdk' });
     await expect.element(appSdk).toBeInTheDocument();
     expect(appSdk.element().getAttribute('href')).toBe(APP_SDK_NPM_URL);
-  });
-
-  test('the Quickstart subtitle pitches a 3-step local app and links to the CLI repo', async () => {
-    renderWithProviders(<GetStartedBody />);
-    await expect
-      .element(page.getByText('Create a local Civitai app in 3 steps', { exact: false }))
-      .toBeInTheDocument();
-    const ghLink = page.getByRole('link', { name: 'Civitai CLI' }).first();
-    await expect.element(ghLink).toBeInTheDocument();
-    expect(ghLink.element().getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
   });
 });

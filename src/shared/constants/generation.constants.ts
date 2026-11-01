@@ -1,22 +1,14 @@
-import type { WorkflowStatus } from '@civitai/client';
 import type {
   ComfySampler,
   ComfyScheduler,
   SdCppSampleMethod,
   SdCppSchedule,
+  WorkflowStatus,
 } from '@civitai/orchestration-client';
-import { Scheduler } from '@civitai/client';
+import { Scheduler } from '@civitai/orchestration-client';
 import type { MantineColor } from '@mantine/core';
 import type { Sampler } from '~/server/common/constants';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  maxUpscaleSize,
-  minDownscaleSize,
-  maxRandomSeed,
-} from '~/server/common/constants';
-import type { GenerationLimits } from '~/server/schema/generation.schema';
+import { maxUpscaleSize, minDownscaleSize, maxRandomSeed } from '~/server/common/constants';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
@@ -26,8 +18,8 @@ import {
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
-import { findClosest, getRatio } from '~/utils/number-helpers';
+import { MEGAPIXEL, type CustomDimensionLimits } from '~/utils/aspect-ratio-helpers';
+import { findClosest } from '~/utils/number-helpers';
 
 // Response header the orchestrator router sets when the generation client is behind; UpdateRequiredWatcher
 // reads it to prompt a refresh. (Rehomed from the deleted auth.constants.ts — it's a generation signal.)
@@ -158,57 +150,51 @@ export const orchestratorPendingStatuses: WorkflowStatus[] = [
 ];
 // #endregion
 
-// #region [injectable resources]
-export type InjectableResource = {
-  id: number;
-  triggerWord?: string;
-  triggerType?: 'negative' | 'positive';
-  baseModelSetType?: BaseModelGroup;
-  sanitize?: (params: TextToImageParams) => Partial<TextToImageParams>;
+// #region [draft mode]
+export const DRAFT_WORKFLOW = 'txt2img:draft';
+
+type SliderRange = { min: number; max: number; default: number };
+
+/**
+ * SD's `txt2img:draft`: an accelerator LoRA the server adds unseen, and the steps/CFG range and
+ * sampler it is trained for.
+ */
+export type SdDraftMode = {
+  loraVersionId: number;
+  /** Pre-computed: the LoRA is never one of the user's resources, so it has no resolved AIR. */
+  air: string;
+  sampler: Sampler;
+  steps: SliderRange;
+  cfgScale: SliderRange;
 };
 
-export const draftInjectableResources = [
-  {
-    id: 391999,
-    baseModelSetType: 'SDXL',
-    sanitize: () => ({
-      steps: 8,
-      cfgScale: 1,
-      sampler: 'Euler',
-    }),
-  } as InjectableResource,
-  {
-    id: 424706,
-    baseModelSetType: 'SD1',
-    sanitize: () => ({
-      steps: 6,
-      cfgScale: 1,
-      sampler: 'LCM',
-    }),
-  } as InjectableResource,
-];
+const sdxlDraftMode: SdDraftMode = {
+  loraVersionId: 391999, // SDXL Lightning LoRAs — 8 Steps
+  air: 'urn:air:sdxl:lora:civitai:350450@391999',
+  sampler: 'Euler',
+  steps: { min: 4, max: 12, default: 8 },
+  cfgScale: { min: 1, max: 2, default: 1 },
+};
 
-export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
+const sd1DraftMode: SdDraftMode = {
+  loraVersionId: 424706, // LCM-LoRA for SD 1.5
+  air: 'urn:air:sd1:lora:civitai:195519@424706',
+  sampler: 'LCM',
+  steps: { min: 4, max: 8, default: 6 },
+  cfgScale: { min: 1, max: 2, default: 1 },
+};
 
-export function getInjectableResources(baseModelSetType: BaseModelGroup) {
-  const isSdxl = getIsSdxl(baseModelSetType);
-  let value = baseModelSetType;
-  if (isSdxl) value = 'SDXL';
-  return {
-    draft: draftInjectableResources.find((x) => x.baseModelSetType === value),
-  };
+/** SD1 has its own LoRA; every other SD-family ecosystem uses SDXL's. */
+export function getSdDraftMode(ecosystem: string | undefined): SdDraftMode {
+  return ecosystem === 'SD1' ? sd1DraftMode : sdxlDraftMode;
 }
-// #endregion
 
-export const whatIfQueryOverrides = {
-  prompt: '',
-  negativePrompt: '',
-  seed: null,
-  // image: undefined,
-  nsfw: false,
-  cfgScale: generation.defaultValues.cfgScale,
-  remixSimilarity: 1,
-};
+export const clampToRange = (value: number | undefined, range: SliderRange) =>
+  Math.min(range.max, Math.max(range.min, value ?? range.default));
+
+/** Kept out of model metrics and stripped from remixes: the user never chose these LoRAs. */
+export const allInjectableResourceIds = [sdxlDraftMode, sd1DraftMode].map((x) => x.loraVersionId);
+// #endregion
 
 export const samplers = [
   'Euler a',
@@ -432,63 +418,6 @@ export function getResourceGenerationType(
   return getBaseModelMediaType(baseModel);
 }
 
-export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
-  params: T,
-  limits?: GenerationLimits
-) {
-  // if (params.sampler) {
-  //   params.sampler = (generation.samplers as string[]).includes(params.sampler)
-  //     ? params.sampler
-  //     : generation.defaultValues.sampler;
-  // }
-
-  const maxValueKeys = Object.keys(generation.maxValues);
-  for (const item of maxValueKeys) {
-    const key = item as keyof typeof generation.maxValues;
-    if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
-  }
-
-  if (!params.aspectRatio && params.width && params.height) {
-    params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
-    if (getIsFlux(params.baseModel))
-      params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);
-  }
-
-  // handle SDXL ClipSkip
-  // I was made aware that SDXL only works with clipSkip 2
-  // if that's not the case anymore, we can rollback to just setting
-  // this for Pony resources -Manuel
-  const isSDXL = getIsSdxl(params.baseModel);
-  if (isSDXL) params.clipSkip = 2;
-
-  if (limits) {
-    if (params.steps) params.steps = Math.min(params.steps, 50);
-    if (params.quantity) params.quantity = Math.min(params.quantity, limits.quantity);
-  }
-  return params;
-}
-
-export function getSizeFromAspectRatio(
-  aspectRatio: string,
-  baseModel?: string,
-  modelVersionId?: number
-) {
-  const aspectRatios = getGenerationConfig(baseModel, modelVersionId).aspectRatios;
-
-  return (
-    aspectRatios.find((x) => getRatio(x.width, x.height) === aspectRatio) ??
-    generationConfig.SD1.aspectRatios[0]
-  );
-}
-
-export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
-  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
-  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  const result = findClosestAspectRatio({ width, height }, aspectRatios) ?? aspectRatios[0];
-  return result ? getRatio(result.width, result.height) : '1:1';
-};
-
 export function getWorkflowDefinitionFeatures(workflow?: {
   features?: WorkflowDefinition['features'];
 }) {
@@ -561,6 +490,8 @@ export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   'Flux2Klein_9B_base',
   'Flux2Klein_4B',
   'Flux2Klein_4B_base',
+  'Flux3Klein',
+  'Flux3Klein_base',
 ];
 
 // Flux Pro 1.1 / Ultra: excluded from the sdcpp 2-for-1 bonus and its footer alert.
@@ -731,6 +662,96 @@ export const flux1ProAspectRatioBuckets = sdxlFullAspectRatioBuckets.filter(
   (b) => b.width <= 1440 && b.height <= 1440
 );
 
+/**
+ * The `value` of a custom width × height, in place of a ratio label. An explicit
+ * marker, not "any size that isn't a bucket": remix and legacy metadata send a
+ * source image's raw size, which must keep snapping to the nearest bucket.
+ */
+export const CUSTOM_ASPECT_RATIO = 'custom';
+
+/**
+ * Custom width × height, grouped by what each model's authors document (model
+ * cards, papers, BFL's docs — checked 2026-10-01): ~1, ~2 and ~4 MP, plus Flux.1
+ * Pro and SD1. The engines accept 64–2048 /16 (Flux.2 and Klein from 512;
+ * flux1-pro 256–1440 /32); these are tighter on purpose: /32
+ * steps, sides from 512, and 2.5:1 at most, which covers the 21:9 bucket
+ * (1536×640 is 2.4:1). Areas are in MEGAPIXEL (1024²) units.
+ *
+ * No image may exceed 4 MP = 2048² — a product ceiling, not an engine one.
+ *
+ * Each group has two levels: `maxArea`, enforced on every parse, and
+ * `recommendedArea`, past which the picker only warns.
+ */
+
+/**
+ * Trained at ~1 MP, nothing larger documented: SDXL, Pony V6, Illustrious, NoobAI,
+ * Chroma, HiDream-I1 — plus Flux.2 Klein and Z-Image Turbo until a test
+ * generation confirms their family's larger figures apply to them. Illustrious
+ * v1.0+ is 1536² native, but the ecosystem can't tell it from the v0.1 merges
+ * that most checkpoints are, so the warning stays at 1 MP.
+ */
+export const sdxlCustomDimensionLimits = {
+  step: 32,
+  minSide: 512,
+  maxSide: 2048,
+  maxArea: 1536 * 1536,
+  recommendedArea: MEGAPIXEL,
+  maxRatio: 2.5,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Documented to ~2 MP: FLUX.1 dev / Krea ("0.1 to 2.0 megapixels"), Anima
+ * (512²–1536²), Pony V7 (768–1536px, larger recommended), Boogu Base/Edit (up to
+ * 2K). Same hard cap as the ~1 MP group; only the warning moves up.
+ */
+export const twoMegapixelCustomDimensionLimits = {
+  ...sdxlCustomDimensionLimits,
+  recommendedArea: 2 * MEGAPIXEL,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Documented to ~4 MP: FLUX.2 dev/pro/flex/max ("up to 4MP"), Ideogram 4 (256–2048
+ * /16), Z-Image Base (512²–2048² total area). Capped at the 4 MP ceiling, which is
+ * also what they recommend, so the picker never warns.
+ */
+export const fourMegapixelCustomDimensionLimits = {
+  ...sdxlCustomDimensionLimits,
+  maxArea: 4 * MEGAPIXEL,
+  recommendedArea: 4 * MEGAPIXEL,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * BFL's flux1-pro takes 256–1440 /32 per side, so 1440² (≈1.98 MP) is its most.
+ * Same 2 MP recommendation as the rest of FLUX.1, so it never warns.
+ */
+export const flux1ProCustomDimensionLimits = {
+  ...twoMegapixelCustomDimensionLimits,
+  maxSide: 1440,
+  maxArea: 1440 * 1440,
+} as const satisfies CustomDimensionLimits;
+
+/** SD1: ~512² training area; the comfy SD1 input caps each side at 1024. */
+export const sd1CustomDimensionLimits = {
+  step: 32,
+  minSide: 256,
+  maxSide: 1024,
+  maxArea: 768 * 768,
+  recommendedArea: 512 * 768,
+  maxRatio: 2.5,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Every set of custom limits. A saved size belongs to the user, not to a model: it
+ * is shown wherever it fits, so saving one only needs some model to accept it.
+ */
+export const allCustomDimensionLimits: readonly CustomDimensionLimits[] = [
+  sdxlCustomDimensionLimits,
+  twoMegapixelCustomDimensionLimits,
+  fourMegapixelCustomDimensionLimits,
+  flux1ProCustomDimensionLimits,
+  sd1CustomDimensionLimits,
+];
+
 /** Shown before the picker's "More" button: the three buckets these pickers offered before. */
 export const sdxlFullPriorityAspectRatios = ['3:2', '1:1', '2:3'];
 
@@ -775,13 +796,9 @@ export const fluxUltraAspectRatios = [
   { label: '9:16', width: 1536, height: 2752 },
   { label: '9:21', width: 1344, height: 3136 },
 ];
-const defaultFluxUltraAspectRatioIndex = generation.defaultValues.fluxUltraAspectRatio;
+const fluxUltraFallbackAspectRatioIndex = 4;
 
 export const fluxModelId = 618692;
-export function getIsFluxUltra({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
-  return modelId === fluxModelId && fluxMode === fluxUltraAir;
-}
-
 export function getIsFluxKrea({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
   return modelId === fluxModelId && fluxMode === fluxKreaAir;
 }
@@ -790,23 +807,11 @@ export function getIsPonyV7(id: number) {
   return id === 2152373;
 }
 
-export function getSizeFromFluxUltraAspectRatio(value: number) {
-  return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
-}
-
-/** The label form `Flux1ProUltraImageGenInput.aspectRatio` takes, vs the index the sibling returns. */
 export function getClosestFluxUltraAspectRatioLabel(width = 1024, height = 1024) {
   const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
   const index = ratios.indexOf(findClosest(ratios, width / height));
-  return (fluxUltraAspectRatios[index] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex])
+  return (fluxUltraAspectRatios[index] ?? fluxUltraAspectRatios[fluxUltraFallbackAspectRatioIndex])
     .label;
-}
-
-export function getClosestFluxUltraAspectRatio(width = 1024, height = 1024) {
-  const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
-  const closest = findClosest(ratios, width / height);
-  const index = ratios.indexOf(closest);
-  return `${index ?? defaultFluxUltraAspectRatioIndex}`;
 }
 
 type GetUpscaleFactorProps = {
@@ -860,6 +865,28 @@ function getUpperLowerLimits(value: number) {
   ];
 }
 
-/** The generator's prompt cap. Here so the server's prompt comparison can bound
- * its input without importing the data-graph. */
+/** The generator's prompt cap. Here so the server's prompt comparison can bound its
+ * input without importing the generation graph. */
 export const MAX_PROMPT_LENGTH = 6000;
+
+/** The model types a version may flag as a turbo variant. */
+export const TURBO_VARIANT_MODEL_TYPES: readonly ModelType[] = ['LORA', 'LoCon', 'DoRA'];
+
+/** The strength a LoRA may be generated at when its version sets no narrower range. */
+export const LORA_STRENGTH_BOUNDS = { min: -1, max: 2 } as const;
+
+/** A resource's strength settings when its version sets none. */
+export const DEFAULT_STRENGTH_RANGE = { ...LORA_STRENGTH_BOUNDS, default: 1 } as const;
+
+/** No range (form state saved before the settings shape) or equal bounds (a version that set none) both mean the full range. */
+export const strengthSliderBounds = (range: { min: number; max: number } | null | undefined) =>
+  !range || range.min === range.max ? LORA_STRENGTH_BOUNDS : { min: range.min, max: range.max };
+
+/** A weight carried onto another version stays, but inside that version's range. */
+export const clampStrength = (
+  strength: number,
+  range: { min: number; max: number } | null | undefined
+) => {
+  const bounds = strengthSliderBounds(range);
+  return Math.min(bounds.max, Math.max(bounds.min, strength));
+};

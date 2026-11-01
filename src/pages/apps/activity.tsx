@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Anchor,
+  Avatar,
   Badge,
   Button,
   Card,
@@ -14,9 +15,12 @@ import {
   Tabs,
   Text,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconChevronDown,
   IconEyeOff,
   IconHistory,
   IconPlugConnected,
@@ -71,6 +75,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import type { RouterOutput } from '~/types/router';
 
 /** 🔴 The gate is the SHARED `resolveActivityPageAccess`, never an inline flag read —
  *  and it is `appBlocks || appBlocksPages`. See `canAccessAppsActivity`. */
@@ -549,7 +554,7 @@ function AppBudgetControl({
  * the drift the shared `ScopeConsentList` exists to make impossible — and it would stay green
  * while the page diverged.
  */
-export function ScopeGrantsPanel() {
+export function ScopeGrantsPanel({ defaultOpened = false }: { defaultOpened?: boolean }) {
   const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
 
   if (isLoading) {
@@ -601,23 +606,71 @@ export function ScopeGrantsPanel() {
   return (
     <AppsCardGrid testId="apps-installed-grants-grid">
       {grants.map((grant) => (
-        <Card key={grant.appBlockId} withBorder padding="sm" radius="md">
-          <Stack gap="xs">
-            <Group justify="space-between" wrap="nowrap">
+        <GrantCard key={grant.appBlockId} grant={grant} defaultOpened={defaultOpened} />
+      ))}
+    </AppsCardGrid>
+  );
+}
+
+type ActivityGrant = RouterOutput['blocks']['listMyScopeGrants'][number];
+
+function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpened: boolean }) {
+  const [opened, { toggle }] = useDisclosure(defaultOpened);
+  const panelId = `grant-permissions-${grant.appBlockId}`;
+  const revoked = new Set(grant.revokedScopes ?? []);
+  const active = grant.scopes.filter((scope) => !revoked.has(scope)).length;
+  const countLabel = grant.grantWithheldAt
+    ? 'On hold'
+    : [
+        active === 0 && revoked.size === 0
+          ? 'No permissions listed'
+          : active === 1
+          ? '1 permission'
+          : `${active} permissions`,
+        revoked.size > 0 ? `${revoked.size} removed` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+  return (
+    <Card withBorder padding="sm" radius="md" data-testid="apps-grant-card">
+      <Stack gap="xs">
+        <UnstyledButton
+          onClick={toggle}
+          aria-expanded={opened}
+          aria-controls={panelId}
+          w="100%"
+          data-testid="apps-grant-toggle"
+        >
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+              <Avatar src={grant.iconUrl} alt="" radius="md" size={40} style={{ flexShrink: 0 }}>
+                {grant.name.charAt(0).toUpperCase()}
+              </Avatar>
               <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-                <Group gap="xs">
-                  <Text fw={600} className="truncate">
-                    {grant.name}
-                  </Text>
-                  <Badge size="xs" variant="outline">
-                    {grant.slug}
-                  </Badge>
-                </Group>
+                <Text fw={600} className="truncate">
+                  {grant.name}
+                </Text>
                 <Text size="xs" c="dimmed" data-testid="apps-grant-surface-line">
                   {buildScopeGrantSurfaceLine({ origin: grant.origin, ...grant.surfaces })}
                 </Text>
               </Stack>
             </Group>
+            <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
+              <Text size="xs" c="dimmed" data-testid="apps-grant-count">
+                {countLabel}
+              </Text>
+              <IconChevronDown
+                size={16}
+                style={{
+                  transform: opened ? 'rotate(180deg)' : undefined,
+                  transition: 'transform 150ms',
+                }}
+              />
+            </Group>
+          </Group>
+        </UnstyledButton>
+        <div id={panelId} hidden={!opened}>
+          <Stack gap="xs">
             <Divider />
             {/* 🔴 AN EXPLICIT `emptyLabel`, PER ROW CLASS. This was a bare
                 `<BlockScopeList scopes={grant.scopes} />`, which fell through to the component's
@@ -638,10 +691,7 @@ export function ScopeGrantsPanel() {
                 revoke control present on one surface and absent on the other would be a much
                 worse divergence than any of them. `emptyLabel` is still passed per caller — see
                 `scopeGrantEmptyScopeLabel`, which owns the difference. */}
-            <ScopeConsentList
-              grant={grant}
-              emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)}
-            />
+            <ScopeConsentList grant={grant} emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)} />
             {/* ⚠️ NO SECOND RECENT-ACTIVITY POINTER HERE. An earlier revision rendered an
                 `<Anchor>` reading "See what it did under Recent activity" directly beneath
                 `<BlockScopeList>` — whose `emptyLabel` for this row class already ENDS with
@@ -651,28 +701,28 @@ export function ScopeGrantsPanel() {
                 on the UNFILTERED feed, so a link promising "what IT did" delivered what every
                 app did. The prose half is kept — the drawer shares that label and has no tab to
                 link to — and the link is deleted rather than narrowed. */}
-            {/* Only for an app the viewer has actually GRANTED the spend scope to —
-                `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
-                `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what
-                the app may be granted). ⚠️ This sentence used to contrast the grant with "the
-                manifest"; that named the wrong set once the displayed list became the
-                intersection. The identical sentence in `AppPermissionsActivityDrawer` was
-                corrected and this sibling was missed. A budget on an app that cannot spend bounds
-                nothing, and the server would ignore the write. */}
-            {grant.spendScopeGranted ? (
-              <>
-                <Divider />
-                <AppBudgetControl
-                  appBlockId={grant.appBlockId}
-                  appName={grant.name}
-                  budget={grant.buzzBudgetPerDay}
-                />
-              </>
-            ) : null}
           </Stack>
-        </Card>
-      ))}
-    </AppsCardGrid>
+        </div>
+        {/* Only for an app the viewer has actually GRANTED the spend scope to —
+            `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
+            `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what
+            the app may be granted). ⚠️ This sentence used to contrast the grant with "the
+            manifest"; that named the wrong set once the displayed list became the
+            intersection. The identical sentence in `AppPermissionsActivityDrawer` was
+            corrected and this sibling was missed. A budget on an app that cannot spend bounds
+            nothing, and the server would ignore the write. */}
+        {grant.spendScopeGranted ? (
+          <>
+            <Divider />
+            <AppBudgetControl
+              appBlockId={grant.appBlockId}
+              appName={grant.name}
+              budget={grant.buzzBudgetPerDay}
+            />
+          </>
+        ) : null}
+      </Stack>
+    </Card>
   );
 }
 
@@ -780,7 +830,7 @@ export default function AppActivityPage() {
   // 🔴 THE BAR IS DERIVED, NOT HAND-SPELLED. This used to be four `canSee… &&` guards
   // inline in the JSX below — four sites the node-env `unit` project could not see, so
   // deleting one of them (rendering a tab whose panel stayed gated) left that whole
-  // suite green and only the report-only `component` tier caught it. Mapping the
+  // suite green and only the `component` tier caught it. Mapping the
   // ledger's own output means the unit-tier guard on `SLOT_GATED_ACTIVITY_TABS` now
   // governs what actually renders.
   const visibleTabs = visibleActivityTabs(visibility);

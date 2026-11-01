@@ -1,0 +1,195 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as KyselyDb from '~/server/db/kyselyDb';
+import type * as Award from '~/server/events/points/award';
+
+// The CommentV2 write sites: a new comment awards, deleting the actor's last comment under an
+// Image or Article removes (one at a time or in a moderator bulk delete), and a failing points
+// call never fails the comment.
+
+const { awardEventPoints, removeEventPoints, hatted } = vi.hoisted(() => ({
+  awardEventPoints: vi.fn(async (..._a: unknown[]) => undefined),
+  removeEventPoints: vi.fn(async (..._a: unknown[]) => undefined),
+  hatted: new Set<string>(),
+}));
+
+// The hook counts the actor's live comments left under the entity in CommentV3; `live` is that count.
+const kysely = vi.hoisted(() => {
+  const state = { live: 0, counted: [] as { table: string; where: unknown[][] }[] };
+  const selectFrom = (table: string) => {
+    const call = { table, where: [] as unknown[][] };
+    state.counted.push(call);
+    const query = {
+      select: () => query,
+      where: (...a: unknown[]) => {
+        call.where.push(a);
+        return query;
+      },
+      executeTakeFirst: async () => ({ n: String(state.live) }),
+    };
+    return query;
+  };
+  return { state, selectFrom };
+});
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
+  ...(await importOriginal<typeof KyselyDb>()),
+  kyselyWrite: { selectFrom: kysely.selectFrom },
+}));
+
+vi.mock('~/server/events/points/award', async (importOriginal) => ({
+  ...(await importOriginal<typeof Award>()),
+  awardEventPoints,
+  removeEventPoints,
+  isHattedEntity: (entityType: string, entityId: number) => hatted.has(`${entityType}:${entityId}`),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    hatted.has(`${entityType}:${entityId}`),
+}));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedCommentContent: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/block-check.service', () => ({
+  getBlockCheckOwnerIdsForComment: vi.fn(async () => []),
+  getBlockCheckOwnerIdsForReply: vi.fn(async () => []),
+  throwIfBlockedByEntityOwner: vi.fn(async () => undefined),
+  throwIfBlockedByOwners: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/sticker.service', () => ({
+  spendStickerUses: vi.fn(async () => []),
+  recordStickerUsage: vi.fn(),
+}));
+vi.mock('~/server/services/text-scan/scam-scan-queue', () => ({ queueScamScan: vi.fn() }));
+
+import { bulkDeleteComments } from '~/server/services/comment.service';
+import { deleteComment, upsertComment } from '~/server/services/commentsv2.service';
+
+const db = dbMock.dbWrite;
+const USER = 5;
+const IMAGE_THREAD = { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null };
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// Resolves to 'pending' if `call` has not settled by the time pending microtasks drain.
+const raceSettle = (call: Promise<unknown>) =>
+  Promise.race([call.then(() => 'done'), settle().then(() => 'pending')]);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  hatted.clear();
+  hatted.add('Image:7');
+  kysely.state.live = 0;
+  kysely.state.counted.length = 0;
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  db.thread.findUnique.mockResolvedValue(IMAGE_THREAD);
+  db.thread.findMany.mockResolvedValue([IMAGE_THREAD]);
+});
+
+/** The owner's single delete reads `comment`, then deletes it under the hold check. */
+function deletes(comment: { id: number; userId: number; threadId: number }) {
+  db.commentV2.findUnique.mockResolvedValue(comment as never);
+  vi.mocked(db.$transaction).mockImplementation((async (fn: (tx: unknown) => unknown) =>
+    fn(db)) as never);
+  vi.mocked(db.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) =>
+    strings.join('').includes('DELETE FROM') ? [comment] : []) as never);
+}
+
+describe('CommentV2 event points', () => {
+  it('awards a new comment on an image', async () => {
+    db.commentV2.create.mockResolvedValue({ id: 456, threadId: 70 });
+
+    await upsertComment({ userId: USER, entityType: 'image', entityId: 7, content: 'hi' });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    expect(awardEventPoints).toHaveBeenCalledWith([
+      {
+        type: 'comment',
+        actorId: USER,
+        entityType: 'Image',
+        entityId: 7,
+        time: expect.any(Date),
+        sourceId: `CommentV2:Image:7:${USER}`,
+      },
+    ]);
+  });
+
+  it('is not failed by a failing points call', async () => {
+    db.commentV2.create.mockResolvedValue({ id: 456, threadId: 70 });
+    awardEventPoints.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(
+      upsertComment({ userId: USER, entityType: 'image', entityId: 7, content: 'hi' })
+    ).resolves.toMatchObject({ id: 456 });
+    await settle();
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes when the deleted comment was the actor's last under the image", async () => {
+    deletes({ id: 456, userId: USER, threadId: 70 });
+
+    await deleteComment({ id: 456 });
+    await settle();
+
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
+    expect(removeEventPoints).toHaveBeenCalledWith([
+      expect.objectContaining({ type: 'comment', sourceId: `CommentV2:Image:7:${USER}` }),
+    ]);
+    // Counted for this actor, on this image, live rows only.
+    expect(kysely.state.counted).toEqual([
+      {
+        table: 'CommentV3',
+        where: [
+          ['userId', '=', USER],
+          ['entityType', '=', 'image'],
+          ['entityId', '=', 7],
+          ['deletedAt', 'is', null],
+          ['tosViolation', '=', false],
+        ],
+      },
+    ]);
+  });
+
+  it('keeps the points while the actor has another live comment under the image', async () => {
+    deletes({ id: 456, userId: USER, threadId: 70 });
+    kysely.state.live = 1;
+
+    await deleteComment({ id: 456 });
+    await settle();
+
+    expect(removeEventPoints).not.toHaveBeenCalled();
+  });
+
+  it('removes for each author the bulk delete deleted, and none it kept', async () => {
+    // The DELETE returns the rows it took; a held author's comment stays and is not among them.
+    vi.mocked(db.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('DELETE FROM')
+        ? [
+            { userId: USER, threadId: 70 },
+            { userId: 6, threadId: 70 },
+          ]
+        : strings.join('').includes('UPDATE')
+        ? [{ userId: 8, threadId: 70 }]
+        : []) as never);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [1, 2, 3] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 2,
+      retainedHidden: 1,
+    });
+    await settle();
+
+    expect(removeEventPoints.mock.calls.map(([[removal]]) => removal.sourceId)).toEqual([
+      `CommentV2:Image:7:${USER}`,
+      'CommentV2:Image:7:6',
+    ]);
+  });
+});
+
+describe('comment failure paths', () => {
+  it('resolves while the points call is still pending', async () => {
+    db.commentV2.create.mockResolvedValue({ id: 456, threadId: 70 });
+    awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
+
+    const call = upsertComment({ userId: USER, entityType: 'image', entityId: 7, content: 'hi' });
+    expect(await raceSettle(call)).toBe('done');
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+});

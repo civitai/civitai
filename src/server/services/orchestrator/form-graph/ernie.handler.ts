@@ -4,10 +4,10 @@ import type {
   ComfyErnieStandardCreateImageGenInput,
   ComfyErnieTurboCreateImageGenInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ernieVersionIds } from '~/shared/form-graph/generation/image/ernie.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 

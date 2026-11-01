@@ -35,6 +35,11 @@ const ruleTester = new RuleTester(ruleTesterConfig as ConstructorParameters<type
  * cites by name — uses for its rail/drawer swap (`useContainerSmallerThan('sm')`), and it
  * wraps `useContainerQuery`, returning FALSE while `inlineSize === 0`, which is exactly
  * what the server always sees. Banning the other three without it would be an allowlist.
+ *
+ * ⚠️ THERE IS NO `extraHooks` CASE HERE ANY MORE BECAUSE THERE IS NO `extraHooks` OPTION.
+ * It was removed unconfigured — `.eslintrc.js` never named a hook through it — and the rule
+ * header says why it was the wrong shape rather than merely unused. Widening the set is an
+ * edit to `SSR_DIVERGENT_HOOKS`, which the four cases below already exercise.
  */
 ruleTester.run('no-ssr-divergent-media-query', rule, {
   valid: [
@@ -125,17 +130,6 @@ ruleTester.run('no-ssr-divergent-media-query', rule, {
         {
           messageId: 'ssrDivergentMediaQuery',
           data: { name: 'useContainerSmallerThan', spelled: 'useContainerSmallerThan' },
-        },
-      ],
-    },
-    // ── the `extraHooks` option widens the set without a code change ──
-    {
-      code: `const v = useViewportSize();`,
-      options: [{ extraHooks: ['useViewportSize'] }],
-      errors: [
-        {
-          messageId: 'ssrDivergentMediaQuery',
-          data: { name: 'useViewportSize', spelled: 'useViewportSize' },
         },
       ],
     },

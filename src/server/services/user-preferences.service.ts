@@ -215,10 +215,17 @@ export const HiddenUsers = createUserCache({
       `,
 });
 
+// The two block caches refill from the PRIMARY, not the replica. `toggleBlockUser` commits
+// the Block and then drops these fields; a refill inside the replica-lag window would read
+// a replica without the Block and write "not blocked" back. The hash TTL is set with `NX`,
+// so that stale field would then stand until the hash expires (up to ~4.5h) instead of
+// healing when the replica catches up. A block is a safety control, so pay the primary
+// read on a cache miss. Both caches, because both are dropped by the same toggle and the
+// block is enforced in both directions (`getBlockedPairIds`, the feed filter).
 export const BlockedUsers = createUserCache({
   key: 'blocked-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
           ue."targetUserId" "id",
           u."username"
@@ -231,7 +238,7 @@ export const BlockedUsers = createUserCache({
 export const BlockedByUsers = createUserCache({
   key: 'blocked-by-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
           ue."userId" "id",
           u."username"
@@ -853,6 +860,28 @@ async function cascadeBlockToPlacements({
   }
 }
 
+/** The blocked user's follow of the blocker is the reverse pair, which the block's upsert never touches. */
+async function removeBlockedUsersFollow({
+  userId,
+  targetUserId,
+}: {
+  userId: number;
+  targetUserId: number;
+}) {
+  // Scoped to Follow so a reverse Block or Hide survives.
+  const unfollowed = await clearUserEngagement({
+    userId: targetUserId,
+    targetUserId: userId,
+    type: UserEngagementType.Follow,
+  });
+  if (!unfollowed) return;
+  await setUserFollowCached({ userId: targetUserId, targetUserId: userId, following: false });
+  // The metric job finds changed pairs by `createdAt`, which a deleted row lacks.
+  // Dynamic: a static import closes an import cycle through the search index.
+  const { userMetrics } = await import('~/server/metrics/user.metrics');
+  await userMetrics.queueUpdate([userId, targetUserId]);
+}
+
 async function toggleBlockUser({
   userId,
   targetUserId,
@@ -918,6 +947,18 @@ async function toggleBlockUser({
     // The pair carries a Block now, so it carries no Follow.
     if (blocked) await setUserFollowCached({ userId, targetUserId, following: false });
     else await userFollowsCache.refresh(userId);
+    // The block has committed; a failure here must not skip the block-cache refreshes below.
+    if (blocked)
+      await removeBlockedUsersFollow({ userId, targetUserId }).catch((error) =>
+        logToAxiom({
+          name: 'block-user',
+          type: 'error',
+          message: "block committed but the blocked user's follow was not removed",
+          userId,
+          targetUserId,
+          error: (error as Error).message,
+        }).catch(() => null)
+      );
   } else {
     const removed = await clearUserEngagement({
       userId,

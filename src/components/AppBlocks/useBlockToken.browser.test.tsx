@@ -64,8 +64,18 @@ const mintForbidden = { ok: false, status: 403, json: async () => ({}) } as unkn
 const mint429 = { ok: false, status: 429, json: async () => ({}) } as unknown as Response;
 
 /** Surfaces the hook's returned contract as observable DOM attributes. */
-function TokenProbe({ instanceId = INSTANCE_ID }: { instanceId?: string }) {
-  const r = useBlockToken({ blockInstanceId: instanceId } as unknown as BlockInstall, context);
+function TokenProbe({
+  instanceId = INSTANCE_ID,
+  devTunnel,
+}: {
+  instanceId?: string;
+  devTunnel?: boolean;
+}) {
+  const r = useBlockToken(
+    { blockInstanceId: instanceId } as unknown as BlockInstall,
+    context,
+    devTunnel === undefined ? undefined : { devTunnel }
+  );
   return (
     <div
       data-testid="probe"
@@ -406,8 +416,8 @@ describe('lifecycle', () => {
 
 describe('identity scope — the hook can outlive the app instance', () => {
   /**
-   * 🔴 The two standalone routes (`/apps/run/[slug]`, `/apps/dev/[blockId]`) call
-   * this hook from the PAGE component, and Next does NOT remount a page on a
+   * 🔴 The two standalone mounters (`/apps/run/[slug]`'s page and `DevTunnelBlockHost`) call this
+   * hook with no `key` on the app, and Next does NOT remount a page on a
    * same-route dynamic-segment navigation — so the hook instance, and every ref
    * in it, survives an app change. The model slot is already safe (it renders
    * with `key={install.blockInstanceId}`), which is exactly why this needs its
@@ -501,5 +511,39 @@ describe('🔴 a TERMINAL mint refusal (403) is not a blip', () => {
     expect(readToken()).toBe('tok_1');
     expect(readRetrying()).toBe(true);
     expect(readTerminal()).toBe(false);
+  });
+});
+
+describe('the dev-tunnel marker on the mint request', () => {
+  /** The parsed JSON body of the Nth mint request. */
+  const bodyOf = (n: number) =>
+    JSON.parse((fetchSpy.mock.calls[n] as [string, RequestInit])[1].body as string) as Record<
+      string,
+      unknown
+    >;
+
+  test('devTunnel: true is sent as `devTunnel: true`, on the first mint AND on refresh', async () => {
+    renderWithProviders(<TokenProbe devTunnel />);
+    await waitForToken('tok_1');
+    expect(bodyOf(0)).toEqual({
+      blockInstanceId: INSTANCE_ID,
+      slotContext: context,
+      devTunnel: true,
+    });
+    await advance(REFRESH_AT_MS);
+    await waitForToken('tok_2');
+    expect(bodyOf(1).devTunnel).toBe(true);
+  });
+
+  test('every other caller sends NO devTunnel key at all (the /apps/run request is unchanged)', async () => {
+    renderWithProviders(<TokenProbe />);
+    await waitForToken('tok_1');
+    expect(bodyOf(0)).toEqual({ blockInstanceId: INSTANCE_ID, slotContext: context });
+  });
+
+  test('devTunnel: false sends no key either', async () => {
+    renderWithProviders(<TokenProbe devTunnel={false} />);
+    await waitForToken('tok_1');
+    expect('devTunnel' in bodyOf(0)).toBe(false);
   });
 });

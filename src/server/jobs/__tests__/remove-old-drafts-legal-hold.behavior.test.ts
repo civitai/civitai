@@ -1,0 +1,247 @@
+import { PGlite } from '@electric-sql/pglite';
+import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
+import { Prisma } from '@prisma/client';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * remove-old-drafts against the real hold marker: the DELETE runs on a Postgres stand-in with the
+ * evidence-hold migration applied, so the hold predicate inside it is what decides.
+ */
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+const { mockDeregisterBatch } = vi.hoisted(() => ({
+  mockDeregisterBatch: vi.fn(async (_versionIds: number[]) => ({ deleted: 0 })),
+}));
+vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: mockDeregisterBatch }));
+vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
+vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
+
+import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+
+const HOLD_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
+);
+
+const OWNERSHIP_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
+);
+
+// One owner per way of being held, and one who is not.
+const MARKED_OWNER = 1; // a hold marker
+const REPORTED_OWNER = 3; // named on a report not yet sent: no marker row exists for them
+const REVIEW_OWNER = 4; // an image awaiting CSAM review: the account hold's image leg
+const FREE_OWNER = 2;
+const GIVEN_BY_MARKED_OWNER = 5; // unheld; owns a model MARKED_OWNER had before
+const GIVEN_BY_FREE_OWNER = 6; // unheld; owns a model FREE_OWNER had before
+const MODELS = [
+  { id: 10, userId: MARKED_OWNER, versionId: 100 },
+  { id: 30, userId: REPORTED_OWNER, versionId: 300 },
+  { id: 40, userId: PLACEHOLDER_OWNER_ID, versionId: 400 },
+  { id: 50, userId: REVIEW_OWNER, versionId: 500 },
+  { id: 20, userId: FREE_OWNER, versionId: 200 },
+  { id: 60, userId: GIVEN_BY_MARKED_OWNER, versionId: 600 },
+  { id: 70, userId: GIVEN_BY_FREE_OWNER, versionId: 700 },
+];
+const FREE_MODELS = [20, 70];
+const FREE_VERSIONS = [200, 700];
+const KEPT_MODELS = [10, 30, 40, 50, 60];
+
+let db: PGlite;
+
+beforeAll(async () => {
+  db = new PGlite();
+  await db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int NOT NULL DEFAULT 0,
+      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
+      "blockedFor" text, metadata jsonb, "updatedAt" timestamp(3)
+    );
+    CREATE TABLE "Post" (
+      id int PRIMARY KEY, "userId" int NOT NULL, title text, detail text,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(), "publishedAt" timestamp(3),
+      "modelVersionId" int, "collectionId" int, metadata jsonb
+    );
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Thread" (
+      id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "reviewId" int,
+      "postId" int, "imageId" int, "parentThreadId" int, "rootThreadId" int, "commentId" int,
+      metadata jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "CommentV2" (
+      id serial PRIMARY KEY, "userId" int NOT NULL,
+      "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
+    );
+    CREATE TABLE "Comment" (
+      id serial PRIMARY KEY, "userId" int NOT NULL,
+      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "parentId" int
+    );
+    CREATE TABLE "ResourceReview" (
+      id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE
+    );
+    CREATE TABLE "ModelVersion" (
+      id int PRIMARY KEY, "modelId" int NOT NULL REFERENCES "Model"(id) ON DELETE CASCADE,
+      "createdAt" timestamp(3) NOT NULL, "updatedAt" timestamp(3) NOT NULL
+    );
+    CREATE TABLE "ModelFile" (
+      id serial PRIMARY KEY,
+      "modelVersionId" int NOT NULL REFERENCES "ModelVersion"(id) ON DELETE CASCADE,
+      "createdAt" timestamp(3) NOT NULL
+    );
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
+      images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
+    );
+  `);
+  await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
+  await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
+  await db.exec(heldCopiesSchemaSql());
+  await db.exec(`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+      (60, ${MARKED_OWNER}, 'create'), (60, ${GIVEN_BY_MARKED_OWNER}, 'transfer'),
+      (70, ${FREE_OWNER}, 'create'), (70, ${GIVEN_BY_FREE_OWNER}, 'transfer');
+    INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED_OWNER}, 'manual', 'review');
+    INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
+    INSERT INTO "Image" (id, "userId", "needsReview") VALUES (9001, ${REVIEW_OWNER}, 'csam');
+  `);
+});
+afterAll(() => db.close());
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  await db.exec(`
+    DELETE FROM "Model";
+    INSERT INTO "Model" (id, "userId") VALUES ${MODELS.map((m) => `(${m.id}, ${m.userId})`).join(
+      ', '
+    )};
+    INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${MODELS.map(
+      (m) => `(${m.versionId}, ${m.id}, now() - interval '200 days', now() - interval '200 days')`
+    ).join(', ')};
+  `);
+  // The replica SELECT names every model as a candidate; everything on the primary runs on the
+  // stand-in.
+  dbMock.dbRead.$queryRaw.mockResolvedValue(MODELS.map(({ id, userId }) => ({ id, userId })));
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(values as never[]));
+    return (await db.query(flat.text, flat.values as unknown[])).rows;
+  }) as never);
+});
+
+const remainingModels = async () =>
+  (await db.query<{ id: number }>(`SELECT id FROM "Model" ORDER BY id`)).rows.map((r) => r.id);
+const axiomEvents = (message: string) =>
+  loggingMock.logToAxiom.mock.calls
+    .map(([arg]) => arg as Record<string, unknown>)
+    .filter((arg) => arg.message === message);
+
+describe('remove-old-drafts under a legal hold', () => {
+  it("keeps every held owner's model, and every model a held owner once had, with its file registrations, and deletes the rest", async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+
+    expect(await remainingModels()).toEqual(KEPT_MODELS);
+    // Deregistering a kept model's versions would drop its files out of the quarantine allowlist.
+    expect(mockDeregisterBatch.mock.calls.map(([ids]) => [...ids].sort())).toEqual([FREE_VERSIONS]);
+    expect(axiomEvents('Removed old draft models')).toEqual([
+      expect.objectContaining({ modelIds: FREE_MODELS }),
+    ]);
+    expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([
+      expect.objectContaining({ modelIds: KEPT_MODELS }),
+    ]);
+  });
+});
+
+describe("remove-old-drafts and a held author's comments on a free owner's model", () => {
+  const LEGACY_MODEL = 160; // a held author left a legacy comment: it cascades and has no thread
+  const THREAD_MODEL = 170; // a held author commented in its thread
+  const CONTROL_MODEL = 180; // only its free owner commented
+
+  beforeEach(async () => {
+    const extra = [LEGACY_MODEL, THREAD_MODEL, CONTROL_MODEL];
+    await db.exec(`
+      DELETE FROM "Thread"; DELETE FROM "Comment";
+      INSERT INTO "Model" (id, "userId") VALUES ${extra
+        .map((id) => `(${id}, ${FREE_OWNER})`)
+        .join(', ')};
+      INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${extra
+        .map((id) => `(${id}0, ${id}, now() - interval '200 days', now() - interval '200 days')`)
+        .join(', ')};
+      INSERT INTO "Comment" ("userId", "modelId") VALUES (${MARKED_OWNER}, ${LEGACY_MODEL});
+      INSERT INTO "Thread" (id, "modelId") VALUES (700, ${THREAD_MODEL}), (800, ${CONTROL_MODEL});
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES
+        (7001, ${MARKED_OWNER}, 700), (7002, ${FREE_OWNER}, 700), (8001, ${FREE_OWNER}, 800);
+    `);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(extra.map((id) => ({ id, userId: FREE_OWNER })));
+  });
+
+  it('keeps a model a held author left a legacy comment on, and the comment', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+
+    expect(await remainingModels()).toContain(LEGACY_MODEL);
+    const legacy = await db.query(`SELECT 1 FROM "Comment" WHERE "modelId" = ${LEGACY_MODEL}`);
+    expect(legacy.rows).toHaveLength(1);
+  });
+
+  it("detaches the held author's thread before the delete, so the model goes and its comments stay", async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+
+    const remaining = await remainingModels();
+    expect(remaining).not.toContain(THREAD_MODEL);
+    // The control proves the foreign keys cascade: without the detach, thread 700 would go too.
+    expect(remaining).not.toContain(CONTROL_MODEL);
+    const comments = await db.query<{ id: number }>(`SELECT id FROM "CommentV2" ORDER BY id`);
+    expect(comments.rows.map((r) => r.id)).toEqual([7001, 7002]);
+    const thread = await db.query<{ modelId: number | null; detachedFrom: unknown }>(
+      `SELECT "modelId", metadata -> 'detachedFrom' AS "detachedFrom" FROM "Thread" WHERE id = 700`
+    );
+    expect(thread.rows).toEqual([{ modelId: null, detachedFrom: { modelId: THREAD_MODEL } }]);
+  });
+});
+
+describe("remove-old-drafts and a held author's review of a free owner's model", () => {
+  const REVIEWED_MODEL = 190;
+
+  beforeEach(async () => {
+    await db.exec(`
+      TRUNCATE "HeldResourceReview";
+      INSERT INTO "Model" (id, "userId") VALUES (${REVIEWED_MODEL}, ${FREE_OWNER});
+      INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES
+        (${REVIEWED_MODEL}0, ${REVIEWED_MODEL}, now() - interval '200 days', now() - interval '200 days');
+      INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId", details) VALUES
+        (${MARKED_OWNER}, ${REVIEWED_MODEL}, ${REVIEWED_MODEL}0, 'held'),
+        (${FREE_OWNER}, ${REVIEWED_MODEL}, ${REVIEWED_MODEL}0, 'free');
+    `);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: REVIEWED_MODEL, userId: FREE_OWNER }]);
+  });
+
+  it('deletes the model and its reviews, keeping a copy of the held author’s only', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+
+    expect(await remainingModels()).not.toContain(REVIEWED_MODEL);
+    const reviews = await db.query(
+      `SELECT id FROM "ResourceReview" WHERE "modelId" = ${REVIEWED_MODEL}`
+    );
+    expect(reviews.rows).toEqual([]);
+    const copies = await db.query(
+      `SELECT "userId", "modelId", details, "holdReasons" FROM "HeldResourceReview"`
+    );
+    expect(copies.rows).toEqual([
+      {
+        userId: MARKED_OWNER,
+        modelId: REVIEWED_MODEL,
+        details: 'held',
+        holdReasons: ['hold-marker'],
+      },
+    ]);
+  });
+});

@@ -16,6 +16,13 @@
   import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import {
+    CHANNEL_HEAD,
+    CHANNEL_SORT_PREFIX,
+    PERFORMANCE_CHANNELS,
+    shownChannels,
+    type PerformanceChannel,
+  } from '$lib/analytics/earning-channels';
+  import {
     BANKABLE_CURRENCIES,
     FILTERABLE_CURRENCIES,
     currencySelectionKind,
@@ -36,33 +43,16 @@
   type Row = NonNullable<PageData['modelPerformance']>[number];
 
   // One column per earning channel. Currency no longer gets its own columns — it moved into the
-  // expandable breakdown, so the header stays flat however many account types a creator has.
-  const CHANNELS = [
-    'licenseFee',
-    'compensation',
-    'earlyAccess',
-    'permanentAccess',
-    'donation',
-  ] as const;
-  // Short headers: eight columns at full width push the last one past the container's right edge and
-  // behind the horizontal scroll, where it reads as missing. Full names live in the header tooltip and
-  // in the expanded breakdown, which has room for them.
-  const CHANNEL_HEAD: Record<(typeof CHANNELS)[number], string> = {
-    licenseFee: 'License Fees',
-    compensation: 'Compensation',
-    earlyAccess: 'Early Access',
-    permanentAccess: 'Perm. Access',
-    donation: 'Donations',
-  };
-  const CHANNEL_FULL: Record<(typeof CHANNELS)[number], string> = {
+  // expandable breakdown, so the header stays flat however many account types a creator has. The headers
+  // are short; full names live in the header tooltip.
+  const CHANNEL_FULL: Record<PerformanceChannel, string> = {
     licenseFee: 'License fees earned from generations using this model',
     compensation: 'Generation compensation',
+    tip: 'Tips from people generating with this model, paid with generation compensation',
     earlyAccess: 'Early access sales (timed window), as sold',
     permanentAccess: 'Permanent paid-access sales, as sold',
     donation: 'Donations to goals attached to this model',
   };
-  // Namespaced so a channel key can never collide with `generations` / `downloads` in sortValue.
-  const CHANNEL_SORT_PREFIX = 'channel:';
   const CASH_SORT_PREFIX = 'cash:';
 
   const grouping = modelGroupingState(() => data.grouping);
@@ -98,7 +88,7 @@
           versionName: null,
           currencies: v.currencies.map((c) => ({ ...c })),
           channels: Object.fromEntries(
-            CHANNELS.map((c) => [
+            PERFORMANCE_CHANNELS.map((c) => [
               c,
               { ...v.channels[c], received: v.channels[c].received.map((r) => ({ ...r })) },
             ])
@@ -125,7 +115,7 @@
           hit.prev = (hit.prev ?? 0) + (c.prev ?? 0);
         } else existing.currencies.push({ ...c });
       }
-      for (const ch of CHANNELS) {
+      for (const ch of PERFORMANCE_CHANNELS) {
         const target = existing.channels[ch];
         const src = v.channels[ch];
         target.total += src.total;
@@ -164,12 +154,12 @@
         : selected.map((c: string) => currencyMeta(c).label).join(' + ')
   );
 
-  const channelTotal = (m: Row, c: (typeof CHANNELS)[number]) =>
+  const channelTotal = (m: Row, c: PerformanceChannel) =>
     m.channels[c].received.reduce(
       (sum, r) => (selectedSet.has(r.currency) ? sum + r.total : sum),
       0
     );
-  const channelPrev = (m: Row, c: (typeof CHANNELS)[number]) =>
+  const channelPrev = (m: Row, c: PerformanceChannel) =>
     m.channels[c].received.reduce(
       (sum, r) => (selectedSet.has(r.currency) ? sum + r.prev : sum),
       0
@@ -202,6 +192,7 @@
   });
   const sortKey = $derived(sorting.key);
   const sortDir = $derived(sorting.dir);
+  const visibleChannels = $derived(shownChannels(data.modelPerformance ?? [], sortKey));
   const pageNum = $derived(Math.max(1, Number(page.url.searchParams.get('page')) || 1));
 
   const sortValue = (m: Row, key: string): number =>
@@ -214,7 +205,7 @@
             ? m.impressions
             : m.generations
           : key.startsWith(CHANNEL_SORT_PREFIX)
-            ? channelTotal(m, key.slice(CHANNEL_SORT_PREFIX.length) as (typeof CHANNELS)[number])
+            ? channelTotal(m, key.slice(CHANNEL_SORT_PREFIX.length) as PerformanceChannel)
             : key.startsWith(CASH_SORT_PREFIX)
               ? cashCell(m, key.slice(CASH_SORT_PREFIX.length))
               : m.generations;
@@ -339,7 +330,7 @@
           <Table.Head class="p-0">
             {@render sortButton('downloads', 'Downloads', 'Downloads of this model')}
           </Table.Head>
-          {#each CHANNELS as c (c)}
+          {#each visibleChannels as c (c)}
             <Table.Head class="p-0">
               {@render sortButton(CHANNEL_SORT_PREFIX + c, CHANNEL_HEAD[c], CHANNEL_FULL[c])}
             </Table.Head>
@@ -428,7 +419,7 @@
                 </div>
               {/if}
             </Table.Cell>
-            {#each CHANNELS as c (c)}
+            {#each visibleChannels as c (c)}
               {@const total = channelTotal(m, c)}
               {@const show = hasDisplayValue(total, 'yellow')}
               <Table.Cell class="align-top text-right">

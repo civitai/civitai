@@ -1,4 +1,5 @@
 import type { Context, ProtectedContext } from '~/server/createContext';
+import { coverageAudience } from '~/server/services/generation/coverage-source';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -18,6 +19,7 @@ import {
   setHomeBlocksOrder,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
+import { filterViewableHomeBlocks, isHomeBlockGated } from '~/server/services/home-block-access';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getFeaturedCollectionsState } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { dbRead } from '~/server/db/client';
@@ -53,6 +55,7 @@ export const getHomeBlocksHandler = async ({
       userId: ctx.user?.id,
       ownedOnly,
       includeSource: true,
+      viewer: ctx.user,
     });
 
     let homeBlocks = _homeBlocks.filter((homeBlock) => {
@@ -77,14 +80,16 @@ export const getHomeBlocksHandler = async ({
       homeBlocks = await getHomeBlocks({
         ids: systemHomeBlockIds,
         includeSource: true,
+        viewer: ctx.user,
       });
     }
 
     if (input.withCoreData) {
+      const coverage = await coverageAudience(ctx.user ?? undefined);
       // Get the core data for each home block:
       const homeBlocksWithData = await Promise.all(
         homeBlocks.map((homeBlock) => {
-          return getHomeBlockData({ homeBlock, user: ctx.user, input });
+          return getHomeBlockData({ homeBlock, user: ctx.user, input, coverage });
         })
       );
 
@@ -109,7 +114,10 @@ export const getSystemHomeBlocksHandler = async ({
 }): Promise<HomeBlockWithData[]> => {
   try {
     const { excludedSystemHomeBlockIds, systemHomeBlockIds } = input;
-    const _homeBlocks = await getSystemHomeBlocks({ input });
+    const _homeBlocks = await filterViewableHomeBlocks(
+      await getSystemHomeBlocks({ input }),
+      ctx.user
+    );
 
     const homeBlocks = _homeBlocks.filter((homeBlock) => {
       if ((excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
@@ -142,7 +150,7 @@ export const getHomeBlocksByIdHandler = async ({
   try {
     const homeBlock = await getHomeBlockById({
       ...input,
-      user: ctx.user,
+      viewer: ctx.user,
     });
 
     // `&& ctx.cache` because `ctx.cache` really is null on the SSG prefetch path —
@@ -157,7 +165,12 @@ export const getHomeBlocksByIdHandler = async ({
     // so do not take any single one as the convention: `system.router.getBenignPhrases`
     // and `model.controller.getModelsPagedSimpleHandler` both guard, while
     // `model.controller.getModelsInfiniteHandler` does not.
-    if (homeBlock?.type === HomeBlockType.Announcement && ctx.cache) ctx.cache.skip = true;
+    if (
+      homeBlock &&
+      (homeBlock.type === HomeBlockType.Announcement || isHomeBlockGated(homeBlock)) &&
+      ctx.cache
+    )
+      ctx.cache.skip = true;
 
     if (!homeBlock) {
       throw throwNotFoundError('Home block not found');
@@ -221,7 +234,7 @@ export const deleteUserHomeBlockHandler = async ({
   const { id: userId, isModerator } = ctx.user;
 
   try {
-    const homeBlock = await getHomeBlockById({ ...input });
+    const homeBlock = await getHomeBlockById({ ...input, viewer: ctx.user });
     if (!homeBlock) throw throwNotFoundError(`No home block with id ${input.id}`);
 
     if (!isModerator && homeBlock.userId !== userId) throw throwAuthorizationError();
@@ -245,7 +258,7 @@ export const setHomeBlocksOrderHandler = async ({
   input: SetHomeBlocksOrderInputSchema;
 }) => {
   try {
-    await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id } });
+    await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id }, viewer: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

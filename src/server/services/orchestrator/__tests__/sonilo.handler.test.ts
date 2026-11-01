@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { createEcosystemStepInput } from '../ecosystems';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { createFormGraphStepInput } from '../form-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
@@ -23,18 +21,10 @@ const ctx = {
 } as unknown as GenerationHandlerCtx;
 const base = { workflow: 'txt2music', ecosystem: 'Sonilo', prompt: 'warm lo-fi hip hop' };
 
-describe.each([
-  {
-    name: 'data-graph',
-    parse: (input: Record<string, unknown>) => generationGraph.safeParse(input, ext),
-    dispatch: createEcosystemStepInput,
-  },
-  {
-    name: 'form-graph',
-    parse: (input: Record<string, unknown>) => generationHub.parse(input, ext),
-    dispatch: createFormGraphStepInput,
-  },
-])('Sonilo $name', ({ parse, dispatch }) => {
+const parse = (input: Record<string, unknown>) => generationHub.parse(input, ext);
+const dispatch = createFormGraphStepInput;
+
+describe('Sonilo', () => {
   async function submit(overrides: Record<string, unknown> = {}) {
     const parsed = parse({ ...base, ...overrides });
     if (!parsed.success) throw new Error(JSON.stringify(parsed.errors));

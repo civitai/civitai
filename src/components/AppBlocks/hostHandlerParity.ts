@@ -52,15 +52,31 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  * `N/A` rationale (the host legitimately doesn't handle it).
  *
  * NOTE: `INVENTORY` may legitimately contain entries that are AHEAD of the
- * currently-PUBLISHED SDK dist union (forward-looking coverage — e.g.
- * `CANCEL_WORKFLOW`, `REQUEST_SIGN_IN`, `REQUEST_CONSENT` exist in the newer
- * `civitai-app-starters` source but not yet in the published
- * `@civitai/app-sdk` dist `BlockToParentMessage`). The compile-time gate below
- * is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be an
- * INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
+ * currently-PUBLISHED SDK dist union (forward-looking coverage for a message
+ * that exists in the newer `civitai-app-starters` source but not yet in the
+ * published `@civitai/app-sdk` dist `BlockToParentMessage`). The compile-time
+ * gate below is intentionally ONE-DIRECTIONAL: every PUBLISHED SDK type must be
+ * an INVENTORY key, but INVENTORY may carry extra ahead-of-published keys.
+ *
+ * As of the installed `@civitai/app-sdk@0.80.0` the published union's 55 types are all
+ * inventory keys, and the inventory carries two keys the union lacks, neither of them
+ * ahead: `VIEWER_ACTIVITY` (sent by `@civitai/sdk`, which this package does not
+ * describe) and `PREPARE_TRAINING_DATASET` (removed from the SDK in 0.77.0; the page
+ * host still answers it with `removed`).
+ * The gate reads the INSTALLED
+ * dist, so it is only as current as the `@civitai/app-sdk` range in
+ * `package.json` — a caret on a 0.x version admits patch releases only, and
+ * every SDK minor needs an explicit bump before the gate can see its messages.
  *
  * Keep one-line rationales human-readable — they ARE the documentation a future
  * maintainer reads when the parity test fails.
+ *
+ * The per-host column is also read at RUNTIME: when a host has no handler for a
+ * type, `unhandledOutcomeFor` (`bridgeTelemetry.ts`) reports
+ * `outcome="not_applicable"` where the column holds a rationale string and
+ * `outcome="no_handler"` where it holds `'required'` (or the type is absent). So
+ * flipping an entry between the two moves its unhandled traffic between those
+ * series on `civitai_app_block_bridge_messages_total`.
  */
 export type HostReq = 'required' | string; // string = N/A reason
 
@@ -70,14 +86,54 @@ export interface MessageSpec {
   /**
    * Reply type the SDK awaits (REQUEST-style only); '' for fire-and-forget.
    *
-   * 🔴 DOCUMENTATION ONLY — NOTHING ENFORCES THIS STRING. The parity test greps
-   * each host for a REGISTERED handler (`onMessage('<TYPE>'`), then interpolates
-   * this value into the test's NAME. It never checks that the host actually
-   * sends it, so a wrong value here is invisible: it produces a green test with a
-   * misleading title. Treat it as a comment, and put behavioural claims about the
-   * reply in the per-message browser tests.
+   * 🔴 ENFORCED ONLY FOR THE FORWARDED TYPES. The parity test greps each host for a
+   * REGISTERED handler (`onMessage('<TYPE>'`) and merely interpolates this value
+   * into the test's NAME, so for every other type a wrong value here is invisible.
+   * For the forwarded types (workflows, app subqueue, buzz, viewer, images, private
+   * and shared storage), the premise test of the forward matrix
+   * (`PageBlockHostForwardMatrix.browser.test.tsx` /
+   * `IframeHostForwardMatrix.browser.test.tsx`) asserts this string equals the reply
+   * type the hosts are observed to send. For the rest, treat it as a comment and put
+   * behavioural claims about the reply in the per-message browser tests.
    */
   reply: string;
+  /**
+   * Top-level keys of a SUCCESS reply payload, `requestId` left out. A `?` suffix marks a key
+   * the reply may omit: a picker's `selected` is absent when the viewer cancels. `null` for
+   * fire-and-forget types, which get no reply.
+   *
+   * A reply counts as an ERROR reply when it has a top-level `error` key; every other reply is
+   * checked against this list. It describes the host's wire shape, not what any client
+   * expects: `VIEWER_RESULT` stays `{ viewer }`.
+   *
+   * Checked by `checkReplyKeys` (below):
+   *   - the forwarded types (`REPLY_TYPE` in `test/bridgeForwardMatrix.ts`): the premise test
+   *     of each forward matrix checks every pinned reply row against this list, and requires
+   *     every listed key to appear in some row. `hostHandlerParity.test.ts` runs the same check
+   *     over the same rows, so it also runs in the unit tier;
+   *   - every other REQUEST type: the per-message tests call `expectReplyKeys` (in
+   *     `test/expectReplyKeys.ts`) on a reply the real host sent. `hostHandlerParity.test.ts`
+   *     requires a pin from each host that must handle the type, and requires the pinned key
+   *     sets to cover every declared key, here and in `errorKeys`.
+   *
+   * Machine-read: tooling outside this repo may read these lists from the source text with a
+   * regex. Keep each one a single-line literal of quoted names, where a reader must accept the
+   * `?` suffix. `hostHandlerParity.test.ts` checks the single-line shape.
+   */
+  replyKeys: readonly string[] | null;
+  /**
+   * Top-level keys of an ERROR reply (a reply with a top-level `error` string), `requestId` left
+   * out. It uses the same `?` notation and always lists `error`. A host-specific error variant
+   * can add fields, such as storage's `value: null` or a shared write's `rateLimit`. The fields
+   * it adds are marked `?`, because the shared dispatcher's NACK (`buildBridgeNackReply`) is a
+   * bare `{ requestId, error }`.
+   *
+   * `'none'` means the host never sends a top-level `error` for this type. That covers two
+   * cases. The workflow family reports failure INSIDE the success shape: a `snapshot` whose
+   * `status` is `'failed'`, see `failureSnapshot`. REQUEST_TOKEN has no failure reply at all
+   * (`BRIDGE_NACK_EXEMPT`). `null` for fire-and-forget types.
+   */
+  errorKeys: readonly string[] | 'none' | null;
   IframeHost: HostReq;
   PageBlockHost: HostReq;
   InlineHost: HostReq;
@@ -103,6 +159,8 @@ export const INVENTORY = {
   BLOCK_HELLO: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -110,6 +168,8 @@ export const INVENTORY = {
   BLOCK_READY: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -117,6 +177,8 @@ export const INVENTORY = {
   BLOCK_ERROR: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -137,6 +199,8 @@ export const INVENTORY = {
   BLOCK_MESSAGE_REJECTED: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost:
       'bridge telemetry, not a feature: consumed by the shared usePostMessage dispatcher above the subscriber lookup, so no per-host onMessage handler exists',
     PageBlockHost:
@@ -146,6 +210,8 @@ export const INVENTORY = {
   RESIZE_IFRAME: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     // N/A: the page renders the iframe full-viewport (height:100%); a page block
     // fills the surface and does NOT size-to-content, so there is nothing to
@@ -157,6 +223,8 @@ export const INVENTORY = {
   NAVIGATE: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     // N/A: the model slot is an embedded panel inside the model page — a block
     // navigating the host away from the model page is out of its remit; the
     // model host intentionally does not bridge NAVIGATE.
@@ -168,20 +236,34 @@ export const INVENTORY = {
   TRACK_EVENT: {
     request: false,
     reply: '',
-    // N/A (both real hosts): TRACK_EVENT is fire-and-forget analytics and is
-    // currently NOT bridged by EITHER host (no host-side analytics sink wired).
-    // Unhandled ⇒ silently dropped, never a hang. If a sink is added, flip the
-    // relevant host(s) to 'required' here so coverage is enforced.
-    IframeHost: 'analytics fire-and-forget; no host-side sink wired (dropped, never hangs)',
-    PageBlockHost: 'analytics fire-and-forget; no host-side sink wired (dropped, never hangs)',
+    replyKeys: null,
+    errorKeys: null,
+    // Forwarded to /api/track/block-event by `blockEventBeacon.ts`; identity comes from
+    // host props, never the payload.
+    IframeHost: 'required',
+    PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
-  // REQUEST_SIGN_IN / REQUEST_CONSENT are AHEAD of the published SDK dist union
-  // (present in the newer civitai-app-starters source). Forward-looking coverage
-  // — kept intentionally; the compile-time gate does not require published.
+  // `@civitai/sdk`'s throttled report (at most one a minute, no payload) that the viewer pressed,
+  // typed, scrolled or focused inside the frame, which the page cannot see. No host handles it: the
+  // App Assistant's preview pane reads it straight off the window (`previewKeepAlive.ts`), and
+  // fire-and-forget means an unhandled one is dropped with no NACK and nothing waiting on it.
+  VIEWER_ACTIVITY: {
+    request: false,
+    reply: '',
+    replyKeys: null,
+    errorKeys: null,
+    IframeHost:
+      'activity report for the App Assistant preview keep-alive, read off the window there; fire-and-forget, nothing to do on a model slot',
+    PageBlockHost:
+      'activity report read off the window by the App Assistant preview keep-alive (previewKeepAlive.ts), not by the host; fire-and-forget, no reply',
+    InlineHost: INLINE_STUB,
+  },
   REQUEST_SIGN_IN: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -208,6 +290,8 @@ export const INVENTORY = {
   REQUEST_CONSENT: {
     request: false,
     reply: '',
+    replyKeys: null,
+    errorKeys: null,
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -226,6 +310,8 @@ export const INVENTORY = {
   REQUEST_TOKEN: {
     request: true,
     reply: 'TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)',
+    replyKeys: ['token'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -233,6 +319,8 @@ export const INVENTORY = {
   SUBMIT_WORKFLOW: {
     request: true,
     reply: 'WORKFLOW_SUBMITTED',
+    replyKeys: ['snapshot'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -240,6 +328,22 @@ export const INVENTORY = {
   ESTIMATE_WORKFLOW: {
     request: true,
     reply: 'ESTIMATE_RESULT',
+    replyKeys: ['snapshot'],
+    errorKeys: 'none',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // The batch twin of ESTIMATE_WORKFLOW: a list of bodies in, one snapshot per
+  // body plus a run total out. Estimate only — nothing is submitted. Both live
+  // hosts forward it to `blocks.estimateWorkflowBatch` (decision + reply live in
+  // `estimateBatchGate.ts`). Its reply is in the `{ requestId, error }` family, so
+  // a host with no handler NACKs it through the shared dispatcher. REQUEST-style.
+  ESTIMATE_WORKFLOW_BATCH: {
+    request: true,
+    reply: 'ESTIMATE_BATCH_RESULT',
+    replyKeys: ['snapshots', 'aggregate'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -247,15 +351,17 @@ export const INVENTORY = {
   POLL_WORKFLOW: {
     request: true,
     reply: 'WORKFLOW_STATUS',
+    replyKeys: ['snapshot'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
-  // CANCEL_WORKFLOW is AHEAD of the published SDK dist union (present in the
-  // newer civitai-app-starters source). Forward-looking coverage — kept.
   CANCEL_WORKFLOW: {
     request: true,
     reply: 'WORKFLOW_CANCELED',
+    replyKeys: ['snapshot'],
+    errorKeys: 'none',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -263,6 +369,8 @@ export const INVENTORY = {
   OPEN_BUZZ_PURCHASE: {
     request: true,
     reply: 'BUZZ_PURCHASE_RESULT',
+    replyKeys: ['purchased'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -271,14 +379,14 @@ export const INVENTORY = {
   // the viewer's generation queue: read (image results) + cancel one, both scoped
   // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed
   // ownership+tag guard on cancel — the block never sees the user's personal
-  // gens). AHEAD of the published SDK dist union (the SDK bridge lands in a
-  // follow-up PR) — forward-looking coverage, allowed by the one-directional
-  // compile-time gate. PAGE-ONLY affordance today (a full-page generator app;
+  // gens). PAGE-ONLY affordance today (a full-page generator app;
   // model-slot apps are deferred + will get the page host too), so N/A for the
   // model host — mirrors the buzz self-read / OPEN_RESOURCE_PICKER placement.
   QUERY_APP_WORKFLOWS: {
     request: true,
     reply: 'APP_WORKFLOWS_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -286,6 +394,8 @@ export const INVENTORY = {
   CANCEL_APP_WORKFLOW: {
     request: true,
     reply: 'CANCEL_APP_WORKFLOW_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -297,6 +407,8 @@ export const INVENTORY = {
   PUBLISH_GENERATION_OUTPUTS: {
     request: true,
     reply: 'PUBLISH_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost:
       'shared-grid publish is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
@@ -309,6 +421,8 @@ export const INVENTORY = {
   GET_IMAGES_BY_IDS: {
     request: true,
     reply: 'IMAGES_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost:
       'shared-grid gated read is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
@@ -321,6 +435,8 @@ export const INVENTORY = {
   GET_BUZZ_BALANCE: {
     request: true,
     reply: 'BUZZ_BALANCE_RESULT',
+    replyKeys: ['balance'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -331,28 +447,29 @@ export const INVENTORY = {
   // movement, so the REST route is the DEFAULT surface and both stay (see the
   // "Direction" note under Routes in docs/features/app-blocks.md, and
   // civitai/civitai-app-starters#437).
-  // AHEAD of the published SDK dist union (SDK co-requisite
-  // — forward-looking coverage, allowed by the one-directional compile-time
-  // gate). PAGE-ONLY affordance today (a page block reading its viewer; model-
+  // PAGE-ONLY affordance today (a page block reading its viewer; model-
   // slot apps are deferred + will get page-host too), so N/A for the model host
   // — mirrors the buzz self-read dashboard bridges.
   GET_VIEWER: {
     request: true,
     reply: 'VIEWER_RESULT',
+    replyKeys: ['viewer'],
+    errorKeys: ['error'],
     IframeHost: 'viewer self-read is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
   // Buzz self-read dashboard bridges (ledger / all-pool balances / per-model
   // earnings) — host-mediated via the `buzz:read:self`-gated `blocks.getMyBuzz*`
-  // MUTATIONS. AHEAD of the published SDK dist union (SDK co-requisite —
-  // forward-looking coverage, allowed by the one-directional compile-time gate).
+  // MUTATIONS.
   // PAGE-ONLY affordance (a Buzz-dashboard page app; model-slot apps are
   // deferred + will get page-host too), so N/A for the model host — mirrors
   // OPEN_RESOURCE_PICKER / OPEN_IMAGE_UPLOAD.
   GET_BUZZ_TRANSACTIONS: {
     request: true,
     reply: 'BUZZ_TRANSACTIONS_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -360,6 +477,8 @@ export const INVENTORY = {
   GET_BUZZ_ACCOUNTS: {
     request: true,
     reply: 'BUZZ_ACCOUNTS_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -367,6 +486,8 @@ export const INVENTORY = {
   GET_DAILY_COMPENSATION: {
     request: true,
     reply: 'DAILY_COMPENSATION_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'buzz self-read dashboard is a page-only affordance; slot-apps deferred',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -374,21 +495,23 @@ export const INVENTORY = {
   OPEN_CHECKPOINT_PICKER: {
     request: true,
     reply: 'CHECKPOINT_PICKER_RESULT',
+    replyKeys: ['selected?'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required', // ported in #2799
     InlineHost: INLINE_STUB,
   },
   // The page-surface resource picker (Checkpoint + LoRA allowlist) — the wider
   // generalization of OPEN_CHECKPOINT_PICKER, opened as host chrome so the iframe
-  // only ever learns the ONE resource the user picked. Now PUBLISHED in the SDK
-  // dist union (was ahead-of-published under app-sdk 0.6), so the compile-time
-  // gate requires it here. IframeHost (model slot) intentionally handles only the
-  // narrower OPEN_CHECKPOINT_PICKER — the wider resource picker is a page-only
-  // affordance (see the PageBlockHost handler's Design-1 rationale), so it's N/A
-  // for the model host.
+  // only ever learns the ONE resource the user picked. IframeHost (model slot)
+  // intentionally handles only the narrower OPEN_CHECKPOINT_PICKER — the wider
+  // resource picker is a page-only affordance (see the PageBlockHost handler's
+  // Design-1 rationale), so it's N/A for the model host.
   OPEN_RESOURCE_PICKER: {
     request: true,
     reply: 'RESOURCE_PICKER_RESULT',
+    replyKeys: ['selected?', 'selectedResources?'],
+    errorKeys: ['error'],
     IframeHost:
       'model slot uses the narrower OPEN_CHECKPOINT_PICKER; the wider resource picker is a page-only affordance',
     PageBlockHost: 'required',
@@ -398,9 +521,7 @@ export const INVENTORY = {
   // asks the host to let the user upload an image (the app decides what it is for).
   // Host-chrome upload (like OPEN_RESOURCE_PICKER): the page host opens its own
   // upload modal, runs civitai's session-authed upload → REAL scan → server-side
-  // SFW + moderation-flag gate, and returns ONLY a moderated image id. AHEAD of the
-  // published SDK dist union (the SDK contract is external + a co-requisite) —
-  // forward-looking coverage, allowed by the one-directional compile-time gate.
+  // SFW + moderation-flag gate, and returns ONLY a moderated image id.
   // A page-only affordance today, so N/A for the model host.
   //
   // NOTE (async cosmetic-image scan): the non-blocking mode's scan VERDICT rides a
@@ -409,17 +530,51 @@ export const INVENTORY = {
   // block→host REQUEST types + their replies). OPEN_IMAGE_UPLOAD's TYPE is unchanged
   // — async mode only adds an OPTIONAL `asyncScan` payload field — so no new entry
   // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
+  //
+  // The `bytes` variant (an app's own image, no picker) is the same type and the same reply, so
+  // it needs no entry either. Nor does `purpose: 'trainingData'` (several training images,
+  // `selected: { images }`): same type, same reply key.
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
+    replyKeys: ['selected?'],
+    errorKeys: ['error'],
     IframeHost:
       'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // The viewer picks from their OWN posted / generated images in host chrome (see
+  // `imagePickerLogic.ts`); the block receives only the pick. REQUEST-style; ahead of the
+  // published SDK dist union (the SDK pair lands in the SDK repo).
+  OPEN_IMAGE_PICKER: {
+    request: true,
+    reply: 'IMAGE_PICKER_RESULT',
+    replyKeys: ['selected?', 'selectedImages?'],
+    errorKeys: ['error'],
+    IframeHost:
+      'the image picker is a page-only affordance today; the shared dispatcher NACKs it with an IMAGE_PICKER_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // An image, video or audio file uploaded as a PRIVATE generation input, picked in host chrome or
+  // sent as `bytes` — see `mediaUploadLogic.ts`. REQUEST-style; ahead of the published SDK dist
+  // union (the SDK pair lands in the SDK repo).
+  OPEN_MEDIA_UPLOAD: {
+    request: true,
+    reply: 'MEDIA_UPLOAD_RESULT',
+    replyKeys: ['selected?'],
+    errorKeys: ['error'],
+    IframeHost:
+      'media upload is a page-only affordance today; the shared dispatcher NACKs it with a MEDIA_UPLOAD_RESULT error',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
   SET_USER_CHECKPOINT: {
     request: true,
     reply: 'USER_CHECKPOINT_SET',
+    replyKeys: ['ok'],
+    errorKeys: ['error', 'ok?'],
     IframeHost: 'required',
     // PAGE: persists to block_user_settings keyed by a model-bound install;
     // updateUserSettings HARD-REQUIRES modelId in the token ctx, which a page
@@ -432,6 +587,8 @@ export const INVENTORY = {
   APP_STORAGE_GET: {
     request: true,
     reply: 'APP_STORAGE_GET_RESULT',
+    replyKeys: ['value'],
+    errorKeys: ['error', 'value?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -439,6 +596,8 @@ export const INVENTORY = {
   APP_STORAGE_SET: {
     request: true,
     reply: 'APP_STORAGE_SET_RESULT',
+    replyKeys: ['ok', 'sizeBytes'],
+    errorKeys: ['error', 'ok?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -446,6 +605,8 @@ export const INVENTORY = {
   APP_STORAGE_DELETE: {
     request: true,
     reply: 'APP_STORAGE_DELETE_RESULT',
+    replyKeys: ['ok', 'deleted'],
+    errorKeys: ['error', 'ok?', 'deleted?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -453,6 +614,8 @@ export const INVENTORY = {
   APP_STORAGE_LIST: {
     request: true,
     reply: 'APP_STORAGE_LIST_RESULT',
+    replyKeys: ['keys', 'nextCursor'],
+    errorKeys: ['error', 'keys?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -460,6 +623,8 @@ export const INVENTORY = {
   APP_STORAGE_QUOTA: {
     request: true,
     reply: 'APP_STORAGE_QUOTA_RESULT',
+    replyKeys: ['usedBytes', 'rowCount', 'limitBytes', 'limitRows'],
+    errorKeys: ['error', 'usedBytes?', 'rowCount?', 'limitBytes?', 'limitRows?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -470,12 +635,12 @@ export const INVENTORY = {
   // voting/requests app is a PAGE app (entity=none) so PageBlockHost is the
   // primary target, but the shared datastore is a per-APP surface an app's
   // model-slot block could also read, so BOTH real hosts wire it (matching the
-  // per-user APP_STORAGE_* placement). Ahead of the published SDK dist union
-  // (forward-looking coverage, like APP_STORAGE_* were) — the compile-time gate
-  // is one-directional so extra keys here are fine.
+  // per-user APP_STORAGE_* placement).
   SHARED_LIST: {
     request: true,
     reply: 'SHARED_LIST_RESULT',
+    replyKeys: ['items', 'nextCursor'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -483,6 +648,8 @@ export const INVENTORY = {
   SHARED_GET_COUNT: {
     request: true,
     reply: 'SHARED_GET_COUNT_RESULT',
+    replyKeys: ['count'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -490,6 +657,8 @@ export const INVENTORY = {
   SHARED_GET_COUNTS: {
     request: true,
     reply: 'SHARED_GET_COUNTS_RESULT',
+    replyKeys: ['counts'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -497,6 +666,8 @@ export const INVENTORY = {
   SHARED_APPEND: {
     request: true,
     reply: 'SHARED_APPEND_RESULT',
+    replyKeys: ['key'],
+    errorKeys: ['error', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -514,6 +685,8 @@ export const INVENTORY = {
   SHARED_UPDATE: {
     request: true,
     reply: 'SHARED_UPDATE_RESULT',
+    replyKeys: ['ok'],
+    errorKeys: ['error', 'ok?', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -521,6 +694,8 @@ export const INVENTORY = {
   SHARED_VOTE: {
     request: true,
     reply: 'SHARED_VOTE_RESULT',
+    replyKeys: ['count'],
+    errorKeys: ['error', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -528,6 +703,8 @@ export const INVENTORY = {
   SHARED_UNVOTE: {
     request: true,
     reply: 'SHARED_UNVOTE_RESULT',
+    replyKeys: ['count'],
+    errorKeys: ['error', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -535,6 +712,8 @@ export const INVENTORY = {
   SHARED_WITHDRAW: {
     request: true,
     reply: 'SHARED_WITHDRAW_RESULT',
+    replyKeys: ['ok', 'deleted'],
+    errorKeys: ['error', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -542,12 +721,12 @@ export const INVENTORY = {
   // Single-row fetch-by-key (Batch-D item 6) — the deep-link companion to
   // SHARED_LIST's paged read. Same REQUEST-style hang class + same both-host
   // placement as its SHARED_* siblings (the shared datastore is a per-APP surface
-  // a model-slot block can also read). Ahead of the published SDK dist union
-  // (forward-looking coverage, like the SHARED_* siblings were) — the one-
-  // directional compile-time gate allows the extra key.
+  // a model-slot block can also read).
   SHARED_GET: {
     request: true,
     reply: 'SHARED_GET_RESULT',
+    replyKeys: ['item'],
+    errorKeys: ['error', 'item?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -557,26 +736,29 @@ export const INVENTORY = {
   // host placement as SHARED_WITHDRAW (its reply is the SHARED_WITHDRAW-style
   // `{ ok, error? }`: the validator accepts an error reply with or without `ok`,
   // and the hosts send `ok: false` because it is the clearer signal, not because
-  // omitting it would hang). Ahead of the published SDK dist union — forward-
-  // looking coverage.
+  // omitting it would hang).
   SHARED_REPORT: {
     request: true,
     reply: 'SHARED_REPORT_RESULT',
+    replyKeys: ['ok'],
+    errorKeys: ['error', 'ok?', 'rateLimit?'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
   // Host download bridge (Batch-D item 1) — the host fetches an image in its
   // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
-  // no `allow-downloads`). Two variants: an origin-allowlisted OWN-output `url`,
-  // or a cross-user `imageId` routed through the gated per-viewer read. PAGE-ONLY
+  // no `allow-downloads`). Three variants: an origin-allowlisted OWN-output `url`,
+  // a cross-user `imageId` routed through the gated per-viewer read, or block-made
+  // `bytes` classified by content (image / JSON / text only). PAGE-ONLY
   // affordance today (the paid-output apps — gen-matrix / custom-generators /
   // model-benchmarking — are all page apps), so N/A for the model host, mirroring
   // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.
-  // Ahead of the published SDK dist union — forward-looking coverage.
   SAVE_IMAGE: {
     request: true,
     reply: 'SAVE_IMAGE_RESULT',
+    replyKeys: ['ok'],
+    errorKeys: ['error', 'ok?'],
     IframeHost:
       'download bridge is a page-only affordance today; the paid-output apps are page apps, the model slot has no such surface',
     PageBlockHost: 'required',
@@ -585,9 +767,7 @@ export const INVENTORY = {
   // ── Wildcard-pack import (W13, page-host bridge) ───────────────────────────
   // A page block asks the HOST to resolve + fetch + unzip + parse a wildcard
   // pack's list files, as the logged-in user (the host holds the real session).
-  // REQUEST-style ⇒ an unhandled one HANGS the block. Ahead of the published SDK
-  // dist union (forward-looking coverage, like OPEN_IMAGE_UPLOAD / SHARED_* were)
-  // — the compile-time gate is one-directional so an extra key here is fine.
+  // REQUEST-style ⇒ an unhandled one HANGS the block.
   //
   // PAGE-ONLY affordance: the resolve+parse runs against the viewer's real
   // session + browsing-level ceiling and is a full-page import flow. The model
@@ -597,8 +777,22 @@ export const INVENTORY = {
   GET_WILDCARD_PACK: {
     request: true,
     reply: 'WILDCARD_PACK_RESULT',
+    replyKeys: ['pack'],
+    errorKeys: ['error'],
     IframeHost:
       'model slot has no wildcard-pack import surface; the resolve+parse bridge is a page-only affordance',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Workflow-file read (civitai-app-starters#664): the GET_WILDCARD_PACK pattern
+  // for Workflows / ComfyWorkflows versions. Page-only by decision on that issue.
+  GET_RESOURCE_FILE: {
+    request: true,
+    reply: 'RESOURCE_FILE_RESULT',
+    replyKeys: ['file'],
+    errorKeys: ['error'],
+    IframeHost:
+      'model slot has no resource-file surface; page-only by decision (civitai-app-starters#664)',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
@@ -624,13 +818,37 @@ export const INVENTORY = {
   // BOTH real hosts: unlike the page-only affordances above, a collection follow
   // is a plain on-site bookmark with no page-sized surface behind it — a model-
   // slot block showing a collection has exactly the same reason to offer it.
-  // REQUEST-style ⇒ an unhandled one HANGS the block. Ahead of the published SDK
-  // dist union (the SDK's `useCollectionFollow` hook is a co-requisite landing in
-  // civitai-app-starters) — forward-looking coverage, allowed by the one-
-  // directional compile-time gate.
+  // REQUEST-style ⇒ an unhandled one HANGS the block.
   SET_COLLECTION_FOLLOW: {
     request: true,
     reply: 'COLLECTION_FOLLOW_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // ── App reactions (image only, v1) ─────────────────────────────────────────
+  // A block sets or reads the VIEWER'S reaction on an image a block endpoint served it,
+  // through `blocks.setReactionFromApp` / `blocks.getReactionsForApp` (block token + session).
+  // No per-tap confirm: the consent is the consent-gated `social:react:self` grant. Shared
+  // decision layer: `reactionGate.ts`. BOTH real hosts, like SET_COLLECTION_FOLLOW: a model-slot
+  // block showing images has the same reason to offer a ♥ as a page block. Ahead of the
+  // published SDK dist union (the SDK pair ships after this deploys). REQUEST-style.
+  SET_ENTITY_REACTION: {
+    request: true,
+    reply: 'ENTITY_REACTION_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  GET_ENTITY_REACTIONS: {
+    request: true,
+    reply: 'ENTITY_REACTIONS_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -658,12 +876,12 @@ export const INVENTORY = {
   // The preview confers NOTHING — the write re-runs every guard.
   //
   // REQUEST-style ⇒ an unhandled one HANGS the block to its 10-minute human
-  // timeout. Ahead of the published SDK dist union (the SDK message pair +
-  // `usePostFromApp` hook are co-requisites landing in civitai-app-starters) —
-  // forward-looking coverage, allowed by the one-directional compile-time gate.
+  // timeout.
   CREATE_POST_FROM_APP: {
     request: true,
     reply: 'CREATE_POST_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
     // N/A, and for the SAME structural reason as PUBLISH_GENERATION_OUTPUTS /
     // QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW above — not a smaller version of
     // the same reason. Every image this message can post comes from the app
@@ -678,7 +896,103 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Start a confirmed `kind:'training'` run — see `runTrainingGate.ts`. REQUEST-style.
+  RUN_TRAINING: {
+    request: true,
+    reply: 'TRAINING_RESULT',
+    replyKeys: ['snapshot'],
+    errorKeys: ['error'],
+    IframeHost:
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Run ONE confirmed pass-through step whose fixed price exceeds the per-call budget —
+  // see `runConfirmedStepGate.ts`. REQUEST-style; ahead of the published SDK dist union
+  // (the SDK pair lands in the SDK repo).
+  RUN_CONFIRMED_STEP: {
+    request: true,
+    reply: 'CONFIRMED_STEP_RESULT',
+    replyKeys: ['snapshot'],
+    errorKeys: ['error'],
+    IframeHost:
+      'confirmed steps are page-only on the server; the shared dispatcher NACKs it with a CONFIRMED_STEP_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // REMOVED: training images are uploaded through OPEN_IMAGE_UPLOAD { purpose:
+  // 'trainingData' }. The page host still answers it, with the fixed error `removed`,
+  // so an older bundle fails at once instead of hanging. REQUEST-style.
+  PREPARE_TRAINING_DATASET: {
+    request: true,
+    reply: 'TRAINING_DATASET_RESULT',
+    replyKeys: [],
+    errorKeys: ['error'],
+    IframeHost:
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_DATASET_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
+
+export type InventoryType = keyof typeof INVENTORY;
+
+/** What `checkReplyKeys` concluded about one reply payload. */
+export interface ReplyKeysCheck {
+  /** `'error'` when the payload has a top-level `error` key, otherwise `'success'`. */
+  outcome: 'success' | 'error';
+  /** Each way the payload disagrees with the declared keys. Empty when it agrees. */
+  problems: string[];
+}
+
+/** Split a declared key list into the keys a reply must carry and the keys it may carry. */
+export function parseDeclaredKeys(declared: readonly string[]): {
+  required: string[];
+  optional: string[];
+} {
+  const required: string[] = [];
+  const optional: string[] = [];
+  for (const key of declared) {
+    if (key.endsWith('?')) optional.push(key.slice(0, -1));
+    else required.push(key);
+  }
+  return { required, optional };
+}
+
+/**
+ * Compare one reply payload a host sent for `type` with what INVENTORY declares for it
+ * (`replyKeys` / `errorKeys`). It checks the top-level key set only, never the value types.
+ */
+export function checkReplyKeys(type: InventoryType, payload: unknown): ReplyKeysCheck {
+  const spec: MessageSpec = INVENTORY[type];
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { outcome: 'success', problems: [`${type}: reply payload is not an object`] };
+  }
+  const keys = Object.keys(payload).filter((k) => k !== 'requestId');
+  const outcome = Object.prototype.hasOwnProperty.call(payload, 'error') ? 'error' : 'success';
+  const declared = outcome === 'error' ? spec.errorKeys : spec.replyKeys;
+  const field = outcome === 'error' ? 'errorKeys' : 'replyKeys';
+  if (declared === null) {
+    return { outcome, problems: [`${type}: fire-and-forget, so it declares no reply`] };
+  }
+  if (declared === 'none') {
+    return {
+      outcome,
+      problems: [`${type}: the reply has a top-level \`error\`, but errorKeys is 'none'`],
+    };
+  }
+  const { required, optional } = parseDeclaredKeys(declared);
+  const problems: string[] = [];
+  for (const k of required) {
+    if (!keys.includes(k)) problems.push(`${type}: ${field} requires \`${k}\`; the reply lacks it`);
+  }
+  for (const k of keys) {
+    if (!required.includes(k) && !optional.includes(k)) {
+      problems.push(`${type}: the reply carries \`${k}\`, which ${field} does not declare`);
+    }
+  }
+  return { outcome, problems };
+}
 
 /**
  * The PUBLISHED SDK block→host message union, read straight from the installed
@@ -695,9 +1009,14 @@ type SdkBlockToParentType = BlockToParentMessageType;
 // graph (under `src`, not excluded; not a `*.test.ts` corner case).
 //
 // ONE-DIRECTIONAL by design: every PUBLISHED SDK type must be an INVENTORY key;
-// INVENTORY MAY carry extra ahead-of-published keys (CANCEL_WORKFLOW,
-// REQUEST_SIGN_IN, REQUEST_CONSENT today). We do NOT assert the reverse — that
-// would delete real forward coverage every time the published dist lags.
+// INVENTORY MAY carry extra keys the published union lacks (`VIEWER_ACTIVITY` and
+// the removed `PREPARE_TRAINING_DATASET` as of app-sdk 0.80.0).
+// We do NOT assert the reverse — that would delete real forward coverage every
+// time the published dist lags.
+//
+// "PUBLISHED" here means the INSTALLED dist, i.e. whatever the `@civitai/app-sdk`
+// range in `package.json` resolves to. While that range trails npm, a message
+// the SDK has already shipped is invisible to this gate.
 //
 // If this errors, the failure type prints the missing type(s):
 //   ['INVENTORY missing published SDK message(s):', <the missing union members>]

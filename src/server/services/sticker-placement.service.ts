@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { toQueueImage } from '~/server/utils/queue-image';
+import { listApprovedPlacementRows, listStickerPlacementRows } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { cosmeticCache } from '~/server/redis/caches';
 import {
@@ -10,6 +13,8 @@ import {
 } from '~/server/services/placement-escrow.service';
 import { createFreePlacement } from '~/server/services/free-placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
 import {
@@ -24,9 +29,9 @@ import {
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
-  CosmeticFlag,
   isStickerKeptOffImage,
-  STICKER_SFW_ONLY_REFUSAL,
+  STICKER_PLACEMENT_RATING_MASK,
+  stickerPlacementRefusal,
 } from '~/shared/constants/cosmetic-flags.constants';
 import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
@@ -159,13 +164,13 @@ async function loadPlaceableSticker({
 
   if (!cosmetic) throw throwBadRequestError('placement: that sticker no longer exists');
   if (!cosmetic.owned) throw throwAuthorizationError('placement: you do not own that sticker');
-  if (isKeptOffRow(cosmetic)) throw throwBadRequestError(STICKER_SFW_ONLY_REFUSAL);
+  if (isKeptOffRow(cosmetic)) throw throwBadRequestError(stickerPlacementRefusal(cosmetic.flags));
 
   return cosmetic;
 }
 
 /**
- * The two columns every primary-side SFW check reads, selected against
+ * The two columns every primary-side rating check reads, selected against
  * `"Cosmetic" c`. One fragment so the placement and the approval cannot drift
  * apart on what a missing image means (unrated, so refused).
  */
@@ -263,6 +268,9 @@ export async function createStickerPlacement({
   // later is additive where charging for it wrongly is not.
   if (space.ownerId === placerId)
     throw throwBadRequestError('placement: you cannot place a sticker on your own content');
+
+  // Above the free branch, so both creation routes scan the note they store.
+  await throwOnBlockedUserContent(commentFrom(data), { surface: 'sticker-placement' });
 
   // The creator's size limit, refused rather than clamped. Quietly shrinking a
   // sticker someone just paid for is the same shape as v1's recurring defect: a
@@ -527,6 +535,12 @@ export type StickerPlacementView = {
   isPending: boolean;
   /** Whether this placement carries a note the viewer may read. */
   hasComment: boolean;
+  /**
+   * Kept off this image by a moderator flag, so it is not in the approved count.
+   * Set only on a moderator's combined listing — the one listing that shows such
+   * rows — and absent everywhere else, so no other payload changes shape.
+   */
+  keptOff?: true;
 };
 
 /**
@@ -697,7 +711,7 @@ async function keptOffPlacementIds(
   const flagged = rows.filter(
     (row) =>
       row.cosmeticId != null &&
-      Flags.hasFlag(cosmetics[row.cosmeticId]?.flags ?? 0, CosmeticFlag.SfwPlacementsOnly)
+      Flags.intersects(cosmetics[row.cosmeticId]?.flags ?? 0, STICKER_PLACEMENT_RATING_MASK)
   );
   if (!flagged.length) return new Set<number>();
 
@@ -719,8 +733,29 @@ async function keptOffPlacementIds(
   );
 }
 
+const stickerPlacementRowSelect = {
+  id: true,
+  targetId: true,
+  placerId: true,
+  ownerId: true,
+  status: true,
+  amount: true,
+  // Beside `amount` rather than derived from it. Zero is what a free row
+  // carries, but it is not what makes it free — and the owner controls the
+  // copy that depends on the answer, so an inference is a wrong sentence
+  // about money rather than a missing one.
+  free: true,
+  data: true,
+  createdAt: true,
+} satisfies Prisma.PlacementSelect;
+
+type StickerPlacementRow = Prisma.PlacementGetPayload<{
+  select: typeof stickerPlacementRowSelect;
+}>;
+
 /**
- * Approved placements for a set of images, plus the viewer's own pending ones.
+ * The rows behind the listing: approved placements on these images, plus the
+ * pending ones the viewer is a party to.
  *
  * The pending row is deliberately in the same payload rather than a second call:
  * the placer sees their own submission rendered faint while it waits, and
@@ -728,18 +763,22 @@ async function keptOffPlacementIds(
  * ends up rendering someone else's pending placement on a page that forgot to
  * filter.
  */
-export async function getStickerPlacements({
+async function readStickerPlacementRows({
   imageIds,
   viewerId,
-  isModerator = false,
 }: {
   imageIds: number[];
   viewerId?: number;
-  isModerator?: boolean;
-}): Promise<StickerPlacementView[]> {
-  if (!imageIds.length) return [];
+}): Promise<StickerPlacementRow[]> {
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    return (await listStickerPlacementRows((await loadKyselyDb()).kyselyRead, {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetIds: imageIds,
+      viewerId,
+    })) as StickerPlacementRow[];
 
-  const rows = await dbRead.placement.findMany({
+  return dbRead.placement.findMany({
     where: {
       surface: SURFACE,
       targetType: TARGET_TYPE,
@@ -758,35 +797,54 @@ export async function getStickerPlacements({
           : []),
       ],
     },
-    select: {
-      id: true,
-      targetId: true,
-      placerId: true,
-      ownerId: true,
-      status: true,
-      amount: true,
-      // Beside `amount` rather than derived from it. Zero is what a free row
-      // carries, but it is not what makes it free — and the owner controls the
-      // copy that depends on the answer, so an inference is a wrong sentence
-      // about money rather than a missing one.
-      free: true,
-      data: true,
-      createdAt: true,
-    },
+    select: stickerPlacementRowSelect,
     orderBy: { createdAt: 'asc' },
   });
+}
 
-  const parsed = rows.map((row) => ({ row, data: parseStickerPlacementData(row.data) }));
-  const keptOff = isModerator
-    ? new Set<number>()
-    : await keptOffPlacementIds(
-        parsed.map(({ row, data }) => ({
-          id: row.id,
-          targetId: row.targetId,
-          cosmeticId: data?.cosmeticId ?? null,
-        }))
-      );
+/** Each row with its `data` parsed ONCE, for both the kept-off check and the listing. */
+function parseRows<T extends { data: Prisma.JsonValue }>(rows: T[]) {
+  return rows.map((row) => ({ row, data: parseStickerPlacementData(row.data) }));
+}
 
+const keptOffInputs = (
+  parsed: { row: { id: number; targetId: number }; data: { cosmeticId: number } | null }[]
+) =>
+  parsed.map(({ row, data }) => ({
+    id: row.id,
+    targetId: row.targetId,
+    cosmeticId: data?.cosmeticId ?? null,
+  }));
+
+/**
+ * The approved count per image: every approved row not kept off its image.
+ *
+ * The one counting rule, shared by the count-only read and the combined one, so
+ * the two cannot disagree about what a badge says. Deliberately NOT derived from
+ * the listing: a row whose `data` no longer parses is dropped from the listing
+ * but still counted, and a moderator's listing skips the kept-off filter that
+ * the count always applies. Both are long-standing behaviour the badge depends
+ * on, and a count read off the listing would change them.
+ */
+function countApprovedPlacements(
+  rows: { id: number; targetId: number; status: string }[],
+  keptOff: Set<number>
+) {
+  const counts: Record<number, number> = {};
+  for (const row of rows) {
+    if (row.status !== 'approved' || keptOff.has(row.id)) continue;
+    counts[row.targetId] = (counts[row.targetId] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function toStickerPlacementViews(
+  parsed: ReturnType<typeof parseRows<StickerPlacementRow>>,
+  keptOff: Set<number>,
+  viewerId?: number,
+  /** Rows to list but mark as kept off — a moderator's view of what `keptOff` hides. */
+  markedKeptOff: Set<number> = new Set()
+): StickerPlacementView[] {
   return parsed.flatMap(({ row, data }) => {
     if (!data || keptOff.has(row.id)) return [];
 
@@ -809,9 +867,35 @@ export async function getStickerPlacements({
         data: { ...data, comment: undefined, commentHidden: undefined },
         isPending: row.status === 'pending',
         hasComment: !!visibleStickerComment(data, isParty),
+        ...(markedKeptOff.has(row.id) ? { keptOff: true as const } : {}),
       },
     ];
   });
+}
+
+/**
+ * Approved placements for a set of images, plus the viewer's own pending ones.
+ *
+ * Kept for clients that predate `getStickerPlacementsAndCounts`; a deployed
+ * bundle keeps calling it for hours after a release.
+ */
+export async function getStickerPlacements({
+  imageIds,
+  viewerId,
+  isModerator = false,
+}: {
+  imageIds: number[];
+  viewerId?: number;
+  isModerator?: boolean;
+}): Promise<StickerPlacementView[]> {
+  if (!imageIds.length) return [];
+
+  const parsed = parseRows(await readStickerPlacementRows({ imageIds, viewerId }));
+  const keptOff = isModerator
+    ? new Set<number>()
+    : await keptOffPlacementIds(keptOffInputs(parsed));
+
+  return toStickerPlacementViews(parsed, keptOff, viewerId);
 }
 
 /** Approved placements per image, for the reaction-bar count. */
@@ -820,30 +904,63 @@ export async function getStickerPlacementCounts(imageIds: number[]) {
 
   // Rows rather than a groupBy, so the count agrees with the listing about
   // placements kept off an image by a moderator flag.
-  const rows = await dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: { in: imageIds },
-      status: 'approved',
-    },
-    select: { id: true, targetId: true, data: true },
-  });
+  const rows = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    ? ((await listApprovedPlacementRows((await loadKyselyDb()).kyselyRead, {
+        surface: SURFACE,
+        targetType: TARGET_TYPE,
+        targetIds: imageIds,
+      })) as { id: number; targetId: number; status: string; data: Prisma.JsonValue }[])
+    : await dbRead.placement.findMany({
+        where: {
+          surface: SURFACE,
+          targetType: TARGET_TYPE,
+          targetId: { in: imageIds },
+          status: 'approved',
+        },
+        select: { id: true, targetId: true, status: true, data: true },
+      });
 
-  const keptOff = await keptOffPlacementIds(
-    rows.map((row) => ({
-      id: row.id,
-      targetId: row.targetId,
-      cosmeticId: parseStickerPlacementData(row.data)?.cosmeticId ?? null,
-    }))
-  );
+  return countApprovedPlacements(rows, await keptOffPlacementIds(keptOffInputs(parseRows(rows))));
+}
 
-  const counts: Record<number, number> = {};
-  for (const row of rows) {
-    if (keptOff.has(row.id)) continue;
-    counts[row.targetId] = (counts[row.targetId] ?? 0) + 1;
-  }
-  return counts;
+/**
+ * The listing and the approved counts for the same images, from ONE read.
+ *
+ * Every surface that wants placements also wants the count, and asking for both
+ * separately cost two procedure calls and two scans of the same rows. The
+ * listing's read already returns every approved row the count would, so the
+ * count is taken from it here — under `countApprovedPlacements`, the same rule
+ * `getStickerPlacementCounts` uses, so both halves are byte-for-byte what the two
+ * separate procedures return for this viewer.
+ *
+ * The count is still viewer-independent: pending rows are in the read only for
+ * the listing, and the counting rule takes approved rows alone.
+ */
+export async function getStickerPlacementsAndCounts({
+  imageIds,
+  viewerId,
+  isModerator = false,
+}: {
+  imageIds: number[];
+  viewerId?: number;
+  isModerator?: boolean;
+}): Promise<{ placements: StickerPlacementView[]; counts: Record<number, number> }> {
+  if (!imageIds.length) return { placements: [], counts: {} };
+
+  const rows = await readStickerPlacementRows({ imageIds, viewerId });
+  const parsed = parseRows(rows);
+  const keptOff = await keptOffPlacementIds(keptOffInputs(parsed));
+
+  return {
+    // A moderator's listing skips the kept-off filter so they can act on what
+    // it hides; their COUNT does not, exactly as the separate procedures behave.
+    // Those rows are marked, so removing one does not take it off a count that
+    // never included it.
+    placements: isModerator
+      ? toStickerPlacementViews(parsed, new Set<number>(), viewerId, keptOff)
+      : toStickerPlacementViews(parsed, keptOff, viewerId),
+    counts: countApprovedPlacements(rows, keptOff),
+  };
 }
 
 /**
@@ -1082,6 +1199,7 @@ async function removeApprovedSticker({
       takenDownById: userId,
     },
   });
+  if (count > 0) void onPlacementsTakenDown([placement.id]);
 
   return { settled: count > 0 };
 }

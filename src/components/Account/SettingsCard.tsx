@@ -25,6 +25,12 @@ import {
   fliptGatedToggleableKeys,
   toggleableFeatures,
 } from '~/server/services/feature-flags.service';
+import {
+  HIDE_FROM_REACTION_LISTS_DESCRIPTION,
+  HIDE_FROM_REACTION_LISTS_LABEL,
+  SHOW_PRE_LAUNCH_REACTIONS_DESCRIPTION,
+  SHOW_PRE_LAUNCH_REACTIONS_LABEL,
+} from '~/shared/constants/reaction-privacy.constants';
 import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -76,6 +82,9 @@ export function SettingsCard() {
         <AutoplayGifsToggle />
         <SwipeGalleryCardsToggle />
         <StickerMotionToggle />
+
+        <Divider label="Privacy" mb={-12} />
+        <HideFromReactionListsToggle />
 
         <Divider label="Model File Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
@@ -190,6 +199,7 @@ export function SettingsCard() {
         )}
 
         <Divider label="Features" />
+        <FitPostImagesToggle />
         <EarlyAdopterToggle />
         {normalizedToggleableFeatures.length > 0 && (
           <ToggleableFeatures data={normalizedToggleableFeatures} />
@@ -255,6 +265,34 @@ export function StickerMotionToggle() {
   );
 }
 
+export function HideFromReactionListsToggle() {
+  const { hideFromReactionLists, showPreLaunchReactions } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Stack id="hide-reaction-lists" gap="sm">
+      <Switch
+        name="hideFromReactionLists"
+        label={HIDE_FROM_REACTION_LISTS_LABEL}
+        description={HIDE_FROM_REACTION_LISTS_DESCRIPTION}
+        checked={hideFromReactionLists ?? false}
+        disabled={isPending}
+        onChange={(e) => mutate({ hideFromReactionLists: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+      <Switch
+        name="showPreLaunchReactions"
+        label={SHOW_PRE_LAUNCH_REACTIONS_LABEL}
+        description={SHOW_PRE_LAUNCH_REACTIONS_DESCRIPTION}
+        checked={showPreLaunchReactions ?? false}
+        disabled={isPending || !!hideFromReactionLists}
+        onChange={(e) => mutate({ showPreLaunchReactions: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+    </Stack>
+  );
+}
+
 export function HideBlueBuzzToggle() {
   const { hideBlueBuzzInHeader } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
@@ -267,6 +305,23 @@ export function HideBlueBuzzToggle() {
       checked={hideBlueBuzzInHeader ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ hideBlueBuzzInHeader: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+export function FitPostImagesToggle() {
+  const { fitPostImagesToScreen } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="fitPostImagesToScreen"
+      label="Fit post images to screen"
+      description="Shows each image in a post whole, sized to fit your screen, instead of at full width."
+      checked={fitPostImagesToScreen ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ fitPostImagesToScreen: e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );

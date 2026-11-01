@@ -67,6 +67,8 @@ const GRANT = {
     'apps:storage:shared:write',
     'collections:read:self',
     'models:read:self',
+    // The document store's base scope. Consent-exempt, so it renders as a fixed-note row.
+    'apps:storage',
   ],
   revokableScopes: ['ai:write:budgeted', 'posts:write:self'],
   /**
@@ -124,6 +126,9 @@ const EXEMPT_NOTE_MUST_MENTION: Record<string, RegExp> = {
   'collections:read:self': /visibility and ownership/i,
   // The subject is fixed by the page the block is mounted on.
   'models:read:self': /the page you opened/i,
+  // The document store's base scope: its note is the only one naming marks and counts on the
+  // entries the app shares.
+  'apps:storage': /marking or counting/i,
 };
 const EXEMPT_IN_FIXTURE = Object.keys(EXEMPT_NOTE_MUST_MENTION);
 
@@ -321,7 +326,7 @@ const SURFACES = [
     name: 'activity page',
     element: () => (
       <ModalsProvider>
-        <ScopeGrantsPanel />
+        <ScopeGrantsPanel defaultOpened />
       </ModalsProvider>
     ),
   },
@@ -1018,6 +1023,10 @@ describe('the exempt-note fragments are a usable discriminator', () => {
     // invisible HERE — but not unguarded: the note map's keys are pinned against the server's exempt
     // set in `components/Apps/__tests__/scopeConsentRows.test.ts`.
     'goods:read:self',
+    // Listed for the same reason as `goods:read:self`: fragmenting it would mean a fifth exempt row
+    // in the fixture. Coverage here is now 4 of 9; the key set is still pinned against the server's
+    // exempt list in `scopeConsentRows.test.ts`.
+    'apps:store:items:write',
   ];
 
   test('🔴 every FIXED_SCOPE_NOTES key is either fragmented or knowingly listed as not', () => {

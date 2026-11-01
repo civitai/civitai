@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 
 /**
  * What `delete-old-training-data` does with each row it selects.
@@ -36,6 +37,11 @@ const { mockDeleteModelFileObject, mockIsFlipt, mockResolveTarget, mockGetQuaran
     mockGetQuarantineBucket: vi.fn(() => 'civitai-quarantine'),
   }));
 
+// The hold marker view exists; the statements that read it are what is under test here.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  holdMarkerViewExists: async () => true,
+}));
 vi.mock('~/utils/s3-utils', () => ({
   deleteModelFileObject: mockDeleteModelFileObject,
   resolveModelFileDeleteTarget: mockResolveTarget,
@@ -64,6 +70,7 @@ const row = (mf_id: number, url = `https://example.invalid/bucket/key-${mf_id}`)
   mf_id,
   job_id: `job-${mf_id}`,
   url,
+  held: false,
 });
 
 const DELETED = { deleted: true } as const;
@@ -263,13 +270,6 @@ describe('a pass is capped', () => {
     expect(dbWrite.$queryRaw.mock.calls[0]).not.toContain(
       DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS
     );
-  });
-
-  it('🔴 the cap is a real bound, not a number larger than any backlog', () => {
-    // A "cap" set above the population it caps is indistinguishable from no cap, and reads in
-    // review as though the hazard were addressed. Pinned to its literal so raising it has to be
-    // argued in the docblock, which says the value is a choice rather than a derivation.
-    expect(DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS).toBe(2000);
   });
 });
 

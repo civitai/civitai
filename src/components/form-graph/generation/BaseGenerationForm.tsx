@@ -6,18 +6,19 @@ import {
   useGenerationConfig,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { getWorkflowModes } from '~/shared/data-graph/generation/config';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { getWorkflowModes } from '~/shared/generation/config';
 import {
   workflowConfigByKey,
   shouldShowBackButton,
   shouldReturnAfterSubmit,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 import { useWorkflowHistoryStore } from '~/store/workflow-history.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -37,7 +38,7 @@ import {
 import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { ExperimentalRulesSync } from '~/components/generation_v2/Experimental';
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
-import { MetadataExtractionFooter } from '~/components/generation_v2/FormFooter';
+import { MetadataExtractionFooter } from '~/components/Generation/footer-parts';
 import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
 import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
@@ -57,6 +58,7 @@ import { migrateV1GenerationStorage } from './migrate-v1-storage';
 import { useGenerationIngestion } from './ingestion';
 import { useOutputType, type GenerationStore } from './store';
 import { useWhatIfContext } from './WhatIfProvider';
+import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 
 /**
  * The BASE generation form: the entry component. Owns the store over the
@@ -118,6 +120,10 @@ export function BaseGenerationForm() {
   useEffect(() => () => storage?.dispose(), [storage]);
 
   const store = useForm(generationHub, { ext, storage }) as GenerationStore;
+  useEffect(() => {
+    useActiveGenerationForm.setState({ store });
+    return () => useActiveGenerationForm.setState({ store: undefined });
+  }, [store]);
 
   return (
     <FormProvider store={store}>
@@ -129,8 +135,24 @@ export function BaseGenerationForm() {
   );
 }
 
+/** A checkpoint's own turbo LoRA rides on its hydrated data, but the store holds a default checkpoint as a bare id, so the graph would never see it. */
+function useModelWriteBack(store: GenerationStore) {
+  const { getResourceData } = useResourceDataContext();
+  useEffect(() => {
+    function writeBack() {
+      const state = store.getSnapshot().state as Record<string, unknown>;
+      const model = state.model as PartialResourceValue | undefined;
+      if (!model?.id || !needsHydration(model)) return;
+      const data = getResourceData(model.id);
+      if (data) store.set({ model: asResourceValue(data) });
+    }
+    writeBack();
+    return store.subscribe(writeBack);
+  }, [store, getResourceData]);
+}
+
 /**
- * v1 InnerProvider's resource-hydration sync: register the ids of PARTIAL
+ * Resource-hydration sync: register the ids of PARTIAL
  * resource values (a default model is just `{id, model:{type}}`) with
  * ResourceDataProvider so the pickers can render them — without this an
  * ecosystem switch auto-sets the model but the selector looks empty.
@@ -180,6 +202,7 @@ function useResourceHydrationSync(store: GenerationStore) {
 
 function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMember: boolean }) {
   useResourceHydrationSync(store);
+  useModelWriteBack(store);
   useGenerationIngestion(store);
   useGenerationTour();
   const output = useOutputType(store);
@@ -189,7 +212,7 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
   const compatibility = useCompatibilityInfo({ workflow, ecosystem });
 
   // Track workflow/ecosystem history for enhancement-workflow back-nav —
-  // same store v1 pushes to, skipping the entries created by Back itself.
+  // skipping the entries created by Back itself.
   const workflowHistory = useWorkflowHistoryStore();
   const isNavigatingRef = useRef(false);
   useEffect(() => {

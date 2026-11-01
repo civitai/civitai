@@ -185,6 +185,33 @@ function srcSetSafe(url: string) {
   );
 }
 
+/** Asks the cacher for a JPEG still of a video instead of the video itself. */
+export const videoStillEdgeOptions = {
+  type: MediaType.image,
+  anim: false,
+  transcode: true,
+} satisfies Omit<EdgeUrlProps, 'src'>;
+
+/**
+ * The `original=true` form of an image-CDN delivery URL, e.g. the resized variant a page
+ * shows and a drag hands over. A variant's re-encode drops a PNG's generation text chunks,
+ * so a reader of generation metadata needs the stored file. Video variants (`transcode`,
+ * `skip`) are frames of an MP4 whose original is not an image, and pass through, as does
+ * any URL not on the image CDN.
+ */
+export function toOriginalEdgeUrl(url: string) {
+  const base = env.NEXT_PUBLIC_IMAGE_LOCATION;
+  if (!base || !url.startsWith(`${base}/`)) return url;
+
+  const [path] = url.slice(base.length + 1).split(/[?#]/);
+  const segments = path.split('/');
+  if (segments.length < 2 || segments.length > 3 || segments.some((s) => !s)) return url;
+
+  const [key, params, name] = segments.length === 3 ? segments : [segments[0], '', segments[1]];
+  if (/(^|,)(transcode=true|skip=)/.test(params)) return url;
+  return [base, key, 'original=true', name].join('/');
+}
+
 export function getEdgeUrl(
   src: string,
   {
@@ -250,6 +277,116 @@ export function getEdgeUrl(
   else name = name + extension;
 
   return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), name].filter(Boolean).join('/');
+}
+
+/**
+ * What `useEdgeUrl` returns, outside React: the URL (and hi-DPI `srcSet`) an element is handed for
+ * `src` under `options`. `useEdgeUrl` is this function and nothing else, so a caller that has to
+ * know the exact request ahead of the element (the image page's preload) reads the same answer.
+ */
+export function resolveEdgeUrl(
+  src: string,
+  options: Omit<EdgeUrlProps, 'src'> | undefined,
+  hiDpi?: boolean
+) {
+  const inferredType = getInferredMediaType(src, options);
+  let type = options?.type ?? inferredType;
+
+  // Same passthrough boundary as getEdgeUrl — one predicate, see edge-url-passthrough.ts.
+  if (isEdgeUrlPassthrough(src)) return { url: src, srcSet: undefined, type: inferredType };
+
+  let { anim, transcode } = options ?? {};
+
+  if (inferredType === 'video' && type === 'image') {
+    transcode = true;
+    anim = false;
+  } else if (type === 'video') {
+    transcode = true;
+    anim = anim ?? true;
+  }
+
+  if (!anim) type = 'image';
+  // Single source for `optimized`; do not re-derive it elsewhere.
+  const optimized = resolveOptimized({
+    width: options?.width,
+    height: options?.height,
+    original: options?.original,
+  });
+
+  const resolved = {
+    ...options,
+    anim,
+    transcode,
+    type,
+    optimized: optimized ? true : undefined,
+  };
+
+  return {
+    url: getEdgeUrl(src, resolved),
+    srcSet: hiDpi ? getEdgeUrlSrcSet(src, resolved) : undefined,
+    type,
+  };
+}
+
+/** The props of `EdgeMedia` that shape the request URL. */
+export type EdgeMediaUrlProps = Omit<EdgeUrlProps, 'src' | 'metadata'>;
+
+/**
+ * The `options` `EdgeMedia` hands `EdgeImage`/`EdgeVideo` for its props: the width capped at 4096,
+ * every other URL-shaping prop as given.
+ */
+export function edgeMediaOptions({
+  name,
+  width,
+  sourceWidth,
+  height,
+  fit,
+  blur,
+  quality,
+  gravity,
+  transcode,
+  type,
+  original,
+  skip,
+  anim,
+  optimized,
+}: EdgeMediaUrlProps) {
+  if (width && typeof width === 'number') width = Math.min(width, 4096);
+  return {
+    name,
+    width,
+    sourceWidth,
+    height,
+    fit,
+    blur,
+    quality,
+    gravity,
+    transcode,
+    type,
+    original,
+    skip,
+    anim,
+    optimized,
+  };
+}
+
+/** What `EdgeImage` hands `useEdgeUrl` for the `options` `EdgeMedia` built. */
+export function edgeImageUrlOptions(options: Omit<EdgeUrlProps, 'src'> | undefined) {
+  // TODO - determine how we can animate cosmetics
+  const { anim, ...rest } = options ?? {};
+  return anim !== false ? rest : { ...rest, anim: false };
+}
+
+/**
+ * The URL (and `srcSet`) `EdgeImage` puts on its `<img>` for the `options` `EdgeMedia` built:
+ * the same two steps `EdgeImage` takes, `useEdgeUrl` being `resolveEdgeUrl`.
+ */
+export function resolveEdgeImageUrl(
+  src: string,
+  options: Omit<EdgeUrlProps, 'src'> | undefined,
+  hiDpi?: boolean
+) {
+  return resolveEdgeUrl(src, edgeImageUrlOptions(options), hiDpi);
 }
 
 const videoTypeExtensions = ['.gif', '.mp4', '.webm'];

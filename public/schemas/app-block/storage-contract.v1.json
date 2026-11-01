@@ -1,0 +1,1957 @@
+{
+  "$comment": "App Blocks document store — declarative contract for /api/v1/blocks/storage. Every case runs against fresh apps and an empty store. A step is one request; `expect.body` is a SUBSET match (extra fields allowed) where an array must match element-wise at the same length, and these strings are matchers: \"$string\", \"$number\", \"$iso\" (an ISO-8601 timestamp), \"$present\", \"$absent\" (the key must not exist), \"$null\". {\"$capture\": \"name\"} stores the value it matches; \"${name}\" in a later path, query or body string is replaced by it, and \"${i}\" by the repeat index; in a request body \"$repeat:<c>:<n>\" is the character <c> repeated n times. A runner must also check that no response carries a numeric user id. The host runs this suite against the real handlers (src/server/services/apps/__tests__/doc-store-api.contract.test.ts); an SDK fake can run it against itself.",
+  "version": 1,
+  "conventions": {
+    "blockedText": "contract-blocked-term",
+    "blockedLink": "https://contract-blocked.example/x",
+    "scannerDown": "contract-scanner-down",
+    "note": "A runner's moderation scanner rejects any string leaf, object key or document key containing blockedText (category blocked) or blockedLink (category link), and fails (an outage) on scannerDown. The moderation cases describe an app whose shared-data moderation is ENFORCED, which the host decides per app: where it runs in shadow, the scan runs after the write and neither a hit nor a scanner outage refuses it, and where it is off nothing is scanned.",
+    "rateLimits": "Each fixed-window limit is per (app, viewer): reads 300/min (an anonymous reader per client IP), private document writes and every delete 120/min, marks and counters 30/min, reports 20/day. A report is a mark, so it also spends one from the marks-and-counters bucket. Shared document creates and updates spend the shared write budget, per (app, viewer), three token buckets refilling continuously: burst 10 (one token back every 6 minutes), daily 50 (one back every 28.8 minutes), and rejections 10 (one back every 30 minutes). A write takes one burst and one daily token and is refused while either, or the rejection bucket, is empty; a write that does not land gives both back, and if the refusal was about the request rather than an outage it also spends one rejection token.",
+    "keys": "A document key is 1-128 characters of [A-Za-z0-9._:-] and must not consist only of dots: URL clients rewrite `.` and `..` path segments, so such a key could never be addressed."
+  },
+  "storage": {
+    "collections": {
+      "prefs": {
+        "visibility": "private"
+      },
+      "posts": {
+        "visibility": "shared",
+        "write": "own",
+        "marks": ["vote"],
+        "counters": ["views"],
+        "indexes": {
+          "status": "string"
+        },
+        "showAuthor": true
+      },
+      "notes": {
+        "visibility": "shared",
+        "write": "own"
+      },
+      "plays": {
+        "visibility": "shared",
+        "write": "none",
+        "counters": ["plays"]
+      }
+    }
+  },
+  "apps": ["A", "B"],
+  "viewers": {
+    "v1": {
+      "username": "contract_v1",
+      "trusted": true
+    },
+    "v2": {
+      "username": "contract_v2",
+      "trusted": true
+    },
+    "v3": {
+      "username": "contract_v3",
+      "trusted": true
+    },
+    "newbie": {
+      "username": "contract_newbie",
+      "trusted": false,
+      "untrustedReason": "account_too_new"
+    }
+  },
+  "limits": {
+    "viewerDocs": 12
+  },
+  "defaultScopes": ["apps:storage", "apps:storage:publish"],
+  "stepFields": {
+    "as": "\"<viewer>@<app>\", \"anon@<app>\", or \"none\" (no token at all)",
+    "token": "optional: \"dev\" for a dev token as the bearer dev-token route mints one for an approved app (namespace dev:<uid>)",
+    "scopes": "optional: the token's scopes, default defaultScopes",
+    "consentMarker": "optional, per case: \"unavailable\", or the list of scopes the viewer revoked",
+    "appStatus": "optional, per case: the backing app's status, default approved",
+    "storage": "optional, per case: \"disabled\" for a store with no database configured",
+    "repeat": "optional: send the step this many times, each expected to match"
+  },
+  "cases": [
+    {
+      "name": "info: declared collections, limits, usage",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "",
+          "expect": {
+            "status": 200,
+            "body": {
+              "collections": {
+                "prefs": {
+                  "visibility": "private",
+                  "write": "$absent"
+                },
+                "posts": {
+                  "visibility": "shared",
+                  "write": "own",
+                  "marks": ["vote"],
+                  "counters": ["views"],
+                  "indexes": {
+                    "status": "string"
+                  },
+                  "showAuthor": true
+                },
+                "plays": {
+                  "write": "none"
+                }
+              },
+              "limits": {
+                "docBytes": 65536,
+                "viewerDocs": 12,
+                "getManyMax": 100
+              },
+              "usage": {
+                "app": {
+                  "bytes": 0,
+                  "docs": 0
+                },
+                "viewer": {
+                  "bytes": 0,
+                  "docs": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "GET",
+          "path": "",
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        }
+      ]
+    },
+    {
+      "name": "private document: put, get, conditional put, conditional delete",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/theme",
+          "body": {
+            "data": {
+              "mode": "dark"
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "key": "theme",
+              "data": {
+                "mode": "dark"
+              },
+              "version": 1,
+              "createdAt": "$iso",
+              "updatedAt": "$iso",
+              "author": {
+                "kind": "user",
+                "isViewer": true,
+                "username": "$absent"
+              },
+              "counters": {},
+              "marks": {},
+              "viewer": {
+                "marks": []
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/prefs/theme",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "mode": "dark"
+              },
+              "version": 1
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/theme",
+          "body": {
+            "data": {
+              "mode": "light"
+            },
+            "ifVersion": 1
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "version": 2
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/theme",
+          "body": {
+            "data": {
+              "mode": "stale"
+            },
+            "ifVersion": 1
+          },
+          "expect": {
+            "status": 409,
+            "code": "version_conflict",
+            "body": {
+              "message": "$string",
+              "error": "$string",
+              "details": {
+                "currentVersion": 2
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/fresh",
+          "body": {
+            "data": {},
+            "ifVersion": 3
+          },
+          "expect": {
+            "status": 409,
+            "code": "version_conflict",
+            "body": {
+              "details": {
+                "currentVersion": 0
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "DELETE",
+          "path": "/prefs/theme",
+          "query": {
+            "ifVersion": "1"
+          },
+          "expect": {
+            "status": 409,
+            "code": "version_conflict"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "DELETE",
+          "path": "/prefs/theme",
+          "query": {
+            "ifVersion": "2"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "deleted": true
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "DELETE",
+          "path": "/prefs/theme",
+          "expect": {
+            "status": 200,
+            "body": {
+              "deleted": false
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/prefs/theme",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        }
+      ]
+    },
+    {
+      "name": "create with a server key, then batch get with a miss",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/prefs",
+          "body": {
+            "data": {
+              "n": 1
+            }
+          },
+          "expect": {
+            "status": 201,
+            "body": {
+              "key": {
+                "$capture": "k"
+              },
+              "version": 1
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/_get/prefs",
+          "body": {
+            "keys": ["${k}", "missing"]
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": [
+                {
+                  "key": "${k}",
+                  "data": {
+                    "n": 1
+                  }
+                },
+                "$null"
+              ]
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/_get/prefs",
+          "expect": {
+            "status": 405,
+            "code": "method_not_allowed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared documents: list, filter, sort, author=me, paging, author display",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {
+              "status": "open"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p2",
+          "body": {
+            "data": {
+              "status": "closed"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/notes/n1",
+          "body": {
+            "data": {
+              "t": "hi"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "POST",
+          "path": "/notes",
+          "body": {
+            "data": {
+              "t": "from v2"
+            }
+          },
+          "expect": {
+            "status": 201,
+            "body": {
+              "key": "$string",
+              "version": 1,
+              "author": {
+                "kind": "user",
+                "isViewer": true,
+                "username": "$absent"
+              },
+              "counters": {},
+              "marks": {}
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts",
+          "query": {
+            "where[status]": "open"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": [
+                {
+                  "key": "p1"
+                }
+              ],
+              "nextCursor": "$null"
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/posts",
+          "query": {
+            "author": "me"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": [
+                {
+                  "key": "p2"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/posts",
+          "query": {
+            "sort": "-key"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": [
+                {
+                  "key": "p2",
+                  "author": {
+                    "kind": "user",
+                    "isViewer": true,
+                    "username": "contract_v2"
+                  }
+                },
+                {
+                  "key": "p1",
+                  "author": {
+                    "kind": "user",
+                    "isViewer": false,
+                    "username": "contract_v1"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts",
+          "query": {
+            "limit": "1"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": [
+                {
+                  "key": "p1"
+                }
+              ],
+              "nextCursor": {
+                "$capture": "cur"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts",
+          "query": {
+            "limit": "1",
+            "cursor": "${cur}"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": [
+                {
+                  "key": "p2"
+                }
+              ],
+              "nextCursor": "$null"
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/notes/n1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "author": {
+                "kind": "user",
+                "isViewer": false,
+                "username": "$absent"
+              }
+            }
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "GET",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "key": "p1",
+              "viewer": "$null"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "counters: an increment creates a document only in a write:none collection",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/plays/m1/counters/plays",
+          "body": {
+            "by": 3
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 3
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "POST",
+          "path": "/plays/m1/counters/plays",
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 4
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/plays/m1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "author": {
+                "kind": "counter"
+              },
+              "counters": {
+                "plays": 4
+              },
+              "data": {}
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/posts/absent/counters/views",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/plays/m1/counters/plays",
+          "body": {
+            "by": 101
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "POST",
+          "path": "/plays/m1/counters/plays",
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        }
+      ]
+    },
+    {
+      "name": "marks and the report mark",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {
+              "status": "open"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/vote",
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "marks": {
+                "vote": 1
+              },
+              "viewer": {
+                "marks": ["vote"]
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "marks": {
+                "vote": 1
+              },
+              "viewer": {
+                "marks": []
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "DELETE",
+          "path": "/posts/p1/marks/vote",
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": false,
+              "count": 0
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/report",
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": "$absent"
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "marks": {
+                "vote": 0,
+                "report": "$absent"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/vote",
+          "body": {
+            "note": "marks carry no payload"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/report",
+          "body": {
+            "reason": "marks carry no payload"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "DELETE",
+          "path": "/posts/p1/marks/report",
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/star",
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/absent/marks/vote",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        }
+      ]
+    },
+    {
+      "name": "request errors",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": "not an object"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {},
+            "expiresAt": "2030-01-01T00:00:00Z"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/bad key",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/prefs",
+          "query": {
+            "colour": "red"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/prefs/k",
+          "query": {
+            "colour": "red"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts",
+          "query": {
+            "where[nope]": "1"
+          },
+          "expect": {
+            "status": 400,
+            "code": "index_not_declared"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts",
+          "query": {
+            "sort": "counter:nope"
+          },
+          "expect": {
+            "status": 400,
+            "code": "index_not_declared"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/nope",
+          "expect": {
+            "status": 404,
+            "code": "collection_not_declared"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/_get",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/prefs/k/extra",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PATCH",
+          "path": "/prefs/k",
+          "expect": {
+            "status": 405,
+            "code": "method_not_allowed"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/big",
+          "body": {
+            "data": {
+              "s": "$repeat:x:70000"
+            }
+          },
+          "expect": {
+            "status": 413,
+            "code": "too_large"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "DELETE",
+          "path": "/prefs/k",
+          "query": {
+            "ifVersion": "-1"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/..",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/...",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/_get/prefs",
+          "body": {
+            "keys": ["."]
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "who may call: no token, anonymous viewer, missing base scope",
+      "steps": [
+        {
+          "as": "none",
+          "method": "GET",
+          "path": "/posts",
+          "expect": {
+            "status": 401,
+            "code": "unauthenticated"
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "GET",
+          "path": "/prefs",
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "GET",
+          "path": "/prefs/k",
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "PUT",
+          "path": "/posts/k",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "GET",
+          "path": "/posts",
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": []
+            }
+          }
+        },
+        {
+          "$comment": "Refused by the token middleware before the storage handler runs, in the same envelope.",
+          "as": "v1@A",
+          "scopes": ["apps:storage:publish"],
+          "method": "GET",
+          "path": "/posts",
+          "expect": {
+            "status": 403,
+            "code": "insufficient_scope"
+          }
+        }
+      ]
+    },
+    {
+      "name": "the publish scope gates creating and updating viewer-authored shared documents",
+      "steps": [
+        {
+          "as": "v1@A",
+          "scopes": ["apps:storage"],
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 403,
+            "code": "consent_required",
+            "body": {
+              "details": {
+                "scope": "apps:storage:publish"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "scopes": ["apps:storage"],
+          "method": "POST",
+          "path": "/notes",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 403,
+            "code": "consent_required"
+          }
+        },
+        {
+          "as": "v1@A",
+          "scopes": ["apps:storage"],
+          "method": "DELETE",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "deleted": false
+            }
+          },
+          "$comment": "Deleting needs only apps:storage: a viewer can always remove what they authored."
+        },
+        {
+          "as": "v1@A",
+          "scopes": ["apps:storage"],
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v1@A",
+          "scopes": ["apps:storage"],
+          "method": "POST",
+          "path": "/plays/m1/counters/plays",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "scopes": ["apps:storage"],
+          "method": "PUT",
+          "path": "/posts/p1/marks/vote",
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
+      "name": "a revoked publish scope is refused although the token still carries it",
+      "consentMarker": ["apps:storage:publish"],
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 403,
+            "code": "consent_required"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts",
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
+      "name": "an unreadable consent marker is retryable, and only refuses the publish scope",
+      "consentMarker": "unavailable",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 503,
+            "code": "consent_unavailable"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
+      "name": "min-trust gate on every viewer write into a shared collection",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "newbie@A",
+          "method": "PUT",
+          "path": "/posts/p2",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 403,
+            "code": "not_eligible",
+            "body": {
+              "details": {
+                "reason": "account_too_new"
+              }
+            }
+          }
+        },
+        {
+          "as": "newbie@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/vote",
+          "expect": {
+            "status": 403,
+            "code": "not_eligible"
+          }
+        },
+        {
+          "as": "newbie@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/report",
+          "expect": {
+            "status": 403,
+            "code": "not_eligible"
+          }
+        },
+        {
+          "as": "newbie@A",
+          "method": "POST",
+          "path": "/plays/m1/counters/plays",
+          "expect": {
+            "status": 403,
+            "code": "not_eligible"
+          }
+        },
+        {
+          "as": "newbie@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "newbie@A",
+          "method": "GET",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
+      "name": "authorship and write policy",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {
+              "v": 1
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {
+              "v": 2
+            }
+          },
+          "expect": {
+            "status": 403,
+            "code": "not_author"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "DELETE",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 403,
+            "code": "not_author"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "v": 1
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/plays",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 403,
+            "code": "write_policy"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "DELETE",
+          "path": "/plays/x",
+          "expect": {
+            "status": 403,
+            "code": "write_policy"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "DELETE",
+          "path": "/posts/p1",
+          "query": {
+            "ifVersion": "1"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "deleted": true
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        }
+      ]
+    },
+    {
+      "name": "moderation of shared writes",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {
+              "title": "a contract-blocked-term here"
+            }
+          },
+          "expect": {
+            "status": 422,
+            "code": "content_rejected",
+            "body": {
+              "details": {
+                "category": "blocked"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/posts",
+          "body": {
+            "data": {
+              "contract-blocked-term": "in a key"
+            }
+          },
+          "expect": {
+            "status": 422,
+            "code": "content_rejected"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {
+              "nested": [
+                {
+                  "url": "https://contract-blocked.example/x"
+                }
+              ]
+            }
+          },
+          "expect": {
+            "status": 422,
+            "code": "content_rejected",
+            "body": {
+              "details": {
+                "category": "link"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/contract-blocked-term",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 422,
+            "code": "content_rejected"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/plays/contract-blocked-term/counters/plays",
+          "expect": {
+            "status": 422,
+            "code": "content_rejected"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {
+              "t": "contract-scanner-down"
+            }
+          },
+          "expect": {
+            "status": 503,
+            "code": "moderation_unavailable"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts/p1",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/contract-blocked-term",
+          "body": {
+            "data": {
+              "t": "contract-blocked-term"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
+      "name": "quota: the viewer's document ceiling",
+      "steps": [
+        {
+          "as": "v3@A",
+          "method": "PUT",
+          "path": "/prefs/k${i}",
+          "body": {
+            "data": {}
+          },
+          "repeat": 12,
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v3@A",
+          "method": "PUT",
+          "path": "/prefs/one-more",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 413,
+            "code": "quota_exceeded",
+            "body": {
+              "details": {
+                "ceiling": "viewer"
+              }
+            }
+          }
+        },
+        {
+          "as": "v3@A",
+          "method": "PUT",
+          "path": "/prefs/k0",
+          "body": {
+            "data": {
+              "x": 1
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
+      "name": "rate limits: marks and counters per minute, reports per day",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/report",
+          "repeat": 20,
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/report",
+          "expect": {
+            "status": 429,
+            "code": "rate_limited",
+            "body": {
+              "details": {
+                "bucket": "report",
+                "retryAfter": "$number"
+              }
+            }
+          }
+        },
+        {
+          "as": "v3@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/vote",
+          "repeat": 30,
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v3@A",
+          "method": "POST",
+          "path": "/plays/m1/counters/plays",
+          "expect": {
+            "status": 429,
+            "code": "rate_limited",
+            "body": {
+              "details": {
+                "bucket": "tally"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/p1/marks/vote",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v3@B",
+          "method": "POST",
+          "path": "/plays/m1/counters/plays",
+          "expect": {
+            "status": 200
+          }
+        }
+      ]
+    },
+    {
+      "name": "isolation: two apps, two viewers, two namespaces",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {
+              "app": "A"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/s",
+          "body": {
+            "data": {
+              "app": "A"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/plays/m/counters/plays",
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "GET",
+          "path": "/prefs/k",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "GET",
+          "path": "/posts/s",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "GET",
+          "path": "/posts",
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": []
+            }
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "GET",
+          "path": "/prefs",
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": []
+            }
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "POST",
+          "path": "/_get/posts",
+          "body": {
+            "keys": ["s"]
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": ["$null"]
+            }
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "PUT",
+          "path": "/posts/s/marks/vote",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "POST",
+          "path": "/posts/s/counters/views",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "DELETE",
+          "path": "/posts/s",
+          "expect": {
+            "status": 200,
+            "body": {
+              "deleted": false
+            }
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "POST",
+          "path": "/plays/m/counters/plays",
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 1
+            }
+          }
+        },
+        {
+          "as": "v1@B",
+          "method": "GET",
+          "path": "",
+          "expect": {
+            "status": 200,
+            "body": {
+              "usage": {
+                "viewer": {
+                  "docs": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/prefs/k",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/prefs",
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": []
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "POST",
+          "path": "/_get/prefs",
+          "body": {
+            "keys": ["k"]
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "items": ["$null"]
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "DELETE",
+          "path": "/prefs/k",
+          "expect": {
+            "status": 200,
+            "body": {
+              "deleted": false
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "token": "dev",
+          "method": "GET",
+          "path": "/prefs/k",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@A",
+          "token": "dev",
+          "method": "GET",
+          "path": "/posts/s",
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v1@A",
+          "token": "dev",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {
+              "ns": "dev"
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "version": 1
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/prefs/k",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "app": "A"
+              },
+              "version": 1
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts/s",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "app": "A"
+              },
+              "marks": {
+                "vote": 0
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/plays/m",
+          "expect": {
+            "status": 200,
+            "body": {
+              "counters": {
+                "plays": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a suspended app gets nothing",
+      "appStatus": "suspended",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts",
+          "expect": {
+            "status": 403,
+            "code": "not_eligible",
+            "body": {
+              "details": {
+                "reason": "app_not_approved"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "inert without a database: every data operation is storage_disabled",
+      "storage": "disabled",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/prefs/k",
+          "expect": {
+            "status": 503,
+            "code": "storage_disabled",
+            "body": {
+              "message": "document storage is unavailable",
+              "error": "document storage is unavailable"
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/k",
+          "body": {
+            "data": {}
+          },
+          "expect": {
+            "status": 503,
+            "code": "storage_disabled"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "",
+          "expect": {
+            "status": 503,
+            "code": "storage_disabled"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/nope",
+          "expect": {
+            "status": 404,
+            "code": "collection_not_declared"
+          }
+        }
+      ]
+    }
+  ]
+}

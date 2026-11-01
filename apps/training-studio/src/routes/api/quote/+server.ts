@@ -26,7 +26,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     !optionalString(body.engine) ||
     !optionalNumber(body.steps) ||
     !optionalNumber(body.epochs) ||
-    !optionalNumber(body.imageCount)
+    !optionalNumber(body.imageCount) ||
+    (body.editTraining !== undefined && typeof body.editTraining !== 'boolean')
   ) {
     error(400, 'Bad quote request.');
   }

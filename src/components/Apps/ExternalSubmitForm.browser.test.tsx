@@ -9,7 +9,7 @@ import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 — /apps/submit external-app WIZARD (redesigned, MERGED external+connect model).
- * Browser-mode surface test (report-only in Tekton). New step order:
+ * Browser-mode surface test (`Component tests` in CI). New step order:
  *
  *   App URL (first, REQUIRED) → App & scopes → Details → Assets
  *
@@ -99,6 +99,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
         removeScreenshot: { useMutation: mutation },
+        setRedMedia: { useMutation: mutation },
       },
       oauthClient: {
         getAll: { useQuery: () => mocks.clients },
@@ -799,7 +800,7 @@ describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
     await cancel.click();
 
     // It navigated…
-    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build'));
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build?view=apps'));
     // …and the modal was never raised. Asserted AFTER the navigation settled, so this
     // is a real absence in a mounted tree rather than a first-empty-observation pass.
     await expect.element(page.getByTestId('apps-offsite-discard-confirm')).not.toBeInTheDocument();
@@ -842,7 +843,7 @@ describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
     await page.getByTestId('apps-offsite-wizard-cancel').click();
     await page.getByTestId('apps-offsite-discard-confirm').click();
 
-    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build'));
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build?view=apps'));
   });
 
   /**

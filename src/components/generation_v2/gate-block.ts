@@ -15,7 +15,7 @@ import {
   disabledSelectionGates,
   type GateSelection,
   type SelectionGate,
-} from '~/shared/data-graph/generation/gates';
+} from '~/shared/generation/gates';
 import { useExperimentalRulesStore } from '~/store/experimental-rules.store';
 
 /** The generation form's selection fields, as every lane's snapshot carries them. */

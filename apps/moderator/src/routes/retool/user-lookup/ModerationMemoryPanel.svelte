@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { enhance } from '$app/forms';
   import { FormState } from '$lib/form-state.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -16,7 +17,14 @@
   let {
     userId,
     canAct,
-  }: { userId: number; canAct: boolean } = $props();
+    canStrike,
+  }: {
+    userId: number;
+    /** The moderation flags: the `/users` page. */
+    canAct: boolean;
+    /** Issue strike: the `user.strike` action grant. */
+    canStrike: boolean;
+  } = $props();
 
   const FLAGS = [
     ['spamWhitelist', 'Spam whitelist', 'Exempt from spam heuristics.'],
@@ -27,7 +35,7 @@
   // not in `data`, so invalidating the page load would not bring it back.
   let version = $state(0);
 
-  const memory = $derived(browser ? fetchMemory(userId, version) : null);
+  const memory = $derived(browser ? fetchMemory(userId, version) : SSR_PENDING);
 
   let adding = $state(false);
   let striking = $state(false);
@@ -140,7 +148,7 @@
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <div class="mb-1 flex items-baseline justify-between gap-3">
       <h3 class="text-sm font-semibold text-white">Strikes</h3>
-      {#if canAct && !striking}
+      {#if canStrike && !striking}
         <Button size="sm" onclick={() => (striking = true)}>Issue strike</Button>
       {/if}
     </div>

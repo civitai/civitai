@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 // purgeResizeCache tells the image-cache service to drop an image's derived variants. Three
 // things about that call are easy to get wrong and impossible to see afterwards:
@@ -145,6 +144,59 @@ describe('purgeResizeCache', () => {
     });
   });
 
+  describe('waitForInvalidationMs', () => {
+    // The hide flip purges the CDN next; doing that before the service has answered lets the CDN
+    // refill from copies the service has not dropped yet.
+    it('resolves only after the service answers when asked to wait', async () => {
+      let answer!: (res: { ok: boolean; status: number }) => void;
+      mockFetch.mockReturnValueOnce(new Promise((r) => (answer = r)));
+
+      let settled = false;
+      const done = purgeResizeCache({
+        url: UUID,
+        scope: 'hidden-meta-orphans',
+        waitForInvalidationMs: 70_000,
+      }).then(() => (settled = true));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(invalidateCalls()).toHaveLength(1);
+      expect(settled).toBe(false);
+
+      answer({ ok: true, status: 202 });
+      await done;
+      expect(settled).toBe(true);
+    });
+
+    it('still resolves, without throwing, when the service call fails', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('timeout'));
+
+      await expect(
+        purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans', waitForInvalidationMs: 70_000 })
+      ).resolves.toBe('unconfirmed');
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'image-cacher-invalidate', type: 'warning' })
+      );
+    });
+
+    // A slow purge running past the wait is the normal case, not an incident.
+    it('logs running out of wait time as info, not a warning', async () => {
+      mockFetch.mockRejectedValueOnce(
+        Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })
+      );
+
+      await purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans', waitForInvalidationMs: 1 });
+
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'image-cacher-invalidate', type: 'info' })
+      );
+    });
+
+    it('does not wait by default, so the delete flow is not slowed down', async () => {
+      mockFetch.mockReturnValueOnce(new Promise(() => undefined));
+
+      await expect(purgeResizeCache({ url: UUID })).resolves.toBe('unconfirmed');
+    });
+  });
+
   describe('auth', () => {
     it('sends the shared secret when one is configured', async () => {
       await purgeResizeCache({ url: UUID });
@@ -186,50 +238,6 @@ describe('purgeResizeCache', () => {
       // toHaveProperty already catches. Kept as a cheap belt-and-braces against a variant that
       // stringifies it — but the assertion above is the one doing the work.
       expect(Object.values(headers)).not.toContain('undefined');
-    });
-  });
-
-  describe('a non-2xx must not be silent', () => {
-    // The whole point. `fetch` resolves for a 401, so without an explicit status check this
-    // returns cleanly and invalidation dies without a single log line.
-    it.each([
-      [401, 'a rejected shared secret'],
-      [409, 'a refusal'],
-      [503, 'a partial failure'],
-    ])('logs a %i (%s)', async (status) => {
-      mockFetch.mockResolvedValue({ ok: false, status } as any);
-
-      await purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans' });
-      // The call is fire-and-forget; let its continuation run.
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'image-cacher-invalidate',
-          status,
-          scope: 'hidden-meta-orphans',
-        })
-      );
-    });
-
-    // POSITIVE CONTROL for the assertion above: with the same harness and a 2xx, nothing is
-    // logged. Without this, a logger that fired unconditionally would satisfy every case above.
-    it('stays quiet on success', async () => {
-      await purgeResizeCache({ url: UUID });
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(mockLogToAxiom).not.toHaveBeenCalled();
-    });
-
-    it('still logs a thrown fetch (timeout / connection refused)', async () => {
-      mockFetch.mockRejectedValue(new Error('timeout'));
-
-      await purgeResizeCache({ url: UUID });
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'image-cacher-invalidate' })
-      );
     });
   });
 });

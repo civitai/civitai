@@ -5,14 +5,9 @@ import { describe, expect, it } from 'vitest';
 import { uniq } from 'lodash-es';
 
 /**
- * `retractPublicBlobs` asks the image-cache service to destroy the SHARED STORED OBJECT behind an
- * image, not just its derived variants. That object is content-addressed, so it is shared by every
- * byte-identical image of every owner: setting this removes the full-resolution original for all of
- * them, their database rows survive, and nothing in this codebase can enumerate them (no
- * content-hash key is stored, and `pHash` is a perceptual — not byte-identity — hash).
- *
- * It is therefore a cross-account destructive capability, and the whole design is that exactly one
- * flow can reach it: the moderation takedown of blocked media. That claim is about a SET OF CALL
+ * `retractPublicBlobs` asks the image-cache service to delete an image's public copies and purge
+ * them from the CDN, not just invalidate its caches. It is a takedown, and the whole design is that
+ * only moderation takedowns can reach it. That claim is about a SET OF CALL
  * SITES, so no behavioural test can pin it — a test asserts what the sites it knows about do, and
  * the risk is the site nobody thought to write a test for.
  *
@@ -75,12 +70,19 @@ const EXTENSIONS = 'ts,tsx,mts,cts,js,mjs,cjs,jsx,svelte';
 const NOT_SOURCE = /(^|\/)(node_modules|dist|build|\.next|\.svelte-kit|coverage|\.turbo|out)(\/|$)/;
 
 /**
- * Every non-test source file allowed to mention the option at all — the plumbing plus the one
- * caller. `image.service.ts` declares it, threads it and builds the query parameter;
+ * Every non-test source file allowed to mention the option at all — the plumbing plus the
+ * callers. `image.service.ts` declares it, threads it and builds the query parameter;
  * `image-ingestion.ts` is the moderation takedown that asks for it.
+ *
+ * `cdn-access.service.ts` is the takedown CDN sync. It builds the query parameter itself rather
+ * than going through `purgeResizeCache`, so it never appears in `LEDGER_SETTERS`: it asks for
+ * retraction only when `desiredUrlAccess` returns `retract`, which needs the same moderator record
+ * (`MODERATOR_TAKEDOWN_ACTIVITIES`, dated at or after the block) or a moderator post or violation
+ * unpublish, and never for a held image. `cdn-access.behavior.test.ts` pins which writes reach it.
  */
 const LEDGER_MENTIONS = [
   'src/server/jobs/image-ingestion.ts',
+  'src/server/services/cdn-access.service.ts',
   'src/server/services/image.service.ts',
 ];
 
@@ -89,14 +91,31 @@ const LEDGER_MENTIONS = [
  * many times each does it. `remove-blocked-images` is the only one, and it asks once — for the
  * subset of the images it is deleting that carries an affirmative record of a human moderator
  * taking THAT image down (a `ModActivity` row of one of `MODERATOR_TAKEDOWN_ACTIVITIES`, dated at
- * or after the block). Everything else in the same batch is deleted with the shared stored object
- * left alone.
+ * or after the block). Everything else in the same batch is deleted without retraction.
  */
 const LEDGER_SETTERS = ['src/server/jobs/image-ingestion.ts ×1'];
+
+/**
+ * Persist keeps a takedown's deny until it is lifted. Only the takedown CDN sync builds the
+ * parameter, and the one other way to ask for it is `persistDeletedTakedowns`, which
+ * `remove-blocked-images` calls once, for the takedowns among the images it hard-deletes.
+ */
+const PERSIST_PARAM = '&persist=true';
+const PERSIST_ENTRY = 'persistDeletedTakedowns';
+const PERSIST_CALL = /persistDeletedTakedowns\(/g;
+const PERSIST_LEDGER_MENTIONS = [
+  'src/server/jobs/image-ingestion.ts',
+  'src/server/services/cdn-access.service.ts',
+];
+const PERSIST_LEDGER_SETTERS = ['src/server/jobs/image-ingestion.ts ×1'];
+const PERSIST_LEDGER_PARAM = ['src/server/services/cdn-access.service.ts'];
 
 type Scan = {
   mentions: string[];
   setters: string[];
+  persistMentions: string[];
+  persistSetters: string[];
+  persistParam: string[];
   scanned: number;
   scannedByRoot: Record<string, number>;
 };
@@ -121,6 +140,9 @@ function scan(): Scan {
   );
   const mentions: string[] = [];
   const setters: string[] = [];
+  const persistMentions: string[] = [];
+  const persistSetters: string[] = [];
+  const persistParam: string[] = [];
   // Keyed on what the walk actually YIELDED, never seeded from `SCAN_ROOTS`: a root that was not
   // walked has to come back absent, not as a zero the constant put there.
   const scannedByRoot: Record<string, number> = {};
@@ -137,12 +159,29 @@ function scan(): Scan {
     const root = file.slice(0, file.indexOf('/'));
     scannedByRoot[root] = (scannedByRoot[root] ?? 0) + 1;
     const src = readFileSync(abs, 'utf8');
+    if (src.includes(PERSIST_PARAM)) persistParam.push(file);
+    if (src.includes(PERSIST_ENTRY)) {
+      persistMentions.push(file);
+      // Calls, not mentions; a definition is `function name(`, which this does not count.
+      const count = [...src.matchAll(PERSIST_CALL)].filter(
+        (m) => !src.slice(Math.max(0, m.index - 9), m.index).endsWith('function ')
+      ).length;
+      if (count > 0) persistSetters.push(`${file} ×${count}`);
+    }
     if (!src.includes(OPTION)) continue;
     mentions.push(file);
     const count = src.match(SET_TRUE)?.length ?? 0;
     if (count > 0) setters.push(`${file} ×${count}`);
   }
-  cached = { mentions: mentions.sort(), setters: setters.sort(), scanned, scannedByRoot };
+  cached = {
+    mentions: mentions.sort(),
+    setters: setters.sort(),
+    persistMentions: persistMentions.sort(),
+    persistSetters: persistSetters.sort(),
+    persistParam: persistParam.sort(),
+    scanned,
+    scannedByRoot,
+  };
   return cached;
 }
 
@@ -214,8 +253,8 @@ describe('no-unmoderated-blob-retraction', () => {
     const { setters } = scan();
     expect(
       setters,
-      'Retraction destroys the shared stored object for every byte-identical image of every ' +
-        'owner. Only a moderation takedown may request it. The count after each file is part of ' +
+      'Retraction deletes an image’s public copies. Only a moderation takedown may request ' +
+        'it. The count after each file is part of ' +
         'the claim: a SECOND call site in an already-listed file is the copy-paste this exists ' +
         'to catch. If you are adding a flow, say why here; if the moderation flow has stopped ' +
         'asking, that is a silent loss of the capability.'
@@ -226,8 +265,24 @@ describe('no-unmoderated-blob-retraction', () => {
     const { mentions } = scan();
     expect(
       mentions,
-      'A new file mentioning this option is a new way to reach a cross-account destructive ' +
-        'capability. Add it here deliberately, or route the call through image.service.'
+      'A new file mentioning this option is a new way to reach retraction. Add it here ' +
+        'deliberately, or route the call through image.service.'
     ).toEqual(LEDGER_MENTIONS);
+  });
+
+  it('lets persist be asked for only by the takedown sync and the takedown hard delete', () => {
+    const { persistMentions, persistSetters, persistParam } = scan();
+    expect(
+      persistSetters,
+      'Persist keeps a takedown deny in place; only the moderation takedown may request it.'
+    ).toEqual(PERSIST_LEDGER_SETTERS);
+    expect(
+      persistMentions,
+      `A new file mentioning ${PERSIST_ENTRY} is a new way to reach it.`
+    ).toEqual(PERSIST_LEDGER_MENTIONS);
+    expect(
+      persistParam,
+      'A new file spelling the persist parameter is a new caller of it on the image server.'
+    ).toEqual(PERSIST_LEDGER_PARAM);
   });
 });

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { baseModelById, BM, isModelSupported } from '@civitai/shared/basemodel.constants';
+import {
+  baseModelById,
+  baseModels,
+  BM,
+  isModelSupported,
+} from '@civitai/shared/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import {
   audioSampleOverrideSchema,
   trainingDetailsObj,
@@ -9,11 +15,14 @@ import {
 import {
   aiToolkitBatchMax,
   aiToolkitStepDefault,
+  enabledStudioModelFlags,
   getDefaultEngine,
   isAudioTrainingBaseType,
+  studioModelFlagFeatures,
   trainingModelInfo,
 } from '~/utils/training';
 import {
+  catalogFlagKeys,
   MODEL_CARDS,
   PARAM_DEFAULTS,
 } from '../../../apps/training-studio/src/lib/data/trainingModels';
@@ -64,6 +73,24 @@ describe.each(models)('%s training identity', (key, id, media) => {
   });
 });
 
+describe('Training Studio embed model gates', () => {
+  it('maps every gated Studio card to a feature flag the host can evaluate', () => {
+    expect(Object.keys(studioModelFlagFeatures).sort()).toEqual(catalogFlagKeys().sort());
+  });
+
+  it('asks Flipt the same key the standalone Studio asks', () => {
+    for (const [flagKey, feature] of Object.entries(studioModelFlagFeatures))
+      expect(getFeatureFliptKey(feature)).toBe(flagKey);
+  });
+
+  it('hands the element only the gates whose feature is on', () => {
+    expect(enabledStudioModelFlags({ audioTraining: true })).toEqual([]);
+    expect(enabledStudioModelFlags({ trainingStudioAudioTraining: true })).toEqual([
+      'training-studio-audio-training',
+    ]);
+  });
+});
+
 describe('YuE2 sample override validation', () => {
   it('drops stale ACE-Step fields when switching models', () => {
     expect(
@@ -76,4 +103,19 @@ describe('YuE2 sample override validation', () => {
     expect(yue2SampleOverrideSchema.safeParse({ steps: 100 }).success).toBe(true);
     expect(audioSampleOverrideSchema.safeParse({ steps: 101 }).success).toBe(true);
   });
+});
+
+// A trained version is written with this base model; a name outside the published list leaves the
+// publish form's base-model select blank.
+describe('trainer base models', () => {
+  it.each(Object.entries(trainingModelInfo))('%s writes a published base model', (_, info) => {
+    expect(baseModels).toContain(info.baseModel);
+  });
+
+  it.each(MODEL_CARDS.flatMap((card) => card.versions.map((version) => [version.key, version])))(
+    'studio %s mirrors a published base model',
+    (_, version) => {
+      expect(baseModels).toContain(version.baseModel);
+    }
+  );
 });

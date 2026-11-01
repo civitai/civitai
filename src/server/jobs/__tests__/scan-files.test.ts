@@ -11,7 +11,8 @@ const { mockCreateModelFileScanRequest, mockModelFileScanSubmissionError, mockLi
         message: string,
         public readonly code: 'not-found' | 'transient',
         public readonly status?: number,
-        public readonly orchestratorMessages?: string[]
+        public readonly orchestratorMessages?: string[],
+        public readonly retryAfter?: number
       ) {
         super(message);
         this.name = 'ModelFileScanSubmissionError';
@@ -116,7 +117,7 @@ describe('scanFilesFallbackJob', () => {
     });
   });
 
-  it('calls createModelFileScanRequest per file with low priority and counts submitted', async () => {
+  it('calls createModelFileScanRequest per file at normal priority and counts submitted', async () => {
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 1,
@@ -133,7 +134,7 @@ describe('scanFilesFallbackJob', () => {
       modelId: 100,
       modelType: 'Checkpoint',
       baseModel: 'SD 1.5',
-      priority: 'low',
+      priority: 'normal',
     });
     expect(result).toEqual({ submitted: 1, failed: 0, skipped: 0 });
   });
@@ -268,6 +269,57 @@ describe('scanFilesFallbackJob', () => {
       'webhooks'
     );
     expect(result).toEqual({ submitted: 0, failed: 1, skipped: 0 });
+  });
+
+  describe('an orchestrator 429', () => {
+    const rejectWith = (status: number, retryAfter: number) => {
+      mockDbWrite.modelFile.findMany.mockResolvedValue([
+        { id: 9, modelVersion: { id: 90, baseModel: 'SDXL', model: { id: 900, type: 'LORA' } } },
+      ]);
+      mockCreateModelFileScanRequest.mockRejectedValue(
+        new mockModelFileScanSubmissionError(
+          'rate limited',
+          'transient',
+          status,
+          undefined,
+          retryAfter
+        )
+      );
+    };
+
+    it('retries at Retry-After instead of the 30-minute failure back-off', async () => {
+      rejectWith(429, 420);
+
+      await runJob(scanFilesFallbackJob);
+
+      // FIXED_NOW - 1 day + 7 min.
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+        where: { id: 9 },
+        data: { scanRequestedAt: new Date('2026-03-04T12:14:13.000Z') },
+      });
+    });
+
+    it('floors a short Retry-After at one 5-minute tick', async () => {
+      rejectWith(429, 20);
+
+      await runJob(scanFilesFallbackJob);
+
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+        where: { id: 9 },
+        data: { scanRequestedAt: new Date('2026-03-04T12:12:13.000Z') },
+      });
+    });
+
+    it('control: a 503 carrying Retry-After keeps the 30-minute back-off', async () => {
+      rejectWith(503, 420);
+
+      await runJob(scanFilesFallbackJob);
+
+      expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+        where: { id: 9 },
+        data: { scanRequestedAt: EXPECTED_BACKOFF_AT },
+      });
+    });
   });
 
   it('processes mixed batches: counts per-file successes and failures correctly', async () => {

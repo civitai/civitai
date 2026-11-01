@@ -8,13 +8,11 @@ import {
 } from '~/shared/constants/generation.constants';
 
 /**
- * Seedream (v3 / v4 / v4.5 / v5.0-lite / v5.0-pro), ported from
- * `seedream-graph.ts`. One field set across versions — only the 2K/4K
+ * Seedream (v3 / v4 / v4.5 / v5.0-lite / v5.0-pro). One field set across versions —
+ * only the 2K/4K
  * resolution toggle is version-gated. No negative prompt, sampler, steps, or
  * CLIP skip.
  */
-
-// ---- copied from seedream-graph.ts, which dies with the data-graph engine ---
 
 export type SeedreamVersion = 'v3' | 'v4' | 'v4.5' | 'v5.0-lite' | 'v5.0-pro';
 
@@ -35,6 +33,8 @@ const seedreamVersionOptions = [
 ];
 
 const seedreamAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
+/** 2K sizes: the presets send `resolution: '2K'` because the toggle on v4.5 and v5.0-lite defaults to 4K. */
+export const seedreamAspectRatios2K = getAspectRatioOptions('2K', seedreamAspectRatioList);
 
 const seedreamResolutionOptions = [
   { label: '2K', value: '2K' },
@@ -46,8 +46,6 @@ const versionsWithResolutionToggle = new Set<number>([
   seedreamVersionIds['v4.5'],
   seedreamVersionIds['v5.0-lite'],
 ]);
-
-// ---- end of seedream-graph.ts copies ----------------------------------------
 
 const RESOLUTION = enumDef({ options: seedreamResolutionOptions, default: '4K' });
 

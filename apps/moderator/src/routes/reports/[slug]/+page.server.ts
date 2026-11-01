@@ -1,162 +1,222 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getReports, setReportStatus, updateReportNotes } from '$lib/server/reports.service';
-import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
-import { removePlacement } from '$lib/server/user-actions.service';
-import { canAccess } from '$lib/server/access';
+import { setReportStatus, getGameMirrors, getReportedGame } from '$lib/server/reports.service';
+import { delistGame, delistReason } from '$lib/server/game-frame';
 import {
-  DEFAULT_REPORT_REASONS,
-  DEFAULT_REPORT_STATUSES,
-  reportEntityForSlug,
-  reportReasons,
-  reportStatuses,
-  ReportStatus,
-  type ReportReason,
-} from '$lib/reports';
+  getReportedStorylines,
+  getReportStorylineId,
+  getStorylineReportHolds,
+  setStorylineTakedown,
+} from '$lib/server/storyline-takedown.service';
+import { liftStorylineScanTakedown } from '$lib/server/storyline-scan-lift.service';
+import {
+  getReportedServiceOfferings,
+  getReportServiceOfferingId,
+  takedownServiceOffering,
+} from '$lib/server/service-offering-takedown.service';
+import { isServiceOfferingTakedownReason } from '@civitai/shared/service-offering-takedown';
+import { canAccess } from '$lib/server/access';
+import { loadReportQueue } from '$lib/server/report-queue-load';
+import { reportStatusActions } from '$lib/server/report-queue-actions';
+import { reportEntityForSlug, reportPath, ReportStatus } from '$lib/reports';
 
-const isStatus = (v: string): v is ReportStatus => (reportStatuses as string[]).includes(v);
-const isReason = (v: string): v is ReportReason => (reportReasons as string[]).includes(v);
-
+// The table queues. Users, models and posts have their own routes (`/reports/user`, `/reports/model`,
+// `/reports/post`), each a queue layout with the open item in the path, and images theirs
+// (`/reports/image`, the image queues' card grid); a static route wins over this one, so none of those
+// slugs reaches here. Articles, chats, collections, bounties and bounty entries share the same layout at
+// `/reports/[queue=entityQueue]`, whose matcher outranks this plain param.
 export const load: PageServerLoad = async ({ params, url }) => {
   const type = reportEntityForSlug(params.slug);
   if (!type) error(404, 'Unknown report type');
 
-  // `?report=<id>` opens ONE report, from a page that could only list it. Its filters are forced to
-  // `all`: a report linked to from elsewhere is usually already handled, and landing on an empty list
-  // because the default view is Pending+Processing reads as "that report does not exist".
-  const reportId = Number(url.searchParams.get('report')) || undefined;
+  const queue = await loadReportQueue(type, url);
+  const entityIds = queue.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
+  const [games, storylines, storylineHolds, serviceOfferings] = await Promise.all([
+    type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
+    type === 'storyline' ? getReportedStorylines(entityIds) : [],
+    type === 'storyline' ? getStorylineReportHolds(queue.items.map((r) => r.id)) : [],
+    type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
+  ]);
 
-  // Canonicalize a bare landing so the active default filters are explicit (and shareable) in the URL.
-  // Only absent params get defaults — a present-but-empty `?status=` is a deliberate clear, left alone.
-  if (!reportId && !url.searchParams.has('status')) {
-    const canonical = new URL(url);
-    DEFAULT_REPORT_STATUSES.forEach((s) => canonical.searchParams.append('status', s));
-    redirect(307, canonical.pathname + canonical.search);
-  }
-
-  const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-  const urlStatuses = url.searchParams.getAll('status').filter(isStatus);
-  const urlReasons = url.searchParams.getAll('reason').filter(isReason);
-  const reportedBy = url.searchParams.get('reportedBy')?.trim() || '';
-
-  // A present-but-empty param (`?status=`/`?reason=`) is an explicit clear → all; an absent param → the
-  // default review view. Both defaults must stay equal to what the badge counts, or a moderator lands on
-  // a list that disagrees with the number they clicked.
-  const statuses = url.searchParams.has('status') ? urlStatuses : DEFAULT_REPORT_STATUSES;
-  const reasons = url.searchParams.has('reason') ? urlReasons : DEFAULT_REPORT_REASONS;
-
-  const data = await getReports({
-    type,
-    page,
-    // An empty selection is every one, said explicitly rather than implied by omission.
-    statuses: reportId ? 'all' : statuses.length ? statuses : 'all',
-    reasons: reportId ? 'all' : reasons.length ? reasons : 'all',
-    reportedBy: reportedBy || undefined,
-    reportId,
-  });
-
-  // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
-  // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
-  // while it is hiding it — once reasons are chosen explicitly, the choice is the whole story.
-  return {
-    type,
-    wide: true,
-    // A `?report=` view ran with no status/reason filter, so echoing the defaults would put chips
-    // saying "Pending + Processing" above an Actioned row and a note about hiding Automated above an
-    // Automated one — the operator reads that as the filters being broken.
-    statuses: reportId ? [] : statuses,
-    reasons: urlReasons,
-    hidingAutomated: !reportId && !url.searchParams.has('reason'),
-    reportedBy,
-    ...data,
-  };
+  return { ...queue, wide: true, games, storylines, storylineHolds, serviceOfferings };
 };
 
-// Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.
+// The page's route tier is gated in hooks.server.ts; actions on a type with its own tier re-check it here with canAccess.
 export const actions: Actions = {
-  setStatus: async ({ request, locals, getClientAddress }) => {
+  ...reportStatusActions(),
+  /**
+   * Delists the reported game on Game Frame, then sets the report Actioned (which pays the reporters).
+   * The report is only touched once Game Frame says the game is down, so a failed call leaves it open.
+   */
+  delistGame: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'gameFrameGame' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
     const data = await request.formData();
     const id = Number(data.get('id'));
-    const status = String(data.get('status'));
-    if (!id || !isStatus(status)) return fail(400, { error: 'Invalid input' });
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
 
-    // `setReportStatus` RETURNS its outcome; discarding it reported success for a report another
-    // moderator had already actioned or deleted. Same defect the batch sweep had — and this is the
-    // path used all day.
+    const game = await getReportedGame(id);
+    if (!game) return fail(410, { error: 'That report no longer exists.', gone: true });
+
+    const outcome = await delistGame({
+      slug: game.slug,
+      reason: delistReason(game, id),
+      reportId: id,
+      moderator: { id: locals.user.id, username: locals.user.username ?? null },
+    });
+    if (!outcome.ok) return fail(outcome.status, { error: outcome.message });
+
+    const forks = outcome.affected ? ` (+${outcome.affected} forks)` : '';
     const result = await setReportStatus({
       id,
-      status,
+      status: ReportStatus.Actioned,
       userId: locals.user.id,
       ip: getClientAddress(),
     });
-    // `gone` rather than a bare message: the page reloads the queue on it, so the row the moderator
-    // is looking at leaves the screen instead of sitting there accepting further clicks.
-    if (!result.ok) return fail(410, { error: result.error, gone: true });
-    if (!result.changed)
-      return fail(409, { error: 'Someone else already set that status. Reload.' });
-    return { success: true };
-  },
-  /**
-   * Retool's `ActionAllPostReports`. Post reports whose post is already entirely blocked are resolved
-   * by the content — the row is open only because nobody clicked it. Retool swept them in one go; the
-   * port had the verb (`setStatus`) and not the SELECT, so the sweep had to be done by hand.
-   *
-   * Actioned, not Unactioned: the content WAS removed, so the report was correct.
-   */
-  actionResolvedPosts: async ({ locals, getClientAddress }) => {
-    const ids = await getResolvedPostReportIds();
-    if (!ids.length)
-      return fail(400, { error: 'No post reports are already resolved by content.' });
-
-    // `setReportStatus` RETURNS its outcome rather than throwing: `ok:false` when the report is gone,
-    // and `ok:true, changed:false` when someone else already put it in this status. Counting the loop
-    // instead of the results reported "actioned N of N" for a run that changed nothing.
-    let actioned = 0;
-    let skipped = 0;
-    for (const id of ids) {
-      const result = await setReportStatus({
-        id,
-        status: ReportStatus.Actioned,
-        userId: locals.user.id,
-        ip: getClientAddress(),
-      });
-      if (result.ok && result.changed) actioned += 1;
-      else skipped += 1;
-    }
-
-    // The SELECT is capped, so a full batch means there are probably more behind it.
-    return { success: true, actioned, skipped, found: ids.length, more: ids.length === 500 };
+    if (!result.ok)
+      return fail(410, { error: `Delisted${forks}, but ${result.error}`, gone: true });
+    return { success: true, delisted: `Delisted${forks}` };
   },
 
   /**
-   * The removal path main added with the `StickerPlacement` reason (#3766). Delegated, not
-   * reimplemented: the service settles escrow, and that must have one implementation.
+   * Takes the reported storyline down, then sets the report Actioned (which pays the reporters).
+   * Already down by a moderator still actions the report.
    */
-  removePlacement: async ({ request, locals }) => {
-    // Acting on reported content, not merely reading the queue — gated on its own path.
-    if (!canAccess(locals.user, '/reports')) return fail(403, { error: 'Not permitted.' });
+  takeDownStoryline: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
 
-    const data = await request.formData();
-    const placementId = Number(data.get('placementId'));
-    if (!Number.isInteger(placementId) || placementId <= 0)
-      return fail(400, { error: 'Invalid placement.' });
-
-    const result = await removePlacement({ placementId, moderatorId: locals.user.id });
-    if (!result.ok) return fail(400, { error: result.error });
-    return { success: true, placementRemoved: placementId };
-  },
-
-  saveNotes: async ({ request }) => {
     const data = await request.formData();
     const id = Number(data.get('id'));
-    if (!id) return fail(400, { error: 'Invalid input' });
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
 
-    const internalNotes = String(data.get('internalNotes') ?? '').trim() || null;
-    // Discarding the outcome reports success for notes that were never stored, because the report
-    // was deleted while they were being typed.
-    const result = await updateReportNotes({ id, internalNotes });
-    if (!result.ok)
-      return fail(410, { error: 'That report was deleted while you were editing.', gone: true });
-    return { success: true };
+    const storylineId = await getReportStorylineId(id);
+    if (!storylineId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const storyline = await setStorylineTakedown({
+      storylineId,
+      takenDown: true,
+      moderatorId: locals.user.id,
+    });
+    if (!storyline) return fail(410, { error: 'That storyline no longer exists.', gone: true });
+
+    const result = await setReportStatus({
+      id,
+      status: ReportStatus.Actioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(410, { error: `Taken down, but ${result.error}`, gone: true });
+    return {
+      success: true,
+      storylineTakedown: storyline.changed ? 'Taken down' : 'Already taken down',
+    };
+  },
+
+  /**
+   * Takes the reported Creator Services offering down with a reason, then sets the report Actioned
+   * (which pays the reporters). Already taken down still actions the report: the content it is about
+   * is down. There is no restore.
+   */
+  takeDownServiceOffering: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'serviceOffering' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+    const reason = data.get('reason');
+    if (!isServiceOfferingTakedownReason(reason)) return fail(400, { error: 'Pick a reason.' });
+    const details =
+      String(data.get('details') ?? '')
+        .trim()
+        .slice(0, 1000) || null;
+    // `other` has no copy of its own, so the details are what the seller is told.
+    if (reason === 'other' && !details)
+      return fail(400, { error: 'Say what is wrong when the reason is Other.' });
+
+    const offeringId = await getReportServiceOfferingId(id);
+    if (!offeringId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const offering = await takedownServiceOffering({
+      offeringId,
+      reason,
+      details,
+      moderatorId: locals.user.id,
+    });
+    if (!offering) return fail(410, { error: 'That service no longer exists.', gone: true });
+
+    const result = await setReportStatus({
+      id,
+      status: ReportStatus.Actioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(410, { error: `Taken down, but ${result.error}`, gone: true });
+    return {
+      success: true,
+      serviceOfferingTakedown: offering.changed ? 'Taken down' : 'Already taken down',
+    };
+  },
+
+  /** Leaves the report's status as it is. */
+  restoreStoryline: async ({ request, locals, params }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const storylineId = await getReportStorylineId(id);
+    if (!storylineId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const storyline = await setStorylineTakedown({
+      storylineId,
+      takenDown: false,
+      moderatorId: locals.user.id,
+    });
+    if (!storyline) return fail(410, { error: 'That storyline no longer exists.', gone: true });
+    return {
+      success: true,
+      storylineTakedown: !storyline.changed
+        ? 'Nothing to restore'
+        : storyline.tosViolation
+        ? 'Restored, but its title scan still keeps it down'
+        : 'Restored',
+    };
+  },
+
+  /**
+   * Lifts the title scan's takedown for the title the moderator read (the form carries it), so an
+   * edit made since is refused rather than waved through. The report's status is left as it is.
+   */
+  liftStorylineScanTakedown: async ({ request, locals, params }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'storyline' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+    const reviewedTitle = data.get('reviewedTitle');
+    if (typeof reviewedTitle !== 'string') return fail(400, { error: 'Invalid title.' });
+
+    const storylineId = await getReportStorylineId(id);
+    if (!storylineId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const lifted = await liftStorylineScanTakedown({
+      storylineId,
+      reviewedTitle,
+      moderatorId: locals.user.id,
+    });
+    if (!lifted.ok) return fail(409, { error: lifted.error });
+    return {
+      success: true,
+      storylineTakedown: lifted.tosViolation
+        ? "Lifted the title scan's takedown; a moderator's takedown keeps it down"
+        : 'Lifted',
+    };
   },
 };

@@ -8,6 +8,7 @@ import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { showErrorNotification } from '~/utils/notifications';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -52,7 +53,8 @@ export function PostUpsertForm2({
   // #endregion
 
   // #region [mutations]
-  async function onSuccess() {
+  async function onSuccess(result: Parameters<typeof notifyIfPublishHeld>[0]) {
+    notifyIfPublishHeld(result);
     await router.replace(getModelUrl({ modelId, modelVersionId }));
   }
 

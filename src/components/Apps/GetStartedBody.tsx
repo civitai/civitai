@@ -1,10 +1,6 @@
 import {
-  Anchor,
   Badge,
   Button,
-  Code,
-  Collapse,
-  Divider,
   Group,
   Image,
   SimpleGrid,
@@ -13,10 +9,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
-  IconChevronDown,
   IconDatabase,
   IconPalette,
   IconPhoto,
@@ -28,12 +22,7 @@ import {
   APP_SDK_NPM_URL,
   BLOCKS_REACT_NPM_URL,
   CIVITAI_CLI_GITHUB_URL,
-  CLI_CREATE_SAMPLE_COMMAND,
-  CLI_INSTALL_BREW,
-  CLI_INSTALL_GO,
-  CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
-import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 
 /**
  * "App builders" get-started body — the Scope-A soft-launch funnel.
@@ -48,40 +37,18 @@ import { CopyableCommand } from '~/components/Apps/CopyableCommand';
  * else has to move. (The earlier version of this note said "one-line flag change" and
  * pointed at `/apps/get-started`, a page this consolidation deletes.)
  *
- * Copy is QUICKSTART-FIRST (devs scan + copy-paste; minimal prose). Honesty /
- * scope: this page points would-be developers at the LOCAL build tooling. The
- * `dev:live` (`/api/v1/blocks/dev-token`) path is `isModerator`-gated server
- * side, so a non-mod can install the CLI, scaffold, and build/test locally
- * against the mock harness.
+ * NO BUILD ROUTES HERE. This body is what a viewer WITHOUT builder access sees (the pitch,
+ * next to the Request access panel), so it does not carry the agent-onboarding prompt: it
+ * needs access to be useful. The prompt lives in the `first-app` state and the workbench's
+ * "Developer resources" strip, which only authors reach. (`/apps/build` shows no manual CLI
+ * steps in any state.)
  *
- * Pure presentational (props-only, no tRPC / no network) so it renders in
+ * Pure presentational (no props, no tRPC / no network) so it renders in
  * isolation in component tests.
  */
-
-// CLI commands + ecosystem links are single-sourced in `./cliCommands`. The
-// quickstart uses the with-sample-name create form (`CLI_CREATE_SAMPLE_COMMAND`).
-
-/**
- * `onCopyCommand` is OPTIONAL and threads the `/apps/build` funnel's `cli_copy` step
- * out to whoever mounted this. It is a CALLBACK rather than a `useTrackEvent()` call
- * in here on purpose: the header above promises this component is props-only with no
- * network, and its `*.browser.test.tsx` suite mounts it with no providers — importing
- * the tracker would break both. See `AppsBuildBody`, the one call site that passes it.
- */
-export function GetStartedBody({ onCopyCommand }: { onCopyCommand?: (c: string) => void } = {}) {
-  const [opened, { toggle }] = useDisclosure(false);
-
+export function GetStartedBody() {
   return (
     <Stack gap="xl">
-      {/* Banner — 3:2 hero image (public asset, no layout shift) */}
-      <Image
-        src="/images/apps/civitai-apps-banner.webp"
-        alt="Build apps on Civitai"
-        radius="md"
-        w="100%"
-        style={{ aspectRatio: '3 / 2' }}
-      />
-
       {/* Hero — one line, no wall of text */}
       <Stack gap="xs">
         <Group gap="xs">
@@ -95,6 +62,20 @@ export function GetStartedBody({ onCopyCommand }: { onCopyCommand?: (c: string) 
           models and generate with Buzz. You focus on creating; we handle the rest.
         </Text>
       </Stack>
+
+      {/*
+        Banner: 3:2 public asset, cropped to a fixed-height strip. At full width a 3:2 box is
+        ~1300px tall on a wide screen and pushes the Request access panel below the fold. The
+        fixed height still reserves its box before it loads.
+      */}
+      <Image
+        src="/images/apps/civitai-apps-banner.webp"
+        alt="Build apps on Civitai"
+        radius="md"
+        w="100%"
+        h={240}
+        fit="cover"
+      />
 
       {/* What you get — the platform leverage a dev gets, then the toolkit links */}
       <Stack gap="sm">
@@ -190,48 +171,6 @@ export function GetStartedBody({ onCopyCommand }: { onCopyCommand?: (c: string) 
             @civitai/app-sdk
           </Button>
         </Group>
-      </Stack>
-
-      <Divider />
-
-      {/* Quickstart — copy 3 lines, you're running. Collapsed by default so the
-          "what you get" pitch leads; the commands are one click away. */}
-      <Stack gap="sm">
-        <Title order={2}>Quickstart</Title>
-        <Text size="sm" c="dimmed">
-          Create a local Civitai app in 3 steps with the{' '}
-          <Anchor href={CIVITAI_CLI_GITHUB_URL} target="_blank" rel="noopener noreferrer">
-            Civitai CLI
-          </Anchor>
-        </Text>
-        <Button
-          variant="subtle"
-          size="xs"
-          onClick={toggle}
-          aria-expanded={opened}
-          w="fit-content"
-          rightSection={
-            <IconChevronDown
-              size={16}
-              style={{
-                transform: opened ? 'rotate(180deg)' : undefined,
-                transition: 'transform 150ms ease',
-              }}
-            />
-          }
-        >
-          {opened ? 'Hide commands' : 'Show commands'}
-        </Button>
-        <Collapse in={opened} data-testid="quickstart-commands">
-          <Stack gap="sm">
-            <CopyableCommand command={CLI_INSTALL_BREW} onCopy={onCopyCommand} />
-            <Text size="xs" c="dimmed">
-              or: <Code>{CLI_INSTALL_GO}</Code>
-            </Text>
-            <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
-            <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
-          </Stack>
-        </Collapse>
       </Stack>
     </Stack>
   );

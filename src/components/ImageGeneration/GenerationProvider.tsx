@@ -11,7 +11,7 @@ import {
   type WorkflowData,
   type NormalizedGeneratedImageResponse,
 } from '~/server/services/orchestrator';
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { usePollableWorkflowIdsStore } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';

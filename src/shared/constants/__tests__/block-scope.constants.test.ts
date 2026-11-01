@@ -6,10 +6,16 @@ import {
   manifestWantsOauthToken,
   assertSensitiveScopesJustified,
   BLOCK_SCOPE_TO_OAUTH_BIT,
+  BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL,
+  BUZZ_BUDGET_CAP,
+  BUZZ_BUDGET_DEFAULT,
   deriveOauthBitmaskFromBlockScopes,
   isAppBlockOauthClientId,
   isKnownBlockScope,
   isSensitiveBlockScope,
+  PRIVATE_RUN_BUZZ_CAP,
+  resolvePerCallBuzzBudget,
+  REVIEW_RUN_FOR_REAL_BUZZ_CAP,
   SENSITIVE_BLOCK_SCOPES,
   sensitiveScopeJustificationError,
   SKIP_OAUTH_CHECK,
@@ -17,6 +23,48 @@ import {
   validateBlockScopesAgainstOauthClient,
 } from '../block-scope.constants';
 import { TokenScope } from '../token-scope.constants';
+
+describe('the per-call Buzz budget', () => {
+  it('caps at 5000 and defaults to 1000', () => {
+    expect(BUZZ_BUDGET_CAP).toBe(5000);
+    expect(BUZZ_BUDGET_DEFAULT).toBe(1000);
+  });
+
+  it('one multi-step call is bounded at 8000', () => {
+    expect(BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL).toBe(8000);
+  });
+
+  // 6301 overshoots the cap without being a multiple of it, so a mutant that drops
+  // the clamp or hardcodes the cap both move an output.
+  it.each([
+    [137, 137],
+    [5000, 5000],
+    [5001, 5000],
+    [6301, 5000],
+  ])('a declared %i resolves to %i', (declared, resolved) => {
+    expect(resolvePerCallBuzzBudget(declared)).toBe(resolved);
+  });
+
+  it.each([[undefined], [null], ['200'], [12.5], [NaN], [Infinity]])(
+    'a declared %s is not an integer and takes the 1000 default',
+    (declared) => {
+      expect(resolvePerCallBuzzBudget(declared)).toBe(1000);
+    }
+  );
+
+  it.each([[0], [-5]])('a declared %i is refused as 0, never defaulted', (declared) => {
+    expect(resolvePerCallBuzzBudget(declared)).toBe(0);
+  });
+
+  // The per-call cap is deliberately not bounded by the aggregates: these record which
+  // side of each one it sits on, so moving any of them is a decision made here.
+  it('sits above the private-run aggregate and equals the review one', () => {
+    expect(PRIVATE_RUN_BUZZ_CAP).toBe(2500);
+    expect(REVIEW_RUN_FOR_REAL_BUZZ_CAP).toBe(5000);
+    expect(BUZZ_BUDGET_CAP).toBeGreaterThan(PRIVATE_RUN_BUZZ_CAP);
+    expect(BUZZ_BUDGET_CAP).toBe(REVIEW_RUN_FOR_REAL_BUZZ_CAP);
+  });
+});
 
 describe('block-scope.constants', () => {
   it('maps known scopes to the right bits', () => {
@@ -112,9 +160,14 @@ describe('block-scope.constants', () => {
       'apps:storage:write',
       'apps:storage:shared:read',
       'apps:storage:shared:write',
+      // The document store. Its routes are not written yet, so nothing has shown they read
+      // the middleware-resolved claims instead of re-verifying the bearer: refusing
+      // `auth: "oauth"` alongside them is the fail-closed answer until they do.
+      'apps:storage',
+      'apps:storage:publish',
     ];
 
-    it('is EXACTLY the four app-storage scopes — no more, no fewer', () => {
+    it('is EXACTLY the six app-storage scopes — no more, no fewer', () => {
       expect([...APP_STORAGE_SCOPES].sort()).toEqual([...EXPECTED_APP_STORAGE].sort());
     });
 
@@ -172,12 +225,21 @@ describe('block-scope.constants', () => {
         );
       });
 
-      // `apps:storage` (no trailing colon) and `apps:storage:readx` are NOT members, so a
+      // `apps:storagex`, `apps:storage:readx` and `x:apps:storage:read` are NOT members, so a
       // prefix predicate that used `includes`/a loose match would be caught here.
       it('matches the vocabulary, not a loose prefix', () => {
         expect(
-          appStorageScopesIn(['apps:storage', 'apps:storage:readx', 'x:apps:storage:read'])
+          appStorageScopesIn(['apps:storagex', 'apps:storage:readx', 'x:apps:storage:read'])
         ).toEqual([]);
+      });
+
+      // The bare family name is a member although it does not start with the
+      // `apps:storage:` prefix — the case a prefix-only derivation silently misses.
+      it('includes the bare `apps:storage` and `apps:storage:publish`', () => {
+        expect(appStorageScopesIn(['apps:storage', 'apps:storage:publish'])).toEqual([
+          'apps:storage',
+          'apps:storage:publish',
+        ]);
       });
     });
   });
@@ -189,11 +251,17 @@ describe('block-scope.constants', () => {
       'buzz:read:self',
       'collections:read:private',
       'apps:storage:shared:write',
+      // Documents in a shared collection, authored as the viewer, read by every viewer.
+      'apps:storage:publish',
       'posts:write:self',
       'goods:purchase:self',
+      // Publishes store cards every visitor sees, under the viewer's name.
+      'apps:store:items:write',
+      // A public, reward-paying reaction under the viewer's name.
+      'social:react:self',
     ];
 
-    it('flags exactly the 7 designated sensitive scopes', () => {
+    it('flags exactly the designated sensitive scopes', () => {
       expect([...SENSITIVE_BLOCK_SCOPES].sort()).toEqual([...EXPECTED_SENSITIVE].sort());
       for (const scope of EXPECTED_SENSITIVE) {
         expect(isSensitiveBlockScope(scope)).toBe(true);
@@ -207,6 +275,7 @@ describe('block-scope.constants', () => {
         'apps:storage:read',
         'apps:storage:write',
         'apps:storage:shared:read',
+        'apps:storage',
         'collections:read:self',
         'collections:write:self',
         // The READ half of the goods pair. It returns only what the CALLING app

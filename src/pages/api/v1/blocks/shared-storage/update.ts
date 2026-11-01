@@ -8,6 +8,7 @@ import {
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
+import { withLegacyStoreGate } from '~/server/services/apps/legacy-store-shutdown';
 import {
   SHARED_KEY_MAX,
   sharedValueInput,
@@ -28,8 +29,8 @@ import {
  * A thin adapter over `updateSharedRow`, the SAME function
  * `trpc.apps.shared.update` calls, so all of it holds verbatim on both surfaces:
  * the write-scope + min-trust gate in `resolveSharedContext(_, 'update')`, the
- * ANON REFUSAL (401), the APPEND daily rate-limit bucket (deliberately shared
- * with append, so repeated edits cannot become an unbounded write), the full
+ * ANON REFUSAL (401), the write budget it shares with append (so repeated edits
+ * cannot become an unbounded write), the full
  * blocking content-safety belt on the NEW title/body, the whole-value byte cap
  * and the per-app quota re-checked on the byte DELTA.
  *
@@ -95,7 +96,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // origin (`Origin: null`), so it needs `ACAO: null` to clear the CORS preflight;
 // the Bearer block-JWT (no cookies) remains the sole authz gate — mirrors
 // images.ts; see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, {
+export default withBlockScope(withLegacyStoreGate('shared', baseHandler), {
   endpoint: 'shared_storage_update',
   requiredScope: 'apps:storage:shared:write',
   allowOpaqueOrigin: true,

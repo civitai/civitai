@@ -26,6 +26,7 @@ import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyou
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
@@ -36,6 +37,7 @@ import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -95,7 +97,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
   // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
   const items = useDedupedCappedItems(
-    useHydratedImageReactions(filtered, { entity: type }) as {
+    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: type }), {
+      entity: type,
+    }) as {
       id: number;
       user?: { id: number } | null;
     }[],
@@ -115,6 +119,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   const itemType = collection?.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
 
+  const hasInfo = !!(metadata.description || metadata.selectionNote);
+
   const MetaDataTop = (
     <Stack gap="sm">
       <Group gap="xs" justify="space-between" className={classes.header}>
@@ -122,7 +128,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
-          {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
+          {!metadata.descriptionAlwaysVisible && currentUser && hasInfo && (
             <Popover withArrow width={380}>
               <Popover.Target>
                 <Box
@@ -157,6 +163,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
                     </Anchor>
                   </Link>
                 )}
+                <SelectionNote note={metadata.selectionNote} />
               </Popover.Dropdown>
             </Popover>
           )}

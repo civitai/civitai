@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -27,7 +28,7 @@ const schema = z.object({ events: z.array(eventSchema) });
 
 function authorized(req: NextApiRequest) {
   const secret = env.WEBHOOK_TOKEN;
-  if (!secret) return false;
+  if (!isConfiguredSecret(secret)) return false;
   const raw = req.headers['x-webhook-secret'];
   const given = Array.isArray(raw) ? raw[0] : raw;
   if (!given) return false;
@@ -44,7 +45,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).end('Method Not Allowed');
   }
 
-  if (!env.WEBHOOK_TOKEN) return res.status(503).json({ error: 'Endpoint not configured' });
+  if (!isConfiguredSecret(env.WEBHOOK_TOKEN))
+    return res.status(503).json({ error: 'Endpoint not configured' });
 
   if (!authorized(req)) return res.status(401).json({ error: 'Unauthorized' });
 

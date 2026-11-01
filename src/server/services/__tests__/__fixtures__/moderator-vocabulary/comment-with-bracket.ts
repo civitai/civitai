@@ -18,5 +18,5 @@ export const RULINGS_WIRED_FOR: readonly string[] = [
 export function unwiredRulingReason(type: string): string | null {
   return (RULINGS_WIRED_FOR as readonly string[]).includes(type)
     ? null
-    : `Rulings are not yet available for "${type}" restrictions — the verdict path still sends generation-specific notices. This restriction was NOT resolved.`;
+    : `Rulings are not yet available for "${type}" restrictions — no verdict effects are defined for this type. This restriction was NOT resolved.`;
 }

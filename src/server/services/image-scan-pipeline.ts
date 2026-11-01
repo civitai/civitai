@@ -36,13 +36,17 @@ import { createImageTagsForReview } from '~/server/services/image-review.service
 import {
   tagIdsForImagesCache,
   tagCacheByName,
+  thumbnailCache,
   userImageVideoCountCaches,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
-import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import {
+  deleteUserProfilePictureCache,
+  refreshProfilePicturesForImages,
+} from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import {
   queueComicsForPanelImage,
@@ -50,6 +54,8 @@ import {
   updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -134,19 +140,21 @@ export async function sendIngestionSignal({
   userId,
   ingestion,
   blockedFor,
+  nsfwLevel,
   log = LEGACY_SCAN_LOG,
 }: {
   imageId: number;
   userId: number | null;
   ingestion: ImageIngestionStatus;
   blockedFor?: string | null;
+  nsfwLevel?: number;
   log?: ScanLog;
 }) {
   if (!userId) return;
   await signalClient
     .send({
       target: SignalMessages.ImageIngestionStatus,
-      data: { imageId, ingestion, blockedFor },
+      data: { imageId, ingestion, blockedFor, nsfwLevel },
       userId,
     })
     .catch((error) =>
@@ -331,6 +339,8 @@ export async function loadImageForScan(imageId: number) {
       nsfwLevelLocked: true,
       nsfwLevel: true,
       ingestion: true,
+      blockedFor: true,
+      needsReview: true,
     },
   });
 
@@ -491,6 +501,8 @@ async function processTags({
 // --------------------------------------------------
 export type ScanOutcome = {
   ingestion: ImageIngestionStatus;
+  /** The level the row was written with; absent when the short-circuit left the row's level alone. */
+  nsfwLevel?: number;
   blockedFor: string | null;
   reviewKey: string | null;
   /** Present only when the image was audited (i.e. not the `blocked` short-circuit). */
@@ -503,8 +515,9 @@ export type ScanOutcome = {
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
  *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it. imageScanning never passes `blocked`, so on that path only
- *    `audit.blockedFor` and moderation rules re-block.
+ *    rescan can clear it, unless the owner is banned or the image is under appeal.
+ *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
+ *    moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
  *  - otherwise: Scanned, with moderation rules applied last so a rule Block/Hold
  *    takes precedence over the audit decision.
@@ -607,6 +620,48 @@ export async function resolveScanOutcome({
     }
   }
 
+  // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
+  // A rescan request may already have cleared `ingestion` and `blockedFor`; it leaves the Blocked level.
+  if ((await getPendingAppealImageIds([image.id])).size) {
+    toUpdate.needsReview = 'appeal';
+    reviewKey = 'appeal';
+    if (hasBlockMarker(image) && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+      toUpdate.ingestion = ImageIngestionStatus.Blocked;
+      toUpdate.blockedFor = image.blockedFor ?? BlockedReason.Moderated;
+      toUpdate.nsfwLevel = NsfwLevel.Blocked;
+    }
+  }
+
+  // This review flag outranks an appeal and is only ever lifted by a moderator, never by a scan. The
+  // SET re-checks the stored value for a flag that lands after the image was loaded.
+  if (image.needsReview === 'csam') {
+    toUpdate.needsReview = 'csam';
+    reviewKey = 'csam';
+  }
+
+  // A block on a banned owner's image is the ban's decision, not a stale automated one, so a scan
+  // never lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
+  if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+    const [current] = await dbWrite.$queryRaw<
+      {
+        ingestion: ImageIngestionStatus;
+        blockedFor: string | null;
+        nsfwLevel: number;
+        ownerBanned: boolean;
+      }[]
+    >`
+      SELECT i.ingestion, i."blockedFor", i."nsfwLevel", u."bannedAt" IS NOT NULL AS "ownerBanned"
+      FROM "Image" i
+      JOIN "User" u ON u.id = i."userId"
+      WHERE i.id = ${image.id}
+    `;
+    if (current?.ownerBanned && hasBlockMarker(current)) {
+      toUpdate.ingestion = ImageIngestionStatus.Blocked;
+      toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
+      toUpdate.nsfwLevel = NsfwLevel.Blocked;
+    }
+  }
+
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
@@ -615,7 +670,8 @@ export async function resolveScanOutcome({
       "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
       "nsfwLevel" = ${toUpdate.nsfwLevel as number},
-      "needsReview" = ${(toUpdate.needsReview as string) ?? null},
+      "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
+        ELSE ${(toUpdate.needsReview as string) ?? null} END,
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
@@ -630,6 +686,7 @@ export async function resolveScanOutcome({
 
   return {
     ingestion: toUpdate.ingestion as ImageIngestionStatus,
+    nsfwLevel: toUpdate.nsfwLevel as number,
     blockedFor: (toUpdate.blockedFor as string) ?? null,
     reviewKey,
     audit,
@@ -883,6 +940,7 @@ export async function applyIngestionSideEffects({
     // it so the next index pass re-evaluates visibility against the
     // moderation gates in `comics.search-index.ts:WHERE`.
     await queueComicsForPanelImage(image.id);
+    await refreshProfilePicturesForImages([image.id]);
     return;
   }
 
@@ -893,11 +951,18 @@ export async function applyIngestionSideEffects({
     // identical counts for an N-image post.
     await userImageVideoCountCaches.bust(image.userId);
     await tagIdsForImagesCache.refresh(image.id);
+    // A custom video thumbnail is cached under its video with this scan's level. The refresh in
+    // insertTagsOnImageNew runs before the final nsfwLevel write, so it can cache the old one.
+    const thumbnailParentId = (image.metadata as { parentId?: number } | null)?.parentId;
+    if (thumbnailParentId) await thumbnailCache.refresh(thumbnailParentId);
     if (
       typeof image.metadata === 'object' &&
       (image.metadata as MediaMetadata | undefined)?.profilePicture
     ) {
       await deleteUserProfilePictureCache(image.userId);
+    } else {
+      // A rescan of an image picked as an avatar after its upload can change its rating too.
+      await refreshProfilePicturesForImages([image.id]);
     }
 
     if (image.postId) {

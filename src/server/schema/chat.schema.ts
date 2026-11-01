@@ -135,7 +135,7 @@ export const DEFAULT_CHAT_SETTINGS: UserSettingsChat = {
   muteSounds: false,
   replaceBadWords: false,
   acknowledged: false,
-  dmPolicy: 'everyone',
+  dmPolicy: 'following',
   // Opt-in, not opt-out: the setting is only reachable behind `chatRedesign`, so
   // defaulting it on would filter inbound chats for users with no way to see or
   // change it. Revisit when the flag ramps.
@@ -157,12 +157,16 @@ export function resolveChatSettings(chat: UserSettingsChat | undefined): UserSet
  * The recipient-side DM policy, reconciling the two places a user can express
  * "don't message me". `features.chat` predates `dmPolicy` and gates the whole
  * chat UI, not just inbound requests, so it is read as `nobody` here and left
- * alone otherwise.
+ * alone otherwise. `fallback` applies only when no policy is stored, so a saved
+ * choice always wins.
  */
-export function resolveDmPolicy(settings: {
-  chat?: UserSettingsChat;
-  features?: Record<string, boolean>;
-}): ChatDmPolicy {
+export function resolveDmPolicy(
+  settings: {
+    chat?: UserSettingsChat;
+    features?: Record<string, boolean>;
+  },
+  fallback: ChatDmPolicy
+): ChatDmPolicy {
   if (settings.features?.chat === false) return 'nobody';
-  return settings.chat?.dmPolicy ?? DEFAULT_CHAT_SETTINGS.dmPolicy ?? 'everyone';
+  return settings.chat?.dmPolicy ?? fallback;
 }

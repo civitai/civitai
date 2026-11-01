@@ -30,7 +30,7 @@ reads as a permission that quietly stopped working.
 
 ## 2. Tick each action grant
 
-Eight permissions. Each is held by nobody until ticked. For seven the UI hides or refuses the control,
+Ten permissions. Each is held by nobody until ticked. For nine the UI hides or refuses the control,
 so the symptom is a missing button rather than an error. **`user.buzz.bank` is the exception**: the Buzz
 history renders normally and simply omits the bank rows, with nothing on screen saying they were
 withheld — so it is the one that cannot be spotted without ticking it and comparing.
@@ -55,6 +55,10 @@ withheld — so it is the one that cannot be spotted without ticking it and comp
       purpose: a role can have the queues without the account-ending half of them.
 - [ ] `csam.report.file` — *File a CSAM report*
       → `/audit/training-data/<versionId>`.
+- [ ] `tickets.reply` — *Reply to and change the status of a support ticket*
+      → `/tickets/<view>?ticket=<id>`, the Reply panel.
+- [ ] `tickets.escalate` — *Send a moderation ticket to support*
+      → `/tickets/moderation?ticket=<id>`, the Send to support panel.
 
 ## 3. Tick the page grants
 
@@ -70,10 +74,9 @@ Two shapes on the `/admin` page tree, and they behave differently:
 
 - [ ] `/retool/user-lookup` for the **staff** role. This is the whole of the open P1 "User Lookup
       unavailable for the staff role" — nothing to build.
-- [ ] **`/retool/post-reports`** — shipped 2026-08-21 and reachable by `moderator:admin` alone until
-      ticked. It is NOT covered by the `/reports` `sharedAccess` grant: that one covers the generic
-      `/reports/*` queues, and this is a separate page under the `Retool` group. Whoever holds
-      `/retool/user-reports` is the group to match.
+- [x] ~~`/retool/post-reports`~~ — moved to `/reports/post` (2026-10-15), under the Reports section's
+      `sharedAccess` grant like `/reports/user`, so there is nothing to tick. Ruling, removing images and
+      striking still need `/users`.
 - [ ] **`/users/newest`** — new 2026-08-24, admin-only until ticked. Grant it on its own merits: it
       reads emails and profile text. 🔴 Do **not** reach for `/users` instead — that grant is also what
       User Lookup's ban, purge and bulk-comment actions check, so granting it hands over enforcement.

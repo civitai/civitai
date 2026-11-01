@@ -1,5 +1,4 @@
 import { negate } from 'lodash-es';
-import { v4 as uuidv4 } from 'uuid';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -60,6 +59,16 @@ type ApiUploadResponse =
 
 type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';
 
+/**
+ * Uploads that share an `id` (a model version, say) can be made to run one at a time. A
+ * `sequential` upload starts only when nothing else in its group is running; the others in the
+ * group are unaffected, so turning sequential off mid-way just stops queueing new files.
+ */
+type UploadGroup = { id: string; sequential: boolean };
+
+type GroupWaiter = { grant: () => void; cancel: () => void };
+type GroupState = { active: number; waiting: GroupWaiter[] };
+
 type StoreProps = {
   items: TrackedFile[];
   setItems: (dispatch: (items: TrackedFile[]) => TrackedFile[]) => void;
@@ -82,6 +91,7 @@ type StoreProps = {
       type: UploadType;
       meta?: Record<string, unknown>;
       options?: UploadToS3Options;
+      uploadGroup?: UploadGroup;
     },
     cb?: ({ url, bucket, key, name, size }: UploadResult) => void
   ) => Promise<UploadResult | undefined>;
@@ -132,6 +142,112 @@ export const useS3UploadStore = create<StoreProps>()(
       });
     }
 
+    const groups = new Map<string, GroupState>();
+
+    function admitWaiting(groupId: string) {
+      const group = groups.get(groupId);
+      if (!group) return;
+      while (group.active === 0 && group.waiting.length > 0) group.waiting.shift()?.grant();
+      if (group.active === 0) groups.delete(groupId);
+    }
+
+    /**
+     * Resolves with the release to call when the upload is over, or `null` when the file was
+     * cancelled or removed while it waited. A waiting file shows as a 'pending' row, and the
+     * server is not asked for part URLs until its turn, so they cannot expire in the queue.
+     */
+    function enterGroup(
+      { file, meta }: Pick<Parameters<StoreProps['upload']>[0], 'file' | 'meta'>,
+      { id, sequential }: UploadGroup
+    ): Promise<(() => void) | null> {
+      const group = groups.get(id) ?? { active: 0, waiting: [] };
+      groups.set(id, group);
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        group.active--;
+        admitWaiting(id);
+      };
+
+      if (!sequential || (group.active === 0 && group.waiting.length === 0)) {
+        group.active++;
+        return Promise.resolve(release);
+      }
+
+      registerCatchNavigation();
+      return new Promise((resolve) => {
+        let uuid = crypto.randomUUID();
+        const waiter: GroupWaiter = {
+          grant: () => {
+            if (!get().items.some((x) => x.uuid === uuid)) return resolve(null);
+            group.active++;
+            // Past this point the file is on its way; the upload sets its own abort once it
+            // has URLs, so a cancel in between must not pretend to have stopped it.
+            updateFile(uuid, { abort: () => undefined });
+            resolve(release);
+          },
+          cancel: () => {
+            group.waiting = group.waiting.filter((x) => x !== waiter);
+            try {
+              updateFile(uuid, { status: 'aborted' });
+            } catch {
+              // the row was cleared while it waited
+            }
+            resolve(null);
+            admitWaiting(id);
+          },
+        };
+        group.waiting.push(waiter);
+
+        // A retried file already has a row, which the upload merges into when its turn comes.
+        const existing = get().items.find((x) => x.file === file);
+        if (existing) {
+          uuid = existing.uuid;
+          updateFile(uuid, {
+            status: 'pending',
+            progress: 0,
+            uploaded: 0,
+            speed: 0,
+            timeRemaining: 0,
+            abort: waiter.cancel,
+          });
+        } else {
+          set((state) => {
+            state.items.push({
+              ...pendingTrackedFile,
+              file,
+              size: file.size ?? 0,
+              uuid,
+              meta,
+              name: file.name,
+              abort: waiter.cancel,
+            });
+          });
+        }
+      });
+    }
+
+    function withUploadGroup(run: StoreProps['upload']): StoreProps['upload'] {
+      return async (args, cb) => {
+        if (!args.uploadGroup) return run(args, cb);
+        const release = await enterGroup(args, args.uploadGroup);
+        if (!release) return undefined;
+        try {
+          return await run(args, cb);
+        } catch (err) {
+          // A file that never got as far as a row of its own is still sitting as 'pending'.
+          if (args.uploadGroup.sequential) {
+            const row = get().items.find((x) => x.file === args.file);
+            if (row?.status === 'pending') updateFile(row.uuid, { status: 'error' });
+          }
+          throw err;
+        } finally {
+          release();
+        }
+      };
+    }
+
     return {
       items: [] as TrackedFile[],
       setItems: (dispatch) => {
@@ -170,7 +286,7 @@ export const useS3UploadStore = create<StoreProps>()(
         const item = get().items.find((x) => x.uuid === uuid);
         item?.abort();
       },
-      upload: async ({ file, type, options, meta }, cb) => {
+      upload: withUploadGroup(async ({ file, type, options, meta }, cb) => {
         // register catch navigation if beginning upload queue
         if (get().items.filter((item) => item.status === 'uploading').length === 0)
           registerCatchNavigation();
@@ -211,7 +327,7 @@ export const useS3UploadStore = create<StoreProps>()(
           // The server sizes chunks against the file so the part count stays bounded;
           // slicing by anything else would send parts that don't match what it signed.
           const chunkSize = data.chunkSize ?? FILE_CHUNK_SIZE;
-          const uuid = uuidv4();
+          const uuid = crypto.randomUUID();
 
           // let currentXhr: XMLHttpRequest;
           // const abort = () => {
@@ -301,6 +417,7 @@ export const useS3UploadStore = create<StoreProps>()(
                 type,
                 uploadId,
                 backend,
+                fileSize: size,
                 ...(failure ? { failure } : {}),
               }),
             });
@@ -601,7 +718,7 @@ export const useS3UploadStore = create<StoreProps>()(
           cb?.(payload);
           return payload;
         }
-      },
+      }),
     };
   })
 );
@@ -626,7 +743,11 @@ const registerCatchNavigation = () => {
     register({
       name: 'file-upload',
       message: 'Files are still uploading. Upload progress will be lost',
-      predicate: () => useS3UploadStore.getState().getStatus().uploading > 0,
+      // A file waiting its turn in a sequential group is as lost on leave as one mid-transfer.
+      predicate: () => {
+        const { uploading, pending } = useS3UploadStore.getState().getStatus();
+        return uploading + pending > 0;
+      },
       event: 'beforeunload',
     });
 };

@@ -12,6 +12,8 @@
 // so an imported pack matches what provisioning would produce — PLUS a
 // Dynamic-Prompts comment strip and the App-Blocks result/inflation caps.
 
+import type { BlockWildcardPackErrorCode } from '@civitai/app-sdk/blocks';
+
 // ── Caps ─────────────────────────────────────────────────────────────────────
 
 export interface WildcardPackCaps {
@@ -79,21 +81,12 @@ export function resolveGetWildcardPackRequest(raw: unknown): GetWildcardPackRequ
 
 // ── Error discriminants ──────────────────────────────────────────────────────
 
-// The CLOSED set WILDCARD_PACK_RESULT.error is validated against block-side —
-// this is the local mirror of the SDK's `BlockWildcardPackErrorCode`. The mirror
-// exists because the pinned @civitai/app-sdk dist does not export the wildcard
-// union yet (it predates the bridge); keep the two in step. Consumers SWITCH on
-// the code, so this is an enum, not free text — a reply carrying anything outside
-// this set is rejected by `isValidWildcardPackResult` and dropped by the
-// transport, leaving the block's pending request unsettled.
-export type WildcardPackErrorCode =
-  | 'not-found'
-  | 'forbidden'
-  | 'too-large'
-  | 'parse-failed'
-  // Host-side backpressure: too many wildcard fetch+parse operations already
-  // in flight in THIS tab (see WILDCARD_MAX_CONCURRENT). The block should retry.
-  | 'busy';
+// The CLOSED set WILDCARD_PACK_RESULT.error is validated against block-side, so
+// it is the SDK's own type: a reply carrying anything outside it is rejected by
+// `isValidWildcardPackResult` and dropped by the transport, leaving the block's
+// pending request unsettled. `busy` is host-side backpressure (see
+// WILDCARD_MAX_CONCURRENT); the block should retry.
+export type WildcardPackErrorCode = BlockWildcardPackErrorCode;
 
 /**
  * Map a thrown error to the WILDCARD_PACK_RESULT error discriminant. A tagged

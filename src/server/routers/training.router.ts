@@ -5,6 +5,14 @@ import { dbKV } from '~/server/db/db-helpers';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  studioAutoLabelPollSchema,
+  studioAutoLabelSubmitSchema,
+} from '~/server/schema/training-studio-auto-label.schema';
+import {
+  pollStudioAutoLabel,
+  submitStudioAutoLabel,
+} from '~/server/services/training-studio-auto-label.service';
+import {
   autoCaptionInput,
   autoTagInput,
   createTrainingRequestDryRunSchema,
@@ -17,6 +25,7 @@ import {
   submitAutoLabelWorkflowSchema,
 } from '~/server/schema/training.schema';
 import { getTrainingEpochArchive } from '~/server/services/orchestrator/training/epoch-archive';
+import { moveAsset } from '~/server/services/orchestrator/training/move-asset';
 import { getTrainingRunState } from '~/server/services/orchestrator/training/training-state';
 import {
   autoCaptionHandler,
@@ -27,7 +36,6 @@ import {
   getAutoLabelWorkflow,
   getJobEstStartsHandler,
   getTrainingServiceStatus,
-  moveAsset,
   submitAutoLabelWorkflow,
   setTrainingServiceStatus,
 } from '~/server/services/training.service';
@@ -70,7 +78,9 @@ export const trainingRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(moveAssetInput)
     .use(isFlagProtected('imageTraining'))
-    .mutation(({ input, ctx }) => moveAsset({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      moveAsset({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
+    ),
   // One zip of everything a finished run produced (epoch models + sample media).
   // A mutation rather than a query: each call mints a short-lived signed URL from
   // the orchestrator, which must not be served from the tRPC query cache.
@@ -152,6 +162,20 @@ export const trainingRouter = router({
     // polls/min. 1500/min keeps polling from being the bottleneck.
     .use(rateLimit({ limit: 1500, period: 60 }))
     .query(({ input, ctx }) => getAutoLabelWorkflow({ ...input, userId: ctx.user.id })),
+  // Training Studio auto-label (the embedded element's host methods). Free to the user, so it runs
+  // on the system token; the same caps as the wizard above keep it from being free compute.
+  studioAutoLabelSubmit: guardedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(studioAutoLabelSubmitSchema)
+    .use(isFlagProtected('trainingStudioUi'))
+    .use(rateLimit({ limit: 100, period: 60 }))
+    .mutation(({ input, ctx }) => submitStudioAutoLabel({ ...input, userId: ctx.user.id })),
+  studioAutoLabelPoll: guardedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(studioAutoLabelPollSchema)
+    .use(isFlagProtected('trainingStudioUi'))
+    .use(rateLimit({ limit: 1500, period: 60 }))
+    .query(({ input, ctx }) => pollStudioAutoLabel({ ...input, userId: ctx.user.id })),
   getStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(isFlagProtected('imageTraining'))

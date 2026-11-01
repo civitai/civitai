@@ -193,3 +193,8 @@ geometry-report.json
 # next to the fixtures -- which a `git add <dir>` then sweeps into a commit.
 __pycache__/
 *.pyc
+
+# Foreman (the background coding-agent orchestrator) writes per-task scratch here
+# inside each worktree -- screenshots, REVIEW.md. It must never reach a commit, or
+# one task's artifacts ride a merge into main and seed every later worktree.
+.foreman/

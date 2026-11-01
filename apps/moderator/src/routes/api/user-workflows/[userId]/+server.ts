@@ -1,13 +1,18 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { RESTRICTION_PAGES } from '$lib/restriction-types';
 import { requireIdParam, requirePermission } from '$lib/server/api-guard';
-import { getUserGeneratedWorkflows, isWorkflowSource } from '$lib/server/user-workflows.service';
+import {
+  ORCHESTRATOR_TIMEOUT_MS,
+  getUserGeneratedWorkflows,
+  isWorkflowSource,
+} from '$lib/server/user-workflows.service';
 
 // The pages that mount the panel. This read is wider than any page's own content — an account's full
 // off-site generation history, prompts and signed media included, for work never published to the site
 // — so the grant list names consumers that exist, not consumers that might. Add a path here when a page
 // actually mounts the panel.
-const PAGES = ['/audit/generator-restrictions', '/retool/user-lookup'];
+const PAGES = [...RESTRICTION_PAGES, '/retool/user-lookup'];
 
 export const GET: RequestHandler = async ({ params, url, locals }) => {
   const userId = requireIdParam(locals, params.userId, PAGES, 'userId');
@@ -17,8 +22,8 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   // minimum of 1, so an omitted param would read as an account that generated almost nothing.
   const takeParam = url.searchParams.get('take');
   const take = takeParam === null ? undefined : Number(takeParam);
-  // An unrecognised source falls back to the on-site feed rather than erroring: it is a tab name, and
-  // the tab that exists is the honest answer to one that does not.
+  // An unrecognised source falls back to the default (all sources) rather than erroring: it is a tab
+  // name, and the tab that exists is the honest answer to one that does not.
   const sourceParam = url.searchParams.get('source');
   const source = isWorkflowSource(sourceParam) ? sourceParam : undefined;
 
@@ -31,9 +36,17 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
       })
     );
   } catch (e) {
-    // The panel reads `body.error` — an uncaught throw here returns an HTML error page, and the
-    // fetch's `r.json()` fails on it before any message reaches the moderator.
     console.error('[user-workflows] query failed', e);
-    return json({ error: 'Could not reach the orchestrator.' }, { status: 502 });
+    const timedOut = e instanceof Error && e.name === 'TimeoutError';
+    // Never 502 or 504: Cloudflare replaces an origin 502/504 with its own HTML page, so the panel
+    // would get `<!DOCTYPE` instead of this message.
+    return json(
+      {
+        error: timedOut
+          ? `The orchestrator did not answer within ${ORCHESTRATOR_TIMEOUT_MS / 1000} seconds.`
+          : 'Could not reach the orchestrator.',
+      },
+      { status: 503 }
+    );
   }
 };

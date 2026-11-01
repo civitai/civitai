@@ -1,11 +1,14 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import {
   applyTagRules,
+  deleteTagsOnImageNew,
   insertTagsOnImageNew,
   upsertTagsOnImageNew,
 } from '../tagsOnImageNew.service';
 import * as systemCache from '../system-cache';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { refreshThumbnailCache } from '~/server/redis/caches';
+import { refreshProfilePicturesForImages } from '~/server/services/user.service';
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {},
@@ -14,11 +17,16 @@ vi.mock('~/server/db/pgDb', () => ({
 }));
 vi.mock('~/server/redis/caches', () => ({
   tagIdsForImagesCache: { bust: vi.fn() },
-  thumbnailCache: { refresh: vi.fn() },
+  refreshThumbnailCache: vi.fn(),
   imageTagsCache: { bust: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(),
+}));
+// Hand-listed rather than `importOriginal`: the real user.service pulls in most of the server, and
+// this file exercises only the tag write.
+vi.mock('~/server/services/user.service', () => ({
+  refreshProfilePicturesForImages: vi.fn(async () => undefined),
 }));
 
 vi.mock('../system-cache', () => ({
@@ -200,6 +208,16 @@ describe('blocked-level tags written after the scan', () => {
     expect(reviewInserts()).toEqual([expect.stringContaining(`(7, ${URINE})`)]);
   });
 
+  it('refreshes the thumbnail cache, parent videos included, for re-rated images', async () => {
+    await upsertTagsOnImageNew([
+      { imageId: 7, tagId: XXX },
+      { imageId: 8, tagId: SAFE },
+    ]);
+
+    expect(refreshThumbnailCache).toHaveBeenCalledTimes(1);
+    expect(refreshThumbnailCache).toHaveBeenCalledWith([7]);
+  });
+
   it('does not touch review state when no blocked-level tag was written', async () => {
     await upsertTagsOnImageNew([
       { imageId: 7, tagId: XXX },
@@ -236,5 +254,52 @@ describe('blocked-level tags written after the scan', () => {
 
     expect(queueQueries()).toHaveLength(1);
     expect(reviewInserts()).toEqual([expect.stringContaining(`(9, ${URINE})`)]);
+  });
+});
+
+/**
+ * Avatars are shown or hidden on their picture's rating, read from a day-long profile-picture cache.
+ * A tag write that re-rates an image (a vote, a tag rule, a moderator tag tool) has to refresh the
+ * cached picture of any user whose avatar it is, or a picture voted from PG up to R keeps passing
+ * the safe-for-work gate until the TTL.
+ */
+describe('profile pictures re-rated by a tag write', () => {
+  const R_TAG = 201;
+  const PLAIN_TAG = 202;
+  const RATED_IMAGE = 61;
+  const UNRATED_IMAGE = 62;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(systemCache.getTagRules).mockResolvedValue([]);
+    vi.mocked(systemCache.getModeratedTags).mockResolvedValue([
+      { id: R_TAG, name: 'r-tag', nsfwLevel: 4 },
+    ]);
+  });
+
+  it('refreshes the cached profile pictures of the re-rated images, after the recompute', async () => {
+    await upsertTagsOnImageNew([
+      { imageId: RATED_IMAGE, tagId: R_TAG },
+      { imageId: UNRATED_IMAGE, tagId: PLAIN_TAG },
+    ]);
+
+    expect(refreshProfilePicturesForImages).toHaveBeenCalledTimes(1);
+    expect(refreshProfilePicturesForImages).toHaveBeenCalledWith([RATED_IMAGE]);
+    // After the level write, or the refresh re-reads the old rating.
+    expect(vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(refreshProfilePicturesForImages).mock.invocationCallOrder[0]
+    );
+  });
+
+  it('refreshes them when a removed tag lowers the rating', async () => {
+    await deleteTagsOnImageNew([{ imageId: RATED_IMAGE, tagId: R_TAG }]);
+
+    expect(refreshProfilePicturesForImages).toHaveBeenCalledWith([RATED_IMAGE]);
+  });
+
+  it('refreshes nothing when no written tag can change a rating', async () => {
+    await upsertTagsOnImageNew([{ imageId: UNRATED_IMAGE, tagId: PLAIN_TAG }]);
+
+    expect(refreshProfilePicturesForImages).not.toHaveBeenCalled();
   });
 });

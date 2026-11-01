@@ -5,10 +5,14 @@ import type {
   ComfyMiniMaxH3ReferenceToVideoInput,
   MiniMaxH3VideoGenInput,
   VideoGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type {
   ComfyMiniMaxH3ControlVideoInput,
+  HeyGenVideoGenInput,
+  MiniMaxH3MaxImageToVideoInput,
+  MiniMaxH3MaxReferenceToVideoInput,
+  MiniMaxH3MaxTextToVideoInput,
   PreprocessVideoStepTemplate,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -17,8 +21,8 @@ import {
   MINIMAX_DEFAULT_ASPECT_RATIO,
   minimaxComfyAspectRatios,
 } from '~/shared/form-graph/generation/video/minimax.graph';
-import { buildControlVideoStep } from '../ecosystems/control-video.helper';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { buildControlVideoStep } from '../handlers/control-video.helper';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
@@ -56,13 +60,13 @@ export const createMiniMaxInput = defineHandler<
       return [
         {
           $type: 'videoGen',
-          input: removeEmpty({
+          input: removeEmpty<ComfyMiniMaxH3ReferenceToVideoInput>({
             ...shared,
             operation: 'referenceToVideo',
             images: referenceImages,
             width: data.aspectRatio?.width,
             height: data.aspectRatio?.height,
-          }) as ComfyMiniMaxH3ReferenceToVideoInput,
+          }),
         },
       ];
     }
@@ -78,13 +82,13 @@ export const createMiniMaxInput = defineHandler<
         ...controlVideo.preprocessSteps,
         {
           $type: 'videoGen',
-          input: removeEmpty({
+          input: removeEmpty<ComfyMiniMaxH3ControlVideoInput>({
             ...shared,
             operation: 'controlVideo',
             ...controlVideo.control,
             width: data.aspectRatio?.width,
             height: data.aspectRatio?.height,
-          }) as ComfyMiniMaxH3ControlVideoInput,
+          }),
         },
       ];
     }
@@ -99,14 +103,14 @@ export const createMiniMaxInput = defineHandler<
     return [
       {
         $type: 'videoGen',
-        input: removeEmpty({
+        input: removeEmpty<ComfyMiniMaxH3ImageToVideoInput>({
           ...shared,
           operation: 'imageToVideo',
           firstFrame,
           lastFrame,
           width,
           height,
-        }) as ComfyMiniMaxH3ImageToVideoInput,
+        }),
       },
     ];
   }
@@ -114,22 +118,99 @@ export const createMiniMaxInput = defineHandler<
   const firstFrameImage = !isRef2Vid && hasImages ? images?.[0]?.url : undefined;
   const lastFrameImage = !isRef2Vid && images && images.length > 1 ? images[1]?.url : undefined;
   const referenceImages = isRef2Vid && hasImages ? images?.map((x) => x.url) : undefined;
+  const isFalOrHeyGen = data.minimaxVariant === 'max' || data.minimaxVariant === 'heygen';
+  if (isFalOrHeyGen && isRef2Vid && !referenceImages?.length)
+    throw new Error('At least one reference image is required for img2vid:ref2vid');
+
+  if (data.minimaxVariant === 'max') {
+    const shared = {
+      engine: 'minimax-h3-max' as const,
+      prompt,
+      model: data.turbo ? ('turbo' as const) : ('max' as const),
+      duration: data.duration,
+      resolution: data.resolution,
+      seed: data.seed,
+    };
+    if (isRef2Vid) {
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty<MiniMaxH3MaxReferenceToVideoInput>({
+            ...shared,
+            operation: 'referenceToVideo',
+            aspectRatio: data.aspectRatio
+              ?.value as MiniMaxH3MaxReferenceToVideoInput['aspectRatio'],
+            referenceImages,
+          }),
+        },
+      ];
+    }
+    if (firstFrameImage) {
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty<MiniMaxH3MaxImageToVideoInput>({
+            ...shared,
+            operation: 'imageToVideo',
+            firstFrameImage,
+            lastFrameImage,
+          }),
+        },
+      ];
+    }
+    return [
+      {
+        $type: 'videoGen',
+        input: removeEmpty<MiniMaxH3MaxTextToVideoInput>({
+          ...shared,
+          operation: 'textToVideo',
+          aspectRatio: data.aspectRatio?.value as MiniMaxH3MaxTextToVideoInput['aspectRatio'],
+        }),
+      },
+    ];
+  }
+
+  if (data.minimaxVariant === 'heygen') {
+    return [
+      {
+        $type: 'videoGen',
+        input: removeEmpty<HeyGenVideoGenInput>({
+          engine: 'heygen',
+          operation: isRef2Vid
+            ? 'referenceToVideo'
+            : firstFrameImage
+            ? 'imageToVideo'
+            : 'textToVideo',
+          prompt,
+          duration: data.duration,
+          resolution: data.resolution,
+          // required by the schema; ignored for imageToVideo, which has no ratio field
+          aspectRatio: (data.aspectRatio?.value ??
+            MINIMAX_DEFAULT_ASPECT_RATIO) as HeyGenVideoGenInput['aspectRatio'],
+          seed: data.seed,
+          firstFrameImage,
+          referenceImages,
+        }),
+      },
+    ];
+  }
 
   return [
     {
       $type: 'videoGen',
-      input: removeEmpty({
+      input: removeEmpty<MiniMaxH3VideoGenInput>({
         engine: 'minimax-h3',
         prompt,
         aspectRatio: firstFrameImage
           ? 'adaptive'
           : (data.aspectRatio?.value as MiniMaxH3VideoGenInput['aspectRatio']),
         duration: data.duration,
-        resolution: '2K',
+        model: data.mode,
+        resolution: data.resolution as MiniMaxH3VideoGenInput['resolution'],
         firstFrameImage,
         lastFrameImage,
         referenceImages,
-      }) as MiniMaxH3VideoGenInput,
+      }),
     },
   ];
 });

@@ -16,7 +16,7 @@ const log = createLogger('block-author-fee-settlement', 'green');
  *
  * ✅ SCHEDULED AND DISPATCHING. Membership of the `jobs` array in
  * `src/pages/api/webhooks/run-jobs/[[...run]].ts` PLUS the cron string below IS the
- * registration — see `CLAUDE.md` → "How a scheduled job actually gets scheduled".
+ * registration — see `.claude/rules/server.md` → "Scheduling a job".
  * ⚠️ An earlier revision of this comment said the opposite ("a newly added cron is
  * not picked up by a deploy… nobody has scheduled it"), and three separate readers
  * concluded from it that this job would never run. The hand-written per-job

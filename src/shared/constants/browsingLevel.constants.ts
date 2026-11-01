@@ -223,6 +223,18 @@ export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArr
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
 
+/** R, X and XXX; unlike nsfwBrowsingLevelsFlag, without Blocked. */
+export const matureBrowsingLevelsFlag = allBrowsingLevelsFlag & ~sfwBrowsingLevelsFlag;
+
+/** A model flagged unsuitable for mature content is held to PG/PG-13 wherever it is shown or used. */
+export const modelBrowsingLevelLimit = (model: { minor: boolean; sfwOnly: boolean }) =>
+  model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+
+export const exceedsModelBrowsingLevelLimit = (
+  nsfwLevel: number,
+  model: { minor: boolean; sfwOnly: boolean }
+) => (nsfwLevel & ~modelBrowsingLevelLimit(model)) !== 0;
+
 /**
  * App Blocks maturity policy — the SINGLE SOURCE OF TRUTH mapping a color
  * domain to the maximum browsing-level flag content rendered/generated inside a

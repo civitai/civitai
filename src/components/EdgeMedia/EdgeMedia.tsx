@@ -3,6 +3,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import React, { SyntheticEvent, useEffect, useRef } from 'react';
 import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { getInferredMediaType } from '~/client-utils/cf-images-utils';
+import { edgeMediaOptions } from '~/client-utils/edge-url';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
@@ -30,7 +31,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     disableWebm?: boolean;
     disablePoster?: boolean;
     videoProps?: React.HTMLAttributes<HTMLVideoElement> &
-      React.MediaHTMLAttributes<HTMLVideoElement> & { hoverPlay?: boolean };
+      React.MediaHTMLAttributes<HTMLVideoElement> & { hoverPlay?: boolean; standby?: boolean };
     imageProps?: React.HTMLAttributes<HTMLImageElement>;
     /** Database image ID — forwarded to EdgeImage for drag-and-drop metadata lookup */
     imageId?: number;
@@ -83,11 +84,9 @@ export function EdgeMedia({
     mediaRef?.[1](imgRef.current);
   }, [mediaRef]);
 
-  if (width && typeof width === 'number') width = Math.min(width, 4096);
-
   const inferredType = getInferredMediaType(src, { name, type });
 
-  const options = {
+  const options = edgeMediaOptions({
     name,
     width,
     sourceWidth,
@@ -102,7 +101,8 @@ export function EdgeMedia({
     skip,
     anim,
     optimized,
-  };
+  });
+  width = options.width;
 
   switch (inferredType) {
     case 'image': {

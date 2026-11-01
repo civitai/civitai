@@ -7,6 +7,7 @@ import type { Session } from '~/types/session';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { outwardTrafficAllowed } from '~/env/local-origin';
 import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -248,6 +249,9 @@ export type BountyEntryActivity = 'Create' | 'Update' | 'Delete' | 'Award';
 export type BountyBenefactorActivity = 'Create';
 
 export type FileActivity = 'Download';
+export type ServiceDealAccessRole = 'Buyer' | 'Seller' | 'Moderator';
+/** `ModeratorFetch` is the moderator dispute tool: it never counts as a party's `Download`. */
+export type ServiceDealAccessKind = 'Download' | 'ModeratorFetch';
 export type ModelFileActivity = 'Create' | 'Delete' | 'Update';
 
 export const ActionType = [
@@ -310,6 +314,10 @@ export const ActionType = [
   // `Feed_TagBar_Click` is the existing precedent for a type whose `details` carries the
   // discriminator (`action: 'select' | 'clear'`).
   'AppsBuild_Action',
+  // User menu v2: one row per item opened from the menu, so default pins can be chosen from use.
+  // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
+  // tracker restart in migrations/README.md); the item, group and section ride in `details`.
+  'UserMenu_Click',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -375,8 +383,19 @@ export class Tracker {
     }
   }
 
-  private async resolveSession() {
-    if (!this.sessionResolved && this.req && this.res) {
+  private sessionPending: Promise<void> | undefined;
+
+  // One session lookup per request however many track() calls, and getSession(), start before it
+  // lands: they share the pending lookup. A failed lookup clears it, so the next call retries.
+  private resolveSession() {
+    if (this.sessionResolved || !this.req || !this.res) return Promise.resolve();
+    return (this.sessionPending ??= this.fetchSession().finally(() => {
+      this.sessionPending = undefined;
+    }));
+  }
+
+  private async fetchSession() {
+    if (this.req && this.res) {
       try {
         await getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
           this.session = session;
@@ -398,6 +417,12 @@ export class Tracker {
         );
       }
     }
+  }
+
+  // The request's session, resolved once and shared with every track() call on this Tracker.
+  public async getSession() {
+    await this.resolveSession();
+    return this.session;
   }
 
   constructor(
@@ -453,6 +478,9 @@ export class Tracker {
     // read it as delivered: `send` returns false, `updateEntityMetric` passes
     // that on, and the row stays queued instead of being stamped counted.
     if (!env.CLICKHOUSE_TRACKER_URL) return false;
+    // A local origin never reaches a tracker unless opted in: a tunnel on loopback can hide a real one.
+    if (!outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED))
+      return false;
     await this.resolveSession();
 
     const body =
@@ -767,7 +795,13 @@ export class Tracker {
     return this.track('bugReports', values);
   }
 
-  public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
+  /** `userId` names the actor when the request has none, as a moderator's transfer. */
+  public modelEvent(values: {
+    type: ModelActivty;
+    modelId: number;
+    nsfw: boolean;
+    userId?: number;
+  }) {
     return this.track('modelEvents', { ...values, ...this.provenance });
   }
 
@@ -972,6 +1006,37 @@ export class Tracker {
     return this.track('files', values);
   }
 
+  // `userId` is the caller's: a moderator-app request carries no site session to stamp it from.
+  // `time` is stamped here: a row buffered in the tracker must not land after the dispute it predates.
+  public serviceDealFileAccess(
+    values: {
+      dealId: number;
+      fileId: number;
+      userId: number;
+      role: ServiceDealAccessRole;
+      kind: ServiceDealAccessKind;
+    },
+    options?: TrackDelivery
+  ) {
+    return this.track(
+      'serviceDealFileAccess',
+      { ...values, time: new Date() },
+      { skipActorMeta: true, ...options }
+    );
+  }
+
+  // Exactly these four columns, in their own table with a 12-month TTL (not `actions`, which has
+  // none): migrations/2026-10-28-image-upload-requests.sql.
+  /** `userId` names who the key was issued to when the request has no session, as in a job. */
+  public imageUploadRequest(key: string, userId?: number) {
+    return this.send('imageUploadRequests', ({ actor }) => ({
+      userId: userId ?? actor.userId,
+      ip: actor.ip,
+      key,
+      time: new Date(),
+    }));
+  }
+
   public search(values: { query: string; index: string; filters?: any }) {
     const { filters, ...rest } = values;
     return this.track('search', {
@@ -1110,7 +1175,12 @@ export class Tracker {
     });
   }
 
-  public crucibleVote(values: { crucibleId: number; winnerEntryId: number; loserEntryId: number }) {
+  public crucibleVote(values: {
+    userId: number;
+    crucibleId: number;
+    winnerEntryId: number;
+    loserEntryId: number;
+  }) {
     return this.track(
       'crucible_votes',
       { ...values, createdAt: new Date() },

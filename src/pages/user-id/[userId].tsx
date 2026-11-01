@@ -4,10 +4,8 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  useSession: true,
-  resolver: async ({ session, ctx }) => {
-    if (!session?.user?.isModerator) return { redirect: { destination: '/', permanent: false } };
-
+  requireModerator: true,
+  resolver: async ({ ctx }) => {
     const { userId } = ctx.params as { userId: string };
     const isEmail = userId.includes('@');
 

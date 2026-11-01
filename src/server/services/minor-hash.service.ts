@@ -1,15 +1,43 @@
 import { Prisma } from '@prisma/client';
+import { uniq } from 'lodash-es';
+import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
-import { MINOR_FLAG_SNAPSHOT_KEY, setModelMinor } from '~/server/services/model.service';
+import {
+  MINOR_FLAG_SNAPSHOT_KEY,
+  MINOR_LOCKED_PROPERTIES,
+  restoreOwnerFlagOverride,
+  setModelMinor,
+} from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { resolveEntityAppeal } from '~/server/services/report.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import {
+  loadGrantTextHash,
+  settleFlagAppealsAfterModeratorLift,
+  stampModeratorTextScanRuling,
+} from '~/server/services/text-scan/actions/appeal-text-hash';
+import {
+  grantModelTextScanPoi,
+  POI_LOCKED_PROPERTIES,
+  reassertModelPoiRestrictions,
+  stampModelTextScanAppeal,
+} from '~/server/services/text-scan/actions/model-poi-minor';
+import {
+  hasOpenTextScanFlag,
+  hasTextScanVerdict,
+  TEXT_SCAN_FLAGS_KEY,
+  type TextScanFlags,
+} from '~/server/services/text-scan/flag-snapshot';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -25,6 +53,7 @@ export const MINOR_HASH_FILE_TYPE = 'Model';
 //   - `minor AND 'minor' = ANY(lockedProperties)` keeps a creator from
 //     self-declaring their way into seeding other people's uploads, and
 //   - excluding source='auto' keeps the machine from seeding itself.
+//   - 'text-scan' is an unreviewed LLM verdict, excluded for the same reason.
 //
 // Without that second clause an auto-flagged model becomes a seed, contributing
 // EVERY hash on it — including ones no moderator ever tied to minor content — so
@@ -40,6 +69,7 @@ const moderatorMinorSeedPredicate = Prisma.sql`
   m.minor
   AND 'minor' = ANY(m."lockedProperties")
   AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
+  AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'text-scan'
 `;
 
 export const MINOR_HASH_CLEARED_KEY = 'minorHashCleared';
@@ -464,9 +494,13 @@ export async function getMinorHashMatchDetail({
     LEFT JOIN "User" u ON u.id = m."userId"
     LEFT JOIN "Model" mm ON mm.id = ${minorModelId}::int
     LEFT JOIN "User" mu ON mu.id = mm."userId"
-    LEFT JOIN "ModActivity" ma
-      ON ma."entityType" = 'model' AND ma."entityId" = ${minorModelId}::int
-        AND ma.activity = 'setMinor'
+    -- The latest flag only: the log is append-only, so a re-flagged seed has one row per flag.
+    LEFT JOIN LATERAL (
+      SELECT "createdAt", "userId" FROM "ModActivity"
+      WHERE "entityType" = 'model' AND "entityId" = ${minorModelId}::int AND activity = 'setMinor'
+      ORDER BY "createdAt" DESC, id DESC
+      LIMIT 1
+    ) ma ON true
     LEFT JOIN "User" fu ON fu.id = ma."userId"
     WHERE m.id = ${modelId}
   `;
@@ -582,9 +616,19 @@ export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
 export async function confirmMinorHashAutoFlag({
   modelId,
   userId,
+  reason,
+  note,
+  textHash,
+  recordTextScanRuling = true,
 }: {
   modelId: number;
   userId: number;
+  reason?: string;
+  note?: string;
+  /** Stamp the ruling only while the flag still carries the text the moderator saw. */
+  textHash?: string;
+  /** False when the caller has already recorded the ruling and only wants the sign-off. */
+  recordTextScanRuling?: boolean;
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -610,15 +654,92 @@ export async function confirmMinorHashAutoFlag({
     entityId: modelId,
     activity: 'setMinor',
   });
+
+  if (!recordTextScanRuling) return { hadVerdict: true, stamped: true };
+
+  // Affirming the flag is a ruling on the text-scan verdict too. A hash-only flag has no verdict to
+  // rule on, and the sign-off above has already happened, so a failed stamp is only logged.
+  let hadVerdict = false;
+  try {
+    const model = await dbWrite.model.findUnique({
+      where: { id: modelId },
+      select: { meta: true },
+    });
+    hadVerdict = hasTextScanVerdict(model?.meta, 'minor');
+    let stamped = hadVerdict;
+    if (hadVerdict) {
+      const changed = await stampModelTextScanAppeal({
+        modelId,
+        userId,
+        decision: 'appealUpheld',
+        labels: ['minor'],
+        via: 'moderator',
+        reason,
+        note,
+        expectTextHash: textHash,
+      });
+      if (textHash) stamped = changed > 0;
+    }
+    return { hadVerdict, stamped };
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan',
+      message: 'moderator minor ruling not recorded on confirm',
+      modelId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return { hadVerdict, stamped: false };
+  }
 }
 
 export async function revertMinorHashAutoFlag({
   modelId,
   userId,
+  recordTextScanRuling,
+  reason,
+  note,
+  textHash,
+  skipRefusal,
+  keepWhenRefused,
 }: {
   modelId: number;
   userId: number;
-}) {
+  reason?: string;
+  note?: string;
+  /** A moderator's direct revert; an appeal records its own grant instead. */
+  recordTextScanRuling?: boolean;
+  /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
+  textHash?: string;
+  /** A granted appeal, which has already decided the flag is the automation's. */
+  skipRefusal?: boolean;
+  /** Leave a flag the revert may not undo in place and report it in `keptMinor`, instead of refusing. */
+  keepWhenRefused?: boolean;
+}): Promise<RollbackReport> {
+  const refusal = skipRefusal ? undefined : await minorRevertRefusal(modelId);
+  if (refusal && keepWhenRefused)
+    return { candidates: 1, rolledBack: 0, skipped: 0, failed: 0, keptMinor: 1, sample: [] };
+  if (refusal) throw throwBadRequestError(refusal);
+
+  // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
+  if (
+    recordTextScanRuling &&
+    !(await stampModeratorTextScanRuling({
+      modelId,
+      userId,
+      label: 'minor',
+      reason,
+      note,
+      textHash,
+    }))
+  )
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan',
+      message: 'moderator minor ruling not recorded: model text unreadable',
+      modelId,
+    }).catch(() => null);
+
   const report = await rollbackMinorHashAutoFlags({
     dryRun: false,
     limit: 1,
@@ -631,7 +752,36 @@ export async function revertMinorHashAutoFlag({
     activity: 'rollbackMinorAutoHash',
   });
 
+  // After the lift, and only for a moderator's own revert: an appeal's revert is followed by its
+  // own resolution, which must not be pre-empted.
+  if (recordTextScanRuling)
+    await settleFlagAppealsAfterModeratorLift({
+      modelId,
+      userId,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
+
   return report;
+}
+
+/**
+ * Why a revert may not undo this model's flag: it undoes automation only, never a moderator's flag
+ * or one a moderator set or confirmed since the automation's snapshot. The admin rollback with
+ * explicit model ids stays the way to undo those.
+ */
+export async function minorRevertRefusal(modelId: number): Promise<string | undefined> {
+  const [row] = await dbWrite.$queryRaw<{ source: string | null; humanSince: boolean }[]>`
+    SELECT m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS source,
+           ${humanConfirmedPredicate} AS "humanSince"
+    FROM "Model" m
+    WHERE m.id = ${modelId}
+  `;
+  if (!row?.source) return;
+  if (row.source !== 'auto' && row.source !== 'text-scan')
+    return 'This minor flag was set by a moderator, not by automation, so it cannot be reverted. Unset it by hand.';
+  if (row.humanSince)
+    return 'A moderator has set or confirmed this minor flag since it was applied, so it cannot be reverted. Unset it by hand.';
 }
 
 export type MinorFlagAppealRow = {
@@ -644,6 +794,8 @@ export type MinorFlagAppealRow = {
   username: string | null;
   status: string;
   minor: boolean;
+  poi: boolean;
+  textScanFlags: TextScanFlags | null;
   flaggedAt: Date | null;
   flagSource: string | null;
   flagConfirmedFrom: string | null;
@@ -664,7 +816,8 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
   const rows = await dbRead.$queryRaw<MinorFlagAppealRow[]>`
     SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
            m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-           m.status::text AS status, m.minor,
+           m.status::text AS status, m.minor, m.poi,
+           m.meta->${TEXT_SCAN_FLAGS_KEY} AS "textScanFlags",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
            m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS "flagSource",
            -- A moderator affirming an auto-flag rewrites source to 'manual', so this
@@ -676,7 +829,7 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     LEFT JOIN "User" u ON u.id = m."userId"
-    WHERE a."entityType" = 'Model'
+    WHERE a."entityType" = 'Model' AND a.category IS NULL
       -- Cast rather than parameterize the enum: Prisma sends the value as text and
       -- Postgres has no AppealStatus = text operator.
       AND a.status::text = ${AppealStatus.Pending}
@@ -687,6 +840,11 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
   return { items: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+export type AppealLabel = 'minor' | 'poi';
+export type AppealLabelDecision = 'uphold' | 'overturn';
+
+const LABEL_NOUN: Record<AppealLabel, string> = { minor: 'a minor', poi: 'a real person' };
+
 // The flag decision is written first and the appeal resolved last, so a failure
 // between them leaves the appeal open and visibly unactioned rather than closed
 // against a model nothing happened to.
@@ -694,37 +852,133 @@ export async function resolveMinorFlagAppeal({
   modelId,
   uphold,
   userId,
+  labels,
+  resolvedReason,
+  internalNotes,
 }: {
   modelId: number;
   uphold: boolean;
   userId: number;
+  labels?: Partial<Record<AppealLabel, AppealLabelDecision>>;
+  resolvedReason?: string;
+  internalNotes?: string;
 }) {
-  if (uphold) {
-    // Another moderator may have reverted the flag since this row was fetched.
-    // Confirming then writes nothing while the appeal still closes Rejected —
-    // telling the owner their request was denied on a model that isn't flagged.
-    // Overturning carries no such gate: it's the only way left to close the row.
-    //
-    // Read from the primary: a revert inside replication lag is exactly the race
-    // this guards, and the replica would still answer "minor". One PK lookup.
-    const model = await dbWrite.model.findUnique({
-      where: { id: modelId },
-      select: { minor: true },
-    });
-    if (!model?.minor)
-      throw throwBadRequestError('This model is no longer flagged as depicting a minor');
+  // Read from the primary: a revert inside replication lag is exactly the race the uphold
+  // guard exists for, and the replica would still answer "flagged". One PK lookup.
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { minor: true, poi: true, meta: true },
+  });
+  const meta = (model?.meta ?? null) as ModelMeta | null;
+  const flagged: AppealLabel[] = [];
+  if (model?.minor) flagged.push('minor');
+  const poiTextScan = !!model?.poi && hasOpenTextScanFlag(meta, 'poi');
+  const poiHash = !!model?.poi && !!meta?.poiFlagSnapshot;
+  if (poiTextScan || poiHash) flagged.push('poi');
 
-    await confirmMinorHashAutoFlag({ modelId, userId });
-  } else {
-    await revertMinorHashAutoFlag({ modelId, userId });
+  for (const label of Object.keys(labels ?? {}) as AppealLabel[])
+    if (!flagged.includes(label))
+      throw throwBadRequestError(
+        `This model is no longer flagged as depicting ${LABEL_NOUN[label]}`
+      );
+  // Upholding a lifted flag writes nothing but still tells the owner their request was denied.
+  if (uphold && !labels && !flagged.length)
+    throw throwBadRequestError('This model is no longer flagged');
+
+  const decide = (label: AppealLabel) => labels?.[label] ?? (uphold ? 'uphold' : 'overturn');
+  const upheld = flagged.filter((label) => decide(label) === 'uphold');
+  const overturned = flagged.filter((label) => decide(label) === 'overturn');
+  const approved = labels ? overturned.length > 0 : !uphold;
+
+  // Checked against the verdict this ruling writes: a per-label ruling also decides flagged labels it
+  // does not name.
+  if (resolvedReason) {
+    const ruledOn = approved ? overturned : flagged;
+    const invalid = resolutionReasonError(
+      'flagAppeal',
+      approved ? 'Approved' : 'Rejected',
+      resolvedReason,
+      internalNotes,
+      ruledOn.length ? ruledOn : undefined
+    );
+    if (invalid) throw throwBadRequestError(invalid);
   }
+
+  const grantHashes: Record<string, string> = {};
+  for (const label of overturned) {
+    // A hash-only real-person flag has no text verdict to grant against.
+    if (label === 'poi' && !poiTextScan) continue;
+    const hash = await loadGrantTextHash('Model', modelId, label);
+    if (!hash)
+      throw throwBadRequestError(
+        "Could not read this model's text, so the grant cannot record what it covers. The appeal is still open."
+      );
+    grantHashes[label] = hash;
+  }
+
+  // The sign-off only: the appeal's own upheld stamp below is the ruling.
+  if (upheld.includes('minor'))
+    await confirmMinorHashAutoFlag({ modelId, userId, recordTextScanRuling: false });
+  // Call-site import: poi-hash.service imports this module.
+  const loadPoiHash = () => import('~/server/services/poi-hash.service');
+  if (upheld.includes('poi') && poiHash)
+    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId, fromAppeal: true });
+  const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
+  if (upheldVerdicts.length)
+    await stampModelTextScanAppeal({
+      modelId,
+      userId,
+      decision: 'appealUpheld',
+      labels: upheldVerdicts,
+    });
+
+  // Before the lift, so a rescan landing in between sees the grant. The poi grant is stamped by the
+  // same statement that lifts it, so a failed lift leaves the appeal retryable.
+  if (overturned.includes('minor')) {
+    await stampModelTextScanAppeal({
+      modelId,
+      userId,
+      decision: 'appealGranted',
+      labels: ['minor'],
+      grantHashes,
+    });
+    const snapshot = meta?.minorFlagSnapshot;
+    const origin = snapshot?.confirmedFrom ?? snapshot?.source;
+    // A moderator's own flag is unset, never rolled back to a pre-state they did not choose. A
+    // confirmed automated flag is still rolled back: the owner's appeal is against the automation.
+    const report =
+      origin === 'auto' || origin === 'text-scan'
+        ? await revertMinorHashAutoFlag({ modelId, userId, skipRefusal: true })
+        : undefined;
+    if (report?.failed)
+      logToAxiom({
+        type: 'error',
+        name: 'minor-hash-rollback',
+        message: 'appeal overturn: the flag rollback failed, unsetting minor instead',
+        modelId,
+      }).catch(() => null);
+    // The owner asked and a moderator agreed, so a minor flag from before the automation goes too.
+    if (!report?.rolledBack) await setModelMinor({ id: modelId, minor: false, userId });
+  }
+  // With both flags, the text-scan grant lifts the flag, restores its own pre-state and drops the
+  // hash snapshot.
+  if (overturned.includes('poi') && poiTextScan)
+    await grantModelTextScanPoi({ modelId, userId, grantHash: grantHashes.poi });
+  else if (overturned.includes('poi'))
+    await (await loadPoiHash()).revertPoiHashAutoFlag({ modelId, userId, fromAppeal: true });
 
   await resolveEntityAppeal({
     ids: [modelId],
     entityType: EntityType.Model,
-    status: uphold ? AppealStatus.Rejected : AppealStatus.Approved,
+    status: approved ? AppealStatus.Approved : AppealStatus.Rejected,
+    resolvedReason,
+    internalNotes,
     userId,
   });
+
+  // The grants cover the current text, so there is nothing to rescan. The moderator app still reads
+  // the flag.
+  return { rescanQueued: false };
 }
 
 export async function dismissMinorHashMatch({
@@ -736,7 +990,7 @@ export async function dismissMinorHashMatch({
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model"
-    SET meta = COALESCE(meta, '{}'::jsonb)
+    SET meta = ${asJsonbObjectSql('meta')}
       || jsonb_build_object('minorHashDismissed', jsonb_build_object('at', now(), 'by', ${userId}))
     WHERE id = ${modelId}
   `;
@@ -750,12 +1004,33 @@ export async function dismissMinorHashMatch({
 
 type RollbackCandidateRow = {
   modelId: number;
+  /** Null on a snapshot written before it was kept. */
+  prevMinor: boolean | null;
+  ownerDeclaredMinor: boolean;
   prevNsfw: boolean;
   prevSfwOnly: boolean;
   prevGalleryLevel: number | null;
   prevLockedProperties: string[];
   prevMinorImageIds: number[];
 };
+
+/**
+ * Why the model was minor before the flag being rolled back, if it was: the rollback undoes that
+ * flag, never an earlier one. A snapshot from before `prevMinor` was kept has to be read from what
+ * it did record, and doubt keeps the flag: a wrongly kept one costs a moderator a click.
+ */
+function minorBeforeFlag(
+  row: Pick<
+    RollbackCandidateRow,
+    'prevMinor' | 'ownerDeclaredMinor' | 'prevNsfw' | 'prevSfwOnly' | 'prevLockedProperties'
+  >
+): 'recorded' | 'declared' | 'locked' | 'sfwOnly' | undefined {
+  if (typeof row.prevMinor === 'boolean') return row.prevMinor ? 'recorded' : undefined;
+  if (row.ownerDeclaredMinor) return 'declared';
+  if (row.prevLockedProperties.includes('minor')) return 'locked';
+  // The state a minor flag leaves; nothing recorded says whether one did.
+  if (row.prevSfwOnly && !row.prevNsfw) return 'sfwOnly';
+}
 
 // A moderator has since reviewed and affirmed the flag by hand (a later
 // `ModActivity` row with activity = 'setMinor') — their decision must stand.
@@ -773,12 +1048,11 @@ const humanConfirmedPredicate = Prisma.sql`
   )
 `;
 
-// A blanket rollback undoes the automation's decisions only. Manual flags are
-// snapshotted too (so they CAN be undone), but only ever by an explicit
-// `modelIds` request — a moderator's deliberate call must never be reverted as
-// collateral of "undo the backfill".
+// A blanket rollback undoes the hash automation's decisions only. Manual flags are snapshotted too
+// (so they CAN be undone), and text-scan flags carry their own appeal path; both are only ever
+// reverted by an explicit `modelIds` request.
 const autoFlaggedPredicate = Prisma.sql`
-  m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'manual'
+  m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
 `;
 
 // Aging out of the review window is itself a decision that the flag stands, so a
@@ -789,7 +1063,7 @@ const notAcceptedPredicate = Prisma.sql`
   NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
 `;
 
-export type RollbackOutcome = 'rolledBack' | 'skipped' | 'failed';
+export type RollbackOutcome = 'rolledBack' | 'keptMinor' | 'skipped' | 'failed';
 export type RollbackSample = { modelId: number; outcome: RollbackOutcome };
 
 export type RollbackReport = {
@@ -797,8 +1071,57 @@ export type RollbackReport = {
   rolledBack: number;
   skipped: number;
   failed: number;
+  /** Models left minor: minor before the flag, or a flag a revert may not undo. Not in `rolledBack`. */
+  keptMinor: number;
   sample: RollbackSample[];
 };
+
+// In the restore's own statement, so a failure before the reassert cannot leave a real-person model
+// without its locks.
+const withPoiLocksSql = (locks: string[]) => Prisma.sql`CASE
+  WHEN poi THEN ARRAY(SELECT DISTINCT unnest(${locks}::text[] || ${POI_LOCKED_PROPERTIES}::text[]))
+  ELSE ${locks}::text[]
+END`;
+
+/**
+ * Rolls back a flag on a model that was minor before it: the locks it added go, and the snapshot
+ * with them, while the earlier minor flag and everything it holds stay.
+ */
+async function rollBackFlagOnMinorModel(
+  row: RollbackCandidateRow,
+  keptBy: NonNullable<ReturnType<typeof minorBeforeFlag>>
+) {
+  // A keep resting on an earlier minor lock keeps the flag's locks too, so only a moderator can
+  // clear it. The others put back the locks from before: a minor lock would make the model a
+  // seed for automated repeat-uploader flags, and nobody confirmed it.
+  const locks =
+    keptBy === 'locked'
+      ? uniq([...row.prevLockedProperties, ...MINOR_LOCKED_PROPERTIES])
+      : row.prevLockedProperties;
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET "lockedProperties" = ${withPoiLocksSql(locks)},
+        meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY} - ${SYSTEM_NSFW_LOCK_META_KEY}::text)
+          || jsonb_build_object(${MINOR_HASH_CLEARED_KEY}, jsonb_build_object('at', now()))
+    WHERE id = ${row.modelId}
+  `;
+  await trackModActivity(SYSTEM_USER_ID, {
+    entityType: 'model',
+    entityId: row.modelId,
+    activity: 'rollbackMinorAutoHash',
+  }).catch(() => null);
+  await reassertModelPoiRestrictions(row.modelId);
+  if (keptBy === 'sfwOnly')
+    await logToAxiom(
+      {
+        type: 'info',
+        name: 'minor-hash-rollback',
+        message: 'kept minor: an older snapshot recorded an SFW-only model, and no prior flag',
+        modelId: row.modelId,
+      },
+      'webhooks'
+    ).catch(() => null);
+}
 
 export async function rollbackMinorHashAutoFlags({
   dryRun,
@@ -846,6 +1169,8 @@ export async function rollbackMinorHashAutoFlags({
 
   const rows = await dbRead.$queryRaw<RollbackCandidateRow[]>`
     SELECT m.id AS "modelId",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevMinor')::boolean AS "prevMinor",
+           COALESCE(m.meta->'ownerFlagOverride'->'flags' ? 'minor', false) AS "ownerDeclaredMinor",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevSfwOnly')::boolean AS "prevSfwOnly",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel",
@@ -867,6 +1192,7 @@ export async function rollbackMinorHashAutoFlags({
     rolledBack: 0,
     skipped: confirmed?.total ?? 0,
     failed: 0,
+    keptMinor: 0,
     sample: [],
   };
 
@@ -881,8 +1207,9 @@ export async function rollbackMinorHashAutoFlags({
 
   if (dryRun) {
     for (const row of rows) {
-      report.rolledBack++;
-      addSample(row.modelId, 'rolledBack');
+      const outcome = minorBeforeFlag(row) ? 'keptMinor' : 'rolledBack';
+      report[outcome]++;
+      addSample(row.modelId, outcome);
     }
     addConfirmedSamples();
     return report;
@@ -890,6 +1217,14 @@ export async function rollbackMinorHashAutoFlags({
 
   const tasks = rows.map((row) => async () => {
     try {
+      const keptBy = minorBeforeFlag(row);
+      if (keptBy) {
+        await rollBackFlagOnMinorModel(row, keptBy);
+        report.keptMinor++;
+        addSample(row.modelId, 'keptMinor');
+        return;
+      }
+
       // Reuses setModelMinor's own machinery (search index, caches, image
       // propagation) instead of hand-rolling the unset — it also clears every
       // image's `minor`, including ones legitimately minor beforehand, which is
@@ -901,25 +1236,34 @@ export async function rollbackMinorHashAutoFlags({
         activity: 'rollbackMinorAutoHash',
       });
 
+      // A real-person or private model stays SFW-only as the flag left it, so no read sees it mature.
       await dbWrite.$executeRaw`
         UPDATE "Model"
-        SET nsfw = ${row.prevNsfw},
-            "sfwOnly" = ${row.prevSfwOnly},
+        SET nsfw = CASE WHEN poi OR availability = 'Private' THEN false ELSE ${row.prevNsfw} END,
+            "sfwOnly" = CASE WHEN poi OR availability = 'Private' THEN true ELSE ${
+              row.prevSfwOnly
+            } END,
             "gallerySettings" = CASE
+              WHEN poi OR availability = 'Private' THEN "gallerySettings"
               WHEN ${row.prevGalleryLevel}::int IS NULL
                 THEN COALESCE("gallerySettings", '{}'::jsonb) - 'level'
               ELSE COALESCE("gallerySettings", '{}'::jsonb)
                 || jsonb_build_object('level', ${row.prevGalleryLevel}::int)
             END,
-            "lockedProperties" = ${row.prevLockedProperties}::text[],
+            "lockedProperties" = ${withPoiLocksSql(row.prevLockedProperties)},
             -- The snapshot goes, so the clear stamp is the only surviving record
             -- that a human said "not minor" — see notMinorHashClearedPredicate.
-            meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY})
+            meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY} - ${SYSTEM_NSFW_LOCK_META_KEY}::text)
               || jsonb_build_object(
                    ${MINOR_HASH_CLEARED_KEY}, jsonb_build_object('at', now())
                  )
         WHERE id = ${row.modelId}
       `;
+      await restoreOwnerFlagOverride(row.modelId, { revertedFlag: 'minor' });
+      // The restore above moves sfwOnly and the gallery level after setModelMinor's own bust.
+      await bustModelGallerySettings([row.modelId]);
+      // Before the image re-mark: the reassert's side effects rewrite every image's minor flag.
+      await reassertModelPoiRestrictions(row.modelId);
 
       if (row.prevMinorImageIds.length) {
         await dbWrite.$executeRaw`
@@ -958,6 +1302,7 @@ export async function rollbackMinorHashAutoFlags({
       message: 'rollback complete',
       candidates: report.candidates,
       rolledBack: report.rolledBack,
+      keptMinor: report.keptMinor,
       skipped: report.skipped,
       failed: report.failed,
     },
@@ -970,9 +1315,11 @@ export async function rollbackMinorHashAutoFlags({
 // The 30-day window hides an unreviewed flag from the queue; this makes that
 // durable. Kept as `source: 'auto'` on purpose — moderatorMinorSeedPredicate
 // excludes 'auto', so a flag no human ever looked at never becomes the seed for
-// further automated flags. No status filter on the Appeal check: any appeal at
-// all means a human already looked, so sweeping it up as "nobody objected"
-// would overwrite that decision with a presumption.
+// further automated flags. No status filter for an in-app appeal: any one at all
+// means a human already looked, so sweeping it up as "nobody objected" would
+// overwrite that decision with a presumption. A site-form appeal (category set) is
+// decided in a queue that rules on the unpublish, not the flag, so it holds the
+// sweep only while Pending.
 export async function acceptExpiredMinorAutoFlags({
   dryRun,
   limit,
@@ -992,13 +1339,14 @@ export async function acceptExpiredMinorAutoFlags({
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+            AND (a.category IS NULL OR a.status = 'Pending')
         )
     `;
     return { accepted: row?.count ?? 0 };
   }
 
   const accepted = await dbWrite.$executeRaw`
-    UPDATE "Model" SET meta = COALESCE(meta, '{}'::jsonb)
+    UPDATE "Model" SET meta = ${asJsonbObjectSql('meta')}
       || jsonb_build_object(${MINOR_HASH_ACCEPTED_KEY}, jsonb_build_object('at', now()))
     WHERE id IN (
       SELECT m.id
@@ -1011,6 +1359,7 @@ export async function acceptExpiredMinorAutoFlags({
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+            AND (a.category IS NULL OR a.status = 'Pending')
         )
       ORDER BY m.id
       LIMIT ${limit}

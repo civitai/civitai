@@ -207,8 +207,20 @@ function parseTotalSize(contentRange: string | undefined, readBytes: number): nu
  */
 export async function probeStoredImage(
   key: string,
-  { maxBytes, timeoutMs = STORED_IMAGE_READ_TIMEOUT_MS }: { maxBytes: number; timeoutMs?: number }
+  opts: { maxBytes: number; timeoutMs?: number }
 ): Promise<StoredImageProbe> {
+  return (await probeStoredImageWithBytes(key, opts)).probe;
+}
+
+/**
+ * {@link probeStoredImage}, also returning the bytes the measurement was decoded from, for a
+ * caller that must read something else out of the SAME object (e.g. embedded generation
+ * metadata) without a second read that could see different bytes.
+ */
+export async function probeStoredImageWithBytes(
+  key: string,
+  { maxBytes, timeoutMs = STORED_IMAGE_READ_TIMEOUT_MS }: { maxBytes: number; timeoutMs?: number }
+): Promise<{ probe: StoredImageProbe; bytes: Buffer }> {
   let bytes: Buffer;
   let sizeBytes: number;
   let etag: string | null;
@@ -280,10 +292,13 @@ export async function probeStoredImage(
   const quarterTurned = orientation != null && orientation >= 5 && orientation <= 8;
 
   return {
-    width: quarterTurned ? height : width,
-    height: quarterTurned ? width : height,
-    format,
-    sizeBytes,
-    etag,
+    probe: {
+      width: quarterTurned ? height : width,
+      height: quarterTurned ? width : height,
+      format,
+      sizeBytes,
+      etag,
+    },
+    bytes,
   };
 }

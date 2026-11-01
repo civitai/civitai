@@ -2,7 +2,8 @@ import {
   MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
   MAX_MANUAL_RESOURCES_PER_IMAGE,
 } from '~/server/common/constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { isImageMetaOnSite } from '~/server/utils/image-onsite';
+import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 // Required rather than optional, so a query that stops selecting `modelType` or `detected` fails to
 // compile instead of silently counting nothing as a checkpoint, or everything as manual.
@@ -59,6 +60,11 @@ export function getManualResourceLimitError(
   )
     return manualResourceLimitMessages.checkpoints;
   return null;
+}
+
+/** On-site generations carry their own resources, so only videos and off-site images take manual ones. */
+export function canAddManualResources({ type, meta }: { type: MediaType; meta: unknown }) {
+  return type === MediaType.video || !isImageMetaOnSite(meta);
 }
 
 /** Splits a multi-pick into the resources that fit, in order, and the first limit message hit. */

@@ -178,3 +178,30 @@ cp .claude/skills/flipt/.env.example .claude/skills/flipt/.env
 ```
 
 The skill needs `FLIPT_URL` and `FLIPT_API_TOKEN` to connect to Flipt.
+
+🔴 **THE SKILL'S OWN `.env` IS NOT OPTIONAL, AND THE ROOT `.env` IS NOT A SUBSTITUTE.**
+`loadEnv` reads this skill's `.env` and then the project root's, first value winning — so the
+root's `FLIPT_URL` IS picked up when this file is absent, and that is the trap rather than the
+rescue. The root's `FLIPT_URL` is the BROWSER-FACING host: every path under it answers 302 to a
+GitHub OAuth login, so no bearer token will ever work against it. Measured 2026-10-05, after this
+skill's `.env` had been lost: `/meta/info`, `/health`, `/api/v1/namespaces`,
+`/api/v2/environments` and `/evaluate/v1/boolean` all 302 to the OAuth provider.
+
+So adding only a token to the root `.env` leaves the skill broken in a WORSE way than it is
+now: the "FLIPT_URL and FLIPT_API_TOKEN must be set" error disappears and is replaced by HTML
+login pages failing to parse as JSON — a confusing failure instead of a clear one. Both values
+belong in this skill's `.env` together.
+
+`FLIPT_FETCHER_SECRET`, which the root `.env` does carry, is a DIFFERENT credential and is not
+an API token — it does not authenticate these calls.
+
+**Ask an infra owner for the API endpoint and a read/query token.** The specifics are
+deliberately not written here: this repository is public, and how to reach a production service
+past its proxy is exactly what the Security section of `CLAUDE.md` keeps out of it.
+
+Once you have it, protect it — these files are one `git clean` from gone and this one has already
+been lost once:
+
+```bash
+node .claude/skills/dev-server/cli.mjs wt env --backup    # copies skill credentials outside the repo
+```

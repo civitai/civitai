@@ -1,12 +1,20 @@
-import { Box, Button, Group, Stack, Textarea } from '@mantine/core';
+import { Alert, Box, Button, Group, Stack, Textarea } from '@mantine/core';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import {
+  ListingMediaSplitControlForListing,
+  MEDIA_SPLIT_NO_DECISION,
+  type ListingMediaSplitResolution,
+} from '~/components/Apps/ListingMediaSplitControl';
+import { OnsiteApproveRatingWarning } from '~/components/Apps/ListingRatingNotices';
 import {
   ReasonGatedField,
   ReasonGatedSubmitButton,
   reasonMeetsMin,
 } from '~/components/Apps/ReasonGatedActionModal';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
+import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
+import { listingFloorApproveRefusal } from '~/shared/utils/listing-publish-floor';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
@@ -34,8 +42,8 @@ import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal'
  *  - `onStatusChange` — lets the page drive its `aria-live` status region and its
  *                 route-leave navigation guard off the mutation lifecycle.
  *
- * SERVER-GRAPH-FREE (only pure constant/zod imports), so it stays browser-testable
- * and never drags the tRPC server graph into the client bundle.
+ * Imports no server infrastructure (pure constants, zod schemas and pure rating helpers),
+ * so it stays browser-testable and never drags the tRPC server graph into the client bundle.
  */
 
 export type ReviewActionStatus = 'idle' | 'submitting' | 'approved' | 'rejected' | 'error';
@@ -68,6 +76,21 @@ export function ReviewActionBar({
   const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
   const [approvalNotes, setApprovalNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
+  const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
+  // `null` until the listing's media has loaded: approving then would send a decision nobody saw.
+  // `MEDIA_SPLIT_NO_DECISION` once it has but the split cannot be read: approve proceeds and sends
+  // no decision, which the server carries out as it did before the split existed.
+  const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitResolution | null>(null);
+  const splitStateUnknown = request.approveRating != null && mediaSplit == null;
+  // The publish floor (icon + cover) the server refuses this approve on, from the same
+  // predicate (`listingFactsForRequests` → `approveFloorMissing`). Approve is disabled and the
+  // reason shown, rather than offered and refused.
+  const floorMissing = request.approveFloorMissing ?? [];
+  const floorBlocked = floorMissing.length > 0;
+  const mediaSplitDecision =
+    request.approveRating && mediaSplit && mediaSplit !== MEDIA_SPLIT_NO_DECISION
+      ? mediaSplit
+      : undefined;
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async () => {
@@ -159,6 +182,27 @@ export function ReviewActionBar({
       </Stack>
     ) : (
       <Stack gap="xs">
+        {floorBlocked && (
+          <Alert color="orange" variant="light" data-testid="apps-review-approve-floor">
+            {listingFloorApproveRefusal(floorMissing)}
+          </Alert>
+        )}
+        {request.approveRating && (
+          <OnsiteApproveRatingWarning
+            listingId={request.approveRating.listingId}
+            declaredRating={request.approveRating.declared}
+            mediaSplit={mediaSplit === 'split'}
+          />
+        )}
+        {request.approveRating && (
+          <ListingMediaSplitControlForListing
+            listingId={request.approveRating.listingId}
+            choice={mediaSplitChoice}
+            onChoice={setMediaSplitChoice}
+            onResolved={setMediaSplit}
+            disabled={busy}
+          />
+        )}
         <Textarea
           label="Approval notes (optional)"
           autosize
@@ -186,9 +230,10 @@ export function ReviewActionBar({
               approveMut.mutate({
                 publishRequestId: request.id,
                 approvalNotes: approvalNotes.trim() || undefined,
+                ...(mediaSplitDecision ? { mediaSplit: mediaSplitDecision } : {}),
               })
             }
-            disabled={busy}
+            disabled={busy || splitStateUnknown || floorBlocked}
             loading={approveMut.isPending}
           >
             Approve + build

@@ -1,4 +1,5 @@
 import {
+  moderatorArticleLookupPath,
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
   moderatorModelLookupPath,
@@ -22,6 +23,7 @@ const ENTITY_PATH: Record<string, string> = {
   comicproject: 'comics',
   model3d: '3d-models',
   crucible: 'crucibles',
+  storyline: 'storylines',
   challenge: 'challenges',
 };
 
@@ -29,7 +31,7 @@ const ENTITY_PATH: Record<string, string> = {
 // thread resolution yields 'bountyEntry'. Matching case-sensitively silently returned null for one of
 // them, which reads as "no link exists" rather than "the key was spelled differently".
 //
-// Types with no standalone page (comments, bounty entries, questions, answers, reviews, accounts)
+// Types with no standalone page (comments, bounty entries, questions, answers, accounts)
 // have no entry and correctly return null.
 export function entityUrl(
   civitaiUrl: string,
@@ -60,15 +62,48 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
   return section ? `${base}/${section}` : base;
 }
 
+/** The main site's account-level CSAM report for a user. */
+export const csamReportUrl = (civitaiUrl: string, userId: number) =>
+  `${civitaiUrl}/moderator/csam/${userId}`;
+
+/** The same page filing a report that supplements `priorReportId`, with `imageIds` preselected. */
+export function csamSupplementalReportUrl(
+  civitaiUrl: string,
+  userId: number,
+  priorReportId: number,
+  imageIds: number[] = []
+): string {
+  const params = new URLSearchParams({ supplementalOf: String(priorReportId) });
+  if (imageIds.length) params.set('imageIds', imageIds.join(','));
+  return `${csamReportUrl(civitaiUrl, userId)}?${params}`;
+}
+
+/** A workflow-only training run's review page. */
+export const trainingWorkflowReviewUrl = (workflowId: string) =>
+  `/audit/training-data/workflow/${encodeURIComponent(workflowId)}`;
+
 // The `/retool/*` builders live in `@civitai/shared/moderator-paths` so this app and the main app read
 // ONE definition. They were two, each carrying a comment telling the reader to keep them in step, and
 // they had already diverged on whether user-lookup takes a `section`. When the transitional namespace
 // moves, the copy nobody updated is the one that becomes a dead link.
 export const userLookupUrl = moderatorUserLookupPath;
+export const bulkBanUrl = (ids: number[]) =>
+  `/retool/bulk-ban?ids=${encodeURIComponent(ids.join('\n'))}`;
 export const bulkImageManagerUrl = moderatorBulkImageManagerPath;
 export const imageLookupUrl = moderatorImageLookupPath;
 export const modelLookupUrl = moderatorModelLookupPath;
 export const modelVersionLookupUrl = moderatorModelVersionLookupPath;
+export const articleLookupUrl = moderatorArticleLookupPath;
+
+/** The user report queue opened on one account. The account and its tab are the PATH so the queue — a
+ *  layout — keeps its data while a moderator moves between them; `details` is the bare path. */
+export const userReportUrl = (userId: number, tab?: string) =>
+  `/reports/user/${userId}${tab && tab !== 'details' ? `/${tab}` : ''}`;
+
+/** The post report queue opened on one post and tab — both the path, as on the user queue; `images` is the
+ *  bare path. */
+export const postReportUrl = (postId: number, tab?: string) =>
+  `/reports/post/${postId}${tab && tab !== 'images' ? `/${tab}` : ''}`;
 
 export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
 
@@ -90,6 +125,11 @@ export const chatAuditUserUrl = (username: string) =>
  *  point on the moderation pages, and dropping it lands the reviewer on whichever version is current. */
 export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>
   `${civitaiUrl}/models/${modelId}?modelVersionId=${versionId}`;
+
+/** A bounty entry on the site. Entries have no page of their own outside their bounty, so `entityUrl`
+ *  has no entry for them. */
+export const bountyEntryUrl = (civitaiUrl: string, bountyId: number, entryId: number) =>
+  `${civitaiUrl}/bounties/${bountyId}/entries/${entryId}`;
 
 /** The public Known Issues board. 🔴 THERE IS NO DEEP LINK — `src/pages/issues/index.tsx` reads no
  *  id, so a link naming a specific issue still lands on the index. Here so that stays one claim in

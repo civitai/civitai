@@ -12,6 +12,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertCircle, IconClock, IconTrash } from '@tabler/icons-react';
+import { showNotification } from '@mantine/notifications';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import { useMemo, useRef, useState } from 'react';
@@ -20,11 +21,18 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
+import { PostEditEventCard } from '~/components/Post/EditV2/PostEditEventCard';
+import { PostEditModelLink } from '~/components/Post/EditV2/PostEditModelLink';
+import { postEditEventCard } from '~/components/Post/EditV2/post-edit-event-card.utils';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { PostEditApplyPreset } from '~/components/Post/EditV2/PostEditApplyPreset';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
+import { storylinePublishMessage } from '~/components/Storyline/editor/storyline-publish-message';
+import { usePostStorylineDraft } from '~/components/Storyline/editor/usePostStorylineDraft';
+import { useStorylineDraftPublish } from '~/components/Storyline/editor/useStorylineDraftPublish';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
@@ -126,6 +134,15 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // directly would just restore the stashed date (via the CASE in
   // updatePost) without making the post visible, which is confusing.
   const isUnpublishedByParent = post.wasPublished && !post.publishedAt;
+  const eventCard = postEditEventCard({
+    ownerId: post.user.id,
+    viewerId: currentUser?.id,
+    collectionId,
+    publishedAt: post.publishedAt,
+    unpublishedByParent: !!isUnpublishedByParent,
+    addedImages,
+    ownModelId: post.ownModelId,
+  });
   // Build a link to the parent model edit page so the user can see why the
   // parent was taken down (the unpublish reason lives on the model/version,
   // not on the post). Use `post.parentModelId` from the unpublish-context
@@ -150,7 +167,15 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     predicate: (mutation) => mutation.options.mutationKey?.flat().includes('post') ?? false,
     exact: false,
   });
-  const publishLabel = collectionId ? 'Submit' : 'Publish';
+  const { pending: storylineDraft } = usePostStorylineDraft(post.id);
+  const isFirstChapterDraft = !!storylineDraft && !storylineDraft.parentChapter;
+  const storylinePublish = useStorylineDraftPublish({ post, pending: storylineDraft });
+  const storylineChapterNumber = storylineDraft?.parentChapter
+    ? storylineDraft.parentChapter.depth + 2
+    : 1;
+  const publishLabel =
+    storylinePublish.label ??
+    (isFirstChapterDraft ? 'Publish chapter 1' : collectionId ? 'Submit' : 'Publish');
   // #endregion
 
   // #region [publish post]
@@ -162,13 +187,37 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         publishedAt,
         collectionId,
         collectionTagId,
+        expectedPrice: storylinePublish.expectedPrice,
       },
       {
-        onSuccess: async (_, post) => {
+        onSuccess: async (result, post) => {
           const { id, publishedAt } = post;
           updatePost((data) => {
             data.publishedAt = publishedAt ?? null;
           });
+          if (result?.storyline) {
+            const { link, message, ...said } = storylinePublishMessage(result.storyline, {
+              chapterNumber: storylineChapterNumber,
+            });
+            showNotification({
+              ...said,
+              message: link ? (
+                <>
+                  {message}{' '}
+                  <Anchor component={Link} href={link.href} inherit>
+                    {link.label}
+                  </Anchor>
+                </>
+              ) : (
+                message
+              ),
+              autoClose: link ? false : 10000,
+            });
+            await Promise.all([
+              queryUtils.storyline.getForPosts.invalidate(),
+              queryUtils.storyline.getPendingForPost.invalidate({ postId: id }),
+            ]);
+          }
           if (publishedAt && afterPublish) await afterPublish({ postId: id, publishedAt });
           else {
             if (returnUrl) router.push(safeInternalPath(returnUrl, `/posts/${post.id}`));
@@ -176,7 +225,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           }
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
         },
-        onError: (error) => {
+        onError: async (error) => {
+          if (await storylinePublish.handleError(error)) return;
           showErrorNotification({
             title: 'There was an error while trying to publish your post',
             error,
@@ -405,7 +455,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         >
           {collectionId ? (
             <Button
-              disabled={!canPublish || !!mutating}
+              disabled={!canPublish || !!mutating || storylinePublish.blocked}
               onClick={() => handlePublish()}
               loading={updatePostMutation.isPending}
               data-tour="post:publish"
@@ -415,7 +465,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           ) : (
             <Button.Group>
               <Button
-                disabled={!canPublish || !!mutating}
+                disabled={!canPublish || !!mutating || storylinePublish.blocked}
                 onClick={() => handlePublish()}
                 loading={updatePostMutation.isPending}
                 className="flex-1"
@@ -428,7 +478,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
                   variant="outline"
                   loading={updatePostMutation.isPending}
                   onClick={handleScheduleClick}
-                  disabled={!canPublish || !!mutating}
+                  disabled={!canPublish || !!mutating || storylinePublish.blocked}
                 >
                   <IconClock size={20} />
                 </Button>
@@ -463,6 +513,14 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Button.Group>
       )}
 
+      {!post.publishedAt && !isUnpublishedByParent && storylinePublish.caption && (
+        <Text size="xs" c="dimmed" data-testid="storyline-publish-caption">
+          {storylinePublish.caption}
+        </Text>
+      )}
+
+      {eventCard && <PostEditEventCard {...eventCard} />}
+
       {!post.publishedAt && !isUnpublishedByParent && !deleted && (
         <Button
           variant="default"
@@ -476,6 +534,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
       {showReorder && <ReorderImagesButton />}
 
+      {features.postPresets && features.canWrite && <PostEditApplyPreset post={post} />}
+
       {/*
         Always show the View button (gated only by having ≥1 image). Owners
         can preview how the post will render to the public even while it's
@@ -485,14 +545,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       {images.length > 0 && (
         <Button
           onClick={() => {
-            const [image] = images;
-            if (images.length > 1) {
-              if (collectionId) router.replace(`/posts/${post.id}`);
-              else router.push(`/posts/${post.id}`);
-            } else if (images.length === 1 && image && 'id' in image.data) {
-              if (collectionId) router.replace(`/images/${image.data.id}`);
-              else router.push(`/images/${image.data.id}`);
-            }
+            if (collectionId) router.replace(`/posts/${post.id}`);
+            else router.push(`/posts/${post.id}`);
           }}
           variant="outline"
           color="blue"
@@ -500,6 +554,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           View {postLabel}
         </Button>
       )}
+
+      <PostEditModelLink modelId={post.parentModelId} modelVersionId={post.modelVersionId} />
 
       <PlacementSpaceToggle level="post" entityId={post.id} />
 

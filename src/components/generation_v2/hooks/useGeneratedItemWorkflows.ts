@@ -20,11 +20,8 @@ import {
   type WorkflowCategory,
   getEcosystemsForWorkflow,
   bulkWorkflowLimits,
-} from '~/shared/data-graph/generation/config/workflows';
-import {
-  getWorkflowsForMediaType,
-  workflowHasNode,
-} from '~/shared/data-graph/generation/generation-graph';
+} from '~/shared/generation/config/workflows';
+import { getWorkflowsForMediaType, workflowHasField } from '~/shared/generation/workflow-media';
 import {
   openCompatibilityConfirmModal,
   buildWorkflowPendingChange,
@@ -34,6 +31,7 @@ import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { recordSourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import { resolveSourceDimensions } from '~/components/generation_v2/utils/resolve-source-dimensions';
 import { getImageDimensions } from '~/utils/image-utils';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
@@ -263,7 +261,7 @@ async function applyWorkflowToForm({
 
   const isImageType = image.mediaType === 'image';
   const acceptsImages =
-    inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
+    inputType === 'image' || (isImageType && workflowHasField(workflowId, 'images'));
 
   let images: { url: string; width: number; height: number }[] | undefined;
   if (acceptsImages) {
@@ -271,6 +269,8 @@ async function applyWorkflowToForm({
     if (!dimensions) return;
     images = [{ url: image.url, ...dimensions }];
   }
+
+  recordSourceRating(image.url, image.nsfwLevel);
 
   if (isEnhancement && (image.params || image.resources)) {
     // Store original generation data as source metadata
@@ -351,7 +351,7 @@ export async function applyWorkflowWithCheck({
     const inputType = getInputTypeForWorkflow(workflowId);
     const isImageType = image.mediaType === 'image';
     const acceptsImages =
-      inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
+      inputType === 'image' || (isImageType && workflowHasField(workflowId, 'images'));
 
     let images: { url: string; width: number; height: number }[] | undefined;
     if (acceptsImages) {
@@ -360,9 +360,14 @@ export async function applyWorkflowWithCheck({
       images = [{ url: image.url, ...dimensions }];
     }
 
+    // Everything the image carries EXCEPT denoise. Applying Face Fix or Hires Fix is a new
+    // operation on the image, so its strength is the user's current setting, not a value copied
+    // from however the source was made — and a txt2img or non-SD source has no denoise at all, so
+    // copying its params would silently hand the slider the def default instead.
+    const { denoise: _sourceDenoise, ...sourceParams } = image.params ?? {};
     generationGraphStore.setData({
       params: {
-        ...image.params,
+        ...sourceParams,
         workflow: workflowId,
         seed: undefined,
         ...(images ? { images } : {}),
@@ -464,6 +469,7 @@ export async function applyBulkWorkflow(
 
   // Store source metadata for each image
   for (const image of batch) {
+    recordSourceRating(image.url, image.nsfwLevel);
     if (image.params || image.resources) {
       sourceMetadataStore.setMetadata(image.url, {
         params: image.params,

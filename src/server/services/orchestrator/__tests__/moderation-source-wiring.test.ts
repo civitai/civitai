@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { clampExternalModerationSource } from '~/server/prom/external-moderation.metrics';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
-import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
+import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
 
 /**
  * 🔴 POPULATION + WIRING GUARD for the `source` label of
@@ -181,6 +181,13 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
   'src/server/services/blocks/steps/moderation.ts::submit': {
     sites: 1,
     siteNote: "the 'promptAudit' step's submit-phase audit",
+    arg: { kind: 'absent' },
+  },
+  // The Training Studio's check on an edit prompt before the Studio submits the edit to the
+  // orchestrator itself; that generation never passes through `generateFromGraph`.
+  'src/pages/api/training-studio/check-text.ts::auditEditPrompt': {
+    sites: 1,
+    siteNote: "the audit of the Studio's edit prompt and its input image",
     arg: { kind: 'absent' },
   },
   'src/server/services/orchestrator/promptEnhancement.ts::enhancePrompt': {

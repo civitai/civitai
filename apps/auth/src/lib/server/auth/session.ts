@@ -1,19 +1,36 @@
 import { randomUUID } from 'crypto';
+import { decodeJwt } from 'jose';
 import type { Cookies } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import {
+  familyClaims,
+  familyId,
+  hostSessionCookieName,
   isSecureCookie,
   maybeCreateSessionSigner,
+  readSessionToken,
+  SESSION_LINEAGE_MAX_AGE_MS,
+  SESSION_COOKIE_BASE,
+  sessionCookieMode,
   sessionCookieName,
+  sessionCookieNameForSlot,
   SPOKE_AUTHORIZE_PATH,
+  type CookieRead,
+  type CookieSlot,
+  type FamilyClaims,
+  type SessionClaims,
   type SessionSigner,
   type SessionUser,
 } from '@civitai/auth';
 import { sessions } from './registry';
-import { getOrCreateDeviceId, linkAccount } from './device';
-import { cookieDomain } from './cookie';
+import { getOrCreateDeviceId, linkAccount, rotateDeviceId } from './device';
+import { clearOtherCookieNames, cookieDomain } from './cookie';
+import { cookieJar } from './cookie-jar';
 import { verifier } from './verifier';
+import { acceptHubSession } from './lineage';
 import { issuePendingAuthz } from './pending-authz';
 import { registrableDomain } from './domain';
+import { isRefusedModerationAccount } from './moderation-account';
 
 // THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
@@ -69,46 +86,139 @@ export function toSessionUser(row: {
   };
 }
 
+/** The shared Civitai Moderation account never gets a session, by any path, including impersonation. */
+export function refuseModerationAccount(
+  user: { id: number; username?: string | null },
+  source: string
+): void {
+  if (isRefusedModerationAccount(user, source)) error(403, 'This account cannot sign in.');
+}
+
+/** Whether this account may be given a new or re-signed session cookie. */
+export function canHoldSession(user: SessionUser | null | undefined): user is SessionUser {
+  return !!user && !user.bannedAt && !user.deletedAt && !isRefusedModerationAccount(user, 'cookie');
+}
+
+/** Seconds a session minted now may live: the normal lifetime, cut short by the 90-day limit and `impExp`. */
+export function sessionExpiresIn(lineage: FamilyClaims, now = Date.now()): number {
+  let until = now + getSigner().maxAge * 1000;
+  if (lineage.iat0 != null) until = Math.min(until, lineage.iat0 + SESSION_LINEAGE_MAX_AGE_MS);
+  if (lineage.impExp != null) until = Math.min(until, lineage.impExp);
+  return Math.max(1, Math.floor((until - now) / 1000));
+}
+
+export interface MintOptions {
+  /** The session this one descends from (refreshed, switched or impersonated from, or the browser's prior
+   *  session on an add-account login). Null or absent: a new sign-in. */
+  parent?: SessionClaims | null;
+  /** A fresh interactive sign-in restarts the 90-day clock. */
+  iat0?: number;
+  clearImpersonation?: boolean;
+  impersonatedBy?: number;
+}
+
 /**
  * Mint the THIN ES256 session token (identity only — `sub`/`jti`/`signedAt`, NO embedded user; the rich user is
- * resolved per-request from the shared cache) + track it for invalidation. Returns the token; does NOT touch
- * any cookie — callers that own the HTTP response set it themselves. `establishSession` is the cookie-setting
- * wrapper for the login path.
+ * resolved per-request from the shared cache) + track it for invalidation. Returns the token and its family; does
+ * NOT touch any cookie — callers that own the HTTP response set it themselves.
  */
-export async function mintUserSession(
+export async function mintSession(
   user: SessionUser,
-  opts?: { impersonatedBy?: number }
-): Promise<string> {
+  opts: MintOptions = {}
+): Promise<{ token: string; family: string }> {
+  refuseModerationAccount(user, opts.impersonatedBy ? 'impersonate' : 'mint');
+  const now = Date.now();
   const tokenId = randomUUID();
+  const lineage = familyClaims(opts.parent ?? null, {
+    iat0: opts.iat0,
+    clearImpersonation: opts.clearImpersonation || opts.impersonatedBy != null,
+    now,
+  });
+  if (opts.impersonatedBy) lineage.impersonatedBy = opts.impersonatedBy;
   const token = await getSigner().mintSessionToken(
-    {
-      signedAt: Date.now(),
-      sub: String(user.id),
-      // Moderator impersonation (F): stamp the moderator's id so the exit path can re-mint their session.
-      ...(opts?.impersonatedBy ? { impersonatedBy: opts.impersonatedBy } : {}),
-    },
-    { jti: tokenId } // the session/token id is the standard `jti` claim — no duplicate `id`
+    { signedAt: now, sub: String(user.id), ...lineage },
+    { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }
   );
   // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
   await sessions.trackToken(tokenId, user.id).catch(() => {});
+  return { token, family: familyId({ sid: lineage.sid, jti: tokenId }) ?? tokenId };
+}
+
+/** Re-sign an existing session under the same jti, keeping its lineage and 90-day limit, and re-track it. */
+export async function reissueSession(
+  claims: SessionClaims,
+  userId: number,
+  jti: string
+): Promise<string> {
+  const now = Date.now();
+  const lineage = familyClaims(claims, { now });
+  const token = await getSigner().mintSessionToken(
+    { sub: String(userId), signedAt: now, ...lineage },
+    { jti, expiresIn: sessionExpiresIn(lineage, now) }
+  );
+  await sessions.trackToken(jti, userId).catch(() => undefined);
   return token;
+}
+
+export async function mintUserSession(user: SessionUser, opts?: MintOptions): Promise<string> {
+  return (await mintSession(user, opts)).token;
+}
+
+/** The hub session token this request carries, and which slot it was read from. */
+export function readHubSession(cookies: Pick<Cookies, 'get'>): CookieRead | null {
+  return readSessionToken(cookieJar(cookies));
 }
 
 /**
  * Set the thin-session cookie from an ALREADY-MINTED token — no mint, no device-set touch. Used by endpoints
  * that serve the browser client DIRECTLY (switch / impersonate / exit), so the hub itself lands the
  * `.civitai.com` cookie on a credentialed CORS response. (The main app's proxies don't use this — they read the
- * returned token and set their own cookie, because they also deploy cross-site as `.red`.)
+ * returned token and set their own cookie, because they also deploy cross-site as `.red`.) The host-only slot
+ * is this hub's alone and carries no Domain.
  */
-export function setSessionCookie(cookies: Cookies, token: string): void {
-  cookies.set(SESSION_COOKIE, token, {
+export function setSessionCookie(
+  cookies: Cookies,
+  token: string,
+  slot: CookieSlot = sessionCookieMode()
+): void {
+  const name = sessionCookieNameForSlot(slot);
+  cookies.set(name, token, {
     path: '/',
-    domain: cookieDomain(),
+    domain: slot === 'host' ? undefined : cookieDomain(),
     httpOnly: true,
     secure: isSecureCookie(),
     sameSite: 'lax',
     maxAge: getSigner().maxAge,
   });
+  if (slot === 'shared') dropStaleHostCopy(cookies, token);
+}
+
+/**
+ * Drop a host-only copy of a session other than `shared`: it would win over `shared` once the hub reads host-only
+ * first. Dropped, not rewritten: the next /authorize copies the shared session afresh.
+ */
+export function dropStaleHostCopy(cookies: Cookies, shared: string): void {
+  const host = hostSessionCookieName();
+  if (host === sessionCookieName()) return;
+  const copy = cookies.get(host);
+  if (copy !== undefined && !isCopyOf(copy, shared))
+    cookies.delete(host, { path: '/', secure: true });
+}
+
+// Unverified: it only decides whether the hub keeps a cookie of its own, never whether a session is valid.
+function isCopyOf(copy: string, token: string): boolean {
+  try {
+    const a = decodeJwt(copy);
+    const b = decodeJwt(token);
+    return (
+      !!a.sub &&
+      a.sub === b.sub &&
+      familyId(a as Pick<SessionClaims, 'sid' | 'jti'>) ===
+        familyId(b as Pick<SessionClaims, 'sid' | 'jti'>)
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -128,7 +238,9 @@ export async function establishSession(
   // accounts). Read it from the incoming cookie (not locals) so this works on every login path uniformly. Done
   // up front because setSessionCookie below queues the new cookie; reading `cookies.get` after that could echo
   // the just-set value. Verification failures (no/expired/invalid prior session) → undefined → no materialize.
-  const priorUserId = await resolvePriorSessionUserId(cookies);
+  refuseModerationAccount(user, 'login');
+  const prior = await resolvePriorSession(cookies);
+  const priorUserId = prior ? Number(prior.sub) : undefined;
 
   // A login bound for a spoke on another registrable domain must not re-point THIS domain's session — the hub
   // cookie is civitai.com's session too. Hand the identity to /authorize out-of-band instead, leaving whoever
@@ -145,20 +257,34 @@ export async function establishSession(
     : undefined;
   const handedOff = !!foreignDomain && (await issuePendingAuthz(cookies, user.id, foreignDomain));
 
+  // A sign-in on a browser that already holds a hub session (adding an account, or signing in again) joins that
+  // session's family, so one sign-out ends both.
+  let family: string | undefined;
   if (!handedOff) {
-    const token = await mintUserSession(user);
-    setSessionCookie(cookies, token);
+    const minted = await mintSession(user, {
+      parent: prior,
+      iat0: Date.now(),
+      clearImpersonation: true,
+    });
+    family = minted.family;
+    setSessionCookie(cookies, minted.token);
   }
 
-  // Link this account to the browser's device set (the account-switch list — see
-  // docs/auth/auth-hub-spoke-overview.md). LAZY: only writes a
-  // `device:accounts:*` key when this is a genuine 2nd distinct account (priorUserId set + != user.id), or when
-  // the set already exists. An ordinary single-account login writes nothing. Best-effort.
-  // Resolve the device id on its own line FIRST: getOrCreateDeviceId is SYNCHRONOUS and (re)sets the device
-  // cookie — keeping it outside the `.catch(...)` chain ensures the cookie-roll always lands and can't be
-  // swallowed as if it were part of linkAccount's best-effort redis write.
-  const deviceId = getOrCreateDeviceId(cookies);
-  await linkAccount(deviceId, user.id, priorUserId).catch(() => {});
+  // Link this account and family to the browser's records (docs/auth/auth-hub-spoke-overview.md). Records this
+  // browser can't show it is signed in to stay with the old device id; the sign-in starts on a new one.
+  const proofFamily = prior ? familyId(prior) : undefined;
+  // The prior session proves the browser is signed in to its principal: the moderator, when impersonating.
+  const priorPrincipal = prior ? prior.impersonatedBy ?? priorUserId : undefined;
+  const link = (id: string, proof?: string) =>
+    linkAccount(
+      id,
+      user.id,
+      priorPrincipal,
+      family ? { family, proofFamily: proof } : undefined
+    ).catch(() => 'none' as const);
+  if ((await link(getOrCreateDeviceId(cookies), proofFamily)) === 'rotate') {
+    await link(rotateDeviceId(cookies));
+  }
 }
 
 /**
@@ -214,14 +340,15 @@ async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | und
   return (await isFirstPartyOrigin(origin)) ? domain : undefined;
 }
 
-/** The userId of the valid session already on this request's civ-token cookie, or undefined. Best-effort. */
-async function resolvePriorSessionUserId(cookies: Cookies): Promise<number | undefined> {
-  const token = cookies.get(SESSION_COOKIE);
+/** The valid session already on this request's civ-token cookie, or undefined. Best-effort. */
+async function resolvePriorSession(cookies: Cookies): Promise<SessionClaims | undefined> {
+  const token = readHubSession(cookies)?.value;
   if (!token) return undefined;
   try {
     const claims = await verifier.verifyToken(token);
-    const userId = Number(claims?.sub);
-    return Number.isFinite(userId) ? userId : undefined;
+    return claims && Number.isFinite(Number(claims.sub)) && (await acceptHubSession(claims))
+      ? claims
+      : undefined;
   } catch {
     return undefined; // no / expired / invalid prior session ⇒ not a 2nd-account login
   }
@@ -237,4 +364,5 @@ export function clearSession(cookies: Cookies): void {
   // would shadow the cleared domain cookie and keep the session alive after logout.
   cookies.delete(SESSION_COOKIE, { path: '/', secure, domain });
   if (domain) cookies.delete(SESSION_COOKIE, { path: '/', secure });
+  clearOtherCookieNames(cookies, SESSION_COOKIE_BASE, SESSION_COOKIE);
 }

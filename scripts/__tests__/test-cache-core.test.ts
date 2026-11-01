@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'fs';
 import { tmpdir } from 'os';
@@ -12,6 +13,7 @@ import { join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import * as Core from '../test-cache/core.mjs';
+import { loadCore } from '../test-cache/load-core.mjs';
 
 type Node = { id: string; importedModules: Set<Node> };
 type Fingerprint = (rel: string) => string;
@@ -22,15 +24,27 @@ const {
   isCoveredElsewhere,
   alwaysRuns,
   keyFor,
+  globalSalt,
   makeFingerprinter,
   mode,
   shadowCandidates,
   changedSince,
   tripped,
+  writeRecord,
+  recordsFor,
+  markHit,
+  RECORDS_PER_TEST,
+  identity,
 } = Core as unknown as {
+  writeRecord: (dir: string, project: string, testRel: string, record: { key: string }) => void;
+  recordsFor: (dir: string, project: string, testRel: string) => { key: string }[];
+  markHit: (dir: string, project: string, testRel: string, key: string) => void;
+  RECORDS_PER_TEST: number;
+  identity: (project: string, testRel: string) => string;
   closureOf: (
     g: { getModuleById: (id: string) => Node | undefined },
-    id: string
+    id: string,
+    expand?: (id: string) => boolean
   ) => Set<string> | null;
   toRel: (id: string, root: string) => string | null;
   isCoveredElsewhere: (rel: string | null) => boolean;
@@ -43,6 +57,7 @@ const {
     fingerprint: Fingerprint;
   }) => string;
   makeFingerprinter: (root: string) => Fingerprint;
+  globalSalt: (root: string, vitestVersion: string) => string;
   mode: (env: Record<string, string | undefined>) => string;
   shadowCandidates: (rel: string) => string[];
   changedSince: (root: string, rel: string, sinceMs: number) => boolean;
@@ -69,6 +84,16 @@ describe('the dependency set a key is built from', () => {
   // null, not an empty set: an empty dependency set is a key no change can ever invalidate.
   it('reports a file missing from the graph as unknown rather than dependency-free', () => {
     expect(closureOf(graphOf({}), 'missing.test.ts')).toBeNull();
+  });
+
+  // A module the walk may not expand is still a dependency; only what it imports is left out.
+  it('keeps a module it may not expand, and stops there', () => {
+    const graph = graphOf({ 't.test.ts': ['a.ts', 'm.ts'], 'a.ts': ['b.ts'], 'm.ts': ['c.ts'] });
+    expect([...closureOf(graph, 't.test.ts', (id) => id !== 'm.ts')!].sort()).toEqual([
+      'a.ts',
+      'b.ts',
+      'm.ts',
+    ]);
   });
 });
 
@@ -187,6 +212,183 @@ describe('the key', () => {
     const before = key(['src']);
     writeFileSync(join(root, 'src/sub/new.ts'), 'n');
     expect(key(['src'])).not.toBe(before);
+  });
+});
+
+// Every release bumps a `version` in one of these manifests, and every new convention guard edits the
+// root `scripts`. When the salt saw either, every record in every worktree stopped matching: the first
+// queued run after each release ran ~2,500 files instead of ~250. If you are about to put either back
+// in the salt, that is what it costs.
+describe('the salt and the workspace manifests', () => {
+  const manifests = ['package.json', 'apps/app/package.json', 'packages/pkg/package.json'];
+  const setup = () => {
+    const root = mkdtempSync(join(tmpdir(), 'test-cache-salt-'));
+    for (const rel of manifests) {
+      mkdirSync(join(root, rel, '..'), { recursive: true });
+      writeManifest(root, rel, { name: rel, version: '1.0.0', exports: { '.': './index.ts' } });
+    }
+    return root;
+  };
+  const writeManifest = (root: string, rel: string, pkg: object) =>
+    writeFileSync(join(root, rel), JSON.stringify(pkg, null, 2));
+  const edit = (root: string, rel: string, change: (pkg: Record<string, unknown>) => void) => {
+    const pkg = JSON.parse(readFileSync(join(root, rel), 'utf8'));
+    change(pkg);
+    writeManifest(root, rel, pkg);
+  };
+
+  it.each(manifests)('ignores a release bumping the version in %s', (rel) => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    edit(root, rel, (pkg) => (pkg.version = '1.0.1'));
+    expect(globalSalt(root, 'v')).toBe(before);
+  });
+
+  it.each(manifests)('ignores an edit to the scripts in %s', (rel) => {
+    const root = setup();
+    edit(root, rel, (pkg) => (pkg.scripts = { test: 'vitest' }));
+    const before = globalSalt(root, 'v');
+    edit(root, rel, (pkg) => (pkg.scripts = { test: 'vitest', 'test:lint-rules': 'vitest run x' }));
+    expect(globalSalt(root, 'v')).toBe(before);
+  });
+
+  it.each(manifests)('still changes when the exports of %s change', (rel) => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    edit(root, rel, (pkg) => (pkg.exports = { '.': './other.ts' }));
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  it('still changes when a dependency changes', () => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    edit(root, 'packages/pkg/package.json', (pkg) => (pkg.dependencies = { zod: '^3.0.0' }));
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  // Only the top-level `version` and `scripts` are dropped. `main`, `type`, `imports` and the rest steer resolution
+  // too, and the lockfile records none of them.
+  it('still changes when any other field changes', () => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    edit(root, 'packages/pkg/package.json', (pkg) => (pkg.zzz = 1));
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  it('still changes when a nested version changes', () => {
+    const root = setup();
+    edit(root, 'packages/pkg/package.json', (pkg) => (pkg.publishConfig = { version: '1' }));
+    const before = globalSalt(root, 'v');
+    edit(root, 'packages/pkg/package.json', (pkg) => (pkg.publishConfig = { version: '2' }));
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  it('still changes when a workspace package appears', () => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    mkdirSync(join(root, 'packages/new'));
+    writeManifest(root, 'packages/new/package.json', { name: 'new' });
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  it('still changes when a manifest it cannot parse changes', () => {
+    const root = setup();
+    writeFileSync(join(root, 'apps/app/package.json'), '{ "version": "1.0.0",');
+    const before = globalSalt(root, 'v');
+    writeFileSync(join(root, 'apps/app/package.json'), '{ "version": "1.0.1",');
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  // The salt is version-blind; a test that reads a manifest itself must not be.
+  // no-lint-rules-script-drift reads the root `scripts` itself, so it must re-run when they change.
+  it.each(['version', 'scripts'])(
+    'still re-runs a test that read a manifest when only its %s changes',
+    (field) => {
+      const root = setup();
+      writeFileSync(join(root, 't.test.ts'), 't');
+      const key = () =>
+        keyFor({
+          salt: globalSalt(root, 'v'),
+          project: 'unit',
+          testRel: 't.test.ts',
+          entries: ['package.json'],
+          fingerprint: makeFingerprinter(root),
+        });
+      const before = key();
+      edit(root, 'package.json', (pkg) => (pkg[field] = 'changed'));
+      expect(key()).not.toBe(before);
+    }
+  );
+});
+
+describe('which key definition a run uses', () => {
+  const dir = () => mkdtempSync(join(tmpdir(), 'test-cache-core-'));
+  const ownCore = readFileSync(resolve(__dirname, '../test-cache/core.mjs'), 'utf8');
+
+  it("uses the tree's own core when the queue names none", async () => {
+    expect((await loadCore({})).keyFor).toBe(keyFor);
+  });
+
+  it('uses the core the queue names', async () => {
+    const path = join(dir(), 'core.mjs');
+    writeFileSync(path, ownCore);
+    const loaded = await loadCore({ CIVITAI_TEST_CACHE_CORE: path });
+    expect(loaded.keyFor).not.toBe(keyFor);
+    expect(typeof loaded.keyFor).toBe('function');
+  });
+
+  it("falls back to the tree's own when the named core cannot stand in for it", async () => {
+    const path = join(dir(), 'core.mjs');
+    writeFileSync(
+      path,
+      ['export const keyFor = () => "k";', 'export const globalSalt = () => "s";'].join('\n')
+    );
+    expect((await loadCore({ CIVITAI_TEST_CACHE_CORE: path })).keyFor).toBe(keyFor);
+    expect((await loadCore({ CIVITAI_TEST_CACHE_CORE: join(dir(), 'nope.mjs') })).keyFor).toBe(
+      keyFor
+    );
+  });
+
+  const copyCore = (marker: string) => {
+    const path = join(dir(), 'core.mjs');
+    writeFileSync(path, ownCore + marker);
+    return path;
+  };
+
+  it('salts with the core that was loaded, so two different cores never share a record', async () => {
+    const root = dir();
+    const a = await loadCore({ CIVITAI_TEST_CACHE_CORE: copyCore('// a') });
+    const b = await loadCore({ CIVITAI_TEST_CACHE_CORE: copyCore('// b') });
+    expect(a.globalSalt(root, 'v')).not.toBe(b.globalSalt(root, 'v'));
+  });
+
+  // A record written at the end of a run must name the code that ran, even if the daemon's checkout
+  // pulled a new core.mjs in the meantime.
+  it('ignores a core.mjs rewritten after it was loaded', async () => {
+    const root = dir();
+    const path = copyCore('// c');
+    const loaded = await loadCore({ CIVITAI_TEST_CACHE_CORE: path });
+    const before = loaded.globalSalt(root, 'v');
+    writeFileSync(path, ownCore + '// pulled mid-run');
+    expect(loaded.globalSalt(root, 'v')).toBe(before);
+  });
+
+  // Importing core.mjs directly makes the shared core silently inert; nothing else would go red.
+  it.each(['sequencer.mjs', 'reporter.mjs'])('%s loads core through load-core.mjs', (f) => {
+    const src = readFileSync(resolve(__dirname, '../test-cache', f), 'utf8');
+    expect(src).toContain("from './load-core.mjs'");
+    expect(src).not.toMatch(/from '\.\/core\.mjs'/);
+  });
+
+  // The tracker, sequencer and reporter always run from the tree, wherever core.mjs came from, so
+  // the salt must hash the tree's copies of them.
+  it("changes the salt when the tree's reporter changes", () => {
+    const root = dir();
+    mkdirSync(join(root, 'scripts/test-cache'), { recursive: true });
+    writeFileSync(join(root, 'scripts/test-cache/reporter.mjs'), 'a');
+    const before = globalSalt(root, 'v');
+    writeFileSync(join(root, 'scripts/test-cache/reporter.mjs'), 'b');
+    expect(globalSalt(root, 'v')).not.toBe(before);
   });
 });
 
@@ -372,5 +574,53 @@ describe('what a key must see besides content', () => {
     expect(tripped(dir)).toBeNull();
     writeFileSync(join(dir, 'TRIPPED.json'), '{"at": "2026');
     expect(tripped(dir)).not.toBeNull();
+  });
+});
+
+describe('which records survive when a test has more than fit', () => {
+  // A full slot set of records, written one second apart: rec-0 oldest, rec-(N-1) newest.
+  const fill = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'test-cache-evict-'));
+    const keys = Array.from({ length: RECORDS_PER_TEST }, (_, i) => `rec-${i}`);
+    const t0 = Date.now() / 1000 - 10 * RECORDS_PER_TEST;
+    keys.forEach((key, i) => {
+      writeRecord(dir, 'unit', 'a.test.ts', { key });
+      const file = join(dir, 'rec', identity('unit', 'a.test.ts'), `${key}.json`);
+      utimesSync(file, t0 + i, t0 + i);
+    });
+    const survivors = () => new Set(recordsFor(dir, 'unit', 'a.test.ts').map((r) => r.key));
+    return { dir, survivors };
+  };
+
+  it('evicts the least recently written record when nothing was hit', () => {
+    const { dir, survivors } = fill();
+    writeRecord(dir, 'unit', 'a.test.ts', { key: 'new' });
+    const left = survivors();
+    expect(left.size).toBe(RECORDS_PER_TEST);
+    expect(left.has('new')).toBe(true);
+    expect(left.has('rec-0')).toBe(false);
+    expect(left.has('rec-1')).toBe(true);
+  });
+
+  it('keeps an old record that was just hit, and evicts the oldest one nobody hit', () => {
+    const { dir, survivors } = fill();
+    markHit(dir, 'unit', 'a.test.ts', 'rec-0');
+    writeRecord(dir, 'unit', 'a.test.ts', { key: 'new' });
+    const left = survivors();
+    expect(left.size).toBe(RECORDS_PER_TEST);
+    expect(left.has('rec-0')).toBe(true);
+    expect(left.has('rec-1')).toBe(false);
+    expect(left.has('new')).toBe(true);
+  });
+
+  it('does nothing when the hit record was evicted in the meantime', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'test-cache-evict-'));
+    expect(() => markHit(dir, 'unit', 'a.test.ts', 'gone')).not.toThrow();
+    expect(recordsFor(dir, 'unit', 'a.test.ts')).toEqual([]);
+  });
+
+  // Eight slots turned over in about an hour for busy tests; fewer than this throws hits away.
+  it('keeps at least 32 records per test', () => {
+    expect(RECORDS_PER_TEST).toBeGreaterThanOrEqual(32);
   });
 });

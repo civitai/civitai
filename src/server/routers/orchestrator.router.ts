@@ -1,4 +1,6 @@
 import { TRPCError } from '@trpc/server';
+import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
+import { assertGenerationInputsUsable } from '~/server/services/generation-input-urls';
 import * as z from 'zod';
 import {
   boostWorkflow,
@@ -13,7 +15,7 @@ import {
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { generationSurfaceForRequest } from '~/server/services/orchestrator/generation-surface';
-import { getWorkflow as clientGetWorkflow } from '@civitai/client';
+import { getWorkflow as clientGetWorkflow } from '@civitai/orchestration-client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
   logToAxiom,
@@ -37,6 +39,7 @@ import {
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { MAX_SOURCE_IMAGES, signProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   createTrainingWhatIfWorkflow,
@@ -53,7 +56,7 @@ import {
 } from '~/server/services/orchestrator/workflows';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
-import { getRequiredFeatureFlagForWorkflow } from '~/shared/data-graph/generation/config/workflows';
+import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/workflows';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
@@ -199,16 +202,22 @@ export const orchestratorRouter = router({
   enhancePrompt: orchestratorGuardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(promptEnhancementSchema)
-    .mutation(({ ctx, input }) =>
-      enhancePrompt({
+    .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: input.images ?? [],
+        userId: ctx.user.id,
+        entry: 'enhancePrompt',
+        isApiCaller: ctx.apiKeyId != null,
+      });
+      return enhancePrompt({
         input,
         token: ctx.token,
         userId: ctx.user.id,
         isGreen: ctx.domain === 'green',
         isModerator: ctx.user.isModerator,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-      })
-    ),
+      });
+    }),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
   queryWorkflowsByTags: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -255,7 +264,11 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      const result = await updateWorkflow({ ...input, token: ctx.token });
+      const result = await updateWorkflow({
+        ...input,
+        token: ctx.token,
+        viewer: { domain: ctx.domain, showNsfw: !!ctx.user.showNsfw },
+      });
       // Bust so a refetch within the TTL doesn't revert the update. Owner is
       // ctx.user.id (own token).
       bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
@@ -389,6 +402,8 @@ export const orchestratorRouter = router({
         sourceProvenance,
         downloadPriority,
       } = input;
+      // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
+      assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
       const { externalCtx, status } = await buildGenerationContext(
@@ -460,6 +475,7 @@ export const orchestratorRouter = router({
         currencies: resolveGenerationCurrencies(ctx.features, buzzType),
         isModerator: ctx.user.isModerator,
         track: ctx.track,
+        inputGate: { entry: 'generateFromGraph', isApiCaller: ctx.apiKeyId != null },
         civitaiTip,
         creatorTip,
         tags,
@@ -576,6 +592,7 @@ export const orchestratorRouter = router({
           experimental: ctx.experimental,
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
           downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
+          inputGate: { entry: 'whatIfFromGraph', isApiCaller: ctx.apiKeyId != null },
         });
       } catch (e) {
         // ~94% of failures here are EXPECTED client-fault validation (BAD_REQUEST
@@ -666,20 +683,23 @@ export const orchestratorRouter = router({
    * is the whole security property, and a client-chosen one would let the caller
    * ask for the stronger `mint` audience from the weaker click.
    *
-   * `getImage` is the gate here for the same reason it is there — it applies the
-   * needs-review, published-or-owner and Blocked checks, so a token cannot be
-   * minted for an image the caller could not open.
+   * The gate is `image.get`'s visibility (needs-review, published-or-owner, Blocked) plus its
+   * owner block check, so a token cannot be minted for an image the caller could not open. Only
+   * that: the full `getImage` payload and the orchestrator middlewares (a token mint, a client
+   * version header, a response URL rewrite) cost the click seconds and refuse nothing here, and
+   * the token lands in the form only once this returns.
    */
-  mintPromptProvenance: orchestratorProcedure
+  mintPromptProvenance: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ imageId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const image = await getImage({
+      const image = await assertImageVisibleToViewer({
         id: input.imageId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        // The mint is a write: a cache "not blocked" is confirmed on the primary.
+        confirmBlockOnPrimary: true,
       });
-      if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
 
       return {
         provenance: signProvenance({
@@ -695,9 +715,19 @@ export const orchestratorRouter = router({
   imageUpload: orchestratorGuardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(z.object({ sourceImage: z.string() }))
-    .mutation(({ ctx, input }) =>
-      imageUpload({ token: ctx.token, allowMatureContent: ctx.allowMatureContent, ...input })
-    ),
+    .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: [input.sourceImage],
+        userId: ctx.user.id,
+        entry: 'imageUpload',
+        isApiCaller: ctx.apiKeyId != null,
+      });
+      return imageUpload({
+        token: ctx.token,
+        allowMatureContent: ctx.allowMatureContent,
+        ...input,
+      });
+    }),
   // #endregion
 
   // #region [image training]
@@ -804,6 +834,12 @@ export const orchestratorRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: [input.sourceImageUrl, ...(input.referenceImages ?? []).map((ref) => ref.url)],
+        userId: ctx.user.id,
+        entry: 'iterateGenerate',
+        isApiCaller: ctx.apiKeyId != null,
+      });
       const modelConfig = getPresetModelConfig(input.baseModel, DEFAULT_ITERATE_MODEL);
       const effectiveVersionId =
         input.sourceImageUrl && modelConfig.img2imgVersionId
@@ -901,6 +937,13 @@ export const orchestratorRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      // Outside the try: a refused url is an answer, not an estimate failure.
+      await assertGenerationInputsUsable({
+        urls: [input.sourceImage?.url, ...(input.referenceImages ?? []).map((ref) => ref.url)],
+        userId: ctx.user.id,
+        entry: 'getIterateCostEstimate',
+        isApiCaller: ctx.apiKeyId != null,
+      });
       try {
         const token = await getOrchestratorToken(ctx.user!.id, ctx);
         const modelConfig = getPresetModelConfig(input.baseModel, DEFAULT_ITERATE_MODEL);

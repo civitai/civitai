@@ -14,10 +14,15 @@
  * valid users. The `deleteCookie` assertions below pin that: reintroducing a delete fails
  * them. A dead cookie now lingers until it expires, which is the deliberate trade.
  *
- * What the discriminator covers: the endpoint's outer catch (`200 {}`), a fetch that rejects
- * or aborts, and a non-OK status. What it still cannot see is a fail-soft lookup — that
- * yields an anonymous render rather than a logout, and closing it properly needs an explicit
- * "session lookup degraded" signal from the endpoint. Tracked separately.
+ * What the discriminator covers: a bootstrap payload with no `session` key, and a bootstrap
+ * that rejects (a failed session lookup, or the render deadline). What it still cannot see is
+ * a fail-soft lookup — that yields an anonymous render rather than a logout, and closing it
+ * properly needs an explicit "session lookup degraded" signal from the bootstrap. Tracked
+ * separately.
+ *
+ * The bootstrap is read IN-PROCESS (`resolveSettingsBootstrapForRender`); it used to be an
+ * HTTP request to our own `/api/user/settings`. The first describe block pins that no such
+ * request is made.
  *
  * Lives outside `src/pages` deliberately: Next treats every file under there as a route
  * and `next build` rejects a test file, which only that build catches.
@@ -30,7 +35,8 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
 const h = vi.hoisted(() => ({
   deleteCookie: vi.fn(),
   jar: {} as Record<string, string>,
-  respond: null as null | (() => Promise<Response>),
+  bootstrap: vi.fn<(req: unknown) => Promise<unknown>>(),
+  fetch: vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(),
 }));
 
 vi.mock('cookies-next', async (importOriginal) => ({
@@ -46,6 +52,12 @@ vi.mock('cookies-next', async (importOriginal) => ({
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsAsync: vi.fn(async () => ({})),
+}));
+
+// Wholesale on purpose: `_app` uses only this export, and loading the real module pulls the
+// server env schema, the database and redis into a test about a cookie decision.
+vi.mock('~/server/services/settings-bootstrap.service', () => ({
+  resolveSettingsBootstrapForRender: h.bootstrap,
 }));
 
 // Module scope on purpose: this graph is ~1200 modules and a `await import()` from a test
@@ -94,32 +106,77 @@ function makeClientNavCtx(): AppContext {
   } as unknown as AppContext;
 }
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
+/** Scripts what the in-process bootstrap resolves with. */
+const answer = (body: unknown) => h.bootstrap.mockImplementation(async () => body);
+/** Scripts the bootstrap rejecting — what a failed session lookup or the deadline does. */
+const fail = (error: unknown) =>
+  h.bootstrap.mockImplementation(async () => {
+    throw error;
   });
-}
+
+const settingsRequests = () =>
+  h.fetch.mock.calls.filter(([input]) => String(input).includes(SETTINGS_PATH));
 
 beforeEach(() => {
   h.deleteCookie.mockClear();
+  h.bootstrap.mockReset();
+  h.fetch.mockReset();
   h.jar = { [AUTH_COOKIE]: 'token-value' };
-  h.respond = async () => json({ session: null });
-  // URL-aware: only the settings self-fetch is scripted. Anything else the bootstrap
-  // happens to call (e.g. the hub provider list) gets a benign failure so it fails open
-  // rather than silently consuming the scripted settings response.
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes(SETTINGS_PATH)) return h.respond!();
-      return new Response(null, { status: 503 });
-    })
-  );
+  answer({ session: null });
+  // Every outbound request the bootstrap makes (e.g. the hub provider list) gets a benign
+  // failure so it fails open. Recorded, so a request to our own settings route is visible.
+  h.fetch.mockImplementation(async () => new Response(null, { status: 503 }));
+  vi.stubGlobal('fetch', h.fetch);
+});
+
+describe('_app settings bootstrap — read in-process', () => {
+  it('makes no HTTP request to its own settings route during a server render', async () => {
+    const session = { user: { id: 7, username: 'in-process' } };
+    answer({ session, settings: { features: {} } });
+
+    const { pageProps } = await getInitialProps(makeCtx());
+
+    expect(
+      settingsRequests().map(([input]) => String(input)),
+      'a server render must read the settings bootstrap in-process, not over HTTP to its own server'
+    ).toEqual([]);
+    // Positive control: the session came from the in-process bootstrap, so the empty list
+    // above is about the transport, not about a render that never asked for settings.
+    expect(h.bootstrap).toHaveBeenCalledTimes(1);
+    expect(pageProps.session).toEqual(session);
+  });
+
+  it('hands the bootstrap the page request itself', async () => {
+    const ctx = makeCtx();
+    await getInitialProps(ctx);
+    expect(h.bootstrap.mock.calls[0]![0]).toBe(ctx.ctx.req);
+  });
+
+  it('logs the alertable marker when it degrades', async () => {
+    // Log-based alerting matches this exact prefix: a degraded bootstrap renders a 200, so this
+    // line is the only signal that every page is rendering signed-out.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fail(new Error('settings bootstrap timed out after 8000ms'));
+    try {
+      await getInitialProps(makeCtx());
+      expect(warn).toHaveBeenCalledWith(
+        '[_app] settings bootstrap fetch failed, rendering without it: settings bootstrap timed out after 8000ms'
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not read the bootstrap at all on a client-side navigation', async () => {
+    await getInitialProps(makeClientNavCtx());
+    expect(h.bootstrap).not.toHaveBeenCalled();
+    expect(settingsRequests()).toEqual([]);
+  });
 });
 
 describe('_app settings bootstrap — auth cookie discriminator', () => {
-  it('renders anonymous but PRESERVES the cookie when the fetch returns session: null', async () => {
-    h.respond = async () => json({ session: null, settings: { features: {} } });
+  it('renders anonymous but PRESERVES the cookie when the bootstrap returns session: null', async () => {
+    answer({ session: null, settings: { features: {} } });
 
     const { pageProps } = await getInitialProps(makeCtx());
 
@@ -133,8 +190,8 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('PRESERVES the cookie when the endpoint swallowed an error into 200 {} (no session key)', async () => {
-    h.respond = async () => json({});
+  it('PRESERVES the cookie when the bootstrap carries no session key', async () => {
+    answer({});
 
     const { pageProps } = await getInitialProps(makeCtx());
 
@@ -151,7 +208,7 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
 
   it('PRESERVES the cookie and threads the session through on a real session', async () => {
     const session = { user: { id: 1, username: 'someone' } };
-    h.respond = async () => json({ session, settings: { features: {} } });
+    answer({ session, settings: { features: {} } });
 
     const { pageProps } = await getInitialProps(makeCtx());
 
@@ -163,10 +220,8 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
     expect(pageProps.session).toMatchObject(session);
   });
 
-  it('PRESERVES the cookie when the fetch rejects outright', async () => {
-    h.respond = async () => {
-      throw new TypeError('fetch failed');
-    };
+  it('PRESERVES the cookie when the bootstrap rejects outright (a failed session lookup)', async () => {
+    fail(new Error('session lookup failed'));
 
     const { pageProps } = await getInitialProps(makeCtx());
 
@@ -177,12 +232,10 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
     expect(pageProps.hasAuthCookie).toBe(true);
   });
 
-  it('PRESERVES the cookie when the fetch aborts on the timeout', async () => {
-    // Models what `AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS)` throws, without
-    // spending the real 8s — a test that waited would be timing-dependent for no gain.
-    h.respond = async () => {
-      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
-    };
+  it('PRESERVES the cookie when the bootstrap misses its render deadline', async () => {
+    // Models what the render deadline rejects with, without spending the real 8s — the
+    // deadline itself is pinned in settings-endpoint-deadlines.test.ts.
+    fail(new Error('settings bootstrap timed out after 8000ms'));
 
     const { pageProps } = await getInitialProps(makeCtx());
 
@@ -193,8 +246,8 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
     expect(pageProps.hasAuthCookie).toBe(true);
   });
 
-  it('PRESERVES the cookie on a non-OK status', async () => {
-    h.respond = async () => json({ session: null }, 500);
+  it('PRESERVES the cookie when the bootstrap resolves with nothing', async () => {
+    answer(undefined);
 
     const { pageProps } = await getInitialProps(makeCtx());
 
@@ -207,7 +260,7 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
 
   it('does not touch the cookie when there was no auth cookie to begin with', async () => {
     h.jar = {};
-    h.respond = async () => json({ session: null, settings: { features: {} } });
+    answer({ session: null, settings: { features: {} } });
 
     const { pageProps } = await getInitialProps(makeCtx());
 
@@ -218,13 +271,43 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
     expect(pageProps.hasAuthCookie).toBe(false);
   });
 
+  // `sessionCookie` (diagnostics only) reports the cookie as the request carried it, where
+  // `hasAuthCookie` is cleared by the lookup's answer: the login-gate diagnostic needs exactly the
+  // case the two disagree on.
+  it.each([
+    [
+      'a cookie the lookup answered signed out',
+      { [AUTH_COOKIE]: 'token-value' },
+      'civ-token',
+      false,
+    ],
+    ['a legacy cookie', { '__Secure-civitai-token': 'legacy-token-value' }, 'legacy', false],
+    [
+      'both families',
+      { [AUTH_COOKIE]: 'token-value', '__Secure-civitai-token': 'legacy-token-value' },
+      'both',
+      false,
+    ],
+    ['no cookie', {}, 'none', false],
+  ])('sessionCookie reports %s as read', async (_, jar, sessionCookie, hasAuthCookie) => {
+    h.jar = jar;
+    answer({ session: null, settings: { features: {} } });
+
+    const { pageProps } = await getInitialProps(makeCtx());
+
+    expect(pageProps.sessionCookie).toBe(sessionCookie);
+    // Names only: no cookie value reaches the page prop.
+    expect(JSON.stringify(pageProps.sessionCookie)).not.toContain('token-value');
+    expect(pageProps.hasAuthCookie).toBe(hasAuthCookie);
+  });
+
   // The LEGACY family is the only population the cookie behaviour ever reached — the
   // delete removed here named `civitai-token`, never `civ-token`. Without this case,
   // dropping `|| x.endsWith('civitai-token')` from the matcher passes the whole file:
   // every other fixture uses a modern cookie.
   it('recognises a legacy civitai-token as an auth cookie', async () => {
     h.jar = { '__Secure-civitai-token': 'legacy-token-value' };
-    h.respond = async () => json({});
+    answer({});
 
     const { pageProps } = await getInitialProps(makeCtx());
 
@@ -275,7 +358,7 @@ describe('_app getInitialProps — SSR-only props are absent on a client-side na
   // early, a stale mock, or a renamed key. This arm proves the probe can see a `region`
   // at all, so the absence in the next test is a fact about the client-nav path.
   it('POSITIVE CONTROL: the SAME call WITH a req populates every one of those keys', async () => {
-    h.respond = async () => json({ session: null, settings: { features: {} } });
+    answer({ session: null, settings: { features: {} } });
 
     const { pageProps } = await getInitialProps(makeCtx());
 

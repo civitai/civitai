@@ -1,3 +1,4 @@
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
@@ -13,7 +14,7 @@ type TipaltiAccessToken = {
   createdAt: number;
 };
 
-class TipaltiCaller extends HttpCaller {
+export class TipaltiCaller extends HttpCaller {
   private static instance: TipaltiCaller;
   private static acessToken: TipaltiAccessToken;
 
@@ -186,15 +187,7 @@ class TipaltiCaller extends HttpCaller {
       .update(stringToSign)
       .digest('hex');
 
-    const vValue = v.split('=')[1];
-
-    return {
-      isValid: hash.toString().toLowerCase() === vValue,
-      hash: hash.toString().toLowerCase(),
-      vValue,
-      stringToSign,
-      signature,
-    };
+    return { isValid: timingSafeEqualStrings(hash.toLowerCase(), v.split('=')[1]) };
   }
 
   async createPaymentBatch(payments: Tipalti.PaymentInput[]) {

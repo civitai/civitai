@@ -6,9 +6,9 @@ import { describe, expect, it } from 'vitest';
  * The app-block host chrome reads `appListings.getAppDetail` from exactly ONE place.
  * Node `unit` project — the tier that EXECUTES this assertion (report-only on a pull
  * request, an honest verdict on a push to `main`). `ChromeReviewEntry.browser.test.tsx`
- * proves the same property behaviourally against real React Query, in the REPORT-ONLY
- * browser tier. NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in
- * this repo, so this is a signal a reviewer must read, not a door that stays shut.
+ * proves the same property behaviourally against real React Query, in the
+ * browser tier (`Component tests`). NEITHER TIER BLOCKS A MERGE: `main` requires no status check at
+ * all in this repo, so this is a signal a reviewer must read, not a door that stays shut.
  *
  * WHY IT EXISTS. F2 gave the chrome one consumer of that listing row (the app-name
  * crumb's store popover). F4 added a second (the ⋮ menu's review item, which needs
@@ -40,6 +40,7 @@ const CHROME_SOURCES = [
   'src/components/AppBlocks/IframeHost.tsx',
   'src/components/AppBlocks/AppNameCrumb.tsx',
   'src/components/AppBlocks/ChromeReviewEntry.tsx',
+  'src/components/AppBlocks/ChromeRecentAppIcon.tsx',
 ];
 
 function read(rel: string): string {
@@ -97,19 +98,49 @@ describe('the chrome reads the listing from one place', () => {
     ).toBe(1);
   });
 
-  it('both consumers reach the query through the shared hook', () => {
+  it('every consumer reaches the query through the shared hook', () => {
     // The count above would also be satisfied by a consumer that stopped reading the
     // listing altogether — which is a behaviour change, not a consolidation. Pin that
     // both surfaces still go through the hook.
     for (const rel of [
       'src/components/AppBlocks/AppNameCrumb.tsx',
       'src/components/AppBlocks/ChromeReviewEntry.tsx',
+      'src/components/AppBlocks/ChromeRecentAppIcon.tsx',
     ]) {
       const src = code(read(rel));
       expect(src, `${rel} no longer calls useChromeListingDetail`).toMatch(
         /useChromeListingDetail\s*\(/
       );
     }
+  });
+
+  it('the "Recently run" menu renders each row icon through the gated ChromeRecentAppIcon, keyed by blockId', () => {
+    // 🔴 THE NODE-TIER PIN OF THE MENU WIRING. The behavioural proof lives in
+    // `AppBlockChrome.browser.test.tsx`, in the browser tier; without this a row
+    // reverted to the generic glyph, or keyed by the AppBlock `id` instead of the listing
+    // slug (`blockId`) — no icon ever, and a 404 per row per open — passes every executed
+    // test. It also forbids reading `.iconUrl` anywhere in the host: that url is the
+    // un-gated stored one this menu must never render.
+    const usages = (src: string) => src.match(/<ChromeRecentAppIcon\b[^>]*\/>/g) ?? [];
+    const BLOCK_ID_USAGE = /^<ChromeRecentAppIcon\s+slug=\{\s*\w+\.blockId\s*\}\s*\/>$/;
+
+    // Positive controls: the matcher sees a usage, the shape test separates the two
+    // keyings, and comment-stripping keeps prose from satisfying it.
+    expect(usages('x = <ChromeRecentAppIcon slug={r.blockId} />')).toHaveLength(1);
+    expect(BLOCK_ID_USAGE.test('<ChromeRecentAppIcon slug={r.blockId} />')).toBe(true);
+    expect(BLOCK_ID_USAGE.test('<ChromeRecentAppIcon slug={r.id} />')).toBe(false);
+    expect(usages(code('{/* <ChromeRecentAppIcon slug={r.blockId} /> */}'))).toHaveLength(0);
+
+    const host = code(read('src/components/AppBlocks/IframeHost.tsx'));
+    const found = usages(host);
+    expect(found, 'IframeHost no longer renders ChromeRecentAppIcon exactly once').toHaveLength(1);
+    expect(
+      found[0],
+      'the recents row must key the gated icon by the listing slug (blockId)'
+    ).toMatch(BLOCK_ID_USAGE);
+    expect(host, 'IframeHost must never read a stored (un-gated) iconUrl').not.toMatch(
+      /\.iconUrl\b/
+    );
   });
 
   it('the hook passes `retry: false`, matching the store-preview page it mirrors', () => {

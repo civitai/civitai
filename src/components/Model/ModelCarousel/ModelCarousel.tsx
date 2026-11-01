@@ -29,8 +29,14 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import classes from './ModelCarousel.module.css';
+import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import {
+  getEventDecorationClearLeftCss,
+  HAT_PLAIN_CARD_NUDGE,
+} from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import clsx from 'clsx';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
 
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
@@ -92,6 +98,8 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
       slidesToScroll={1}
       withControls={hasMultipleSlides ? true : false}
       controlSize={mobile ? 32 : 56}
+      hatLayer
+      className="[--event-decoration-allowance-top:36px] [--event-decoration-allowance:16px] md:[--event-decoration-allowance:36px]"
       loop
       // initialHeight={mobile ? 300 : 600}
     >
@@ -110,13 +118,34 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                 {({ inView }) => (
                   <div
                     className="relative w-full"
-                    style={{ aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}` }}
+                    style={
+                      {
+                        aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}`,
+                        ...(image.eventDecoration && {
+                          '--event-decoration-clear-left': getEventDecorationClearLeftCss(
+                            image.eventDecoration.data,
+                            'corner',
+                            HAT_PLAIN_CARD_NUDGE
+                          ),
+                        }),
+                      } as React.CSSProperties
+                    }
                   >
+                    <ImpressionSentinel
+                      impressions={[{ entityType: 'Image', entityId: image.id }]}
+                    />
+                    {image.eventDecoration && (
+                      <EventDecorationOverlay
+                        decoration={image.eventDecoration.data}
+                        placement="corner"
+                        wornOn={{ entityType: 'Image', entityId: image.id }}
+                      />
+                    )}
                     {inView && (
                       <ImageGuard2 image={image} connectType="model" connectId={modelId}>
                         {(safe) => (
                           <>
-                            <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                            <ImageGuard2.BlurToggle className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10" />
                             <Stack
                               gap="xs"
                               align="flex-end"

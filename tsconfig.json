@@ -23,6 +23,8 @@
     "noUncheckedIndexedAccess": false, // TODO swap to true
     "paths": {
       "~/*": ["./src/*"],
+      "@civitai/post-planner": ["./packages/civitai-post-planner/src/index"],
+      "@civitai/post-planner/*": ["./packages/civitai-post-planner/src/*"],
       "@civitai/db-schema": ["./packages/civitai-db-schema/src/index"],
       "@civitai/db-schema/*": ["./packages/civitai-db-schema/src/*"],
       "@civitai/db": ["./packages/civitai-db/src/index"],
@@ -40,7 +42,9 @@
       "@civitai/brand": ["./packages/civitai-brand/src/index"],
       "@civitai/brand/*": ["./packages/civitai-brand/src/*"],
       "@civitai/notifications": ["./packages/civitai-notifications/src/index"],
-      "@civitai/notifications/*": ["./packages/civitai-notifications/src/*"]
+      "@civitai/notifications/*": ["./packages/civitai-notifications/src/*"],
+      "@civitai/app-assistant": ["./packages/civitai-app-assistant/src/index"],
+      "@civitai/app-assistant/*": ["./packages/civitai-app-assistant/src/*"]
     },
     "noErrorTruncation": true,
     "plugins": [

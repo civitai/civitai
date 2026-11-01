@@ -1,10 +1,12 @@
 // Server half of the training writes: env trace mode + per-user signal callbacks, delegating to the
 // client-safe builders in $lib/train-core (shared with the web-component backend).
 import { env } from '$env/dynamic/private';
+import { logToAxiom, safeError } from './axiom';
 import { orchestratorClient } from './orchestrator';
 import { workflowSignalCallbacks } from './signals';
+import { requestTextCheck } from './text-check';
 import * as core from '$lib/train-core';
-import type { ContinueOpts, TrainingRunInput } from '$lib/train-core';
+import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
 
@@ -14,16 +16,31 @@ const TRACE_MODE = env.TRAINING_TRACE_MODE ?? 'events';
 
 /** Submit a batch of training workflows (see `core.submitTrainingBatch` for the stop-at-first-failure /
  *  partial-return policy). Charges Buzz — the single write in the flow. The `userId` registers the
- *  orchestrator callback that pushes live `workflow-update` signals for each run. */
+ *  orchestrator callback that pushes live `workflow-update` signals for each run; `cookie` is the
+ *  caller's, forwarded to the main app's trigger word check. */
 export function submitTrainingBatch(
   token: string,
   runs: TrainingRunInput[] | undefined,
-  userId: number
-): Promise<string[]> {
+  userId: number,
+  /** null in the dev-login preview, which has no session to send the check with. */
+  cookie: string | null
+): Promise<SubmittedBatch> {
   return core.submitTrainingBatch(orchestratorClient(token), runs, {
+    checkText: requestTextCheck(cookie, userId),
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
-    onRunError: (err) => console.warn('[training-studio] submitTraining failed', err),
+    onRunError: (err, runIndex) =>
+      void logToAxiom({
+        name: 'training-studio-submit',
+        type: 'error',
+        message: 'submitTraining failed',
+        userId,
+        runIndex,
+        runCount: runs?.length,
+        status: err instanceof core.TrainingSubmitError ? err.status : undefined,
+        reason: core.submitFailureReason(err),
+        ...(err instanceof core.TrainingSubmitError ? {} : { error: safeError(err) }),
+      }),
   });
 }
 
@@ -31,9 +48,12 @@ export function submitTrainingBatch(
 export function continueTraining(
   token: string,
   userId: number,
-  opts: ContinueOpts
+  opts: ContinueOpts,
+  /** null in the dev-login preview, which has no session to send the check with. */
+  cookie: string | null
 ): Promise<string> {
   return core.continueTraining(orchestratorClient(token), opts, {
+    checkText: requestTextCheck(cookie, userId),
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
   });

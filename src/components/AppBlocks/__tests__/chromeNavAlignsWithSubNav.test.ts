@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
  * destinations the way the STORE draws them. Node `unit` project — the tier that
  * EXECUTES this assertion (report-only on a pull request, an honest verdict on a
  * push to `main`). The behavioural companion in
- * `AppBlockChromePlatformNav.browser.test.tsx` is in the REPORT-ONLY browser tier.
+ * `AppBlockChromePlatformNav.browser.test.tsx` is in the browser tier (`Component tests`).
  * NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in this
  * repo, so this is a signal a reviewer must read, not a door that stays shut.
  *
@@ -80,6 +80,14 @@ function code(src: string): string {
 }
 
 type NavEntry = { href: string; label: string; icon: string };
+
+/**
+ * The ROUTE a chrome href opens — its path without the query. A subnav row is a route; a chrome
+ * item may add a query to it (`/apps/build?view=apps`, "My apps", which an author holding the App
+ * Assistant needs to reach their list rather than the assistant). The route-membership and glyph
+ * rules compare routes; the ledgers below pin the full href, query included.
+ */
+const routeOf = (href: string) => href.split('?')[0];
 
 /**
  * The `appsSections` registry as `{href, label, icon}` rows.
@@ -406,7 +414,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
 
     for (const item of nav) {
-      const store = bySubNavHref.get(item.href);
+      const store = bySubNavHref.get(routeOf(item.href));
       expect(
         store,
         `the chrome platform nav offers \`${item.href}\`, which the store subnav does not list. ` +
@@ -460,7 +468,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
   it('🔴 the subnav rows deliberately ABSENT from the chrome are exactly these', () => {
     const subnav = parseSubNav(code(read(SUBNAV)));
     const nav = parsePlatformNav(code(read(CHROME)));
-    const inChrome = new Set(nav.map((e) => e.href));
+    const inChrome = new Set(nav.map((e) => routeOf(e.href)));
 
     // 🔴 PARSE CONTROLS, NOT LEDGERS — and the floors are deliberately far below the
     // live counts (8 and 4). Pinned ON those counts they MASK the ledger they were
@@ -491,6 +499,8 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       // direction this ledger is meant to make visible.
       '/apps/invites',
       '/apps/revenue',
+      // `/apps/assistant` LEFT THIS LIST BY BEING DELETED FROM THE SUBNAV: it 301s to
+      // `/apps/build`, which the chrome already carries.
     ]);
   });
 
@@ -503,7 +513,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     expect(nav).toEqual([
       { href: '/apps', label: 'Marketplace', icon: 'IconBuildingStore' },
       { href: '/apps/activity', label: 'App activity', icon: 'IconPlugConnected' },
-      { href: '/apps/build', label: 'My apps', icon: 'IconCode' },
+      { href: '/apps/build?view=apps', label: 'My apps', icon: 'IconCode' },
       { href: '/apps/review', label: 'Review', icon: 'IconGavel' },
     ]);
   });
@@ -528,7 +538,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // stand alone in a dropdown over a running app and need the noun. Asserting
     // equality here would force a wrong "fix" in one file or the other.
     expect(navByHref.get('/apps/activity')?.label).toBe('App activity');
-    expect(navByHref.get('/apps/build')?.label).toBe('My apps');
+    expect(navByHref.get('/apps/build?view=apps')?.label).toBe('My apps');
     expect(navByHref.get('/apps/review')?.label).toBe('Review');
     expect(subByHref.get('/apps/activity')?.label).toBe('Activity');
   });
@@ -560,7 +570,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // (a) Every route the chrome links to is a route the store actually has.
     for (const link of links) {
       expect(
-        bySubNavHref.get(link.href),
+        bySubNavHref.get(routeOf(link.href)),
         `the chrome links to \`${link.href}\` ("${link.label}"), which the store subnav does ` +
           'not list. Either it belongs in `appsSections`, or the chrome is inventing a ' +
           'destination the store has no tab for — decide deliberately.'
@@ -578,9 +588,11 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       expect(
         link.icon,
         `same-route icon drift: "${link.label}" links to \`${link.href}\` with \`${link.icon}\`, ` +
-          `but the store subnav draws that route with \`${bySubNavHref.get(link.href)?.icon}\`. ` +
+          `but the store subnav draws that route with \`${
+            bySubNavHref.get(routeOf(link.href))?.icon
+          }\`. ` +
           'One route must not wear two glyphs in one bar.'
-      ).toBe(bySubNavHref.get(link.href)?.icon);
+      ).toBe(bySubNavHref.get(routeOf(link.href))?.icon);
     }
 
     // (c) The pair that actually collided, named explicitly so the regression is
@@ -671,7 +683,8 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       // `/apps/activity` (301) then sorted the pair back before it ('a' < 'b').
       '/apps/activity', // App activity — platform nav
       '/apps/activity', // Manage apps — ⋮ overflow; the pair (c) governs their labels
-      '/apps/build', // My apps — platform nav; the store calls this row "Build"
+      // `?view=apps`: bare `/apps/build` opens the App Assistant for an author who holds it.
+      '/apps/build?view=apps', // My apps — platform nav; the store calls this row "Build"
       '/apps/review', // Review — platform nav, moderator-gated
     ]);
   });

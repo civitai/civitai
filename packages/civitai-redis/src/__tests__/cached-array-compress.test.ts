@@ -9,12 +9,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * WHY THIS FILE DRIVES THE REAL CLIENT: the hazard here is a SEAM, not a component. The flag has
  * to be symmetric across TWO modules — `cached-array.ts` must pass `{ compress }` to every one of
- * its nine `redis.packed` reads and writes, AND `client.ts`'s `packed.mGet` must actually honour
- * it (before #4588 it could not — only `packed.get` took the option, and `createCachedArray` reads
- * exclusively through `mGet`). A test that mocks `redis.packed` proves neither half: it would pass
- * against a client whose mGet ignores the flag entirely, which is the exact production defect —
- * a compressed value decoded on the general msgpack path throws, the entry is EVICTED, and the
- * read reports a MISS. Permanent miss+evict loop, no error anywhere.
+ * its `redis.packed` reads and to every write but fetch's (deliberately uncompressed) notFound
+ * marker, AND `client.ts`'s `packed.mGet` must actually honour it (before #4588 it could not — only
+ * `packed.get` took the option, and `createCachedArray` reads exclusively through `mGet`).
+ * A test that mocks `redis.packed` proves neither half: it would pass against a client whose mGet
+ * ignores the flag entirely, which is the exact production defect — a compressed value decoded
+ * on the general msgpack path throws, the entry is EVICTED, and the read reports a MISS.
+ * Permanent miss+evict loop, no error anywhere.
  *
  * So the only thing faked here is the TRANSPORT: `redis`'s client factory is replaced by an
  * in-memory server holding raw Buffers. Everything above the socket — `createCacheRedis`,
@@ -110,6 +111,7 @@ function buildCache(
     revalidate: () => undefined,
     failOpenDegraded: () => undefined,
     failOpenOriginFetch: () => undefined,
+    missWouldJoin: () => undefined,
   };
   const { createCachedObject } = createCacheBuilders({
     redis,
@@ -172,22 +174,54 @@ describe('createCachedObject { compress: true } — write path', () => {
     expect(raw.length).toBeLessThan(uncompressedSize / 2);
   });
 
-  it('compresses the notFound sentinel write too, and does not re-consult the origin', async () => {
-    // lookupFn returns nothing for id 7 -> negative marker { id, notFound, cachedAt }.
-    const lookupFn = vi.fn(async () => ({} as Record<string, Row>));
+  it('writes the notFound marker UNCOMPRESSED, and it still reads back as a negative hit', async () => {
+    // lookupFn returns nothing for id 7 -> negative marker { id, notFound, cachedAt }; id 8 is
+    // found, in the SAME fill, so both write formats are pinned side by side.
+    const lookupFn = vi.fn(
+      async (ids: number[]) =>
+        Object.fromEntries(
+          ids.filter((id) => id === 8).map((id) => [id, { id, blob: bigBlob }])
+        ) as Record<string, Row>
+    );
     const { cache } = buildCache({ compress: true }, lookupFn);
 
-    const first = await cache.fetch([7]);
+    const first = await cache.fetch([7, 8]);
     expect(first['7']).toBeUndefined();
+    expect(first['8']).toEqual({ id: 8, blob: bigBlob });
     expect(lookupFn).toHaveBeenCalledTimes(1);
 
+    // Marker: plain msgpack MAP (first byte 0x80–0x8f / 0xde / 0xdf), never the sentinel.
     const raw = stored(7)!;
-    expect(raw[0]).toBe(PACKED_BROTLI_SENTINEL);
+    expect(raw[0]).not.toBe(PACKED_BROTLI_SENTINEL);
+    // (msgpackr's default `pack` emits map16 = 0xde even for small maps.)
+    const isMapMarker = (raw[0] >= 0x80 && raw[0] <= 0x8f) || raw[0] === 0xde || raw[0] === 0xdf;
+    expect(isMapMarker, `first byte 0x${raw[0].toString(16)}`).toBe(true);
+    expect(unpack(raw)).toMatchObject({ id: 7, notFound: true });
+    // Found value: compressed.
+    expect(stored(8)![0]).toBe(PACKED_BROTLI_SENTINEL);
 
-    // The negative cache must be READABLE through the compressed path, or every miss re-queries.
-    const second = await cache.fetch([7]);
+    // The negative cache must be READABLE through the compressed path, or every miss re-queries
+    // (and a failed decode would also have UNLINKed it).
+    const second = await cache.fetch([7, 8]);
     expect(second['7']).toBeUndefined();
+    expect(second['8']).toEqual({ id: 8, blob: bigBlob });
     expect(lookupFn).toHaveBeenCalledTimes(1);
+    expect(store.has(`${KEY}:7`)).toBe(true);
+  });
+
+  it('a COMPRESSED notFound marker (left in Redis by invalidate() before it swapped markers for debounce) still reads as a negative hit', async () => {
+    const lookupFn = vi.fn(async () => ({} as Record<string, Row>));
+    const { cache } = buildCache({ compress: true }, lookupFn);
+    const compressedMarker = await compressPacked(
+      Buffer.from(pack({ id: 11, notFound: true, cachedAt: new Date() }))
+    );
+    expect(compressedMarker[0]).toBe(PACKED_BROTLI_SENTINEL);
+    store.set(`${KEY}:11`, compressedMarker);
+
+    const got = await cache.fetch([11]);
+    expect(got['11']).toBeUndefined();
+    expect(lookupFn).not.toHaveBeenCalled();
+    expect(stored(11)!.equals(compressedMarker)).toBe(true);
   });
 });
 
@@ -251,6 +285,22 @@ describe('createCachedObject { compress: true } — symmetry across bust / refre
     expect(after, 'entry was evicted — invalidate read it on the non-compress path').toBeDefined();
     expect(after![0]).toBe(PACKED_BROTLI_SENTINEL);
     expect(after!.equals(before)).toBe(false); // it really rewrote the entry
+  });
+
+  it('bust() on an SWR cache swaps a notFound marker for a debounce marker on the compressed path', async () => {
+    const lookupFn = vi.fn(async () => ({} as Record<string, Row>));
+    const { cache } = buildCache({ compress: true, staleWhileRevalidate: true }, lookupFn);
+    await cache.fetch([12]); // negatively cached
+
+    await cache.bust(12);
+    const raw = stored(12);
+    expect(raw, 'marker was evicted — invalidate read it on the non-compress path').toBeDefined();
+    expect(raw![0]).toBe(PACKED_BROTLI_SENTINEL);
+    expect(unpack(await decompressPacked(raw!))).toMatchObject({ id: 12, debounce: true });
+
+    // Read back as a debounce marker, so the next fetch goes to origin.
+    await cache.fetch([12]);
+    expect(lookupFn).toHaveBeenCalledTimes(2);
   });
 
   it('update() reads and rewrites a compressed entry', async () => {
@@ -327,12 +377,13 @@ describe('default / compress:false is byte-for-byte unchanged', () => {
   });
 });
 
-describe('SEAM LEDGER: every redis.packed call site in cached-array.ts is compress-aware', () => {
-  // The behavioural tests above cover all NINE call sites as they exist today. This ledger is
-  // what catches the TENTH: a new redis.packed read or write added later without `packedOptions`
-  // would be silently asymmetric on a compressed cache, and no existing test would exercise it.
-  // Asserted as an exact COUNT in both directions — a shrinking set means the detector went
-  // blind, which passes an additions-only check while reporting a clean file.
+describe('SEAM LEDGER: every redis.packed read in cached-array.ts is compress-aware; only the notFound write is not', () => {
+  // The behavioural tests above cover all TEN call sites as they exist today. This ledger is
+  // what catches the ELEVENTH: a new redis.packed READ without `packedOptions` would be silently
+  // asymmetric on a compressed cache, and the exact set below also forces any new uncompressed
+  // write to be added on purpose. Asserted as an exact COUNT in both directions — a shrinking set
+  // means the detector went blind, which passes an additions-only check while reporting a clean
+  // file.
   const src = readFileSync(path.join(__dirname, '..', 'cached-array.ts'), 'utf8');
   // Paren-matched rather than regex-captured: the call sites here span 1–6 lines and a
   // "up to the closing paren" regex silently misses the single-line ones (it did, at first —
@@ -351,20 +402,32 @@ describe('SEAM LEDGER: every redis.packed call site in cached-array.ts is compre
     calls.push({ op: m[1], args: src.slice(i + 1, end) });
   }
 
-  // INVARIANT GUARD (green at origin/main too): the nine call sites exist there as well. Its job
+  // INVARIANT GUARD: the ten call sites exist. Its job
   // is to keep the ledger below honest — a detector that goes blind fails HERE rather than
   // reporting zero violations over zero call sites.
-  it('finds exactly the 9 known redis.packed call sites', () => {
+  it('finds exactly the 10 known redis.packed call sites', () => {
     // POSITIVE CONTROL on the detector: if the matcher stops matching, the count drops and the
     // whole ledger fails loudly rather than reporting zero violations over zero call sites.
-    expect(calls.length).toBe(9);
+    expect(calls.length).toBe(10);
     expect(calls.filter((c) => c.op === 'mGet').length).toBe(3);
-    expect(calls.filter((c) => c.op === 'set').length).toBe(6);
+    expect(calls.filter((c) => c.op === 'set').length).toBe(7);
   });
 
-  it('every one of them passes packedOptions', () => {
-    const missing = calls.filter((c) => !c.args.includes('packedOptions')).map((c) => c.args);
-    expect(missing).toEqual([]);
+  // Every READ must be compress-aware. Every write passes packedOptions EXCEPT the notFound marker,
+  // which is deliberately uncompressed (the compress-aware read decodes a non-sentinel value as
+  // raw msgpack). Pinned as an exact set so a second uncompressed write cannot slip in.
+  it('every read and every write but the notFound marker passes packedOptions', () => {
+    const usesShared = (c: { args: string }) => /\bpackedOptions\b/.test(c.args);
+    expect(calls.filter((c) => c.op === 'mGet' && !usesShared(c))).toEqual([]);
+    const notShared = calls.filter((c) => !usesShared(c));
+    expect(notShared.length).toBe(1);
+    expect(notShared[0].op).toBe('set');
+    expect(notShared[0].args).toMatch(/NX: true/);
+    expect(notShared[0].args).toMatch(/\bnotFoundPackedOptions\b/);
+  });
+
+  it('notFoundPackedOptions is uncompressed', () => {
+    expect(src).toMatch(/const notFoundPackedOptions = \{ compress: false \} as const;/);
   });
 
   // `cacheName: key` joined the binding when the codec duration histogram landed. It is pinned in

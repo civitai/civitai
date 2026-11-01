@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { readKeyValueViaKysely, readKeyValueViaPrisma } from '~/server/services/hot-reads-5.reads';
 import { getCreatorRequirements } from '~/server/services/creator-program.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
 
@@ -28,6 +31,8 @@ const DEFAULTS = {
     gold: { days: 7, count: 2 },
   },
 } as const;
+
+export const ANNOUNCEMENT_DEFAULT_MIN_SCORE = DEFAULTS.minScore;
 
 const capSchema = z.object({
   days: z.number().int().min(1).max(365),
@@ -58,7 +63,9 @@ export type AnnouncementAllowance = {
 async function getConfig() {
   let value: Record<string, unknown> = {};
   try {
-    const row = await dbRead.keyValue.findUnique({ where: { key: ANNOUNCEMENTS_CONFIG_KEY } });
+    const row = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+      ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyRead, ANNOUNCEMENTS_CONFIG_KEY)
+      : await readKeyValueViaPrisma(dbRead, ANNOUNCEMENTS_CONFIG_KEY);
     if (row?.value && typeof row.value === 'object') value = row.value as Record<string, unknown>;
   } catch {
     // Fall through to defaults.
@@ -74,6 +81,10 @@ async function getConfig() {
   }
 
   return { minScore: minScore.success ? minScore.data : DEFAULTS.minScore, caps };
+}
+
+export async function getAnnouncementMinScore(): Promise<number> {
+  return (await getConfig()).minScore;
 }
 
 function toAnnouncementTier(membership: string | null | undefined): AnnouncementTier {

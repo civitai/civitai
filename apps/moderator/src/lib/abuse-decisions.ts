@@ -1,4 +1,5 @@
 import type { AbuseVerdict } from './abuse-verdicts';
+import { collapseRulings, type Decision as SharedDecision } from './decisions';
 
 /**
  * Collapsing a run's findings into the DECISIONS a moderator actually makes.
@@ -21,21 +22,13 @@ export type GroupableFinding = {
   verdict: AbuseVerdict | null;
 };
 
-export type Decision<F extends GroupableFinding> = {
-  /**
-   * Stable `{#each}` key.
-   *
-   * 🔴 TWO NAMESPACES, NOT ONE. A producer's group key is an opaque string it chose; keying an
-   * ungrouped finding on its bare id would let a producer that emitted the key `"7"` collapse into
-   * the finding whose id is 7. The prefixes make that unrepresentable rather than unlikely.
-   */
-  id: string;
-  groupKey: string | null;
-  /** Every finding this one decision covers — one element for an ungrouped finding. */
-  members: F[];
-  /** The row rendered: the most-confident member, matching the order the run is sorted in. */
-  lead: F;
-};
+/**
+ * 🔴 TWO NAMESPACES IN `id`, NOT ONE. A producer's group key is an opaque string it chose; keying an
+ * ungrouped finding on its bare id would let a producer that emitted the key `"7"` collapse into the
+ * finding whose id is 7. The prefixes make that unrepresentable rather than unlikely. `lead` is the
+ * most-confident member, matching the order the run is sorted in.
+ */
+export type Decision<F extends GroupableFinding> = SharedDecision<F>;
 
 /**
  * One decision per cluster, and one per ungrouped finding.
@@ -79,6 +72,5 @@ const byConsequenceThenConfidence = (a: GroupableFinding, b: GroupableFinding) =
  * cluster's, which is the board asserting something no human said.
  */
 export function storedVerdict(d: Decision<GroupableFinding>): AbuseVerdict | 'mixed' | null {
-  const distinct = new Set(d.members.map((m) => m.verdict));
-  return distinct.size > 1 ? 'mixed' : d.members[0].verdict;
+  return collapseRulings(d.members.map((m) => m.verdict));
 }

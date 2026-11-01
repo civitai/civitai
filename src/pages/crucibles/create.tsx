@@ -79,7 +79,7 @@ export default function CrucibleCreate() {
       });
       return;
     }
-    createCrucibleMutation.mutate({ ...input, coverImage, buzzType: values.buzzType });
+    createCrucibleMutation.mutate({ ...input, coverImage });
   };
 
   return (

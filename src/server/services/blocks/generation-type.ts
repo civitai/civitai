@@ -19,7 +19,7 @@ import { REGISTERED_STEP_IDS } from './steps';
 // ── THE VALUE GRAMMAR ───────────────────────────────────────────────────────
 //
 //   value   ::= coarse | coarse ":" subtype
-//   coarse  ::= "textToImage" | "customComfy" | "step" | <registered step id>
+//   coarse  ::= "textToImage" | "customComfy" | "step" | "training" | <registered step id>
 //   subtype ::= a COLON-FREE token, from the closed set that coarse key allows —
 //               EXCEPT under "step", whose subtype axis is OPEN and bounded by
 //               SHAPE instead (see THE ONE OPEN AXIS below)
@@ -44,8 +44,10 @@ import { REGISTERED_STEP_IDS } from './steps';
 //   customComfy:<recipe id>    customComfy:inline
 //   convert-image              chat-completion
 //   step:<orchestrator $type>
+//   training:<ai-toolkit ecosystem>
+//   workflow
 //
-// A bare `textToImage` / `customComfy` / `step` is still a legal value: it is
+// A bare `textToImage` / `customComfy` / `step` / `training` is still a legal value: it is
 // what a submit degrades to when the sub-axis cannot be established (see
 // RESOLUTION below). It is shallower, never wrong.
 //
@@ -86,7 +88,7 @@ import { REGISTERED_STEP_IDS } from './steps';
 // column; that is the honest record of what the app actually submitted.
 //
 // 🔴 AND IT CANNOT BE BOUNDED AGAINST A KNOWN SET. There is no vendored `$type`
-// catalog in this repo — only the 15-entry `PLATFORM_INTERNAL_STEP_TYPES`
+// catalog in this repo — only the `PLATFORM_INTERNAL_STEP_TYPES`
 // denylist and the 2-entry step registry — and the live mapping gained three
 // types in six weeks, so a membership test here would either need a catalog
 // nobody maintains or would degrade every new upstream type to a bare `step`.
@@ -167,6 +169,62 @@ import { REGISTERED_STEP_IDS } from './steps';
 export const BLOCK_PASS_THROUGH_COARSE_TYPE = 'step';
 
 /**
+ * The COARSE key for `kind: 'training'` — the wire `kind` itself. Its subtype is
+ * the ai-toolkit ECOSYSTEM the run trains (`training:sdxl`), from the CLOSED set
+ * below, so a training row is priced and grouped as training, never as a
+ * pass-through `step:training`.
+ */
+export const BLOCK_TRAINING_COARSE_TYPE = 'training';
+
+/**
+ * The COARSE key for `kind: 'workflow'` — the wire `kind` itself. It carries NO
+ * subtype: one multi-step workflow is one generation, charged one author fee, and
+ * the step `$type`s it ran are on the invocation row's `detail`.
+ */
+export const BLOCK_MULTI_STEP_COARSE_TYPE = 'workflow';
+
+/**
+ * The ai-toolkit ecosystems a `kind: 'training'` body can name — the closed subtype
+ * set for the `training` coarse key.
+ *
+ * 🔴 A LITERAL HERE, MIRRORING THE `ecosystem` DISCRIMINATOR OF
+ * `aiToolkitTrainingParamsSchema` (`schema/orchestrator/training.schema`), for the
+ * same import-light reason as `IMAGE_SUBTYPE_BY_WORKFLOW`: this module rides the
+ * fire-and-forget spend path. `generation-type.test.ts` reads the schema's own
+ * options and pins the two sets equal in BOTH directions, so an ecosystem added to
+ * the training form cannot silently record a bare `training`.
+ */
+export const BLOCK_TRAINING_ECOSYSTEMS = [
+  'sd1',
+  'sdxl',
+  'chroma',
+  'qwen',
+  'zimageturbo',
+  'zimagebase',
+  'ltx2',
+  'ltx23',
+  'ltx25',
+  'minimaxh3',
+  'ernie',
+  'anima',
+  'boogu',
+  'krea2',
+  'mageflow',
+  'ideogram4',
+  'sd3',
+  'flux1',
+  'wan',
+  'flux2klein',
+  'qwen21',
+  'ming',
+  'yue2',
+  'ace_step_15',
+  'ace_step_15_xl',
+] as const;
+
+export type BlockTrainingEcosystem = (typeof BLOCK_TRAINING_ECOSYSTEMS)[number];
+
+/**
  * The wire `kind`s that are their own coarse generation type.
  *
  * Kept as a literal tuple (rather than derived from the zod union) because these
@@ -184,6 +242,8 @@ export const BLOCK_WORKFLOW_KIND_GENERATION_TYPES = [
   'textToImage',
   'customComfy',
   BLOCK_PASS_THROUGH_COARSE_TYPE,
+  BLOCK_TRAINING_COARSE_TYPE,
+  BLOCK_MULTI_STEP_COARSE_TYPE,
 ] as const;
 
 /**
@@ -374,6 +434,9 @@ export type BlockGenerationType =
   // `buzz-attribution.service` is not redundant with this type.
   | typeof BLOCK_PASS_THROUGH_COARSE_TYPE
   | `${typeof BLOCK_PASS_THROUGH_COARSE_TYPE}:${string}`
+  | typeof BLOCK_TRAINING_COARSE_TYPE
+  | `${typeof BLOCK_TRAINING_COARSE_TYPE}:${BlockTrainingEcosystem}`
+  | typeof BLOCK_MULTI_STEP_COARSE_TYPE
   | (typeof REGISTERED_STEP_IDS)[number];
 
 /**
@@ -402,6 +465,7 @@ function blockGenerationSubtypeRule(coarse: string): readonly string[] | typeof 
   if (coarse === 'textToImage') return BLOCK_IMAGE_GENERATION_SUBTYPES;
   if (coarse === 'customComfy') return CUSTOM_COMFY_GENERATION_SUBTYPES;
   if (coarse === BLOCK_PASS_THROUGH_COARSE_TYPE) return OPEN_SUBTYPE_AXIS;
+  if (coarse === BLOCK_TRAINING_COARSE_TYPE) return BLOCK_TRAINING_ECOSYSTEMS;
   return [];
 }
 
@@ -435,6 +499,7 @@ export const BLOCK_GENERATION_TYPES: readonly BlockGenerationType[] = [
   ...BLOCK_WORKFLOW_KIND_GENERATION_TYPES,
   ...BLOCK_IMAGE_GENERATION_SUBTYPES.map((s) => `textToImage:${s}`),
   ...CUSTOM_COMFY_GENERATION_SUBTYPES.map((s) => `customComfy:${s}`),
+  ...BLOCK_TRAINING_ECOSYSTEMS.map((s) => `${BLOCK_TRAINING_COARSE_TYPE}:${s}`),
   ...REGISTERED_STEP_IDS,
 ] as readonly BlockGenerationType[];
 
@@ -652,6 +717,18 @@ export function resolveBlockGenerationType(
 
   if (kind === 'customComfy') {
     return composeBlockGenerationType(kind, customComfyGenerationSubtype(body));
+  }
+
+  if (kind === BLOCK_TRAINING_COARSE_TYPE) {
+    // The ecosystem is read off the body's own `params`, which the wire schema
+    // validated against the training form's discriminated union; it is bounded
+    // again here by `composeBlockGenerationType` against the closed set.
+    const ecosystem = (body as { params?: { ecosystem?: unknown } }).params?.ecosystem;
+    return composeBlockGenerationType(kind, typeof ecosystem === 'string' ? ecosystem : null);
+  }
+
+  if (kind === BLOCK_MULTI_STEP_COARSE_TYPE) {
+    return composeBlockGenerationType(kind, null);
   }
 
   if (kind === 'step') {

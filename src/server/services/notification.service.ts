@@ -7,7 +7,11 @@ import { logToAxiom } from '~/server/logging/client';
 import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
-import { isPushableNotificationType } from '~/server/notifications/utils.notifications';
+import {
+  emailNotificationTypeList,
+  isEmailNotificationType,
+  isPushableNotificationType,
+} from '~/server/notifications/utils.notifications';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   notificationSingleRowFull,
@@ -15,6 +19,7 @@ import {
   type GetUserNotificationsSchema,
   type MarkReadNotificationInput,
   type ToggleNotificationSettingInput,
+  type ToggleEmailSettingInput,
   type TogglePushSettingInput,
   type UpsertPushSubscriptionInput,
 } from '~/server/schema/notification.schema';
@@ -71,13 +76,15 @@ export async function getUserNotifications({
   category,
   count = false,
   unread = false,
+  showSfwFace,
 }: Partial<GetUserNotificationsSchema> & {
   userId: number;
   count?: boolean;
+  showSfwFace: boolean;
 }) {
   // Base rows come from the app (notif DB); enrichment reads the MAIN db, so it stays here.
   const items = await notifications.queryNotifications({ userId, limit, cursor, category, unread });
-  await populateNotificationDetails(items);
+  await populateNotificationDetails(items, { showSfwFace });
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 
@@ -237,5 +244,33 @@ export const togglePushSetting = async ({
     });
   } else {
     await dbWrite.userPushSetting.deleteMany({ where: { userId, type: { in: type } } });
+  }
+};
+
+/** The email-capable types this user gets email for: all of them except the ones opted out of. */
+export const getUserEmailSettings = async ({ userId }: { userId: number }) => {
+  const optOuts = await dbWrite.userEmailNotificationOptOut.findMany({
+    where: { userId },
+    select: { type: true },
+  });
+  const off = new Set(optOuts.map((x) => x.type));
+  return emailNotificationTypeList.filter((type) => !off.has(type));
+};
+
+export const toggleEmailSetting = async ({
+  type,
+  enabled,
+  userId,
+}: ToggleEmailSettingInput & { userId: number }) => {
+  if (enabled) {
+    await dbWrite.userEmailNotificationOptOut.deleteMany({ where: { userId, type: { in: type } } });
+  } else {
+    const invalid = type.filter((t) => !isEmailNotificationType(t));
+    if (invalid.length > 0)
+      throw throwBadRequestError(`Not an email-capable notification type: ${invalid.join(', ')}`);
+    await dbWrite.userEmailNotificationOptOut.createMany({
+      data: type.map((t) => ({ userId, type: t })),
+      skipDuplicates: true,
+    });
   }
 };

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
@@ -10,12 +12,20 @@ import {
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 
 const { entityChangesMock, outcomeMock } = vi.hoisted(() => ({
   entityChangesMock: vi.fn(),
   outcomeMock: vi.fn(),
 }));
 
+// Pinned off so this suite stays about the XGuard path, not about what Flipt answers here.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
+}));
+// Hand-listed, as in challenge-moderation-adapter.test.ts: the text-scan notify path imports it.
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/prom/model-moderation.metrics', () => ({
   recordModelTextModerationOutcome: outcomeMock,
 }));
@@ -54,6 +64,7 @@ const { isFlipt } = await import('~/server/flipt/client');
 const { submitTextModeration } = await import('~/server/services/text-moderation.service');
 const { getDbWithoutLag } = await import('~/server/db/db-lag-helpers');
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
+const { TEXT_SCAN_ENTITY_NOT_PUBLIC } = await import('~/server/services/text-scan/route');
 
 const SUBMIT_FLAG = 'model-text-moderation-xguard';
 const APPLY_FLAG = 'model-text-moderation-xguard-apply';
@@ -86,14 +97,15 @@ const applyArgs = (triggeredLabels: string[], blocked = false) => ({
   output: okOutput(triggeredLabels, blocked),
 });
 
-// `$executeRaw` is a tagged template, so a call arrives as (strings, ...boundValues). Splitting
+// `$executeRaw` is a tagged template, so a call arrives as (strings, ...values); Prisma.sql inlines
+// the nested fragments among the values, leaving the bound ones, as Prisma does. Splitting
 // the two raw statements on their SQL keeps the assertions readable and makes a revert that
 // drops one of them fail by name rather than by index.
 const rawCalls = () =>
-  dbMock.dbWrite.$executeRaw.mock.calls.map((call: unknown[]) => ({
-    sql: (call[0] as unknown as readonly string[]).join('?'),
-    values: call.slice(1),
-  }));
+  dbMock.dbWrite.$executeRaw.mock.calls.map((call: unknown[]) => {
+    const query = Prisma.sql(call[0] as readonly string[], ...call.slice(1));
+    return { sql: query.sql, values: query.values };
+  });
 const flipCall = () => rawCalls().find((c) => c.sql.includes('SET nsfw = TRUE'));
 const forensicsCall = () => rawCalls().find((c) => c.sql.includes("'textModeration'"));
 
@@ -123,7 +135,8 @@ describe('modelModerationAdapter.applyResult', () => {
     const flip = flipCall();
     expect(flip).toBeDefined();
     expect(flip?.sql).toContain('array_append');
-    expect(flip?.values).toEqual([1]);
+    expect(flip?.sql).toContain("'systemNsfwLock'");
+    expect(flip?.values).toEqual(['xguard-text-moderation', 1]);
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
   });
 
@@ -325,7 +338,7 @@ describe('modelModerationAdapter.applyResult', () => {
     it('merges into meta in SQL rather than overwriting the object', async () => {
       await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
 
-      expect(forensicsCall()?.sql).toContain("COALESCE(m.meta, '{}'::jsonb) ||");
+      expect(forensicsCall()?.sql).toContain(`${asJsonbObject('m.meta')} ||`);
       expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
     });
 
@@ -488,7 +501,10 @@ describe('modelModerationAdapter.applyResult', () => {
 });
 
 describe('modelModerationAdapter.submit', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 5 });
+  });
 
   it('submits the full label list at low priority, recorded for review, when the flag is on', async () => {
     flags({ [SUBMIT_FLAG]: true });
@@ -517,6 +533,16 @@ describe('modelModerationAdapter.submit', () => {
 
     expect(submitTextModeration).not.toHaveBeenCalled();
     expect(result).toBeUndefined();
+  });
+
+  it('returns the not-public marker instead of submitting a model that is not public', async () => {
+    flags({ [SUBMIT_FLAG]: true });
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
+
+    const result = await modelModerationAdapter.submit({ entityId: 5, content: 'some text' });
+
+    expect(submitTextModeration).not.toHaveBeenCalled();
+    expect(result).toBe(TEXT_SCAN_ENTITY_NOT_PUBLIC);
   });
 
   // The cron asks this BEFORE it spends a retry. A declined submit is indistinguishable from a
@@ -554,6 +580,15 @@ describe('modelModerationAdapter.resolveContent', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
 
     expect((await modelModerationAdapter.resolveContent([1, 2])).size).toBe(0);
+  });
+
+  // Only a deleted model is gone; a not-public one keeps its row and verdict, and submit parks it.
+  it('omits only deleted models', async () => {
+    await modelModerationAdapter.resolveContent([1]);
+
+    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] }, deletedAt: null } })
+    );
   });
 });
 

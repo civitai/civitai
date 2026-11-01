@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MISSING_MEDIA_PUBLISH_MESSAGE } from '@civitai/shared';
+import type * as ThumbnailCache from '../thumbnail-cache';
 
 /**
  * The write-side guard in the spoke's `resolveIngestionError` — the call site that caused the
@@ -19,9 +20,15 @@ const headObject = vi.fn();
 const recordModActivity = vi.fn();
 const syncSearchIndex = vi.fn();
 const bustCachedObject = vi.fn();
+const invalidateThumbnails = vi.fn();
+
+/** Rows the publishing UPDATE reports; 0 reproduces an image that left Error since the queue loaded. */
+let updatedRows = 1n;
 
 /** `undefined` reproduces "no such image", so the earlier not-found check owns that case. */
-let imageRow: { postId: number | null; metadata: unknown; url: string } | undefined;
+let imageRow:
+  | { postId: number | null; parentId?: number | null; metadata: unknown; url: string }
+  | undefined;
 
 function chain(record: (calls: Call[]) => void, resolve: (calls: Call[]) => unknown) {
   const calls: Call[] = [];
@@ -60,7 +67,7 @@ vi.mock('../db', () => ({
           expect(table).toBe('Image');
           updates.push(calls);
         },
-        () => []
+        () => ({ numUpdatedRows: updatedRows })
       ),
   },
 }));
@@ -84,6 +91,12 @@ vi.mock('../storage', () => ({
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex }));
 vi.mock('../cache', () => ({ bustCachedObject }));
+// Its own lookup reads `User`, which the Image-only db fake above refuses; profile-picture-bust covers it.
+vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: vi.fn() }));
+vi.mock('../thumbnail-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof ThumbnailCache>()),
+  invalidateThumbnails,
+}));
 
 const { resolveIngestionError } = await import('../ingestion.service');
 
@@ -100,10 +113,12 @@ beforeEach(() => {
   // is hidden by a leaked `{ exists: true }`.
   vi.resetAllMocks();
   updates.length = 0;
+  updatedRows = 1n;
   // postId is null so the post-level recompute (raw SQL against the real client) stays out of the
   // way; it is not what these cases are about.
   imageRow = {
     postId: null,
+    parentId: 4100,
     metadata: { foo: 'bar' },
     url: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
   };
@@ -152,6 +167,36 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
     });
     expect(syncSearchIndex).toHaveBeenCalledTimes(1);
     expect(bustCachedObject).toHaveBeenCalledTimes(2);
+    expect(invalidateThumbnails).toHaveBeenCalledWith(4242, [4100]);
+  });
+
+  it('clears blockedFor when it publishes, so no Scanned image keeps a stale block reason', async () => {
+    headObject.mockResolvedValue({ exists: true });
+
+    await resolve();
+
+    expect(published()).toHaveProperty('blockedFor', null);
+  });
+
+  it('publishes only an image still in Error', async () => {
+    headObject.mockResolvedValue({ exists: true });
+
+    await resolve();
+
+    expect(updates[0].filter(([m]) => m === 'where').map(([, args]) => args)).toEqual([
+      ['id', '=', 4242],
+      ['ingestion', '=', 'Error'],
+    ]);
+  });
+
+  it('fails, with no follow-up writes, when the image is no longer in Error', async () => {
+    headObject.mockResolvedValue({ exists: true });
+    updatedRows = 0n;
+
+    await expect(resolve()).rejects.toThrow(/no longer in an ingestion error state/);
+    expect(recordModActivity).not.toHaveBeenCalled();
+    expect(syncSearchIndex).not.toHaveBeenCalled();
+    expect(invalidateThumbnails).not.toHaveBeenCalled();
   });
 
   it('publishes and logs when the probe THREW — inability to consult is not evidence of loss', async () => {

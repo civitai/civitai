@@ -26,9 +26,12 @@
 
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
-import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { dbWrite } from '~/server/db/client';
+import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
+import {
+  blockTokenRefusalError,
+  resolveBlockToken,
+} from '~/server/services/blocks/block-bridge-auth.service';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
@@ -39,9 +42,15 @@ import {
   appStorageQuotaExceededCounter,
   appStorageUserQuotaUntrackedCounter,
 } from '~/server/prom/client';
+import type {
+  AppStorageCeiling,
+  AppStorageOp,
+  AppStorageOutcome,
+} from '~/server/prom/app-block-storage.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
-import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
+import { appSchemaIdent } from '~/server/utils/apps-slug';
 
 /**
  * App Blocks authoring gate: storage procedures are `publicProcedure` +
@@ -87,14 +96,14 @@ async function assertViewerIsAppDeveloper(userId: number, op: StorageOp): Promis
   // capability is evaluated. Distinct message from the capability refusal below
   // AND from the run gate's, so all three stay separable in a log and in a test.
   if (!user) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'review token subject could not be resolved',
     });
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'Apps authoring is not enabled for this account',
@@ -153,14 +162,14 @@ async function assertAppBlocksEnabledForTokenUser(userId: number, op: StorageOp)
   // message so the two refusals below are separable in a log AND in a test —
   // they are different conditions, not one gate spelled twice.
   if (!user) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({
       code: 'UNAUTHORIZED',
       message: 'block token subject could not be resolved',
     });
   }
   if (!(await isAppBlocksEnabled({ user }))) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
 }
@@ -231,6 +240,35 @@ function isUndefinedTable(err: unknown): boolean {
 }
 
 /**
+ * The only site in this service that emits a real count on
+ * `civitai_app_block_storage_ops_total` — the zero-seeding in
+ * `~/server/prom/app-block-storage.metrics` also writes it.
+ *
+ * 🔴 Exists so `outcome` is type-checked. prom-client types a label value as `string | number`,
+ * so a bare `.inc({ op, outcome: 'rateLimited' })` compiles, emits an unseeded series, and
+ * reads as `no data` until it first fires — and no grep can reliably tell a metric literal
+ * apart from the same word in an Axiom payload or a comment (there are three such in this
+ * file). Routing every emit through this signature puts the union under `tsc` instead.
+ */
+function countStorageOutcome(op: StorageOp, outcome: AppStorageOutcome): void {
+  appStorageOpsCounter.inc({ op, outcome });
+}
+
+/**
+ * The only site in this service that emits a real count on
+ * `civitai_app_block_storage_quota_exceeded_total` — the zero-seeding in
+ * `~/server/prom/app-block-storage.metrics` also writes it.
+ *
+ * 🔴 Same reason as `countStorageOutcome`, and it matters more here because this counter is
+ * SEEDED. A mistyped `ceiling` is worse than an absent series: the seeded `ceiling="user"` row
+ * keeps reading a reassuring 0 forever while real refusals pile up under the typo, and a
+ * permanent present 0 is the one state no absence check can catch.
+ */
+function countQuotaExceeded(appBlockId: string, ceiling: AppStorageCeiling): void {
+  appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling });
+}
+
+/**
  * Count an UNEXPECTED fault on a storage procedure.
  *
  * Every deliberate refusal on these paths increments its own `outcome`
@@ -245,12 +283,12 @@ function isUndefinedTable(err: unknown): boolean {
  *
  * The discriminator is the error type, not a flag threaded through the body: a
  * refusal is always a `TRPCError`, a fault never is. A future `TRPCError` thrown
- * without its own `.inc` would go uncounted — that is the pre-existing contract
- * this preserves, and the reason each refusal counts itself at the throw site.
+ * without its own `countStorageOutcome` would go uncounted — that is the pre-existing
+ * contract this preserves, and the reason each refusal counts itself at the throw site.
  */
 function countStorageFault(op: StorageOp, err: unknown): void {
   if (err instanceof TRPCError) return;
-  appStorageOpsCounter.inc({ op, outcome: 'error' });
+  countStorageOutcome(op, 'error');
 }
 
 // H2: evaluated with the request user's context (`ctx.user`) so the live
@@ -293,42 +331,72 @@ async function resolveStorageContext(
    */
   privateRun: boolean;
 }> {
-  const claims = await verifyBlockToken(blockToken);
-  if (!claims) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+  const resolved = await resolveBlockToken(blockToken, {
+    // Per-instance revocation FIRST. A token's signature and expiry say nothing about the
+    // install, so without this an uninstall or a mod toggling the instance off leaves every
+    // already-minted token reading and writing until natural expiry. A publisher ban writes
+    // one too, as of clawgate #618 — into a SEPARATE keyspace, which `isRevoked` checks
+    // alongside the install one. The install writer `revokeInstance` has two call sites
+    // (`uninstallFromModel`, `toggleEnabled(false)`, both `block-registry.service.ts`); the
+    // ban writer `revokeInstanceForBan` has one (`revokeBlockInstancesForPublisher`, called
+    // from `toggleBan`). See `block-scope.middleware.ts` for why the keyspaces are split and
+    // for what the ban leg does and does not cover. Placed before the run-for-real branch so
+    // it binds EVERY storage op, not only the approved-app ones.
+    order: 'revocation-first',
+    // 🔴 STRICTER THAN THE SHARED PREDICATE, AND THAT IS A STATEMENT ABOUT THIS TARGET
+    // RATHER THAN ABOUT APPROVAL. The run-for-real branch below is this resolver's ONLY
+    // exemption. `resolveAppBlockApprovalVerdict`
+    // (`~/server/services/blocks/block-approval.service`) — the shared predicate behind the
+    // REST middleware and the tRPC bridge — also exempts a token with no backing row and an
+    // owner running a suspended app in their own live dev tunnel; neither can apply here,
+    // because per-user KV has to resolve to a REAL Postgres schema and a plain dev token
+    // names none. `resolveSharedContext` (`apps-shared.router`) is stricter still and
+    // exempts nothing. Three rules, one policy plus two structural narrowings — ledgered
+    // with their rationales, and enforced on growth and shrink, in
+    // `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
+    approval: 'strict+reviewPreview',
+    // Every scope this resolver authorizes (`apps:storage:read` / `apps:storage:write`) is
+    // consent-exempt, so no marker can name one; ledgered as an exempt-only seam there too.
+    consent: 'exempt-only',
+    // Counted below, per op, on this service's own counter.
+    metrics: 'none',
+    slugCheck: true,
+  });
+  if (!resolved.ok) {
+    // One literal emit site per refusal, NOT a lookup table: the metrics suite counts these
+    // sites to prove every seeded outcome is reachable, and an indirection hides them from it.
+    switch (resolved.refusal) {
+      case 'invalid_token':
+        countStorageOutcome(op, 'unauthorized');
+        break;
+      case 'invalid_slug':
+        countStorageOutcome(op, 'error');
+        break;
+      case 'revoked':
+        countStorageOutcome(op, 'unauthorized');
+        break;
+      case 'not_found':
+        countStorageOutcome(op, 'not_found');
+        break;
+      case 'not_approved':
+        countStorageOutcome(op, 'unauthorized');
+        break;
+      case 'consent_unavailable':
+        // Cannot happen (`consent: 'exempt-only'` reads no marker). A plain Error, so the
+        // caller's fault counter records it rather than a refusal nobody counted.
+        throw new Error('app storage: consent refusal from an exempt-only resolution');
+      default:
+        resolved.refusal satisfies never;
+    }
+    throw blockTokenRefusalError(resolved.refusal);
   }
-  const slug = sanitizeAppSlug(claims.blockId);
-  if (!slug) {
-    appStorageOpsCounter.inc({ op, outcome: 'error' });
-    throw new TRPCError({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: 'block id is not a valid storage slug',
-    });
-  }
-
-  // Per-instance revocation. `verifyBlockToken` checks the signature and expiry
-  // and nothing else, so without this an uninstall or a mod toggling the instance
-  // off leaves every already-minted token reading and writing until natural
-  // expiry. A publisher ban writes one too, as of clawgate #618 — into a SEPARATE
-  // keyspace, which `isRevoked` checks alongside the install one. The install writer
-  // `revokeInstance` has two call sites (`uninstallFromModel`, `toggleEnabled(false)`,
-  // both `block-registry.service.ts`); the ban writer `revokeInstanceForBan` has one
-  // (`revokeBlockInstancesForPublisher`, called from `toggleBan`). See
-  // `block-scope.middleware.ts` for why the keyspaces are split and for what the ban leg
-  // does and does not cover.
-  // The REST `withBlockScope` middleware and
-  // `resolveSharedContext` both enforce it; this path was the remaining gap.
-  // Placed before the run-for-real branch so it binds EVERY storage op, not only
-  // the approved-app ones.
-
-  // `claims.sub` is passed for the same reason the two runtime guards pass it: the
-  // subject-scoped ban keyspace. Latent on THIS path today — it requires an `approved`
-  // AppBlock row and an ephemeral app has none — but the argument costs nothing and
-  // the alternative is a silent trap pointed at unsubmitted-app storage.
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
+  const { claims, slug, approval } = resolved;
+  // Cannot happen under the options above (`slugCheck: true`, a `strict` policy); the
+  // resolver's result is not narrowed by its options, so this states it instead of casting.
+  if (slug === null || approval.kind === 'admitted') {
+    throw new Error(
+      'app storage: token resolved without a storage slug or under the bridge policy'
+    );
   }
 
   // The DECLARED-scope gate (A5 / design-gaps H4). Reads need apps:storage:read;
@@ -348,9 +416,12 @@ async function resolveStorageContext(
   // approved-status check below, byte-identical to before. Cross-user shared
   // storage is untouched (apps:storage:shared:* lives in a different resolver and
   // is never granted in run-for-real).
-  if (claims.reviewRunForReal === true) {
+  //
+  // The claim itself is read by the resolver (`strict+reviewPreview`), which then skips the
+  // approved-row read and answers `review_preview`.
+  if (approval.kind === 'review_preview') {
     if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
-      appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+      countStorageOutcome(op, 'unauthorized');
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: `storage ${op} requires the ${requiredScope} scope`,
@@ -378,7 +449,7 @@ async function resolveStorageContext(
       select: { status: true },
     });
     if (!pr || pr.status !== 'pending') {
-      appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+      countStorageOutcome(op, 'unauthorized');
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'review preview is no longer active for this request',
@@ -397,30 +468,8 @@ async function resolveStorageContext(
     };
   }
 
-  // 🔴 STRICTER THAN THE SHARED PREDICATE, AND THAT IS A STATEMENT ABOUT THIS TARGET
-  // RATHER THAN ABOUT APPROVAL. The run-for-real branch above is this resolver's ONLY
-  // exemption. `resolveAppBlockApprovalVerdict`
-  // (`~/server/services/blocks/block-approval.service`) — the shared predicate behind the
-  // REST middleware and the tRPC bridge — also exempts a token with no backing row and an
-  // owner running a suspended app in their own live dev tunnel; neither can apply here,
-  // because per-user KV has to resolve to a REAL Postgres schema and a plain dev token
-  // names none. `resolveSharedContext` (`apps-shared.router`) is stricter still and
-  // exempts nothing. Three rules, one policy plus two structural narrowings — ledgered
-  // with their rationales, and enforced on growth and shrink, in
-  // `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
-  const block = await dbRead.appBlock.findUnique({
-    where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
-    select: { id: true, status: true },
-  });
-  if (!block) {
-    appStorageOpsCounter.inc({ op, outcome: 'not_found' });
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
-  }
-  if (block.status !== 'approved') {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
-  }
-  // A5 / design-gaps H4: storage is a DECLARED, approved scope — not an
+  // From here the resolver has read the backing row and it is approved (see the
+  // `approval` option above). A5 / design-gaps H4: storage is a DECLARED, approved scope — not an
   // ambient capability. Before touching appsDb, assert the token actually
   // carries the storage scope appropriate to the op. The scope only reaches
   // the token if it was in the manifest AND in the block's approvedScopes
@@ -429,7 +478,7 @@ async function resolveStorageContext(
   // claims.scopes, so a block approved for e.g. only models:read:self could
   // still read/write 50MB of per-user KV it never disclosed.)
   if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: `storage ${op} requires the ${requiredScope} scope`,
@@ -458,14 +507,16 @@ async function resolveStorageContext(
     userId,
     slug,
     schema: appSchemaIdent(slug),
-    appBlockId: block.id,
+    appBlockId: approval.appBlockId,
     blockInstanceId: claims.blockInstanceId,
     reviewPreview: false,
     privateRun: claims.privateRun === true,
   };
 }
 
-type StorageOp = 'get' | 'set' | 'delete' | 'list' | 'getQuota';
+// Derived so a new op cannot be added without the metric seeding in
+// `~/server/prom/app-block-storage.metrics` picking it up. Type-only, so no runtime edge.
+type StorageOp = AppStorageOp;
 
 const keyInput = z.string().min(1).max(200);
 
@@ -546,7 +597,7 @@ export async function getAppStorageValue(blockToken: string, key: string) {
   try {
     const { userId, schema, blockInstanceId } = await resolveStorageContext(blockToken, 'get');
     if (userId == null) {
-      appStorageOpsCounter.inc({ op: 'get', outcome: 'ok' });
+      countStorageOutcome('get', 'ok');
       return { value: null as unknown };
     }
     const pool = requireAppsDb();
@@ -557,7 +608,7 @@ export async function getAppStorageValue(blockToken: string, key: string) {
         [blockInstanceId, userId, key]
       )
     ).rows;
-    appStorageOpsCounter.inc({ op: 'get', outcome: 'ok' });
+    countStorageOutcome('get', 'ok');
     return { value: rows[0]?.value ?? null };
   } catch (err) {
     countStorageFault('get', err);
@@ -580,7 +631,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     const { userId, slug, schema, appBlockId, blockInstanceId, privateRun } =
       await resolveStorageContext(blockToken, 'set');
     if (userId == null) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'unauthorized' });
+      countStorageOutcome('set', 'unauthorized');
       throw new TRPCError({
         code: 'UNAUTHORIZED',
         message: 'storage requires an authenticated viewer',
@@ -616,15 +667,19 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     // bypass — both byte ceilings below are enforced in the stored unit and bind
     // regardless. Tightening the per-value cap would refuse writes that succeed
     // today, so it is left alone deliberately.
-    const serialized = JSON.stringify(value ?? null);
-    const byteSize = Buffer.byteLength(serialized, 'utf8');
-    if (byteSize > PER_VALUE_BYTE_CAP) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'payload_too_large' });
+    //
+    // The cap is measured before the value is serialised: a tRPC `value` arrives deserialised
+    // and can repeat one object or string many times, so its JSON can be far longer than the
+    // request. Only an under-cap value is built.
+    if (!jsonLengthWithin([value ?? null], PER_VALUE_BYTE_CAP, { unit: 'utf8' })) {
+      countStorageOutcome('set', 'payload_too_large');
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: `value exceeds ${PER_VALUE_BYTE_CAP / 1024}KB cap`,
       });
     }
+    const serialized = JSON.stringify(value ?? null);
+    const byteSize = Buffer.byteLength(serialized, 'utf8');
 
     const pool = requireAppsDb();
 
@@ -699,10 +754,15 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       // it showed up solely as the `ok` series falling to zero. A state
       // observable only by going and reading logs has the same gap,
       // and nothing schedules the backfill that ends it, so it can persist
-      // indefinitely with no bound. The counter is the alertable half — it is
+      // indefinitely with no bound. The counter is the readable half — it is
       // the series that says "this app has been running with its per-user
-      // sub-budget unenforced", and the series that returns to zero once the
-      // backfill has actually reached every app.
+      // sub-budget unenforced".
+      //
+      // 🔴 It does NOT return to zero once the backfill reaches every app; this
+      // comment claimed that and it was false. A prom-client counter is
+      // monotonic for the process lifetime, so what falls silent is
+      // `increase()`/`rate()` over a window with no new writes, never the
+      // series itself.
       appStorageUserQuotaUntrackedCounter.inc({ app_block_id: appBlockId });
       logToAxiom({ event: 'user_quota_relation_missing', appBlockId, slug }, STORAGE_LOG).catch(
         () => undefined
@@ -818,8 +878,8 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     const isNonIncreasing = netDelta <= 0;
 
     if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
-      appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'app' });
+      countStorageOutcome('set', 'quota_exceeded');
+      countQuotaExceeded(appBlockId, 'app');
       logToAxiom(
         {
           event: 'quota_exceeded',
@@ -843,8 +903,8 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       });
     }
     if (isInsert && rowCount + 1 > APP_ROW_LIMIT) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
-      appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'app' });
+      countStorageOutcome('set', 'quota_exceeded');
+      countQuotaExceeded(appBlockId, 'app');
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: 'app row limit exceeded',
@@ -880,12 +940,12 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     //
     // "We did not enforce" stays distinct from "we enforced against zero" where
     // that distinction is actually consumable: the
-    // `app_blocks_storage_user_quota_untracked_total` counter and the
+    // `civitai_app_block_storage_user_quota_untracked_total` counter and the
     // `user_quota_relation_missing` log on the fallback branch above. The flag
     // itself is gone — it had no reader left that could act on it.
     if (!isNonIncreasing && userUsedBytes + netDelta > USER_QUOTA_BYTES) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
-      appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
+      countStorageOutcome('set', 'quota_exceeded');
+      countQuotaExceeded(appBlockId, 'user');
       logToAxiom(
         {
           event: 'user_quota_exceeded',
@@ -905,8 +965,8 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       });
     }
     if (isInsert && userRowCount + 1 > USER_ROW_LIMIT) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
-      appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
+      countStorageOutcome('set', 'quota_exceeded');
+      countQuotaExceeded(appBlockId, 'user');
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: 'per-user row limit exceeded',
@@ -946,7 +1006,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       client.release();
     }
 
-    appStorageOpsCounter.inc({ op: 'set', outcome: 'ok' });
+    countStorageOutcome('set', 'ok');
     logToAxiom(
       {
         event: 'set',
@@ -1018,7 +1078,7 @@ export async function deleteAppStorageValue(blockToken: string, key: string) {
       'delete'
     );
     if (userId == null) {
-      appStorageOpsCounter.inc({ op: 'delete', outcome: 'unauthorized' });
+      countStorageOutcome('delete', 'unauthorized');
       throw new TRPCError({
         code: 'UNAUTHORIZED',
         message: 'storage requires an authenticated viewer',
@@ -1035,7 +1095,7 @@ export async function deleteAppStorageValue(blockToken: string, key: string) {
         [blockInstanceId, userId, key]
       );
       await client.query('COMMIT');
-      appStorageOpsCounter.inc({ op: 'delete', outcome: 'ok' });
+      countStorageOutcome('delete', 'ok');
       const deleted = (result.rowCount ?? 0) > 0;
       if (deleted) {
         logToAxiom(
@@ -1113,7 +1173,7 @@ export async function listAppStorageKeys(
   try {
     const { userId, schema, blockInstanceId } = await resolveStorageContext(blockToken, 'list');
     if (userId == null) {
-      appStorageOpsCounter.inc({ op: 'list', outcome: 'ok' });
+      countStorageOutcome('list', 'ok');
       return { keys: [], nextCursor: undefined as string | undefined };
     }
 
@@ -1140,7 +1200,7 @@ export async function listAppStorageKeys(
         ? Buffer.from(rows[rows.length - 1].key, 'utf8').toString('base64')
         : undefined;
 
-    appStorageOpsCounter.inc({ op: 'list', outcome: 'ok' });
+    countStorageOutcome('list', 'ok');
     return {
       keys: rows.map((r) => ({ key: r.key, updatedAt: r.updated_at })),
       nextCursor,
@@ -1188,7 +1248,7 @@ export async function getAppStorageQuota(blockToken: string) {
     } else {
       quota = await AppStorageProvisioner.getUserQuota({ slug, appBlockId, userId });
     }
-    appStorageOpsCounter.inc({ op: 'getQuota', outcome: 'ok' });
+    countStorageOutcome('getQuota', 'ok');
     return {
       usedBytes: quota?.usedBytes ?? 0,
       rowCount: quota?.rowCount ?? 0,

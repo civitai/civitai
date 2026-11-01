@@ -38,3 +38,18 @@ export function getModelVersionActionLayout({
       branch !== 'request-review' && !hideDownload && !isComponentOnlyModel && hasVisibleFiles,
   };
 }
+
+/** A review already pending (a Model rules hold sets `needsReview`) needs no request from the owner. */
+export function showRequestReviewFor({
+  isOwner,
+  isModerator,
+  violation,
+  underReview,
+}: {
+  isOwner: boolean;
+  isModerator: boolean;
+  violation: boolean;
+  underReview: boolean;
+}): boolean {
+  return isOwner && !isModerator && violation && !underReview;
+}

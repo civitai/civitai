@@ -1,6 +1,7 @@
 import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { bustKeyBestEffort } from './cache';
 import { dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
@@ -47,27 +48,16 @@ async function setCache(data: BlocklistDTO) {
  * own bust cannot put a reader into this write's window, because a miss it caused reads a row that
  * is already updated. `CACHE_TTL` is the TTL-short-enough option: it bounds that window rather than closing it.
  *
- * Returns false rather than throwing. The row is already committed by the time this runs, and a
- * throw here reports failure for a write that succeeded — on the remove path the operator's retry
- * then finds the entry gone, gets "Nothing was removed", reloads, and sees the chip still there
- * because the stale cache is what serves the page. Same rule as `a04fa6a608` on the session cache.
+ * Returns false rather than throwing (see `bustKeyBestEffort`): on the remove path a throw makes the
+ * operator's retry find the entry gone, get "Nothing was removed", and still see the chip because the
+ * stale cache serves the page.
  */
-async function bustCache(type: string): Promise<boolean> {
-  try {
-    await getRedis().del(blocklistKey(type));
-    return true;
-  } catch (error) {
-    void logToAxiom({
-      name: 'blocklist-cache-bust-failed',
-      type: 'error',
-      message: 'Blocklist row was written but its cache key was not cleared; readers stay stale',
-      details: {
-        blocklistType: type,
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
-    return false;
-  }
+function bustCache(type: string): Promise<boolean> {
+  return bustKeyBestEffort(blocklistKey(type), {
+    logName: 'blocklist-cache-bust-failed',
+    message: 'Blocklist row was written but its cache key was not cleared; readers stay stale',
+    details: { blocklistType: type },
+  });
 }
 
 /**

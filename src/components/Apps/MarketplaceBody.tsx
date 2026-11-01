@@ -244,11 +244,11 @@ export function MarketplaceBody() {
   //    never fires the install `onOpen`. The store dedups, so an app opened via
   //    both paths is recorded once.
   function recordRecent(block: AvailableBlock) {
-    // Enrich the recents entry with the block's name + cover image when they're
-    // already on hand (they are, on the AvailableBlock) so the shared app-chrome
-    // "Recently run" menu can render icon + name without a re-fetch. Both are
-    // optional in the store, so a null coverUrl/appName just falls back to the
-    // generic icon / blockId handle.
+    // Enrich the recents entry with the block's name when it's already on hand
+    // (it is, on the AvailableBlock) so the shared app-chrome "Recently run" menu
+    // can render it without a re-fetch; a null appName falls back to the blockId
+    // handle. The cover passed as `iconUrl` is NOT persisted — the recents store
+    // never keeps an icon url (see `RecentApp` in `recentlyOpenedAppsStore.ts`).
     setRecents(
       recordRecentlyOpenedApp(
         {
@@ -491,10 +491,11 @@ function MarketplaceEmptyState({
               two-doors layout it removed.
             • BETTER LANDING. Whoever presses this has, by definition, an empty store in
               front of them. If they have no apps either, `/apps/build` state B is
-              "ship your first app" — quickstart plus a create button — rather than a bare
-              type picker. If they DO have apps, state C is their workbench. Both are
-              strictly more useful than the mode selector, and state B's primary button is
-              `/apps/submit` anyway, so nothing is more than one click further away.
+              "ship your first app" — the coding-agent prompt, then a secondary create
+              button — rather than a bare type
+              picker. If they DO have apps, state C is their workbench. Both are strictly more
+              useful than the mode selector, and state B's create button is `/apps/submit`
+              anyway, so nothing is more than one click further away.
             • MEASURABLE. The funnel events live on `/apps/build`; a direct jump to the
               submit wizard is a create-flow entry nothing counts.
         */}

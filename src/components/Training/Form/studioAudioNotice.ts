@@ -4,7 +4,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 type TrainingMediaType = TrainingDetailsObj['mediaType'];
 
 // The Training Studio toggle is Flipt-gated: its key is withheld from users who aren't granted,
-// so absence means Settings has no toggle to point them at (same test as SettingsCard).
+// so absence means there is nothing for them to switch to (same test as SettingsCard).
 export function isStudioToggleAvailable(userFeatures: Record<string, boolean> | undefined) {
   return !!userFeatures && 'trainingStudioUi' in userFeatures;
 }

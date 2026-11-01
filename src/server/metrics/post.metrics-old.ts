@@ -226,10 +226,9 @@ async function getCommentTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent post comments
     SELECT DISTINCT
-      t."postId" AS id
-    FROM "Thread" t
-    JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."postId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
+      c."entityId" AS id
+    FROM "CommentV3" c
+    WHERE c."entityType" = 'post' AND c."parentId" IS NULL AND c."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 100).map((ids, i) => async () => {
@@ -238,15 +237,16 @@ async function getCommentTasks(ctx: MetricContext) {
     await getMetrics(ctx)`
       -- get post comment metrics
       SELECT
-        t."postId",
+        c."entityId" AS "postId",
         tf.timeframe,
         ${snippets.timeframeSum('c."createdAt"')} "commentCount"
-      FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id AND c."tosViolation" = false
+      FROM "CommentV3" c
       CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
-      WHERE t."postId" IN (${ids})
-        AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-      GROUP BY t."postId", tf.timeframe
+      WHERE c."entityType" = 'post' AND c."parentId" IS NULL AND c."deletedAt" IS NULL
+        AND c."tosViolation" = false
+        AND c."entityId" IN (${ids})
+        AND c."entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+      GROUP BY c."entityId", tf.timeframe
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });

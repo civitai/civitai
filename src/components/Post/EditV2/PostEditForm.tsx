@@ -5,6 +5,8 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
+import { PostEditBackLink } from '~/components/Post/EditV2/PostEditBackLink';
+import { presetTitleFor } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
 import {
   usePendingSave,
   usePostEditParams,
@@ -80,6 +82,19 @@ export function PostEditForm() {
     };
   }, []); // eslint-disable-line
 
+  // Apply preset hands its title here rather than saving it, so the field's current value decides
+  // (a prefilled or still-unsaved title wins) and the autosave above is the only writer.
+  const [presetTitle, setPresetTitle] = usePostEditStore((state) => [
+    state.presetTitle,
+    state.setPresetTitle,
+  ]);
+  useEffect(() => {
+    if (!presetTitle) return;
+    const title = presetTitleFor(form.getValues('title'), presetTitle);
+    if (title) form.setValue('title', title, { shouldDirty: true });
+    setPresetTitle(null);
+  }, [presetTitle]); // eslint-disable-line
+
   usePendingSave('post-detail', debounce);
 
   const controls = [
@@ -98,6 +113,13 @@ export function PostEditForm() {
           "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this post."
         }
       />
+      {post && (
+        <PostEditBackLink
+          modelId={post.parentModelId}
+          modelVersionId={post.modelVersionId}
+          modelName={post.parentModelName}
+        />
+      )}
       <InputTextArea
         data-tour="post:title"
         name="title"

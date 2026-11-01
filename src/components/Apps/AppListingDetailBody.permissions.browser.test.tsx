@@ -16,9 +16,8 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * is served by `appListings.getAppDetail` → this component.
  *
  * 🔴 READ THIS BEFORE TREATING ANY RESULT HERE AS A GATE: IT IS NOT ONE. This file
- * is in the Vitest browser-mode `component` project, which CI runs only as the
- * preview pipeline's `preview / component-tests` — report-only, non-blocking, and
- * not reported at all when the preview build fails. The GATING half of this change
+ * is in the Vitest browser-mode `component` project, which CI runs as
+ * `Component tests`; no check in this repo blocks a merge. The GATING half of this change
  * lives in the blocking node project, in
  * `src/server/services/blocks/__tests__/app-listing.service.test.ts`, which pins
  * the thing that actually matters for safety: that the disclosure is fed by the
@@ -133,6 +132,9 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     installCount: 4213,
     sourceRepoUrl: null,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     scopes: [],
@@ -165,8 +167,22 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
     await expect.element(within.getByTestId('apps-listing-permissions')).toBeInTheDocument();
     // Both, not just the first — the fixture's two scopes are distinct strings so
     // "rendered only one" is a different DOM than "rendered both".
-    await expect.element(within.getByText(PLAIN_SCOPE)).toBeInTheDocument();
-    await expect.element(within.getByText(SENSITIVE_SCOPE)).toBeInTheDocument();
+    await expect.element(within.getByText('See the model it sits on')).toBeInTheDocument();
+    await expect.element(within.getByText('Run AI work with your Buzz')).toBeInTheDocument();
+  });
+
+  test('the live card speaks plain language: no scope ids, a Sensitive marker on the sensitive one', async () => {
+    const { container } = await renderBody(base({ scopes: [PLAIN_SCOPE, SENSITIVE_SCOPE] }));
+    const card = container.querySelector('[data-testid="apps-listing-permissions"]') as HTMLElement;
+    expect(card, 'the permissions card must render').not.toBeNull();
+    // Plain `toContain` on `textContent`: `not.toBeInTheDocument()` is inert in this repo.
+    expect(card.textContent).not.toContain(PLAIN_SCOPE);
+    expect(card.textContent).not.toContain(SENSITIVE_SCOPE);
+    expect(card.querySelectorAll('[data-permission-row]')).toHaveLength(2);
+    const sensitiveRow = card.querySelector(`[data-permission-row="${SENSITIVE_SCOPE}"]`)!;
+    const plainRow = card.querySelector(`[data-permission-row="${PLAIN_SCOPE}"]`)!;
+    expect(sensitiveRow.textContent).toContain('Sensitive');
+    expect(plainRow.textContent).not.toContain('Sensitive');
   });
 
   test('the section is ABSENT — not empty — when the app declares no scopes', async () => {

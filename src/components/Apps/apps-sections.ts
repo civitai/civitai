@@ -119,9 +119,10 @@ export type AppsNavContext = {
   isAuthor: boolean;
   /**
    * May load `/apps/build` → show "Build". This is the page's OWN gate turned into a
-   * viewer fact, and it is computed by the SHARED `canAccessAppsBuild` — the
-   * same call `resolveBuildPageAccess` makes in `getServerSideProps`. Not re-derived
-   * here; see that predicate for why one function rather than two spellings.
+   * viewer fact, and it is computed by the SHARED `resolveAppsBuildPageMode` (the build
+   * states or the App Assistant) — the same call `resolveBuildPageAccess` makes in
+   * `getServerSideProps`. Not re-derived here; see that function for why one rule rather
+   * than two spellings.
    */
   canBuild: boolean;
   /**
@@ -211,8 +212,8 @@ export type AppsSection = {
  *   • `__tests__/appsBuildAccess.test.ts` and `__tests__/appsBuildGateCallSites.test.ts`
  *     cover the Build row behaviourally and structurally.
  * ⚠️ Invites, Revenue and Review are in NEITHER node-tier set. Their only per-row
- * behavioural pin is `AppsRailNav.browser.test.tsx`, which runs in the report-only
- * browser tier — so editing one of those three predicates is not blocked by anything.
+ * behavioural pin is `AppsRailNav.browser.test.tsx`, in the browser tier
+ * (`Component tests`).
  * If one gains a flag term, add it to `appsSectionRowsMatchPageGates.test.ts` rather
  * than relying on review.
  *
@@ -340,8 +341,8 @@ export const appsSections: AppsSection[] = [
    * stops having a nav entry.
    *
    * 🔴 NOT `c.isAuthor`, AND NOT `!!features.appBlocksGetStarted` — `c.canBuild`, which
-   * is `canAccessAppsBuild` verbatim. `hasSubmissions` / `hasEditableApps` are
-   * deliberately ABSENT from this predicate even though they decide what the page
+   * is `resolveAppsBuildPageMode` verbatim (the build states or the App Assistant).
+   * `hasSubmissions` / `hasEditableApps` are deliberately ABSENT from this predicate even though they decide what the page
    * RENDERS: they come from the client-only `getNavSummary`, and an entry that appeared
    * after mount for an author with apps is the hydration mismatch this surface already
    * survived once. The page's own state machine reads them; the nav does not.

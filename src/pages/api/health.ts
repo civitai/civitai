@@ -7,11 +7,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  MeiliCallTimeoutError,
-  metricsSearchClient,
-  withMeiliHealthProbe,
-} from '~/server/meilisearch/client';
-import {
   registerCounter,
   registerCounterWithLabels,
   registerHistogram,
@@ -104,24 +99,6 @@ const checkFns: Record<string, CancellableCheckFn> = {
     }
   },
 
-  async searchMetrics(signal: AbortSignal) {
-    if (signal.aborted) return false;
-    const client = metricsSearchClient;
-    if (client === null) return true;
-    // Wrap under withMeiliHealthProbe() — a dedicated tiny limiter that's
-    // ISOLATED from the user-traffic 'metricsSearch' limiter. Without this
-    // isolation, a backend brownout starves the probe first (because user
-    // calls fill the main limiter), kubelet trips at 10s, pods SIGKILL —
-    // exactly the 2026-05-29 cascade. The probe also inherits
-    // MEILI_CALL_TIMEOUT_MS so it can't hang.
-    // A MeiliCallTimeoutError here means "Meili is sick" → probe failure.
-    return await withMeiliHealthProbe(() => client.isHealthy()).catch((e) => {
-      if (e instanceof MeiliCallTimeoutError) return false;
-      logError({ error: e, name: 'metricsSearch', details: null });
-      return false;
-    });
-  },
-
   // Redis cluster client: skip explicit PING because redis@5 cluster client
   // throws `Cannot read properties of undefined (reading 'connectPromise')`
   // when a master is transiently re-establishing. isReady is the canonical
@@ -171,11 +148,10 @@ export type CheckKey =
   | 'read'
   | 'pgWrite'
   | 'pgRead'
-  | 'searchMetrics'
   | 'redis'
   | 'sysRedis'
   | 'clickhouse';
-// Static disable list from env (HEALTHCHECK_DISABLED="searchMetrics,clickhouse").
+// Static disable list from env (HEALTHCHECK_DISABLED="clickhouse").
 // Filtered to real check names so a typo can't silently swallow nothing-or-everything.
 // Applies in all environments; the sysRedis DISABLED_HEALTHCHECKS list (prod-only)
 // is layered on top at request time.
@@ -401,6 +377,48 @@ export async function runHealthChecks(
   }
 }
 
+// Readiness probes call /api/health every few seconds. A run in which EVERY check passed is reused
+// for this long, so a dependency that breaks just after a clean run is noticed up to this much
+// later. Anything less than a clean sweep is never reused: a failing or soft-failing dependency, a
+// deadline overrun or an aborted run all re-run the full suite on the next probe, so recovery is
+// seen as fast as before.
+const CLEAN_RUN_REUSE_MS = 10_000;
+let lastCleanRun: { startedAt: number; results: Record<CheckKey, boolean> } | undefined;
+// Overlapping probes can finish out of order: a slow clean run must not overwrite a failure that a
+// later-started run already reported.
+let lastNonCleanFinishedAt = -Infinity;
+
+/** Test-only: forget any reusable run, so one test can never be answered by another's. */
+export function resetHealthCheckReuseForTests() {
+  lastCleanRun = undefined;
+  lastNonCleanFinishedAt = -Infinity;
+}
+
+export async function runHealthChecksReusingCleanRun(
+  ...args: Parameters<typeof runHealthChecks>
+): ReturnType<typeof runHealthChecks> {
+  const [signal] = args;
+  // Monotonic, so a wall-clock step backwards cannot keep a stale verdict fresh.
+  const startedAt = performance.now();
+  if (lastCleanRun && startedAt - lastCleanRun.startedAt < CLEAN_RUN_REUSE_MS) {
+    return { healthy: true, results: { ...lastCleanRun.results }, deadlineTimedOut: false };
+  }
+
+  const run = await runHealthChecks(...args);
+  // Every check true implies `healthy`, and a deadline overrun leaves an unsettled check false.
+  const clean =
+    !signal.aborted &&
+    Object.keys(run.results).length > 0 &&
+    Object.values(run.results).every(Boolean);
+  if (!clean) {
+    lastNonCleanFinishedAt = performance.now();
+    lastCleanRun = undefined;
+  } else if (startedAt >= lastNonCleanFinishedAt) {
+    lastCleanRun = { startedAt, results: { ...run.results } };
+  }
+  return run;
+}
+
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
@@ -422,7 +440,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  const { healthy, results } = await runHealthChecks(signal);
+  const { healthy, results } = await runHealthChecksReusingCleanRun(signal);
 
   // Clean up the close listener
   res.off('close', onClose);

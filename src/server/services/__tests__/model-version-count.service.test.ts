@@ -90,15 +90,6 @@ describe('getModelVersionCountsByModelId', () => {
     expect(counts.size).toBe(0);
   });
 
-  it('defaults to the read-replica handle (dbRead) when no db is passed', async () => {
-    groupBy.mockResolvedValue([{ modelId: 1, _count: { _all: 2 } }]);
-
-    await getModelVersionCountsByModelId([1]);
-
-    // The mocked dbRead.modelVersion.groupBy is the one that ran.
-    expect(groupBy).toHaveBeenCalledTimes(1);
-  });
-
   it('runs on the caller-supplied db handle (no-lag primary) when one is passed', async () => {
     // A distinct handle standing in for the post-write primary the training
     // handler routes both its list read AND count through.

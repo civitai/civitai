@@ -160,7 +160,7 @@ function makeRow(appListing: Record<string, unknown>) {
     submittedAt: new Date('2026-01-01T00:00:00Z'),
     changelog: null,
     appListing,
-    submittedBy: { id: 42, username: 'dev', image: null },
+    submittedBy: { id: 42, username: 'dev', deletedAt: null, image: null },
   } as never;
 }
 

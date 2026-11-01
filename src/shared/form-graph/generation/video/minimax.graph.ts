@@ -1,5 +1,5 @@
 import { branch, defineGraph } from 'form-graph';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import {
   getAspectRatioOptions,
   type GenerationAspectRatio,
@@ -10,6 +10,7 @@ import {
   aspectRatioDef,
   boolDef,
   controlVideoDef,
+  enumDef,
   imagesDef,
   sliderDef,
   workflowScoped,
@@ -20,25 +21,27 @@ import {
   familyScope,
   makeTextBlock,
   modelIdOf,
+  perModelScope,
   versionModeOf,
   type FamilyExt,
 } from '../shared';
 
 /**
- * MiniMax H3, ported from `minimax-graph.ts`. Two builds behind one version
- * picker: the API build (no extra knobs) and the comfy build (LoRAs, seed, a
- * turbo toggle that reshapes the steps range). Prompt is required even with
- * images (H3 rejects text-less requests). No negative prompt.
+ * MiniMax H3. Four builds behind one version picker: MiniMax's API build
+ * (Standard, Highspeed or Lite tiers), the comfy build (LoRAs, seed, a turbo toggle that
+ * reshapes the steps range), H3 Max through FAL (Max or Max Turbo, resolution, seed) and
+ * HeyGen Video 1 (resolution, seed; first frame only). Prompt is required even
+ * with images (H3 rejects text-less requests). No negative prompt.
  */
-
-// ---- copied from minimax-graph.ts, which dies with the data-graph engine ----
 
 export const minimaxVersionIds = {
   'v1.0': 3183239,
   comfy: 3216500,
+  max: 3388469,
+  heygen: 3388470,
 } as const;
 
-export type MinimaxVariant = 'api' | 'comfy';
+export type MinimaxVariant = 'api' | 'comfy' | 'max' | 'heygen';
 
 const minimaxAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
@@ -59,15 +62,82 @@ export const MINIMAX_DEFAULT_ASPECT_RATIO = '16:9';
 
 const MAX_REFERENCE_IMAGES = 9;
 
-// ---- end of minimax-graph.ts copies -----------------------------------------
+const minimaxMaxResolutions = [
+  { label: '480p', value: '480P' },
+  { label: '768p', value: '768P' },
+  { label: '1080p', value: '1080P' },
+] as const;
+
+const heygenResolutions = [
+  { label: '480p', value: '480p' },
+  { label: '768p', value: '768p' },
+  { label: '2K', value: '2K' },
+] as const;
 
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
 export const minimaxVariantOf = versionModeOf(
-  { comfy: minimaxVersionIds.comfy } as Record<MinimaxVariant, number>,
+  {
+    comfy: minimaxVersionIds.comfy,
+    max: minimaxVersionIds.max,
+    heygen: minimaxVersionIds.heygen,
+  } as Record<MinimaxVariant, number>,
   'api'
 );
 
-const api = defineGraph<FamilyExt>();
+/** The orchestrator's lower duration bound per build; all four cap at 15. */
+const minimaxDurationMin: Record<MinimaxVariant, number> = {
+  api: 5,
+  comfy: 4,
+  max: 4,
+  heygen: 5,
+};
+
+const minimaxApiModels = [
+  { label: 'Standard', value: 'standard' },
+  { label: 'Highspeed', value: 'highspeed' },
+  { label: 'Lite', value: 'lite' },
+] as const;
+
+export type MinimaxApiModel = (typeof minimaxApiModels)[number]['value'];
+
+/** The orchestrator rejects any other model/resolution pair. */
+const minimaxApiResolutions: Record<MinimaxApiModel, { label: string; value: string }[]> = {
+  standard: [
+    { label: '768p', value: '768P' },
+    { label: '2K', value: '2K' },
+  ],
+  highspeed: [{ label: '768p', value: '768P' }],
+  lite: [
+    { label: '480p', value: '480P' },
+    { label: '768p', value: '768P' },
+  ],
+};
+
+const api = defineGraph<FamilyExt>()
+  .field('mode', {
+    ...enumDef({ options: minimaxApiModels, default: 'standard' }),
+    meta: {
+      options: minimaxApiModels,
+      info: 'Highspeed and Lite generate faster and cost less. Standard has the highest quality and is the only one offering 2K.',
+    },
+  })
+  .field('resolution', ({ mode }) => ({
+    ...enumDef({
+      options: minimaxApiResolutions[mode],
+      default: mode === 'standard' ? '2K' : '768P',
+    }),
+    scope: `api-${mode}`,
+  }));
+
+const max = defineGraph<FamilyExt>()
+  .field('seed', SEED)
+  // scoped so the comfy build's turbo LoRA choice doesn't carry into Max Turbo
+  .field('turbo', { ...boolDef(false), scope: 'max' })
+  .field('resolution', enumDef({ options: minimaxMaxResolutions, default: '768P' }));
+
+const heygen = defineGraph<FamilyExt>()
+  .field('seed', SEED)
+  .field('resolution', enumDef({ options: heygenResolutions, default: '768p' }));
 
 const comfy = defineGraph<FamilyExt>()
   .field('resources', familyResources)
@@ -89,19 +159,44 @@ const comfy = defineGraph<FamilyExt>()
 
 type MinimaxExt = FamilyExt & { model?: unknown };
 
-/** Tagged: v1's `minimaxVariant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `minimaxVariant`. */
 const variants = branch('minimaxVariant', (ext: MinimaxExt) => minimaxVariantOf(ext.model), {
   api,
   comfy,
+  max,
+  heygen,
 });
 
 export const minimax = defineGraph<FamilyExt>({ scope: familyScope })
+  .field('model', ({ _ext }) =>
+    checkpointDef({
+      ecosystem: _ext.ecosystem,
+      workflow: _ext.workflow,
+      ext: _ext,
+      versions: {
+        options: [
+          { label: 'Comfy', value: minimaxVersionIds.comfy },
+          { label: 'Api', value: minimaxVersionIds['v1.0'] },
+          { label: 'Max by Fal', value: minimaxVersionIds.max },
+          { label: 'HeyGen', value: minimaxVersionIds.heygen },
+        ],
+      },
+      defaultModelId: minimaxVersionIds.comfy,
+    })
+  )
   .field(
     'images',
-    workflowScoped(({ _ext }) => {
+    workflowScoped(({ model, _ext }) => {
       // isWorkflowOrVariant matches by the config's variantOf, so ref2vid is
       // NOT an img2vid variant here — it takes plain references, not slots
       if (isWorkflowOrVariant(_ext.workflow, 'img2vid')) {
+        // HeyGen takes a first frame only
+        if (modelIdOf(model) === minimaxVersionIds.heygen) {
+          return imagesDef({
+            slots: [{ label: 'First Frame', required: true }],
+            warnOnMissingAiMetadata: true,
+          });
+        }
         return imagesDef({
           slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
           warnOnMissingAiMetadata: true,
@@ -111,20 +206,6 @@ export const minimax = defineGraph<FamilyExt>({ scope: familyScope })
         return imagesDef({ max: MAX_REFERENCE_IMAGES, warnOnMissingAiMetadata: true });
       }
       return null;
-    })
-  )
-  .field('model', ({ _ext }) =>
-    checkpointDef({
-      ecosystem: _ext.ecosystem,
-      workflow: _ext.workflow,
-      ext: _ext,
-      versions: {
-        options: [
-          { label: 'H3 (Comfy)', value: minimaxVersionIds.comfy },
-          { label: 'H3 (API)', value: minimaxVersionIds['v1.0'] },
-        ],
-      },
-      defaultModelId: minimaxVersionIds.comfy,
     })
   )
   // frame workflows derive the ratio from the source image (H3's 'adaptive',
@@ -140,7 +221,10 @@ export const minimax = defineGraph<FamilyExt>({ scope: familyScope })
         })
       : null
   )
-  .field('duration', sliderDef({ min: 4, max: 15, default: 6 }))
+  .field('duration', ({ model }) => ({
+    ...sliderDef({ min: minimaxDurationMin[minimaxVariantOf(model)], max: 15, default: 6 }),
+    scope: perModelScope({ model }),
+  }))
   .use(variants)
   .use(makeTextBlock({ negativePrompt: false, promptAlwaysRequired: true }));
 

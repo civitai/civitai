@@ -1,3 +1,4 @@
+import type { shownActivity } from '@civitai/shared/held-media';
 import { dbWrite } from '~/server/db/client';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
@@ -12,9 +13,18 @@ type ModelModActivity = {
     | 'unsetMinor'
     | 'setSfwOnly'
     | 'unsetSfwOnly'
+    | 'setPoi'
+    | 'unsetPoi'
     | 'setMinorAutoHash'
+    | 'setMinorTextScan'
     | 'rollbackMinorAutoHash'
-    | 'dismissMinorHashMatch';
+    | 'dismissMinorHashMatch'
+    | 'setPoiAutoHash'
+    | 'revertPoiAutoHash'
+    | 'dismissPoiHashMatch'
+    // A moderator's model save added or removed one locked property (`lockProperty:poi`).
+    | `lockProperty:${string}`
+    | `unlockProperty:${string}`;
 };
 
 type ModelVersionModActivity = {
@@ -29,7 +39,14 @@ type ImageTagModActivity = {
 
 export type ImageModActivity = {
   entityType: 'image';
-  activity: TagActivities | 'review' | 'setNsfwLevel' | 'resolveAppeal' | 'setNsfwLevelKono';
+  activity:
+    | TagActivities
+    | 'review'
+    | 'setNsfwLevel'
+    | 'resolveAppeal'
+    | 'setNsfwLevelKono'
+    | 'heldMedia:view'
+    | ReturnType<typeof shownActivity>;
 };
 
 type ArticleModActivity = {
@@ -53,8 +70,16 @@ type UserModActivity = {
     | 'setRewardsEligibility'
     | 'removeContent'
     | 'autoMuteScam'
+    // The account was already muted by a moderator, so a scam verdict hid its content and opened no case.
+    | 'scamCleanup'
     | 'mutePendingReview'
     | 'overturnPendingReviewMute'
+    | 'mute'
+    | 'unmute'
+    | 'revokeTimedMute'
+    | 'createSystemAccount'
+    | 'mintSystemAccountApiKey'
+    | 'setSystemAccountProfile'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -69,7 +94,28 @@ type UserModActivity = {
     // A moderator closed the account FOR its owner, which in practice means a data-subject erasure
     // request from someone who cannot sign in to do it themselves. Distinct from `removeContent`,
     // which strips what an account owns and leaves the account itself identifiable.
-    | 'deleteAccount';
+    | 'deleteAccount'
+    // A moderator removed every reaction the account made, on its owner's request. One row per call;
+    // the per-table counts are on the ClickHouse audit row (`affected`).
+    | 'removeReactions'
+    // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
+    // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
+    | `mintMembershipCode:${string}`
+    // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
+    | `revokeMembershipCode:${string}`
+    // Support ended a Buzz-purchased membership early (`endBuzzMembership:<productId>`).
+    | `endBuzzMembership:${string}`
+    // A moderator awarded Creator Score (`grantCreatorScore:<grantId>:<amount>`) or withdrew a grant
+    // (`revokeCreatorScore:<grantId>`). The grant itself lives on CreatorScoreGrant.
+    | `grantCreatorScore:${string}`
+    | `revokeCreatorScore:${string}`
+    // A moderator set or cleared the Creator Program ban
+    // (`creatorProgramBan:<set|clear>:<before>:<after>:<{reason,gateRef} JSON>`).
+    | `creatorProgramBan:${string}`
+    // A lost payment dispute on a payment this account made
+    // (`chargeback:<disputeId>:<banned|already-banned|skipped-moderator>`), written as the system user.
+    | `chargeback:${string}`
+    | `creditCryptoDeposit:${string}`;
 };
 
 type ComicProjectModActivity = {
@@ -84,6 +130,50 @@ type PlacementModActivity = {
   activity: 'removePlacement';
 };
 
+/** A moderator hid an `app-block` report from the app's developer, or unhid it. */
+type FeedbackModActivity = {
+  entityType: 'feedback';
+  activity: 'hideFromOwner' | 'unhideFromOwner';
+};
+
+/** A moderator cleared a bounty entry file's check result
+ *  (`clearFileCheck:<{fileId,reason} JSON>`; the file holds it as `metadata.checkOverride`), or
+ *  undid that clear (`reblockFileCheck:<{fileId,reason} JSON>`). */
+type BountyEntryModActivity = {
+  entityType: 'bountyEntry';
+  activity: `clearFileCheck:${string}` | `reblockFileCheck:${string}`;
+};
+
+/** The CSAM report page opened an account's held media; the activity carries how many items. */
+type HeldMediaGridModActivity = {
+  entityType: 'user';
+  activity: `heldMedia:grid:${number}`;
+};
+
+/** A moderator changed someone else's storyline through its owner's controls. */
+export type StorylineModActivity = {
+  entityType: 'storyline';
+  activity:
+    | 'update'
+    | 'insertChapter'
+    | 'moveChapter'
+    | 'linkChapter'
+    | 'setCanon'
+    | 'removeCollaborator'
+    | 'removeChapter'
+    | 'delete';
+};
+
+type CrucibleModActivity = {
+  entityType: 'crucible';
+  activity: 'takeDown';
+};
+
+type SiteAlertModActivity = {
+  entityType: 'siteAlert';
+  activity: 'post' | 'edit' | 'extend' | 'end';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -96,7 +186,13 @@ type ModActivity = {
   | ImpersonateModActivity
   | UserModActivity
   | ComicProjectModActivity
+  | CrucibleModActivity
   | PlacementModActivity
+  | FeedbackModActivity
+  | BountyEntryModActivity
+  | SiteAlertModActivity
+  | HeldMediaGridModActivity
+  | StorylineModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
@@ -113,9 +209,13 @@ type ModActivity = {
 // `MODERATOR_TAKEDOWN_ACTIVITIES` in `src/server/jobs/image-ingestion.ts`, where a suppressed row means a
 // takedown demoted to a delete-without-blob-retraction. That demotion is reproducible locally and cannot
 // happen in production — do not diagnose one from the other.
-export async function trackModActivity(userId: number, input: ModActivity) {
+export async function trackModActivity(
+  userId: number,
+  input: ModActivity,
+  client: Pick<typeof dbWrite, '$executeRaw'> = dbWrite
+) {
   if (!input.entityId) {
-    await dbWrite.$executeRaw`
+    await client.$executeRaw`
       INSERT INTO "ModActivity" ("userId", "entityType", activity)
       VALUES (${userId}, ${input.entityType}, ${input.activity})
       ON CONFLICT DO NOTHING
@@ -124,7 +224,7 @@ export async function trackModActivity(userId: number, input: ModActivity) {
   }
 
   if (input.entityId && !Array.isArray(input.entityId)) input.entityId = [input.entityId];
-  await dbWrite.$executeRaw`
+  await client.$executeRaw`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
     SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId})
     ON CONFLICT DO NOTHING

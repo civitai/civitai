@@ -1383,9 +1383,12 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
  * granted scopes, returning the granted subset to sign + the withheld scopes
  * the host must re-consent for.
  *
- * `apps:storage:*` (per-user KV) is intentionally NOT consent-gated here — it is
+ * The per-user storage scopes (`apps:storage:read` / `apps:storage:write`, the per-user
+ * KV, and `apps:storage`, the document store's base scope) are intentionally NOT
+ * consent-gated here — NOT the whole `apps:storage:*` family, since `apps:storage:publish`
+ * is gated (see its entry below). The per-user KV scopes are each
  * an ambient-but-otherwise-gated scope with its own issuance-time / per-op check
- * (resolveStorageContext). Subjecting it to per-user consent would make the
+ * (resolveStorageContext). Subjecting them to per-user consent would make the
  * publisher re-consent to their own block's storage on every version bump for
  * no security gain. The remaining user-resource scopes (user/ai/buzz/
  * social, models:write) flow through the consent gate.
@@ -1450,6 +1453,12 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
  * confirm away as redundant with this grant — they answer different questions
  * ("may this app post as me at all" vs "may it post THIS").
  *
+ * `social:react:self` (set the viewer's public, reward-paying reaction on an image) is
+ * INTENTIONALLY ABSENT as well, and unlike `posts:write:self` there is NO per-action confirm
+ * behind it — so this grant is the ONLY consent the reaction path has. Exempting it would mean
+ * an app could react as the viewer with no prompt at all. Revoking it stops future reactions;
+ * reactions already made stay (decision on civitai-app-starters#669).
+ *
  * 🔴 MEMBERSHIP HERE MAKES A SCOPE UN-REVOKABLE, AND A REVOKE CONTROL ON ONE WOULD BE A
  * LIE. `partitionByConsent` below signs on `CONSENT_EXEMPT_SCOPES.has(scope) ||
  * grantedScopes.has(scope)` — the exempt test comes FIRST and never consults the grant —
@@ -1461,7 +1470,7 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
  * visibility/ownership, self-bound subject, rate limits), and removing the scope would
  * not remove those gates' subject matter — it would only break the #3090 page-token fix.
  * The scopes a revoke DOES reach are the gated ones: notably `ai:write:budgeted`,
- * `collections:read:private`, `posts:write:self`.
+ * `collections:read:private`, `posts:write:self`, `social:react:self`.
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
   // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed
@@ -1475,6 +1484,14 @@ const CONSENT_EXEMPT_SCOPES = new Set([
   // min-trust gate + content moderation + rate limits, not per-scope consent.
   'apps:storage:shared:read',
   'apps:storage:shared:write',
+  // DOCUMENT STORE — `apps:storage` reaches only this app's own store: the viewer's private
+  // collections, reads of shared ones, marks and counters. Each is bounded by the app's
+  // reviewed `storage` declaration and by the server-side per-op checks of the storage
+  // routes. Its sibling `apps:storage:publish` is deliberately ABSENT: authoring documents
+  // other viewers read, under the viewer's identity, needs a grant — one prompt per app.
+  // (Unlike `apps:storage:shared:write` above, which signs consent-free today and which the
+  // publish scope replaces.)
+  'apps:storage',
   'models:read:self',
   // Collections — server-side visibility/ownership (read) + self-bound subject
   // (follow) are the gate; see the block collections endpoints. #3090: exempting
@@ -1487,6 +1504,9 @@ const CONSENT_EXEMPT_SCOPES = new Set([
   // consent to. Its sibling `goods:purchase:self` is deliberately ABSENT — money
   // out of the viewer's balance always needs an explicit grant.
   'goods:read:self',
+  // apps:store:items:write — gated per call server-side; a consent gate here would only drop
+  // the scope from tokens.
+  'apps:store:items:write',
 ]);
 
 export function partitionByConsent(

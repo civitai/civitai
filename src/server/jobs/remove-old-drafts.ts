@@ -1,7 +1,15 @@
+import { Prisma } from '@prisma/client';
+import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  detachHeldThreadsCte,
+  heldLegacyCommentOnModelSql,
+  modelThreadParents,
+} from '~/server/services/comment-thread-hold';
+import { modelDataHeldSql } from '~/server/services/legal-hold.service';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
 
@@ -191,6 +199,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   let deletedCount = 0;
   let errorCount = 0;
   let skippedCount = 0;
+  let heldCount = 0;
 
   log(`Found ${modelIds.length} old draft models to remove`);
 
@@ -230,17 +239,58 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
 
       if (deletable.length === 0) continue;
 
-      const deletableSet = new Set(deletable);
-      // Only the versions of models we are actually about to delete. Deregistering
-      // a spared model's file_locations would drop its objects out of the
-      // dereference-quarantine allowlist — the same data loss by another route.
-      const versionIds = versionRows.filter((v) => deletableSet.has(v.modelId)).map((v) => v.id);
-
-      await dbWrite.$executeRaw`
-        DELETE FROM "Model"
-        WHERE id = ANY(${deletable})
+      // Checked in the DELETE itself, so a hold placed after the replica SELECT still stops it.
+      const deletedRows = await dbWrite.$queryRaw<{ id: number }[]>`
+        WITH doomed AS (
+          SELECT m.id FROM "Model" m
+          WHERE m.id = ANY(${deletable})
+            AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
+            AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
+        ),
+        ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT id FROM doomed`), true)},
+        ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT id FROM doomed`), true)}
+        DELETE FROM "Model" m
+        WHERE m.id IN (SELECT id FROM doomed)
+        RETURNING m.id
       `;
-      deletedCount += deletable.length;
+      const deletedSet = new Set(deletedRows.map((r) => r.id));
+      const deleted = deletable.filter((id) => deletedSet.has(id));
+      deletedCount += deleted.length;
+
+      // Not deleted and still there is held; gone already (another delete got there first) is not.
+      // Reporting only, so a failure here must not fail a batch whose deletes have committed.
+      const notDeleted = deletable.filter((id) => !deletedSet.has(id));
+      if (notDeleted.length > 0) {
+        await dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "Model" WHERE id = ANY(${notDeleted}) ORDER BY id
+        `.then(
+          (rows) => {
+            heldCount += rows.length;
+            // Model ids only: the same held drafts come up every night.
+            if (rows.length > 0)
+              logToAxiom({
+                type: 'info',
+                name: 'remove-old-drafts',
+                message: 'Kept old draft models of owners under a legal hold',
+                modelIds: rows.map((r) => r.id),
+              });
+          },
+          (error: unknown) =>
+            logToAxiom({
+              type: 'error',
+              name: 'remove-old-drafts',
+              message: 'Failed to read which old draft models a legal hold kept',
+              error: (error as Error)?.message,
+              modelIds: notDeleted,
+            })
+        );
+      }
+      if (deleted.length === 0) continue;
+
+      // Only the versions of models actually deleted. Deregistering a spared model's file_locations
+      // would drop its objects out of the dereference-quarantine allowlist — the same data loss by
+      // another route.
+      const versionIds = versionRows.filter((v) => deletedSet.has(v.modelId)).map((v) => v.id);
 
       // Identify what was destroyed. The delete is irreversible and cascades, so
       // without the ids a later "my model vanished" report is unanswerable.
@@ -249,8 +299,8 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
         type: 'info',
         name: 'remove-old-drafts',
         message: 'Removed old draft models',
-        modelIds: deletable,
-        userIds: deletable.map((id) => userByModelId.get(id) ?? null),
+        modelIds: deleted,
+        userIds: deleted.map((id) => userByModelId.get(id) ?? null),
       });
 
       // Post-delete: deregister storage-resolver file_locations for the reaped
@@ -291,6 +341,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   log(
     `Removed ${deletedCount} old draft models` +
       `${skippedCount > 0 ? `, ${skippedCount} skipped for recent activity` : ''}` +
+      `${heldCount > 0 ? `, ${heldCount} kept for a legal hold` : ''}` +
       `${errorCount > 0 ? `, ${errorCount} failed` : ''}`
   );
 });

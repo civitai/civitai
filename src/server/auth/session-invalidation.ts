@@ -1,6 +1,7 @@
 import { SignalMessages } from '~/server/common/enums';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import { hSetMultiWithTTL } from '~/server/redis/atomic';
+import { hSetMultiWithTTL, hSetMultiWithTTLUnlessValue } from '~/server/redis/atomic';
+import { logToAxiom } from '~/server/logging/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { createLogger } from '~/utils/logging';
 import { signalClient } from '~/utils/signal-client';
@@ -12,7 +13,8 @@ import {
   type SessionStateCaller,
 } from './session-metrics';
 
-const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
+// Revocation markers must outlast the 90-day session limit, or a token outlives the marker that revokes it.
+const MARKER_EXPIRATION = 60 * 60 * 24 * 91;
 // Fields per HSCAN page. Only bounds how many field names come back per round trip; the scan is incremental
 // either way, so this trades round trips against per-command size rather than affecting correctness.
 const SCAN_PAGE = 500;
@@ -22,6 +24,8 @@ const SCAN_PAGE = 500;
 // minutes while the per-page fail-open never trips. This caps the whole scan instead. Exceeding it yields a
 // PARTIAL token list, which is reported distinctly rather than as a normal read — see below.
 const SCAN_BUDGET_MS = 3000;
+// Fields per HDEL when untracking invalidated tokens, so one command never scales with the user's whole hash.
+const UNTRACK_CHUNK = 1000;
 const log = createLogger('session-invalidation', 'green');
 
 type RefreshSessionOptions = { sendSignal?: boolean; caller?: SessionStateCaller };
@@ -98,12 +102,18 @@ async function updateSessionState(
   // `clearSessionCache` asks the hub to drop it, so the next read re-produces from the DB. It runs on
   // BOTH the 'refresh' and 'invalid' paths, and unconditionally (not gated on the token scan above), so
   // every per-user caller of refreshSession/invalidateSession gets a fresh shape on the next read.
-  await clearSessionCache(userId);
+  try {
+    await clearSessionCache(userId);
+  } catch (err) {
+    // A revoke must still reach the token state and the signal below, which are what end the sessions.
+    if (type !== 'invalid') throw err;
+    logSignOutStepFailure('clear-session-cache', userId, err);
+  }
   if (userTokens.length > 0) {
     // Atomic multi-field set+TTL — single EVAL replaces the sequential
     // hSet (multi-field) + hExpire (multi-field). The previous pair could
     // leave a subset of fields no-TTL if the second call failed; here all
-    // fields land with the same DEFAULT_EXPIRATION TTL atomically.
+    // fields land with the same MARKER_EXPIRATION TTL atomically.
     //
     // Fail-open wrapper: an in-flight EVAL throw during a sysRedis
     // sentinel failover (Phase 4) would otherwise propagate up into the
@@ -113,18 +123,33 @@ async function updateSessionState(
     // here is sysRedis unreachability; the trade-off is documented on
     // invalidateSession below (read path in token-refresh.ts is already
     // fail-open, so the unobserved write is symmetric).
+    const onChunk: Parameters<typeof hSetMultiWithTTL>[4] = ({
+      durationSeconds,
+      chunkIndex,
+      chunkTotal,
+    }) => {
+      observeSessionStateChunk(caller, type, durationSeconds);
+      chunksWritten = chunkIndex + 1;
+      chunksTotal = chunkTotal;
+    };
+    const ttlMs = MARKER_EXPIRATION * 1000;
+    const tokenStateKey = REDIS_SYS_KEYS.SESSION.TOKEN_STATE;
+    let marked = false;
     try {
-      await hSetMultiWithTTL(
-        sysRedis,
-        REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
-        userTokensObj,
-        DEFAULT_EXPIRATION * 1000,
-        ({ durationSeconds, chunkIndex, chunkTotal }) => {
-          observeSessionStateChunk(caller, type, durationSeconds);
-          chunksWritten = chunkIndex + 1;
-          chunksTotal = chunkTotal;
-        }
-      );
+      if (type === 'invalid') {
+        await hSetMultiWithTTL(sysRedis, tokenStateKey, userTokensObj, ttlMs, onChunk);
+      } else {
+        // A signed-out token stays signed out: refresh must not replace its 'invalid' marker.
+        await hSetMultiWithTTLUnlessValue(
+          sysRedis,
+          tokenStateKey,
+          userTokensObj,
+          ttlMs,
+          'invalid',
+          onChunk
+        );
+      }
+      marked = true;
     } catch (err) {
       // chunksWritten vs chunksTotal is the difference between "revoked none of them" and "revoked 29 of
       // 54" — without it a partial write and a total failure produce identical log lines, and a moderator
@@ -137,9 +162,40 @@ async function updateSessionState(
         chunksTotal,
       });
     }
+    // Untrack only after every marker landed, as session-registry.ts does: a token dropped from the user's
+    // hash without its 'invalid' marker can no longer be found by a later sign-out.
+    if (type === 'invalid' && marked) await untrackTokens(key, userId, userTokens);
   }
   observeSessionStateUpdate(caller, type, userTokens.length, (Date.now() - startedAt) / 1000);
   return userTokens;
+}
+
+async function untrackTokens(key: string, userId: number, tokens: string[]) {
+  let removed = 0;
+  try {
+    for (let i = 0; i < tokens.length; i += UNTRACK_CHUNK) {
+      const chunk = tokens.slice(i, i + UNTRACK_CHUNK);
+      await sysRedis.hDel(key as any, chunk);
+      removed += chunk.length;
+    }
+  } catch (err) {
+    logSysRedisFailOpen('write-degraded', 'session-invalidation.untrackTokens', err, {
+      userId,
+      tokenCount: tokens.length,
+      removed,
+    });
+  }
+}
+
+// Ends every token of the user signed before now, including ones the token walk can't find.
+async function writeUserCut(userId: number) {
+  try {
+    await sysRedis.set(`${REDIS_SYS_KEYS.SESSION.USER_CUT}:${userId}` as any, String(Date.now()), {
+      EX: MARKER_EXPIRATION,
+    });
+  } catch (err) {
+    logSysRedisFailOpen('write-degraded', 'session-invalidation.writeUserCut', err, { userId });
+  }
 }
 
 async function sendSessionSignal(userId: number, type: 'refresh' | 'invalid') {
@@ -152,7 +208,19 @@ async function sendSessionSignal(userId: number, type: 'refresh' | 'invalid') {
   } catch (error) {
     // Don't let signal failures break session invalidation
     log(`Failed to send session ${type} signal to user ${userId}: ${error}`);
+    if (type === 'invalid') logSignOutStepFailure('session-signal', userId, error);
   }
+}
+
+/** A sign-out step that failed while the others ran, named so it can be re-run for this user. */
+function logSignOutStepFailure(step: string, userId: number, err: unknown) {
+  logToAxiom({
+    type: 'error',
+    name: 'session-invalidation-step-failed',
+    step,
+    userId,
+    message: (err as Error)?.message,
+  }).catch(() => undefined);
 }
 
 /**
@@ -211,6 +279,7 @@ export async function invalidateSession(
   userId: number,
   caller: SessionStateCaller = 'unspecified'
 ) {
+  await writeUserCut(userId);
   const userTokens = await updateSessionState(userId, 'invalid', caller);
   await sendSessionSignal(userId, 'invalid');
 

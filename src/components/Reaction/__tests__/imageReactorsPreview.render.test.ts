@@ -96,12 +96,21 @@ describe('ImageReactorsPreview — owner only, nothing fetched at render', () =>
 describe('ImageReactorsList', () => {
   it('asks for this image, says how it is ordered, and links to Creator Studio', () => {
     state.useQuery.mockReturnValueOnce({ data: [], isLoading: false, isError: false });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-26T12:00:00Z'));
 
-    const html = render(ImageReactorsList, { imageId: IMAGE_ID });
+    let html: string;
+    try {
+      html = render(ImageReactorsList, { imageId: IMAGE_ID });
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(state.useQuery).toHaveBeenCalledWith({ id: IMAGE_ID });
     expect(html).toContain('Newest accounts first');
-    expect(html).toContain('No reactions yet.');
-    expect(html).toContain(`href="${CREATOR_STUDIO_URL}/analytics/content/image/${IMAGE_ID}"`);
+    expect(html).toContain('No one to show.');
+    expect(html).toContain(
+      `href="${CREATOR_STUDIO_URL}/analytics/content/image/${IMAGE_ID}?month=2026-10"`
+    );
   });
 });

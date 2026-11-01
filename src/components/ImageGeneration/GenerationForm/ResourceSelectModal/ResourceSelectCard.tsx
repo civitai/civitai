@@ -12,6 +12,8 @@ import {
 import { IconBrush, IconCheck, IconDownload, IconLock, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { searchHitName } from '~/shared/utils/model-sfw-face';
 import { BidModelButton } from '~/components/Auction/BidModelButton';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
@@ -96,6 +98,8 @@ export function ResourceSelectCard({
   const image = data.images[0];
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  const showSfwFace = useShowsSfwFace();
+  const modelName = searchHitName(data, showSfwFace);
 
   const versions = data.versions;
   const initialIndex = useMemo(
@@ -224,7 +228,7 @@ export function ResourceSelectCard({
                         <Link
                           href={getModelUrl({
                             modelId: data.id,
-                            modelName: data.name,
+                            modelName,
                             modelVersionId: selectedVersion.id,
                           })}
                           target="_blank"
@@ -347,7 +351,7 @@ export function ResourceSelectCard({
               component={Link}
               href={getModelUrl({
                 modelId: data.id,
-                modelName: data.name,
+                modelName,
                 modelVersionId: selectedVersion.id,
               })}
               target="_blank"
@@ -361,7 +365,7 @@ export function ResourceSelectCard({
               // default `align-items: stretch` would fill the cross axis.
               className="max-w-full self-start truncate hover:underline"
             >
-              {data.name}
+              {modelName}
             </Text>
             <div className="flex items-center justify-between gap-2">
               <Select

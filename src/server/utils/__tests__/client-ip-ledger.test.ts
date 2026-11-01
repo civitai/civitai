@@ -61,9 +61,10 @@ import path from 'path';
  * `src/server/utils/apps-catalog-rate-limit.ts`, the four
  * `src/pages/api/v1/blocks/` endpoints (`dev-token.ts`, `withdraw.ts`,
  * `submissions.ts`, `submit-version.ts`), and
- * `src/server/middleware/bot-detection.middleware.ts`. The first five carry a
+ * `getClientIp` in `src/server/middleware/api-request-policy.ts` (moved there
+ * from `bot-detection.middleware.ts`). The first five carry a
  * byte-identical open-coded helper and five of the six build rate-limit keys
- * (bot-detection is the exception; its value feeds bot verification). A seventh
+ * (`getClientIp` is the exception; its value feeds bot verification). A seventh
  * lives outside `src/` in `apps/auth/src/lib/server/auth/request.ts`, which this
  * walk's root cannot reach at all. None of that is in scope for this file —
  * it is recorded so the numbers here are read as "what is on the ledger", never
@@ -199,8 +200,8 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
   'server/controllers/image.controller.ts': {
     symbol: 'resolveClientIpOrNull',
     why:
-      'Forwards the acting moderator’s address to the moderator spoke, which records it on the '  +
-      'image-moderation audit row. Attribution, not enforcement — and the field is optional, so the '  +
+      'Forwards the acting moderator’s address to the moderator spoke, which records it on the ' +
+      'image-moderation audit row. Attribution, not enforcement — and the field is optional, so the ' +
       'falsy sentinel is preserved.',
   },
   'pages/api/mod/comment/remove-as-tos.ts': {

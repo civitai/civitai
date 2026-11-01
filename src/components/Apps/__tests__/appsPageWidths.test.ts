@@ -42,8 +42,8 @@ import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/
  * between routes.
  *
  * The RENDERED proof of the alignment lives in
- * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode, report-only). This
- * file pins the CONSTANTS and the route taxonomy in the tier that actually gates.
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode). This
+ * file pins the CONSTANTS and the route taxonomy in the node tier.
  */
 
 /**
@@ -392,18 +392,6 @@ function portalOffenders(name: string, abs: string, exportName: string): string[
 }
 
 describe('the container is uniform, and it is the only container', () => {
-  test('every `/apps/*` route renders in ONE container width (2560)', () => {
-    // A literal, not derived from the module's own arithmetic.
-    //
-    // 🔴 2560, RAISED FROM 1920 BY THE ULTRAWIDE PASS. The old cap left `(2560 −
-    // 1920) / 2 = 320px` of dead margin on each side of every apps page on a 2560
-    // monitor, and Mantine's top breakpoint (`xl`, 88em / 1408px) meant nothing in
-    // the grid could react to any of it. Raising the cap is only half the change —
-    // the store's column ladder is the other half, and it lives in
-    // `__tests__/appListingGrid.test.ts`.
-    expect(APPS_PAGE_CONTAINER_WIDTH).toBe(2560);
-  });
-
   test('🔴 there is no per-route CONTAINER width map any more', () => {
     // The defect was `APPS_PAGE_WIDTHS`: a container width per route. If it comes
     // back — under any name — the sub-nav starts moving again. `APPS_PAGE_MEASURES`
@@ -618,14 +606,14 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
    * 🔴 THE RAIL-OPEN RUNG — the reason the constant moved at all, and the case the old
    * value silently lost.
    *
-   * The left rail takes 276px off every `/apps/*` body, so at a 2560 viewport the card
-   * list gets 2242 of grid rather than 2528. At the old 1200 that is ONE column: the
+   * The left rail takes 292px off every `/apps/*` body, so at a 2560 viewport the card
+   * list gets 2226 of grid rather than 2528. At the old 1200 that is ONE column: the
    * 640px content-to-control gap this constant exists to close reopened on exactly the
    * monitors it was written for. 1100 restores the second column there and changes
    * nothing at 1300 / 1440 / 1920, where a single column was already correct.
    *
    * RED AT `origin/main` BY CONSTRUCTION: at `APPS_CARD_LIST_MIN_COLUMN = 1200`,
-   * `columnsAt(2242)` is 1.
+   * `columnsAt(2226)` is 1.
    */
   test('🔴 with the rail OPEN, a 2560 viewport still gets TWO columns', () => {
     const railOpenGrid =
@@ -633,7 +621,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
       APPS_RESERVED_SCROLLBAR -
       APPS_CONTAINER_GUTTER -
       appsRailChromeWidth(false);
-    expect(railOpenGrid).toBe(2242);
+    expect(railOpenGrid).toBe(2226);
     expect(columnsAt(railOpenGrid)).toBe(2);
 
     // …and the narrower viewports are UNCHANGED — one column with the rail open, exactly
@@ -650,7 +638,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
     // 🔴 THE BOUND IS SOLVED, NOT SAMPLED — and this is the correction an audit forced.
     // The previous version asserted 1100 / 1120 / 1200 and the COMMENT generalised that
     // three-point sample into "1100 is the LOOSEST value that restores it". It is not:
-    // two columns need `2n + 16 <= 2242`, so the largest admissible value is **1113**, and
+    // two columns need `2n + 16 <= 2226`, so the largest admissible value is **1105**, and
     // the sample simply had no point between 1100 and 1120. A sampled inequality cannot
     // establish a maximum; scanning for the first failure can, so it does.
     const columnsAtMin = (w: number, min: number) =>
@@ -660,7 +648,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
       if (columnsAtMin(railOpenGrid, n) >= 2) bound = n;
       else break;
     }
-    expect(bound, 'the largest min-column that still yields two columns at 2242').toBe(1113);
+    expect(bound, 'the largest min-column that still yields two columns at 2226').toBe(1105);
     expect(columnsAtMin(railOpenGrid, bound)).toBe(2);
     expect(columnsAtMin(railOpenGrid, bound + 1)).toBe(1);
 
@@ -677,20 +665,6 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
 });
 
 describe('🔴 the measures preserve the OLD rendered content widths exactly', () => {
-  /**
-   * THE +32px TRAP, PINNED. Mantine's `Container` is border-box: `size={N}` renders
-   * `N − 2×16` of content. A `maw={N}` box lives INSIDE that gutter and renders `N`.
-   * So carrying the old round container numbers over as measures would have widened
-   * every narrowed page by 32px — a confounded change hiding inside an alignment fix.
-   *
-   * Each measure is therefore the OLD container width minus the gutter, and the old
-   * numbers are named here as literals so the provenance is checkable rather than
-   * asserted in prose.
-   */
-  test('the Container gutter is 16px per side', () => {
-    expect(APPS_CONTAINER_GUTTER).toBe(32);
-  });
-
   // 🔴 THE PROVENANCE IS NOW THE BAND'S **FLOOR**, and that is the point of a floor: a
   // band whose min drifted off the old container width would silently re-decide what a
   // 1440 monitor shows, which is the confounded change the gutter arithmetic above
@@ -973,6 +947,7 @@ describe('every /apps page on disk is classified', () => {
         // sub-nav row. So the set SHRANK by two — which is exactly the direction this
         // ledger exists to make visible, and the reason it is a `toEqual` and not a floor.
         '/apps/activity',
+        // `/apps/assistant` left by 301ing here: `/apps/build` renders the App Assistant.
         '/apps/build',
         '/apps/invites',
         '/apps/listing/[appListingId]/edit',

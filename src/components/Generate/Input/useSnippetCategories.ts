@@ -2,7 +2,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import type { SnippetCategoryItem } from './SnippetCategoryList';
 import { trpc } from '~/utils/trpc';
-import { useSnippetsGraph } from './useSnippetsGraph';
+import { useSnippetsForm } from './useSnippetsForm';
 
 /**
  * Resolve the popover-ready category list for the snippets feature, reading
@@ -24,18 +24,16 @@ import { useSnippetsGraph } from './useSnippetsGraph';
  * audit/invalidated state, valueCount per category) so the strip can
  * render without re-querying.
  *
- * Works under either form lane (see `useSnippetsGraph`). When the active
- * subgraph has no `snippets` node, the hook treats `wildcardSetIds` as
+ * When the active branch has no `snippets` field, the hook treats `wildcardSetIds` as
  * empty — still safe to call unconditionally (no errors, just empty
  * results).
  */
 export function useSnippetCategories() {
   // Subscribe to the snippets node so additions/removals push fresh
   // `wildcardSetIds` through without callers needing their own graph
-  // plumbing. `snippets` is undefined when the node isn't in the active
-  // discriminator branch — that's the v0 case where the ecosystem didn't
-  // merge `snippetsGraph`.
-  const { snippets, setSnippets } = useSnippetsGraph();
+  // plumbing. `snippets` is undefined when the field isn't in the active branch,
+  // or when its block was built with `snippets: false`.
+  const { snippets, setSnippets } = useSnippetsForm();
   // Memo on the snapshot value (stable until the node updates) so the
   // fallback empty-array branch doesn't churn a new `[]` reference per
   // render — that would re-trigger every downstream `useMemo` keyed off

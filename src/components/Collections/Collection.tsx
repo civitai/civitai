@@ -40,7 +40,11 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  BrowsingLevelProvider,
+  useBrowsingLevelContext,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { viewerCollectionCap } from '~/components/BrowsingLevel/resolve-browsing-level';
 import { Model3DsInfinite } from '~/components/Model3D/Infinite/Model3DsInfinite';
 import {
   contestCollectionReactionsHidden,
@@ -87,10 +91,12 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
@@ -112,6 +118,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import classes from './Collection.module.scss';
+import { isViewer } from '~/utils/is-viewer';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -297,8 +304,8 @@ const ImageCollection = ({
           permissions?.manage ||
           currentUser?.id === collection.user.id ||
           currentUser?.isModerator ||
-          currentUser?.id === (image.userId ?? image.user?.id) ||
-          currentUser?.id === image.collectionItemAddedById;
+          isViewer(currentUser, image.userId ?? image.user?.id) ||
+          isViewer(currentUser, image.collectionItemAddedById);
         return (
           <>
             {canRemove && (
@@ -516,6 +523,8 @@ export function Collection({
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
+  const { userBrowsingLevel } = useBrowsingLevelContext();
   const { collection, permissions, collaborators, pendingReviewCount, isLoading } =
     useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
@@ -647,26 +656,30 @@ export function Collection({
 
   if (!collection) return null;
 
+  const bypassRating =
+    permissions?.manage ||
+    currentUser?.id === collection.user.id ||
+    (currentUser?.isModerator ?? false);
+  const collectionCap = viewerCollectionCap(
+    collection.metadata.forcedBrowsingLevel,
+    userBrowsingLevel,
+    bypassRating
+  );
+
   return (
     /* 🔴 `forcedBrowsingLevel`, not `browsingLevel`. This is a policy ceiling —
-       the same value `Gated` below treats as a gate, bypassed only for mods and
-       owners — and the override slot it used to sit in is one any component may
+       the collection's level, which `Gated` below treats as a gate, bypassed only
+       for mods and owners — and the override slot it used to sit in is one any component may
        decline to read. `useViewerBrowsingLevelDebounced` does exactly that by
        design, so as an override this cap silently stopped applying to the remix
        gallery and to avatars. Caps are intersected by the provider, so this
        cannot lift the domain cap either. */
-    <BrowsingLevelProvider
-      forcedBrowsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
-    >
+    <BrowsingLevelProvider forcedBrowsingLevel={collectionCap}>
       <BrowsingSettingsAddonsProvider>
         <Gated
           contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
           nsfw={collection.nsfw ?? undefined}
-          bypassRating={
-            permissions?.manage ||
-            currentUser?.id === collection.user.id ||
-            (currentUser?.isModerator ?? false)
-          }
+          bypassRating={bypassRating}
           suppressAds={collection.read !== 'Public'}
           meta={{
             title: `${collection.name}${
@@ -762,6 +775,13 @@ export function Collection({
                     </IconBadge> */}
                       </Group>
                     )}
+                    {collection && (
+                      <OwnerRatingControls
+                        entityType="Collection"
+                        entityId={collection.id}
+                        isOwner={!!permissions?.isOwner}
+                      />
+                    )}
                   </Stack>
                   {collection && permissions && (
                     <Stack>
@@ -777,21 +797,16 @@ export function Collection({
                         [CollectionType.Image, CollectionType.Post].some(
                           (x) => x === collection.type
                         ) ? (
-                          <HoverCard
-                            width={300}
-                            disabled={!currentUser?.meta?.contestBanDetails}
-                            withArrow
-                            withinPortal
-                          >
+                          <HoverCard width={300} disabled={!isContestBanned} withArrow withinPortal>
                             <HoverCard.Target>
                               {/* Required div to display hovercard even when button is disabled */}
                               <div>
                                 <Button
                                   color="blue"
                                   radius="xl"
-                                  disabled={!!currentUser?.meta?.contestBanDetails}
+                                  disabled={isContestBanned}
                                   onClick={() => {
-                                    if (currentUser?.meta?.contestBanDetails) {
+                                    if (isContestBanned) {
                                       return;
                                     }
 
@@ -815,7 +830,7 @@ export function Collection({
                               </div>
                             </HoverCard.Target>
                             <HoverCard.Dropdown px="md" py={8}>
-                              {currentUser?.meta?.contestBanDetails && (
+                              {isContestBanned && (
                                 <Text>
                                   Due to breaking the rules in the past, you are ineligible for
                                   participation in this event.

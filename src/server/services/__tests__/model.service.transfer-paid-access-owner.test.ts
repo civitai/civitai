@@ -1,9 +1,12 @@
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { recordedOwnership } from './model-ownership-db';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 
 /**
  * `PaidAccess.ownerId` is a denormalised copy of the model owner. It decides who generates free from a
@@ -24,7 +27,7 @@ const SOURCE_USER_ID = 5;
 const TARGET_USER_ID = 9;
 const MOD_USER_ID = 1;
 
-type RawCall = { sql: string; values: unknown[] };
+type RawCall = { sql: string; values: unknown[]; text: string };
 
 /** Where an interpolated value sat, so a value can be tied to the fragment it followed. */
 const PARAM = ' ?? ';
@@ -36,8 +39,10 @@ const {
   mockBustDonationGoals,
   mockDeleteBasicDataForUser,
   mockPreventModelLag,
+  mockAssertNotHeld,
 } = vi.hoisted(() => ({
   mockPreventModelLag: vi.fn(async () => undefined),
+  mockAssertNotHeld: vi.fn(),
   mockBustPaidAccessCache: vi.fn(),
   mockBustMvCache: vi.fn(),
   mockQueueModelsIndex: vi.fn(),
@@ -48,6 +53,10 @@ const {
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   preventReplicationLagBatch: mockPreventModelLag,
+}));
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  assertOwnersNotUnderLegalHold: mockAssertNotHeld,
 }));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { cancellableQuery: vi.fn() },
@@ -111,6 +120,12 @@ vi.mock('~/server/search-index', () => ({
 import { transferModelOwnership } from '~/server/services/model.service';
 import { constants } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  HOLD_UNCONFIRMED,
+  LEGAL_HOLD_REFUSAL,
+  LegalHoldError,
+  LegalHoldUnconfirmedError,
+} from '~/server/services/legal-hold.service';
 
 /** The operations handed to the ONE $transaction call, in order. */
 let transactionOps: unknown[] = [];
@@ -179,6 +194,7 @@ beforeEach(() => {
       return Promise.resolve();
     });
 
+  mockAssertNotHeld.mockResolvedValue(undefined);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: TARGET_USER_ID });
   dbMock.dbWrite.model.findMany.mockResolvedValue(
     MODEL_IDS.map((id) => ({ id, userId: SOURCE_USER_ID, nsfw: false }))
@@ -200,10 +216,27 @@ beforeEach(() => {
   // A tagged-template stand-in for Prisma's $executeRaw. The marker it returns is what lands in the
   // $transaction array, so a statement can be identified there by its own SQL. Interpolated values are
   // kept SEPARATE from the SQL: joining the template strings drops every one of them.
+  // A statement built elsewhere arrives as one Prisma.Sql rather than a template.
   dbMock.dbWrite.$executeRaw.mockImplementation(
-    (strings: TemplateStringsArray, ...values: unknown[]) => ({
-      __raw: { sql: strings.join(PARAM), values },
-    })
+    (
+      strings: TemplateStringsArray | { strings: string[]; values: unknown[] },
+      ...values: unknown[]
+    ) =>
+      Array.isArray(strings)
+        ? {
+            __raw: {
+              sql: strings.join(PARAM),
+              values,
+              text: Prisma.sql(strings as TemplateStringsArray, ...(values as never[])).text,
+            },
+          }
+        : {
+            __raw: {
+              sql: strings.strings.join(PARAM),
+              values: strings.values,
+              text: (strings as Prisma.Sql).text,
+            },
+          }
   );
   dbMock.dbWrite.$transaction.mockImplementation(async (ops: unknown[]) => {
     transactionOps = ops;
@@ -353,6 +386,18 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     expect(order.indexOf('lag')).toBeLessThan(order.indexOf('del'));
   });
 
+  // Owner checks that read one version at a time (App Blocks `ownedModelVersions`) route on the
+  // 'modelVersion' key; flagging only 'model' leaves them reading the previous owner off a replica.
+  it("flags every transferred version under the 'modelVersion' key too", async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    expect(mockPreventModelLag).toHaveBeenCalledWith('modelVersion', VERSION_IDS);
+  });
+
   it('moves DonationGoal.userId in the same transaction, on both target spellings', async () => {
     await transferModelOwnership({
       modelIds: MODEL_IDS,
@@ -382,6 +427,64 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
       // and every other assertion here still passes.
       expectScopedToTransfer(statement);
     }
+  });
+
+  it('records the target as an owner of the moved models, in the same transaction', async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    // The transaction's raw statements run in order against Postgres, with the ORM move between them.
+    const ops = transactionOps as { __raw?: RawCall; __op?: string }[];
+    const rows = await recordedOwnership(
+      MODEL_IDS.map((id) => [id, SOURCE_USER_ID]),
+      ops.flatMap((op) =>
+        op?.__raw?.sql.includes('"ModelOwnership"')
+          ? [op.__raw]
+          : op?.__op === 'model'
+          ? [
+              (db) =>
+                db.query(`UPDATE "Model" SET "userId" = $1 WHERE id = ANY($2)`, [
+                  TARGET_USER_ID,
+                  MODEL_IDS,
+                ]),
+            ]
+          : []
+      )
+    );
+    expect(
+      rows,
+      'no ownership row: a hold on the previous owner no longer reaches the model'
+    ).toEqual([
+      ...MODEL_IDS.map((modelId) => ({
+        modelId,
+        userId: SOURCE_USER_ID,
+        reason: 'baseline',
+        actorId: null,
+      })),
+      ...MODEL_IDS.map((modelId) => ({
+        modelId,
+        userId: TARGET_USER_ID,
+        reason: 'transfer',
+        actorId: MOD_USER_ID,
+      })),
+    ]);
+  });
+
+  it('records the outgoing owner first, before the move, in the same transaction', async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    const ops = transactionOps as { __raw?: RawCall; __op?: string }[];
+    const baseline = ops.findIndex((op) => op?.__raw?.sql.includes("'baseline'"));
+    const move = ops.findIndex((op) => op?.__op === 'model');
+    expect(baseline, 'no baseline for the outgoing owner in the transfer transaction').toBe(0);
+    expect(move).toBeGreaterThan(baseline);
   });
 
   it('does not fail a COMMITTED transfer when an invalidation throws', async () => {
@@ -477,5 +580,39 @@ describe('transferModelOwnership marks a model official on arrival', () => {
     const args = modelUpdateArgs();
     expect(args?.data).toEqual({ userId: TARGET_USER_ID });
     expect(args?.data).not.toHaveProperty('isOfficial');
+  });
+});
+
+// Every hold is keyed on the owner, so a transfer would move a held owner's content out of it.
+describe('transferModelOwnership under a legal hold', () => {
+  it.each([
+    ['held', () => new LegalHoldError(), LEGAL_HOLD_REFUSAL],
+    ['unreadable', () => new LegalHoldUnconfirmedError(), HOLD_UNCONFIRMED],
+  ])('refuses, and moves nothing, when the hold is %s', async (_name, error, message) => {
+    mockAssertNotHeld.mockRejectedValueOnce(error());
+
+    await expect(
+      transferModelOwnership({
+        modelIds: MODEL_IDS,
+        targetUserId: TARGET_USER_ID,
+        modUserId: MOD_USER_ID,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message });
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('checks every owner the models come from', async () => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      { id: MODEL_IDS[0], userId: SOURCE_USER_ID, nsfw: false },
+      { id: MODEL_IDS[1], userId: SOURCE_USER_ID + 1, nsfw: false },
+    ]);
+
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    expect(mockAssertNotHeld).toHaveBeenCalledWith([SOURCE_USER_ID, SOURCE_USER_ID + 1]);
   });
 });

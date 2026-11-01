@@ -5,6 +5,7 @@ import type { ResourceSelectModalProps } from '~/components/ImageGeneration/Gene
 import type { GenerationResource } from '~/shared/types/generation.types';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * App Blocks PAGE checkpoint picker (dev:live↔prod parity).
@@ -57,7 +58,10 @@ vi.mock('~/utils/trpc', () => ({
       unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -316,6 +320,7 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
     const payload = replies.last('CHECKPOINT_PICKER_RESULT')!.payload as {
       selected: Record<string, unknown>;
     };
+    expectReplyKeys('OPEN_CHECKPOINT_PICKER', 'success', ['selected'], payload);
     const sel = payload.selected;
     const sensitiveAbsent = [
       'availability',
@@ -359,6 +364,7 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
       const r = replies.last('CHECKPOINT_PICKER_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_cancel' });
+      expectReplyKeys('OPEN_CHECKPOINT_PICKER', 'success', [], r.payload);
     });
     replies.stop();
   });

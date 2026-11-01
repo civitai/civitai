@@ -9,10 +9,13 @@ import type * as SystemCache from '~/server/services/system-cache';
 //     without its content-rating cap (forcedBrowsingLevel).
 // Neither shows up as an error at any layer, so only a test pins them.
 
-const { permissionsMock, replacedTagIdsMock } = vi.hoisted(() => ({
+const { permissionsMock, replacedTagIdsMock, heldLevelMock } = vi.hoisted(() => ({
   permissionsMock: vi.fn(),
   replacedTagIdsMock: vi.fn(),
+  heldLevelMock: vi.fn(),
 }));
+
+vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: heldLevelMock }));
 
 vi.mock('~/server/services/collection.service', () => ({
   getUserCollectionPermissionsByIds: permissionsMock,
@@ -91,6 +94,7 @@ beforeEach(() => {
   // one test leaks into every later one. Re-declared here so each test starts from
   // "nothing is replaced" rather than from whatever ran before it.
   replacedTagIdsMock.mockResolvedValue([]);
+  heldLevelMock.mockResolvedValue(undefined);
   stubVersions({});
   // The service maps whatever the write returns before handing it back, so the
   // fakes have to return a row rather than undefined.
@@ -497,9 +501,39 @@ describe('hubBrowsingLevel', () => {
   it('leaves the viewer level untouched when the hub sets no cap', () => {
     expect(hubBrowsingLevel(1 | 2 | 4, sources(0))).toBe(1 | 2 | 4);
   });
+
+  it('narrows the level to the held level of a held model it serves', () => {
+    expect(hubBrowsingLevel(1 | 2 | 4, { ...sources(0), heldBrowsingLevel: 1 })).toBe(1);
+    expect(hubBrowsingLevel(1 | 2 | 4, { ...sources(1 | 4), heldBrowsingLevel: 1 | 2 })).toBe(1);
+  });
+
+  it('treats an absent viewer level as PG under a held model too', () => {
+    expect(hubBrowsingLevel(undefined, { ...sources(0), heldBrowsingLevel: 1 | 2 })).toBe(1);
+  });
+
+  it('returns 0 when its held models allow no level in common', () => {
+    expect(hubBrowsingLevel(1 | 2 | 4, { ...sources(0), heldBrowsingLevel: 0 })).toBe(0);
+  });
 });
 
 describe('resolveHubSources source expansion', () => {
+  it('carries the held level of the models whose versions it serves', async () => {
+    findFirstHub.mockResolvedValue({
+      sources: [
+        { type: UserHubSourceType.Model, targetId: 20 },
+        { type: UserHubSourceType.ModelVersion, targetId: 41 },
+      ],
+    });
+    stubVersions({ 20: [30] });
+    heldLevelMock.mockResolvedValue(1);
+
+    const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+    // Model 20's version is known to be model 20's; only the explicit version is looked up.
+    expect(heldLevelMock).toHaveBeenCalledWith({ modelIds: [20], modelVersionIds: [41] });
+    expect(result?.heldBrowsingLevel).toBe(1);
+  });
+
   it('expands a model source into its versions alongside explicit versions', async () => {
     findFirstHub.mockResolvedValue({
       sources: [
@@ -518,6 +552,34 @@ describe('resolveHubSources source expansion', () => {
     // 31 is both explicit and expanded — it must appear once, or the filter
     // carries a duplicate id for every version a user pinned by hand.
     expect([...(result?.modelVersionIds ?? [])].sort((a, b) => a - b)).toEqual([30, 31]);
+  });
+
+  it('holds no level for a viewer the caller exempts', async () => {
+    findFirstHub.mockResolvedValue({
+      sources: [{ type: UserHubSourceType.ModelVersion, targetId: 41 }],
+    });
+    heldLevelMock.mockResolvedValue(1);
+
+    const result = await resolveHubSources({
+      hubId: 1,
+      userId: 5,
+      isModerator: true,
+      holdExempt: true,
+    });
+
+    expect(heldLevelMock).not.toHaveBeenCalled();
+    expect(result?.heldBrowsingLevel).toBeUndefined();
+  });
+
+  it('holds a moderator the caller does not exempt', async () => {
+    findFirstHub.mockResolvedValue({
+      sources: [{ type: UserHubSourceType.ModelVersion, targetId: 41 }],
+    });
+    heldLevelMock.mockResolvedValue(1);
+
+    const result = await resolveHubSources({ hubId: 1, userId: 5, isModerator: true });
+
+    expect(result?.heldBrowsingLevel).toBe(1);
   });
 
   it('ranks versions per model in the emitted SQL', async () => {

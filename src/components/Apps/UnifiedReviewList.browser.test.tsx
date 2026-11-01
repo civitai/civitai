@@ -5,8 +5,8 @@ import type { OffsitePendingRow } from './OffsiteReviewQueue';
 import type { OffsiteReviewRequest, OnsiteReviewRequest } from './unifiedReviewRow';
 
 /**
- * The unified moderator review LIST — browser-mode render test (report-only in
- * Tekton; the pure adapters/merge in `unifiedReviewRow.test.ts` are the blocking
+ * The unified moderator review LIST — browser-mode render test (`Component tests`
+ * in CI; the pure adapters/merge in `unifiedReviewRow.test.ts` are the node-tier
  * gate). Asserts a list built from ONE on-site + ONE off-site row:
  *  - renders BOTH rows with the correct kind badge (App / External);
  *  - orders oldest-first for `direction="asc"` (pending);
@@ -54,7 +54,7 @@ const ONSITE: OnsiteReviewRequest = {
   fileSummary: {},
   manifestDiffSummary: {},
   reviewRepoUrl: 'https://forgejo.example/repo',
-  submittedBy: { id: 7, username: 'onsite-dev', image: null },
+  submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -75,7 +75,7 @@ const OFFSITE: OffsiteReviewRequest = {
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 9, username: 'offsite-dev', image: null },
+  submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
 };
 
 const { UnifiedReviewList } = await import('./UnifiedReviewList');

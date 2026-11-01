@@ -1,7 +1,7 @@
 # SvelteKit app standard
 
 The shared conventions for **every** SvelteKit app in this repo — `apps/moderator`, `apps/auth`,
-`apps/creator-studio`. Each app's own `CLAUDE.md` points here and records only what genuinely differs.
+`apps/creator-studio`, `apps/training-studio`. Each app's own `CLAUDE.md` points here and records only what genuinely differs.
 
 The root [`CLAUDE.md`](../CLAUDE.md) describes the **main Next.js app** (Mantine, tRPC, Prisma). None of
 that applies here: these are SvelteKit 5 + Kysely + shadcn-svelte + Tailwind v4.
@@ -32,7 +32,7 @@ const signals = $derived(
   browser ? fetch(`/api/user-signals/${userId}`).then((r): Promise<Signals> => {
     if (!r.ok) throw new Error(String(r.status));
     return r.json();
-  }) : null
+  }) : SSR_PENDING // never `: null` — see below
 );
 
 {#await signals}
@@ -47,6 +47,17 @@ const signals = $derived(
 A new `userId` produces a new promise and the template re-awaits it, so there is no state to go stale.
 `browser` keeps SSR from issuing the request. **Every `{#await}` needs a `{:catch}`** — without one a
 rejection is silent and the panel just never fills in.
+
+**The server half must be a promise that never settles, not `null`.** The moderator app exports one as
+`SSR_PENDING` from `$lib/ssr-pending`; elsewhere `new Promise(() => {})` is the whole of it. With `null`
+the server renders `{:then}` — null is not a promise — while the browser hydrates `pending`, and Svelte
+does not reconcile the two: what the browser renders lands outside the block, so when a parent `{#key}` or
+`{#if}` later swaps the panel out, its content stays on the page and the replacement renders beneath it.
+That was the model reports "stuck preview" (2026-10-14), pinned in
+`apps/moderator/src/lib/__tests__/ssr-pending.test.ts`. Wrapping the await in `{#if x}` with `: null` is
+also correct — Svelte does repair a mismatched `{#if}` — and is the form for a panel that should render
+nothing at all without JS. Neither holds once `experimental.async` is on: async SSR awaits the promise,
+and a never-settling one hangs the request.
 
 To refetch after a write, bump a counter (`?v=${version}`) — it is part of the derived expression, so
 the promise rebuilds. Don't reach for `invalidateAll()` when the data didn't come from `load`.
@@ -202,7 +213,7 @@ Reuse the shapes already on the page rather than inventing spacing: panels are
 
 ## Comments
 
-Per the [root guide](../CLAUDE.md#comments), and more strictly here: a comment in these apps earns its
+Per the [root comment guideline](../.claude/rules/comments.md), and more strictly here: a comment in these apps earns its
 place only as a **breakage guard** — an invariant, a cast, an ordering requirement, a hazard a future
 edit would otherwise walk into. No narration, no provenance, no "ported from X", no explaining your work
 to a reviewer. Say that in the PR.
@@ -210,7 +221,7 @@ to a reviewer. Say that in the PR.
 ## Verifying
 
 `typecheck`, never `check` — and `build` is not a check. Both run `svelte-kit sync`, which fights the
-dev server's file watcher; see the root [`CLAUDE.md`](../CLAUDE.md) for the full rule and why. Read
+dev server's file watcher; see [`.claude/rules/sveltekit.md`](../.claude/rules/sveltekit.md) for the full rule and why. Read
 `svelte-check`'s **WARNING** lines as well as its errors: `state_referenced_locally` is a real bug and
 appears nowhere else.
 
@@ -228,8 +239,8 @@ unnoticed because the loop that would have caught them is the one we tell you no
 
 Each app owns a `vitest.config.ts` declaring `name: 'app:<slug>'`, and the root config globs those
 **config files** — so an app without one is silently not selected. Run one app with
-`pnpm --filter @civitai/<app> test`, or every app with `pnpm run test:apps:run` (CI's `App unit tests`
-job). The `app:` prefix is load-bearing: every app is also published as `@civitai/*`, so dropping the
+`pnpm --filter @civitai/<app> test`, or every app with `pnpm run test:apps:run` (CI's `App suites`
+workflow). The `app:` prefix is load-bearing: every app is also published as `@civitai/*`, so dropping the
 `name` moves the suite into the packages job instead.
 
 These are **node-env tests over plain modules** — no SvelteKit pipeline, so `$lib` and the `$env`
@@ -238,6 +249,12 @@ imported at all. Route logic is reachable: import `load`/`actions` from a `+page
 them with the slice of the event they read. Component behaviour is **not** — no SvelteKit app has a
 browser-test project, so anything that depends on `use:enhance`, bindings or lifecycle is verified by
 review and by opening the page, not by a test.
+
+The one exception is static markup branches. `apps/creator-studio` compiles `.svelte` in its vitest
+config, so a test may server-render a page with `svelte/server` (mocking `$app/*`) to pin which branch
+renders, such as a link that must be present or absent. SSR output never runs `use:enhance`, `$state`
+changes or anything after hydration, so do not use it for those. The app's `src/test/setup.ts` stubs
+`@tabler/icons-svelte` for every suite, because compiling the real barrel adds about a minute.
 
 🔴 **A suite must not open a connection to whatever `DATABASE_URL` points at.** Mock the app's db
 module. Where a suite genuinely needs the real schema, plan the statement rather than run it — compile
@@ -261,7 +278,7 @@ Each takes the app directory as its scope and reads that app's `CLAUDE.md` for l
 
 **After fixing a non-trivial bug, and after extracting or changing a shared component, run
 `svelte-recurrence-sweep`.** It takes one known defect and finds every other place that shape exists,
-across all three apps. The three reviews above are each scoped to the segment in front of them, so a
+across every SvelteKit app. The three reviews above are each scoped to the segment in front of them, so a
 bug fixed in one page stays live in its sibling until somebody happens to remember — which is exactly
 how two `$effect` bugs survived in `apps/moderator` for days after being fixed next door.
 

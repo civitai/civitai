@@ -15,7 +15,9 @@
     IconLayoutGrid,
     IconHeart,
     IconBook,
+    IconClock,
   } from '@tabler/icons-svelte';
+  import { recentFirst } from '$lib/content-sort';
   import type { TopImage } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
@@ -74,6 +76,8 @@
     { key: 'impressions', label: 'Impressions', icon: IconLayoutGrid },
     { key: 'views', label: 'Views', icon: IconEye },
     { key: 'reactions', label: 'Reactions', icon: IconHeart },
+    // The one sort the server is told about: its pool is the newest items, not the most-reacted.
+    { key: 'recent', label: 'Recent', icon: IconClock },
   ] as const;
   type SortKey = (typeof SORTS)[number]['key'];
   const sort = $derived(
@@ -98,20 +102,24 @@
   const media = $derived(
     !isMedia || data[tab] === null
       ? null
-      : sort === 'views'
-        ? [...(data[tab] as TopImage[])].sort((a, b) => b.views - a.views)
-        : sort === 'impressions'
-          ? [...(data[tab] as TopImage[])].sort((a, b) => b.impressions - a.impressions)
-          : (data[tab] as TopImage[])
+      : sort === 'recent'
+        ? recentFirst(data[tab] as TopImage[], (m) => m.imageId)
+        : sort === 'views'
+          ? [...(data[tab] as TopImage[])].sort((a, b) => b.views - a.views)
+          : sort === 'impressions'
+            ? [...(data[tab] as TopImage[])].sort((a, b) => b.impressions - a.impressions)
+            : (data[tab] as TopImage[])
   );
   const articles = $derived(
     data.articles === null
       ? null
-      : sort === 'views'
-        ? [...data.articles].sort((a, b) => b.views - a.views)
-        : sort === 'impressions'
-          ? [...data.articles].sort((a, b) => b.impressions - a.impressions)
-          : [...data.articles].sort((a, b) => b.reactions - a.reactions)
+      : sort === 'recent'
+        ? recentFirst(data.articles, (a) => a.articleId)
+        : sort === 'views'
+          ? [...data.articles].sort((a, b) => b.views - a.views)
+          : sort === 'impressions'
+            ? [...data.articles].sort((a, b) => b.impressions - a.impressions)
+            : [...data.articles].sort((a, b) => b.reactions - a.reactions)
   );
   // Comics and 3D models arrive wrapped in a panel carrying a `tracking` flag, so that "nothing collected
   // yet" can be told apart from "you have none" — their ClickHouse tables are live but stay empty until the
@@ -122,6 +130,7 @@
     // Comics rank by views vs chapter READS, not reactions: the `reactions` type enum has no Comic arm, so
     // there is no reaction count to sort on. `sort` is shared with the other tabs, and its 'reactions' value
     // maps to reads here — the control is relabelled rather than given a third vocabulary.
+    if (sort === 'recent') return recentFirst(list, (c) => c.projectId);
     return sort === 'views'
       ? [...list].sort((a, b) => b.projectViews - a.projectViews)
       : [...list].sort((a, b) => b.chapterReads - a.chapterReads);
@@ -172,7 +181,7 @@
 
   {#if !is3d}
     <div class="flex items-center gap-2">
-      <span class="text-xs text-dark-3">Rank by</span>
+      <span class="hidden text-xs text-dark-3 sm:inline">Rank by</span>
       <ToggleGroup
         type="single"
         value={sort}
@@ -186,7 +195,7 @@
              there rather than shown ranking everything at zero. -->
         {#each SORTS.filter((s) => !(isComics && s.key === 'impressions')) as s (s.key)}
           {@const ReadsIcon = isComics && s.key === 'reactions' ? IconBook : s.icon}
-          <ToggleGroupItem value={s.key} class="gap-1 text-xs">
+          <ToggleGroupItem value={s.key} class="gap-1 px-2 text-xs sm:px-3">
             <ReadsIcon size={13} />
             {isComics && s.key === 'reactions' ? 'Reads' : s.label}
           </ToggleGroupItem>
@@ -208,6 +217,8 @@
   <div class="placeholder">
     {#if is3d}
       You haven't published a 3D model yet.
+    {:else if sort === 'recent'}
+      No {active.singular}s created {formatRange(data.range)}.
     {:else if isComics}
       You haven't published a comic yet.
     {:else if isArticles}
@@ -224,18 +235,32 @@
         {trackingLive ? `· by views ${periodLabel}` : '· view tracking wasn’t collecting yet then'}
       </span>
     {:else if isComics}
-      Your comics by {sort === 'views' ? 'views' : 'chapter reads'}
+      Your comics {sort === 'recent'
+        ? `created ${formatRange(data.range)}, newest first`
+        : `by ${sort === 'views' ? 'views' : 'chapter reads'}`}
       <span class="text-xs text-dark-3">
-        {trackingLive ? `· ${periodLabel}` : '· by readers, not views'}
+        {trackingLive
+          ? sort === 'recent'
+            ? '· up to 100'
+            : `· ${periodLabel}`
+          : '· by readers, not views'}
       </span>
     {:else}
-      Top {tab} by {sort === 'views'
-        ? 'views'
-        : sort === 'impressions'
-          ? 'impressions'
-          : 'reactions'}
+      {#if sort === 'recent'}
+        Newest {tab} created {formatRange(data.range)}
+      {:else}
+        Top {tab} by {sort === 'views'
+          ? 'views'
+          : sort === 'impressions'
+            ? 'impressions'
+            : 'reactions'}
+      {/if}
       <span class="text-xs text-dark-3">
-        {periodLabel}{isMedia && sort !== 'reactions' ? ' · within your 100 most-reacted' : ''}
+        {#if sort === 'recent'}
+          · up to 100
+        {:else}
+          {periodLabel}{isMedia && sort !== 'reactions' ? ' · within your 100 most-reacted' : ''}
+        {/if}
       </span>
     {/if}
   </p>

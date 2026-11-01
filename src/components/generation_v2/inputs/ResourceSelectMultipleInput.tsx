@@ -26,6 +26,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronDown, IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
+import { defaultStrength } from '~/shared/utils/resource.utils';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type {
   ResourceSelectOptions,
@@ -143,7 +144,7 @@ function ResourceItem({
     >
       <ResourceItemContent
         resource={displayResource}
-        strengthValue={resourceValue.strength ?? displayResource.strength}
+        strengthValue={resourceValue.strength ?? defaultStrength(displayResource)}
         // Don't allow strength changes for disabled resources
         onStrengthChange={
           resourceIsDisabled ? undefined : (strength) => onChange({ ...displayResource, strength })

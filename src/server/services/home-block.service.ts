@@ -1,10 +1,19 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
+import type { CoverageAudience } from '~/server/services/generation/coverage-source';
 import { CacheTTL } from '~/server/common/constants';
-import { ImageSort, ModelSort } from '~/server/common/enums';
+import { CrucibleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import {
+  homeBlockByIdSelect,
+  readHomeBlockViaKysely,
+  readHomeBlockViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   GetHomeBlockByIdInputSchema,
@@ -22,10 +31,18 @@ import {
 } from '~/server/services/collection.service';
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
 import { getAllImagesIndex } from '~/server/services/image.service';
+import { getCrucibles, withEntryCounts } from '~/server/services/crucible.service';
+import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import {
   bustSystemHomeBlockCaches,
   getHomeBlockCached,
 } from '~/server/services/home-block-cache.service';
+import {
+  assertValidHomeBlockFeatureFlag,
+  canViewHomeBlock,
+  filterViewableHomeBlocks,
+} from '~/server/services/home-block-access';
+import type { EventViewer } from '~/server/events/event-access';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import {
@@ -51,7 +68,14 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
-import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { capPerUser } from '~/shared/utils/cap-per-user';
+import {
+  COSMETIC_SHOP_ROTATION_DEFAULTS,
+  rotateShopSectionItems,
+  shopBlockMaxItems,
+} from '~/shared/utils/cosmetic-shop-rotation';
+import { CrucibleStatus, HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { normalizeCrucibleEventTag } from '~/shared/constants/crucible.constants';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
@@ -80,17 +104,29 @@ const homeBlockSelect = {
   index: true,
 } as const;
 
-export const getHomeBlocks = async ({
-  userId,
-  ownedOnly,
-  ids,
-  includeSource = false,
-}: {
+type GetHomeBlocksArgs = {
   userId?: number;
   ownedOnly?: boolean;
   ids?: number[];
   includeSource?: boolean;
-}) => {
+};
+
+// Gated per viewer AFTER every read, including the shared permanent-block cache, which must keep
+// holding rows unfiltered: a filtered list under a shared key would serve one viewer's set to all.
+export const getHomeBlocks = async ({
+  viewer,
+  ...args
+}: GetHomeBlocksArgs & { viewer: EventViewer }) => {
+  const rows = await getUngatedHomeBlocks(args);
+  return filterViewableHomeBlocks<(typeof rows)[number]>(rows, viewer);
+};
+
+const getUngatedHomeBlocks = async ({
+  userId,
+  ownedOnly,
+  ids,
+  includeSource = false,
+}: GetHomeBlocksArgs) => {
   const hasCustomHomeBlocks = await userHasCustomHomeBlocks(userId);
 
   if (ownedOnly && !userId) {
@@ -165,60 +201,87 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
     },
   });
 
-  return homeBlocks.map((homeBlock) => ({
-    ...homeBlock,
-    metadata: homeBlock.metadata as HomeBlockMetaSchema,
-  }));
+  // Resolved, because the gate reads the flag from a sourced row's source.
+  return Promise.all(
+    homeBlocks.map(async (homeBlock) => ({
+      ...homeBlock,
+      metadata: homeBlock.sourceId
+        ? await resolveHomeBlockMetadata(homeBlock)
+        : (homeBlock.metadata as HomeBlockMetaSchema),
+    }))
+  );
 };
 
 export const getHomeBlockById = async ({
   id,
   domain,
+  viewer,
 }: GetHomeBlockByIdInputSchema & {
-  // Accepted and deliberately NOT read. The body destructures `id` and `domain` only.
-  //
-  // Keep it that way, for two independent reasons — the first is the one that binds:
+  // Read ONLY to refuse a gated row before the shared read, never to shape the body.
   //
   // 1. The result is stored in a SHARED Redis entry with no user segment. This path goes
   //    through `getHomeBlockCached` (`~/server/services/home-block-cache.service.ts`),
   //    whose key is built from the block's type, its identifier and the domain only.
-  //    Personalizing the result off `user` would therefore write one caller's body under
+  //    Personalizing the result off the viewer would therefore write one caller's body under
   //    a key every other caller reads — a cross-user leak that exists even with
   //    `edgeCacheIt` removed from the procedure entirely, because the leak is in the
   //    server-side cache, not in the response headers.
   //
   // 2. `homeBlock.getHomeBlock` is additionally edge-cached, so a personalized body would
-  //    also be served from the edge to every other caller of the same URL.
-  user?: SessionUser;
+  //    also be served from the edge to every other caller of the same URL. A gated row's
+  //    200 is kept off the edge by the controller (`isHomeBlockGated`).
+  viewer: EventViewer;
 }) => {
   const homeBlockFindArgs = {
-    select: {
-      id: true,
-      metadata: true,
-      type: true,
-      userId: true,
-      sourceId: true,
-    },
+    select: homeBlockByIdSelect,
     where: {
       id,
     },
   } as const;
-  const homeBlock = await dbRead.homeBlock.findUniqueOrThrow(homeBlockFindArgs).catch(() => {
+  // A miss (or any error) on the replica falls back to the primary, through Prisma, so its
+  // not-found throw is unchanged. A missing Kysely row takes the same fallback. A call with no `id`
+  // (the input allows it) stays on Prisma, which rejects it as before.
+  const fallback = () => {
     dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
     return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);
-  });
+  };
+  const homeBlock =
+    id !== undefined && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+      ? await readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, id).then(
+          (row) => row ?? fallback(),
+          fallback
+        )
+      : await readHomeBlockViaPrisma(dbRead, id).catch(fallback);
 
   if (!homeBlock) {
     return null;
   }
 
-  return getHomeBlockCached(
-    {
-      ...homeBlock,
-      metadata: homeBlock.metadata as HomeBlockMetaSchema,
+  const row = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
+  const metadata = await resolveHomeBlockMetadata(row);
+  if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
+
+  const block = await getHomeBlockCached(row, domain, metadata);
+  const rotation = metadata.cosmeticShopSection;
+  if (!block?.cosmeticShopSection || !rotation?.random) return block;
+
+  const visible = shopBlockMaxItems(rotation) ?? COSMETIC_SHOP_ROTATION_DEFAULTS.maxItems;
+  const rotated = rotateShopSectionItems(block.cosmeticShopSection.items, {
+    sectionId: rotation.id,
+    rotateHours: rotation.rotateHours,
+    now: Date.now(),
+    visible,
+    getId: (item) => item.shopItem.id,
+  });
+  return {
+    ...block,
+    cosmeticShopSection: {
+      ...block.cosmeticShopSection,
+      // A rotating block shows a handful of a section that can hold over a hundred. Three times
+      // that is room for the client to drop blocked sellers and still fill the row.
+      items: rotated.slice(0, 3 * visible),
     },
-    domain
-  );
+  };
 };
 
 // `moreHref` is carried from the block's own metadata, not from the board row, so
@@ -235,7 +298,8 @@ type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>
 /** A Feed block's resolved slice. `entity` tells the renderer which card to use. */
 export type FeedBlockItems =
   | { entity: 'images'; items: AsyncReturnType<typeof getAllImagesIndex>['items'] }
-  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] };
+  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] }
+  | { entity: 'crucibles'; items: AsyncReturnType<typeof getFeedCrucibles> };
 
 export type PickedFeaturedCollection = {
   collection: AsyncReturnType<typeof getCollectionById>;
@@ -293,15 +357,31 @@ const FEED_FETCH_DEFAULT = 28;
  * says is what ships — a `limit` of 42 fetches 42.
  *
  * The value has to sit well above the rendered slice (`rows * HOME_BLOCK_ITEMS_PER_ROW`), because
- * `maxPerUser` and the viewer's own hidden-preferences filter both thin the pool after the fetch,
- * and the fetch applies no per-creator cap of its own — so the head of the pool is
- * creator-concentrated. Measured on the two live blocks: 454066 (7 slots) fills at 7, but 454065
- * (14 slots) needs 21, and its first 7 items come from only 4 creators.
+ * `maxPerUser` and the viewer's own hidden-preferences filter both thin the pool after the fetch.
+ * Outside "new & upcoming" blocks the fetch applies no per-creator cap of its own, so the head of
+ * the pool is creator-concentrated.
  *
  * Exported for unit tests.
  */
 export function resolveFeedFetchLimit(limit?: number) {
   return Math.min(limit ?? FEED_FETCH_DEFAULT, FEED_FETCH_CEILING);
+}
+
+// "New & upcoming" blocks exist to show creators without an established following. Sorted by
+// reactions alone, the pool went to a handful of the board's biggest accounts (2026-10-07: 42
+// images from 15 of 200 creators, one holding 14), and the client's per-view cap only rotated
+// which two of theirs showed. So these blocks cap each creator's share of the pool itself, not
+// just of the view, and the images block caps followers in its creator list.
+// The models board (`new_creators`) applies the same < 1000 rule in its own Leaderboard.query SQL,
+// which lives in the database: retune both together.
+const NEW_CREATORS_MAX_FOLLOWERS = 1000;
+// Filling 42 at 2 per creator took the top 98 ranked images on 2026-10-07.
+const NEW_CREATORS_POOL_OVERFETCH = 3;
+const NEW_CREATORS_POOL_FETCH_CEILING = 150;
+
+/** Exported for unit tests. */
+export function newCreatorsPoolFetchLimit(limit: number) {
+  return Math.min(limit * NEW_CREATORS_POOL_OVERFETCH, NEW_CREATORS_POOL_FETCH_CEILING);
 }
 
 // Both model-carrying home blocks take this pair. The images come straight from the shared
@@ -321,6 +401,38 @@ const modelFeedDefaults = {
   favorites: false,
   hidden: false,
 } as const;
+
+const CRUCIBLE_FEED_LIMIT = 8;
+
+/**
+ * Running crucibles first, then upcoming, each by prize pool: `getCrucibles` under the PrizePool
+ * sort. No viewer, because the result is shared-cached; the client still applies the viewer's
+ * hidden users and browsing level.
+ */
+const getFeedCrucibles = async ({
+  eventTag,
+  limit,
+  browsingLevel,
+  domain,
+}: {
+  eventTag: string;
+  limit: number;
+  browsingLevel: number;
+  domain?: DomainColor;
+}) => {
+  const { items } = await getCrucibles({
+    input: {
+      limit: Math.min(limit, CRUCIBLE_FEED_LIMIT),
+      sort: CrucibleSort.PrizePool,
+      status: [CrucibleStatus.Active, CrucibleStatus.Pending],
+      browsingLevel,
+    },
+    select: crucibleListSelect,
+    isGreen: domain === 'green',
+    eventTag,
+  });
+  return withEntryCounts(items);
+};
 
 // PG only unless a block opts up. The rest of the site treats PG+PG13 as "SFW", but
 // nothing on the home page has passed human review before appearing there.
@@ -391,6 +503,7 @@ export const getHomeBlockData = async ({
   user,
   input,
   homeBlock,
+  coverage,
 }: {
   homeBlock: {
     id: number;
@@ -419,6 +532,8 @@ export const getHomeBlockData = async ({
   // poisoning a shared cache entry and leaking one user's view to everyone else. If a
   // personalized variant is ever genuinely needed, it needs its own key, not this one.
   user?: SessionUser;
+  /** See `getModelsRaw`; the same never-from-the-shared-entry rule as `user`. */
+  coverage?: CoverageAudience;
 }): Promise<HomeBlockWithData | null> => {
   const metadata = await resolveHomeBlockMetadata(homeBlock);
 
@@ -496,46 +611,72 @@ export const getHomeBlockData = async ({
       if (!feed) return null;
 
       const limit = resolveFeedFetchLimit(feed.limit);
+      const poolMaxPerUser = feed.newCreators ? feed.maxPerUser : undefined;
+      const fetchLimit = poolMaxPerUser ? newCreatorsPoolFetchLimit(limit) : limit;
       // `[]` means "no filter" here, but the two consumers disagree about that: the images
       // path guards on `.length` and skips the filter, while model.service guards on
       // truthiness and strips every version off every model, ejecting the whole block.
       // Metadata is cast rather than parsed and is hand-written, so `[]` is reachable.
       const baseModels = feed.baseModels?.length ? feed.baseModels : undefined;
 
+      if (feed.entity === 'crucibles') {
+        // Without a tag the block would list every running crucible on the site.
+        const eventTag = normalizeCrucibleEventTag(feed.eventTag ?? '');
+        if (!eventTag) return null;
+
+        const items = await getFeedCrucibles({
+          eventTag,
+          limit,
+          browsingLevel: feedBrowsingLevel(feed.browsingLevel),
+          domain: input.domain,
+        });
+        return { ...homeBlock, metadata, feedItems: { entity: 'crucibles' as const, items } };
+      }
+
       if (feed.entity === 'images') {
         const { items } = await getAllImagesIndex({
           ...imageFeedDefaults,
           browsingLevel: feedBrowsingLevel(feed.browsingLevel),
-          limit,
+          limit: fetchLimit,
           domain: input.domain,
           sort: (feed.sort as ImageSort) ?? ImageSort.MostReactions,
           period: feed.period ?? MetricTimeframe.Week,
           newCreators: feed.newCreators,
+          newCreatorsMaxFollowers: feed.newCreators ? NEW_CREATORS_MAX_FOLLOWERS : undefined,
           types: feed.types,
           baseModels,
           user,
           headers: { src: 'getHomeBlockData:feed' },
         });
 
-        return { ...homeBlock, metadata, feedItems: { entity: 'images' as const, items } };
+        return {
+          ...homeBlock,
+          metadata,
+          feedItems: { entity: 'images' as const, items: capPerUser(items, limit, poolMaxPerUser) },
+        };
       }
 
       const { items } = await getModelsWithImagesAndModelVersions({
         input: {
           ...modelFeedDefaults,
           browsingLevel: feedBrowsingLevel(feed.browsingLevel),
-          limit,
+          limit: fetchLimit,
           sort: (feed.sort as ModelSort) ?? ModelSort.HighestRated,
           period: feed.period ?? MetricTimeframe.Week,
           newCreators: feed.newCreators,
           baseModels,
         },
         user,
+        coverage,
         domain: input.domain,
         ...slimModelImages,
       });
 
-      return { ...homeBlock, metadata, feedItems: { entity: 'models' as const, items } };
+      return {
+        ...homeBlock,
+        metadata,
+        feedItems: { entity: 'models' as const, items: capPerUser(items, limit, poolMaxPerUser) },
+      };
     }
     case HomeBlockType.CosmeticShop: {
       const cosmeticShopSectionMeta = metadata.cosmeticShopSection;
@@ -543,15 +684,24 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      // No feature flags in this context — creator-listed items stay excluded
-      // from homepage shop blocks until the creatorShop flag goes GA.
+      // This body is shared by every viewer, so the creatorShop and stickers flags are resolved as
+      // they are for a signed-out one: on while the flag is public, off when it is pulled or Flipt
+      // can't answer. The per-viewer block filter the shop page applies can't live in a shared body
+      // either; the block applies it on the client.
+      const [creatorShopEnabled, stickersEnabled] = await Promise.all([
+        isFliptPublic('creator-shop'),
+        isFliptPublic('stickers'),
+      ]);
       const data = await getShopSectionsWithItems({
         sectionId: cosmeticShopSectionMeta.id,
+        creatorShopEnabled,
+        stickersEnabled,
       });
 
       const [cosmeticShopSection] = data;
 
-      if (!cosmeticShopSection || cosmeticShopSection._count.items === 0) {
+      // `_count.items` counts placed items only; a section filled by its event tag has none.
+      if (!cosmeticShopSection || cosmeticShopSection.items.length === 0) {
         return null;
       }
 
@@ -637,6 +787,7 @@ export const getHomeBlockData = async ({
           ? (
               await getModelsWithImagesAndModelVersions({
                 user,
+                coverage,
                 input: {
                   ids: featured.map((f) => f.modelId),
                   limit: featured.length,
@@ -647,6 +798,7 @@ export const getHomeBlockData = async ({
                   periodMode: 'stats',
                   browsingLevel: allBrowsingLevelsFlag,
                 },
+                faceBrowsingLevel: sfwBrowsingLevelsFlag,
                 ...slimModelImages,
               })
             ).items
@@ -711,8 +863,10 @@ export const upsertHomeBlock = async ({
 }: {
   input: UpsertHomeBlockInput & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, id, metadata, type, sourceId } = input;
+  const { userId, isModerator, id, type, sourceId } = input;
   let { index } = input;
+  const metadata = { ...input.metadata };
+  if (!isModerator) delete metadata.featureFlag;
 
   if (id) {
     const homeBlock = await dbRead.homeBlock.findUnique({
@@ -1027,6 +1181,7 @@ export async function createHomeBlockAdmin({
   index?: number;
   permanent?: boolean;
 }) {
+  assertValidHomeBlockFeatureFlag(metadata);
   const created = await dbWrite.homeBlock.create({
     data: {
       userId: SYSTEM_HOMEBLOCK_USER_ID,
@@ -1059,6 +1214,7 @@ export async function updateHomeBlockAdmin({
   sourceId?: number | null;
 }) {
   await assertSystemHomeBlock(id);
+  assertValidHomeBlockFeatureFlag(metadata);
   const data: Prisma.HomeBlockUncheckedUpdateInput = {};
   if (metadata !== undefined) data.metadata = metadata;
   if (index !== undefined) data.index = index;
@@ -1112,8 +1268,10 @@ export async function reorderHomeBlocksAdmin({ orderedIds }: { orderedIds: numbe
 
 export const setHomeBlocksOrder = async ({
   input,
+  viewer,
 }: {
   input: SetHomeBlocksOrderInputSchema & { userId: number };
+  viewer: EventViewer;
 }) => {
   const { userId, homeBlocks } = input;
   if (homeBlocks.find((homeBlock) => homeBlock.userId !== -1 && homeBlock.userId !== userId)) {
@@ -1143,14 +1301,20 @@ export const setHomeBlocksOrder = async ({
   // with clones of permanent blocks, so for those absence means "never offered", not "removed".
   // Sweeping them would delete the last row of a user who kept only a permanent block, and this
   // app reads "no rows" as "never customized", which hands that user the full default homepage.
-  const homeBlocksToRemove = await dbRead.homeBlock.findMany({
-    select: { id: true },
-    where: {
-      userId,
-      id: { not: { in: homeBlockIds } },
-      OR: [{ sourceId: null }, { source: { permanent: false } }],
-    },
-  });
+  // A row gated from this viewer was never offered either, so it is kept for when they can see it.
+  const homeBlocksToRemove = await filterViewableHomeBlocks(
+    await resolveMetadataForAll(
+      await dbRead.homeBlock.findMany({
+        select: { id: true, type: true, metadata: true, sourceId: true },
+        where: {
+          userId,
+          id: { not: { in: homeBlockIds } },
+          OR: [{ sourceId: null }, { source: { permanent: false } }],
+        },
+      })
+    ),
+    viewer
+  );
 
   // if we have items to remove, add a deleteMany mutation to the transaction
   if (homeBlocksToRemove.length) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { createEcosystemStepInput } from '../ecosystems';
-import { minimaxMusicVersionIds } from '~/shared/data-graph/generation/minimax-music-graph';
+import { createFormGraphStepInput } from '../form-graph';
+import { minimaxMusicVersionIds } from '~/shared/form-graph/generation/audio/minimax-music.graph';
 import { formatStepOutputs, type GenerationHandlerCtx } from '../orchestration-new.service';
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 
@@ -22,7 +22,7 @@ const base = {
 // is the wiring most easily forgotten, and a missing one throws
 // `Unknown ecosystem: MiniMaxMusic3` here rather than at submit time.
 const steps = (data: Record<string, unknown>) =>
-  createEcosystemStepInput({ ...base, ...data } as any, ctx);
+  createFormGraphStepInput({ ...base, ...data } as any, ctx);
 
 const simple = { minimaxMusicMode: 'simple', prompt: 'a lullaby about the sea' };
 const custom = {
@@ -44,7 +44,7 @@ describe('minimax music simple mode', () => {
   it('points both required fields at that step', async () => {
     const [, music] = await steps(simple);
     const input = music.input as any;
-    expect(input.caption).toEqual({ $ref: '$0', path: 'output.parsed.caption' });
+    expect(input.prompt).toEqual({ $ref: '$0', path: 'output.parsed.caption' });
     expect(input.lyrics).toEqual({ $ref: '$0', path: 'output.parsed.lyrics' });
   });
 
@@ -61,7 +61,7 @@ describe('minimax music custom mode', () => {
     const result = await steps(custom);
     expect(result.map((s) => s.$type)).toEqual(['miniMaxMusic3']);
     const input = result[0].input as any;
-    expect(input.caption).toBe(custom.musicDescription);
+    expect(input.prompt).toBe(custom.musicDescription);
     expect(input.lyrics).toBe(custom.lyrics);
   });
 });

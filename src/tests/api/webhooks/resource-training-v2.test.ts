@@ -28,9 +28,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 // Real WorkflowStatus values (lowercase) so the handler's `z.enum(WorkflowStatus)`
 // body validation accepts the statuses the switch actually handles. (The global
-// test setup mocks @civitai/client with capitalized Pending/Running/Completed,
+// test setup mocks @civitai/orchestration-client with capitalized Pending/Running/Completed,
 // which would reject 'succeeded' at parse time — override it here.)
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   WorkflowStatus: {
     unassigned: 'unassigned',
     preparing: 'preparing',

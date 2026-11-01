@@ -11,11 +11,11 @@
 import { create } from 'zustand';
 
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 
 interface MetadataExtractionState {
   metadata: ImageMetaProps | undefined;
-  resolvedResources: GenerationResource[];
+  resolvedResources: GenerationResourceValue[];
   /** Graph-compatible params from the server (includes workflow, ecosystem, prompt, etc.) */
   params: Record<string, unknown> | undefined;
   fileUrl: string | undefined;
@@ -24,7 +24,7 @@ interface MetadataExtractionState {
   isResolving: boolean;
 
   setMetadata: (metadata: ImageMetaProps | undefined) => void;
-  setResolved: (resources: GenerationResource[], params: Record<string, unknown>) => void;
+  setResolved: (resources: GenerationResourceValue[], params: Record<string, unknown>) => void;
   setFileUrl: (url: string | undefined) => void;
   setIsVideo: (isVideo: boolean) => void;
   setIsExtracting: (extracting: boolean) => void;

@@ -1,7 +1,10 @@
 /* Applied once at the chat window root so every pane inherits the same tokens.
    Mantine's `c="blue"` resolves to blue-6 in light but blue-8 in dark, which is
-   near-invisible on a dark panel — hence an explicit accent rather than a role. */
-.surface {
+   near-invisible on a dark panel — hence an explicit accent rather than a role.
+   `.tokens` is the same palette without the window paint below, for chat rows
+   rendered outside the window (ChatShareModal portals to the body). */
+.surface,
+.tokens {
   --chat-accent: light-dark(var(--mantine-color-blue-7), var(--mantine-color-blue-4));
   --chat-line: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
   --chat-panel: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));

@@ -1,12 +1,7 @@
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import type { InstantSearchProps } from 'react-instantsearch';
-import { env } from '~/env/client';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id' }
-);
+const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
 // The empty `SearchResponse` shape `@meilisearch/instant-meilisearch` / `react-instantsearch`
 // expect — one entry per request, no hits. Shared so the three clients that return it (this

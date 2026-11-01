@@ -96,23 +96,23 @@
  * the vacuous pass this harness exists to remove.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * 🔴 WHAT RUNS THIS: THE `Geometry tests` JOB — AND IT IS REPORT-ONLY ON A PR.
+ * 🔴 WHAT RUNS THIS: THE `Geometry tests` STEP — AND IT IS REPORT-ONLY ON A PR.
  * ─────────────────────────────────────────────────────────────────────────────
  * ⚠️ THIS PARAGRAPH SAID "NOTHING RUNS THIS, SAY IT OUT LOUD" AND HAD STOPPED BEING
- * TRUE. `.github/workflows/lint.yml` now carries a `geometry:` job (`Geometry tests`)
- * that installs Chromium and runs `vitest run --project geometry`, plus a collected-
- * count ledger so a selector that matches nothing fails instead of exiting 0. It is
- * observable on any PR's check list. Left uncorrected, the sentence would have talked
- * the next reader out of relying on a gate that exists — the mirror image of the rot it
- * was written to prevent.
+ * TRUE. `.github/workflows/lint.yml`'s `component` job (`Component + geometry tests`)
+ * installs Chromium and runs `vitest run --project geometry` as its `Geometry tests`
+ * step, plus a collected-count ledger so a selector that matches nothing fails instead
+ * of exiting 0. Left uncorrected, the sentence would have talked the next reader out of
+ * relying on a gate that exists — the mirror image of the rot it was written to prevent.
  *
  * What is still true, and is the part that matters when you read a green check:
- * the job carries `continue-on-error: ${{ github.event_name == 'pull_request' }}`, so
+ * the step carries `continue-on-error: ${{ github.event_name == 'pull_request' }}`, so
  * on a PR it REPORTS and on a push to `main` it BLOCKS. Do not write "the blocking
- * tier" about this project without that qualifier.
+ * tier" about this project without that qualifier. On a PR a red here leaves the job
+ * green and the step's API conclusion `success`; the failure shows as an error
+ * annotation from the job's `Report-only results` step.
  *
- * `component` is still ungated: no project selector in that workflow matches it, and
- * its only CI home is the preview pipeline's report-only `preview / component-tests`.
+ * `component` runs in the same job, as its blocking `Component tests` step.
  *
  * `pnpm run test:geometry` is still the whole command locally, and the glob is
  * disjoint from every other project's, so adding a file here cannot change what any
@@ -132,6 +132,7 @@ import '@mantine/notifications/styles.layer.css';
 import '@mantine/nprogress/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
 import 'mantine-react-table/styles.css';
+import '@civitai/components/styles.css';
 
 import React from 'react';
 import { afterEach, vi } from 'vitest';
@@ -335,7 +336,27 @@ export function cascadeEvidence(): {
   probeBoxSizing: string;
   /** `@tailwind utilities` — inert in the `component` tier, which loads none of it. */
   tailwindFlexUtilityResolves: boolean;
-  /** A `theme`-layer rule from globals.css. */
+  /**
+   * The ROOT FONT SIZE — the SCOPE of every px measurement taken in this tier, and the only
+   * field here that is NOT cascade evidence.
+   *
+   * ⚠️ IT WAS DOCUMENTED AS "a `theme`-layer rule from globals.css" AND NO SUCH RULE EXISTS:
+   * `src/styles/globals.css` declares no `html { font-size }` (its only `16px` is an
+   * `input:focus` override inside an iOS `hover: none`/`pointer: coarse` media query), and
+   * nothing overrides `--mantine-scale`. So this reports the BROWSER DEFAULT, which makes it
+   * worthless as evidence the cascade loaded — the same mistake that got the body's
+   * `margin-top` cut from this list.
+   *
+   * It is kept — and is now asserted by at least one caller — for the opposite reason to the
+   * fields above: almost everything in the Mantine cascade is in `rem`, so a px number
+   * measured in this tier is a claim AT A PARTICULAR ROOT FONT SIZE. A geometry whose terms
+   * are a mix of rem and px changes sign across this axis while every width-based assertion
+   * stays green. Worked example, measured: the root-font-size block in
+   * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx` pins a clearance that was
+   * 0.00px at a 16px root font size and **−9px at 20px** — invisible to that file's two
+   * viewports, which agreed with each other at both. Assert it, so a measurement carries its
+   * own scope; override it (`document.documentElement.style.fontSize`) to vary the axis.
+   */
   htmlFontSize: string;
 } {
   const probe = document.createElement('div');

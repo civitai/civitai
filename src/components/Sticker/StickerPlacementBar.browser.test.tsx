@@ -1,10 +1,12 @@
 import { NsfwLevel } from '~/server/common/enums';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
+import type { StickerDraft } from '~/store/sticker-placement-draft.store';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
 /**
  * The invitation is a claim that this image has no stickers. `total` is fed by
@@ -23,6 +25,8 @@ const PLUS = 'Place a sticker';
 // a chip reading zero with nothing on the page that reveals what they came for.
 // Asserting only the total leaves that entirely unguarded.
 const placementsEnabled: (boolean | undefined)[] = [];
+/** The same record for the count-only call, which a signed-in viewer must not make. */
+const countsOnlyEnabled: (boolean | undefined)[] = [];
 
 const queryState = {
   counts: {} as Record<number, number>,
@@ -61,16 +65,37 @@ const standingEnabled: (boolean | undefined)[] = [];
 // transitive import graph of the bar, and nothing warns when that graph grows.
 vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementUtil>()),
-  useStickerPlacementCounts: () => ({
-    counts: queryState.counts,
-    isLoading: queryState.countsLoading,
-    isError: queryState.countsError,
-  }),
+  // `countsLoading` / `countsError` describe whichever call carries the counts:
+  // the count-only one for a viewer who wants no placements, and the combined one
+  // — which then also carries `placementsLoading` — for everyone else. Both mocks
+  // read the same fields so each test states the count's state once, whichever
+  // call the bar is supposed to take it from.
+  //
+  // Each mock answers ONLY when the bar enabled it, as a real query does: a
+  // disabled call that still handed back counts would let a bar reading the
+  // wrong call's answer render the right number.
+  useStickerPlacementCounts: (_ids: number[], enabled?: boolean) => {
+    countsOnlyEnabled.push(enabled);
+    const landed = enabled !== false && !queryState.countsLoading && !queryState.countsError;
+    return {
+      counts: queryState.counts,
+      data: landed ? queryState.counts : undefined,
+      isLoading: queryState.countsLoading,
+      isError: queryState.countsError,
+    };
+  },
   useStickerPlacements: (_ids: number[], enabled?: boolean) => {
     placementsEnabled.push(enabled);
+    const landed =
+      enabled !== false &&
+      !queryState.countsLoading &&
+      !queryState.countsError &&
+      !queryState.placementsLoading;
     return {
       byImage: new Map(queryState.pending.length ? [[IMAGE_ID, queryState.pending]] : []),
-      isLoading: queryState.placementsLoading,
+      counts: landed ? queryState.counts : undefined,
+      isLoading: queryState.placementsLoading || queryState.countsLoading,
+      isError: queryState.countsError,
     };
   },
   // 🔴 No default value for `enabled`, deliberately. With `(enabled = true)` a
@@ -140,6 +165,12 @@ const renderBar = async () => {
 const invitations = () => page.getByRole('button', { name: INVITATION }).elements().length;
 
 describe('StickerPlacementBar', () => {
+  // Restored after every test rather than at the end of the one that changes it,
+  // so a failure there cannot flip every later test to signed-out.
+  afterEach(() => {
+    queryState.signedIn = true;
+  });
+
   test('claims the image is empty only once both queries have arrived', async () => {
     Object.assign(queryState, {
       counts: {},
@@ -219,6 +250,37 @@ describe('StickerPlacementBar', () => {
     // nothing to act on, so the argument is the thing worth pinning.
     expect(placementsEnabled.length).toBeGreaterThan(0);
     expect(placementsEnabled.every((enabled) => enabled === true)).toBe(true);
+  });
+
+  // 🔴 The request this change removed. The combined call already carries the
+  // counts, so a signed-in viewer asking for them again is a second procedure
+  // call per image view for the same rows. `false`, not "falsy": the hook
+  // defaults `enabled` to true, so an omitted argument fires the call.
+  test('takes a signed-in viewer’s count from the combined call, without the count-only one', async () => {
+    Object.assign(queryState, { counts: { [IMAGE_ID]: 3 }, pending: [], signedIn: true });
+    countsOnlyEnabled.length = 0;
+    await renderBar();
+
+    expect(page.getByRole('button', { name: /^3 stickers$/ }).elements()).toHaveLength(1);
+    expect(countsOnlyEnabled.length).toBeGreaterThan(0);
+    expect(countsOnlyEnabled.every((enabled) => enabled === false)).toBe(true);
+  });
+
+  // The other side of that trade, and an INVARIANT GUARD rather than regression
+  // coverage: this viewer's calls are unchanged. A signed-out viewer with stickers
+  // hidden wants the count and nothing else, and the count-only response is the
+  // one a shared cache can answer — so it keeps that call and does not ask for
+  // placements. `!== false` because the hook defaults `enabled` to true.
+  test('keeps a signed-out viewer with stickers hidden on the count-only call', async () => {
+    Object.assign(queryState, { counts: { [IMAGE_ID]: 3 }, pending: [], signedIn: false });
+    countsOnlyEnabled.length = 0;
+    placementsEnabled.length = 0;
+    await renderBar();
+
+    expect(page.getByRole('button', { name: /^3 stickers$/ }).elements()).toHaveLength(1);
+    expect(countsOnlyEnabled.length).toBeGreaterThan(0);
+    expect(countsOnlyEnabled.every((enabled) => enabled !== false)).toBe(true);
+    expect(placementsEnabled.every((enabled) => enabled === false)).toBe(true);
   });
 });
 
@@ -501,5 +563,105 @@ describe('StickerPlacementBar — free slots', () => {
     // also matches wrapper elements whose subtree text contains it, and `/free$/`
     // would let a regression to "1 free left" through.
     expect(page.getByText(/\d+ free/).elements()).toHaveLength(0);
+  });
+});
+
+describe('StickerPlacementBar — preview toggle', () => {
+  const draftOn = (imageId: number): StickerDraft => ({
+    id: `draft-${imageId}`,
+    imageId,
+    cosmeticId: 5,
+    x: 0.5,
+    y: 0.5,
+    scale: 0.2,
+    rotation: 0,
+    flip: false,
+    opacity: 1,
+  });
+
+  const placing = (imageId: number, previewing = false) =>
+    useStickerPlacementDraftStore.setState({
+      targetImageId: imageId,
+      drafts: [draftOn(imageId)],
+      selectedDraftId: `draft-${imageId}`,
+      previewing,
+    });
+
+  const settled = {
+    counts: {},
+    countsLoading: false,
+    countsError: false,
+    placementsLoading: false,
+    pending: [],
+    freeSlots: 0,
+    freeSlotsRemaining: 0,
+    allowanceRemaining: undefined as number | undefined,
+    usedHere: false,
+    signedIn: true,
+  };
+
+  afterEach(() => {
+    useStickerPlacementDraftStore.setState({
+      targetImageId: null,
+      drafts: [],
+      selectedDraftId: null,
+      previewing: false,
+    });
+  });
+
+  test('hides and restores the controls from under the image', async () => {
+    Object.assign(queryState, settled);
+    placing(IMAGE_ID);
+    await renderBar();
+
+    await page.getByRole('button', { name: 'Hide controls' }).click();
+    const show = page.getByRole('button', { name: 'Show controls' });
+    await expect.element(show).toBeVisible();
+    await expect.element(show).toHaveAttribute('aria-pressed', 'true');
+    expect(useStickerPlacementDraftStore.getState().previewing).toBe(true);
+
+    await show.click();
+    await expect.element(page.getByRole('button', { name: 'Hide controls' })).toBeVisible();
+    expect(useStickerPlacementDraftStore.getState().previewing).toBe(false);
+  });
+
+  test('is absent while the drafts belong to another image', async () => {
+    Object.assign(queryState, settled);
+    placing(IMAGE_ID + 1);
+    await renderBar();
+
+    expect(page.getByRole('button', { name: /controls$/ }).elements()).toHaveLength(0);
+  });
+
+  // The tray's own toggle is hidden with the tray, so this one is the only way
+  // back. A bar that stops being able to place must not take it with it.
+  test('keeps the way out of preview when the bar has nothing else to show', async () => {
+    Object.assign(queryState, settled, { signedIn: false });
+    placing(IMAGE_ID, true);
+    renderWithProviders(<StickerPlacementBar imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />);
+
+    await expect.element(page.getByRole('button', { name: 'Show controls' })).toBeVisible();
+  });
+
+  // Closing the hint is how it is dismissed for the day, so preview has to hide
+  // it without closing it.
+  test('hides the free hint while previewing without dismissing it', async () => {
+    localStorage.removeItem('sticker-free-hint-dismissed');
+    Object.assign(queryState, settled, {
+      freeSlots: 4,
+      freeSlotsRemaining: 2,
+      allowanceRemaining: 1,
+    });
+    placing(IMAGE_ID);
+    await renderBar();
+    const hint = page.getByText('Daily free sticker');
+    await expect.element(hint).toBeVisible();
+
+    await page.getByRole('button', { name: 'Hide controls' }).click();
+    await expect.element(hint).not.toBeVisible();
+    expect(localStorage.getItem('sticker-free-hint-dismissed')).toBeNull();
+
+    await page.getByRole('button', { name: 'Show controls' }).click();
+    await expect.element(hint).toBeVisible();
   });
 });

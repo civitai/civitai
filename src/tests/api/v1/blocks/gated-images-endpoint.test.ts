@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
+import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
 
 /**
  * ADAPTER-level coverage for `GET /api/v1/blocks/gated-images`.
@@ -21,7 +22,10 @@ import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
  *      withheld tile — but an EMPTY list means "nothing to show", and
  *      `civitai-app-custom-generators` would silently render a board with no
  *      covers rather than surfacing an error.
- *   2. The body's result is passed through UNTOUCHED, `hidden` entries included.
+ *   2. The body's result is passed through UNTOUCHED, `hidden` entries included —
+ *      except that a `visible` entry gains a `reactTicket` when a signing secret is
+ *      configured (pinned in the last describe block; every earlier case runs with the
+ *      secret stubbed empty, so no ticket is signed).
  *      The whole point of the route is that `hidden` survives to the wire; an
  *      adapter that filtered it would reproduce the omission behaviour this route
  *      exists to avoid, with nothing failing.
@@ -125,6 +129,8 @@ function createMocks({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // No signing secret unless a case sets one, whatever the caller's environment exports.
+  vi.stubEnv('NEXTAUTH_SECRET', '');
   claimsBox.claims = fakeClaims();
   mockRateLimit.mockResolvedValue({ allowed: true, retryAfterSeconds: 0 });
   mockResolve.mockResolvedValue({ images: [] });
@@ -266,5 +272,45 @@ describe('GET /api/v1/blocks/gated-images — rate limiting', () => {
     await (baseHandler as any)(req, res);
 
     expect(mockRateLimit).toHaveBeenCalledWith('bki');
+  });
+});
+
+describe('GET /api/v1/blocks/gated-images — reactTicket (app reactions provenance)', () => {
+  const SECRET = 'gated-endpoint-secret';
+  beforeEach(() => {
+    vi.stubEnv('NEXTAUTH_SECRET', SECRET);
+  });
+
+  it('tickets VISIBLE entries only, bound to (image, app, viewer); everything else is untouched', async () => {
+    const visible = {
+      imageId: 5,
+      status: 'visible',
+      url: 'https://edge/x',
+      width: 1,
+      height: 2,
+      nsfwLevel: 1,
+    };
+    const hidden = { imageId: 6, status: 'hidden' };
+    mockResolve.mockResolvedValue({ images: [visible, hidden] });
+
+    const { req, res } = createMocks({ query: { ids: '5,6' } });
+    await (baseHandler as any)(req, res);
+
+    expect(res._status()).toBe(200);
+    const [v, hd] = (res._json() as any).images;
+    // A hidden entry carries no pixels the viewer could have reacted to — and no ticket.
+    expect(hd).toEqual(hidden);
+    const { reactTicket, ...rest } = v;
+    expect(rest).toEqual(visible);
+    const subject = {
+      entityType: 'image' as const,
+      entityId: 5,
+      appBlockId: 'apb',
+      sub: 'user:29',
+    };
+    expect(verifyReactTicket(reactTicket, subject, { secret: SECRET }).ok).toBe(true);
+    expect(
+      verifyReactTicket(reactTicket, { ...subject, appBlockId: 'apb_other' }, { secret: SECRET }).ok
+    ).toBe(false);
   });
 });

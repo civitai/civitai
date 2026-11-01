@@ -2,9 +2,17 @@
 // (the session-gated wrappers under src/routes/api/*). Flow code goes through $lib/host's backend()
 // seam and never fetches '/api/…' itself; the only other client modules that do are signals.ts
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
-import type { AutoLabelResult, StudioBackend, TrainingRunPayload } from '$lib/backend';
+import type {
+  AutoLabelResult,
+  EditGenerationItem,
+  EditImageOption,
+  StudioBackend,
+  SubmittedBatch,
+  TrainingRunPayload,
+} from '$lib/backend';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
+import type { TrainingServiceStatus } from '$lib/service-status-core';
 import { UploadError, uploadProblem } from '$lib/upload';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
@@ -18,19 +26,44 @@ async function messageOf(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
+/** GET `path` as JSON; a failure throws the route's message, else `fallback (status)`. */
+async function getFor<T>(path: string, fallback: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, { signal });
+  if (!res.ok) throw new Error(await messageOf(res, `${fallback} (${res.status})`));
+  return (await res.json()) as T;
+}
+
+async function quoteFrom(path: string): Promise<number | null> {
+  const res = await fetch(path);
+  if (!res.ok) return null;
+  return ((await res.json()) as { cost: number | null }).cost;
+}
+
+async function postFor(path: string, body: unknown, fallback: string) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await messageOf(res, fallback));
+  return (await res.json()) as { workflowId: string };
+}
+
 export const shellBackend: StudioBackend = {
-  listTrainings: async () => {
-    const res = await fetch('/api/trainings');
-    if (!res.ok) throw new Error(await messageOf(res, `Failed to load trainings (${res.status})`));
-    return (await res.json()) as TrainingRow[];
-  },
+  listTrainings: () => getFor<TrainingRow[]>('/api/trainings', 'Failed to load trainings'),
 
   // The /[id] page's own detail still comes from its server load (refresh() re-runs it); this seam
   // read serves RunDetail's ancestor-chain fetches (combined epochs).
-  getRunDetail: async (workflowId) => {
-    const res = await fetch(`/api/run-detail?id=${encodeURIComponent(workflowId)}`);
-    if (!res.ok) throw new Error(await messageOf(res, `Failed to load training (${res.status})`));
-    return (await res.json()) as TrainingDetail;
+  getRunDetail: (workflowId) =>
+    getFor<TrainingDetail>(
+      `/api/run-detail?id=${encodeURIComponent(workflowId)}`,
+      'Failed to load training'
+    ),
+
+  modelLive: async (modelId) => {
+    const res = await fetch(`/api/model-status?id=${modelId}`);
+    if (!res.ok) throw new Error(await messageOf(res, `Model check failed (${res.status})`));
+    return ((await res.json()) as { live: boolean }).live;
   },
 
   getRunDataset: async (workflowId) => {
@@ -91,9 +124,40 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify({ runs }),
     });
     if (!res.ok) throw new Error(await messageOf(res, `Training could not start (${res.status})`));
-    const { workflowIds } = (await res.json()) as { workflowIds: string[] };
-    return workflowIds;
+    const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
+    return { workflowIds, failure };
   },
+
+  listEditGenerations: async () =>
+    (
+      await getFor<{ items: EditGenerationItem[] }>(
+        '/api/generations?media=image&kind=edit',
+        'Failed to load your edits'
+      )
+    ).items,
+
+  editImageQuote: () => quoteFrom('/api/edit-image'),
+
+  editImageSubmit: (req) => postFor('/api/edit-image', req, "Couldn't create the image."),
+
+  editImagePoll: (workflowId, signal) =>
+    getFor<{ done: boolean; options: EditImageOption[] }>(
+      `/api/edit-image/${encodeURIComponent(workflowId)}`,
+      'Image progress unavailable',
+      signal
+    ),
+
+  suggestQuote: () => quoteFrom('/api/suggest-instruction'),
+
+  suggestSubmit: (req) =>
+    postFor('/api/suggest-instruction', req, "Couldn't suggest an instruction."),
+
+  suggestPoll: (workflowId, signal) =>
+    getFor<{ done: boolean; text?: string }>(
+      `/api/suggest-instruction/${encodeURIComponent(workflowId)}`,
+      'Suggestion unavailable',
+      signal
+    ),
 
   rename: async (workflowId, name) => {
     const res = await fetch('/api/rename', {
@@ -104,12 +168,13 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
   },
 
-  epochArchive: async (workflowId) => {
-    const res = await fetch(`/api/epoch-archive?id=${encodeURIComponent(workflowId)}`, {
-      method: 'POST',
-    });
+  epochArchive: async (workflowId, kind) => {
+    const res = await fetch(
+      `/api/epoch-archive?id=${encodeURIComponent(workflowId)}&kind=${kind}`,
+      { method: 'POST' }
+    );
     if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
-    return (await res.json()) as EpochArchive;
+    return (await res.json()) as EpochArchive[];
   },
 
   deleteTraining: async (workflowId) => {
@@ -119,13 +184,15 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
   },
 
-  continueQuote: async (workflowId, fromEpoch, addEpochs) => {
-    const res = await fetch(
-      `/api/continue-training?id=${encodeURIComponent(
-        workflowId
-      )}&fromEpoch=${fromEpoch}&addEpochs=${addEpochs}`
-    );
-    if (!res.ok) throw new Error(await res.text().catch(() => 'Could not price the continuation.'));
+  continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
+    const params = new URLSearchParams({
+      id: workflowId,
+      fromEpoch: String(fromEpoch),
+      addEpochs: String(addEpochs),
+    });
+    for (const currency of currencies) params.append('currencies', currency);
+    const res = await fetch(`/api/continue-training?${params}`);
+    if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
     return (await res.json()) as { cost: number | null; steps?: number };
   },
 
@@ -135,10 +202,7 @@ export const shellBackend: StudioBackend = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies }),
     });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(detail || 'Could not start training.');
-    }
+    if (!res.ok) throw new Error(await messageOf(res, 'Could not start training.'));
     return ((await res.json()) as { workflowId: string }).workflowId;
   },
 
@@ -161,5 +225,11 @@ export const shellBackend: StudioBackend = {
     const res = await fetch('/api/buzz');
     if (!res.ok) return null;
     return (await res.json()) as { yellow: number; green: number; blue: number } | null;
+  },
+
+  getServiceStatus: async () => {
+    const res = await fetch('/api/training-status');
+    if (!res.ok) return null;
+    return (await res.json()) as TrainingServiceStatus;
   },
 };

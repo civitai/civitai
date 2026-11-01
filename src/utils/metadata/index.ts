@@ -39,14 +39,14 @@ export const legacyTypeToGenerator = {
 type LegacyParserType = keyof typeof legacyTypeToGenerator;
 
 /**
- * `file` is a File/Blob or a URL string (http/data/blob) — local filesystem
- * paths were never part of this surface.
+ * `file` is a File/Blob, raw image bytes (server callers holding a Buffer), or a URL
+ * string (http/data/blob) — local filesystem paths were never part of this surface.
  *
  * `parse()` returns the raw bag unvalidated; `getMetadata()` re-validates via
  * imageMetaSchema, which also strips `extra` to the app's shape — call sites
  * that store meta depend on getMetadata's stripping, not parse's fidelity.
  */
-export async function ExifParser(file: File | string) {
+export async function ExifParser(file: File | Blob | Uint8Array | string) {
   const md = await readCivitaiMetadata(file);
 
   function parse() {
@@ -72,7 +72,7 @@ export async function ExifParser(file: File | string) {
   return { exif: md.exif, parse, encode, getMetadata, isMadeOnSite, media: md };
 }
 
-export async function getMetadata(file: File | string) {
+export async function getMetadata(file: File | Blob | Uint8Array | string) {
   const parser = await ExifParser(file);
   return parser.getMetadata();
 }

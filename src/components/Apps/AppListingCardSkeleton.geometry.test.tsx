@@ -117,6 +117,7 @@ function makeCard(id: string, name: string, creator: string, openCount: number):
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: `blk-${id}`,
@@ -210,9 +211,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { APP_LISTING_SKELETON_ROWS, gridQueryInlineSize } = await import('./AppListingCardSkeleton');
 const { listingGridColumnsAt } = await import('./appListingGrid');
-const { LISTING_ACTION_ROW_CONTROL_PX, LISTING_ACTION_ROW_GAP_PX } = await import(
-  './appListingCardGeometry'
-);
 
 /**
  * A viewport wide enough that neither grid width below is clamped by it. The grid
@@ -325,24 +323,15 @@ function ctaWidths(): number[] {
     document.querySelectorAll('[data-testid="apps-listing-grid-col"]')
   ) as HTMLElement[];
   return cells.map((cell) => {
-    const card = cell.firstElementChild as HTMLElement | null;
-    const stack = card?.lastElementChild as HTMLElement | null;
-    const actionRow = Array.from(stack?.children ?? []).find(
-      (el) => (el as HTMLElement).style.marginTop === 'auto'
-    ) as HTMLElement | undefined;
-    if (!actionRow) {
-      throw new Error(
-        `no bottom-pinned (mt="auto") action row among the card stack's children: ` +
-          `${stack?.outerHTML.slice(0, 200) ?? 'null'}`
-      );
-    }
-    const cta = actionRow.firstElementChild as HTMLElement | null;
+    // Card A: the CTA is the LAST child of the header row (icon | title | CTA).
+    const header = cell.querySelector('[data-testid="apps-listing-card-header"]');
+    const cta = header?.lastElementChild as HTMLElement | null;
     if (!cta || !(cta.tagName === 'BUTTON' || cta.tagName === 'A')) {
       throw new Error(
         `the walk did not land on the CTA control: ${cta?.outerHTML.slice(0, 200) ?? 'null'}`
       );
     }
-    return Math.round(cta.getBoundingClientRect().width * 100) / 100;
+    return cta.getBoundingClientRect().width;
   });
 }
 
@@ -824,27 +813,17 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
   });
 
   /**
-   * 🔴 THE `LISTING_ACTION_ROW_GAP_PX` EXCLUSION, MEASURED RATHER THAN ASSERTED IN
-   * PROSE.
+   * 🔴 THE `⋮` TRIGGER COSTS NO GEOMETRY, MEASURED RATHER THAN ASSERTED IN PROSE.
    *
-   * `AppListingCardSkeleton` deliberately does not read that constant: it is the gap
-   * between the CTA and the `⋮` overflow trigger, a card renders that trigger only
-   * for an owner or a moderator, and a loading state cannot know which viewer it is
-   * about to serve. `__tests__/appListingCardSkeleton.test.ts` carries the exclusion
-   * as a named carve-out, and a carve-out justified by "it costs no geometry" has to
-   * have that COST measured, or it is a promise.
+   * Card A floats the `⋮` over the cover's top-right corner, so a viewer who gains the trigger
+   * (the owner, a moderator) changes neither the CTA's width nor the card's box, and the
+   * skeleton can reserve ONE box for every viewer. The same listings at the same width are
+   * rendered signed-out and as the OWNER; the trigger appears and nothing moves.
    *
-   * So: the same listings, the same width, rendered for a signed-out viewer and for
-   * their OWNER. The trigger appears, the CTA gives up exactly
-   * `LISTING_ACTION_ROW_CONTROL_PX + LISTING_ACTION_ROW_GAP_PX` of width to it — and
-   * the CARD's box does not move. That is the whole claim.
-   *
-   * The fixture carries an icon and a cover here, unlike the parity fixture above:
-   * an owner looking at a listing missing either gets the "Incomplete" badge, which
-   * would make the owner arm genuinely taller for a reason that has nothing to do
-   * with the trigger and would turn this measurement into a different test.
+   * The fixture carries an icon and a cover: a listing missing either gets the owner-only
+   * "Incomplete" badge, which would make the owner arm taller for an unrelated reason.
    */
-  test('🔴 the ⋮ trigger takes width from the CTA and NOTHING from the card box', async () => {
+  test('🔴 the ⋮ trigger takes nothing from the CTA and nothing from the card box', async () => {
     const OWNER = { id: 7331, username: 'ashling' };
     const COMPLETE = POOL.slice(0, 8).map((c) => ({
       ...c,
@@ -881,14 +860,13 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
       0
     );
 
-    // THE CTA PAYS FOR THE TRIGGER — exactly the trigger plus the row gap.
+    // THE CTA PAYS NOTHING FOR THE TRIGGER — it floats over the cover, so Open keeps its width.
     expect(anonCtas.length).toBe(ownerCtas.length);
     for (let i = 0; i < anonCtas.length; i++) {
       expect(
         Math.round(anonCtas[i] - ownerCtas[i]),
-        `CTA ${i} did not give up exactly the trigger + gap when the ⋮ appeared ` +
-          `(${anonCtas[i]} -> ${ownerCtas[i]})`
-      ).toBe(LISTING_ACTION_ROW_CONTROL_PX + LISTING_ACTION_ROW_GAP_PX);
+        `CTA ${i} changed width when the ⋮ appeared (${anonCtas[i]} -> ${ownerCtas[i]})`
+      ).toBe(0);
     }
 
     // …AND THE CARD DOES NOT MOVE. This is what licenses the skeleton to ignore the

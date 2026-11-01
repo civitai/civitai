@@ -167,7 +167,7 @@ describe('enforceAppBlocksFlag — query (listForModel)', () => {
   });
 });
 
-describe('listAvailable — anon-capable read path, dark behind the flag gate (F-E E1)', () => {
+describe('listAvailable — legacy read: flag gate, then moderator-only (F-E E1)', () => {
   it('anonymous WITHOUT the flag: gate disables → empty (dark today), registry NOT consulted', async () => {
     // Real anon today: the mod-segmented flag can never match without a mod
     // context, so the middleware sets _appBlocksDisabled → empty. This is the
@@ -187,16 +187,36 @@ describe('listAvailable — anon-capable read path, dark behind the flag gate (F
     expect(mockListAvailable).not.toHaveBeenCalled();
   });
 
-  it('anonymous WITH the flag granted (the dark path, lit): registry IS consulted', async () => {
-    // Simulate the post-launch segment widen: the flag resolves ON even with no
-    // user. The procedure must then serve the anon caller (no session) — proving
-    // it is anon-CAPABLE, not just mod-only. listAvailable is publicProcedure;
-    // there is NO secondary isModerator gate left to block this.
+  // 🔴 MODERATOR-ONLY, INDEPENDENT OF THE FLAG. The service SQL reads `app_blocks` with no
+  // join to `app_listings`, so it never applies per-listing visibility. Once
+  // civitai/flipt-state#263 widens `app-blocks-enabled` to every user, a flag-only gate would
+  // let any caller enumerate testers-only and private apps. Nothing in the product calls
+  // this procedure for a non-moderator any more (the store reads `appListings.listAvailable`),
+  // so it is closed to everyone but moderators rather than taught visibility.
+  const LEAKY_ROWS = {
+    items: [
+      { id: 'ab_testers', visibility: 'testers' },
+      { id: 'ab_private', visibility: 'private' },
+    ],
+    nextCursor: undefined,
+  };
+
+  it('🔴 anonymous WITH the flag on for everyone (post-#263): empty, registry NOT consulted', async () => {
     mockIsAppBlocksEnabled.mockResolvedValue(true);
+    mockListAvailable.mockResolvedValue(LEAKY_ROWS);
     const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
     const result = await caller.listAvailable({ limit: 20 });
-    expect(result).toEqual({ items: [{ id: 'ab_1' }], nextCursor: undefined });
-    expect(mockListAvailable).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ items: [], nextCursor: undefined });
+    expect(mockListAvailable).not.toHaveBeenCalled();
+  });
+
+  it('🔴 non-mod WITH the flag on for everyone (post-#263): empty, registry NOT consulted', async () => {
+    mockIsAppBlocksEnabled.mockResolvedValue(true);
+    mockListAvailable.mockResolvedValue(LEAKY_ROWS);
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    const result = await caller.listAvailable({ limit: 20 });
+    expect(result).toEqual({ items: [], nextCursor: undefined });
+    expect(mockListAvailable).not.toHaveBeenCalled();
   });
 
   it('moderator: gate passes, registry IS consulted (mods-only is the live state)', async () => {

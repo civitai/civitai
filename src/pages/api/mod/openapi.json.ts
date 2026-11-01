@@ -21,7 +21,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 //
 // `ModEndpoint`, not `defineModeratorEndpoint`: reading documentation is not a moderation action, and
 // routing it through the wrapper would write an audit row every time the reference page loads. It still
-// accepts a moderator API key as well as a session, because `getServerAuthSession` resolves a bearer
+// accepts a moderator's full-scope personal API key as well as a session, because `getServerAuthSession` resolves a bearer
 // token — so a script or CI job can fetch this without a browser.
 
 type Operation = Record<string, unknown>;
@@ -46,8 +46,13 @@ function operationFor(entry: CatalogEntry): Operation | null {
       400: { description: 'Invalid request — the response carries per-field issues.' },
       401: { description: 'Not signed in, or the API key did not resolve.' },
       403: doc.privileged
-        ? { description: `Not a moderator, or missing the "${doc.privileged}" permission.` }
-        : { description: 'Not a moderator.' },
+        ? {
+            description: `Not a moderator, not a browser session or full-scope personal API key, or missing the "${doc.privileged}" permission.`,
+          }
+        : {
+            description:
+              'Not a moderator, or not a browser session or full-scope personal API key.',
+          },
       429: { description: 'Rate limit exceeded for this actor.' },
     },
     // Extensions rather than prose: a client generator ignores them, and a human reading the document
@@ -106,7 +111,8 @@ export default ModEndpoint(
         version: '1.0.0',
         description: [
           'Endpoints behind the moderator tools. Every one resolves to a real moderator: a browser',
-          'session, that same session forwarded by a first-party spoke, or a moderator API key.',
+          "session, that same session forwarded by a first-party spoke, or a moderator's full-scope",
+          'personal API key in the Authorization header. Any other credential gets 403.',
           '',
           'Generated from the zod schemas the endpoints validate against — there is no second',
           'description of an endpoint that could drift from the first.',
@@ -119,7 +125,8 @@ export default ModEndpoint(
           moderatorApiKey: {
             type: 'http',
             scheme: 'bearer',
-            description: "A moderator's own API key.",
+            description:
+              "A moderator's own full-scope personal API key. Other keys and OAuth tokens get 403.",
           },
         },
       },

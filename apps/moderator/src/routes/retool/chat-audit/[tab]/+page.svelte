@@ -6,7 +6,7 @@
   import ReportsPanel from './ReportsPanel.svelte';
   import SpamGroupsPanel from './SpamGroupsPanel.svelte';
   import TopActivityPanel from './TopActivityPanel.svelte';
-  import TranscriptPanel from './TranscriptPanel.svelte';
+  import TranscriptPanel from '$lib/components/chat-audit/TranscriptPanel.svelte';
   import UserMessagesPanel from './UserMessagesPanel.svelte';
   import { fetchChatInsights } from './chat-insights';
 

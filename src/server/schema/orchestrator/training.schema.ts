@@ -58,8 +58,12 @@ const aiToolkitBaseParams = z.object({
   numRepeats: z.number().optional(),
 });
 
-// Use discriminated union to enforce modelVariant requirements per ecosystem
-const aiToolkitTrainingParams = z
+// Use discriminated union to enforce modelVariant requirements per ecosystem.
+//
+// Exported (as `aiToolkitTrainingParamsSchema`) for the App Blocks `kind:'training'`
+// wire body, which validates an app-supplied param set against THIS schema rather
+// than a second copy that could drift from what the training form accepts.
+export const aiToolkitTrainingParamsSchema = z
   .discriminatedUnion('ecosystem', [
     // SD1, SDXL, Chroma, Qwen, and ZImageTurbo don't need modelVariant
     aiToolkitBaseParams.extend({
@@ -179,7 +183,7 @@ const aiToolkitTrainingParams = z
     }
   );
 
-export type AiToolkitTrainingParams = z.infer<typeof aiToolkitTrainingParams>;
+export type AiToolkitTrainingParams = z.infer<typeof aiToolkitTrainingParamsSchema>;
 
 const whatIfTrainingDetailsParams = trainingDetailsParams.pick({
   resolution: true,

@@ -1,9 +1,15 @@
 import { sql } from '@civitai/db/kysely';
+import {
+  activityLabel,
+  DIRECTIONAL_ACTIVITIES,
+  PURGE_UNCONFIRMED_ACTIVITY,
+} from '$lib/mod-activity';
 import type { task_enum_0648e184 } from './moderator-db/enums';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { getModeratorDb } from './moderator-db';
 import { REPORT_ENTITIES } from './report-entities';
+import { SYSTEM_USER_ID } from './users.service';
 
 // Retool's Moderation Status board — the parts that are NOT counts.
 //
@@ -19,7 +25,7 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
   // The join table is dynamic, so this is a raw `sql` tag rather than a builder join — the table name
   // comes from `REPORT_ENTITIES`, never from a request. `!= 'Pending'` rather than `= 'Actioned'`:
   // unactioning is also working the queue, and Retool counted it. `statusSetAt` is null on rows that
-  // predate the column.
+  // predate the column. The system user closes expired Clavata reports daily; it is not a person.
   const rows = await Promise.all(
     REPORT_ENTITIES.map(async ({ label, reportTable }) => {
       const { rows: found } = await sql<{ statusSetAt: Date; username: string | null }>`
@@ -28,6 +34,7 @@ export async function getRecentQueueActivity(): Promise<Map<string, QueueActivit
         JOIN ${sql.table(reportTable)} rt ON rt."reportId" = r."id"
         LEFT JOIN "User" u ON u."id" = r."statusSetBy"
         WHERE r."status" != 'Pending' AND r."statusSetAt" IS NOT NULL
+          AND r."statusSetBy" IS DISTINCT FROM ${SYSTEM_USER_ID}
         ORDER BY r."statusSetAt" DESC
         LIMIT 1
       `.execute(dbRead);
@@ -72,15 +79,12 @@ const MOD_ACTIVITY_LABELS: Record<string, string> = {
   setNsfwLevelKono: 'ratings (KoNO)',
   resolveAppeal: 'appeals',
   ratingReview: 'rating disputes',
+  [PURGE_UNCONFIRMED_ACTIVITY]: activityLabel(PURGE_UNCONFIRMED_ACTIVITY).toLowerCase(),
 };
 
 /** Membership is named, not inferred from the `:` — a colon is the separator every parameterised
  *  activity uses, so `buzz:send:yellow:…` read as a flag write too. */
 const FLAG_ACTIVITIES = new Set(['minor', 'poi', 'spamWhitelist', 'deservedMute']);
-
-/** Activities whose second segment is a verb rather than a value, a count or an id — `buzz:send` and
- *  `buzz:deduct` are two decisions and must not share a row. */
-const DIRECTIONAL_ACTIVITIES = new Set(['buzz', 'comments', 'reviews']);
 
 /** Anything unmapped is humanised rather than enumerated — the log gains values from the main app
  *  without passing through here. */
@@ -285,20 +289,6 @@ export async function acknowledgeSweep(task: SweepTask, by: string): Promise<voi
 }
 
 /**
- * Retool's `AutoBlockedUsers` (`table10` on the board): accounts the scam detector muted on its own.
- * Nobody decided these individually, so the list is the only place they are reviewable — and a false
- * positive here is a muted account with no moderator behind it.
- */
-export type AutoBlockedUser = {
-  id: number;
-  userId: number;
-  username: string | null;
-  createdAt: Date;
-  bannedAt: Date | null;
-  muted: boolean | null;
-};
-
-/**
  * Retool's `ActionAllPostReports`: pending post reports whose post is *entirely* blocked already
  * (`nsfwLevel = 32` on every image). The content has resolved the report; the row is only still open
  * because nobody clicked it.
@@ -323,29 +313,6 @@ export async function getResolvedPostReportIds(limit = 500): Promise<number[]> {
     LIMIT ${limit}
   `.execute(dbRead);
   return rows.map((r) => r.report_id);
-}
-
-export async function getAutoBlockedUsers(limit = 50): Promise<AutoBlockedUser[]> {
-  return (
-    dbRead
-      .selectFrom('ModActivity as ma')
-      .innerJoin('User as u', 'u.id', 'ma.entityId')
-      .select([
-        'ma.id',
-        'ma.entityId as userId',
-        'ma.createdAt',
-        'u.username',
-        'u.bannedAt',
-        'u.muted',
-      ])
-      .where('ma.activity', '=', 'autoMuteScam')
-      // Retool had no entityType filter and got away with it because the activity name is unique to
-      // users; keeping it makes the (entityType, entityId, createdAt) index usable.
-      .where('ma.entityType', '=', 'user')
-      .orderBy('ma.createdAt', 'desc')
-      .limit(limit)
-      .execute() as Promise<AutoBlockedUser[]>
-  );
 }
 
 // MODELS THE OWNER ASKED TO HAVE RE-REVIEWED. Asked for as a queue with the query below; the page that
@@ -375,4 +342,89 @@ function fetchModelsNeedingReview(): Promise<number> {
     .where(sql<boolean>`meta->>'needsReview' = 'true'`)
     .executeTakeFirst()
     .then((row) => Number(row?.count ?? 0));
+}
+
+/** How recent an action has to be for its moderator to count as working now. */
+export const WORKING_NOW_MINUTES = 15;
+
+/** Shown even when fewer are working now, so a quiet hour still says who was last on. */
+const MIN_RECENTLY_ACTIVE = 3;
+
+/** How far back "last on" looks. Bounded so the scan stays on the (createdAt) index. */
+const RECENTLY_ACTIVE_DAYS = 2;
+
+/** Rating-game (KoNO) votes: a moderator who plays is not working a queue. */
+const NON_MODERATOR_ACTIVITIES = ['setNsfwLevelKono'];
+
+export type WorkingNow = { username: string | null; label: string; at: Date; active: boolean };
+export type YouToday = { actions: number; actioned: number; dismissed: number };
+
+// Global, so cached; "active" is decided per request from `at`.
+const recentlyActive = createCache({
+  name: 'recently-active-mods:v1',
+  fetch: fetchRecentlyActive,
+  ttlSeconds: 60,
+});
+
+async function fetchRecentlyActive() {
+  const rows = await dbRead
+    .selectFrom('ModActivity as ma')
+    .innerJoin('User as u', 'u.id', 'ma.userId')
+    .distinctOn('ma.userId')
+    .select(['ma.entityType', 'ma.activity', 'ma.createdAt', 'u.username'])
+    .where(
+      'ma.createdAt',
+      '>',
+      sql<Date>`now() - make_interval(days => ${sql.lit(RECENTLY_ACTIVE_DAYS)})`
+    )
+    .where('ma.userId', '>', AUTOMATED_USER_ID)
+    .where('ma.activity', 'not in', NON_MODERATOR_ACTIVITIES)
+    .where('u.isModerator', '=', true)
+    .orderBy('ma.userId')
+    .orderBy('ma.createdAt', 'desc')
+    .execute();
+  return rows.map((r) => ({
+    username: r.username,
+    label: modActivityLabel(r.entityType, r.activity),
+    at: r.createdAt,
+  }));
+}
+
+/** Everyone active in the last WORKING_NOW_MINUTES, topped up to MIN_RECENTLY_ACTIVE, newest first. */
+export async function getWorkingNow(): Promise<WorkingNow[]> {
+  const cutoff = Date.now() - WORKING_NOW_MINUTES * 60_000;
+  const rows = (await recentlyActive.get({}))
+    .map((r) => {
+      const at = new Date(r.at);
+      return { ...r, at, active: at.getTime() > cutoff };
+    })
+    .sort((a, b) => b.at.getTime() - a.at.getTime());
+  return rows.filter((r, i) => r.active || i < MIN_RECENTLY_ACTIVE);
+}
+
+/** Since midnight UTC. Report verdicts come from `Report`, which records them whichever app made them. */
+export async function getYouToday(userId: number): Promise<YouToday> {
+  const midnight = sql<Date>`date_trunc('day', now() at time zone 'UTC')`;
+  const [actions, reports] = await Promise.all([
+    dbRead
+      .selectFrom('ModActivity')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('userId', '=', userId)
+      .where('createdAt', '>=', midnight)
+      .executeTakeFirst(),
+    // The `<> -1` literal lets the planner use Report_human_statusSetAt_idx.
+    sql<{ actioned: string; dismissed: string }>`
+      SELECT count(*) FILTER (WHERE "status" = 'Actioned') AS actioned,
+             count(*) FILTER (WHERE "status" = 'Unactioned') AS dismissed
+      FROM "Report"
+      WHERE "statusSetBy" = ${userId} AND "statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
+        AND "statusSetAt" >= ${midnight}
+    `.execute(dbRead),
+  ]);
+  const verdicts = reports.rows[0];
+  return {
+    actions: Number(actions?.count ?? 0),
+    actioned: Number(verdicts?.actioned ?? 0),
+    dismissed: Number(verdicts?.dismissed ?? 0),
+  };
 }

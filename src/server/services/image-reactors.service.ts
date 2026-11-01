@@ -2,7 +2,9 @@ import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { getBasicDataForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
-import { isImageOwner } from '~/server/services/util.service';
+import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
+import { BlockedReason } from '~/server/common/enums';
+import { imageReactionListedToViewer } from '~/server/services/reaction-privacy.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -34,19 +36,38 @@ export function safeProfilePicture(picture: ProfileImage | null | undefined) {
     : null;
 }
 
+// AiNotVerified is blocked but not removed: the owner fixes it by adding metadata, so they keep the list.
+// Creator Studio's `imageAudienceListable` / `ownsListableContent` apply the same rule.
+export function hidesReactors(image: { ingestion: string; blockedFor: string | null }) {
+  return image.ingestion === 'Blocked' && image.blockedFor !== BlockedReason.AiNotVerified;
+}
+
 /**
  * The newest accounts that reacted to one of the caller's images. Not reaction-time order: only the
  * `(imageId, userId) INCLUDE (reaction)` index serves this at constant cost; no index covers `createdAt` with
  * `userId`, so ordering by it reads every reaction on the image.
  */
 export async function getImageReactors({ imageId, userId }: { imageId: number; userId: number }) {
-  if (!(await isImageOwner({ userId, imageId, allowMods: false })))
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { userId: true, ingestion: true, blockedFor: true },
+  });
+  if (!image || image.userId !== userId || hidesReactors(image))
     throw throwNotFoundError(`No image with id ${imageId}`);
 
+  // Reactors not counted in the reaction totals are left out so the list and the counts agree. Filtered in SQL
+  // rather than after, so the LIMIT still fills a page. Empty when unavailable: everyone is listed.
+  const notCounted = await getMetricExcludedUserIds();
   const rows = await dbRead.$queryRaw<ReactorRow[]>`
     SELECT "userId", reaction FROM "ImageReaction"
     WHERE "imageId" = ${imageId}
       AND reaction::text IN (${Prisma.join([...IMAGE_REACTOR_TYPES])})
+      AND ${imageReactionListedToViewer(userId)}
+      ${
+        notCounted.length
+          ? Prisma.sql`AND NOT ("userId" = ANY(${notCounted}::int[]))`
+          : Prisma.empty
+      }
     ORDER BY "userId" DESC
     LIMIT ${IMAGE_REACTORS_LIMIT * IMAGE_REACTOR_TYPES.length}
   `;

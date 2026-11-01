@@ -2,14 +2,28 @@ import { Autocomplete, Loader } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
-import { env } from '~/env/client';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { SITE_SEARCH_PATH, searchFetch } from '~/components/Search/site-search-client';
+import { searchIndexMap } from '~/components/Search/search.types';
 
 type ModelSearchResult = {
   id: number;
   name: string;
   user: { username: string };
 };
+
+type ModelSearchHit = { id: number; name: string; user?: { username?: string } };
+
+function searchModelsIndex(params: { q?: string; filter?: string; limit: number }) {
+  return searchFetch<{ hits: ModelSearchHit[] }>(
+    `${SITE_SEARCH_PATH}/indexes/${searchIndexMap.models}/search`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...params, attributesToRetrieve: ['id', 'name', 'user'] }),
+    }
+  );
+}
 
 type Props = {
   value: number | null | undefined;
@@ -46,17 +60,10 @@ export function ModelSearchInput({ value, onChange, error }: Props) {
 
   const fetchModelById = async (modelId: number) => {
     try {
-      // Use Meilisearch to get the model by ID
-      const response = await fetch(
-        `${env.NEXT_PUBLIC_SEARCH_HOST}/indexes/models/documents/${modelId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${env.NEXT_PUBLIC_SEARCH_CLIENT_KEY}`,
-          },
-        }
-      );
-      if (response.ok) {
-        const model = await response.json();
+      // A search by id rather than the documents endpoint: search tokens only grant search.
+      const data = await searchModelsIndex({ filter: `id = ${Number(modelId)}`, limit: 1 });
+      const model = data.hits[0];
+      if (model) {
         setSelectedModel({
           id: model.id,
           name: model.name,
@@ -72,29 +79,14 @@ export function ModelSearchInput({ value, onChange, error }: Props) {
   const searchModels = async (query: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SEARCH_HOST}/indexes/models/search`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${env.NEXT_PUBLIC_SEARCH_CLIENT_KEY}`,
-        },
-        body: JSON.stringify({
-          q: query,
-          limit: 10,
-          attributesToRetrieve: ['id', 'name', 'user'],
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setResults(
-          data.hits.map((hit: any) => ({
-            id: hit.id,
-            name: hit.name,
-            user: { username: hit.user?.username || 'Unknown' },
-          }))
-        );
-      }
+      const data = await searchModelsIndex({ q: query, limit: 10 });
+      setResults(
+        data.hits.map((hit) => ({
+          id: hit.id,
+          name: hit.name,
+          user: { username: hit.user?.username || 'Unknown' },
+        }))
+      );
     } catch (error) {
       console.error('Model search failed:', error);
       setResults([]);

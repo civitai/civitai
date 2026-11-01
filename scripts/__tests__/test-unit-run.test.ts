@@ -151,3 +151,58 @@ describe('test:unit:run — the exit code a queued run reports', () => {
     expect(stderr).not.toContain('INCOMPLETE');
   });
 });
+
+/**
+ * `pnpm run test:unit:run -- --max-workers=4` passes the script a leading `--`. Forwarded as-is it
+ * lands after `vitest run --project unit*`, where vitest stops reading options, so the worker cap is
+ * dropped without a word (measured: 12 workers instead of 4). Driven through the real entry point so
+ * the test fails if the call site stops normalising, not only if the helper changes.
+ */
+describe('test:unit:run — the arguments it forwards', () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+  const script = resolve(repoRoot, 'scripts/test-unit-run.mjs');
+
+  async function argsQueuedFor(argv: string[]) {
+    let posted: { args?: string[] } | undefined;
+    const server = createServer((req, res) => {
+      let body = '';
+      req.on('data', (d) => (body += d));
+      req.on('end', () => {
+        if (req.method === 'POST' && req.url?.startsWith('/test-runs')) posted = JSON.parse(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          req.url?.includes('/logs')
+            ? JSON.stringify({ logs: [] })
+            : JSON.stringify({ id: 'stub', status: 'completed', exitCode: 0, logIndex: 0 })
+        );
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const { port } = server.address() as AddressInfo;
+    try {
+      await new Promise<void>((done) => {
+        const child = spawn(process.execPath, [script, ...argv], {
+          cwd: repoRoot,
+          env: { ...process.env, CI: '', CIVITAI_TEST_QUEUE: '1', DEV_DAEMON_PORT: String(port) },
+          stdio: ['ignore', 'ignore', 'ignore'],
+        });
+        child.on('exit', () => done());
+      });
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+    return posted?.args;
+  }
+
+  it('drops the leading -- pnpm adds, so the flags after it reach vitest', async () => {
+    expect(await argsQueuedFor(['--', '--max-workers=4'])).toEqual(['--max-workers=4']);
+  });
+
+  it('keeps a -- the caller placed later in the list', async () => {
+    expect(await argsQueuedFor(['--max-workers=4', '--', 'x'])).toEqual([
+      '--max-workers=4',
+      '--',
+      'x',
+    ]);
+  });
+});

@@ -1,4 +1,8 @@
-import type { Prisma } from '@prisma/client';
+import { detachHeldThreadsCte, questionThreadParents } from '~/server/services/comment-thread-hold';
+import { answersToQuestionsSql, keepHeldAnswersCte } from '~/server/services/held-review.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { Prisma } from '@prisma/client';
 import { isNotTag } from './../schema/tag.schema';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TagTarget } from '~/shared/utils/prisma/enums';
@@ -11,6 +15,8 @@ import type {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { isTag } from '~/server/schema/tag.schema';
 import { QuestionSort, QuestionStatus } from '~/server/common/enums';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 
 export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
   limit = 20,
@@ -66,6 +72,10 @@ export const upsertQuestion = async ({
   tags,
   userId,
 }: UpsertQuestionInput & { userId: number }) => {
+  await throwOnBlockedUserContent(
+    [title, content, ...(await newTagNames(tags?.map((tag) => tag.name)))],
+    { surface: 'question' }
+  );
   const tagsToCreate = tags?.filter(isNotTag) ?? [];
   const tagsToUpdate = tags?.filter(isTag) ?? [];
 
@@ -141,7 +151,13 @@ export const upsertQuestion = async ({
 };
 
 export const deleteQuestion = async ({ id }: GetByIdInput) => {
-  await dbWrite.question.delete({ where: { id } });
+  const markerView = await holdMarkerViewExists();
+  const question = Prisma.sql`SELECT ${id}::int`;
+  const deleted = await dbWrite.$executeRaw`
+    WITH ${detachHeldThreadsCte(questionThreadParents(question), markerView)},
+    ${keepHeldAnswersCte(answersToQuestionsSql(question), markerView)}
+    DELETE FROM "Question" WHERE id = ${id}`;
+  if (!deleted) throw throwNotFoundError(`No question with id ${id}`);
 };
 
 export const setQuestionAnswer = async ({ id, answerId }: SetQuestionAnswerInput) => {

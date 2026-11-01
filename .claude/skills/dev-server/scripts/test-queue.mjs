@@ -15,6 +15,7 @@ import { EventEmitter } from 'events';
 import { spawn, execFileSync } from 'child_process';
 import { closeSync, existsSync, openSync, readSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { StringDecoder } from 'string_decoder';
@@ -206,11 +207,16 @@ export function normalizeKind(kind) {
 }
 
 export const DEFAULT_CONCURRENCY = 1;
-// null, not a number: no cap is not the same decision as a cap that happens to equal today's core
-// count, and only the first one keeps following the box when it changes.
-export const DEFAULT_MAX_WORKERS = null;
+// A queue restart must not bring back an unclamped suite: one uncapped run took 15 workers and
+// ~4.7 GB. `null` is still the explicit uncap (`test config --max-workers none`).
+export const DEFAULT_MAX_WORKERS = 4;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
-const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
+// 60, not 30 (Justin, 2026-10-20). A full unit suite on the shared desk under load does not fit in
+// 30 minutes: every queued unit run from 10-19 21:41Z through 10-20 14:14Z was killed at the cap,
+// each throwing away 2-3 core-hours for no result, and agents went around the queue. A run that
+// finishes late costs the same CPU as one killed at the cap, and only one of them returns an answer.
+// Tune with TEST_RUN_TIMEOUT_MIN or `test config --run-timeout <min>`.
+export const DEFAULT_RUN_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_KILL_GRACE_MS = 30 * 1000;
 const MAX_LOG_LINES = 2000;
 const KEEP_FINISHED = 50;
@@ -374,6 +380,27 @@ export function workerCapArgv(maxWorkers, args, ceiling = null) {
  * exists to impose. `concurrency` already rejects the same input, because its normalizer refuses
  * null; only this flag was asymmetric.
  */
+/**
+ * A run timeout in milliseconds: a positive integer, or it throws. The queue checks it on every
+ * deadline sweep, so `0` or NaN would kill every running run on the next tick.
+ */
+export function normalizeRunTimeoutMs(value) {
+  const ms = Number(value);
+  if (!Number.isInteger(ms) || ms < 1) {
+    throw new Error(`run timeout must be a positive whole number of milliseconds, got ${JSON.stringify(value)}`);
+  }
+  return ms;
+}
+
+/** `--run-timeout <minutes>` as typed, in milliseconds. Whole minutes only, at least 1. */
+export function parseRunTimeoutFlag(raw) {
+  const text = String(raw ?? '').trim();
+  if (!/^\d+$/.test(text) || Number(text) < 1) {
+    throw new Error(`--run-timeout takes whole minutes (>= 1), got ${JSON.stringify(raw ?? '')}`);
+  }
+  return Number(text) * 60 * 1000;
+}
+
 export function parseMaxWorkersFlag(raw) {
   // A MISSING operand is an error, not an uncap. `test config 4 --max-workers` is a truncated
   // command, and reading it as "remove the cap" is the same silent uncap this function exists to
@@ -389,10 +416,15 @@ export function parseMaxWorkersFlag(raw) {
 export const CACHE_MODES = ['off', 'shadow', 'on'];
 
 // The WORKTREE's copy, not the daemon's: the sequencer and fs tracker come from that tree's
-// vitest config, and all three must share one key definition (scripts/test-cache/core.mjs) or
-// every lookup misses. A tree without the files simply runs uncached.
+// vitest config and import the tree's vitest, and the reporter must speak their protocol. A tree
+// without the files simply runs uncached.
 export const cacheReporterPath = (worktree) =>
   join(worktree, 'scripts', 'test-cache', 'reporter.mjs');
+
+// See scripts/test-cache/load-core.mjs.
+export const sharedCacheCorePath = fileURLToPath(
+  new URL('../../../../scripts/test-cache/core.mjs', import.meta.url)
+);
 
 /**
  * The reporter arguments a queued unit run should carry. The reporter is passed on the command line
@@ -407,6 +439,29 @@ export function cacheReporterArgv(cacheMode, args, reporterPath) {
   return [...(named ? [] : ['--reporter=default']), `--reporter=${reporterPath}`];
 }
 
+/**
+ * The `VITEST_MAX_WORKERS` a queued run's child should see, given the argv it will run.
+ *
+ * Vitest reads that variable AFTER it merges the CLI (vitest 4.1.11, `resolveConfig`:
+ * `if (process.env.VITEST_MAX_WORKERS) resolved.maxWorkers = …`), so an inherited copy beats the
+ * `--max-workers` this queue passes. The daemon passes its own environment on, and a box whose
+ * user env says 4 pinned every queued suite at 4 workers, whatever `test config --max-workers`
+ * said: measured 2026-10-20, 3-4 forks over 30 s under `--max-workers=12`, and every full unit run
+ * from 10-19 21:41Z on hit the 30-minute cap. So the variable follows the argv: the width named
+ * there, or cleared when the argv names none (an uncapped run stays uncapped).
+ *
+ * `undefined` clears it: spawn drops keys whose value is undefined.
+ */
+export function vitestWorkersEnv(argv) {
+  for (let i = argv.length - 1; i >= 0; i--) {
+    const m = String(argv[i]).match(/^--max(?:-w|W)orkers(?:=(.*))?$/);
+    if (!m) continue;
+    const value = m[1] ?? argv[i + 1];
+    return value === undefined ? undefined : String(value);
+  }
+  return undefined;
+}
+
 export function defaultStartRun({
   worktree,
   args,
@@ -419,8 +474,12 @@ export function defaultStartRun({
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
-  const { script, capWorkers, resultCache, maxWorkersCeiling = null } =
-    RUN_KINDS[normalizeKind(kind)];
+  const {
+    script,
+    capWorkers,
+    resultCache,
+    maxWorkersCeiling = null,
+  } = RUN_KINDS[normalizeKind(kind)];
   const argv = [
     'run',
     script,
@@ -455,6 +514,11 @@ export function defaultStartRun({
         CIVITAI_TEST_QUEUE: '0',
         // Read by the worktree's vitest config, sequencer, tracker and reporter alike.
         CIVITAI_TEST_CACHE: RUN_KINDS[normalizeKind(kind)].resultCache ? cacheMode : 'off',
+        // Set or cleared, never inherited: a cached run's own children would otherwise pass it on.
+        CIVITAI_TEST_CACHE_CORE:
+          resultCache && existsSync(sharedCacheCorePath) ? sharedCacheCorePath : undefined,
+        // Vitest lanes only: the width this run asked for, never the daemon's. See vitestWorkersEnv.
+        ...(capWorkers ? { VITEST_MAX_WORKERS: vitestWorkersEnv(argv) } : {}),
       },
       // The same fd twice: one file description, one shared offset, so the two streams append in
       // the order they were actually written. See createOutputCapture.
@@ -614,7 +678,7 @@ export class TestQueue {
     this.startRun = startRun;
     this.now = now;
     this.abandonAfterMs = abandonAfterMs;
-    this.runTimeoutMs = runTimeoutMs;
+    this.runTimeoutMs = normalizeRunTimeoutMs(runTimeoutMs);
     this.killGraceMs = killGraceMs;
     this.waitCommand = waitCommand;
 
@@ -797,6 +861,16 @@ export class TestQueue {
   }
 
   /**
+   * Unlike the worker cap, this reaches runs ALREADY running: the deadline is checked against the
+   * current value on every sweep. Raising it saves a run that would have been killed; lowering it
+   * below a run's age kills that run on the next sweep.
+   */
+  setRunTimeoutMs(value) {
+    this.runTimeoutMs = normalizeRunTimeoutMs(value);
+    return this.runTimeoutMs;
+  }
+
+  /**
    * Deadlines, driven by the injected clock rather than a timer. Returns what it acted on so a
    * caller (and a test) can assert on it rather than infer it.
    */
@@ -938,7 +1012,9 @@ export class TestQueue {
         const kind = this.runs.get(id)?.kind;
         if (!kind) return false;
         if (this.runningFor(kind) >= this.limits[kind]) return false;
-        return this.runningForGroup(RUN_KINDS[kind].group) < this.groupLimits[RUN_KINDS[kind].group];
+        return (
+          this.runningForGroup(RUN_KINDS[kind].group) < this.groupLimits[RUN_KINDS[kind].group]
+        );
       });
       if (next === undefined) break;
       this.order.splice(this.order.indexOf(next), 1);
@@ -1139,7 +1215,9 @@ function normalizeMaxWorkers(value) {
  */
 function normalizeGroupName(group) {
   if (!Object.prototype.hasOwnProperty.call(RUN_GROUPS, group)) {
-    throw new Error(`unknown run group: ${group} (want one of ${Object.keys(RUN_GROUPS).join(', ')})`);
+    throw new Error(
+      `unknown run group: ${group} (want one of ${Object.keys(RUN_GROUPS).join(', ')})`
+    );
   }
   return group;
 }

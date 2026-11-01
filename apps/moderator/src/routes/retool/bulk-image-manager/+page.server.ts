@@ -1,7 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess } from '$lib/server/access';
+import { denied } from '$lib/server/access';
+import type { PermissionId } from '$lib/permissions';
 import { parseForm, parseIdList, parseQuery, checkboxField } from '$lib/server/query';
 import { BULK_SOURCES, REMOVED_FILTERS } from './sources';
 import { DEFAULT_LIMIT, MAX_LIMIT, MAX_OFFSET } from './limits';
@@ -28,6 +29,7 @@ import {
   type BulkBatch,
 } from '$lib/server/bulk-image.service';
 import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
+import { HELD_FOLLOW_UPS_NOTE, heldRemovalMessage } from '$lib/server/removal-hold';
 
 // `source` + `q` in the URL so a moderator can hand a colleague the exact batch they are looking at.
 // `limit` and `offset` ride along for the same reason — a page of a 40k-image account is as much a
@@ -48,11 +50,21 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const { source, q, limit, offset, removed } = parseQuery(url, querySchema);
   const window = { limit, offset, removed };
   // Reaching the page is an investigation permission; removing content is not.
-  const canAct = canAccess(locals.user, '/users');
+  const canAct = !!locals.grants['image.moderate'];
+  const canStrike = !!locals.grants['user.strike'];
 
   // Every branch below returns these, including `wide` — this page is one image grid whatever the
   // source resolved to, and a sixth early return that forgot it would render the grid capped.
-  const shell = { source, q, limit, offset, removed: removed ?? null, canAct, wide: true };
+  const shell = {
+    source,
+    q,
+    limit,
+    offset,
+    removed: removed ?? null,
+    canAct,
+    canStrike,
+    wide: true,
+  };
 
   if (!q)
     return {
@@ -137,6 +149,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 };
 
 const actionFail = (message: string) => fail(400, { error: message });
+// The action grants every page that makes these writes checks — User Reports, the report queues, Image
+// Lookup — so a selection here is no way round them.
+const refuse = (id: PermissionId) => fail(403, { error: denied(id) });
 
 const idsSchema = z.object({
   imageIds: z
@@ -148,7 +163,7 @@ const idsSchema = z.object({
 
 export const actions: Actions = {
   remove: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return actionFail('Not permitted.');
+    if (!locals.grants['image.moderate']) return refuse('image.moderate');
     const input = parseForm(
       idsSchema.extend({
         reason: z.string().trim().max(500).optional(),
@@ -161,8 +176,14 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
+    // Striking the owners rides on the removal, so it needs the strike grant as a strike does anywhere.
+    if (input.strikeOwners && !locals.grants['user.strike']) return refuse('user.strike');
 
-    const result = await removeImagesWithFollowUps({ ...input, moderatorId: locals.user.id });
+    const result = await removeImagesWithFollowUps({
+      ...input,
+      moderatorId: locals.user.id,
+      canConfirmReRemoval: !!locals.grants['image.removal.confirm'],
+    });
     if (!result.ok) return actionFail(result.error);
 
     const flagWarning =
@@ -178,13 +199,18 @@ export const actions: Actions = {
       removed: result.removed,
       alreadyBlocked: result.alreadyBlocked,
       struck: result.struck?.struck,
+      held: result.held.length
+        ? `${heldRemovalMessage(result.held)}${
+            input.strikeOwners || input.alsoFlag ? ` ${HELD_FOLLOW_UPS_NOTE}` : ''
+          }`
+        : undefined,
       // Both halves are reported, and the strike one wins the single warning slot: a missing flag is
       // recoverable from this screen, an unissued strike is not. A removal that changed nothing is
       // last, because it is the only one of the three that is not a partial failure of the action.
       warning:
         strikeWarning ??
         flagWarning ??
-        (result.removed - result.alreadyBlocked === 0
+        (result.removed - result.alreadyBlocked === 0 && !result.held.length
           ? 'Nothing changed — every image submitted was already blocked.'
           : undefined),
     };
@@ -193,7 +219,7 @@ export const actions: Actions = {
   // Retool's image-only account nuke. Unlike every other action here it is NOT scoped to the ids on
   // screen — the endpoint takes the account and blocks everything it owns, however many pages that is.
   removeAllForUser: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return actionFail('Not permitted.');
+    if (!locals.grants['image.moderate']) return refuse('image.moderate');
     const input = parseForm(
       z.object({
         userId: z.coerce.number().int().positive().max(MAX_INT4),
@@ -224,7 +250,7 @@ export const actions: Actions = {
   },
 
   restore: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return actionFail('Not permitted.');
+    if (!locals.grants['image.moderate']) return refuse('image.moderate');
     const input = parseForm(idsSchema, await request.formData());
     if (typeof input === 'string') return actionFail(input);
 
@@ -241,7 +267,7 @@ export const actions: Actions = {
   // Retool's TogglePoIMakeSureToEdit. It hardcoded poi/true; both are choices here, so a flag set in
   // error can be cleared from the same screen.
   setFlag: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return actionFail('Not permitted.');
+    if (!locals.grants['image.moderate']) return refuse('image.moderate');
     const input = parseForm(
       // A submit button carries one name/value pair, so the flag and the direction share a field.
       idsSchema.extend({
@@ -263,7 +289,7 @@ export const actions: Actions = {
   // Retool's GetBulkRemoveImageUserIdsForNotifs + SendNotification2: one message per affected ACCOUNT.
   // Notifying per image would send a 300-image removal as 300 notifications to 40 people.
   notifyOwners: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return actionFail('Not permitted.');
+    if (!locals.grants['user.strike']) return refuse('user.strike');
     const input = parseForm(
       idsSchema.extend({ message: z.string().trim().min(1).max(1000) }),
       await request.formData()

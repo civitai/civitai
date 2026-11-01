@@ -1,8 +1,20 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
+import { takePage } from './keyset-page';
+import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
+import {
+  imagesVersion,
+  imageVersion,
+  removedNotDismissed,
+  setAsideCounts,
+  setAsideState,
+  type SetAsideState,
+} from './csam-queue-set-aside';
+import { outOfCsamQueuePending as outOfPending } from '@civitai/db-queries/csam-queue';
 import type { MediaType } from '$lib/media/edge-url';
-import type { ImageReviewType } from '$lib/image-review';
+import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
+import { DEFAULT_REPORT_REASONS } from '$lib/reports';
 
 export type ReviewTag = { id: number; name: string; nsfwLevel: number };
 
@@ -15,6 +27,7 @@ export type ImageReviewItem = {
   type: MediaType;
   needsReview: string | null;
   blockedFor: string | null;
+  ingestion: string;
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
@@ -31,6 +44,12 @@ export type ImageReviewItem = {
   postTitle: string | null;
   entityType: string | null;
   entityId: number | null;
+  mimeType: string | null;
+  /** Raw `metadata` text, for the placeholder of a file that cannot be shown. */
+  size: string | null;
+  duration: string | null;
+  /** `imageVersion`: what a dismissal from the CSAM queue is taken against. */
+  version: string;
   reviewTags: ReviewTag[];
 };
 
@@ -39,6 +58,7 @@ export async function getImageReviewQueue({
   tagIds,
   excludedTagIds,
   browsingLevel,
+  userId,
   cursor,
   limit,
 }: {
@@ -46,10 +66,13 @@ export async function getImageReviewQueue({
   tagIds?: number[];
   excludedTagIds?: number[];
   browsingLevel: number;
+  /** One owner's images only. */
+  userId?: number;
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageReviewItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const setAside = needsReview === FLAG_KEPT_THROUGH_BLOCK ? await setAsideState(dbRead) : null;
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .leftJoin('Post as p', 'p.id', 'i.postId')
@@ -75,6 +98,7 @@ export async function getImageReviewQueue({
       'i.type',
       'i.needsReview',
       'i.blockedFor',
+      'i.ingestion',
       'i.minor',
       'i.poi',
       'i.acceptableMinor',
@@ -91,12 +115,16 @@ export async function getImageReviewQueue({
       'p.title as postTitle',
       'ic.entityType',
       'ic.entityId',
+      'i.mimeType',
+      sql<string | null>`i.metadata ->> 'size'`.as('size'),
+      sql<string | null>`i.metadata ->> 'duration'`.as('duration'),
+      imageVersion('i').as('version'),
     ])
     // needsReview + ingestion equality drives the Image_needsReview_index partial index. The bit-op
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', needsReview)
-    .where('i.ingestion', '=', 'Scanned')
+    .where('i.ingestion', 'in', reviewQueueIngestion(needsReview))
     .$if(!!tagIds?.length, (qb) =>
       qb.where(
         sql<boolean>`EXISTS (SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."tagId" IN (${sql.join(
@@ -111,13 +139,14 @@ export async function getImageReviewQueue({
         )}))`
       )
     )
+    .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
+    .$if(setAside != null, (qb) => qb.where(sql<boolean>`not ${setAsideCounts('i', setAside!)}`))
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = Number(rows.pop()?.id);
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.id);
 
   const ids = rows.map((r) => r.id);
   const tagsByImage = new Map<number, ReviewTag[]>();
@@ -169,15 +198,142 @@ export async function getReviewQueueTags(
     .execute();
 }
 
+// A block keeps that flag, so its queue (and its count) must also list Blocked images, or they would
+// be held with no way to reach them.
+function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Blocked')[] {
+  return needsReview === FLAG_KEPT_THROUGH_BLOCK ? ['Scanned', 'Blocked'] : ['Scanned'];
+}
+
+export const CSAM_QUEUE_USER_LIMIT = 500;
+
+/** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
+ *  the status is unknown rather than that this user is on a hold. */
+export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
+
+export type CsamQueueUser = {
+  userId: number;
+  username: string | null;
+  flagged: number;
+  /** Flagged and neither covered by a sent CSAM report nor set aside: the user's share of the badge. */
+  pending: number;
+  /** Flagged, removed and not yet dismissed, at any browsing level: what a bulk dismiss would take. */
+  removed: number;
+  /** `imagesVersion` of those images, which a bulk dismiss is taken against; null when none. */
+  removedVersion: string | null;
+  latestImageId: number;
+  /** Newest `reportSentAt` of the user's CSAM reports; null when none was sent. */
+  reportSentAt: Date | null;
+  /** The user's newest sent image report, which a supplemental report refers to. */
+  latestSentImageReportId: number | null;
+  /** Any CSAM report row for the user, sent or not. */
+  reported: boolean;
+  /** The holds on the user's account; empty when there are none. */
+  heldBy: CsamQueueHoldReason[];
+};
+
+/** The CSAM review queue as one row per owning user, most pending first, at the browsing level of
+ *  `getImageReviewQueue`. */
+export async function getCsamQueueByUser({
+  browsingLevel,
+}: {
+  browsingLevel: number;
+}): Promise<{ users: CsamQueueUser[]; truncated: boolean }> {
+  const setAside = await setAsideState(dbRead);
+  const groups = await dbRead
+    .selectFrom('Image as i')
+    .select([
+      'i.userId',
+      sql<number>`count(*)::int`.as('flagged'),
+      sql<number>`(count(*) filter (where not ${outOfPending('i', setAside)}))::int`.as('pending'),
+      sql<number>`max(i.id)`.as('latestImageId'),
+    ])
+    .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
+    .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+    .where('i.ingestion', 'in', reviewQueueIngestion(FLAG_KEPT_THROUGH_BLOCK))
+    .groupBy('i.userId')
+    .orderBy('pending', 'desc')
+    .orderBy(sql`count(*)`, 'desc')
+    .orderBy('i.userId')
+    .limit(CSAM_QUEUE_USER_LIMIT + 1)
+    .execute();
+
+  const truncated = groups.length > CSAM_QUEUE_USER_LIMIT;
+  const page = groups.slice(0, CSAM_QUEUE_USER_LIMIT);
+  const userIds = page.map((g) => g.userId);
+  if (!userIds.length) return { users: [], truncated };
+
+  const [users, reports, removed, holds, marker] = await Promise.all([
+    dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
+    dbRead
+      .selectFrom('CsamReport')
+      .select([
+        'userId',
+        sql<Date | null>`max("reportSentAt")`.as('reportSentAt'),
+        sql<number | null>`(array_agg(id order by "reportSentAt" desc) filter (
+          where type = 'Image' and "reportSentAt" is not null and "reportId" is not null
+        ))[1]`.as('latestSentImageReportId'),
+      ])
+      .where('userId', 'in', userIds)
+      .groupBy('userId')
+      .execute(),
+    removedNotDismissed(dbRead, setAside)
+      .select([
+        'i.userId',
+        sql<number>`count(*)::int`.as('count'),
+        imagesVersion('i').as('version'),
+      ])
+      .where('i.userId', 'in', userIds)
+      .groupBy('i.userId')
+      .execute(),
+    getFlagClearHolds(userIds),
+    holdMarkerState(dbRead),
+  ]);
+  const reasons = (legs: FlagClearHoldLeg[] = []): CsamQueueHoldReason[] =>
+    marker === 'view'
+      ? legs
+      : legs.map((leg) => (leg === 'evidenceHold' ? 'evidenceHoldUnknown' : leg));
+  const removedByUser = new Map(removed.map((r) => [r.userId, r]));
+  const usernames = new Map(users.map((u) => [u.id, u.username]));
+  const reportsByUser = new Map(reports.map((r) => [r.userId, r]));
+
+  return {
+    users: page.map((g) => ({
+      userId: g.userId,
+      username: usernames.get(g.userId) ?? null,
+      flagged: Number(g.flagged),
+      pending: Number(g.pending),
+      removed: Number(removedByUser.get(g.userId)?.count ?? 0),
+      removedVersion: removedByUser.get(g.userId)?.version ?? null,
+      latestImageId: Number(g.latestImageId),
+      reportSentAt: reportsByUser.get(g.userId)?.reportSentAt ?? null,
+      latestSentImageReportId: reportsByUser.get(g.userId)?.latestSentImageReportId ?? null,
+      reported: reportsByUser.has(g.userId),
+      heldBy: reasons(holds.get(g.userId)),
+    })),
+    truncated,
+  };
+}
+
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
 export async function getImageReviewCounts(): Promise<Record<string, number>> {
+  const covered = outOfPending('Image', await setAsideState(dbRead));
   const rows = await dbRead
     .selectFrom('Image')
     .select('needsReview')
-    .select((eb) => eb.fn.countAll<number>().as('count'))
+    // The CSAM queue counts only what is still pending, as its by-user page does.
+    .select(
+      sql<number>`count(*) filter (where "needsReview" <> ${FLAG_KEPT_THROUGH_BLOCK} or not ${covered})`.as(
+        'count'
+      )
+    )
     .where('needsReview', 'is not', null)
     .where('needsReview', '!=', 'appeal')
-    .where('ingestion', '=', 'Scanned')
+    .where((eb) =>
+      eb.or([
+        eb('ingestion', '=', 'Scanned'),
+        eb.and([eb('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK), eb('ingestion', '=', 'Blocked')]),
+      ])
+    )
     .groupBy('needsReview')
     .execute();
   return Object.fromEntries(rows.map((r) => [r.needsReview!, Number(r.count)]));
@@ -213,12 +369,16 @@ export async function getReportedImageQueue({
   browsingLevel,
   cursor,
   limit,
+  reportId,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
+  /** One report, whatever its status or rating — what `reportActionPath` links to from User Lookup and
+   *  the hand-off panels. Without it a link to a ruled report landed on an unrelated Pending list. */
+  reportId?: number;
 }): Promise<{ items: ReportedImageItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .innerJoin('ImageReport as imgr', 'imgr.imageId', 'i.id')
@@ -245,15 +405,21 @@ export async function getReportedImageQueue({
       'ru.username as reportUsername',
       'ru.id as reportUserId',
     ])
-    .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
-    .where('r.status', '=', 'Pending')
+    .$if(reportId != null, (qb) => qb.where('r.id', '=', reportId!))
+    .$if(reportId == null, (qb) =>
+      qb
+        .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
+        .where('r.status', '=', 'Pending')
+        // The reasons the Reports badge counts (`report:image`), so the badge and this grid are one
+        // number. Today it removes nothing: Automated reports are filed for other entity types.
+        .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
+    )
     .$if(cursor != null, (qb) => qb.where('r.id', '>', cursor!))
     .orderBy('r.id', 'asc')
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = Number(rows.pop()?.reportId);
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.reportId);
 
   const items: ReportedImageItem[] = rows.map((r) => ({
     id: r.id,
@@ -321,7 +487,7 @@ export async function getAppealImageQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .innerJoinLateral(
@@ -383,13 +549,14 @@ export async function getAppealImageQueue({
     ])
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', 'appeal')
-    .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
-    .orderBy('i.id', 'desc')
+    // Oldest appeal first, by appeal id: ordering by image id served the newest uploads first whatever
+    // the appeal's age. Appeal ids follow `createdAt` (1 inversion of 1ms in 21,864 on 2026-10-07).
+    .$if(cursor != null, (qb) => qb.where('appeal.id', '>', cursor!))
+    .orderBy('appeal.id', 'asc')
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = Number(rows.pop()?.id);
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
   const tosByImage = new Map<number, string>();

@@ -239,6 +239,13 @@ export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 5, 18, 9];
 export const APPS_MOD_LISTINGS_COLUMNS: AppsTableColumns = [null, 5, 5, 4, 13];
 
 /**
+ * The `/apps/review` SUB-LISTINGS table (`SubListingReviewQueue`). The item cell carries the
+ * before/after diff of a staged edit, so it takes the slack; the action cell holds up to three
+ * buttons.
+ */
+export const APPS_SUB_LISTING_QUEUE_COLUMNS: AppsTableColumns = [null, 12, 10, 22];
+
+/**
  * The revenue attributions table (`RevenuePanel`) — Date · [App] · **Scope** · Buzz ·
  * Gross · Your share · Status.
  *
@@ -424,6 +431,15 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  */
 export const APPS_AGENT_REPORT_SCOPE_COLUMNS: AppsTableColumns = [7, 5, 6, 6, 22, null];
 
+/**
+ * The analytics panel's Custom events table (`AppAnalyticsPanel`) — **Event** · Events ·
+ * Signed-in viewers · Signed-out events. Event is primary: the three counts are numbers whose
+ * natural width more space does not improve, so their shares use the shrink-to-content idiom
+ * (too small to bind) and the surplus goes to the event name beside its counts. No geometry arm
+ * measures this table.
+ */
+export const APPS_CUSTOM_EVENTS_COLUMNS: AppsTableColumns = [null, 2, 2, 2];
+
 /** Every ledger in this module, so a guard can sweep them all rather than a sample. */
 export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns>> = {
   'review queue (pending/rejected)': APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy,
@@ -434,6 +450,7 @@ export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns
   'revenue (scoped)': APPS_REVENUE_COLUMNS.scoped,
   'active previews': APPS_ACTIVE_PREVIEWS_COLUMNS,
   'agent report scopes': APPS_AGENT_REPORT_SCOPE_COLUMNS,
+  'custom events': APPS_CUSTOM_EVENTS_COLUMNS,
 };
 
 /**

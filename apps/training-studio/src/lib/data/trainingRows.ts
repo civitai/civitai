@@ -1,4 +1,8 @@
-import type { AiToolkitTrainingInput, Workflow, WorkflowStatus } from '@civitai/client';
+import type {
+  AiToolkitTrainingInput,
+  Workflow,
+  WorkflowStatus,
+} from '@civitai/orchestration-client';
 import { slugify } from '$lib/slug';
 import {
   cardByAirEcosystem,
@@ -13,7 +17,7 @@ import {
 
 /** Tags every training workflow carries. `TRAINING_TAG` mirrors the main app's
  * `TRAINING_WORKFLOW_TAG`; `CIVITAI_TAG` is the platform namespace. The main app's queryWorkflows
- * *wrapper* prepends `civitai`, but the raw `@civitai/client` call this app uses does not, so the
+ * *wrapper* prepends `civitai`, but the raw `@civitai/orchestration-client` call this app uses does not, so the
  * query must pass both explicitly. */
 export const TRAINING_TAG = 'training';
 export const CIVITAI_TAG = 'civitai';
@@ -24,6 +28,9 @@ export const AUTO_LABEL_TAG = 'auto-label';
 /** Version stamped into `Workflow.metadata` by the write path and read back here. Bump when the
  * `TrainingStudioMeta` shape changes incompatibly; the reader degrades field-by-field regardless. */
 export const META_VERSION = 1;
+
+/** `base` for a run no catalog lookup could place. */
+export const UNKNOWN_BASE = 'Training run';
 
 /** A pick-able generation blob, as returned by `/api/generations`. Declared here (not on the server
  *  helper) so the route, `listGenerations`, and the picker share one contract across the network boundary. */
@@ -153,10 +160,15 @@ type TrainingStepInput = Partial<AiToolkitTrainingInput> & {
   /** SD-family only. */
   minSnrGamma?: number | null;
   /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
-  samples?: { prompts?: string[] };
+  samples?: { prompts?: string[]; sourceImages?: string[] };
   /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
    *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
-  trainingData?: { type?: string; items?: Array<{ air?: string; caption?: string }> };
+  trainingData?: {
+    type?: string;
+    items?: Array<{ air?: string; caption?: string; path?: string }>;
+  };
+  /** An edit LoRA: `trainingData.items` are before/after pairs placed by `path`. */
+  isEditTraining?: boolean;
 };
 /** The weights-blob half of an epoch entry in the training step's output. `id` is the blob's
  *  orchestrator key — the handle continue/generate reference the checkpoint by (as a blob AIR);
@@ -243,7 +255,17 @@ function resolveWorkflow(w: Workflow) {
   // the step's ecosystem. cardType must beat the ecosystem fallback: several cards share an
   // ecosystem (Illustrious/Pony/a custom checkpoint are all `sdxl`), so ecosystem-first showed
   // every one of them as "SDXL" instead of the base the run actually trained on.
-  const byAir = input.model ? findByAir(input.model) : undefined;
+  // A card that shares a checkpoint with another (Flux.2 Klein Edit) is only told apart by the card
+  // the run recorded, so a recorded card that lists this AIR wins over the first catalog match.
+  const metaCard = meta.cardType ? cardByType(meta.cardType) : undefined;
+  const metaVersion = input.model
+    ? metaCard?.versions.find((v) => v.air === input.model)
+    : undefined;
+  const byAir = metaVersion
+    ? { card: metaCard!, version: metaVersion }
+    : input.model
+    ? findByAir(input.model)
+    : undefined;
   const card =
     byAir?.card ??
     (meta.cardType ? cardByType(meta.cardType) : undefined) ??
@@ -268,7 +290,7 @@ function resolveWorkflow(w: Workflow) {
             ? ` · ${versionSuffix(card.name, version?.label)}`
             : ''
         }`
-      : 'Training run',
+      : UNKNOWN_BASE,
     baseFamily: card?.name ?? 'Other',
     code: card?.code ?? '??',
     // TODO(write-path): main-app runs carry no name tag, so we show the trigger word or a fallback. The
@@ -476,6 +498,9 @@ export interface TrainingDetail {
   isVideo: boolean;
   /** The fixed sample prompts (usually 3). Rows of the compare grid; captions for each epoch's images. */
   prompts: string[];
+  /** The input images an edit run's samples were rendered from, index-aligned to `prompts`. Absent on
+   *  text-only runs. */
+  sourceImages?: string[];
   /** The requested checkpoint count, for a "N of M" progress readout while training. */
   plannedEpochs?: number;
   /** Overall step progress, 0–1 (the orchestrator's estimate) — the general "how far along" the run is. */
@@ -544,7 +569,9 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     );
   const liveTraceUrl = traces[liveTraceIndex(traces)]?.url;
 
-  const dataset: DatasetItem[] = (input.trainingData?.items ?? [])
+  // An edit run's items are pairs, not a dataset of labeled images: offered as one, its starting images
+  // would be retrained as plain images. Reusing pairs is not supported yet.
+  const dataset: DatasetItem[] = (input.isEditTraining ? [] : input.trainingData?.items ?? [])
     .filter(
       (i): i is { air: string; caption?: string } => typeof i.air === 'string' && i.air.length > 0
     )
@@ -581,6 +608,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     media,
     isVideo: media === 'video',
     prompts,
+    ...(input.samples?.sourceImages?.length ? { sourceImages: input.samples.sourceImages } : {}),
     plannedEpochs: input.epochs ?? undefined,
     progress,
     liveTraceUrl,
@@ -605,41 +633,123 @@ const blobExt = (id: string, fallback: string): string => {
 /** The orchestrator rejects a blobArchive step with more entries than this. */
 export const MAX_ARCHIVE_ENTRIES = 1000;
 
-/** The blob entries for a run's "download all" archive: every epoch's weights first, then each
- *  epoch's samples, ascending by epoch — the order decides what survives when a run exceeds
- *  `MAX_ARCHIVE_ENTRIES`, and the weights are the part a user can't regenerate. Deduped by blob id.
- *  Legacy runs whose epochs carry only signed URLs (no blob ids) contribute nothing. */
-export function epochArchiveEntries(w: Workflow): {
+/** Filename stem shared by every file a run downloads: `<run>-<base>`, so a folder of LoRAs sorts by
+ *  run and still says what each was trained on. The base is dropped when unknown or already in the
+ *  run name (`style-flux` on Flux would otherwise read `style-flux-flux`). */
+export function runFileStem(name: string, base: string): string {
+  const run = slugify(name, 'training');
+  const baseSlug = base === UNKNOWN_BASE ? '' : slugify(base);
+  return baseSlug && !run.includes(baseSlug) ? `${run}-${baseSlug}` : run;
+}
+
+/** Zero-padded to the run's largest epoch number (min 2 digits) so names sort in epoch order. */
+export function epochTag(epoch: number, maxEpoch: number): string {
+  return String(epoch).padStart(Math.max(2, String(maxEpoch).length), '0');
+}
+
+/** One epoch's weights file name, in the archive and as a single download alike. */
+export function epochWeightsFileName(
+  stem: string,
+  epoch: number,
+  maxEpoch: number,
+  blobKey?: string
+): string {
+  return `${stem}-epoch-${epochTag(epoch, maxEpoch)}${blobExt(blobKey ?? '', '.safetensors')}`;
+}
+
+/** A signed epoch-weights URL that downloads as `fileName` instead of the opaque blob id. The
+ *  orchestrator's signature covers only the path, so the added `filename`/`download` params pass
+ *  through to its Content-Disposition; an orchestrator that ignores them still serves the file. */
+export function namedDownloadUrl(url: string, fileName: string): string {
+  try {
+    new URL(url);
+  } catch {
+    return url;
+  }
+  // Appended, not rebuilt through URLSearchParams, so the signed query keeps its exact encoding.
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}filename=${encodeURIComponent(fileName)}&download=true`;
+}
+
+export type ArchiveKind = 'weights' | 'samples';
+export interface ArchivePart {
   entries: { blobId: string; fileName: string }[];
   archiveName: string;
-} {
-  const { output, name } = resolveWorkflow(w);
-  // Flat names (`<run>-epoch-03.safetensors`, `<run>-epoch-03-sample-2.png`): the orchestrator
+}
+
+/** The orchestrator's archive URL carries the whole manifest in its path (base64 JSON of every blob id
+ *  and entry name, plus a signature), and a request line past ~8 KB is refused with 414. A run's
+ *  archive is split into parts whose estimated token stays under this. */
+export const ARCHIVE_TOKEN_BUDGET = 6000;
+
+/** Upper estimate of the archive token's length: the orchestrator's manifest JSON (`e`: entries as
+ *  `id`/`n`, `a`: archive name, `f`: format, `x`: expiry), base64-encoded, plus its signature. Non-ASCII
+ *  and HTML-sensitive characters are counted as the `\uXXXX` escape its serializer writes. */
+export function estimateArchiveTokenLength(part: ArchivePart): number {
+  const manifest = JSON.stringify({
+    e: part.entries.map((e) => ({ id: e.blobId, n: e.fileName })),
+    a: part.archiveName,
+    f: 0,
+    x: '2026-01-01T00:00:00.0000000Z',
+  }).replace(/[^\x20-\x7e]|[+&<>'`]/g, '\\u0000');
+  return Math.ceil(manifest.length / 3) * 4 + 64;
+}
+
+/** A run's "download all" archives of one kind — `weights` (every epoch's LoRA) or `samples` (every
+ *  epoch's sample images) — ascending by epoch, deduped by blob id, packed into as few parts as
+ *  `ARCHIVE_TOKEN_BUDGET` and `MAX_ARCHIVE_ENTRIES` allow. Weights and samples are separate archives
+ *  so the file a user can't regenerate never shares a URL budget with dozens of images. Legacy runs
+ *  whose epochs carry only signed URLs (no blob ids) yield no parts. */
+export function epochArchiveParts(w: Workflow, kind: ArchiveKind): ArchivePart[] {
+  const { output, name, base } = resolveWorkflow(w);
+  // Flat names (`<run>-<base>-epoch-03.safetensors`, `…-epoch-03-sample-2.png`): the orchestrator
   // strips path components from entry names.
-  const slug = slugify(name, 'training');
+  const stem = runFileStem(name, base);
   const epochs = [...(output.epochs ?? [])].sort(
     (a, b) => (a.epochNumber ?? 0) - (b.epochNumber ?? 0)
   );
-  const width = Math.max(2, String(epochs.at(-1)?.epochNumber ?? 0).length);
-  const tag = (e: TrainingEpochOutput) => String(e.epochNumber ?? 0).padStart(width, '0');
-  const entries: { blobId: string; fileName: string }[] = [];
+  const maxEpoch = epochs.at(-1)?.epochNumber ?? 0;
+  const tag = (e: TrainingEpochOutput) => epochTag(e.epochNumber ?? 0, maxEpoch);
+
+  const entries: ArchivePart['entries'] = [];
   const seen = new Set<string>();
   const add = (blobId: string, fileName: string) => {
-    if (seen.has(blobId) || entries.length >= MAX_ARCHIVE_ENTRIES) return;
+    if (seen.has(blobId)) return;
     seen.add(blobId);
     entries.push({ blobId, fileName });
   };
   for (const e of epochs) {
-    const key = epochModelKey(e.model);
-    if (key) add(key, `${slug}-epoch-${tag(e)}${blobExt(key, '.safetensors')}`);
+    if (kind === 'weights') {
+      const key = epochModelKey(e.model);
+      if (key) add(key, epochWeightsFileName(stem, e.epochNumber ?? 0, maxEpoch, key));
+    } else {
+      epochSamples(e).forEach((sample, i) => {
+        if (!sample.available || typeof sample.id !== 'string' || !sample.id) return;
+        add(sample.id, `${stem}-epoch-${tag(e)}-sample-${i + 1}${blobExt(sample.id, '')}`);
+      });
+    }
   }
-  for (const e of epochs) {
-    epochSamples(e).forEach((sample, i) => {
-      if (!sample.available || typeof sample.id !== 'string' || !sample.id) return;
-      add(sample.id, `${slug}-epoch-${tag(e)}-sample-${i + 1}${blobExt(sample.id, '')}`);
-    });
+
+  const label = kind === 'weights' ? 'checkpoints' : 'samples';
+  // Packed against the longest name a part can get, so renaming parts afterwards can't push one over.
+  const nameFor = (i: number, total: number) =>
+    total === 1 ? `${stem}-${label}.zip` : `${stem}-${label}-${i + 1}-of-${total}.zip`;
+  const worstName = nameFor(998, 999);
+  const groups: ArchivePart['entries'][] = [];
+  let current: ArchivePart['entries'] = [];
+  for (const entry of entries) {
+    const next = [...current, entry];
+    const fits =
+      next.length <= MAX_ARCHIVE_ENTRIES &&
+      estimateArchiveTokenLength({ entries: next, archiveName: worstName }) <= ARCHIVE_TOKEN_BUDGET;
+    if (fits || current.length === 0) current = next;
+    else {
+      groups.push(current);
+      current = [entry];
+    }
   }
-  return { entries, archiveName: `${slug}-checkpoints.zip` };
+  if (current.length) groups.push(current);
+  return groups.map((g, i) => ({ entries: g, archiveName: nameFor(i, groups.length) }));
 }
 
 /** Preview rows for the dev-login user (id 0), who has no real orchestrator token. */

@@ -71,6 +71,16 @@ vi.mock('~/server/events/holiday2024.event', () => ({
   },
 }));
 
+// The other registered event, pinned long past its cleanup window so `test-event` is the only one
+// active whatever today's date is.
+vi.mock('~/server/events/birthday2026.event', () => ({
+  birthday2026: {
+    name: 'ended-event',
+    startDate: new Date('2000-01-01'),
+    endDate: new Date('2000-01-02'),
+  },
+}));
+
 vi.mock('~/server/integrations/discord', () => ({
   discord: {
     getDiscordId: vi.fn(async () => undefined),

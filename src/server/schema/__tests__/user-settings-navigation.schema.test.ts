@@ -16,6 +16,12 @@ describe('navigation settings', () => {
     expect(setUserSettingsInput.parse({ navigation: config }).navigation).toEqual(config);
   });
 
+  it('keeps keepProfileLabels through the client-writable schema', () => {
+    const navigation = { ...config, keepProfileLabels: true };
+    expect(setUserSettingsInput.parse({ navigation }).navigation).toEqual(navigation);
+    expect(userSettingsSchema.parse({ navigation }).navigation).toEqual(navigation);
+  });
+
   /**
    * "Reset to default" sends `{ navigation: undefined }` and depends on the key SURVIVING the
    * parse — `splitSettingsPatch` routes a present-but-undefined key to `remove`, which is what

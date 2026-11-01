@@ -1,16 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 /**
- * 🔴 REACHABILITY GUARD for a cross-account destructive capability.
+ * 🔴 REACHABILITY GUARD for blob retraction.
  *
- * `remove-blocked-images` is the one flow allowed to pass `retractPublicBlobs`, which asks the
- * image-cache service to destroy the SHARED, content-addressed stored object behind an image —
- * removing the full-resolution original for every byte-identical image of every OTHER owner,
- * irreversibly, with no way to enumerate or notify them.
+ * `remove-blocked-images` passes `retractPublicBlobs`, which asks the image-cache service to
+ * delete an image's public copies and purge them from the CDN. Only a moderator's takedown of that
+ * image may turn it on.
  *
  * The job reads a QUEUE that a database trigger fills on any write landing
  * `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified'. So the population that
@@ -102,12 +101,23 @@ function fireQueueTrigger(row: ImageRow) {
   store.queue.push({ entityId: row.id, createdAt: tick() });
 }
 
-const { mockDeleteImages } = vi.hoisted(() => ({
+const { mockDeleteImages, mockPersistDeletedTakedowns } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(async (ids: number[]) => ids.map((id) => ({ id }))),
+  mockPersistDeletedTakedowns: vi.fn(async () => ({ sent: 0, queued: 0, skipped: 0 })),
 }));
 
 // `isProd` alone is overridden; the rest of the module is spread so nothing else in the graph
 // loses an export it imports. The job short-circuits before deleting anything when it is false.
+// The re-removal hold reads through Kysely, which this file does not route to PGlite; no image here
+// has an approved appeal, so the hold lets everything through (covered by its own tests).
+vi.mock('~/server/services/image-removal-hold.service', () => ({
+  canConfirmReRemoval: async () => false,
+  holdRemovals: async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  }),
+  heldRemovalSummary: () => [],
+}));
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isProd: true,
@@ -139,6 +149,10 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   deleteImages: mockDeleteImages,
 }));
+vi.mock('~/server/services/cdn-access.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  persistDeletedTakedowns: mockPersistDeletedTakedowns,
+}));
 
 const { createImage, handleBlockImages } = await import('~/server/services/image.service');
 const { trackModActivity } = await import('~/server/services/moderator.service');
@@ -164,6 +178,38 @@ function retractionFor(id: number) {
   if (!call) return undefined;
   return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
+
+/** The images persisted after their delete. */
+const persisted = () =>
+  new Set(
+    (mockPersistDeletedTakedowns.mock.calls as unknown as [{ id: number }[]][]).flatMap(([rows]) =>
+      rows.map((r) => r.id)
+    )
+  );
+function persistFor(id: number) {
+  if (retractionFor(id) === undefined) return undefined;
+  return persisted().has(id);
+}
+
+/**
+ * 🔴 Persist follows retraction and nothing else: every case below that does not retract is also a
+ * case that must not persist, and a persist must come after the delete it follows.
+ */
+afterEach(() => {
+  for (const call of mockDeleteImages.mock.calls) {
+    const ids = call[0] as number[];
+    const retracts = Boolean(
+      (call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs
+    );
+    for (const id of ids)
+      expect(persisted().has(id), `persist differs from retraction for image ${id}`).toBe(retracts);
+  }
+  if (mockPersistDeletedTakedowns.mock.calls.length)
+    expect(
+      Math.min(...mockPersistDeletedTakedowns.mock.invocationCallOrder),
+      'persist ran before the storage delete'
+    ).toBeGreaterThan(Math.min(...mockDeleteImages.mock.invocationCallOrder));
+});
 
 function image(id: number, userId: number, over: Partial<ImageRow> = {}): ImageRow {
   return {
@@ -217,9 +263,31 @@ function presenceTest(sql: string, key: string) {
 }
 
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
-  const sql = strings.join('?');
+  // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
+  const sql = Array.isArray(strings)
+    ? strings.join('?')
+    : (strings as unknown as { sql: string }).sql;
 
   if (sql.includes('FROM "CsamReport"')) return [];
+
+  // remove-blocked-images: its two queue reads, each passed as one `Prisma.sql` value.
+  if (sql.includes('FROM "JobQueue" j')) {
+    const bound = Array.isArray(strings)
+      ? values
+      : (strings as unknown as { values: unknown[] }).values;
+    const ids = (bound.find(Array.isArray) as number[] | undefined) ?? [];
+    if (sql.includes('AND EXISTS (SELECT 1 FROM unnest(')) {
+      const cutoff = bound.find((v) => v instanceof Date) as Date;
+      return store.queue.filter((q) => ids.includes(q.entityId) && q.createdAt <= cutoff);
+    }
+    return store.queue
+      .filter((q) => !ids.includes(q.entityId))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  // The hold marker's view exists, as on prod, and holds nobody.
+  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
+  if (sql.includes('FROM "EvidenceHeldUser"')) return [];
 
   // `toggleBan`'s pre-block read: the rows its remove-all-media UPDATE is about to block that
   // still carry a grace breadcrumb. Narrowly scoped on purpose — see the note at that call site.
@@ -352,9 +420,13 @@ beforeEach(async () => {
     store.images.filter((i) => matches(i, where))
   );
   dbMock.dbWrite.image.create.mockImplementation(async ({ data }: any) => {
-    const row = image(data.id, data.userId, {
+    // `createImage` never writes an `id`; the store assigns it from the `key-<id>/` url.
+    if (data.id !== undefined) throw new Error('createImage wrote a caller-supplied id');
+    const key = /^key-(\d+)\//.exec(data.url ?? '');
+    if (!key) throw new Error(`fixture url must be key-<id>/…, got ${data.url}`);
+    const row = image(Number(key[1]), data.userId, {
       metadata: data.metadata ?? null,
-      url: data.url ?? `key-${data.id}/original.jpeg`,
+      url: data.url,
       ingestion: data.ingestion ?? 'Pending',
     });
     store.images.push(row);
@@ -379,11 +451,6 @@ beforeEach(async () => {
   dbMock.dbWrite.image.updateMany.mockImplementation(applyUpdate as never);
   dbMock.dbWrite.image.update.mockImplementation((async (args: any) =>
     applyUpdate({ where: args.where, data: args.data })) as never);
-
-  dbMock.dbRead.jobQueue.findMany.mockImplementation(async ({ where }: any) => {
-    const excluded = where?.entityId?.notIn ?? [];
-    return store.queue.filter((q) => !excluded.includes(q.entityId));
-  });
 
   // The shared db mock only defaults the READ verbs; `toggleBan` fires several fire-and-forget
   // writes whose result it immediately `.catch()`es, and an undefined return throws before the
@@ -458,6 +525,7 @@ describe('who can reach blob retraction, driven through the real block writers',
     await removeBlockedImages.run(ctx).result;
 
     expect(retractionFor(1), 'a moderator takedown stopped asking for retraction').toBe(true);
+    expect(persistFor(1), 'a moderator takedown stopped asking for persist').toBe(true);
   });
 
   // The main app's own single-image TOS takedown. It is `moderatorProcedure`-gated and per-image,
@@ -493,6 +561,7 @@ describe('who can reach blob retraction, driven through the real block writers',
       retractionFor(11),
       'the main-app TOS takedown stopped asking for retraction — check it still records ModActivity'
     ).toBe(true);
+    expect(persistFor(11), 'the main-app TOS takedown stopped asking for persist').toBe(true);
   });
 
   // 🔴 F1. The uploader owns `Image.metadata`, so anything the retraction decision reads out of it
@@ -505,7 +574,6 @@ describe('who can reach blob retraction, driven through the real block writers',
   ] as const) {
     it(`ignores a forged marker (${label}) carried through the real upload path`, async () => {
       await createImage({
-        id: 2,
         userId: TAKEDOWN_USER,
         url: 'key-2/original.jpeg',
         type: 'image',
@@ -535,11 +603,10 @@ describe('who can reach blob retraction, driven through the real block writers',
   }
 
   // The other direction of the same forgery, and the more dangerous one under a POSITIVE
-  // discriminator: a marker that turns retraction ON would let an uploader destroy the shared
-  // object behind any byte-identical image simply by getting their own copy blocked.
+  // discriminator: a marker that turns retraction ON would let an uploader make an automated
+  // block read as a moderator takedown.
   it('a forged marker cannot make an automated block retract', async () => {
     await createImage({
-      id: 3,
       userId: SCANNED_USER,
       url: 'key-3/original.jpeg',
       type: 'image',
@@ -614,8 +681,8 @@ describe('who can reach blob retraction, driven through the real block writers',
       expect(retractionFor(id), `image ${id} was not deleted at all`).not.toBeUndefined();
       expect(
         retractionFor(id),
-        'a whole-library ban block reached the retracting call: banning an account must not ' +
-          'destroy other owners’ stored bytes'
+        'a whole-library ban block reached the retracting call: banning an account is not a ' +
+          'per-image takedown'
       ).toBe(false);
     }
   });
@@ -672,10 +739,7 @@ describe('who can reach blob retraction, driven through the real block writers',
     await removeBlockedImages.run(ctx).result;
 
     expect(retractionFor(10), 'the image was not deleted at all').not.toBeUndefined();
-    expect(
-      retractionFor(10),
-      'a rating change was read as a decision to destroy the shared stored object'
-    ).toBe(false);
+    expect(retractionFor(10), 'a rating change was read as a takedown decision').toBe(false);
   });
 
   // Not a retraction claim. `unblockAccountDeletionImages` restores an image on the presence of
@@ -925,6 +989,8 @@ describe('who can reach blob retraction, driven through the real block writers',
 
     expect(retractionFor(7)).toBe(true);
     expect(retractionFor(8)).toBe(false);
+    expect(persistFor(7)).toBe(true);
+    expect(persistFor(8)).toBe(false);
     // The purge itself is unchanged: both are still hard-deleted on schedule.
     expect(store.queue, 'the queue was not drained').toEqual([]);
   });

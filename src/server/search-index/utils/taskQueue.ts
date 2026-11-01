@@ -14,15 +14,14 @@ type BaseTask = {
   start?: number;
   /**
    * How many source ids this task is responsible for. Carried through the pull -> transform ->
-   * push chain (the derived tasks no longer hold the id list) so that a task which ends up
-   * failing can be attributed back to a number of documents that were never indexed.
+   * push chain so that a task which ends up failing can be attributed back to a number of
+   * documents that were never indexed.
    */
   idCount?: number;
   /**
-   * Targeted tasks only: the ids this task was asked to index. Set on the transform task, where
-   * it is the only place the requested ids and the produced documents are both in hand — a pull
-   * task has no documents yet and a push task no longer knows what was asked for. Carried no
-   * further: the push task keeps `idsWithoutDocument` instead, which is usually far smaller.
+   * Targeted tasks only: the ids this task was asked to index. Set on the transform task and
+   * carried to the push task, so a batch that permanently fails at either step can name the ids
+   * it did not write (`TaskQueue.failedIds`).
    */
   requestedIds?: (number | string)[];
   /**
@@ -87,7 +86,8 @@ type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed';
  * which, on a degraded backend where many batches fail, is a large amount of memory retained for
  * the sake of a number. `idCount` is the only field any production consumer reads (via
  * `failedIdCount`); `type` and `retries` are kept for diagnostics and are so far read only by the
- * specs.
+ * specs. A targeted task's ids are kept separately, in `TaskQueue.failedIds`, so they can be
+ * re-queued.
  */
 export type FailedTaskRecord = {
   type: Task['type'];
@@ -129,6 +129,11 @@ export class TaskQueue {
    * `isQueueEmpty` so the workers cannot all exit during the retry backoff.
    */
   retrying: number;
+  /**
+   * The ids of every TARGETED task that exhausted its retries, so a caller that drained them from
+   * a queue can put them back. A range task contributes nothing: it holds a span, not ids.
+   */
+  failedIds: number[];
 
   constructor(queueEntry: Task['type'] = 'pull', maxQueueSize = MAX_QUEUE_SIZE_DEFAULT) {
     this.queues = {
@@ -151,6 +156,7 @@ export class TaskQueue {
     this.idsWithoutDocumentSample = [];
     this.handledWithoutDocumentIdCount = 0;
     this.retrying = 0;
+    this.failedIds = [];
   }
 
   get data() {
@@ -254,6 +260,10 @@ export class TaskQueue {
       }
       return;
     }
+
+    const targetedIds =
+      task.type === 'pull' ? (task.mode === 'targeted' ? task.ids : undefined) : task.requestedIds;
+    for (const id of targetedIds ?? []) if (typeof id === 'number') this.failedIds.push(id);
 
     // Summarise rather than retain. On this path only — the task has given up, the retry branch
     // above having already returned with it back on `queues[type]` — no structure on the queue

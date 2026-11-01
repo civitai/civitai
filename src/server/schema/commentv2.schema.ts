@@ -26,6 +26,8 @@ export const commentConnectorSchema = z.object({
     'model3d',
     'model3dReview',
     'appListing',
+    'crucible',
+    'storyline',
   ]),
   parentThreadId: z.number().optional(),
   excludedUserIds: z.array(z.number()).optional(),
@@ -46,7 +48,6 @@ export const upsertCommentv2Schema = commentConnectorSchema.extend({
     }, 'Cannot be empty')
     .refine((data) => data.length <= constants.comments.maxLength, 'Comment content too long'),
   nsfw: z.boolean().optional(),
-  tosViolation: z.boolean().optional(),
 });
 
 export type ToggleHideCommentInput = z.infer<typeof toggleHideCommentSchema>;
@@ -69,6 +70,8 @@ export const toggleHideCommentSchema = z.object({
     'model3d',
     'model3dReview',
     'appListing',
+    'crucible',
+    'storyline',
   ]),
 });
 

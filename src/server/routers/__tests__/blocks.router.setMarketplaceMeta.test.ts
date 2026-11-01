@@ -12,10 +12,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *       · anon (no session)  → UNAUTHORIZED, service NEVER called.
  *       · non-mod (logged in) → FORBIDDEN,    service NEVER called.
  *       · moderator           → served, service called with the input.
- *   - getFeaturedBlocks is anon-CAPABLE but DARK behind the flag:
- *       · anon WITHOUT the flag → EMPTY rail, service NOT consulted.
- *       · anon WITH the flag (lit path) → served — proves anon-capable, no
- *         isModerator belt.
+ *   - getFeaturedBlocks is MODERATOR-ONLY (flag AND isModerator):
+ *       · anon / non-mod WITHOUT the flag → EMPTY rail, service NOT consulted.
+ *       · anon / non-mod WITH the flag on for everyone (civitai/flipt-state#263)
+ *         → EMPTY rail: the service SQL applies no per-listing visibility, so a
+ *         flag-only gate would leak testers-only and private apps.
+ *       · moderator → served.
  */
 
 const {
@@ -126,7 +128,12 @@ beforeEach(() => {
   mockGetMarketplaceMeta.mockResolvedValue(META_RESULT);
 });
 
-const SET_INPUT = { appBlockId: 'ab_1', category: 'games', featured: true, featuredOrder: 3 } as const;
+const SET_INPUT = {
+  appBlockId: 'ab_1',
+  category: 'games',
+  featured: true,
+  featuredOrder: 3,
+} as const;
 
 describe('blocks.setMarketplaceMeta — MOD-ONLY curation write (F-E E4)', () => {
   it('anon (no session): UNAUTHORIZED, the write is NEVER attempted', async () => {
@@ -210,7 +217,7 @@ describe('blocks.getMarketplaceMeta — MOD-ONLY read (F-E E4)', () => {
   });
 });
 
-describe('blocks.getFeaturedBlocks — anon-capable, dark behind the flag (F-E E4)', () => {
+describe('blocks.getFeaturedBlocks — legacy read: flag gate, then moderator-only (F-E E4)', () => {
   it('anon WITHOUT the flag: gate disables → EMPTY rail, service NOT consulted', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
     const result = await caller.getFeaturedBlocks({ limit: 12 });
@@ -225,29 +232,24 @@ describe('blocks.getFeaturedBlocks — anon-capable, dark behind the flag (F-E E
     expect(mockGetFeaturedBlocks).not.toHaveBeenCalled();
   });
 
-  it('anon WITH the flag granted (lit path): served — proves anon-CAPABLE, no isModerator belt', async () => {
-    mockIsAppBlocksEnabled.mockResolvedValue(true);
-    const featured = [
-      {
-        id: 'ab_1',
-        blockId: 'cool-block',
-        appId: 'app_1',
-        appName: 'Cool App',
-        manifest: { name: 'Cool Block' },
-        installCount: 3,
-        category: 'games',
-        scopesSummary: ['ai:write:budgeted'],
-      },
-    ];
-    mockGetFeaturedBlocks.mockResolvedValue(featured);
-    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
-    const result = await caller.getFeaturedBlocks({ limit: 12 });
-    expect(result).toEqual({ items: featured });
-    // PAGE-ONLY LAUNCH GATE (#2622): a non-mod/anon caller passes launchOnly=true
-    // so the featured rail carries launch (page) apps only.
-    // 3rd arg = redCapable (NSFW-app-red-only; no host header → false).
-    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, true, false);
-  });
+  const LEAKY_FEATURED = [
+    { id: 'ab_testers', blockId: 'testers-only', appId: 'app_t', appName: 'Testers App' },
+    { id: 'ab_private', blockId: 'private-one', appId: 'app_p', appName: 'Private App' },
+  ];
+
+  for (const [label, user] of [
+    ['anon', undefined],
+    ['non-mod', normalUser],
+  ] as const) {
+    it(`🔴 ${label} WITH the flag on for everyone (post-#263): EMPTY rail, service NOT consulted`, async () => {
+      mockIsAppBlocksEnabled.mockResolvedValue(true);
+      mockGetFeaturedBlocks.mockResolvedValue(LEAKY_FEATURED);
+      const caller = blocksRouter.createCaller(fakeCtx(user) as never);
+      const result = await caller.getFeaturedBlocks({ limit: 12 });
+      expect(result).toEqual({ items: [] });
+      expect(mockGetFeaturedBlocks).not.toHaveBeenCalled();
+    });
+  }
 
   it('moderator (the live state today): served — sees ALL featured apps (launchOnly=false)', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);

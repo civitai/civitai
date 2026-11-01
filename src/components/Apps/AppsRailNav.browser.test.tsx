@@ -25,7 +25,7 @@ import { renderWithProviders } from '../../../test/component-setup';
  *     the exported `appsSections` (`apps-sections.ts`), so the visibility predicates can
  *     be driven directly here instead of through a presentational component's props;
  *   • the `< 2 sections ⇒ render nothing` COLLAPSE moved from the view into
- *     `AppsPageLayout`, because the layout also has to stop reserving the rail's 276px of
+ *     `AppsPageLayout`, because the layout also has to stop reserving the rail's 292px of
  *     horizontal chrome. So this file renders the REAL `AppsPageLayout` with the data
  *     hook stubbed, rather than a presentational view in isolation — which exercises the
  *     collapse where it now lives instead of re-implementing it in a fixture;
@@ -72,24 +72,40 @@ const ALL: AppsNavSummary = {
  * Sees the store, may reach `/apps/build`, and may AUTHOR (mod, or a non-mod holding
  * `appBlocksAuthor`) — today's live moderator / `app-dev-testers` shape.
  */
-const AUTHOR: AppsNavContext = { isAuthor: true, canBuild: true, canSeeStore: true };
+const AUTHOR: AppsNavContext = {
+  isAuthor: true,
+  canBuild: true,
+  canSeeStore: true,
+};
 /**
  * A store-visible NON-author who may still reach `/apps/build`: `canAccessAppsBuild`'s
  * `appBlocksGetStarted` disjunct. The cohort the recruiting pitch (state A) exists for.
  */
-const BUILDER: AppsNavContext = { isAuthor: false, canBuild: true, canSeeStore: true };
+const BUILDER: AppsNavContext = {
+  isAuthor: false,
+  canBuild: true,
+  canSeeStore: true,
+};
 /**
  * The widened store-visibility tester cohort: sees the store, cannot author and cannot
  * build (no `appBlocksGetStarted`). This is the LIVE `< 2` collapse cohort — Marketplace
  * is the only row that qualifies for them.
  */
-const NOT_AUTHOR: AppsNavContext = { isAuthor: false, canBuild: false, canSeeStore: true };
+const NOT_AUTHOR: AppsNavContext = {
+  isAuthor: false,
+  canBuild: false,
+  canSeeStore: true,
+};
 /**
  * No store access at all. `canBuild` is `false` here BY CONSTRUCTION, not by choice:
  * `canAccessAppsBuild` ANDs `hasAppsStoreAccess`, so `{canBuild: true, canSeeStore:
  * false}` is a shape the container cannot produce.
  */
-const NO_STORE: AppsNavContext = { isAuthor: false, canBuild: false, canSeeStore: false };
+const NO_STORE: AppsNavContext = {
+  isAuthor: false,
+  canBuild: false,
+  canSeeStore: false,
+};
 
 /**
  * 🔴 THE DATA HOOK IS STUBBED; THE LAYOUT AND THE RAIL ARE REAL. That split is what lets
@@ -162,12 +178,19 @@ function renderedSections(): string[] {
   return Array.from(nav.querySelectorAll('a')).map((el) => (el.textContent ?? '').trim());
 }
 
-/** The group HEADINGS currently in the rail, in DOM order. */
+/**
+ * The group HEADINGS currently in the rail, in DOM order.
+ *
+ * ⚠️ SELECTED BY `data-apps-chrome="rail-group-heading"`, NOT BY "every non-anchor child
+ * of the nav". The older form was a claim about DEPTH as well as about headings: the first
+ * group's heading now shares a row with the rail's collapse toggle, so it sits one level
+ * down inside a wrapper and the structural filter would have reported the WRAPPER (whose
+ * text happens to match, so it would have kept passing while measuring a different node).
+ */
 function renderedGroups(): string[] {
   const nav = navEl();
   if (!nav) return [];
-  return Array.from(nav.children)
-    .filter((el) => el.tagName.toLowerCase() !== 'a')
+  return Array.from(nav.querySelectorAll('[data-apps-chrome="rail-group-heading"]'))
     .map((el) => (el.textContent ?? '').trim())
     .filter(Boolean);
 }
@@ -415,6 +438,24 @@ describe('Build is gated on canBuild', () => {
   });
 });
 
+describe('the App Assistant has no row of its own — it lives on Build', () => {
+  test('a full author sees Build and no App Assistant entry, and nothing links to /apps/assistant', async () => {
+    // `/apps/assistant` 301s to `/apps/build`, which renders the workspace itself. A row of its
+    // own would be a link into a redirect.
+    await renderNav(ALL, AUTHOR, '/apps');
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(renderedSections()).toEqual([
+      'Marketplace',
+      'Activity',
+      'Invites',
+      'Revenue',
+      'Build',
+      'Review',
+    ]);
+    expect(document.querySelector('a[href^="/apps/assistant"]')).toBeNull();
+  });
+});
+
 /**
  * 🔴 THE MARKETPLACE ROW IS STORE-GATED — THE EXPOSURE THAT GATING CLOSED.
  *
@@ -461,7 +502,7 @@ describe('Marketplace is gated on canSeeStore', () => {
  *   (⇒ `canBuild: false`) · empty summary  ⇒  Marketplace ALONE ⇒ no rail.
  *
  * 🔴 IT IS ASSERTED HERE AGAINST THE REAL `AppsPageLayout`, WHICH IS WHERE THE RULE NOW
- * LIVES. As a tab strip the collapse saved a row's height; as a rail it saves 276px of
+ * LIVES. As a tab strip the collapse saved a row's height; as a rail it saves 292px of
  * every apps page's WIDTH, which is a bigger claim and a worse regression to miss.
  *
  * ⚠️ THE SHAPE IS REAL; THE COHORT THIS USED TO NAME IS NOT. An earlier version said

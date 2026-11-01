@@ -308,6 +308,11 @@ textarea {
                                        further down, because this package
                                        ships UNLAYERED CSS and a layered rule
                                        loses to it no matter how specific.
+     · `@civitai/components`           1 fixed (`toast-region`, `bottom/right:
+                                       16px`) — 0 call sites: the app renders
+                                       only its `button` markup (the
+                                       `shellDesignSystemMarkup` shell). 0
+                                       sticky. All in `@layer civitai.components`.
 
    One more entry point exists and is not in `_app.tsx`:
    `draft-js/dist/Draft.css`, imported by `TrainingImagesCaptionViewer`. 0
@@ -653,7 +658,8 @@ textarea {
 /* Mantine overrides */
 
 .mantine-Badge-label *,
-.mantine-Button-label * {
+.mantine-Button-label *,
+[data-badge-label] * {
   font-size: inherit;
   font-weight: inherit;
   font-family: inherit;
@@ -1138,6 +1144,13 @@ div[data-youtube-video] > iframe {
 #adconsent-usp-link {
   border: 1px solid #1971c2 !important;
   color: #1971c2 !important;
+}
+
+/* Admiral's injected "Do Not Sell" footer link (the only <a> directly inside our <footer>) and its
+   floating button, hidden until detectPrivacyUi sets `data-privacy-ui="visible"`. */
+html:not([data-privacy-ui='visible']) footer[data-app-footer] > a,
+html:not([data-privacy-ui='visible']) body > div:has(> #whisper-anchor) {
+  display: none !important;
 }
 
 #adconsent-usp-banner-optout input:checked + .adconsent-usp-slider {

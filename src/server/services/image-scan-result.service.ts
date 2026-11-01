@@ -1,4 +1,4 @@
-import type { MediaRatingOutput } from '@civitai/client';
+import type { MediaRatingOutput } from '@civitai/orchestration-client';
 import { dbWrite } from '~/server/db/client';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -314,6 +314,7 @@ export async function processImageScanWorkflow({
     userId: image.userId,
     ingestion: outcome.ingestion,
     blockedFor: outcome.blockedFor,
+    nsfwLevel: outcome.nsfwLevel,
   });
 }
 

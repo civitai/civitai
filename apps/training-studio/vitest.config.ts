@@ -2,9 +2,12 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  // This config does not load the SvelteKit plugin, so `$lib` needs aliasing by hand.
+  // This config does not load the SvelteKit plugin, so `$lib` and `$env` need aliasing by hand.
   resolve: {
-    alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) },
+    alias: {
+      $lib: fileURLToPath(new URL('./src/lib', import.meta.url)),
+      '$env/dynamic/private': fileURLToPath(new URL('./src/test/env.mock.ts', import.meta.url)),
+    },
   },
   test: {
     // Required — see the `apps/*` note in the root vitest.config.mts.

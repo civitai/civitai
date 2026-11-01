@@ -3,6 +3,7 @@ import type { Session } from '~/types/session';
 import * as z from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { dbRead } from '~/server/db/client';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
@@ -86,8 +87,17 @@ export default MixedAuthEndpoint(async function handler(
 
     const coverWithinCeiling =
       !!collection.image?.url &&
-      (!collection.image.nsfwLevel ||
-        Flags.intersects(collection.image.nsfwLevel, browsingLevel));
+      (!collection.image.nsfwLevel || Flags.intersects(collection.image.nsfwLevel, browsingLevel));
+    // Same poi/minor exclusion the public image endpoints apply. getCollectionById
+    // doesn't select these, so look them up only for a cover that is otherwise shown.
+    const coverFlags =
+      coverWithinCeiling && collection.image
+        ? await dbRead.image.findUnique({
+            where: { id: collection.image.id },
+            select: { poi: true, minor: true },
+          })
+        : null;
+    const showCover = !!coverFlags && !coverFlags.poi && !coverFlags.minor;
 
     return res.status(200).json({
       id: collection.id,
@@ -98,7 +108,7 @@ export default MixedAuthEndpoint(async function handler(
       read: collection.read,
       isPublic: collection.read === CollectionReadConfiguration.Public,
       coverImageUrl:
-        coverWithinCeiling && collection.image?.url
+        showCover && collection.image?.url
           ? getEdgeUrl(collection.image.url, {
               width: 450,
               type: collection.image.type ?? undefined,

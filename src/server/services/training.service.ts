@@ -1,3 +1,4 @@
+import { extname } from 'node:path';
 import { Upload } from '@aws-sdk/lib-storage';
 import type {
   AudioCaptioningStepTemplate,
@@ -5,14 +6,15 @@ import type {
   WdTaggingStepTemplate,
   Workflow,
   WorkflowStepTemplate,
-} from '@civitai/client';
-import type { WorkflowStatus } from '@civitai/client';
+} from '@civitai/orchestration-client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import {
   getConsumerBlobUploadUrl,
   getWorkflow as clientGetWorkflow,
   handleError,
   submitWorkflow as clientSubmitWorkflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
+import { UploadType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -26,7 +28,6 @@ import type {
   AutoTagInput,
   GetAutoLabelUploadUrlInput,
   GetAutoLabelWorkflowInput,
-  MoveAssetInput,
   SubmitAutoLabelWorkflowInput,
   TrainingServiceStatus,
 } from '~/server/schema/training.schema';
@@ -47,16 +48,18 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+import { env as clientEnv } from '~/env/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
-  deleteObject,
   getB2S3Client,
   getGetUrl,
   getPutUrl,
   getS3Client,
+  getUploadBucket,
   isB2Url,
   parseKey,
 } from '~/utils/s3-utils';
+import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
@@ -72,41 +75,28 @@ export type TrainingRequest = {
   modelVersionMetadata?: MixedObject | null;
 };
 
-async function getSubmittedAt(modelVersionId: number, userId: number) {
-  const [modelFile] = await dbWrite.$queryRaw<MoveAssetRow[]>`
-    SELECT mf.metadata, mv."updatedAt"
-    FROM "ModelVersion" mv
-           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-           JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId}
-      AND m."userId" = ${userId}
-  `;
-
-  if (!modelFile) throw throwBadRequestError('Invalid model version');
-  if (modelFile.metadata?.trainingResults?.submittedAt) {
-    return new Date(modelFile.metadata.trainingResults.submittedAt);
-  } else if (modelFile.metadata?.trainingResults?.history) {
-    for (const { status, time } of modelFile.metadata.trainingResults.history) {
-      if (status === TrainingStatus.Submitted) {
-        return new Date(time);
-      }
-    }
-  }
-
-  return modelFile.updatedAt;
-}
-
-const assetUrlRegex =
-  /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
-
 const blobUrlRegex = /\/v\d\/consumer\/blobs\/(?<blobId>[A-Z0-9]+)\.(?<extension>\w+)/i;
 
-type MoveAssetRow = {
-  metadata: FileMetadata | null;
-  updatedAt: Date;
-};
+/**
+ * Where a training checkpoint is copied to. A unique asset key per copy: the same asset name can
+ * come back (a later pick, another run), and a copy must never land on an existing object.
+ */
+export function uniqueAssetKey(modelVersionId: number, assetName: string) {
+  const ext = extname(assetName);
+  const base = assetName.slice(0, assetName.length - ext.length);
+  return `modelVersion/${modelVersionId}/${base}.${generateToken(8)}${ext}`;
+}
 
-async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVersionId: number }) {
+export async function moveAssetFromBlob({
+  url,
+  modelVersionId,
+}: {
+  url: string;
+  modelVersionId: number;
+}) {
+  // blobUrlRegex matches a path, so it says nothing about which host answers. This URL is
+  // fetched and its body stored under our own bucket — see isTrustedOrchestratorUrl.
+  if (!isTrustedOrchestratorUrl(url)) throw throwBadRequestError('Invalid asset URL');
   console.log('[moveAssetFromBlob] Starting', { url, modelVersionId });
 
   const urlMatch = url.match(blobUrlRegex);
@@ -119,7 +109,7 @@ async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVe
     url: destinationUri,
     bucket,
     key,
-  } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
+  } = await getPutUrl(uniqueAssetKey(modelVersionId, assetName));
   console.log('[moveAssetFromBlob] Got put URL', { bucket, key });
 
   // Download the blob
@@ -172,81 +162,46 @@ async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVe
   };
 }
 
-async function moveAssetFromJob({
-  url,
+/**
+ * Has the orchestrator copy a job asset into storage under `modelVersionId`. It copies any job's
+ * asset with the system token, so the caller must already have tied `jobId`/`assetName` to a
+ * checkpoint of the version's own approved run.
+ */
+export async function moveAssetFromJob({
+  jobId,
+  assetName,
   modelVersionId,
-  userId,
+  submittedAt,
 }: {
-  url: string;
+  jobId: string;
+  assetName: string;
   modelVersionId: number;
-  userId: number;
+  submittedAt?: Date;
 }) {
-  const urlMatch = url.match(assetUrlRegex);
-  if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
-  const { jobId, assetName } = urlMatch.groups;
+  const { url: destinationUri } = await getPutUrl(uniqueAssetKey(modelVersionId, assetName));
 
-  const { url: destinationUri } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
-
-  const reqBody: Orchestrator.Training.CopyAssetJobPayload = {
-    jobId,
-    assetName,
-    destinationUri,
-  };
-
-  const submittedAt = await getSubmittedAt(modelVersionId, userId);
   const response = await getOrchestratorCaller(submittedAt).copyAsset({
-    payload: reqBody,
+    payload: { jobId, assetName, destinationUri },
     queryParams: { wait: true },
   });
-  if (response.status === 429) {
-    throw throwRateLimitError();
-  }
-
-  if (!response.ok) {
+  if (response.status === 429) throw throwRateLimitError();
+  if (!response.ok)
     throw throwBadRequestError(
       "We couldn't reach the training service to transfer your file. Please wait a moment and try again."
     );
-  }
 
-  const thisJob = response.data?.jobs?.[0];
-
-  if (!thisJob || thisJob.lastEvent?.type !== 'Succeeded') {
+  const job = response.data?.jobs?.[0];
+  if (!job || job.lastEvent?.type !== 'Succeeded')
     throw throwBadRequestError(
       "Your training file couldn't be transferred to your model. Please try again or select another file."
     );
-  }
-
-  const result = thisJob.result;
-  if (!result || !result.found) {
+  if (!job.result?.found)
     throw throwBadRequestError(
       "We couldn't find the training file you selected. It may have expired — please try again or select another file."
     );
-  }
 
-  const newUrl = destinationUri.split('?')[0];
-
-  return {
-    newUrl,
-    fileSize: result.fileSize,
-  };
+  return { newUrl: destinationUri.split('?')[0], fileSize: job.result.fileSize };
 }
-
-export const moveAsset = async ({
-  url,
-  modelVersionId,
-  userId,
-}: MoveAssetInput & { userId: number }) => {
-  // Check if it's a blob URL (new format)
-  if (blobUrlRegex.test(url)) {
-    // blobUrlRegex matches a path, so it says nothing about which host answers. This URL is
-    // fetched and its body stored under our own bucket — see isTrustedOrchestratorUrl.
-    if (!isTrustedOrchestratorUrl(url)) throw throwBadRequestError('Invalid asset URL');
-    return moveAssetFromBlob({ url, modelVersionId });
-  }
-
-  // Otherwise, use the job asset flow (legacy format)
-  return moveAssetFromJob({ url, modelVersionId, userId });
-};
 
 export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
   const response = await getOrchestratorCaller(submittedAt).clearAssets({
@@ -358,6 +313,18 @@ export type AutoCaptionResponse = {
   [key: string]: string;
 };
 
+// The auto-label input is the zip the client just uploaded via /api/upload, whose keys are
+// `${type}/${userId}/...` (see buildUploadKey).
+function assertOwnTrainingTempUpload(url: string, userId: number) {
+  const { key, bucket } = parseKey(url);
+  if (
+    !bucket ||
+    bucket !== getUploadBucket(isB2Url(url) ? 'b2' : 'default') ||
+    !key.startsWith(`${UploadType.TrainingImagesTemp}/${userId}/`)
+  )
+    throw throwBadRequestError('Invalid URL');
+}
+
 export const autoTagHandler = async ({
   url,
   modelId,
@@ -365,11 +332,10 @@ export const autoTagHandler = async ({
 }: AutoTagInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   // todo check if this property comes through
 
@@ -387,12 +353,10 @@ export const autoTagHandler = async ({
   console.log(response, payload);
 
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -410,11 +374,10 @@ export const autoCaptionHandler = async ({
 }: AutoCaptionInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   const payload: Orchestrator.Training.ImageAutoCaptionJobPayload = {
     mediaUrl: getUrl,
@@ -431,12 +394,10 @@ export const autoCaptionHandler = async ({
   });
 
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -542,9 +503,8 @@ export async function updateTrainingWorkflowRecords(
   // Read, never derived: createTrainingWorkflow stamps this at submit, and this runs again on any
   // re-sync of a finished run. Deriving it here would renumber one — and generation binds an epoch
   // by value, where getTrainingFileEpochNumberDetails answers a miss with the newest epoch rather
-  // than an error, so those bindings would silently move to other weights. Not enforced, though:
-  // `modelFileMetadataSchema` takes `trainingResults` from the client, so an owner can seed any
-  // offset on their own run.
+  // than an error, so those bindings would silently move to other weights. modelFile writes drop
+  // client `trainingResults`, but a file saved before that may carry any offset.
   const epochData = offsetEpochNumbers(derivedEpochs, trainingResults.epochOffset);
 
   const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;
@@ -691,7 +651,7 @@ type AutoLabelStepMetadata = {
 // ⚠ Deliberate NARROWING that comes with it: `isPublicHttpsUrl` also refuses *public* bare
 // IPv4/IPv6 literals and dot-less hostnames. A legitimate media URL is a DNS name, and the
 // canonical helper makes the same call for App Blocks manifests, so the two now agree.
-function assertSafeMediaUrls(urls: string[]) {
+export function assertSafeMediaUrls(urls: string[]) {
   for (const raw of urls) {
     let parsed: URL;
     try {
@@ -711,6 +671,29 @@ function assertSafeMediaUrls(urls: string[]) {
     if (!lexical.ok) {
       throw throwBadRequestError('mediaUrl host is not reachable');
     }
+  }
+}
+
+// For submits on the system orchestrator token: only media on Civitai's orchestrator, where uploads
+// land. The raw string is forwarded, so it must already be canonical (which also refuses the
+// backslash and control bytes WHATWG rewrites); the host judged here is then the host any parser
+// sees. `@` is refused anywhere: a parser splitting the authority on the last `@` would read the
+// host from the query. Both host comparisons include the port.
+export function assertCivitaiMediaUrls(urls: string[]) {
+  const publicHost = new URL(clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT).host;
+  for (const raw of urls) {
+    const parsed = URL.canParse(raw) ? new URL(raw) : null;
+    const ok =
+      parsed &&
+      parsed.href === raw &&
+      !parsed.hash &&
+      !raw.includes('@') &&
+      (isTrustedOrchestratorUrl(raw) ||
+        (parsed.protocol === 'https:' && parsed.host === publicHost));
+    if (!ok)
+      throw throwBadRequestError(
+        'Auto-label only accepts media uploaded to Civitai. Upload the file, then try again.'
+      );
   }
 }
 
@@ -802,6 +785,9 @@ export async function submitAutoLabelWorkflow({
             mediaUrl: img.mediaUrl,
             temperature: params.temperature,
             maxNewTokens: params.maxNewTokens,
+            // Training wants the caption itself, not the moderation-oriented transcript.
+            includeCaption: true,
+            prepareForModeration: false,
           },
           metadata: stepMetadata,
         };

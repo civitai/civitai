@@ -1,18 +1,14 @@
 import {
   Alert,
   Anchor,
-  Badge,
   Box,
   Center,
   Container,
-  Divider,
   Group,
   Loader,
   Menu,
-  Stack,
   Text,
   ThemeIcon,
-  Title,
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -51,6 +47,8 @@ import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -85,7 +83,6 @@ const TransferModelOwnership = dynamic(
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -96,6 +93,7 @@ import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
+import { modelOgEndpoint } from '~/components/Meta/og-image-url';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
@@ -103,14 +101,32 @@ import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
+import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
-import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
+import {
+  CategoryBadge,
+  ModelStatBadge,
+  ModelStatText,
+  ModelTitle,
+  PageGroup,
+  PageStack,
+  TagBadge,
+  TagDivider,
+  UpdatedText,
+} from '~/components/Model/ModelPageDs/ModelPageDs';
+import {
+  modelVersionAccessInput,
+  toModelVersionPermissionData,
+  useModelVersionPermission,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -131,9 +147,8 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   getIsSafeBrowsingLevel,
@@ -142,8 +157,10 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import {
+  AppealCategory,
   Availability,
   CollectionType,
+  CosmeticEntity,
   ModelStatus,
   ModelType,
   UserHubSourceType,
@@ -177,6 +194,14 @@ import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookup
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
+
+const NOT_FOUND = Symbol('model-not-found');
+
+const isNotFoundError = (error: unknown) => {
+  // `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`.
+  const err = error as { code?: string; data?: { code?: string } } | null | undefined;
+  return err?.code === 'NOT_FOUND' || err?.data?.code === 'NOT_FOUND';
+};
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -271,14 +296,19 @@ export const getServerSideProps = createServerSideProps({
       // Fetch the model first so we can short-circuit on slug mismatch before
       // doing any other prefetch work. Stale links from search results /
       // bookmarks land here often; bailing early saves ~5 DB roundtrips.
-      const model = await ssg.model.getById
+      const fetched = await ssg.model.getById
         .fetch({ id, excludeTrainingData: true })
-        .catch(() => null);
+        .catch((error) => (isNotFoundError(error) ? NOT_FOUND : null));
+      // `getById` is viewer-scoped, so this is a 404 for exactly the viewers it refuses; any
+      // other failure still renders and lets the client retry.
+      if (fetched === NOT_FOUND) return { notFound: true };
+      const model = fetched;
 
       if (model) {
         gating = {
           contentNsfwLevel: model.nsfwLevel,
-          nsfw: model.nsfw,
+          // A complete .com face is what civitai.com shows; it is not the mature listing.
+          nsfw: model.nsfw && !model.hasSfwFace,
         };
         suppressAds = model.status !== ModelStatus.Published;
       }
@@ -311,10 +341,9 @@ export const getServerSideProps = createServerSideProps({
         [
           ssg.hiddenPreferences.getHidden.prefetch(),
           modelVersionIdParsed
-            ? ssg.common.getEntityAccess.prefetch({
-                entityId: modelVersionIdParsed as number,
-                entityType: 'ModelVersion',
-              })
+            ? ssg.common.getEntityAccess.prefetch(
+                modelVersionAccessInput(modelVersionIdParsed as number)
+              )
             : null,
           ssg.model.getCollectionShowcase.prefetch({ id }),
           // Creator-card CLS fix: SSR-prefetch user.getCreator (the SmartCreatorCard
@@ -322,6 +351,10 @@ export const getServerSideProps = createServerSideProps({
           // rank, links, badges — instead of rendering the zeroed fallback and
           // growing once the client fetch lands. Simple key, no middleware to
           // mismatch; fail-soft on miss.
+          // Kept under `modelPageDeferBelowFold` too: there the card renders client-side only
+          // (see ModelVersionDetails), and this prefetch lets it mount from the dehydrated
+          // cache with the real creator, so the page shifts once (placeholder → card) rather
+          // than twice (placeholder → zeroed fallback → card).
           model?.user?.id
             ? ssg.user.getCreator.prefetch({ id: model.user.id }).catch(() => null)
             : null,
@@ -356,7 +389,6 @@ export const getServerSideProps = createServerSideProps({
           // Query key won't line up and the client refetches. Fail-soft on any miss.
           model && modelVersionIdParsed
             ? (async () => {
-                const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
                 // Mirror ModelCarousel: a minor model forces its carousel to SFW for
                 // non-moderators, so SSR must resolve at that same forced level. Using
                 // the viewer's own level here would key on a different disableMinor
@@ -371,11 +403,10 @@ export const getServerSideProps = createServerSideProps({
                       canViewNsfw: features?.canViewNsfw ?? false,
                       user: session?.user,
                     });
-                const addons = await getBrowsingSettingAddons().catch(() => null);
-                if (!addons) return null;
-                const addonSettings = resolveBrowsingSettingsAddons(addons, browsingLevel, {
+                const filters = await getServerImageQueryFilters(browsingLevel, {
                   isModerator: session?.user?.isModerator,
                 });
+                if (!filters) return null;
                 return ssg.image.getInfinite
                   .prefetchInfinite({
                     modelVersionId: modelVersionIdParsed as number,
@@ -386,10 +417,7 @@ export const getServerSideProps = createServerSideProps({
                     pending: true,
                     include: [],
                     withMeta: false,
-                    browsingLevel,
-                    excludedTagIds: addonSettings.excludedTagIds,
-                    disablePoi: addonSettings.disablePoi,
-                    disableMinor: addonSettings.disableMinor,
+                    ...filters,
                   })
                   .catch(() => null);
               })()
@@ -416,6 +444,7 @@ export default function ModelDetailsV2({
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
+  const ds = !!features.modelPageDesignSystemMarkup;
   const { activeTour, running, runTour } = useTourContext();
 
   const [opened, { toggle }] = useDisclosure();
@@ -467,7 +496,12 @@ export default function ModelDetailsV2({
     ) ?? 0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
-    useModelVersionPermission({ modelVersionId: selectedVersion?.id });
+    useModelVersionPermission({
+      modelVersionId: selectedVersion?.id,
+      // The version is already on hand from model.getById — don't refetch it via modelVersion.getById.
+      modelVersion:
+        model && selectedVersion ? toModelVersionPermissionData(model, selectedVersion) : undefined,
+    });
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -575,7 +609,8 @@ export default function ModelDetailsV2({
     }
   };
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess() {
+    async onSuccess(result) {
+      notifyIfPublishHeld(result);
       await queryUtils.model.getById.invalidate({ id });
     },
     onError(error) {
@@ -868,7 +903,7 @@ export default function ModelDetailsV2({
   return (
     <Gated
       contentNsfwLevel={model.nsfwLevel}
-      nsfw={model.nsfw}
+      nsfw={model.nsfw && !model.hasSfwFace}
       bypassRating={isOwner}
       suppressAds={!published}
       meta={{
@@ -877,7 +912,7 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
         description: truncate(removeTags(model.description ?? ''), { length: 150 }),
         images: versionImages,
-        ogEndpoint: `/api/og?type=model&id=${model.id}`,
+        ogEndpoint: modelOgEndpoint(model),
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
@@ -897,24 +932,23 @@ export default function ModelDetailsV2({
       <RenderAdUnitOutstream minContainerWidth={2800} />
       <div className={showRail ? `${classes.mainRegion} ${classes.withRail}` : classes.mainRegion}>
         <Container size="xl" px={0} className={classes.contentCol} data-tour="model:start">
-          <Stack gap="xl">
-            <Stack gap="xs">
-              <Stack gap={4}>
-                <Group align="flex-start" justify="space-between" wrap="nowrap">
-                  <Group className={classes.titleWrapper} align="center">
-                    <Title className={classes.title} order={1} lineClamp={2}>
+          <PageStack ds={ds} gap="xl">
+            <PageStack ds={ds} gap="xs">
+              <PageStack ds={ds} gap={4}>
+                <PageGroup ds={ds} align="flex-start" justify="space-between" nowrap>
+                  <PageGroup ds={ds} className={classes.titleWrapper}>
+                    <ModelTitle ds={ds} className={classes.title}>
                       {model?.name}
-                    </Title>
+                    </ModelTitle>
                     <StatHoverCard
                       label="Unique Reviews"
                       value={model.rank?.thumbsUpCountAllTime ?? 0}
                     >
                       <div>
                         <LoginRedirect reason="favorite-model">
-                          <IconBadge
-                            radius="sm"
+                          <ModelStatBadge
+                            ds={ds}
                             color={isFavorite ? 'green' : 'gray'}
-                            size="lg"
                             icon={
                               <ThumbsUpIcon
                                 size={18}
@@ -930,10 +964,10 @@ export default function ModelDetailsV2({
                               handleToggleFavorite({ setTo: !isFavorite });
                             }}
                           >
-                            <Text className={classes.modelBadgeText}>
+                            <ModelStatText ds={ds} className={classes.modelBadgeText}>
                               {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
-                            </Text>
-                          </IconBadge>
+                            </ModelStatText>
+                          </ModelStatBadge>
                         </LoginRedirect>
                       </div>
                     </StatHoverCard>
@@ -942,15 +976,15 @@ export default function ModelDetailsV2({
                       value={model.rank?.downloadCountAllTime ?? 0}
                       message={model.hiddenMetrics?.downloads ? HIDDEN_METRIC_MESSAGE : undefined}
                     >
-                      <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
-                        <Text className={classes.modelBadgeText}>
+                      <ModelStatBadge ds={ds} icon={<IconDownload size={18} />}>
+                        <ModelStatText ds={ds} className={classes.modelBadgeText}>
                           {model.hiddenMetrics?.downloads ? (
                             <HiddenMetricNotice size={18} withTooltip={false} />
                           ) : (
                             abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)
                           )}
-                        </Text>
-                      </IconBadge>
+                        </ModelStatText>
+                      </ModelStatBadge>
                     </StatHoverCard>
                     {latestGenerationVersion && (
                       <GenerateButton
@@ -958,15 +992,15 @@ export default function ModelDetailsV2({
                         modelId={model.id}
                         data-activity="create:model-stat"
                       >
-                        <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
-                          <Text className={classes.modelBadgeText}>
+                        <ModelStatBadge ds={ds} icon={<IconBrush size={18} />}>
+                          <ModelStatText ds={ds} className={classes.modelBadgeText}>
                             {model.hiddenMetrics?.generations ? (
                               <HiddenMetricNotice size={18} />
                             ) : (
                               abbreviateNumber(model.rank?.generationCountAllTime ?? 0)
                             )}
-                          </Text>
-                        </IconBadge>
+                          </ModelStatText>
+                        </ModelStatBadge>
                       </GenerateButton>
                     )}
                     {features.collections && (
@@ -976,17 +1010,16 @@ export default function ModelDetailsV2({
                       >
                         <div>
                           <LoginRedirect reason="add-to-collection">
-                            <IconBadge
-                              radius="sm"
-                              size="lg"
+                            <ModelStatBadge
+                              ds={ds}
                               icon={<IconBookmark size={18} />}
                               className="cursor-pointer"
                               onClick={handleCollect}
                             >
-                              <Text className={classes.modelBadgeText}>
+                              <ModelStatText ds={ds} className={classes.modelBadgeText}>
                                 {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
-                              </Text>
-                            </IconBadge>
+                              </ModelStatText>
+                            </ModelStatBadge>
                           </LoginRedirect>
                         </div>
                       </StatHoverCard>
@@ -1003,22 +1036,21 @@ export default function ModelDetailsV2({
                             entityId={model.id}
                             entityType="Model"
                           >
-                            <IconBadge
+                            <ModelStatBadge
+                              ds={ds}
                               className="cursor-pointer"
-                              radius="sm"
-                              size="lg"
                               icon={
                                 <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
                               }
                             >
-                              <Text className={classes.modelBadgeText}>
+                              <ModelStatText ds={ds} className={classes.modelBadgeText}>
                                 {model.hiddenMetrics?.buzz ? (
                                   <HiddenMetricNotice size={18} withTooltip={false} />
                                 ) : (
                                   abbreviateNumber(buzzEarned)
                                 )}
-                              </Text>
-                            </IconBadge>
+                              </ModelStatText>
+                            </ModelStatBadge>
                           </InteractiveTipBuzzButton>
                         </div>
                       </StatHoverCard>
@@ -1032,19 +1064,14 @@ export default function ModelDetailsV2({
                           </Text>
                         }
                       >
-                        <IconBadge
-                          radius="sm"
-                          color="green"
-                          size="lg"
-                          icon={<IconClock size={18} />}
-                        >
+                        <ModelStatBadge ds={ds} color="green" icon={<IconClock size={18} />}>
                           Early Access
-                        </IconBadge>
+                        </ModelStatBadge>
                       </Tooltip>
                     )}
-                  </Group>
+                  </PageGroup>
 
-                  <Group gap={8} wrap="nowrap">
+                  <PageGroup ds={ds} gap={8} nowrap>
                     <HowToButton
                       size={30}
                       stroke={1.5}
@@ -1167,6 +1194,15 @@ export default function ModelDetailsV2({
                             entityId={model.id}
                           />
                         )}
+                        {/* The model itself, so its showcase images are not the nearest thing to hat. */}
+                        {isCreator && versionImages[0] && (
+                          <AddEventDecorationMenuItem
+                            entityType={CosmeticEntity.Model}
+                            entityId={model.id}
+                            image={versionImages[0]}
+                            findWornHat
+                          />
+                        )}
                         {(!currentUser || !isOwner || isModerator) && (
                           <LoginRedirect reason="report-model">
                             <Menu.Item
@@ -1187,7 +1223,7 @@ export default function ModelDetailsV2({
                             <Menu.Label>Moderation</Menu.Label>
                             <HideUserButton as="menu-item" userId={model.user.id} />
                             <BlockUserButton as="menu-item" userId={model.user.id} />
-                            <HideModelButton as="menu-item" modelId={model.id} />
+                            <HideModelButton as="menu-item" model={model} />
                             <Menu.Item
                               leftSection={<IconTagOff size={14} stroke={1.5} />}
                               onClick={() =>
@@ -1389,50 +1425,27 @@ export default function ModelDetailsV2({
                         )}
                       </Menu.Dropdown>
                     </Menu>
-                  </Group>
-                </Group>
-                <Group gap={4}>
-                  <Text size="xs" c="dimmed">
-                    Updated: {formatDate(model.updatedAt)}
-                  </Text>
+                  </PageGroup>
+                </PageGroup>
+                <PageGroup ds={ds} gap={4}>
+                  <UpdatedText ds={ds}>Updated: {formatDate(model.updatedAt)}</UpdatedText>
                   {category && (
                     <>
-                      <Divider orientation="vertical" />
-                      <Link
-                        href={`/tag/${encodeURIComponent(category.name.toLowerCase())}`}
-                        legacyBehavior
-                        passHref
-                      >
-                        <Badge component="a" size="sm" color="blue" className="cursor-pointer">
-                          {category.name}
-                        </Badge>
-                      </Link>
+                      <TagDivider ds={ds} />
+                      <CategoryBadge ds={ds} name={category.name} />
                     </>
                   )}
 
-                  {tags.length > 0 && <Divider orientation="vertical" />}
+                  {tags.length > 0 && <TagDivider ds={ds} />}
                   <Collection
                     items={tags}
+                    ds={ds}
                     renderItem={(tag) => (
-                      <Link
-                        legacyBehavior
-                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
-                        passHref
-                      >
-                        <Badge
-                          component="a"
-                          size="sm"
-                          color="gray"
-                          variant={colorScheme === 'dark' ? 'filled' : undefined}
-                          className="cursor-pointer"
-                        >
-                          {tag.name}
-                        </Badge>
-                      </Link>
+                      <TagBadge ds={ds} name={tag.name} colorScheme={colorScheme} />
                     )}
                   />
-                </Group>
-              </Stack>
+                </PageGroup>
+              </PageStack>
               {(model.status === ModelStatus.Unpublished || modelDeleted) && (
                 <Alert color="red">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -1450,6 +1463,11 @@ export default function ModelDetailsV2({
                 <ModelUnpublishedAlert
                   reason={model.meta?.unpublishedReason}
                   customMessage={model.meta?.customMessage}
+                  appealHref={
+                    isCreator && features.siteAppealForm
+                      ? siteAppealHref(true, { category: AppealCategory.Model, id: model.id })
+                      : undefined
+                  }
                 />
               )}
               {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
@@ -1482,7 +1500,10 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
-              {isCreator && model.minorFlagged && <ModelMinorFlagAlert model={model} />}
+              {isCreator && (model.minorFlagged || model.poiFlagged) && (
+                <ModelMinorFlagAlert model={model} />
+              )}
+              <OwnerRatingControls entityType="Model" entityId={model.id} isOwner={isCreator} />
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -1504,8 +1525,16 @@ export default function ModelDetailsV2({
                     : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
                 </AlertWithIcon>
               )}
-            </Stack>
-            <Group gap={4} wrap="nowrap">
+              {model.status === ModelStatus.Published && (
+                <FirstPublishCard
+                  entityType="model"
+                  entityId={model.id}
+                  ownerId={model.user.id}
+                  publishedAt={model.publishedAt}
+                />
+              )}
+            </PageStack>
+            <PageGroup ds={ds} gap={4} nowrap>
               {isOwner ? (
                 <>
                   {model.availability !== Availability.Private && (
@@ -1528,6 +1557,7 @@ export default function ModelDetailsV2({
                 </>
               ) : null}
               <ModelVersionList
+                ds={ds}
                 versions={model.modelVersions}
                 selected={selectedVersion?.id}
                 onVersionClick={(version) => {
@@ -1546,16 +1576,17 @@ export default function ModelDetailsV2({
                 showExtraIcons={isOwner || isModerator}
                 showToggleCoverage={model.type === ModelType.Checkpoint}
               />
-            </Group>
+            </PageGroup>
             {!!selectedVersion && (
               <ModelVersionDetails
+                ds={ds}
                 model={model}
                 version={selectedVersion}
                 image={image}
                 onFavoriteClick={handleToggleFavorite}
               />
             )}
-          </Stack>
+          </PageStack>
           {versionCount > 1 ? (
             <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
           ) : null}

@@ -1,4 +1,6 @@
-import { Badge, Button, Card, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import type { ReactNode } from 'react';
+import { useRef, useState } from 'react';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   IconExclamationCircle,
@@ -7,15 +9,15 @@ import {
   IconPinned,
 } from '@tabler/icons-react';
 
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useToggleCommentReaction } from '~/components/CommentSection/useToggleCommentReaction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { ReactionDetails } from '~/server/selectors/reaction.selector';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import type { CommentGetAllItem } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -32,46 +34,9 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
     { initialData: comment._count.comments, staleTime: Infinity, refetchOnWindowFocus: false }
   );
 
-  const queryUtils = trpc.useUtils();
-
-  const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
-    async onMutate({ id, reaction }) {
-      await queryUtils.comment.getReactions.cancel({ commentId: id });
-
-      const previousReactions = queryUtils.comment.getReactions.getData({ commentId: id }) ?? [];
-      const latestReaction =
-        previousReactions.length > 0 ? previousReactions[previousReactions.length - 1] : { id: 0 };
-
-      if (currentUser) {
-        const newReaction: ReactionDetails = {
-          id: latestReaction.id + 1,
-          reaction,
-          user: {
-            id: currentUser.id,
-            username: currentUser.username ?? '',
-          },
-        };
-        const reacted = previousReactions.find(
-          (r) => r.reaction === reaction && r.user.id === currentUser.id
-        );
-        queryUtils.comment.getReactions.setData({ commentId: id }, (old = []) =>
-          reacted
-            ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
-            : [...old, newReaction]
-        );
-      }
-
-      return { previousReactions };
-    },
-    onError(_error, variables, context) {
-      queryUtils.comment.getReactions.setData(
-        { commentId: variables.id },
-        context?.previousReactions
-      );
-    },
-  });
+  const toggleCommentReaction = useToggleCommentReaction(comment.id);
   const handleReactionClick = (reaction: ReviewReactions) => {
-    toggleReactionMutation.mutate({ id: comment.id, reaction });
+    toggleCommentReaction.toggle(reaction);
   };
 
   return (
@@ -104,7 +69,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
         </Group>
       </Group>
 
-      <ContentClamp maxHeight={100}>
+      <ClampedContent commentId={comment.id}>
         <RenderHtml
           html={comment.content}
           className="text-sm"
@@ -112,13 +77,13 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
           withProfanityFilter
           allowStickers
         />
-      </ContentClamp>
+      </ClampedContent>
 
       <Group mt="sm" align="flex-start" justify="space-between" wrap="nowrap">
         <ReactionPicker
           reactions={reactions}
           onSelect={handleReactionClick}
-          disabled={toggleReactionMutation.isPending}
+          disabled={toggleCommentReaction.isPending}
         />
         <Group gap={4} wrap="nowrap">
           {currentUser?.isModerator && comment.tosViolation && (
@@ -153,3 +118,54 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
 }
 
 type Props = { data: CommentGetAllItem; modelUserId?: number };
+
+const CLAMP_HEIGHT = 100;
+
+/**
+ * Kept per comment so a card remounted by the virtualizer renders at its final height. The
+ * virtualizer measures a card when it attaches, before this component's layout effect can add
+ * the Show More control, so deciding on mount shifted every card below it in the column.
+ */
+const clampStateById = new Map<number, { overflows: boolean; expanded: boolean }>();
+const CLAMP_CACHE_LIMIT = 500;
+
+function rememberClampState(id: number, state: { overflows: boolean; expanded: boolean }) {
+  clampStateById.delete(id);
+  clampStateById.set(id, state);
+  if (clampStateById.size > CLAMP_CACHE_LIMIT)
+    clampStateById.delete(clampStateById.keys().next().value!);
+}
+
+function ClampedContent({ commentId, children }: { commentId: number; children: ReactNode }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const cached = clampStateById.get(commentId);
+  const [overflows, setOverflows] = useState(cached?.overflows ?? false);
+  const [expanded, setExpanded] = useState(cached?.expanded ?? false);
+
+  useIsomorphicLayoutEffect(() => {
+    rememberClampState(commentId, { overflows, expanded });
+  }, [commentId, overflows, expanded]);
+
+  useIsomorphicLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const measure = () => setOverflows(el.offsetHeight > CLAMP_HEIGHT);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <>
+      <div style={{ maxHeight: expanded ? undefined : CLAMP_HEIGHT, overflow: 'hidden' }}>
+        <div ref={contentRef}>{children}</div>
+      </div>
+      {overflows && (
+        <Anchor component="button" type="button" onClick={() => setExpanded((v) => !v)}>
+          <Text size="sm">{expanded ? 'Hide' : 'Show More'}</Text>
+        </Anchor>
+      )}
+    </>
+  );
+}

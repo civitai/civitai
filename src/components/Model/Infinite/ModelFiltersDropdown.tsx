@@ -5,10 +5,10 @@ import {
   Drawer,
   Group,
   Indicator,
-  MultiSelect,
   Popover,
   ScrollArea,
   Stack,
+  TextInput,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import type { CSSProperties } from 'react';
@@ -21,12 +21,11 @@ import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilterSelect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   Availability,
@@ -35,6 +34,7 @@ import {
   ModelStatus,
   ModelType,
 } from '~/shared/utils/prisma/enums';
+import { adjustPublishedRange } from '~/shared/utils/published-range';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
@@ -67,6 +67,7 @@ export function DumbModelFiltersDropdown({
   isFeed,
   maxPopoverHeight,
   hideEarlyAccess = false,
+  showPublishedRange = false,
   ...buttonProps
 }: Props & {
   filters: Partial<ModelFilterSchema>;
@@ -112,6 +113,8 @@ export function DumbModelFiltersDropdown({
       fromPlatform: false,
       isFeatured: false,
       period: MetricTimeframe.AllTime,
+      publishedFrom: undefined,
+      publishedTo: undefined,
       availability: undefined,
     };
 
@@ -130,6 +133,8 @@ export function DumbModelFiltersDropdown({
         fromPlatform: undefined,
         isFeatured: undefined,
         period: MetricTimeframe.AllTime,
+        publishedFrom: undefined,
+        publishedTo: undefined,
       });
     setFilters(reset);
   }, [localMode, setFilters, setQueryFilters]);
@@ -150,6 +155,18 @@ export function DumbModelFiltersDropdown({
     onClear: handleClear,
   });
 
+  const patchPublished = (value: string, edited: 'from' | 'to') => {
+    const range = adjustPublishedRange(
+      {
+        from: mergedFilters.publishedFrom,
+        to: mergedFilters.publishedTo,
+        [edited]: value || undefined,
+      },
+      edited
+    );
+    patchPending({ publishedFrom: range.from, publishedTo: range.to });
+  };
+
   const showCheckpointType =
     !mergedFilters.types?.length || mergedFilters.types.includes('Checkpoint');
 
@@ -168,6 +185,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.fileFormats?.length ?? 0) +
     (!!mergedFilters.availability ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
+    (showPublishedRange && (mergedFilters.publishedFrom || mergedFilters.publishedTo) ? 1 : 0) +
     (mergedFilters.poiOnly ? 1 : 0) +
     (mergedFilters.minorOnly ? 1 : 0) +
     (isModerator && mergedFilters.disablePoi ? 1 : 0) +
@@ -206,6 +224,25 @@ export function DumbModelFiltersDropdown({
           onChange={(period) => patchPending({ period })}
         />
       </Stack>
+      {showPublishedRange && (
+        <Stack gap={0}>
+          <Divider label="Published (up to 31 days)" className="text-sm font-bold" mb={4} />
+          <Group gap={8} grow>
+            <TextInput
+              type="date"
+              aria-label="Published from"
+              value={mergedFilters.publishedFrom ?? ''}
+              onChange={(e) => patchPublished(e.currentTarget.value, 'from')}
+            />
+            <TextInput
+              type="date"
+              aria-label="Published to"
+              value={mergedFilters.publishedTo ?? ''}
+              onChange={(e) => patchPublished(e.currentTarget.value, 'to')}
+            />
+          </Group>
+        </Stack>
+      )}
       <Stack gap={0}>
         {currentUser?.isModerator && (
           <>
@@ -360,14 +397,9 @@ export function DumbModelFiltersDropdown({
       ) : null}
       <Stack gap={0}>
         <Divider label="Base model" className="text-sm font-bold" mb={4} />
-        <MultiSelect
-          data={baseModelSelectData}
+        <BaseModelFilterSelect
           value={(mergedFilters.baseModels as string[]) ?? []}
-          onChange={(baseModels) => patchPending({ baseModels: baseModels as BaseModel[] })}
-          placeholder="All Base Models"
-          searchable={!isMobileDevice()}
-          clearable
-          comboboxProps={{ withinPortal: false }}
+          onChange={(baseModels) => patchPending({ baseModels })}
         />
       </Stack>
 
@@ -469,6 +501,9 @@ export function DumbModelFiltersDropdown({
         shadow="md"
         opened={opened}
         onClose={close}
+        onChange={(next) => {
+          if (!next) close();
+        }}
         middlewares={{ flip: true, shift: true }}
         withinPortal
         withArrow
@@ -497,4 +532,6 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   maxPopoverHeight?: CSSProperties['maxHeight'];
   // Hide the Early Access toggle when the caller locks it on (e.g. Creator Shop).
   hideEarlyAccess?: boolean;
+  // Only the feeds that pass `publishedFrom`/`publishedTo` on to the query offer the range.
+  showPublishedRange?: boolean;
 };

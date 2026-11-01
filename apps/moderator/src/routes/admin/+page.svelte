@@ -5,8 +5,10 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { IconChevronDown, IconChevronRight } from '@tabler/icons-svelte';
+  import { permissionByKey } from '$lib/permissions';
   import type { AccessNode } from '$lib/server/access';
   import type { ActionData, PageData } from './$types';
+  import ChangeHistory from './ChangeHistory.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -147,6 +149,10 @@
     )
   );
   const dirty = $derived(Object.keys(changes).length);
+  // What each changed path held at load, so the save refuses rather than reverts a change made since.
+  const expected = $derived(
+    Object.fromEntries(Object.keys(changes).map((key) => [key, data.granted[key] ?? []]))
+  );
 
   function revert() {
     editedSinceAnswer = true;
@@ -204,7 +210,7 @@
   {/if}
 {/snippet}
 
-{#snippet row(node: AccessNode, depth: number)}
+{#snippet row(node: AccessNode, depth: number, keyColumn: boolean)}
   {@const open = isOpen(node)}
   <!-- Depth reaches assistive tech through the row header's text, not `aria-level`: that attribute is
        only honoured on rows inside a `treegrid`, so here it announced nothing at all. -->
@@ -216,6 +222,11 @@
       ? 'bg-dark-7'
       : 'odd:bg-dark-7/40'}"
   >
+    {#if keyColumn}
+      <td class="py-1.5 pr-4 pl-4 whitespace-nowrap">
+        <code class="text-xs text-dark-2">{permissionByKey(node.key)?.id ?? node.key}</code>
+      </td>
+    {/if}
     <th
       scope="row"
       class="py-1.5 pr-4 text-left font-normal"
@@ -245,6 +256,29 @@
       {:else}
         <span class="flex items-center gap-1 pl-4.5 text-dark-0">{node.label}</span>
       {/if}
+      <!-- Roles with no column here, so no checkbox: the save keeps `kept` from the stored row and drops
+           `retired`, and saying so on the row is the only way an operator learns either. -->
+      {#if data.outside[node.key]}
+        {@const { kept, retired } = data.outside[node.key]}
+        <div class="mt-1 flex flex-wrap gap-1 pl-4.5 text-xs">
+          {#each kept as role (role)}
+            <span
+              class="rounded border border-dark-4 px-1.5 py-0.5 text-dark-2"
+              title="Granted outside this page. Saving keeps it."
+            >
+              {role} · kept on save
+            </span>
+          {/each}
+          {#each retired as role (role)}
+            <span
+              class="rounded border border-yellow-500/30 px-1.5 py-0.5 text-yellow-300"
+              title="Not a role this page grants. The next save of this row removes it."
+            >
+              {role} · removed on save
+            </span>
+          {/each}
+        </div>
+      {/if}
     </th>
     {#each data.roles as role (role)}
       <!-- Flex, not `text-center`: the checkbox is a block-level button, which text alignment does not
@@ -256,16 +290,23 @@
   </tr>
   {#if open}
     {#each childrenOf(node) as child (child.key)}
-      {@render row(child, depth + 1)}
+      {@render row(child, depth + 1, keyColumn)}
     {/each}
   {/if}
 {/snippet}
 
-{#snippet matrix(nodes: AccessNode[], heading: string)}
+<!-- `keyColumn` leads each row with its grant key — the id call sites, grant rows and refusals all use —
+     and the action list arrives sorted on it (`pageAccessState`), so one key's actions sit together. -->
+{#snippet matrix(nodes: AccessNode[], heading: string, keyColumn = false)}
   <table class="w-full min-w-xl text-sm">
     <caption class="sr-only">Pages and actions each moderator role is granted</caption>
     <thead class="sticky top-0 z-10 bg-dark-6">
       <tr class="border-b border-dark-4">
+        {#if keyColumn}
+          <th scope="col" class="py-2 pr-4 pl-4 text-left text-xs tracking-wide text-dark-2 uppercase">
+            Grant key
+          </th>
+        {/if}
         <th scope="col" class="py-2 pl-4 text-left text-xs tracking-wide text-dark-2 uppercase">
           {heading}
         </th>
@@ -283,7 +324,7 @@
     </thead>
     <tbody>
       {#each nodes.filter(isVisible) as node (node.key)}
-        {@render row(node, 0)}
+        {@render row(node, 0, keyColumn)}
       {/each}
     </tbody>
   </table>
@@ -305,6 +346,10 @@
     — nothing you change here will alter what your own account sees. To check a change, sign in as an
     account holding only that role, or call
     <code>/api/whoami?userId=…</code>, which reports the verdict for each page and action.
+  </p>
+  <p class="mt-2 text-dark-2">
+    What each role and moderator may spend on the mod assistant per day is set on
+    <a href="/admin/spend-caps" class="underline">Assistant spend caps</a>.
   </p>
 </header>
 
@@ -337,6 +382,7 @@
   <Button variant="outline" size="sm" disabled={!dirty} onclick={revert}>Revert</Button>
   <form method="POST" action="?/save" use:enhance>
     <input type="hidden" name="changes" value={JSON.stringify(changes)} />
+    <input type="hidden" name="expect" value={JSON.stringify(expected)} />
     <Button type="submit" size="sm" disabled={!dirty}>Save</Button>
   </form>
 </div>
@@ -386,7 +432,7 @@
   {#if data.actions.filter(isVisible).length === 0}
     <p class="p-5 text-sm text-dark-2">No actions match <span class="text-dark-0">{search}</span>.</p>
   {:else}
-    {@render matrix(data.actions, 'Action')}
+    {@render matrix(data.actions, 'Action', true)}
   {/if}
 </div>
 
@@ -398,3 +444,5 @@
     {dirty} unsaved change{dirty === 1 ? '' : 's'} — including any made outside the current filter.
   </p>
 {/if}
+
+<ChangeHistory changes={data.changes} historyError={data.historyError} />

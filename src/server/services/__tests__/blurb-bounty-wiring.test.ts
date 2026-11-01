@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as AutoNsfw from '~/server/services/auto-nsfw';
 import type * as BlurbMaterializeService from '~/server/services/blurb-materialize.service';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as ImageIngestion from '~/server/services/image.service';
+import type * as SubmitModule from '~/server/services/text-scan/submit';
 
 // The Bounty half of the blurb save path, run against the REAL `upsertBounty` /
 // `applyBountyContentChange`. Only the blurb modules, the blocklist guard and the Redis-backed
@@ -21,8 +25,10 @@ const {
   enqueueImageIngestion,
   refreshUserBountyCount,
   evaluateAutoNsfw,
+  scanEntityInBackground,
 } = vi.hoisted(() => ({
   evaluateAutoNsfw: vi.fn(),
+  scanEntityInBackground: vi.fn(),
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
   reconcileBlurbReferences: vi.fn(),
@@ -31,6 +37,11 @@ const {
   refreshUserBountyCount: vi.fn(async () => undefined),
 }));
 
+// Pinned per test: 'off' by default keeps the profanity tests about the path they were written for.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+}));
 vi.mock('~/server/services/auto-nsfw', async (importOriginal) => ({
   ...(await importOriginal<typeof AutoNsfw>()),
   evaluateAutoNsfw,
@@ -48,6 +59,10 @@ vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) =>
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageIngestion>()),
   enqueueImageIngestion,
+}));
+vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubmitModule>()),
+  scanEntityInBackground,
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = await importOriginal<typeof RedisCaches>();
@@ -67,8 +82,12 @@ const CLIENT_HTML = '<div data-type="blurb" data-id="7">ATTACKER SUPPLIED</div>'
 const EXPANDED_HTML = '<div data-type="blurb" data-id="7">REAL</div>';
 const USES = [{ blurbId: 7, contentHash: 'h7' }];
 
-const upsert = (input: Record<string, unknown> = {}) =>
-  upsertBounty({
+const upsert = (input: Record<string, unknown> = {}) => {
+  // The fixture image's upload key was issued to whoever saves.
+  const saver = String(input.userId ?? OWNER_ID);
+  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+    keys.map(() => saver)) as never);
+  return upsertBounty({
     id: BOUNTY_ID,
     userId: OWNER_ID,
     isModerator: false,
@@ -96,6 +115,7 @@ const upsert = (input: Record<string, unknown> = {}) =>
     ],
     ...input,
   } as never);
+};
 
 /** The `$executeRaw` templates that write the description column, joined into readable SQL. */
 function descriptionSql() {
@@ -106,6 +126,7 @@ function descriptionSql() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanMode).mockResolvedValue('off');
   expandBlurbs.mockResolvedValue({ evaluated: true, html: EXPANDED_HTML, uses: USES });
   getReferencedBlurbIds.mockResolvedValue([7]);
   reconcileBlurbReferences.mockResolvedValue(undefined);
@@ -233,6 +254,14 @@ describe('upsertBounty — blurb reconciliation', () => {
 });
 
 describe('applyBountyContentChange', () => {
+  it('hands the text it just wrote to the text scan', async () => {
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Bounty',
+      entityId: BOUNTY_ID,
+    });
+  });
+
   it('writes the description column and nothing else', async () => {
     await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
 
@@ -276,6 +305,20 @@ describe('applyBountyContentChange', () => {
 // The bypass this closes: `upsertBounty` evaluates the text a creator types, but this path
 // rewrites an already-published description with text that gate never saw.
 describe('applyBountyContentChange — the auto-NSFW gate', () => {
+  it('does not run once Bounty text scan is active; the rescan is the rating path', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    evaluateAutoNsfw.mockReturnValue(FLAGGED);
+
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+
+    expect(evaluateAutoNsfw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.bounty.update).not.toHaveBeenCalled();
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Bounty',
+      entityId: BOUNTY_ID,
+    });
+  });
+
   const FLAGGED = {
     metaPatch: { profanityMatches: ['x'], profanityEvaluation: { reason: 'r', metrics: {} } },
     lock: true,

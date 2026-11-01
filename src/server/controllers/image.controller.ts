@@ -1,5 +1,4 @@
 import { TRPCError } from '@trpc/server';
-import { v4 as uuid } from 'uuid';
 import {
   BlockedReason,
   ImageSort,
@@ -33,33 +32,56 @@ import {
   updateImageAcceptableMinor,
   raiseOwnImageNsfwLevel,
   updateImageNsfwLevel,
+  getOpenImageReportIds,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
+import {
+  clearReviewFlagsOnBlock,
+  keepPendingAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import { getGallerySettingsByModelId } from '~/server/services/model.service';
+import {
+  getGallerySettingsByModelId,
+  getHeldGalleryLevel,
+  getHeldLevelsByPost,
+} from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
+import {
+  canConfirmReRemoval,
+  heldRemovalSummary,
+  holdRemovals,
+} from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
+import { viewerCanSeeImageMedia, withoutMedia } from '~/server/utils/image-media-visibility';
+import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
+  EntityType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import type {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -71,6 +93,7 @@ import type {
   UpdateImageNsfwLevelOutput,
 } from './../schema/image.schema';
 import { requiresImageDbPath } from './../schema/image.schema';
+import { FEED_MAX_LIMIT } from '~/server/services/feed-shadow.service';
 import {
   getAllImages,
   getEntityCoverImage,
@@ -81,6 +104,7 @@ import {
   getResourceIdsForImages,
   filterPinnedImagesToVersion,
   getTagNamesForImages,
+  getPostImageCounts,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
@@ -110,6 +134,9 @@ export const moderateImageHandler = async ({
       userId: ctx.user.id,
       ip: resolveClientIpOrNull(ctx.req) ?? undefined,
       userAgent: ctx.req.headers['user-agent'],
+      ...(input.reviewAction === 'block' && {
+        canConfirmReRemoval: await canConfirmReRemoval(ctx.user),
+      }),
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -138,9 +165,15 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById(input);
+    const image = await deleteImageById({ ...input, deletedById: ctx.user.id });
 
     if (image) {
+      // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Image,
+        entityIds: [input.id],
+        ownerId: ctx.user.id,
+      });
       await ctx.track.images([
         {
           type: 'Delete',
@@ -188,11 +221,30 @@ export const setTosViolationHandler = async ({
     });
     if (!image) throw throwNotFoundError(`No image with id ${id}`);
 
+    // Before anything changes: a held removal leaves the image, its reports and its owner untouched
+    // until a second moderator confirms it.
+    if (!(await canConfirmReRemoval(user))) {
+      const { held } = await holdRemovals(
+        [
+          {
+            imageId: id,
+            violationType,
+            violationDetails,
+            reportIds: await getOpenImageReportIds(id, ReportReason.TOSViolation),
+          },
+        ],
+        user.id,
+        'site.setTosViolation'
+      );
+      if (held.length) return { ...image, held: heldRemovalSummary(held)[0] };
+    }
+
     // Update all reports with this comment id to actioned
     const affectedReports = await updateImageReportStatusByReason({
       id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: user.id,
     });
     // Reward users for accepted reports
     await Promise.allSettled(
@@ -205,7 +257,7 @@ export const setTosViolationHandler = async ({
       userId: image.userId,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:image:${uuid()}`,
+      key: `tos-violation:image:${crypto.randomUUID()}`,
       details: {
         modelName: image.post?.title ?? `post #${image.postId as number}`,
         entity: 'image',
@@ -222,15 +274,16 @@ export const setTosViolationHandler = async ({
     await dbWrite.image.updateMany({
       where: { id },
       data: {
-        needsReview: null,
         ingestion: 'Blocked',
-        // nsfw: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
         updatedAt: new Date(),
       },
     });
+    await clearReviewFlagsOnBlock([id]);
+    await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
+    await refreshProfilePicturesForImages([id]);
 
     // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
     // would let a later account restore un-block what was just moderated.
@@ -242,8 +295,8 @@ export const setTosViolationHandler = async ({
     // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
     // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
     //
-    // It is also load-bearing now: `remove-blocked-images` retracts the SHARED, content-addressed
-    // stored object only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
+    // It is also load-bearing now: `remove-blocked-images` retracts an image's public copies
+    // only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
     // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
     // bytes left in place — which is the safe direction, but not the intended one.
     await trackModActivity(user.id, {
@@ -282,7 +335,7 @@ export const setTosViolationHandler = async ({
         userId: ctx.user.id,
       },
     ]);
-    return image;
+    return { ...image, held: null };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -290,6 +343,30 @@ export const setTosViolationHandler = async ({
 };
 
 // #region [new handlers]
+/**
+ * A held gallery is shown whole to a moderator, signed in or on a full-access key: the same
+ * credentials the moderator procedures accept, so an app a moderator authorised does not get it.
+ */
+const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+
+/**
+ * The images a viewer may see whole: one on a minor or SFW-only model's post, above that model's held
+ * level, only the model's owner and moderators may, each in their own session or with a full key.
+ */
+async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLevel: number }>(
+  ctx: Context,
+  images: T[]
+) {
+  const postIds = images.map((image) => image.postId).filter(isDefined);
+  if (!postIds.length || moderatorView(ctx)) return images;
+  const held = await getHeldLevelsByPost(postIds);
+  return images.filter((image) => {
+    const hold = image.postId ? held.get(image.postId) : undefined;
+    const owner = !!ctx.user && isSessionOrFullUserKey(ctx) && hold?.ownerId === ctx.user.id;
+    return !hold || owner || Flags.intersects(hold.level, image.nsfwLevel);
+  });
+}
+
 export const getInfiniteImagesHandler = async ({
   input,
   ctx,
@@ -321,7 +398,7 @@ export const getInfiniteImagesHandler = async ({
   // same thing either way. The `hubId` conflict in `getInfiniteImagesSchema` still
   // reads the un-narrowed input and so stays the stricter of the two — it refuses
   // a combination this would have served, which is the safe direction.
-  const scopedInput =
+  let scopedInput =
     input.publishedOnly && input.userId && input.userId !== user?.id
       ? { ...input, publishedOnly: undefined }
       : input;
@@ -341,14 +418,29 @@ export const getInfiniteImagesHandler = async ({
   }
 
   try {
+    // A minor or SFW-only model's images are served only at its gallery's held level, except to
+    // moderators, who must see what they may need to remove.
+    const heldLevel = moderatorView(ctx) ? undefined : await getHeldGalleryLevel(scopedInput);
+    if (heldLevel !== undefined) {
+      const browsingLevel = Flags.intersection(scopedInput.browsingLevel, heldLevel);
+      // The fetches read 0 as their default level, not as none, so an empty intersection is an empty page.
+      if (!browsingLevel) return { items: [], nextCursor: undefined };
+      scopedInput = { ...scopedInput, browsingLevel };
+    }
+    // Images picked by id name no model, so each is held by its own post's model.
+    const byId = !!scopedInput.imageId || !!scopedInput.ids?.length;
+
     if (useIndex) {
-      return await getAllImagesIndex({
+      const result = await getAllImagesIndex({
         ...scopedInput,
         user,
+        holdExempt: moderatorView(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        eventDecorationViewer: user,
         signal,
         actor: buildSearchActor({
           userId: user?.id,
@@ -356,6 +448,7 @@ export const getInfiniteImagesHandler = async ({
           userAgent: ctx.req.headers['user-agent'],
         }),
       });
+      return byId ? { ...result, items: await withoutHeldFromViewer(ctx, result.items) } : result;
     } else {
       const result = await getAllImages({
         ...scopedInput,
@@ -364,12 +457,18 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        eventDecorationViewer: user,
       });
       // Name this branch too, like the index path's `source`. Stamped here rather
       // than inside getAllImages because the index result type is derived from its
       // return. No client reads it today — it is the wire contract, and the routing
       // tests assert on it to tell a DB page from an index page that returned nothing.
-      return { ...result, source: 'db' as const };
+      return {
+        ...result,
+        items: byId ? await withoutHeldFromViewer(ctx, result.items) : result.items,
+        source: 'db' as const,
+      };
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -393,6 +492,33 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesIndex>['items'][number];
 type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
+// One completion fetch stays inside the search index's hit window (posts) and the feed service's
+// page (rows): a fetch the feed can't answer whole goes to the search index instead.
+const COMPLETION_POSTS_PER_FETCH = 25;
+const COMPLETION_ROWS_PER_FETCH = FEED_MAX_LIMIT;
+
+/**
+ * Groups posts into completion fetches of at most `COMPLETION_POSTS_PER_FETCH` posts and
+ * `COMPLETION_ROWS_PER_FETCH` rows, in order. A post larger than one fetch goes alone.
+ */
+export function packPostCompletions(postIds: number[], rowsOf: (postId: number) => number) {
+  const batches: number[][] = [];
+  let batch: number[] = [];
+  let rows = 0;
+  for (const postId of postIds) {
+    const r = rowsOf(postId);
+    const full = batch.length >= COMPLETION_POSTS_PER_FETCH || rows + r > COMPLETION_ROWS_PER_FETCH;
+    if (batch.length && full) {
+      batches.push(batch);
+      batch = [];
+      rows = 0;
+    }
+    batch.push(postId);
+    rows += r;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
   ctx,
@@ -402,6 +528,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const { user, features } = ctx;
+    // Every fetch below names `user` as the event decoration viewer. Safe because only a signed-out
+    // response is edge-cached here (createContext), and that one names no viewer.
 
     const useIndex = features.imageIndexFeed;
 
@@ -414,9 +542,34 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const pinned: Record<number, ResultType[]> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
-    const modelGallerySettings = input.modelId
-      ? await getGallerySettingsByModelId({ id: input.modelId })
-      : null;
+    // Only the model's owner and moderators may list the images it hides from its gallery.
+    if (hidden && input.modelId && !moderatorView(ctx)) {
+      const model = await dbRead.model.findUnique({
+        where: { id: input.modelId },
+        select: { userId: true },
+      });
+      if (!user || model?.userId !== user.id) return { nextCursor: undefined, items: [] };
+    }
+    // A minor or SFW-only model's gallery serves only its held level, whatever level is asked for:
+    // the page, the pinned posts and the sponsored post alike. Moderators see it whole.
+    const [modelGallerySettings, heldLevel] = await Promise.all([
+      input.modelId ? getGallerySettingsByModelId({ id: input.modelId }) : null,
+      moderatorView(ctx) ? undefined : getHeldGalleryLevel(input),
+    ]);
+    if (heldLevel !== undefined) {
+      const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
+      // The fetches below read 0 as their default level, not as none, so an empty intersection is an
+      // empty gallery.
+      if (!browsingLevel) return { nextCursor: undefined, items: [] };
+      input = {
+        ...input,
+        browsingLevel,
+        preCapBrowsingLevel: Flags.intersection(
+          input.preCapBrowsingLevel ?? input.browsingLevel,
+          heldLevel
+        ),
+      };
+    }
     const hiddenImages = modelGallerySettings?.hiddenImages ?? {};
     const versionHiddenImages = input.modelVersionId
       ? hiddenImages[input.modelVersionId] ?? []
@@ -442,6 +595,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         followed: false,
         postIds: versionPinnedPosts,
         user,
+        eventDecorationViewer: user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: 'datapacket',
@@ -489,6 +643,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         followed: false,
         postIds: [sponsoredPost.postId],
         user,
+        eventDecorationViewer: user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: 'datapacket',
@@ -506,20 +661,25 @@ export const getImagesAsPostsInfiniteHandler = async ({
       userAgent: ctx.req.headers['user-agent'],
     });
 
+    // TODO handle/remove all these (headers, include, ids)
+    const pageFetchArgs = {
+      ...input,
+      followed: false,
+      domain: getRequestBoardDomainColor(ctx.req),
+      ids: fetchHidden ? versionHiddenImages : undefined,
+      user,
+      eventDecorationViewer: user,
+      headers: { src: 'getImagesAsPostsInfiniteHandler' },
+      include: [...input.include, 'tagIds' as const, 'profilePictures' as const],
+      dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
+      actor,
+    };
+
     while (true) {
-      // TODO handle/remove all these (headers, include, ids)
       const { nextCursor, items } = await fetchFn({
-        ...input,
-        followed: false,
-        domain: getRequestBoardDomainColor(ctx.req),
+        ...pageFetchArgs,
         cursor,
-        ids: fetchHidden ? versionHiddenImages : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
-        user,
-        headers: { src: 'getImagesAsPostsInfiniteHandler' },
-        include: [...input.include, 'tagIds', 'profilePictures'],
-        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        actor,
       });
 
       // Merge images by postId
@@ -542,6 +702,45 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // If there are enough posts, stop
       if (Object.keys(posts).length >= limit) break;
       remaining = limit - Object.keys(posts).length;
+    }
+
+    // Pages are cut by image, so an image-level sort leaves a post holding only the images that
+    // ranked onto this page. Completing it here keeps its card, and the `imageCount` the lazy
+    // carousel loads the tail from, the same on every page. A post whose row count is already on
+    // the page cannot be incomplete, so only the others are fetched again. It runs only with lazy
+    // post images on, so turning that flag off restores the page as the query returned it.
+    if (features.galleryLazyPostImages) {
+      const pagePostIds = Object.keys(posts).map(Number);
+      const rowCounts = await getPostImageCounts({
+        postIds: pagePostIds,
+        dbTarget: pageFetchArgs.dbTarget,
+      }).catch((error: Error) => {
+        // Without counts, complete every post rather than leave one short.
+        logToAxiom({ type: 'error', name: 'gallery-post-counts-failed', message: error.message });
+        return undefined;
+      });
+      const rowCountOf = (postId: number) => rowCounts?.get(postId) ?? POST_IMAGE_LIMIT;
+      const partialPostIds = pagePostIds.filter(
+        (postId) => rowCountOf(postId) > posts[postId].length
+      );
+      const completions = await Promise.all(
+        packPostCompletions(partialPostIds, rowCountOf).map((postIds) =>
+          fetchFn({
+            ...pageFetchArgs,
+            cursor: undefined,
+            postIds,
+            postIdsInRequestedSort: true,
+            // The rows a filtered fetch returns are a subset of the posts' rows.
+            limit: postIds.reduce((sum, postId) => sum + rowCountOf(postId), 0),
+          })
+        )
+      );
+      for (const { items: wholePosts } of completions) {
+        for (const image of wholePosts) {
+          const post = image?.postId ? posts[image.postId] : undefined;
+          if (post && !post.some((x) => x.id === image.id)) post.push(image);
+        }
+      }
     }
 
     const mergedPosts = Object.values({ ...pinned, ...posts });
@@ -599,7 +798,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // TODO meili has sortAt as a string, not a date
       const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
 
-      if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      if (input.sort === ImageSort.Newest)
+        images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
       let nsfwLevel = 0;
       for (const imageNsfwLevel of imageNsfwLevels) {
@@ -732,23 +932,87 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    const result = await getImage({
-      ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
-    });
+    const [image, eventDecorations] = await Promise.all([
+      getImage({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      }),
+      // The hat the image detail draws when it is opened on its own, with no feed to seed it.
+      // Safe per viewer only while image.get caches nothing per URL.
+      // A hat is decoration: its lookup failing must not fail the image.
+      getEventDecorationsForEntity({
+        ids: [input.id],
+        entity: 'Image',
+        viewer: eventViewerOf(ctx),
+      }).catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'image-get-event-decoration',
+          message: (error as Error).message,
+          imageId: input.id,
+        }).catch(() => undefined);
+        return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
+      }),
+    ]);
+    const result = { ...image, eventDecoration: eventDecorations[image.id] ?? null };
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });
       if (blocked) throw throwNotFoundError();
     }
 
-    return result;
+    const canSeeMedia = await viewerCanSeeImageMedia(ctx, {
+      nsfwLevel: result.nsfwLevel,
+      userId: result.user.id,
+      postId: result.postId ?? null,
+    });
+    // A failed hold lookup serves the image without media rather than failing the page.
+    const heldChecked = await withoutHeldFromViewer(ctx, [result]).catch((error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'image-get-held-level',
+        message: (error as Error).message,
+        imageId: input.id,
+      }).catch(() => undefined);
+      return [];
+    });
+    const servable = canSeeMedia && !!heldChecked.length;
+    return servable ? result : withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
+
+/**
+ * The image detail page's "Published with <app>" credit, for THIS viewer.
+ *
+ * A query of its own rather than a field on `image.get`, because the image page
+ * renders from whichever payload brought the image there (a feed page, a post's
+ * image list, or `image.get`), so no one image read reaches the sidebar on every
+ * path. The visibility check, the media rule and the fail-open all live in
+ * `readImageAppChip`; this handler only threads the request through. Its answer
+ * varies by viewer, so it must never be edge-cached per URL for a signed-in user
+ * (the default context already sets no edge TTL for one; an anonymous viewer is
+ * always gated to `null`).
+ */
+export const getImagePublishedWithAppHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) =>
+  readImageAppChip({
+    imageId: input.id,
+    ctx,
+    // Fail-closed on absence: a missing host refuses a mature app.
+    host: ctx.req?.headers?.host ?? '',
+    // Computed outside the resolver's try, as on the post page: a pure read of
+    // `ctx.features` and `ctx.user`.
+    viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+  });
 
 export type ImageResourceModel = AsyncReturnType<typeof getImageResourcesHandler>[0];
 export const getImageResourcesHandler = async ({
@@ -759,16 +1023,39 @@ export const getImageResourcesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getImageResources({ ...input });
+    const resources = await getImageResources({ ...input });
+    // A .com face makes the name depend on the viewer, so that response stays out of the edge cache.
+    if (ctx.cache && resources.some((resource) => resource.sfwName != null)) ctx.cache.skip = true;
+    const showSfwFace = showsSfwFace(getRequestBrowsingLevel(ctx));
+    return resources.map(({ sfwName, modelName, ...resource }) => ({
+      ...resource,
+      modelName:
+        modelName == null
+          ? modelName
+          : resolveModelFace({ name: modelName, sfwName }, showSfwFace).name,
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
 
-export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
+export const getEntitiesCoverImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetEntitiesCoverImage;
+  ctx: Context;
+}) => {
   try {
-    return await getEntityCoverImage({ ...input, include: ['tags'] });
+    return await getEntityCoverImage({
+      ...input,
+      include: ['tags'],
+      viewer: ctx.user,
+      // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
+      // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
+      eventDecorationViewer: ctx.user,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

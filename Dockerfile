@@ -1,6 +1,6 @@
 ##### DEPENDENCIES
 
-FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS deps
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -52,6 +52,11 @@ ARG NODE_BUILD_MEM=8192
 # Defaults empty (commit:null) when built outside CI.
 ARG SOURCE_COMMIT=""
 ENV SOURCE_COMMIT=$SOURCE_COMMIT
+# "1" skips `next build`'s own TypeScript pass (read in next.config.mjs). Empty by default, so
+# every build that does not pass it type-checks. Only the PR-preview build passes it, because
+# that pipeline runs the full `tsc` in a parallel task already. A build ARG is visible to the RUN
+# below as an environment variable; it is deliberately NOT an ENV, so it never reaches the image.
+ARG CIVITAI_SKIP_BUILD_TYPECHECK=""
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
@@ -140,6 +145,20 @@ RUN mkdir -p /app/server-maps && \
     { find . -name '*.js.map' | tar -cf - -T - | tar -xf - -C /app/server-maps || true; } && \
     echo "Staged $(find /app/server-maps -name '*.js.map' | wc -l) server source maps ($(du -sh /app/server-maps | cut -f1))"
 
+# Duplicate server chunks -> one-line re-export stubs, in the SHIPPED tree only.
+#
+# Turbopack emits the same server chunk under many file names (the copies differ only in their
+# trailing sourceMappingURL comment), and its Node runtime loads chunks with `require(<path>)`.
+# Node caches by path, so every copy is compiled and its source kept on the heap. The script
+# replaces each duplicate with `module.exports=require("./<canonical>.js")`: every existing
+# reference still names a real file, and the runtime receives the canonical's own module array
+# (it registers factories by module id, so module identity is unchanged). See the script header.
+#
+# Runs after the gates and the map staging above, which read `.next/server`; this touches only
+# `.next/standalone/.next/server`. Exits 1 if a stub does not resolve to a real chunk, 2 if it
+# finds no chunks — both fail the build.
+RUN node scripts/dedupe-server-chunks.mjs /app/.next/standalone/.next/server
+
 ##### MAPS ARTIFACT (fetched on-demand; NOT part of the runtime image)
 #
 # A minimal `FROM scratch` image holding ONLY the staged server source maps,
@@ -155,7 +174,7 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
-FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runner
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -177,6 +196,11 @@ COPY --from=builder /app/bundle-budget.json ./bundle-budget.json
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# The standalone tRPC server (`node -- trpc-server/server.cjs`): plain CommonJS that serves the
+# tRPC, probe and metrics routes from the compiled route modules above, without the Next router.
+# Only the two runtime files; its tests and parity harness stay out of the image. The default
+# CMD below is unchanged — this is only used where something runs that command instead.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs ./trpc-server/
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
@@ -201,8 +225,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 #
 # Exits 2 (not 0) when it cannot observe its input, same rule as the build-output gates above.
 # The script is removed in the same layer chain so it is not part of the served image.
+#
+# The standalone tRPC server's two files are checked the same way: they require Next internals
+# by deep path (`next/dist/server/...`), which nothing else here loads at build time, so a trace
+# that dropped one would otherwise surface as a crash-looping container.
 COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
-RUN node /tmp/assert-standalone-boot-graph.mjs /app && rm -f /tmp/assert-standalone-boot-graph.mjs
+RUN node /tmp/assert-standalone-boot-graph.mjs /app server.js trpc-server/server.cjs trpc-server/next-compat.cjs && rm -f /tmp/assert-standalone-boot-graph.mjs
 
 USER nextjs
 EXPOSE 3000

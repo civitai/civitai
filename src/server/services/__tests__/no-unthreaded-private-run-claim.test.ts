@@ -139,10 +139,11 @@ const countThreaded = (src: string) => countPrivateRunThreading(src, THREADED_SP
 const LEDGER = [
   {
     opener: 'recordSpendAttribution({',
-    count: 4,
+    count: 6,
     why:
-      'ARM A. Four submit paths write a spend-attribution row: txt2img, customComfy, ' +
-      'the registry-step bridge and the pass-through step. A path that omits the claim ' +
+      'ARM A. Six submit paths write a spend-attribution row: txt2img, customComfy, ' +
+      'the registry-step bridge, the pass-through step, the multi-step workflow and the shared ' +
+      'confirmed-quote path (training runs and confirmed steps). A path that omits the claim ' +
       "writes `tracked` for a private run, which lands in the suspended app's " +
       'owner-visible analytics as engagement.',
     /** A field every site in this population already carries — the extractor's control. */
@@ -150,9 +151,10 @@ const LEDGER = [
   },
   {
     opener: 'quoteBlockAuthorFee({',
-    count: 4,
+    count: 6,
     why:
-      'ARM B, disclosure side. Two estimate sites and two submit sites. An omitted ' +
+      'ARM B, disclosure side. Three estimate sites and three submit sites (txt2img, the ' +
+      'registry step and the multi-step workflow, one of each). An omitted ' +
       'claim here does not move money by itself, but it SHOWS a moderator a fee the ' +
       'submit will refuse — re-creating the estimate/submit divergence the disclosure ' +
       'callers exist to remove.',
@@ -160,9 +162,9 @@ const LEDGER = [
   },
   {
     opener: 'chargeBlockAuthorFee({',
-    count: 2,
+    count: 3,
     why:
-      'ARM B, the DEBIT. The txt2img and registry-step submit paths. This is the one ' +
+      'ARM B, the DEBIT. The txt2img, registry-step and multi-step workflow submit paths. This is the one ' +
       'population where an omission moves real Buzz: the reviewer is debited and the ' +
       'suspended publisher is credited the same amount, because the platform takes no ' +
       'cut on this rail.',
@@ -170,17 +172,18 @@ const LEDGER = [
   },
   {
     opener: 'recordScopeInvocation({',
-    count: 5,
+    count: 8,
     why:
       'THE AUDIT-VISIBILITY ARM, which is NOT a money arm and is in this ledger for the ' +
-      'seam, not the spend. Five router paths write a `block_scope_invocations` row: the ' +
-      'block-post writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
-      "submit and the pass-through submit. That row carries the app's REAL id and the " +
+      'seam, not the spend. Eight router paths write a `block_scope_invocations` row: the ' +
+      'block-post writer, the app-reaction writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
+      'submit, the pass-through submit, the multi-step workflow submit and the shared ' +
+      "confirmed-quote submit (training runs and confirmed steps). That row carries the app's REAL id and the " +
       "viewer's REAL user id, and `app-analytics.service.ts` aggregates it by " +
       '`appBlockId IN (ownedIds)` — so a path that omits the claim writes an UNMARKED row ' +
       "that appears in a delisted app owner's own analytics, which is exactly the signal " +
-      'the private-run feature exists to withhold. The full cross-file population (nine ' +
-      'sites over four files) is ledgered by ' +
+      'the private-run feature exists to withhold. The full cross-file population (thirteen ' +
+      'sites over five files) is ledgered by ' +
       '`no-unmarked-private-run-invocation.test.ts`; this entry exists so the TOTAL below ' +
       'stays an honest count of the router.',
     control: 'statusCode',

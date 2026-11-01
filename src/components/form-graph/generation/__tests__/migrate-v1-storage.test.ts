@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { buildV1MigrationIntent, migrateV1GenerationStorage } from '../migrate-v1-storage';
 
 const EXT: GenerationCtx = {

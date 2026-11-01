@@ -81,7 +81,7 @@ describe('shouldBatch', () => {
     expect(shouldBatch(op())).toBe(false);
   });
 
-  it('does NOT batch when window.isAuthed is unknown/undefined (early hydration is safe)', () => {
+  it('does NOT batch when window.isAuthed is unknown/undefined (session not yet known)', () => {
     setTrpcBatchingEnabled(true);
     setWindowAuthed(undefined); // window exists but isAuthed not yet set
     expect(shouldBatch(op())).toBe(false);
@@ -404,13 +404,13 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
   const routersDir = join(process.cwd(), 'src/server/routers');
 
   // Map `<basename>.router.ts` -> tRPC key prefix from the appRouter registration:
-  //   `key: lazy(() => import('.../x.router').then((m) => m.xRouter))`
+  //   `key: () => import('.../x.router').then((m) => m.xRouter)`
   const buildFileToKey = (): Record<string, string> => {
-    // Comment-aware for the same reason as the `edgeCacheIt(` scan: a commented-out `lazy()`
+    // Comment-aware for the same reason as the `edgeCacheIt(` scan: a commented-out
     // registration is not a registered router, and must not mint a key.
     const index = stripTsComments(readFileSync(join(routersDir, 'index.ts'), 'utf8'));
     const map: Record<string, string> = {};
-    const re = /(\w+):\s*lazy\(\(\)\s*=>\s*import\(['"]([^'"]+)['"]\)/g;
+    const re = /(\w+):\s*\(\)\s*=>\s*import\(['"]([^'"]+)['"]\)/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(index))) {
       const [, key, importPath] = m;
@@ -475,13 +475,13 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
 
   it('resolves a bespoke authed opt-out expressed in a local middleware', () => {
     const content = [
-      "const skipIt = middleware(async ({ ctx, next }) => {",
-      "  return next({ ctx: { cache: { ...ctx.cache, skip: !!ctx.user } } });",
-      "});",
-      "",
-      "  getAll: publicProcedure",
-      "    .use(skipIt)",
-      "    .use(edgeCacheIt({ ttl: 60 }))",
+      'const skipIt = middleware(async ({ ctx, next }) => {',
+      '  return next({ ctx: { cache: { ...ctx.cache, skip: !!ctx.user } } });',
+      '});',
+      '',
+      '  getAll: publicProcedure',
+      '    .use(skipIt)',
+      '    .use(edgeCacheIt({ ttl: 60 }))',
     ].join('\n');
     const block = procedureBlocks(content).find((b) => b.name === 'getAll')!.block;
     // The bare block cannot see it; resolving `.use()` is what makes it visible.
@@ -491,13 +491,13 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
 
   it('does not invent an opt-out for a local middleware that ignores the caller', () => {
     const content = [
-      "const skipIt = middleware(async ({ input, ctx, next }) => {",
-      "  return next({ ctx: { cache: { ...ctx.cache, skip: !!(input as any).favorites } } });",
-      "});",
-      "",
-      "  getAll: publicProcedure",
-      "    .use(skipIt)",
-      "    .use(edgeCacheIt({ ttl: 60 }))",
+      'const skipIt = middleware(async ({ input, ctx, next }) => {',
+      '  return next({ ctx: { cache: { ...ctx.cache, skip: !!(input as any).favorites } } });',
+      '});',
+      '',
+      '  getAll: publicProcedure',
+      '    .use(skipIt)',
+      '    .use(edgeCacheIt({ ttl: 60 }))',
     ].join('\n');
     const block = procedureBlocks(content).find((b) => b.name === 'getAll')!.block;
     expect(optsOutForAuthed(withResolvedUses(block, localMiddlewares(content)))).toBe(false);
@@ -572,6 +572,15 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
     expect(CACHEABLE_PROCEDURES.has('event.getTeamScores')).toBe(true);
     expect(CACHEABLE_PROCEDURES.has('image.getResources')).toBe(true);
   });
+
+  it.each([...NEVER_BATCH_PROCEDURES])('never-batch procedure %s exists in its router', (path) => {
+    // A renamed procedure would leave its old name in NEVER_BATCH_PROCEDURES excluding nothing.
+    const [key, procedure] = path.split('.');
+    const file = Object.entries(buildFileToKey()).find(([, k]) => k === key)?.[0];
+    expect(file).toBeDefined();
+    const content = stripTsComments(readFileSync(join(routersDir, file!), 'utf8'));
+    expect(procedureBlocks(content).map((b) => b.name)).toContain(procedure);
+  });
 });
 
 describe('NEVER_BATCH_PROCEDURES (independent of the edge-cache derivation)', () => {
@@ -584,10 +593,16 @@ describe('NEVER_BATCH_PROCEDURES (independent of the edge-cache derivation)', ()
     clearWindow();
   });
 
-  it('pins both pending-cacheable procedures to the never-batch set', () => {
+  // A literal pin, not a restatement: the four heavy feed names are fixed outside this repo,
+  // which it cannot import or check.
+  it('pins the pending-cacheable and heavy feed procedures to the never-batch set', () => {
     expect([...NEVER_BATCH_PROCEDURES].sort()).toEqual([
       'event.getData',
       'image.getGenerationData',
+      'image.getImagesAsPostsInfinite',
+      'image.getInfinite',
+      'model.getAll',
+      'user.getAll',
     ]);
   });
 

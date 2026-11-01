@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
 
 export type GetPaginatedCosmeticShopItemInput = z.infer<typeof getPaginatedCosmeticShopItemInput>;
 export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
@@ -42,13 +43,20 @@ export type CosmeticShopItemHistoryEntry = z.infer<typeof cosmeticShopItemHistor
 export const cosmeticShopItemHistoryEntry = z.object({
   at: z.string(),
   userId: z.number(),
-  kind: z.enum(['submitted', 'edited', 'reviewed', 'takedown']),
+  kind: z.enum(['submitted', 'edited', 'reviewed', 'takedown', 'refunded']),
   // Status the item landed in after this event.
   status: z.string().optional(),
   // Review verdict for `reviewed` entries: approve | reject | request-changes | revert.
   action: z.string().optional(),
   note: z.string().optional(),
   changes: z.array(cosmeticShopItemHistoryChange).optional(),
+});
+
+const withdrawnRefundTerms = z.object({
+  trigger: z.enum(['reject', 'archive', 'manual']),
+  clawback: z.boolean(),
+  userId: z.number(),
+  at: z.string(),
 });
 
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
@@ -64,6 +72,9 @@ export const cosmeticShopItemMeta = z.object({
   // so today's configured value is not what an older item paid.
   submissionFee: z.number().optional(),
   lastApprovedAmount: z.number().optional(),
+  // Whether holders may wear the item while it is not Published: set by every verdict, cleared by a
+  // creator edit to what holders see. Kept here because `history` is capped and loses old verdicts.
+  displayApproved: z.boolean().optional(),
   // Pre-submit artwork validation + image info, surfaced to moderators in the
   // Creator Shop review queue.
   autoChecks: z
@@ -82,13 +93,15 @@ export const cosmeticShopItemMeta = z.object({
   // sha256 of the submitted artwork bytes — used to block duplicate submissions.
   imageHash: z.string().optional(),
   // Packs only. A pack has no Cosmetic of its own, so its cover art and size
-  // live here rather than in `Cosmetic.data`. `packMemberCount` is a render
-  // convenience; the join table stays authoritative for what's in the pack.
+  // live here rather than in `Cosmetic.data`.
   coverUrl: z.string().optional(),
   // Artwork of the first few members, for packs with no cover of their own.
   // Snapshotted rather than joined so a storefront card can render it from meta
   // alone; re-taken whenever the contents change.
   coverTiles: z.array(z.string()).optional(),
+  // Authoritative, not a render convenience: the build-time member count a sale
+  // is checked against (`packMembersMissing`). The join rows can't serve, since
+  // deleting a member Cosmetic deletes its row. A pack without it can't be sold.
   packMemberCount: z.number().optional(),
   // Cross-creator selling: whether other creators may resell this item, and the %
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
@@ -118,6 +131,13 @@ export const cosmeticShopItemMeta = z.object({
       at: z.string(),
     })
     .optional(),
+  // Set when a moderator rejects the item or it is archived while withheld: purchases made up to
+  // `at` that are still unrefunded get refunded and the creator's payouts reversed. Both writers
+  // set `clawback: true`; a manual refund stamps the same terms on the purchase row only, with
+  // `clawback` chosen by the moderator. The terms stay explicit because they are copied onto
+  // purchase rows and finished as stored. The withdrawn-refund job retries from it; approval and
+  // restore clear it.
+  withdrawnRefund: withdrawnRefundTerms.optional(),
   // Append-only (capped) log of submissions, creator edits, review verdicts and
   // takedowns, so a re-review can see what changed and what was decided before.
   // Absent on items that predate it — the UI shows an empty state rather than
@@ -147,6 +167,14 @@ export const cosmeticPurchaseMeta = z.object({
   // Kept by the platform (no recipient), so nothing to claw back — recorded for
   // the takedown summary and for reconciliation.
   platformCut: z.number().optional(),
+  // Stamped before a withdrawn-item refund moves any money for this purchase: the terms it is
+  // finished on, even if the item's own marker is cleared before it is.
+  withdrawnRefund: withdrawnRefundTerms.optional(),
+  // A box purchase whose draw a takedown revoked: flagged refunded when claimed, with the Buzz owed
+  // until `paidAt`. A re-run of that takedown pays any still owed.
+  takedownRefund: z
+    .object({ shopItemId: z.number(), at: z.string(), paidAt: z.string().optional() })
+    .optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
@@ -203,6 +231,9 @@ export const cosmeticShopSectionMeta = z.object({
   // Renders the sitewide community-cosmetics feed in place of hand-picked
   // items, so mods control the hub's placement/banner/copy like any section.
   communityHub: z.boolean().optional(),
+  // Shop items carrying this event tag join the section on their own, after its hand-picked items,
+  // so an event's approved cosmetics need not be placed one by one. Blank clears it.
+  eventTag: z.union([z.literal('').transform(() => undefined), eventTagSchema]).optional(),
 });
 
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
@@ -215,6 +246,18 @@ export const upsertCosmeticShopSectionInput = z.object({
   image: comfylessImageSchema.nullish(),
   published: z.boolean().optional(),
   meta: cosmeticShopSectionMeta.optional(),
+});
+
+export type SetShopItemEventTagsInput = z.infer<typeof setShopItemEventTagsInput>;
+export const setShopItemEventTagsInput = z.object({
+  shopItemId: z.number().int().positive(),
+  eventTags: eventTagsSchema,
+});
+
+export type ShopItemSectionInput = z.infer<typeof shopItemSectionInput>;
+export const shopItemSectionInput = z.object({
+  shopItemId: z.number().int().positive(),
+  sectionId: z.number().int().positive(),
 });
 
 export type UpdateCosmeticShopSectionsOrderInput = z.infer<
@@ -241,9 +284,13 @@ export const purchaseCosmeticShopItemInput = z.object({
   //
   // The expected price is checked with it: the buyer pressed a button showing a
   // number, and a listing re-priced since that render must refuse rather than
-  // charge something they never agreed to.
+  // charge something they never agreed to. For a pack it is the amount due, which
+  // also moves with what the buyer owns.
   idempotencyKey: z.string().uuid().optional(),
   expectedUnitAmount: z.number().int().nonnegative().optional(),
+  // A mystery box listing only: the box version whose contents and odds the buyer was shown.
+  // Required there; a box edited since refuses rather than sells contents nobody saw.
+  expectedVersion: z.number().int().positive().optional(),
 });
 
 export type ToggleWishlistShopItemInput = z.infer<typeof toggleWishlistShopItemInput>;
@@ -267,4 +314,6 @@ export const getShopInput = z.object({
   // but a shopper filtering the shelf thinks of it as one more kind of thing.
   cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal('Pack')])).optional(),
   sectionId: z.number().optional(),
+  // Only this event's items (Cosmetic.data.event), for the event's own page.
+  event: z.string().max(64).optional(),
 });

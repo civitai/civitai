@@ -259,7 +259,9 @@ Two blind spots in the export itself, both of which need a screenshot to close:
 **Read [`apps/moderator/CLAUDE.md`](../../../apps/moderator/CLAUDE.md) first** — Svelte 5 idiom, shadcn
 usage, styling tokens and component placement are defined there and apply to every page in the app,
 whether it came from Retool or the main app. What follows is only the Retool-specific part. A
-neighbouring route (`routes/reports`, `routes/blocklists`) is a good model.
+neighbouring route (`routes/reports`, `routes/blocklists`) is a good model. A **report queue** is not
+modelled on a neighbour but built to [`docs/moderator-app/report-queue-pattern.md`](../../../docs/moderator-app/report-queue-pattern.md),
+under `routes/reports/<type>` rather than `routes/retool/`.
 
 - **Route**: `apps/moderator/src/routes/retool/<slug>/+page.server.ts` + `+page.svelte`
 - **Data**: `load` calls a service in `$lib/server/<domain>.service.ts`; queries go through
@@ -405,13 +407,8 @@ the repo precisely so the next session doesn't need the previous one's context.
 ## 7. Feedback loop
 
 Moderators report bugs and request features in the **Mod Studio Feedback** Discord group chat —
-channel `1534637921829912777`.
-
-```bash
-QB=~/.claude/skills/discord-bridge/query.mjs
-node $QB messages 1534637921829912777          # recent feedback
-node $QB search "retool" --guild <guildId>     # older context
-```
+channel `1534637921829912777`. The repo's `discord` skill goes through a bot,
+which may not see a group chat; read it with your own Discord access.
 
 Check it **before** starting a page (someone may have already described what they need) and
 **after** shipping one. It carries screenshots, real SQL moderators want surfaced, and bug

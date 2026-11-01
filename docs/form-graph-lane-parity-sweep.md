@@ -1,5 +1,11 @@
 # form-graph lane parity sweep — 2026-09-23
 
+> **Decided and executed (`feat/remove-data-graph`).** `GenerationFormV2` and the whole data-graph
+> lane are deleted. Everything below is the record of the read-across that supported that decision —
+> the lane comparison, the shadow-parse divergence analysis and the Phase 6 sizing are history and
+> are not re-checkable. Two findings outlived the sweep and are still open; they are restated at the
+> top of "What is left".
+
 A read-across of the two generation form lanes, to decide whether `GenerationFormV2` (the data-graph
 lane) can be retired. Run after the header revert of the same date (see
 [`features/generator-header-redesign.md`](features/generator-header-redesign.md)), which put the
@@ -170,6 +176,8 @@ control in v2** — the form-graph lane renders it. The lane is not a strict sub
 
 ## Scope beyond the form: what retiring the lane actually touches
 
+**(Historical — this is the sizing that `feat/remove-data-graph` executed against.)**
+
 `grep -rln "libs/data-graph\|shared/data-graph/generation" src` outside the graph directories
 themselves: **175 files**.
 
@@ -187,8 +195,13 @@ themselves: **175 files**.
 
 ## What is left
 
-Findings **3** (needs a decision on silent redirect vs confirm modal) and **7** (latent until Veo
-ships a second API version). Neither blocks widening the flag.
+Still open, and now the only live items in this file:
+
+- **Finding 3** — needs a decision on silent redirect vs confirm modal.
+- **Finding 7** — the Veo 3 `version` field has no control; latent until `veo3ApiVersions` has a
+  second entry. *Closes when:* a second entry produces a radio group, or the field is removed.
+
+Everything after this paragraph concerns the shadow comparison, which was deleted with the lane.
 
 Bigger than either, and not a form gap — though the largest class of it is now addressed: the shadow comparison
 (`orchestrator/form-graph/shadow-parse.ts`) is not at zero, which is the counter's own stated
@@ -235,7 +248,8 @@ So the counter should not be read as "441 bugs": one class was a hub defect, two
 upstream of it, and the largest remaining class is v1's. That is what the `corrections` labels in
 `shadow-parse` exist to make legible without this kind of manual pass.
 
-`src/components/form-graph/generation/__tests__/lane-parity.test.ts` guards the five fixed findings
-by reading both lanes' entry files, plus the image and audio bodies for the two per-body mounts — the defect class is "the call site is absent in one lane", which
-source can answer, and rendering either lane needs its whole provider stack. Mutation-checked:
-deleting `useGenerationTour()` from `BaseGenerationForm` fails it by name.
+`src/components/form-graph/generation/__tests__/generation-form-mounts.test.ts` (renamed from
+`lane-parity.test.ts` when the second lane was deleted) guards the five fixed findings by reading the
+entry file plus the image and audio bodies for the two per-body mounts — the defect class is "the call
+site is absent", which source can answer, and rendering the form needs its whole provider stack.
+Mutation-checked: deleting `useGenerationTour()` from `BaseGenerationForm` fails it by name.

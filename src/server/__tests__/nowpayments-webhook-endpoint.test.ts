@@ -1,22 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The handler pulls these in at module scope; install canonical mocks first.
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
-const { env, processDeposit, validateWebhookEvent } = vi.hoisted(() => ({
+const { env, processDeposit, validateWebhookEvent, getPaymentStatus } = vi.hoisted(() => ({
   env: { NOW_PAYMENTS_IPN_KEY: 'ipn-secret' } as { NOW_PAYMENTS_IPN_KEY?: string },
   processDeposit: vi.fn(async () => ({ userId: 42, buzzAmount: 0, transactionId: undefined })),
   // Signature validation is not what this suite tests; hold it valid and vary the body.
-  validateWebhookEvent: vi.fn((_sig: string, body: unknown) => ({ isValid: true, ...(body as object) })),
+  validateWebhookEvent: vi.fn((_sig: string, body: unknown) => ({
+    isValid: true,
+    ...(body as object),
+  })),
+  getPaymentStatus: vi.fn(),
 }));
 
 vi.mock('~/env/server', () => ({ env }));
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
-vi.mock('~/server/clickhouse/client', () => ({ trackWebhookEvent: vi.fn(() => Promise.resolve()) }));
-vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
-  default: { validateWebhookEvent },
+vi.mock('~/server/clickhouse/client', () => ({
+  trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
-vi.mock('~/server/services/nowpayments.service', () => ({ processDeposit }));
+vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
+  default: {
+    validateWebhookEvent,
+    lookupPayment: async (id: number) => ({ payment: await getPaymentStatus(id), status: 200 }),
+  },
+}));
+vi.mock('~/server/services/nowpayments.service', () => ({
+  processDeposit,
+  isDepositCredited: async () => false,
+  recordUnverifiedDeposit: async () => undefined,
+}));
 
 const handler = (await import('~/pages/api/webhooks/nowpayments')).default;
 
@@ -27,13 +40,18 @@ function createMocks(body: unknown) {
   >;
 
   let statusCode = 0;
+  let sent: unknown;
   const res = {
     status(code: number) {
       statusCode = code;
       return res;
     },
     json: () => res,
-    send: () => res,
+    send: (body: unknown) => {
+      sent = body;
+      return res;
+    },
+    _sent: () => sent,
     setHeader: () => res,
     end: () => res,
     once: () => res,
@@ -43,12 +61,21 @@ function createMocks(body: unknown) {
 }
 
 const run = (payment_status: string) => {
+  getPaymentStatus.mockResolvedValue({
+    payment_id: 12345,
+    payment_status,
+    order_id: 'user:42',
+    outcome_amount: 9.5,
+    pay_address: '0xaddr',
+    pay_currency: 'btc',
+  });
   const { req, res } = createMocks({ payment_id: 12345, payment_status, order_id: 'user:42' });
   return handler(req as never, res as never).then(() => res);
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getPaymentStatus.mockReset();
   env.NOW_PAYMENTS_IPN_KEY = 'ipn-secret';
 });
 
@@ -60,7 +87,7 @@ describe('nowpayments webhook endpoint', () => {
     expect(processDeposit).toHaveBeenCalledWith(12345, 'failed', expect.any(Object));
   });
 
-  it.each(['confirming', 'finished', 'partially_paid'])(
+  it.each(['confirming', 'confirmed', 'sending', 'finished', 'partially_paid'])(
     'routes a %s event to processDeposit',
     async (status) => {
       await run(status);
@@ -73,5 +100,24 @@ describe('nowpayments webhook endpoint', () => {
 
     expect(processDeposit).not.toHaveBeenCalled();
     expect(res._status()).toBe(200);
+  });
+});
+
+const EXTRA = 'ab'.repeat(64);
+
+describe('nowpayments webhook endpoint: a request that fails validation', () => {
+  it('returns only an error message', async () => {
+    validateWebhookEvent.mockReturnValueOnce({
+      isValid: false,
+      extra: EXTRA,
+    } as never);
+    const { req, res } = createMocks({ payment_id: 12345, payment_status: 'finished' });
+
+    await handler(req as never, res as never);
+
+    expect(res._status()).toBe(400);
+    expect(Object.keys(res._sent() as object)).toEqual(['error']);
+    expect(JSON.stringify(res._sent())).not.toMatch(/[0-9a-f]{64}/);
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain(EXTRA);
   });
 });

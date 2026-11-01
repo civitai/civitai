@@ -5,7 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Ships with the dev-server skill (plain .mjs, loaded by the daemon under node, never bundled),
 // so it is imported by path rather than moved into src/ — same arrangement as the port probe.
 import type { RunHandle } from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
-import { TestQueue, exitCodeFor } from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
+import {
+  DEFAULT_RUN_TIMEOUT_MS,
+  TestQueue,
+  exitCodeFor,
+  parseRunTimeoutFlag,
+} from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
 
 type Kill = RunHandle['kill'];
 
@@ -241,7 +246,7 @@ describe('dev-server test queue', () => {
   /**
    * 🔴 The saturating group holds the lanes that each want most of the machine. If you are here
    * because you moved one of these into `light`: that is the 31-vitest-workers-plus-12-Chromium
-   * pair CLAUDE.md names, and arbitrating it is what this queue exists for.
+   * pair `.claude/rules/testing.md` names, and arbitrating it is what this queue exists for.
    */
   it.each(['component', 'packages', 'apps', 'geometry'])(
     'does not start a %s run beside a running unit suite',
@@ -774,5 +779,62 @@ describe('a clipped log announces itself', () => {
     expect(queue.logs(id, -1)).toHaveLength(2000);
     // An unknown run is 0 dropped, not a throw: the route answers 404 on its own terms.
     expect(queue.droppedFor('nope')).toBe(0);
+  });
+});
+
+describe('run timeout', () => {
+  /**
+   * 30 minutes killed every full unit suite on the shared desk (10-19 21:41Z to 10-20 14:14Z, each
+   * kill throwing away 2-3 core-hours), so the default is 60 and it is a knob, live and in `.env`.
+   */
+  const MIN = 60_000;
+  let now: number;
+  let runner: ReturnType<typeof makeRunner>;
+  const build = (overrides = {}) =>
+    new TestQueue({ startRun: (opts: RunnerArgs) => runner.startRun(opts), now: () => now, ...overrides });
+
+  beforeEach(() => {
+    now = 1_000;
+    runner = makeRunner();
+  });
+
+  it('defaults to 60 minutes: a 59-minute run lives, a 60-minute one is killed', () => {
+    const queue = build();
+    expect(queue.runTimeoutMs).toBe(60 * MIN);
+    expect(DEFAULT_RUN_TIMEOUT_MS).toBe(60 * MIN);
+    const run = queue.request({ worktree: '/wt/a' });
+    now += 59 * MIN;
+    expect(queue.sweep().timedOut).toEqual([]);
+    now += MIN;
+    expect(queue.sweep().timedOut).toEqual([run.id]);
+  });
+
+  it('a live change reaches a run already running, in both directions', () => {
+    const queue = build({ runTimeoutMs: 30 * MIN });
+    const saved = queue.request({ worktree: '/wt/a' });
+    now += 29 * MIN;
+    queue.setRunTimeoutMs(60 * MIN);
+    now += 2 * MIN;
+    expect(queue.sweep().timedOut).toEqual([]);
+    expect(mustGet(queue, saved.id).status).toBe('running');
+    // The control: lowering it below the run's age kills it on the next sweep.
+    queue.setRunTimeoutMs(10 * MIN);
+    expect(queue.sweep().timedOut).toEqual([saved.id]);
+  });
+
+  it('refuses a timeout that would kill everything on the next sweep', () => {
+    const queue = build();
+    for (const bad of [0, -1, Number.NaN, 1.5, '30m']) {
+      expect(() => queue.setRunTimeoutMs(bad as number)).toThrow(/positive whole number/);
+    }
+    expect(queue.runTimeoutMs).toBe(60 * MIN);
+    expect(() => build({ runTimeoutMs: 0 })).toThrow(/positive whole number/);
+  });
+
+  it('--run-timeout takes whole minutes', () => {
+    expect(parseRunTimeoutFlag('90')).toBe(90 * MIN);
+    for (const bad of ['0', '1.5', '', undefined, '30m', 'none']) {
+      expect(() => parseRunTimeoutFlag(bad)).toThrow(/whole minutes/);
+    }
   });
 });

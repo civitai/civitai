@@ -13,8 +13,10 @@ import {
   isTerminal as isTerminalStatus,
   laneConcurrencyArgs,
   parseMaxWorkersFlag,
+  parseRunTimeoutFlag,
 } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { daemonFetch } from './scripts/daemon-http.mjs';
 import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -74,7 +76,7 @@ const DAEMON_URL = resolveDaemonUrl();
 async function daemonRequest(path, options = {}) {
   const url = `${DAEMON_URL}${path}`;
   try {
-    const response = await fetch(url, {
+    const response = await daemonFetch(url, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...options.headers },
     });
@@ -680,6 +682,17 @@ async function cmdTest(sub, rest) {
           process.exit(1);
         }
       }
+      const timeoutAt = rest.findIndex((a) => /^--run-timeout(=|$)/.test(a));
+      if (timeoutAt !== -1) {
+        const inline = rest[timeoutAt].split('=')[1];
+        const raw = inline !== undefined ? inline : rest[timeoutAt + 1];
+        try {
+          body.runTimeoutMs = parseRunTimeoutFlag(raw);
+        } catch (err) {
+          console.error(err.message);
+          process.exit(1);
+        }
+      }
       result = Object.keys(body).length
         ? await daemonRequest('/test-runs/config', { method: 'POST', body: JSON.stringify(body) })
         : await daemonRequest('/test-runs/config');
@@ -925,8 +938,19 @@ async function cmdUnwedge(rest) {
 
 async function cmdWorktree(rest) {
   const [action, ...tail] = rest;
-  const { cmdStale, cmdRemove } = await import('./scripts/worktree.mjs');
+  const { cmdStale, cmdRemove, cmdCreate, parseNewArgs } = await import('./scripts/worktree.mjs');
 
+  if (action === 'env') {
+    const { cmdSkillEnv } = await import('./scripts/skill-env.mjs');
+    cmdSkillEnv(projectRoot, tail);
+    return;
+  }
+
+  if (action === 'new') {
+    const { name, branch, ...opts } = parseNewArgs(tail);
+    await cmdCreate(projectRoot, name, branch, opts);
+    return;
+  }
   if (action === 'stale') {
     await cmdStale(projectRoot, daemonRequest);
     return;
@@ -945,7 +969,7 @@ async function cmdWorktree(rest) {
     );
     return;
   }
-  console.error('Usage: wt <stale|rm>');
+  console.error('Usage: wt <new|stale|rm|env>');
   process.exit(1);
 }
 
@@ -1072,6 +1096,8 @@ Commands:
   test config [n]     Show or set the UNIT lane's concurrency (0 pauses that lane;
                       --typecheck n does the same for the typecheck lane)
                       [--max-workers <n>|none] also caps each run's vitest pool
+                      [--run-timeout <min>] kills a run older than this (default 60;
+                      reaches runs already running)
                       [--typecheck <n>] sets the typecheck lane's limit
                       [--typecheck-apps <n>] sets the app-typecheck lane's limit
                       [--component <n>] sets the component (browser) lane's limit

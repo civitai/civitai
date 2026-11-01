@@ -238,6 +238,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'DELETEs the viewer’s own shared_kv row, cascading away its votes, counter and reports. The most destructive route on the whole shared surface: what it removes cannot be reconstructed from anything left behind, so a suspended app left reachable here could erase a user’s published history in a loop. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
   },
+  'src/pages/api/v1/blocks/storage/[[...path]].ts': {
+    exposure: 'WRITE',
+    why: 'The document store, every operation behind one catch-all: it reads the viewer’s PRIVATE documents, reads and writes the app’s SHARED documents (public within the app, attributed to the viewer), sets marks and counters other users see, and files reports. A suspended app left reachable here could keep reading a signed-in user’s stored data, keep publishing under their name and keep moving public tallies after the takedown. ALREADY refused before this gate as well, by delegation: its resolver (apps/doc-store-access.ts) takes the strict approval read (resolveStrictAppBlockApproval) and gives an app that is not approved no storage at all.',
+  },
   'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
     exposure: 'WRITE',
     why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
@@ -249,6 +253,18 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   'src/pages/api/v1/blocks/goods/purchase.ts': {
     exposure: 'SPEND',
     why: 'Debits the viewer’s Buzz for a manifest-declared good and pays the app owner 70% immediately. The third SPEND route this table carries, and the only one whose counterparty is the app’s own owner: a suspended app left reachable here would keep selling its catalog to signed-in users and keep paying its own owner out of their balances, which is precisely the revenue a takedown exists to stop. The charge is bounded per purchase and per viewer per day, but neither bound is a substitute for refusing a suspended app.',
+  },
+  'src/pages/api/v1/blocks/sub-listings/upsert.ts': {
+    exposure: 'WRITE',
+    why: 'Publishes or edits the viewer’s own app item as an App Store card. The card is public, so a suspended app left reachable here could keep putting new store entries — titles, taglines and images under its users’ names — in front of every store visitor after the takedown. Moderator approval bounds what appears, but refusing a suspended app is the gate.',
+  },
+  'src/pages/api/v1/blocks/sub-listings/withdraw.ts': {
+    exposure: 'WRITE',
+    why: 'Takes the viewer’s own store item out of the App Store. Bounded to the caller’s own rows, but a suspended app left reachable here could still pull its users’ approved cards in a loop, and an approved card cannot come back without another moderator review.',
+  },
+  'src/pages/api/v1/blocks/sub-listings/mine.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Lists the viewer’s own store items for this app with their review status and any moderator reason. Scoped to the calling app and the token subject, but the reasons are moderator-written text about that user, which a suspended app should not keep reading.',
   },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
@@ -1357,6 +1373,12 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/shared-storage/update.ts',
     'src/pages/api/v1/blocks/shared-storage/vote.ts',
     'src/pages/api/v1/blocks/shared-storage/withdraw.ts',
+    // The document store: viewers' private documents, shared writes, marks and reports.
+    'src/pages/api/v1/blocks/storage/[[...path]].ts',
+    // App Store items: two writes of public store cards and the author's own status read.
+    'src/pages/api/v1/blocks/sub-listings/mine.ts',
+    'src/pages/api/v1/blocks/sub-listings/upsert.ts',
+    'src/pages/api/v1/blocks/sub-listings/withdraw.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
     // The per-viewer checkpoint override write. WRITE, so it may not opt out: a
@@ -1523,12 +1545,12 @@ const BACKING_ROW_SCAN_ROOTS = ['src/server', 'src/pages'];
 const BACKING_ROW_LOOKUP_RE = /\bappId_blockId\b/;
 
 const BACKING_ROW_LOOKUP_LEDGER: Record<string, string> = {
+  // ⚠️ `app-storage.service.ts` and `apps-shared.router.ts` USED TO HAVE THEIR OWN ENTRIES, one
+  // per strict row read. Both reads now go through `resolveStrictAppBlockApproval` in the entry
+  // below (via `resolveBlockToken`'s `strict` policies), so neither file names the unique any
+  // more and the derivation dropped them. Their rationales moved into that entry, not away.
   'src/server/services/blocks/block-approval.service.ts':
-    'THE PREDICATE. The one place the row is resolved from token claims and compared against `approved`. Both halves of the runtime — withBlockScope (REST) and assertAppBlockApproved (the tRPC bridge) — resolve their verdict here. Its exemptions are THREE named cases, not the bare `dev` claim (clawgate #571): a signed reviewRunForReal review token, a synthetic id with no backing row, and the owner-dev-tunnel case re-derived from the row owner plus an ACTIVE tunnel. A new approval check belongs in this file or calling it, not beside it.',
-  'src/server/services/apps/app-storage.service.ts':
-    'resolveStorageContext — per-user KV. Reads the row and refuses a non-approved one itself, and is STRICTER than the predicate: it exempts ONLY reviewRunForReal, because per-user KV must resolve to a real Postgres schema and a plain dev token names none. Since clawgate #571 the predicate answers reviewRunForReal first too, so the two now agree about the review sandbox and differ by exactly the owner-dev-tunnel case — correctly, since a suspended app being debugged in its owner tunnel has a page to render but no per-user KV schema to write. Folding this into the predicate would widen an exemption it deliberately does not have. (This lived in `routers/apps.router.ts` until the `/api/v1/blocks/app-storage/*` REST twins landed; it moved so a route module could import the implementation without module-evaluating `appsRouter`. Same function, same single call site, new file.)',
-  'src/server/routers/apps-shared.router.ts':
-    'resolveSharedContext — shared, app-global KV. Same shape, exempts NOTHING: shared storage is cross-user state and run-for-real never grants apps:storage:shared:* at all, so there is no case to exempt. Stricter than both the predicate and resolveStorageContext, for a reason about its target rather than about approval.',
+    "TWO READS, ONE FILE. (1) THE PREDICATE, `resolveAppBlockApprovalVerdict`: the row resolved from token claims and compared against `approved` for both halves of the runtime — withBlockScope (REST) and the `bridge` policy of resolveBlockToken (the tRPC bridge). Its exemptions are named cases, not the bare `dev` claim (clawgate #571): a signed reviewRunForReal review token, a private run (the privateRun + audience pair), a synthetic id with no backing row, and the owner-dev-tunnel case re-derived from the row owner plus an ACTIVE tunnel. (2) THE STRICT READ, `resolveStrictAppBlockApproval`: row must exist and be approved, NO exemption, and it also selects `id` (the storage quota key). Called today from resolveBlockToken's `strict` and `strict+reviewPreview` policies, i.e. by the two legacy storage resolvers (which policy each caller passes is pinned below), and directly by the document store's resolver apps/doc-store-access.ts, which answers a reviewRunForReal token before it and exempts nothing else (who calls this function is not pinned). resolveSharedContext (shared, app-global KV) takes `strict` and exempts NOTHING: shared storage is cross-user state and run-for-real never grants apps:storage:shared:* at all. resolveStorageContext (per-user KV) takes `strict+reviewPreview`, which answers a reviewRunForReal token before this read and exempts nothing else — per-user KV must resolve to a real Postgres schema and a plain dev token names none, so it differs from the predicate by the private-run, owner-dev-tunnel and no-backing-row cases. Folding (2) into (1) would widen an exemption storage deliberately does not have. A new approval check belongs in this file or calling it, not beside it.",
   'src/pages/api/v1/developer/block-manifests.ts':
     'NOT an approval check. The developer manifest-upload path, keyed on an authenticated appId rather than on token claims: it reads the existing row to refuse server-controlled trustTier/renderMode changes, then upserts on the same unique. It gates on trust tier, never on status.',
 };
@@ -1611,6 +1633,75 @@ describe('the approval predicate is not open-coded a second time', () => {
     ).toEqual(Object.keys(BACKING_ROW_LOOKUP_LEDGER).sort());
   });
 
+  /**
+   * 🔴 WHICH APPROVAL POLICY EACH `resolveBlockToken` CALLER PASSES — the half of the backing-row
+   * ledger the consolidation moved out of reach of the derivation above.
+   *
+   * Before the three tRPC resolvers shared `resolveBlockToken`, each storage resolver named the
+   * `appId_blockId` unique itself, so switching one of them onto the lenient shared predicate
+   * deleted its lookup and the ledger above went red on SHRINK. Both strict reads now live in
+   * `block-approval.service.ts`, and a storage caller changes policy by editing one option value,
+   * which no file-level derivation can see. So the option is pinned per caller, in both
+   * directions (the caller set is derived), and the predicate module's two reads are counted.
+   */
+  const APPROVAL_POLICY_BY_CALLER: Record<string, string> = {
+    'src/server/routers/apps-shared.router.ts': 'strict',
+    'src/server/services/apps/app-storage.service.ts': 'strict+reviewPreview',
+    'src/server/services/blocks/block-bridge-auth.service.ts': 'bridge',
+  };
+
+  /** Every `approval:` option value in a CODE position, in source order. */
+  function approvalOptions(rel: string): string[] {
+    return [
+      ...codeWithLiterals(read(rel), rel).matchAll(/\bapproval:\s*\u0000([^\u0000]*)\u0000/g),
+    ].map((m) => m[1]);
+  }
+
+  it('pins the approval policy each resolveBlockToken caller passes', () => {
+    // Walks `src` whole, through the same derivation as the consent seams below — not the
+    // backing-row roots, a bound that would leave a caller under `src/shared` unpinned.
+    // `verifyTokenCallers` skips the REST middleware as the DEFINER of `verifyBlockToken`; that
+    // exclusion is about the OTHER function, so the file is added back here.
+    const callers = [...verifyTokenCallers(), 'src/server/middleware/block-scope.middleware.ts']
+      .filter((rel) => RESOLVER_CALL_RE.test(stripNonCode(read(rel))))
+      .sort();
+    // Positive control: the walk finds the callers at all.
+    expect(callers.length).toBeGreaterThan(2);
+    expect(
+      callers,
+      'the set of resolveBlockToken callers changed — ledger the new one with the approval ' +
+        'policy it passes, and say why that policy is right for its target'
+    ).toEqual(Object.keys(APPROVAL_POLICY_BY_CALLER).sort());
+    for (const [rel, policy] of Object.entries(APPROVAL_POLICY_BY_CALLER)) {
+      expect(
+        approvalOptions(rel),
+        `${rel} must pass approval: '${policy}' — and only that. The storage resolvers' strict ` +
+          'policies are deliberate (see BACKING_ROW_LOOKUP_LEDGER); moving one onto the shared ' +
+          'predicate widens its exemptions and is a decision, not a refactor.'
+      ).toEqual([policy]);
+    }
+    // Discrimination: the matcher reads a code-position value and ignores a comment.
+    expect(
+      [
+        ...codeWithLiterals("f({ approval: 'strict' }); // approval: 'bridge'").matchAll(
+          /\bapproval:\s*\u0000([^\u0000]*)\u0000/g
+        ),
+      ].map((m) => m[1])
+    ).toEqual(['strict']);
+  });
+
+  it('the predicate module resolves the backing row in exactly TWO reads', () => {
+    // The shared predicate and the strict read. Folding one into the other — or adding a third —
+    // leaves the FILE-level ledger above green, so the reads are counted here.
+    const lines = codeWithLiterals(
+      read('src/server/services/blocks/block-approval.service.ts'),
+      'src/server/services/blocks/block-approval.service.ts'
+    )
+      .split('\n')
+      .filter((line) => BACKING_ROW_LOOKUP_RE.test(line));
+    expect(lines).toHaveLength(2);
+  });
+
   it('every ledger entry says what the site does with the row', () => {
     const thin = Object.entries(BACKING_ROW_LOOKUP_LEDGER)
       .filter(([, why]) => why.trim().length < 40)
@@ -1650,17 +1741,24 @@ describe('the approval predicate is not open-coded a second time', () => {
    * 🔴 WHICH TOKEN SEAMS APPLY PER-SCOPE CONSENT REVOCATIONS — a growth/shrink ledger, because
    * the enforcement is a STRIP and a strip is invisible where it is absent.
    *
-   * `verifyBlockToken` has FOUR call sites. Two of them apply revocations
+   * FOUR seams verify a block token: the REST middleware calls `verifyBlockToken` directly; the
+   * tRPC bridge reaches it through `resolveBlockToken` with `consent: 'strip'`, and the two
+   * storage resolvers through `resolveBlockToken` with `consent: 'exempt-only'`. Two of them apply revocations
    * (`consent-revocation.service`'s `applyRevocations`); two do not, and that is safe ONLY
    * because each of those authorizes exclusively `apps:storage:*` / `apps:storage:shared:*`,
    * every one of which is in `CONSENT_EXEMPT_SCOPES` — so no marker can ever name a scope they
    * check. Nothing asserted that property, which means a gated scope added to the storage family
    * would be silently unenforced on those two paths. This is that assertion.
    *
+   * ⚠️ Until the three tRPC resolvers were consolidated onto `resolveBlockToken`, all four seams
+   * called `verifyBlockToken` themselves, and the "applies revocations" half was a property of
+   * each FILE. The strip now lives in the shared resolver, so for a seam that goes through it the
+   * property is the `consent` option it passes, and that is what the arm below reads.
+   *
    * 🔴 IT FAILS IN BOTH DIRECTIONS **BECAUSE IT DERIVES THE CALLER SET**, and the first version did
    * not. That version asserted a growth property it could not observe: every `walk()` in this file
-   * targets `src/pages/api`, while all four real `verifyBlockToken` call sites live under
-   * `src/server/**` — so a fifth caller was invisible and the "fails on growth" sentence was
+   * targets `src/pages/api`, while all four real `verifyBlockToken` call sites of the time lived
+   * under `src/server/**` — so a fifth caller was invisible and the "fails on growth" sentence was
    * false. Same description-wider-than-body defect this commit fixed twice elsewhere, reproduced
    * inside its own new guard. The callers are now enumerated from **`src`**, whole.
    *
@@ -1701,7 +1799,8 @@ describe('the approval predicate is not open-coded a second time', () => {
   };
 
   /**
-   * Every production file that CALLS `verifyBlockToken`, derived by walking `src` whole.
+   * Every production file that VERIFIES a token — calls `verifyBlockToken` or `resolveBlockToken`
+   * (see `VERIFYING_CALL_RE`) — derived by walking `src` whole.
    * `block-scope.middleware.ts` is excluded as the DEFINER — it exports the function, and its own
    * call is the REST seam, which is ledgered by name. The exclusion is safe because both sides of
    * the equality use the same constant, so a RENAME breaks the comparison loudly rather than
@@ -1725,14 +1824,46 @@ describe('the approval predicate is not open-coded a second time', () => {
     const DEFINER = 'src/server/middleware/block-scope.middleware.ts';
     return tsFiles('src')
       .filter((rel) => rel !== DEFINER)
-      .filter((rel) => /verifyBlockToken\s*\(/.test(stripNonCode(read(rel))))
+      .filter((rel) => VERIFYING_CALL_RE.test(stripNonCode(read(rel))))
       .sort();
   }
 
-  it('POSITIVE CONTROL: the verifyBlockToken caller set is derived and complete', () => {
+  /**
+   * A seam VERIFIES a token by calling `verifyBlockToken` directly, or by calling
+   * `resolveBlockToken` (`block-bridge-auth.service.ts`), the one tRPC-side resolver, which
+   * calls it once for all three tRPC resolvers. Until that consolidation each of the three
+   * called `verifyBlockToken` itself, so the derivation keyed on that name alone; keyed on it
+   * alone now, it would lose the two storage seams and the exempt-only arm below would assert
+   * nothing about them.
+   */
+  const VERIFYING_CALL_RE = /\b(?:verifyBlockToken|resolveBlockToken)\s*(?:<[^()]*>)?\s*\(/;
+
+  /**
+   * A call to the shared resolver. Explicit type arguments are tolerated between the name and
+   * the paren: the function is not generic, so `tsc` rejects that spelling, but a ledger that
+   * looked only for the bare call would not have seen it — and once did not.
+   */
+  const RESOLVER_CALL_RE = /\bresolveBlockToken\s*(?:<[^()]*>)?\s*\(/;
+
+  /** A `resolveBlockToken` options object naming this consent mode, in a CODE position. */
+  const consentOption = (rel: string, mode: 'strip' | 'exempt-only') =>
+    new RegExp(`\\bconsent:\\s*\\u0000${mode}\\u0000`).test(codeWithLiterals(read(rel), rel));
+
+  it('POSITIVE CONTROL: the token-verifying caller set (verifyBlockToken or resolveBlockToken) is derived and complete', () => {
     const callers = verifyTokenCallers();
     // A broken walk makes every equality below vacuous.
     expect(callers.length).toBeGreaterThan(2);
+    // …and the widened derivation still SEES a direct caller, and still DISCRIMINATES: the
+    // regex matches a real call to either name and not a mention of either.
+    expect(callers).toContain('src/server/services/blocks/block-bridge-auth.service.ts');
+    expect(VERIFYING_CALL_RE.test('const r = await resolveBlockToken(t, o);')).toBe(true);
+    expect(VERIFYING_CALL_RE.test('const c = await verifyBlockToken(t);')).toBe(true);
+    expect(VERIFYING_CALL_RE.test('import { resolveBlockToken } from "x";')).toBe(false);
+    // The explicit-type-argument spelling is a call too, to both matchers.
+    const typed = "await resolveBlockToken<'bridge', 'exempt-only', false>(t, o);";
+    expect(VERIFYING_CALL_RE.test(stripNonCode(typed))).toBe(true);
+    expect(RESOLVER_CALL_RE.test(stripNonCode(typed))).toBe(true);
+    expect(RESOLVER_CALL_RE.test('import { resolveBlockToken } from "x";')).toBe(false);
     // And it really is the union of the two ledgers — this is the GROWTH check the first version
     // claimed and could not perform.
     // The REST seam IS `block-scope.middleware.ts`, which is also the DEFINER and therefore
@@ -1749,11 +1880,11 @@ describe('the approval predicate is not open-coded a second time', () => {
     const { isConsentExemptScope } = await import('~/server/services/blocks/scope-grant.service');
     const seams = [...Object.keys(CONSENT_STRIP_SEAMS), ...Object.keys(EXEMPT_ONLY_SEAMS)].sort();
 
-    // POSITIVE CONTROL on the enumeration itself: every ledgered seam must really call
-    // `verifyBlockToken`, or this whole block is a claim about a list rather than the tree.
+    // POSITIVE CONTROL on the enumeration itself: every ledgered seam must really verify a
+    // token, or this whole block is a claim about a list rather than the tree.
     for (const rel of seams) {
       expect(stripNonCode(read(rel)), `${rel} does not verify a block token`).toMatch(
-        /verifyBlockToken\s*\(/
+        VERIFYING_CALL_RE
       );
     }
 
@@ -1764,6 +1895,16 @@ describe('the approval predicate is not open-coded a second time', () => {
           `applyRevocations. A strip that is absent is invisible: every scope the viewer ` +
           `withdrew keeps working on that seam for the rest of the token's life.`
       ).toMatch(/applyRevocations\s*\(/);
+      // A seam that goes through the shared resolver must also ASK it to strip: the resolver
+      // file contains `applyRevocations` whatever any one caller passes.
+      if (RESOLVER_CALL_RE.test(stripNonCode(read(rel)))) {
+        // …and ONLY strip: a second call in this file asking for `exempt-only` would be a seam
+        // that verifies without stripping, with no ledger entry of its own.
+        expect(
+          consentOption(rel, 'strip') && !consentOption(rel, 'exempt-only'),
+          `${rel} must pass consent: 'strip' to resolveBlockToken, and nothing else`
+        ).toBe(true);
+      }
     }
 
     for (const [rel, scopes] of Object.entries(EXEMPT_ONLY_SEAMS)) {
@@ -1771,6 +1912,13 @@ describe('the approval predicate is not open-coded a second time', () => {
       expect(code, `${rel} now applies revocations — move it to CONSENT_STRIP_SEAMS.`).not.toMatch(
         /applyRevocations\s*\(/
       );
+      // Since the consolidation the strip lives in the shared resolver, so "does not call
+      // applyRevocations" is true of these files whatever they ask for. What decides it now is
+      // the option they pass — and it must be exempt-only, never strip.
+      expect(
+        consentOption(rel, 'exempt-only') && !consentOption(rel, 'strip'),
+        `${rel} must pass consent: 'exempt-only' to resolveBlockToken, and nothing else`
+      ).toBe(true);
       for (const scope of scopes) {
         expect(
           isConsentExemptScope(scope),

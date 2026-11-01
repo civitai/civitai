@@ -18,19 +18,20 @@ import {
 } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { imagesFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import { imagesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import type { ImageGenerationProcess, MediaType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 100000; // Do not increase - might break Redis from what we've been able to tell.
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
-
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -81,6 +82,14 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       'onIndexSetup :: updateFilterableAttributesTask created',
       updateFilterableAttributesTask
     );
+  }
+
+  // Meili returns at most maxValuesPerFacet (default 100) values per facet, alphabetically.
+  if (settings.faceting?.maxValuesPerFacet !== SEARCH_FACET_LIMIT) {
+    const updateFacetingTask = await index.updateFaceting({
+      maxValuesPerFacet: SEARCH_FACET_LIMIT,
+    });
+    console.log('onIndexSetup :: updateFacetingTask created', updateFacetingTask);
   }
 
   console.log('onIndexSetup :: all tasks completed');
@@ -245,9 +254,13 @@ export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[n
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   // Retired: the `images_v6` Meilisearch index is no longer served (the /search/images page
   // redirects and the `imageSearch` flag is off by default). All writes and syncs no-op, so the
-  // call sites that still queue image updates cost nothing. Restoring image search means clearing
-  // this and re-running a reset to rebuild the index. See ticket 868m4c2dn.
-  retired: true,
+  // call sites that still queue image updates cost nothing. Restoring image search means removing
+  // it from RETIRED_SEARCH_INDEXES and re-running a reset to rebuild the index. See ticket 868m4c2dn.
+  // NOTE: the ban-purge flow (processUserContentRemovalQueue in server/meilisearch/util.ts)
+  // intentionally has NO entry for this index anymore — with it retired, that flow's
+  // getOrCreateIndex re-created the index bare and its delete tasks all failed. Re-add the
+  // images entry there as part of the same change as the restoration reset.
+  retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,

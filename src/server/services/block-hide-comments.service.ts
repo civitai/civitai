@@ -23,6 +23,8 @@ export const THREAD_CONTENT_OWNERS = [
   { column: 'comicProjectId', table: '"ComicProject"', owner: '"userId"', key: 'id' },
   { column: 'challengeId', table: '"Challenge"', owner: '"createdById"', key: 'id' },
   { column: 'appListingId', table: 'app_listings', owner: 'user_id', key: 'serial_id' },
+  { column: 'crucibleId', table: '"Crucible"', owner: '"userId"', key: 'id' },
+  { column: 'storylineId', table: '"Storyline"', owner: '"userId"', key: 'id' },
 ] as const;
 
 // The read resolves an owner for EVERY visible comment the author has before the LIMIT applies, so

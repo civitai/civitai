@@ -1,11 +1,11 @@
 ---
 name: mod-actions
-description: "Comprehensive moderation toolkit: user actions (ban/mute/DM), strike system, image moderation, report handling, generation moderation, content/training moderation, and NCMEC/CSAM reporting. All via Civitai tRPC API."
+description: "Comprehensive moderation toolkit: user actions (ban/mute/DM), strike system, image moderation, report handling, generation moderation, content/training moderation, NCMEC/CSAM reporting, and Creator Shop purchase refunds. All via Civitai tRPC API."
 ---
 
 # Moderator Actions
 
-Comprehensive moderation toolkit for Civitai. Covers user actions, strike management, image moderation, report handling, generation moderation, content/training moderation, and NCMEC/CSAM reporting.
+Comprehensive moderation toolkit for Civitai. Covers user actions, strike management, image moderation, report handling, generation moderation, content/training moderation, NCMEC/CSAM reporting, and Creator Shop purchase refunds.
 
 All scripts use the Civitai tRPC API with Bearer token authentication, ensuring actions go through the proper service layer with full side effects.
 
@@ -33,7 +33,7 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 
 | File | Domain | Commands |
 |------|--------|----------|
-| `query.mjs` | User moderation | user, ban, mute, leaderboard, remove-content, dm |
+| `query.mjs` | User moderation | user, ban, mute, leaderboard, remove-content, dm, inbox, thread, creator-program-ban, end-buzz-membership |
 | `strikes.mjs` | Strike system | get-user, standings, list, create, void |
 | `images.mjs` | Image moderation | review-queue, review-counts, moderate, tos-violation, rescan, report-csam, poi-tags, user-images, rating-requests, ingestion-errors, resolve-ingestion, downleveled, pending-ingestion, toggle-flag |
 | `reports.mjs` | Report handling | list, set-status, bulk-status, update, appeals, appeal-details, resolve-appeal |
@@ -41,6 +41,7 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 | `content.mjs` | Content moderation | models, flagged-models, resolve-flagged, model-versions, rescan-model, restore-model, toggle-cannot-promote, toggle-cannot-publish, articles, mod-rule |
 | `model3ds.mjs` | 3D Models moderation | list, get, files, unpublish, delete, restore, set-nsfw-level, toggle-tos, toggle-poi, toggle-minor, toggle-nsfw, toggle-unlisted |
 | `csam.mjs` | NCMEC/CSAM reporting | reports, stats, image-resources, create-report |
+| `shop.mjs` | Creator Shop | refund |
 
 ---
 
@@ -57,9 +58,13 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 | `mute <id\|username>` | Toggle mute status |
 | `leaderboard <id\|username> <true\|false>` | Set leaderboard eligibility |
 | `remove-content <id\|username>` | Remove all user content (DESTRUCTIVE) |
-| `dm <id\|username>` | Send a DM (requires `--message`) |
+| `dm <id\|username>` | Message the user as the shared **Civitai Moderation** account (requires `--message`; needs the `user.message.asCivitai` permission). The user sees only that account and can reply; you are recorded as the sender. Prints an idempotency key first: if the response is lost, rerun with `--key <key>` and it sends at most once. Refused while another moderator holds the thread's claim, or when the user already has several unanswered messages from the account in 24 h. `--as-self` sends from your own account instead (the old behaviour). |
+| `inbox` | Civitai Moderation threads whose last message is the user's, oldest first (`--all`: every thread, newest first) |
+| `thread <id\|username>` | A user's Civitai Moderation thread, naming the moderator behind each message, and who holds its claim |
+| `creator-program-ban <id\|username> <set\|clear>` | Ban from / unban from the Creator Program (requires `--internal <reason>`; optional `--gate <ref>`; needs the `user.creatorProgram.ban` permission). Use this, never a raw `onboarding` UPDATE. |
+| `end-buzz-membership <id\|username>` | End the account's Buzz-purchased membership now: `canceled`, `canceledAt`/`endedAt` = now, so the tier's perks stop (requires `--internal <reason>`; needs the `user.membership.code` permission). Stripe and code memberships are untouched. Moves no Buzz: refund the purchase separately. |
 
-**Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`
+**Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`, `--gate <ref>`, `--key <key>`, `--as-self`, `--all`
 
 **Ban Reason Codes:** SexualMinor, SexualMinorGenerator, SexualMinorTraining, SexualPOI, Bestiality, Scat, Nudify, Harassment, SpamBot, LeaderboardCheating, BuzzCheating, RRDViolation, Other
 
@@ -67,6 +72,10 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 node .claude/skills/mod-actions/query.mjs user 3879899
 node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "ToS violation" --dry-run
 node .claude/skills/mod-actions/query.mjs dm 3879899 --message "Please review our guidelines"
+node .claude/skills/mod-actions/query.mjs inbox
+node .claude/skills/mod-actions/query.mjs thread 3879899
+node .claude/skills/mod-actions/query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
+node .claude/skills/mod-actions/query.mjs end-buzz-membership 12345 --internal "Buzz refunded by support" --dry-run
 ```
 
 ---
@@ -161,7 +170,7 @@ node .claude/skills/mod-actions/reports.mjs <command> [options]
 node .claude/skills/mod-actions/reports.mjs list --type image --limit 20
 node .claude/skills/mod-actions/reports.mjs set-status 456 Actioned --dry-run
 node .claude/skills/mod-actions/reports.mjs bulk-status Actioned --ids 1,2,3
-node .claude/skills/mod-actions/reports.mjs appeals --user-id 3879899
+node .claude/skills/mod-actions/reports.mjs appeals   # the signed-in account's own recent appeals
 node .claude/skills/mod-actions/reports.mjs resolve-appeal --ids 10,11 --entity-type Image --status Approved
 ```
 
@@ -304,9 +313,26 @@ node .claude/skills/mod-actions/csam.mjs create-report 3879899 --type GeneratedI
 
 ---
 
+## shop.mjs — Creator Shop
+
+```bash
+node .claude/skills/mod-actions/shop.mjs refund <buzzTransactionId...> --reason <text> (--clawback | --no-clawback) [--writable]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `refund <ids...>` | WRITE | Refund purchases: Buzz back to the buyer, payouts reversed with `--clawback`, cosmetic revoked, purchase marked refunded (`creatorShop.refundPurchases`) |
+
+Dry run unless `--writable` (the server's dry run lists each purchase's ledger legs). Re-running is safe.
+`--no-clawback` means Civitai pays the refund, `--clawback` the creator. Choose per case: an agent's
+`--writable` run needs Justin's approval card, and the card must name the clawback value.
+Refusals and behaviour: `docs/features/creator-shop.md` → "Refunding a purchase by hand".
+
+---
+
 ## Global Options
 
-All scripts support:
+All scripts except `shop.mjs` (dry run by default; `--writable` writes) support:
 
 | Flag | Description |
 |------|-------------|
@@ -317,7 +343,7 @@ All scripts support:
 
 ## Safety Notes
 
-- **Always use `--dry-run` first** for destructive/write actions
+- **Always use `--dry-run` first** for destructive/write actions (`shop.mjs`: omit `--writable` first)
 - All actions are logged in the ModActivity table
 - Ban actions invalidate user sessions immediately
 - CSAM reports are submitted to NCMEC — use with extreme care

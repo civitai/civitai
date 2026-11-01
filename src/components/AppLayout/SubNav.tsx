@@ -10,10 +10,12 @@ import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilt
 import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilters';
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
 import { ToolFeedFilters } from '~/components/Filters/FeedFilters/ToolFeedFilters';
+import { AppsStoreFeedFilters } from '~/components/Apps/AppsStoreFeedFilters';
 import { NavCustomizeNotice } from '~/components/Alerts/NavCustomizeNotice';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
 import { SubNavSettingsButton } from '~/components/HomeContentToggle/SubNavSettingsButton';
 import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImageFeedFilters';
+import { StorylineFeedFilters } from '~/components/Storyline/StorylineFeedFilters';
 import clsx from 'clsx';
 
 const filterSections = [
@@ -28,6 +30,8 @@ const filterSections = [
   { pathname: '/tools', component: <ToolFeedFilters ml="auto" /> },
   { pathname: '/tools/[slug]', component: <ToolImageFeedFilters ml="auto" /> },
   { pathname: '/comics', component: <ComicFeedFilters ml="auto" /> },
+  { pathname: '/apps', component: <AppsStoreFeedFilters ml="auto" /> },
+  { pathname: '/storylines', component: <StorylineFeedFilters ml="auto" /> },
   // Matched on `router.pathname`, which is the ROUTE and not the URL, so this has
   // to carry the optional slug segment the hub route gained.
   // Desktop only: below `sm` these are full width (`FeedFilters.module.scss`) and

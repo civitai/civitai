@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
+import path from 'node:path';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
  * `/api/mod/user/delete` — the moderator path to a data-subject erasure request.
@@ -43,19 +44,9 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/utils/endpoint-helpers', () => ({
-  handleEndpointError: (
-    res: { status: (n: number) => { json: (b: unknown) => unknown } },
-    e: unknown
-  ) => {
-    // The REAL mapper, not a hand-written table. A table here has to be extended every time the
-    // handler learns a new refusal code, and the failure when it is not is a 500 in a test asserting
-    // a 4xx — which reads as a bug in the endpoint.
-    const status = e instanceof TRPCError ? getHTTPStatusCodeFromError(e) : 500;
-    return res
-      .status(status)
-      .json({ error: (e as { code?: string }).code ?? 'error', message: (e as Error).message });
-  },
+// The REAL envelope: the moderator app reads the refusal out of exactly this body.
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof EndpointHelpers>()),
 }));
 
 const deleteUser = vi.fn(async () => ({}));
@@ -72,15 +63,21 @@ vi.mock('~/server/services/moderator-grants', () => ({
 }));
 
 import handler from '~/pages/api/mod/user/delete';
+import { LegalHoldError, LegalHoldUnconfirmedError } from '~/server/services/legal-hold.service';
+import {
+  GENERIC_SERVER_ERROR_MESSAGE,
+  REST_ERROR_CODE,
+  restErrorBody,
+} from '~/server/utils/rest-error-envelope';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TARGET = 8675309;
+const PERSONAL_KEY = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
 /** The confirmation the endpoint REQUIRES for any account that has a username. */
 const NAME = 'not_a_real_user';
 
 function call(
   body: Record<string, unknown>,
-  context?: { tokenScope?: number },
   headers: Record<string, string> = {},
   query: Record<string, unknown> = {}
 ) {
@@ -89,7 +86,6 @@ function call(
     headers,
     body,
     query,
-    ...(context ? { context } : {}),
   } as Parameters<typeof handler>[0];
   let statusCode = 200;
   let payload: unknown;
@@ -194,6 +190,20 @@ describe('user.delete — it delegates, it does not reimplement', () => {
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
   });
 
+  // A muted account can't close itself through `user.delete`; a support ticket routes it here. If
+  // this path refused muted accounts too, that person would have no way left to be erased.
+  it('deletes a MUTED account', async () => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({
+      id: TARGET,
+      username: NAME,
+      deletedAt: null,
+      muted: true,
+    });
+    const { status } = await call({ userId: TARGET, username: NAME });
+    expect(status).toBe(200);
+    expect(deleteUser).toHaveBeenCalledWith(expect.objectContaining({ id: TARGET }));
+  });
+
   // Stored and typed values are identical here; the trim case below is what pins that the STORED
   // one is sent.
   it('passes the username to the service', async () => {
@@ -285,6 +295,38 @@ describe('user.delete — confirming which account', () => {
   });
 });
 
+describe('user.delete — the shared moderation account', () => {
+  it('refuses deleting it, found by its name', async () => {
+    liveTarget('CivitaiModeration');
+    const { status } = await call({ userId: TARGET, username: 'CivitaiModeration' });
+    expect(status).toBe(400);
+    expect(deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('deletes another account holding the name while the shared id is configured', async () => {
+    liveTarget('CivitaiModeration');
+    setEnv({ CIVITAI_MODERATION_USER_ID: TARGET + 1 });
+    try {
+      const { status } = await call({ userId: TARGET, username: 'CivitaiModeration' });
+      expect(status).toBe(200);
+      expect(deleteUser).toHaveBeenCalledTimes(1);
+    } finally {
+      setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    }
+  });
+
+  it('refuses deleting it, found by its id', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: TARGET });
+    try {
+      const { status } = await call({ userId: TARGET, username: NAME });
+      expect(status).toBe(400);
+      expect(deleteUser).not.toHaveBeenCalled();
+    } finally {
+      setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    }
+  });
+});
+
 describe('user.delete — the already-deleted refusal', () => {
   it('refuses an account that is already deleted, and says so', async () => {
     dbMock.dbWrite.user.findFirst.mockResolvedValue({
@@ -329,7 +371,7 @@ describe('user.delete — the already-deleted refusal', () => {
  */
 describe('user.delete — where the confirmation may travel', () => {
   it('refuses a username sent in the query string, and says where to put it', async () => {
-    const { status, body } = await call({ userId: TARGET }, undefined, {}, { username: NAME });
+    const { status, body } = await call({ userId: TARGET }, {}, { username: NAME });
 
     expect(status).toBe(400);
     expect(body).toMatchObject({
@@ -406,58 +448,26 @@ describe('user.delete — what the audit row keeps', () => {
   });
 });
 
-describe('user.delete — token scope', () => {
-  // The self-serve `user.delete` procedure is `requiredScope: TokenScope.Full`, so a scoped token
-  // cannot delete even its own account. This route must not be the looser way in.
-  const NARROW = TokenScope.MediaRead;
+describe('user.delete — API keys', () => {
+  // The refusals here come from `defineModeratorEndpoint`'s credential rule, pinned in
+  // `moderator-rest-wrappers.credential-requirements.test.ts`. These cases hold this route to it.
+  const MODERATOR = { id: 990000007, isModerator: true, permissions: [], bannedAt: null };
+  const asBearer = (tokenScope: number) => {
+    bearerSession.value = { user: MODERATOR, ...PERSONAL_KEY, tokenScope };
+    return call({ userId: TARGET, username: NAME }, { authorization: 'Bearer key' });
+  };
 
-  it('refuses a token that is not full-scope', async () => {
-    const { status } = await call({ userId: TARGET, username: NAME }, { tokenScope: NARROW });
+  it('refuses a reduced-scope personal API key', async () => {
+    const { status, body } = await asBearer(TokenScope.MediaRead);
     expect(status).toBe(403);
+    expect(body).toEqual({
+      error: 'This action requires a signed-in session or a full-access personal API key',
+    });
     expect(deleteUser).not.toHaveBeenCalled();
   });
 
-  // THE CONTROL. Same call, full scope: without it the refusal above passes against an endpoint
-  // that refuses every token, or one whose scope check rejects unconditionally.
-  it('allows the SAME call with a full-scope token', async () => {
-    const { status } = await call(
-      { userId: TARGET, username: NAME },
-      { tokenScope: TokenScope.Full }
-    );
-    expect(status).toBe(200);
-    expect(deleteUser).toHaveBeenCalledTimes(1);
-  });
-
-  // A cookie session carries no scope at all, and is the full-authority case. If this reddened,
-  // every moderator using the moderator app would be locked out of the route.
-  it('treats a cookie session (no scope on the request) as full', async () => {
-    const { status } = await call({ userId: TARGET, username: NAME });
-    expect(status).toBe(200);
-  });
-
-  // 🔴 THE BEARER BRANCH IS A SEPARATE RESOLUTION. `resolveActor` reads the scope from a different
-  // place here than on the cookie path, and a scope lost on this branch must not read as full —
-  // with the three cases above still green, because none of them takes this branch.
-  it('refuses a NARROW bearer token', async () => {
-    bearerSession.value = {
-      user: { id: 990000007, isModerator: true, permissions: [], bannedAt: null },
-      tokenScope: TokenScope.MediaRead,
-    };
-    const { status } = await call({ userId: TARGET, username: NAME }, undefined, {
-      authorization: 'Bearer key',
-    });
-    expect(status).toBe(403);
-    expect(deleteUser).not.toHaveBeenCalled();
-  });
-
-  it('allows the SAME bearer call at full scope', async () => {
-    bearerSession.value = {
-      user: { id: 990000007, isModerator: true, permissions: [], bannedAt: null },
-      tokenScope: TokenScope.Full,
-    };
-    const { status } = await call({ userId: TARGET, username: NAME }, undefined, {
-      authorization: 'Bearer key',
-    });
+  it('serves the same call from a full-scope personal API key', async () => {
+    const { status } = await asBearer(TokenScope.Full);
     expect(status).toBe(200);
     expect(deleteUser).toHaveBeenCalledTimes(1);
   });
@@ -511,5 +521,61 @@ describe('user.delete — the retry path, after a deletion reported as failed', 
       message: `User ${TARGET} is already deleted; nothing to delete.`,
     });
     expect(deleteUser).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('user.delete — an account under a legal hold', () => {
+  it('refuses with the neutral text and records no deletion', async () => {
+    deleteUser.mockRejectedValueOnce(new LegalHoldError());
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ message: 'Account under legal hold; contact Legal.' });
+    expect(trackModActivity).not.toHaveBeenCalled();
+    expect(mockUserActivity).not.toHaveBeenCalled();
+  });
+
+  /** The moderator app's body reader and refusal texts, loaded by path across the app boundary. */
+  const moderatorSide = async () => {
+    const lib = path.resolve(__dirname, '../../../../../..', 'apps/moderator/src/lib');
+    const { restErrorReason } = (await import(
+      /* @vite-ignore */ `${lib}/server/rest-error-reason.ts`
+    )) as { restErrorReason: (body: unknown, status: number) => string | null };
+    const texts = (await import(/* @vite-ignore */ `${lib}/legal-hold.ts`)) as Record<
+      string,
+      string
+    >;
+    return { restErrorReason, ...texts };
+  };
+
+  it.each([
+    ['a hold', () => new LegalHoldError(), 'LEGAL_HOLD_REFUSAL'],
+    [
+      'a hold status it could not read',
+      () => new LegalHoldUnconfirmedError(),
+      'HOLD_UNKNOWN_REFUSAL',
+    ],
+  ])('refuses %s with the text the moderator app maps it by', async (_, error, refusal) => {
+    deleteUser.mockRejectedValueOnce(error());
+    const moderator = await moderatorSide();
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(403);
+    expect(moderator[refusal]).toEqual(expect.any(String));
+    expect(moderator.restErrorReason(body, status)).toBe(moderator[refusal]);
+  });
+
+  // THE CONTROL: any other failure is not reported as a hold.
+  it('does not dress up another failure as a hold', async () => {
+    deleteUser.mockRejectedValueOnce(new Error('boom'));
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(500);
+    expect(body).toEqual(
+      restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE)
+    );
   });
 });

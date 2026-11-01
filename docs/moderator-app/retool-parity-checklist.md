@@ -164,13 +164,12 @@ Open, with the evidence each audit produced:
       planting sentinel values on all four Redis keys and confirming the action cleared every one.
 - [x] **"Remove Badges" (`RemoveCosmetics`) ported** (2026-08-11 — a Remove control per row on the
       Cosmetics panel). Done **locally** rather than via `retool/cosmetic → unassign`, which the audit
-      suggested: that endpoint refreshes the sticker cache alone, leaving the profile-level caches stale
-      for a day, and attributes to the shared API key's owner instead of the acting moderator. Scoped to
-      the exact `(cosmeticId, claimKey)` row clicked, so a cosmetic held twice loses only the claim on
-      screen — the endpoint deletes every claim. `user-account.service.ts` carried a comment saying this
-      was *deliberately* unported because "the main app's equivalent also refreshes entity caches and
-      search indexes"; `unassignCosmetic` does neither, so the stated reason was false and the comment
-      is gone.
+      suggested: that endpoint deletes every claim of the cosmetic, where this is scoped to the exact
+      `(cosmeticId, claimKey)` row clicked, so a cosmetic held twice loses only the claim on screen. (At
+      the time it also refreshed the sticker cache alone and attributed to the shared API key's owner;
+      since the take-back refresh work, `unassignCosmetic` runs the full post-delete cleanup, and
+      `removeCosmetic` reaches the same cleanup for the rows it deleted through
+      `/api/mod/cosmetic/holdings-removed`.)
 - [x] **Every `retool/*` call attributes to the API key's owner** — **RESOLVED 2026-08-19** by session
       forwarding instead of minted keys: the spoke relays the acting moderator's own cookie to
       `/api/mod/*`, so the audit row, the `privileged` check and the rate-limit bucket are all per
@@ -355,6 +354,9 @@ Open, with the evidence each audit produced:
       filter-row work rendered it on *Reviews written*. **Reviews received still dropped it**, while its
       own Search filter matched against it, so a moderator could search for text the page would not show.
       Now rendered on both.
+- [x] **Reviews written: paged, filtered in the query** (2026-10-26). The list left `/api/user-account`
+      for `/api/user-reviews/[userId]` (50 a page, plus a model-owner filter), so a filter searches every
+      review rather than the newest 100. Bulk review actions batch at 500 ids.
 - [x] **Review text rendered as raw markup** (2026-08-11 — found while verifying the item above, not
       previously listed). `details` is stored as HTML, and Svelte escapes it, so moderators read literal
       `<p>` tags; the Search filter matched the tags too, making a search for "p" hit every row. A shared
@@ -471,8 +473,8 @@ browser as user 1290051, not by reading the code.
 - [x] 🎥 **Strike the user as part of the TOS action** (2026-08-12). *"TOS, affect the reason, also
       strike the user."* Retool's `strikeCheckbox` is now on the remove form in the shared
       `ImageActionBar`, so it is on **both** pages. Owners are resolved **server-side** from the image
-      ids (`strikeBatchOwners`), not from the grid: a selection outlives the page in front of the
-      moderator, and on Bulk Image Manager it can span accounts — every distinct owner is struck once.
+      ids (`strikeBatchOwners`), not from the grid: a hand-built POST can carry any ids, and on Bulk
+      Image Manager a selection can span accounts — every distinct owner is struck once.
       The strike is the main app's (`issueStrike` → `retool/strike`), and its description is the canned
       message, which is what makes one gesture out of two: the same wording the removal was filed under
       is what the account is told.
@@ -515,11 +517,15 @@ browser as user 1290051, not by reading the code.
       Changing it is a new batch — `removed` is part of `batchKey` — so it resets paging and clears the
       selection; a new search does not carry it over. Two consequences handled: `Select all`
       counts the **filtered** set and says so — "**Select all N on screen**" — which is the point of
-      filtering to ToS'd before acting; and the bar says "**N selected but not on screen**" whenever the
-      selection outlives the screen, which it can do two ways: a rating/prompt filter hides an image, or
-      the moderator pages past it (selections deliberately survive paging on the suspect grid — the batch
-      key is the non-paging part of the query string). The removal posts ids, not what is on screen, so
-      without it, filtering or paging after selecting is a way to remove 40 images while looking at 12.
+      filtering to ToS'd before acting. **2026-10-16:** a selection holds only what is on screen —
+      `ImageActionBar` drops whatever a filter hides or a page turn moves off (the owner's rule: "The
+      user should only ever be able to select what is visually on the screen"). This replaced the
+      "**N selected but not on screen**" warning and the cross-page selection (mod-studio-feedback
+      2026-08-21, "Turning the page threw the selection away"; 2026-08-24, 566b09c08f). **Reopened
+      2026-10-19 for the two hosts that page one subject's images:** User Reports (`/reports/user`,
+      images tab) and the collection report queue pass `keepOffScreen`, so their selection survives
+      page turns and the bar shows "N on other pages". Bulk Image Manager and the other grids still
+      prune to what is on screen; there a range is shift-click, page by page.
 - [x] **Bulk selection helpers** — Select All / Select 100 / Unselect All (2026-08-09, in the shared
       `ImageActionBar` that Bulk Image Manager and User Reports both use).
 - [x] `negativePrompt` is selected and rendered nowhere (2026-08-12 — on the card under the prompt, and
@@ -716,7 +722,8 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
       another's scale.
 - [x] **Who last worked each queue, and how long ago** — **already built** (verified 2026-08-12):
       *Recently worked* (oldest first, so the untouched queue is the visible one) and *Queue sweeps*
-      off `Mods_TaskTimers`, including the front-page per-level rows.
+      off `Mods_TaskTimers`, including the front-page per-level rows. *Since 2026-10, Recently worked
+      lists newest first; untouched queues surface in Needs attention instead.*
 - [x] **An "Urgent Content (N)" banner** (2026-08-12). The data was already there — *Most reported* is
       pending reports from the last week with more than one reporter — but it sits below three screens
       of queue counts, and a pile-up on one item is a live incident rather than a long queue. A red
@@ -770,6 +777,8 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 ## 11. Operational
 
 - [ ] `FRESHDESK_API_KEY` — see the handover. (`CIVITAI_MOD_API_KEY` is retired, 2026-08-19.)
+- [ ] `FRESHDESK_WRITE_API_KEY` — the `/tickets` reply, status and "Send to support" actions refuse
+      without it. Separate from the read key on purpose; there is no fallback between them.
       **`RETOOL_DATABASE_URL` is superseded**: the cutover retires it in favour of
       `MODERATOR_DATABASE_URL`, which already points at the same database the xguard lab uses. Set that
       one in every deployed environment instead — see [`retool-db-cutover.md`](retool-db-cutover.md).
@@ -779,8 +788,8 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
       gate; a non-zero exit means stop.
 - [ ] **Grant the new pages on `/admin`.** A new page has no `AppPageAccess` rows, so only
       `moderator:admin` can see it until someone ticks the boxes — it is invisible rather than broken,
-      which is the hard failure to notice. `/models/minor-hash-matches` (2026-08-13) is the newest and
-      is **not yet granted to anyone**.
+      which is the hard failure to notice. `/models/flags/*` (2026-10) is the newest; its grants are copied from the
+      old pages by a hand-applied migration.
 - [x] **Re-extract every export while access remains** — done 2026-08-10; all nine carry option sets
       and layout geometry, and sanitized copies are committed under `retool-exports/raw/`.
 - [x] 🔒 **Support-tool credential** — never committed (verified 2026-08-10). Ticket-body hygiene is an
@@ -888,6 +897,9 @@ that reporter to that build.
       below the whole queue board; §8b's *Urgent content* banner was the same instinct, but the ask was
       for the table itself rather than a jump link to it. Verified in a browser: `Dashboard` (48px) →
       `Most reported` (136px) → the board (1087px).
+      **Superseded 2026-10:** *Needs attention*, *Working now* and *You today* now sit above *Most
+      reported*, which shows the top 5 with a "Show all (N)" toggle; the queue cards follow under
+      "All queues". The urgent banner still leads.
 - [x] 🔴 **Show the reporter count per row** — **it was already built, and wrong by one** (fixed
       2026-08-13). The table's first column *is* the count. But `fetchMostReported` derived it as
       `array_length(t."alsoReportedBy", 1)`, and `alsoReportedBy` **excludes the original reporter** —
@@ -906,8 +918,10 @@ that reporter to that build.
       **1** row where the corrected one returns **10+**, every one of them a genuine two-reporter
       pile-up that the board had never shown. Verified in a browser: the table now renders 10 rows
       reading 3, 2, 2, 2 … where it previously rendered one.
-- [ ] **Put *Recently worked* and *Queue sweeps* next to the queues they describe**, rather than in
-      their own blocks. Filed with *"might need a new table to track all of these queues, or
+- [ ] **Put *Recently worked* and *Queue sweeps* (now the *Catch-up checks* tab) next to the queues they describe**, rather than in
+      their own blocks. *Partly done 2026-10:* the sidebar and *Needs attention* carry each report
+      queue's last-actioned age (`lastActionedBadge`), and sweeps carry age badges; both blocks are
+      still separate. Filed with *"might need a new table to track all of these queues, or
       expand/revise `ModActivity`"* — **answer: no new table.** `Mods_TaskTimers` already carries the
       per-task timestamps and `getSweepAt`/`getSweepCounts` already read them; see §12d.
 
@@ -982,7 +996,9 @@ that reporter to that build.
       page**, which `docs/moderator-app/page-migration-checklist.md` already has a pattern for
       (procedures → `load`/actions, services → Kysely in `$lib/server`), with `comics-review` as the
       nearest precedent. ⚠️ **The page is absent from that checklist**, which is how it was missed.
-      Now at `/models/minor-hash-matches`, under a new **Models** nav group between Images and Articles.
+      Now the three tabs of **Model Flags** (`/models/flags/{appeals,review,matches}`, since renamed `{appeals,auto,needs-review}`, under the **Models**
+      nav group); the old `/models/minor-hash-matches`, `/models/flag-appeals` and `/models/held-detections`
+      URLs redirect (see `docs/features/moderator-model-flags.md`).
       **Reads ported, writes not — that split is the point.** `revert` runs `setModelMinor`, which owns
       the search-index sync, the cache busting and the per-image propagation, then restores five columns
       from the flag snapshot; `resolveAppeal` also closes the `Appeal` row and refuses to uphold against

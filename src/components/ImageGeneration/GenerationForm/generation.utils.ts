@@ -6,7 +6,7 @@ import {
   generationStatusSchema,
 } from '~/server/schema/generation.schema';
 import type { GenerationStatusMode } from '~/server/schema/generation.schema';
-import type { GateRule } from '~/shared/data-graph/generation/gates';
+import type { GateRule } from '~/shared/generation/gates';
 import type { GeneratorMessage } from '~/shared/generation/messages';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';

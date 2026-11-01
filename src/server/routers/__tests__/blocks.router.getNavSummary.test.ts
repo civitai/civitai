@@ -40,9 +40,18 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
   emptyAnalytics: vi.fn(),
   resolveRange: vi.fn(),
 }));
-vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
+// 🔴 SPREAD, NOT A HAND-LISTED FACTORY. This suite tests nothing about revenue; it
+// mocks this module only because `blocks.router` imports it at module scope. A
+// factory naming individual exports therefore fails to LOAD the moment the router
+// gains one more import from here — in CI, in a file nobody was looking at, with a
+// green typecheck. It has already had to be edited once for exactly that reason.
+// `~/server/services/blocks/dev-tunnel.service` below is mocked this way for the
+// same stated reason.
+vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
   getRevenueForOwner: vi.fn(),
   getRecentAttributionsForOwner: vi.fn(),
+  getGoodsSalesForOwner: vi.fn(),
   emptyRevenue: vi.fn(),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({

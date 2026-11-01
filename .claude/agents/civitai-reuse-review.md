@@ -1,6 +1,7 @@
 ---
 name: civitai-reuse-review
 description: Reviews a feature segment in the main Civitai Next.js app (src/) for code that was rebuilt when it already exists — a component in src/components/, a service function in src/server/services/, a hook, a cache, a selector, a tRPC procedure — and reports pre-existing duplicate services the diff touches. Use before calling a segment done, alongside civitai-correctness-review, civitai-perf-review, civitai-test-review and civitai-intent-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -9,7 +10,7 @@ tools: Read, Grep, Glob, Bash
 **Scope is `src/` and the packages it imports** (`packages/civitai-*`). The SvelteKit apps under `apps/`
 are reviewed by the `svelte-*-review` trio — if the diff touches those, say so and skip them.
 
-Read the root `CLAUDE.md` first, especially "Server-Side Architecture Map" and "Component Standards".
+Read the root `CLAUDE.md` first, then `.claude/rules/server.md` (architecture map) and `.claude/rules/components.md` (frontend conventions).
 It is the only written map of this codebase.
 
 You answer one question: **did this segment write something that already exists?**

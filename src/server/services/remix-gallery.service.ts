@@ -4,6 +4,12 @@ import { Availability, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readViewerPendingPlacementsViaKysely,
+  readViewerPendingPlacementsViaPrisma,
+} from '~/server/services/hot-reads-3.reads';
 import { logToAxiom } from '~/server/logging/client';
 import { remixAcceptReward } from '~/server/rewards/active/remixAccept.reward';
 import { getAllImages } from '~/server/services/image.service';
@@ -14,6 +20,7 @@ import {
 } from '~/server/services/free-placement.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -637,6 +644,7 @@ export async function actOnRemixGallerySubmission({
 
     if (!count)
       throw throwBadRequestError('remix gallery: that entry was already removed elsewhere');
+    void onPlacementsTakenDown([placementId]);
 
     return { settled: true, removed: true };
   }
@@ -1557,18 +1565,17 @@ async function getViewerPendingSubmissions({
   /** The viewer own band. Marked on each row, never filtered on. */
   viewerLevels: number;
 }) {
-  const rows = await dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: hostImageId,
-      placerId: viewerId,
-      status: 'pending',
-    },
-    select: { id: true, amount: true, free: true, data: true, createdAt: true, expiresAt: true },
-    orderBy: { createdAt: 'asc' },
-    take: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
-  });
+  // `kysely-hot-reads-3` on: the same read through Kysely, on the replica as before.
+  const pendingInput = {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: hostImageId,
+    placerId: viewerId,
+    limit: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
+  };
+  const rows = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
+    ? await readViewerPendingPlacementsViaKysely((await loadKyselyDb()).kyselyRead, pendingInput)
+    : await readViewerPendingPlacementsViaPrisma(dbRead, pendingInput);
 
   const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
   const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
@@ -1744,22 +1751,14 @@ export async function getRemixGalleryVisibility({
         })
       : null;
 
-  // The owner's name and cut, so the submit button can say where the money goes
-  // without the copy asserting it. The shares are operator-tunable at runtime,
-  // so a string compiled against today's split is a claim about money that can
-  // quietly stop being true — the same reason `ResolvedPlacementSpace` carries
-  // `ownerShare` at all.
-  const owner = await dbRead.user.findUnique({
-    where: { id: space.ownerId },
-    select: { username: true },
-  });
-
   // The actual Buzz a decline would cost, not a percentage the reader has to
-  // apply themselves. Computed with the same helper the refund uses, from the
-  // same operator-set rate, so the number quoted before paying is the number
-  // charged — a hardcoded 30% would be a promise this layer cannot keep.
-  const declineFeeRate = (await getPlacementConfig()).declineFeeRate(SURFACE);
-  const declineFee = space.price == null ? null : declineFeeAmount(space.price, declineFeeRate);
+  // apply themselves — a hardcoded 30% would be a promise this layer cannot
+  // keep. `space.declineFee` is `declineFeeAmount` (the helper the refund uses)
+  // over this space's price, at the rate the space was resolved with. The hold
+  // does not reuse that rate: submit calls `holdPlacementEscrow` with none, and
+  // the escrow reads the config again at that moment, so an operator rate
+  // change between quote and submit makes the two differ.
+  const declineFee = space.price == null ? null : space.declineFee;
 
   return {
     open: space.mode !== 'off',
@@ -1767,7 +1766,9 @@ export async function getRemixGalleryVisibility({
     render: space.mode !== 'off' || hasEntries,
     price: space.price,
     ownerId: space.ownerId,
-    ownerUsername: owner?.username ?? null,
+    // The owner's name and cut, so the submit button can say where the money goes
+    // without the copy asserting it.
+    ownerUsername: space.ownerUsername,
     ownerShare: space.ownerShare,
     // What the creator accepts is theirs to publish — it is a setting on their
     // own image, the same standing as `price`.

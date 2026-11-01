@@ -49,6 +49,9 @@ import type {
 } from '~/server/schema/model.schema';
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { readModelVersionOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
 import {
@@ -69,7 +72,9 @@ import {
   unpublishModelVersionById,
   updateModelVersionById,
   upsertModelVersion,
+  withPairedStrength,
 } from '~/server/services/model-version.service';
+import { getVersionByIdWithGenerationChildren } from '~/server/services/model-version-generation-children.service';
 import {
   getModel,
   queueModelEarlyAccessReindex,
@@ -87,6 +92,9 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
   Availability,
   LicensingFeeSettlementCurrency,
@@ -95,17 +103,26 @@ import {
   ModelUsageControl,
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
-import { removeNulls } from '~/utils/object-helpers';
 import { dbRead, dbWrite } from '../db/client';
+import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
+import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { assertBaseModelAttestations } from '~/server/services/base-model-attestation.service';
+import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
+import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
+import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
+import { scanModelAndRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -133,7 +150,7 @@ const loadModelVersion = async ({
   const { id, withFiles } = input;
 
   try {
-    const version = await getVersionById({
+    const version = await getVersionByIdWithGenerationChildren({
       id,
       forceWriteDb,
       select: {
@@ -164,8 +181,10 @@ const loadModelVersion = async ({
           select: {
             id: true,
             name: true,
+            sfwName: true,
             type: true,
             status: true,
+            mode: true,
             publishedAt: true,
             nsfw: true,
             // The version editor gates paid access on this. Omitted, `model.poi` reads undefined and the
@@ -175,27 +194,15 @@ const loadModelVersion = async ({
             uploadType: true,
             user: { select: { id: true } },
             availability: true,
+            meta: true,
           },
         },
         files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
         posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
-        recommendedResources: {
-          select: {
-            id: true,
-            resource: {
-              select: {
-                id: true,
-                // name: true,
-                // trainedWords: true,
-                // baseModel: true,
-                // model: { select: { id: true, name: true, type: true } },
-              },
-            },
-            settings: true,
-          },
-        },
+        // `recommendedResources` and `generationCoverage` come from
+        // getVersionByIdWithGenerationChildren's single raw statement, not nested selects.
         monetization: {
           select: {
             id: true,
@@ -212,9 +219,10 @@ const loadModelVersion = async ({
             },
           },
         },
-        generationCoverage: { select: { covered: true, coveredNext: true } },
       },
     });
+    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ctx.user))
+      throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
@@ -273,13 +281,16 @@ const loadModelVersion = async ({
     );
 
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
+    const browsingLevel = getRequestBrowsingLevel(ctx);
     const generationResources = await getResourceData(recommendedResourceIds, {
       user: ctx?.user,
+      browsingLevel,
     }).then((data) =>
       data.map((item) => {
-        const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??
-          {}) as RecommendedSettingsSchema;
-        return { ...item, ...removeNulls(settings) };
+        return withPairedStrength(
+          item,
+          regularResources.find((x) => x.resource.id === item.id)?.settings
+        );
       })
     );
 
@@ -337,8 +348,29 @@ const loadModelVersion = async ({
         ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
         : null;
 
+    const ownerMetricPrivacyDefaults = await getOwnerMetricPrivacyDefaultsForEditor(
+      ctx.user,
+      version.model.user.id
+    );
+
+    // The version editor shows what the model's hide/show settings make each metric. Only those
+    // settings leave here, and only to the owner or a moderator: the rest of the meta is internal.
+    const { meta: modelMeta, ...model } = version.model;
+    const editorModelMeta: ModelMeta | null = isOwnerOrMod
+      ? { metricVisibility: getMetaMetricVisibility(modelMeta) }
+      : null;
+    // As on the model page: owners and moderators keep the .red listing, since this seeds the editor.
+    const withSfwFace = !isOwnerOrMod && model.sfwName != null && showsSfwFace(browsingLevel);
+
     return {
       ...version,
+      // A .com face has no per-version description; the .red one is not shown in its place.
+      description: withSfwFace ? null : version.description,
+      model: {
+        ...resolveModelFace(model, withSfwFace),
+        meta: editorModelMeta,
+        ownerMetricPrivacyDefaults,
+      },
       licensingFee,
       canGenerate,
       wildcardSetId,
@@ -395,6 +427,26 @@ export const toggleNotifyEarlyAccessHandler = async ({
 
 const asUserTier = (tier: string | null): SessionUser['tier'] =>
   (userTiers as readonly string[]).includes(tier ?? '') ? (tier as SessionUser['tier']) : undefined;
+
+/** Throws unless every file is the entry author's own upload. Null when there is nothing to copy. */
+async function getAwardedEntryFiles({ bountyId, userId }: { bountyId: number; userId: number }) {
+  const entry = await dbRead.bountyEntry.findFirst({
+    where: { bountyId, benefactors: { some: { userId } } },
+    select: { id: true, userId: true, bounty: true },
+  });
+  if (!entry || !constants.bounties.supportedBountyToModels.some((t) => t === entry.bounty.type))
+    return null;
+
+  const files = await getFilesByEntity({ id: entry.id, type: 'BountyEntry' });
+  for (const file of files)
+    assertBountyEntryFileUrlAllowed({
+      url: file.url,
+      authorId: entry.userId,
+      userId,
+      bountyEntryId: entry.id,
+    });
+  return { entry, files };
+}
 
 export const upsertModelVersionHandler = async ({
   input: { bountyId, ...input },
@@ -493,6 +545,17 @@ export const upsertModelVersionHandler = async ({
 
     if (input.usageControl === ModelUsageControl.ExternalGeneration && !ctx.user.isModerator) {
       throw throwBadRequestError('Only moderators can manage external generation models');
+    }
+
+    // Denied/Paused are moderation decisions. Updates are judged against the stored value in
+    // upsertModelVersion; internal creators (publish-from-workflow) call the service directly.
+    if (
+      !updatesExistingVersion &&
+      !ctx.user.isModerator &&
+      (input.trainingStatus === TrainingStatus.Denied ||
+        input.trainingStatus === TrainingStatus.Paused)
+    ) {
+      throw throwBadRequestError("A new version's training status can't be set here.");
     }
 
     if (input.trainingDetails === null) {
@@ -687,6 +750,10 @@ export const upsertModelVersionHandler = async ({
       }
     }
 
+    // Before the write: a refused file must not leave a half-built version behind.
+    const bountyCopy =
+      !input.id && bountyId ? await getAwardedEntryFiles({ bountyId, userId }) : null;
+
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,
@@ -728,42 +795,28 @@ export const upsertModelVersionHandler = async ({
         // });
       }
 
-      if (bountyId) {
-        // Create model version files from the bounty.
-        const awardedEntry = await dbRead.bountyEntry.findFirst({
-          where: { bountyId, benefactors: { some: { userId } } },
-          select: { id: true, bounty: true },
-        });
-
-        if (
-          awardedEntry &&
-          constants.bounties.supportedBountyToModels.some((t) => t === awardedEntry?.bounty.type)
-        ) {
-          const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
-
-          if (files.length) {
-            await Promise.all(
-              files.map((f) =>
-                createFile({
-                  modelVersionId: version.id,
-                  sizeKB: f.sizeKB,
-                  url: f.url,
-                  type: 'Model',
-                  metadata: {
-                    ...f.metadata,
-                    bountyId: awardedEntry.bounty.id,
-                    bountyEntryId: awardedEntry.id,
-                  },
-                  userId: ctx.user.id,
-                  name: f.name,
-                  select: {
-                    id: true,
-                  },
-                })
-              )
-            );
-          }
-        }
+      if (bountyCopy?.files.length) {
+        const { entry, files } = bountyCopy;
+        await Promise.all(
+          files.map((f) =>
+            createFile({
+              modelVersionId: version.id,
+              sizeKB: f.sizeKB,
+              url: f.url,
+              type: 'Model',
+              metadata: {
+                ...f.metadata,
+                bountyId: entry.bounty.id,
+                bountyEntryId: entry.id,
+              },
+              userId: ctx.user.id,
+              name: f.name,
+              select: {
+                id: true,
+              },
+            })
+          )
+        );
       }
     }
 
@@ -825,7 +878,9 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        model: { select: { userId: true, nsfw: true, status: true } },
+        model: {
+          select: { userId: true, nsfw: true, status: true, availability: true, meta: true },
+        },
       },
     });
 
@@ -847,16 +902,70 @@ export const publishModelVersionHandler = async ({
     if (
       !ctx.user.isModerator &&
       (constants.modPublishOnlyStatuses.includes(version.status) ||
-        constants.modPublishOnlyStatuses.includes(version.model.status))
+        constants.modPublishOnlyStatuses.includes(version.model.status) ||
+        isRemovedWithOwner(version.model.meta))
     ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
+
+    await assertTrainingSourcePublishable({
+      modelId: version.modelId,
+      meta: version.model.meta as ModelMeta | null,
+      ownerId: version.model.userId,
+      callerId: ctx.user.id,
+    });
+    await assertNotCrossOwnerDuplicate({
+      versionId: input.id,
+      ownerId: version.model.userId,
+      isModerator: ctx.user.isModerator,
+    });
 
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       versionMeta || {};
-    const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
+    // A model that is not public yet is held at its own publish; this is for one already live.
+    const modelIsLive =
+      (version.model.status === ModelStatus.Published ||
+        version.model.status === ModelStatus.Scheduled) &&
+      version.model.availability !== Availability.Private;
+    const literalHold =
+      modelIsLive && !ctx.user.isModerator
+        ? await checkModelRulesLiteralHold({
+            modelId: version.modelId,
+            versionIds: [input.id],
+            meta: version.model.meta as ModelMeta | null,
+          })
+        : null;
+    const updatedVersion = await publishModelVersionById({
+      ...input,
+      meta,
+      republishing,
+      enforceTakedown: !ctx.user.isModerator,
+    });
+    let held = false;
+    if (literalHold) {
+      try {
+        held = await unpublishLiveModelForLiteralRules({
+          modelId: version.modelId,
+          ...literalHold,
+        });
+      } catch (error) {
+        // The version is already published and stays so.
+        logToAxiom({
+          name: 'text-scan',
+          type: 'error',
+          message: 'model rules literal takedown failed',
+          entityType: 'ModelRules',
+          entityId: version.modelId,
+          error: error instanceof Error ? error.message : error,
+        });
+      }
+    }
+    // The Model scan reads only public versions, so the newly public one needs a scan of its own.
+    scanModelAndRules(updatedVersion.modelId, { rules: false });
+    // The takedown refreshed the caches, and the model is no longer live to announce or reindex.
+    if (held) return { ...updatedVersion, held };
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
@@ -884,7 +993,7 @@ export const publishModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return updatedVersion;
+    return { ...updatedVersion, held };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
@@ -952,7 +1061,7 @@ export const unpublishModelVersionHandler = async ({
     if (scope.kind === 'model') {
       const model = await getModel({
         id: scope.modelId,
-        select: { meta: true, nsfw: true },
+        select: { nsfw: true },
       });
       if (!model) throw throwNotFoundError(`No model with id ${scope.modelId}`);
 
@@ -961,7 +1070,6 @@ export const unpublishModelVersionHandler = async ({
       await unpublishModelById({
         ...input,
         id: scope.modelId,
-        meta: (model.meta as ModelMeta | null) ?? undefined,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       });
@@ -1004,8 +1112,11 @@ export const unpublishModelVersionHandler = async ({
 
 export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
+    // The primary, not a replica: this row is written back whole, so a lagging read would
+    // overwrite a fresh edit with stale values.
     const version = await getVersionById({
       id: input.id,
+      forceWriteDb: true,
       select: {
         id: true,
         name: true,
@@ -1046,8 +1157,10 @@ export const declineReviewHandler = async ({
   try {
     if (!ctx.user.isModerator) throw throwAuthorizationError();
 
+    // The primary, for the reason in requestReviewHandler.
     const version = await getVersionById({
       id: input.id,
+      forceWriteDb: true,
       select: {
         id: true,
         name: true,
@@ -1228,10 +1341,17 @@ export const modelVersionDonationGoalHandler = async ({
 };
 
 export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
-  const version = await getVersionById({
-    ...input,
-    select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },
-  });
+  const version =
+    ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+      ? await readModelVersionOwnerViaKysely(
+          await getKyselyWithoutLag('modelVersion', input.id),
+          input.id
+        )
+      : undefined) ??
+    (await getVersionById({
+      ...input,
+      select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },
+    }));
   if (!version) throw throwNotFoundError();
   return version.model.user;
 }
@@ -1296,8 +1416,19 @@ export async function publishPrivateModelVersionHandler({
       id: true,
       status: true,
       uploadType: true,
+      baseModel: true,
+      publishedAt: true,
+      meta: true,
       model: {
-        select: { id: true, publishedAt: true, availability: true, userId: true, status: true },
+        select: {
+          id: true,
+          type: true,
+          publishedAt: true,
+          availability: true,
+          userId: true,
+          status: true,
+          meta: true,
+        },
       },
       files: {
         select: {
@@ -1329,10 +1460,19 @@ export async function publishPrivateModelVersionHandler({
   if (
     !ctx.user.isModerator &&
     (constants.modPublishOnlyStatuses.includes(version.status) ||
-      constants.modPublishOnlyStatuses.includes(version.model.status))
+      constants.modPublishOnlyStatuses.includes(version.model.status) ||
+      isRemovedWithOwner(version.model.meta))
   ) {
     throw throwAuthorizationError('You are not authorized to publish this model version');
   }
+
+  await assertTrainingSourcePublishable({
+    modelId: version.model.id,
+    meta: version.model.meta as ModelMeta | null,
+    ownerId: version.model.userId,
+    callerId: ctx.user.id,
+  });
+  assertBaseModelAttestations({ versions: [version] });
 
   // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
   const fileIds = version.files.map((f) => f.id);
@@ -1371,6 +1511,7 @@ export async function publishPrivateModelVersionHandler({
       publishedAt: new Date(),
       availability: Availability.Private,
     },
+    enforceTakedown: !ctx.user.isModerator,
   });
 
   await dataForModelsCache.refresh(version.model.id);

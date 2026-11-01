@@ -20,6 +20,8 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { maybeRecordOauthScopeUsage } from '~/server/services/oauth/oauth-scope-audit';
+import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
+import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
  * Map a settled procedure outcome to an HTTP-ish status for the audit row.
@@ -42,6 +44,26 @@ export function auditStatusFromError(error: unknown): number {
   return 500;
 }
 
+/** Whether the request came from a session or carries a bearer credential `isFullScopeUserKey` accepts. */
+export function isSessionOrFullUserKey(ctx: BearerCredential & { apiKeyId?: number | null }) {
+  // Unlike req.context, createContext defaults tokenScope to Full for sessions,
+  // so it is not a bearer marker.
+  const presentedBearer = ctx.apiKeyId != null || ctx.subject != null || ctx.apiKeyType != null;
+  return !presentedBearer || isFullScopeUserKey(ctx);
+}
+
+/** Throws FORBIDDEN unless `isSessionOrFullUserKey`. */
+export function assertSessionOrFullUserKey(
+  ctx: BearerCredential & { apiKeyId?: number | null }
+): void {
+  if (!isSessionOrFullUserKey(ctx)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This action requires a signed-in session or a full-access personal API key.',
+    });
+  }
+}
+
 /**
  * The `enforceTokenScope` middleware body. Generic over `next()`'s return so it
  * stays transparent to tRPC's MiddlewareResult typing (same shape as
@@ -52,10 +74,13 @@ export function runEnforceTokenScope<T>(opts: {
   ctx: {
     tokenScope: number;
     apiKeyId?: number | null;
+    apiKeyType?: ApiKeyType | null;
     subject?: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string };
     user?: { id: number } | null;
   };
-  meta: { requiredScope?: number; blockApiKeys?: boolean } | undefined;
+  meta:
+    | { requiredScope?: number; blockApiKeys?: boolean; requireFullUserCredential?: boolean }
+    | undefined;
   path: string;
   next: () => Promise<T>;
 }): Promise<T> {
@@ -70,6 +95,8 @@ export function runEnforceTokenScope<T>(opts: {
       message: 'This action cannot be performed via API key or OAuth token.',
     });
   }
+
+  if (meta?.requireFullUserCredential) assertSessionOrFullUserKey(ctx);
 
   // The scope this call exercises — the declared requiredScope, or Full for an
   // unannotated endpoint (which implicitly requires Full). Also the value the

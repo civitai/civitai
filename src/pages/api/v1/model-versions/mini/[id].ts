@@ -29,7 +29,9 @@ import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -68,6 +70,7 @@ type VersionRow = {
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
   modelUserId: number;
+  poi: boolean;
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -128,6 +131,7 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
+      m.poi,
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
@@ -200,7 +204,9 @@ export default MixedAuthEndpoint(async function handler(
     ) gc ON TRUE
     WHERE ${Prisma.join(where, ' AND ')}
   `;
-  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+  // Same answer as an unknown id, so the response does not reveal that the version exists.
+  if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
+    return res.status(404).json({ error: 'Model not found' });
 
   const files = await dbWrite.$queryRaw<FileRow[]>`
     SELECT 
@@ -397,6 +403,7 @@ export default MixedAuthEndpoint(async function handler(
       modelType: modelVersion.type,
       modelId: modelVersion.modelId,
       fileSizeKB: targetFile.sizeKB,
+      versionFlags: modelVersion.versionFlags,
     },
   ]);
 
@@ -478,14 +485,20 @@ export default MixedAuthEndpoint(async function handler(
     });
   }
 
-  // A version charging its own fee earns through that channel instead of tips + creator comp. The
+  // A version charging its own fee earns through that channel instead of creator comp. The
   // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
     !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
+  // Independent of the fee: a fee creator still gets their share of the creator tip.
+  const tipsEnabled = isCreatorTipEligible({
+    ownerId: modelVersion.modelUserId,
+    ownerFlags: modelVersion.userFlags,
+  });
 
   const data = {
     air,
+    defaultFileId: getGenerationFile(files)?.id ?? null,
     versionName: modelVersion.versionName,
     modelName: modelVersion.modelName,
     userId: modelVersion.modelUserId,
@@ -502,7 +515,8 @@ export default MixedAuthEndpoint(async function handler(
     canGenerate,
     isFeatured,
     isPromoted: modelVersion.isPromoted,
-    evictable: isEvictable(modelVersion.versionFlags),
+    // Computed, not written to the flag, so the pin lifts by itself when the promotion ends.
+    evictable: !modelVersion.isPromoted && isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
@@ -512,6 +526,7 @@ export default MixedAuthEndpoint(async function handler(
     sfwOnly: modelVersion.sfwOnly,
     fees,
     payoutEnabled,
+    tipsEnabled,
   };
   res.status(200).json(data);
 });

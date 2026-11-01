@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { TextProps } from '@mantine/core';
 import type { CosmeticEntity, MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 export const simpleCosmeticSelect = Prisma.validator<Prisma.CosmeticSelect>()({
   id: true,
@@ -53,6 +54,8 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'> & {
       to: string;
       deg?: number;
     };
+    /** Sweeps a gradient plate's colours horizontally; `deg` is ignored. Rendered by NamePlateText. */
+    animated?: boolean;
   };
 };
 
@@ -74,6 +77,11 @@ export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'
     texture?: { url: string; size: { width: number; height: number } };
   };
 };
+/** A `ContentDecoration` that belongs to an event and is worn beside, not instead of, a frame. */
+export type EventDecorationCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'> & {
+  data: EventDecorationData;
+};
+
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
   data: { textColor?: string; backgroundColor?: string; offset?: string; type?: MediaType };
 };
@@ -81,5 +89,8 @@ export type ProfileBackgroundCosmetic = BadgeCosmetic & {
 export type StickerCosmetic = Omit<SimpleCosmetic, 'data'> & {
   data: { slug: string; url: string; animated?: boolean; uses?: number; pricePerUse?: number };
 };
+
+export type CardGlow = { color?: string; intensity?: number; animated?: boolean };
+export type CardDecorationCosmetic = Omit<SimpleCosmetic, 'data'> & { data: { glow?: CardGlow } };
 
 export type WithClaimKey<T> = T & { claimKey: string };

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { civitaiAppUrl } from './civitai-url';
 import { sql } from '@civitai/db/kysely';
-import { NsfwLevel } from '@civitai/shared';
 import { violationUserMessage } from '$lib/violations';
+import { deprecatedNsfwName } from '$lib/nsfw-levels';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { NotificationCategory } from '@civitai/notifications';
+import { isSafeToRetry } from '@civitai/buzz';
 import { dbRead } from './db';
 import { getBuzz } from './buzz';
 import { bustCacheTag, bustCachedObject } from './cache';
@@ -149,15 +150,6 @@ export async function removeImagesFromBlocklist(pHashes: (string | null)[]): Pro
   });
 }
 
-const NSFW_LEVEL_TO_DEPRECATED: Record<number, 'None' | 'Soft' | 'Mature' | 'X' | 'Blocked'> = {
-  [NsfwLevel.PG]: 'None',
-  [NsfwLevel.PG13]: 'Soft',
-  [NsfwLevel.R]: 'Mature',
-  [NsfwLevel.X]: 'X',
-  [NsfwLevel.XXX]: 'X',
-  [NsfwLevel.Blocked]: 'Blocked',
-};
-
 const NEEDS_REVIEW_TO_VIOLATION: Record<string, string> = {
   minor: 'realisticMinor',
   poi: 'realPerson',
@@ -204,17 +196,22 @@ export type ImageDeleteTosInput = {
   violationDetails?: string;
 };
 
+const activeTagNames = async (imageId: number) =>
+  (
+    await dbRead
+      .selectFrom('TagsOnImageDetails as toi')
+      .innerJoin('Tag as t', 't.id', 'toi.tagId')
+      .select('t.name')
+      .where('toi.imageId', '=', imageId)
+      .where('toi.disabled', '=', false)
+      .execute()
+  ).map((r) => r.name);
+
 export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<void> {
   const { imageId, ownerId, nsfwLevel, needsReview, actorUserId } = input;
   try {
-    const [tagRows, resourceRows, reportRes] = await Promise.all([
-      dbRead
-        .selectFrom('TagsOnImageDetails as toi')
-        .innerJoin('Tag as t', 't.id', 'toi.tagId')
-        .select('t.name')
-        .where('toi.imageId', '=', imageId)
-        .where('toi.disabled', '=', false)
-        .execute(),
+    const [tags, resourceRows, reportRes] = await Promise.all([
+      activeTagNames(imageId),
       dbRead
         .selectFrom('ImageResourceNew')
         .select('modelVersionId')
@@ -238,8 +235,8 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
           type: 'DeleteTOS',
           userId: actorUserId,
           imageId,
-          tags: tagRows.map((r) => r.name),
-          nsfw: NSFW_LEVEL_TO_DEPRECATED[nsfwLevel] ?? 'None',
+          tags,
+          nsfw: deprecatedNsfwName(nsfwLevel),
           ip: input.ip ?? 'unknown',
           userAgent: input.userAgent ?? 'unknown',
           ownerId,
@@ -258,6 +255,47 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
     });
   } catch (e) {
     console.error('trackImageDeleteTos failed', { imageId, error: (e as Error).message });
+  }
+}
+
+/** A restore of a removed image, as the main app's `/api/mod/restore-images` logs it. Without it the
+ *  User Lookup's Image removals list shows the removal as standing after the image came back. */
+export async function trackImageRestore(input: {
+  imageId: number;
+  actorUserId: number;
+}): Promise<void> {
+  const { imageId, actorUserId } = input;
+  try {
+    const [image, tags] = await Promise.all([
+      dbRead
+        .selectFrom('Image')
+        .select(['userId', 'nsfwLevel'])
+        .where('id', '=', imageId)
+        .executeTakeFirst(),
+      activeTagNames(imageId),
+    ]);
+    if (!image) return;
+    await getClickhouse().insert({
+      table: 'images',
+      values: [
+        {
+          type: 'Restore',
+          userId: actorUserId,
+          imageId,
+          ownerId: image.userId,
+          tags,
+          nsfw: deprecatedNsfwName(image.nsfwLevel),
+          ip: 'unknown',
+          userAgent: 'unknown',
+          via: 'web',
+          viaClientId: '',
+          viaApiKeyId: 0,
+        },
+      ],
+      format: 'JSONEachRow',
+    });
+  } catch (e) {
+    console.error('trackImageRestore failed', { imageId, error: (e as Error).message });
   }
 }
 
@@ -366,36 +404,51 @@ const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 export async function refundAppealFee(appeal: {
   id: number;
   buzzTransactionId: string | null;
+  entityType: string;
   entityId: number;
-}): Promise<void> {
-  if (!appeal.buzzTransactionId) return;
-  const description = `Refunded appeal ${appeal.id} for Image ${appeal.entityId}`;
+}): Promise<boolean> {
+  if (!appeal.buzzTransactionId) return false;
+  const description = `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`;
   try {
     if (isAppealPrefix(appeal.buzzTransactionId))
-      await getBuzz().refundMultiTransaction({
-        externalTransactionIdPrefix: appeal.buzzTransactionId,
-        description,
-      });
+      // A timed-out refund may still land, so only a request that never reached Buzz is retried.
+      await getBuzz().refundMultiTransaction(
+        { externalTransactionIdPrefix: appeal.buzzTransactionId, description },
+        { shouldRetry: isSafeToRetry }
+      );
     else await getBuzz().refundTransaction(appeal.buzzTransactionId, { description });
+    return true;
   } catch (e) {
-    console.error('refundAppealFee failed', { appealId: appeal.id, error: (e as Error).message });
+    // The appeal is already closed, so this is the only record that the fee is still owed.
+    void logAxiomError(e, {
+      event: 'appeal fee refund failed',
+      appealId: appeal.id,
+      buzzTransactionId: appeal.buzzTransactionId,
+    });
+    return false;
   }
 }
 
 export async function notifyAppealResolved(input: {
-  userId: number;
+  appeal: { id: number; userId: number };
+  entityType?: string;
   entityId: number;
   status: 'Approved' | 'Rejected';
   resolvedMessage?: string;
+  /** Read by the main app's `entity-appeal-resolved` copy, e.g. a site appeal's `category`. */
+  details?: Record<string, unknown>;
 }): Promise<void> {
+  const entityType = input.entityType ?? 'Image';
   try {
     await getNotifications().createNotification({
-      userId: input.userId,
+      userId: input.appeal.userId,
       type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:Image:${input.entityId}`,
+      category: NotificationCategory.Moderation,
+      // Per appeal, matching the main app: a repeated key reuses the first decision's notification.
+      key: `entity-appeal-resolved:${entityType}:${input.entityId}:${input.appeal.id}`,
       details: {
-        entityType: 'Image',
+        ...input.details,
+        entityType,
         entityId: input.entityId,
         status: input.status,
         resolvedMessage: input.resolvedMessage ?? '',

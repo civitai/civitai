@@ -62,7 +62,7 @@ export const answerRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteAnswerHandler),
-  vote: protectedProcedure
+  vote: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(answerVoteSchema)
     .mutation(setAnswerVoteHandler),

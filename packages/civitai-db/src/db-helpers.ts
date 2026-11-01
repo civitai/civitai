@@ -5,14 +5,15 @@ import { performance } from 'node:perf_hooks';
 import client from 'prom-client';
 import { type DbLogFn } from './env';
 import { limitConcurrency } from './concurrency-helpers';
+import { guardPool } from './pool-guard';
 
 // Fix Dates: TIMESTAMP comes back as a UTC Date (was set per-pool-module in the app).
 types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
   return new Date(stringValue.replace(' ', 'T') + 'Z');
 });
 
-// Histogram for pg Pool acquire latency. Defined here (not in prom/client.ts)
-// to avoid a module-init cycle: prom/client.ts imports pgDb/notifDb/datapacketDb,
+// Histogram for pg Pool acquire latency: name + factory live here (not in the app's prom/client.ts)
+// to avoid a module-init cycle: prom/client.ts imports pgDb/datapacketDb,
 // which import db-helpers. If db-helpers also imported a const from prom/client.ts,
 // webpack's CJS-style chunking can leave that binding in a Temporal Dead Zone
 // during module init — observed as "Cannot access 'S' before initialization" +
@@ -21,22 +22,38 @@ types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
 // prom-client itself has no cycle back into our code, so importing it directly
 // is safe. Unprefixed name matches the existing node_postgres_pool_* gauges in
 // prom/client.ts so dashboards correlate on the same metric family.
-const PG_POOL_ACQUIRE_HISTOGRAM_NAME = 'node_postgres_pool_acquire_duration_seconds';
-const pgPoolAcquireHistogram = (() => {
+export const PG_POOL_ACQUIRE_HISTOGRAM_NAME = 'node_postgres_pool_acquire_duration_seconds';
+export type PgPoolAcquireHistogram = client.Histogram<'pool' | 'result'>;
+
+/** Builds the acquire histogram in `registers` (default: prom-client's default registry). */
+export function createPgPoolAcquireHistogram(
+  registers?: client.Registry[]
+): PgPoolAcquireHistogram {
+  return new client.Histogram({
+    name: PG_POOL_ACQUIRE_HISTOGRAM_NAME,
+    help: 'Time spent awaiting a connection from a pg.Pool, by pool instance and result',
+    labelNames: ['pool', 'result'] as const,
+    buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+    ...(registers ? { registers } : {}),
+  });
+}
+
+// Lazy: a caller that injects its own histogram (CreatePoolOptions.acquireHistogram) must not also
+// leave an empty same-named family in the default registry, or a scrape that concatenates both
+// registries emits the family twice.
+let defaultPgPoolAcquireHistogram: PgPoolAcquireHistogram | undefined;
+function getDefaultPgPoolAcquireHistogram(): PgPoolAcquireHistogram {
+  if (defaultPgPoolAcquireHistogram) return defaultPgPoolAcquireHistogram;
   try {
-    return new client.Histogram({
-      name: PG_POOL_ACQUIRE_HISTOGRAM_NAME,
-      help: 'Time spent awaiting a connection from a pg.Pool, by pool instance and result',
-      labelNames: ['pool', 'result'] as const,
-      buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
-    });
+    defaultPgPoolAcquireHistogram = createPgPoolAcquireHistogram();
   } catch {
     // HMR re-registration: prom-client throws on duplicate; reuse the existing one
-    return client.register.getSingleMetric(PG_POOL_ACQUIRE_HISTOGRAM_NAME) as client.Histogram<
-      'pool' | 'result'
-    >;
+    defaultPgPoolAcquireHistogram = client.register.getSingleMetric(
+      PG_POOL_ACQUIRE_HISTOGRAM_NAME
+    ) as PgPoolAcquireHistogram;
   }
-})();
+  return defaultPgPoolAcquireHistogram;
+}
 
 /**
  * Formats a value for SQL display/logging.
@@ -87,6 +104,12 @@ export type CreatePoolOptions = {
   /** Default true → append `sslmode=no-verify`. */
   ssl?: boolean;
   log?: DbLogFn;
+  /**
+   * Where acquire latency is observed. Defaults to a histogram in prom-client's default registry. A
+   * pool shared across module graphs must pass one from a registry every graph's scrape reads: the
+   * pool's closures observe into whichever graph built it.
+   */
+  acquireHistogram?: PgPoolAcquireHistogram;
 };
 
 /**
@@ -108,8 +131,10 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     perConnectionStatementTimeout,
     ssl = true,
     log: logOption,
+    acquireHistogram,
   } = options;
   const log: DbLogFn = logOption ?? (() => {});
+  const pgPoolAcquireHistogram = acquireHistogram ?? getDefaultPgPoolAcquireHistogram();
 
   log(`Creating ${label} client`);
 
@@ -126,6 +151,10 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     statement_timeout: statementTimeout,
     application_name: applicationName,
   }) as AugmentedPool;
+
+  // Before anything else, so every client the pool creates gets the per-client listener. Logs to the
+  // console, not `log`: `log` defaults to a no-op.
+  guardPool(pool, label);
 
   // Per-connection statement_timeout for PgBouncer-fronted pools (which ignore the startup param).
   if (perConnectionStatementTimeout) {
@@ -194,8 +223,7 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     if (typeof sql === 'object') {
       // Prisma.Sql object
       queryText = sql.text;
-      queryParams = sql.values;
-      for (const i in queryParams) queryParams[i] = formatSqlType(queryParams[i]);
+      queryParams = sql.values.map(formatSqlParam);
     } else if (params !== undefined) {
       // Plain string with parameters
       queryText = sql;
@@ -359,6 +387,13 @@ function formatSqlType(value: any): string {
     return JSON.stringify(value);
   }
   return value;
+}
+
+// Unlike formatSqlType, which inlines values into SQL text, a bound array stays an array so node-postgres
+// sends it as a Postgres array (`= ANY($1::int[])`).
+function formatSqlParam(value: any): any {
+  if (!Array.isArray(value)) return formatSqlType(value);
+  return value.map((element) => (element === null ? null : formatSqlParam(element)));
 }
 
 export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {

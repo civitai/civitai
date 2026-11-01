@@ -17,14 +17,19 @@ const mocks = vi.hoisted(() => ({
   getCsamsToReport: vi.fn(),
   archiveCsamDataForReport: vi.fn(),
   processCsamReport: vi.fn(),
+  logBlockedCsamReports: vi.fn(),
   getCsamsToRemoveContent: vi.fn(async () => []),
 }));
 
 vi.mock('~/server/services/csam.service-new', () => mocks);
 
+const evidence = vi.hoisted(() => ({ checkCsamArchiveEvidence: vi.fn() }));
+vi.mock('~/server/services/csam-archive-evidence.service', () => evidence);
+
 import {
   CSAM_ARCHIVE_JOB_LOCK_SECONDS,
   CSAM_ARCHIVE_MEASURED_PASS_SECONDS,
+  CSAM_SEND_JOB_LOCK_SECONDS,
   csamJobs,
 } from '~/server/jobs/process-csam';
 import { createDisconnectHandler, createJob } from '~/server/jobs/job';
@@ -41,6 +46,8 @@ beforeEach(() => {
   mocks.getCsamsToReport.mockResolvedValue(reports);
   mocks.archiveCsamDataForReport.mockResolvedValue(undefined);
   mocks.processCsamReport.mockResolvedValue(undefined);
+  mocks.logBlockedCsamReports.mockResolvedValue(undefined);
+  evidence.checkCsamArchiveEvidence.mockResolvedValue(undefined);
 });
 
 /** The exact pre-fix failure: `Promise.reject()` with no argument. */
@@ -110,6 +117,25 @@ describe('archive-csam-reports batch isolation', () => {
       .filter((arg) => arg?.subType === 'archive-data');
     expect(logged[0].message).toBe('synthetic archive failure');
   });
+
+  it('checks the stored evidence after the batch, even when a report failed', async () => {
+    mocks.archiveCsamDataForReport.mockImplementationOnce(() =>
+      Promise.reject(new Error('synthetic archive failure'))
+    );
+
+    await archiveJob!.run({}).result;
+
+    expect(evidence.checkCsamArchiveEvidence).toHaveBeenCalledTimes(1);
+    expect(evidence.checkCsamArchiveEvidence.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.archiveCsamDataForReport.mock.invocationCallOrder.at(-1)!
+    );
+  });
+
+  it('finishes the job when the evidence check fails', async () => {
+    evidence.checkCsamArchiveEvidence.mockRejectedValueOnce(new Error('synthetic check failure'));
+
+    await expect(archiveJob!.run({}).result).resolves.not.toThrow();
+  });
 });
 
 describe('the archive job asks for a lock that can hold a real archival pass', () => {
@@ -171,7 +197,7 @@ describe('the archive job asks for a lock that can hold a real archival pass', (
   });
 });
 
-describe('the archive job’s lock survives the caller hanging up', () => {
+describe('the CSAM jobs’ locks survive the caller hanging up', () => {
   // 🔴 THE HALF THAT MAKES THE CONSTANT ABOVE MEAN ANYTHING. The caller holds the trigger request
   // open under a client-side timeout and retries; a pass longer than that timeout loses its socket.
   // On the default path the route's close handler releases the lock there and then — throwing the
@@ -196,12 +222,24 @@ describe('the archive job’s lock survives the caller hanging up', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
-  it('CONTROL: the sibling job, which does not opt in, still releases on a disconnect', async () => {
-    // Same handler, same harness, a real un-opted job — so a green above is a fact about the
-    // opt-in and not about the harness. This is also the default-unchanged claim, checked against
-    // a job that ships today rather than a fixture.
-    expect(sendJob!.options.keepLockOnDisconnect).toBeUndefined();
-    const { cancel, release, handler } = harness(sendJob!.options);
+  it('the send job keeps its lock on a disconnect too, and holds it as long', async () => {
+    const { release, handler } = harness(sendJob!.options);
+
+    await handler();
+
+    expect(release).not.toHaveBeenCalled();
+    expect(sendJob!.options.lockExpiration).toBe(CSAM_SEND_JOB_LOCK_SECONDS);
+    // Shorter than the hourly cron, or than the default, and two runs can overlap on one report.
+    const inherited = createJob('probe', '0 */1 * * *', async () => undefined);
+    expect(sendJob!.cron).toBe('0 */1 * * *');
+    expect(CSAM_SEND_JOB_LOCK_SECONDS).toBeGreaterThan(60 * 60);
+    expect(CSAM_SEND_JOB_LOCK_SECONDS).toBeGreaterThan(inherited.options.lockExpiration);
+  });
+
+  it('CONTROL: a job that does not opt in still releases on a disconnect', async () => {
+    const unopted = createJob('probe', '0 */1 * * *', async () => undefined);
+    expect(unopted.options.keepLockOnDisconnect).toBeUndefined();
+    const { cancel, release, handler } = harness(unopted.options);
 
     await handler();
 
@@ -224,5 +262,25 @@ describe('send-csam-reports batch isolation', () => {
       .filter((arg) => arg?.subType === 'send-report');
     expect(logged).toHaveLength(1);
     expect(logged[0].message).toBe('undefined');
+  });
+});
+
+describe('send-csam-reports blocked-report alert', () => {
+  it('checks every fetched report after the batch, even when one failed', async () => {
+    mocks.processCsamReport.mockRejectedValueOnce(new Error('synthetic send failure'));
+
+    await sendJob!.run({}).result;
+
+    expect(mocks.logBlockedCsamReports).toHaveBeenCalledTimes(1);
+    expect(mocks.logBlockedCsamReports).toHaveBeenCalledWith([8801, 8802, 8803]);
+    expect(mocks.logBlockedCsamReports.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.processCsamReport.mock.invocationCallOrder.at(-1)!
+    );
+  });
+
+  it('finishes the job when the check fails', async () => {
+    mocks.logBlockedCsamReports.mockRejectedValueOnce(new Error('synthetic check failure'));
+
+    await expect(sendJob!.run({}).result).resolves.not.toThrow();
   });
 });

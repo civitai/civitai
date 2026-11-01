@@ -1,12 +1,12 @@
-import { Button, Center, Group, Select, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Center, Group, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { AppSubListingCard } from '~/components/Apps/AppSubListingCard';
 import { AppListingCardSkeletonGrid } from '~/components/Apps/AppListingCardSkeleton';
 import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
-import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDropdown';
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
 import { RecentlyOpenedListingsView } from '~/components/Apps/RecentlyOpenedApps';
@@ -23,7 +23,8 @@ import {
 } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ListingCard, ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
+import type { StoreGridItem } from '~/server/schema/blocks/app-listing-read.schema';
+import { isSubListingCard, onlyListingCards } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
@@ -70,13 +71,6 @@ import { trpc } from '~/utils/trpc';
  * (~1 entry per letter typed). The input therefore renders from local state and
  * the URL is the debounced echo — see `searchInput` below.
  */
-
-const SORT_OPTIONS: { value: ListingSort; label: string }[] = [
-  { value: 'top-rated', label: 'Top rated' },
-  { value: 'popular', label: 'Most popular' },
-  { value: 'newest', label: 'Newest' },
-  { value: 'name', label: 'Name (A–Z)' },
-];
 
 export function AppListingsMarketplaceBody() {
   const features = useFeatureFlags();
@@ -172,7 +166,9 @@ export function AppListingsMarketplaceBody() {
   useEffect(() => {
     if (hasPendingWrite()) return;
     if (searchInput !== debouncedSearch) return;
-    if (filters.query !== searchInput) setSearchInput(filters.query);
+    // Trimmed on both sides, like the echo above: a write skipped for whitespace alone leaves the
+    // URL one space off the box, and adopting that would eat or resurrect the space under the caret.
+    if (filters.query.trim() !== searchInput.trim()) setSearchInput(filters.query);
   });
 
   // "Recently opened" rail (client-only personalisation from localStorage).
@@ -247,6 +243,7 @@ export function AppListingsMarketplaceBody() {
       // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
       // request-time zod error, not a bigger page.
       limit: 48,
+      includeSubListings: true,
     },
     {
       // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
@@ -307,14 +304,20 @@ export function AppListingsMarketplaceBody() {
     }
   );
 
-  const items = useMemo(() => (data?.pages ?? []).flatMap((p) => p.items as ListingCard[]), [data]);
+  const gridItems = useMemo(
+    () => (data?.pages ?? []).flatMap((p): StoreGridItem[] => p.items),
+    [data]
+  );
+  // The app cards alone. Sub-listing cards are grid-only: the "Recently opened" rail is about
+  // APPS, so it reconciles against these.
+  const items = useMemo(() => onlyListingCards(gridItems), [gridItems]);
 
   /**
    * RECONCILE the persisted recents against the listings already on this page.
    *
    * 🔴 WHY THE RAIL NEEDS THIS. A recents entry written by the legacy
-   * `MarketplaceBody.recordRecent` carries `{id, blockId, name, iconUrl}` — no
-   * `hasPage` — and `resolveRecentApp` reads a missing `hasPage` as `false`. So a
+   * `MarketplaceBody.recordRecent` carries `{id, blockId, name}` (the `iconUrl` it
+   * passes is dropped by the store, which never persists one) — no `hasPage` — and `resolveRecentApp` reads a missing `hasPage` as `false`. So a
    * viewer's most-run apps rendered an EYE pointing at the detail page instead of
    * a PLAY pointing at `/apps/run/…`, and no amount of clicking healed it:
    * `handleOpenRecent` re-persists the resolved `false`. `reconcileRecentApps`
@@ -344,7 +347,7 @@ export function AppListingsMarketplaceBody() {
    * 🔴 AND IT WOULD NOT BUY THE CHROME MENU ANYTHING EITHER. The store's other
    * consumer — the app-chrome "Recently run" menu — filters on `kind`/`blockId`,
    * and a legacy entry carries `blockId` but NOT `kind`: `MarketplaceBody`'s
-   * `recordRecent` writes only `{id, blockId, name, iconUrl}`. Such entries are
+   * `recordRecent` writes only `{id, blockId, name}`. Such entries are
    * admitted by ABSENCE (`undefined !== 'offsite'` is true), not by carrying the
    * field — see the 🔴 note on `selectChromeRecentApps`, which is the authority
    * on that gate. So persisting `kind` would not change what that menu shows;
@@ -398,13 +401,13 @@ export function AppListingsMarketplaceBody() {
   // this is complete only while the catalog fits in the loaded pages.
   const filteredItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
+    if (!q) return gridItems;
+    return gridItems.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.tagline ? c.tagline.toLowerCase().includes(q) : false)
     );
-  }, [items, debouncedSearch]);
+  }, [gridItems, debouncedSearch]);
 
   // The BROAD predicate — includes search, because a viewer looking at an empty
   // grid can't tell which control emptied it. The dropdown's `Indicator` counts
@@ -450,28 +453,11 @@ export function AppListingsMarketplaceBody() {
   return (
     <Stack gap="md">
       {/*
-        ONE control row: search (flexes) · sort · Filters. Replaces the previous
-        three stacked rows.
+        Search only. Sort and Filters live in the site sub-nav (`AppsStoreFeedFilters`,
+        mounted by `SubNav2`), the way the images feed does it; all three write the same
+        URL params this body reads.
 
-        ALIGNMENT. The row was previously `align="end"` because the search input
-        carried a visible `label="Search"` and the sort `Select` carried
-        `label="Sort"` — the labels made the two controls different heights, so
-        they could only be lined up by their BOTTOM edge, and the filter toggles
-        underneath had no label at all and sat on a third baseline. The labels
-        are gone (the placeholder + the leading magnifier already say "search",
-        and the sort control shows its own value), so all three controls are the
-        same height and the row centres cleanly.
-
-        🔴 Removing the visible label does NOT remove the accessible name —
-        `aria-label` carries it, so `getByLabelText('Search')` and a screen
-        reader still resolve the same names they did before. An icon and a
-        placeholder are not an accessible name.
-
-        The `radius="xl"` pills + `size="sm"` (36px) match the `/models` filter
-        row geometry, which is what "align the search and sort components" is
-        measured against. `wrap="wrap"` so a narrow viewport drops Filters onto
-        its own line instead of crushing the search box; `flex: 1` + a 220px
-        floor keeps search the dominant control at every width.
+        🔴 `aria-label` carries the accessible name; an icon and a placeholder are not one.
       */}
       <Group gap="sm" align="center" wrap="wrap" data-testid="apps-store-control-row">
         <TextInput
@@ -484,17 +470,6 @@ export function AppListingsMarketplaceBody() {
           size="sm"
           style={{ flex: 1, minWidth: 220 }}
         />
-        <Select
-          aria-label="Sort"
-          data={SORT_OPTIONS}
-          value={sort}
-          onChange={(v) => setFilters({ sort: (v as ListingSort) ?? 'top-rated' })}
-          allowDeselect={false}
-          radius="xl"
-          size="sm"
-          w={180}
-        />
-        <AppsStoreFiltersDropdown filters={{ kind, category }} onChange={setFilters} />
       </Group>
 
       {/* RECENTLY OPENED — BELOW the search/sort/filter controls and ABOVE the
@@ -637,7 +612,11 @@ export function AppListingsMarketplaceBody() {
             <div className={gridClasses.grid} data-testid="apps-listing-grid">
               {filteredItems.map((card) => (
                 <div key={card.id} data-testid="apps-listing-grid-col">
-                  <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  {isSubListingCard(card) ? (
+                    <AppSubListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  ) : (
+                    <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  )}
                 </div>
               ))}
             </div>

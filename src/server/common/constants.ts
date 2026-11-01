@@ -1,7 +1,6 @@
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   BountyType,
   CommercialUse,
@@ -23,8 +22,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
 
 /**
  * Comment surfaces laid out full-width, so a conversation can render open and deeply nested
- * without the indentation running out of room. Everything else gets the shallower defaults —
- * `image` and `bountyEntry` sit in narrow columns and are shallower still.
+ * without the indentation running out of room. Everything else gets the shallower defaults.
  *
  * Deep threads reach the end of an article's ceiling for 99.5% of article threads (prod,
  * Aug 2026); bounty and challenge threads have not been measured, and share the ceiling
@@ -33,28 +31,41 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
 const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
 
 function getCommentMaxDepth(entityType: string) {
-  if (wideCommentSurfaces.has(entityType)) return 10;
-  switch (entityType) {
-    case 'image':
-    case 'bountyEntry':
-      return 3;
-    default:
-      return 5;
+  return wideCommentSurfaces.has(entityType) ? 10 : 5;
+}
+
+/** civitai.com and the deployment's own host, each with its `image.` subdomain. */
+function chatCivHosts() {
+  let baseHost = 'civitai.com';
+  const base = env.NEXT_PUBLIC_BASE_URL;
+  if (base) {
+    try {
+      baseHost = new URL(/^https?:\/\//i.test(base) ? base : `https://${base}`).hostname;
+    } catch {
+      // unparseable: civitai.com only
+    }
   }
+  return [...new Set([baseHost, 'civitai.com'])].flatMap((host) => [host, `image.${host}`]);
 }
 
 /**
- * Surfaces that open fewer reply levels than they can hold, because something below the section
- * has to stay reachable. A challenge puts its entry gallery *underneath* the discussion, and
- * opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
- * one level costs 4.2. Bounty and article have nothing below their discussion to scroll to.
+ * Reply levels a surface opens up front, where it differs from "as deep as it holds" on a wide
+ * surface or "none" elsewhere. A challenge puts its entry gallery *underneath* the discussion,
+ * and opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
+ * one level costs 4.2. `image` and `bountyEntry` sit in narrow detail columns, so they open part
+ * of their depth rather than all of it.
  */
-const autoExpandDepthOverrides: Record<string, number> = { challenge: 1 };
+const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
+
+/** Per-surface page budget where `v3PageBudget` is too large, such as a narrow detail column. */
+const v3PageBudgetOverrides: Record<string, number> = {};
+const v3PageBudget = 40;
 
 function getCommentAutoExpandDepth(entityType: string) {
-  if (!wideCommentSurfaces.has(entityType)) return 0;
+  const override = autoExpandDepthOverrides[entityType];
+  if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
   const ceiling = getCommentMaxDepth(entityType) - 1;
-  return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
+  return Math.min(override ?? ceiling, ceiling);
 }
 
 /**
@@ -426,6 +437,23 @@ export const constants = {
      */
     autoExpandBudget: 40,
     replyPageSize: 5,
+    /**
+     * The v3 suite's page, in rendered comments, replies included: top-level comments are added
+     * until the next would pass it, so one with a large thread costs its share and fewer load.
+     */
+    v3PageBudget,
+    getV3PageBudget({ entityType }: { entityType: string }) {
+      return v3PageBudgetOverrides[entityType] ?? v3PageBudget;
+    },
+    /**
+     * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
+     * it here and mounts `CommentSection`; notifications build their deep links from this list.
+     */
+    v3ReadSurfaces: ['article'] as string[],
+    /** Most replies the v3 suite opens up front under one top-level comment. */
+    v3RepliesPerRoot: 10,
+    /** Replies per "show more" page in the v3 suite. */
+    v3ReplyPageSize: 10,
     maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
@@ -507,14 +535,17 @@ export const constants = {
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
-    // TODO disable just "image.civitai.com" with nothing else
-    civRegex: new RegExp(
-      `^(?:https?://)?(?:image\\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com')
-        .replace(/^https?:\/\//, '')
-        .replace(/\./g, '\\.')}|civitai\\.com)`
-    ),
-    externalRegex:
-      /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com|civitai\.red(?=[/:?#]|$))/,
+    // Hosts a chat link may point at, matched exactly against the parsed hostname
+    // (see `src/components/Chat/util.tsx`). Links to these hosts are rendered in-app.
+    civHosts: chatCivHosts(),
+    // Off-site hosts chat will link (and preview server-side). Exact hostnames only.
+    externalHosts: [
+      'github.com',
+      'twitter.com',
+      'x.com',
+      'civitai.red',
+      'education.civitai.com',
+    ].flatMap((host) => [host, `www.${host}`]),
   },
   entityCollaborators: {
     maxCollaborators: 15,
@@ -592,7 +623,12 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
-export const POST_MINIMUM_SCHEDULE_MINUTES = 10;
+// The scheduling window lives in @civitai/shared so the planner element and Creator Studio read the
+// same numbers; re-exported here for the many existing importers.
+export {
+  POST_MAXIMUM_SCHEDULE_MONTHS,
+  POST_MINIMUM_SCHEDULE_MINUTES,
+} from '@civitai/shared/post-scheduling';
 // Caps on resources a user can manually credit on a single uploaded/external image
 // (`ImageResourceNew.detected = false`); auto-detected resources are not counted. This is an
 // attribution action with no GPU cost, so it is intentionally decoupled from the per-tier
@@ -603,6 +639,8 @@ export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
+
+export const CYBERTIP_CONTACT_EMAIL = 'compliance@civitai.com';
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
@@ -834,6 +872,26 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // encouraged "Powered by" form, so there is no notice and no poweredBy.
     attribution: 'MiniMax-Music3',
   },
+  'krea 2 community': {
+    // The licence link on the Hugging Face model cards, pinned to a commit.
+    url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+    name: 'Krea 2 Community License Agreement',
+  },
+  'flux kommunity': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/55d9cc2b0d33255ccd4fe1c9724bc3754de0ae96/LICENSE.md',
+    name: 'FLUX Kommunity License',
+    // Section 3(b) Attribution Notice, split like the other BFL licences.
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Kommunity License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    // Section 2(b): the model and its derivatives are non-commercial; only a Qualifying
+    // User's outputs may be used commercially.
+    nonCommercial: true,
+    // Section 2(a) applies every restriction to derivatives, and 3(a) makes them carry it.
+    requiresSameLicense: true,
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -877,6 +935,9 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
   'Flux.3': baseLicenses['bfl tos'],
+  'Flux.3 Klein': baseLicenses['flux kommunity'],
+  'Flux.3 Klein-base': baseLicenses['flux kommunity'],
+  'MOSS Image': baseLicenses['apache 2.0'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
   'Flux.2 Klein 9B': baseLicenses['flux1D'],
@@ -922,7 +983,68 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
+  'Krea 2': baseLicenses['krea 2 community'],
+  'Krea 2 Turbo': baseLicenses['krea 2 community'],
 };
+
+type CivitaiLicenseAgreement = {
+  partner: string;
+  url?: string;
+  // Shown in place of the public licence's notice, which is written for the case
+  // the agreement now headlines.
+  notice?: string;
+};
+
+// Base models Civitai uses under its own agreement with the rights holder. Display only:
+// commercial-use, mature and same-license enforcement still come from baseModelLicenses.
+export const civitaiLicenseAgreements: Partial<Record<BaseModel, CivitaiLicenseAgreement>> = {
+  'MiniMax H3': {
+    partner: 'MiniMax',
+    notice:
+      'The MiniMax H3 Community License Agreement’s grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+  },
+};
+
+export type LicenseLine = { label?: string; name: string; url?: string; suffix?: string };
+export type DisplayedBaseModelLicense = {
+  lines: LicenseLine[];
+  notice?: string;
+  poweredBy?: string;
+};
+
+export function getDisplayedBaseModelLicense(
+  baseModel: string
+): DisplayedBaseModelLicense | undefined {
+  const license = baseModelLicenses[baseModel as BaseModel];
+  const agreement = civitaiLicenseAgreements[baseModel as BaseModel];
+  if (!agreement) {
+    if (!license) return undefined;
+    return {
+      lines: [{ name: license.name, url: license.url }],
+      notice: license.notice,
+      poweredBy: license.poweredBy,
+    };
+  }
+
+  // The agreement covers use on Civitai only. Downloaded weights stay under the public
+  // licence, so the two scopes get equal billing rather than one demoting the other.
+  const lines: LicenseLine[] = [
+    {
+      label: 'On Civitai (generation, training, sharing LoRAs):',
+      name: `covered by Civitai’s agreement with ${agreement.partner}`,
+      url: agreement.url,
+    },
+  ];
+  if (license)
+    lines.push({
+      label: 'Downloaded weights:',
+      name: license.name,
+      url: license.url,
+      suffix: 'applies',
+    });
+
+  return { lines, notice: agreement.notice, poweredBy: license?.poweredBy };
+}
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
@@ -987,6 +1109,28 @@ export function getEffectiveDifferentLicense(
   return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
 }
 
+// "Different permissions on merges" means nothing while merges are not allowed. The upsert form
+// used to hide that box without clearing it, so ~111k models store merges off with it still on:
+// every reader goes through this rather than the raw column, and those rows are left as stored.
+export function allowsDifferentLicenseOnMerges(permissions: {
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+}): boolean {
+  return permissions.allowDerivatives && permissions.allowDifferentLicense;
+}
+
+// The write-side half of the rule above. Only when the caller is writing permissions: a save that
+// omits both fields leaves the stored pair alone. `storedAllowDerivatives` covers a save that sends
+// only allowDifferentLicense to a model whose merges are already off.
+export function normalizeMergePermissions(
+  data: { allowDerivatives?: boolean; allowDifferentLicense?: boolean },
+  storedAllowDerivatives?: boolean
+) {
+  if (data.allowDerivatives === undefined && data.allowDifferentLicense === undefined) return;
+  if ((data.allowDerivatives ?? storedAllowDerivatives) === false)
+    data.allowDifferentLicense = false;
+}
+
 // Whether a model's own terms add anything to the base license, which decides if Attachment B
 // is offered. Returns true for every input: every element of a CommercialUse[] is in CommercialUse
 // by construction, so the `.some` is `length > 0` and the `!length` arm covers the rest, and
@@ -1020,648 +1164,6 @@ export function isNsfwLevelRestrictedForBaseModel(
   return restrictedLevels.includes(nsfwLevel);
 }
 
-export const samplerOffsets = {
-  'Euler a': 4,
-  Euler: 4,
-  Heun: 8,
-  LMS: 10,
-  DDIM: 15,
-  'DPM++ 2M Karras': 4,
-  DPM2: 4,
-  'DPM2 a': 4,
-  undefined: 4,
-} as const;
-
-export const commonAspectRatios = [
-  { label: 'Square', width: 1024, height: 1024 },
-  { label: 'Landscape', width: 1216, height: 832 },
-  { label: 'Portrait', width: 832, height: 1216 },
-];
-
-export const seedreamSizes = [
-  { label: '16:9', width: 2560, height: 1440 },
-  { label: '4:3', width: 2304, height: 1728 },
-  { label: '1:1', width: 2048, height: 2048 },
-  { label: '3:4', width: 1728, height: 2304 },
-  { label: '9:16', width: 1440, height: 2560 },
-];
-
-const seedreamSizes4K = [
-  { label: '16:9', width: 4096, height: 2304 },
-  { label: '4:3', width: 4096, height: 3072 },
-  { label: '1:1', width: 4096, height: 4096 },
-  { label: '3:4', width: 3072, height: 4096 },
-  { label: '9:16', width: 2304, height: 4096 },
-];
-
-export const qwenSizes = [
-  { label: '16:9', width: 1664, height: 928 },
-  { label: '4:3', width: 1472, height: 1104 },
-  { label: '1:1', width: 1328, height: 1328 },
-  { label: '3:4', width: 1104, height: 1472 },
-  { label: '9:16', width: 928, height: 1664 },
-];
-
-export const grokSizes = [
-  { label: '16:9', width: 1824, height: 1024 },
-  { label: '4:3', width: 1184, height: 888 },
-  { label: '1:1', width: 1024, height: 1024 },
-  { label: '3:4', width: 888, height: 1184 },
-  { label: '9:16', width: 1024, height: 1824 },
-];
-
-export const ponyV7Sizes = [
-  { label: '3:2', width: 1536, height: 1024 },
-  { label: '6:5', width: 1536, height: 1280 },
-  { label: '1:1', width: 1536, height: 1536 },
-  { label: '5:6', width: 1280, height: 1536 },
-  { label: '2:3', width: 1024, height: 1536 },
-];
-
-export const nanoBananaProSizes = [
-  { label: '16:9', width: 2560, height: 1440 },
-  { label: '4:3', width: 2304, height: 1728 },
-  { label: '1:1', width: 2048, height: 2048 },
-  { label: '3:4', width: 1728, height: 2304 },
-  { label: '9:16', width: 1440, height: 2560 },
-];
-
-export const generationResourceConfig: Record<number, MixedObject> = {
-  2470991: {
-    aspectRatios: seedreamSizes4K,
-  },
-};
-
-export type GenerationConfigKey = keyof typeof generationConfig;
-export const generationConfig = {
-  SD1: {
-    aspectRatios: [
-      { label: 'Square', width: 512, height: 512 },
-      { label: 'Landscape', width: 768, height: 512 },
-      { label: 'Portrait', width: 512, height: 768 },
-    ],
-    checkpoint: {
-      id: 128713,
-      name: '8',
-      trainedWords: [],
-      baseModel: 'SD 1.5',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 4384,
-        name: 'DreamShaper',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  SDXL: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 128078,
-      name: 'v1.0 VAE fix',
-      trainedWords: [],
-      baseModel: 'SDXL 1.0',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 101055,
-        name: 'SD XL',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Pony: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 290640,
-      name: 'V6 (start with this one)',
-      trainedWords: [],
-      baseModel: 'Pony',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 257749,
-        name: 'Pony Diffusion V6 XL',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  PonyV7: {
-    aspectRatios: ponyV7Sizes,
-    checkpoint: {
-      id: 2152373,
-      name: 'v7.0',
-      trainedWords: [],
-      baseModel: 'PonyV7',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1901521,
-        name: 'Pony V7',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Illustrious: {
-    aspectRatios: commonAspectRatios,
-    // doesn't work for all illustrios models
-    // aspectRatios: [
-    //   { label: 'Square', width: 1536, height: 1536 },
-    //   { label: 'Landscape', width: 1920, height: 1280 },
-    //   { label: 'Portrait', width: 1280, height: 1920 },
-    // ],
-    checkpoint: {
-      id: 889818,
-      name: 'v0.1',
-      trainedWords: [],
-      baseModel: 'Illustrious',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 795765,
-        name: 'Illustrious-XL',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Chroma: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2164239,
-      name: 'v1.0-HD',
-      trainedWords: [],
-      baseModel: 'Chroma',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1330309,
-        name: 'Chroma',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  NoobAI: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 1190596,
-      name: 'V-Pred-1.0-Version',
-      trainedWords: [],
-      baseModel: 'NoobAI',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 833294,
-        name: 'NoobAI-XL (NAI-XL)',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux1: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 691639,
-      name: '',
-      trainedWords: [],
-      baseModel: 'Flux.1 D',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 618692,
-        name: 'FLUX',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  FluxKrea: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2068000,
-      name: '',
-      trainedWords: [],
-      baseModel: 'Flux.1 Krea',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 618692,
-        name: 'FLUX',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2439067,
-      name: '',
-      trainedWords: [],
-      baseModel: 'Flux.2 D',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2Klein_9B: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2612554,
-      name: '9b',
-      trainedWords: [],
-      baseModel: 'Flux.2 Klein 9B',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2 Klein',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2Klein_9B_base: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2612548,
-      name: '9b-base',
-      trainedWords: [],
-      baseModel: 'Flux.2 Klein 9B-base',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2 Klein',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2Klein_4B: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2612557,
-      name: '4b',
-      trainedWords: [],
-      baseModel: 'Flux.2 Klein 4B',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2 Klein',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2Klein_4B_base: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2612552,
-      name: '4b-base',
-      trainedWords: [],
-      baseModel: 'Flux.2 Klein 4B-base',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2 Klein',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Qwen: {
-    aspectRatios: qwenSizes,
-    checkpoint: {
-      id: 2552908,
-      name: 'fp8_e4m3fn',
-      trainedWords: [],
-      baseModel: 'Qwen',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2268063,
-        name: 'Qwen-Image-2512',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Seedream: {
-    aspectRatios: seedreamSizes,
-    checkpoint: {
-      id: 2470991,
-      name: 'v4.5',
-      trainedWords: [],
-      baseModel: 'Seedream',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1951069,
-        name: 'Seedream',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  HiDream: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 1771369,
-      name: '',
-      trainedWords: [],
-      baseModel: 'HiDream',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      covered: true,
-      model: {
-        id: 1562709,
-        name: 'HiDream',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux1Kontext: {
-    aspectRatios: [
-      { label: '21:9', width: 21, height: 9 },
-      { label: '16:9', width: 16, height: 9 },
-      { label: '4:3', width: 4, height: 3 },
-      { label: '3:2', width: 3, height: 2 },
-      { label: '1:1', width: 1, height: 1 },
-      { label: '2:3', width: 2, height: 3 },
-      { label: '3:4', width: 3, height: 4 },
-      { label: '9:16', width: 9, height: 16 },
-      { label: '9:21', width: 9, height: 21 },
-    ],
-    checkpoint: {
-      id: 1892509,
-      name: 'Flux.1 Kontext [Pro]',
-      trainedWords: [],
-      baseModel: 'Flux.1 Kontext',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1672021,
-        name: 'FLUX.1 Kontext',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  // SD3: {
-  //   aspectRatios: commonAspectRatios,
-  //   checkpoint: {
-  //     id: 983309,
-  //     name: 'Large',
-  //     trainedWords: [],
-  //     baseModel: 'SD 3.5',
-  //     strength: 1,
-  //     minStrength: -1,
-  //     maxStrength: 2,
-  //     canGenerate: true,
-  //     hasAccess: true,
-  //     model: {
-  //       id: 878387,
-  //       name: 'Stable Diffusion 3.5 Large',
-  //       type: 'Checkpoint',
-  //     },
-  //   } as GenerationResource,
-  // },
-  // SD3_5M: {
-  //   aspectRatios: commonAspectRatios,
-  //   checkpoint: {
-  //     id: 1003708,
-  //     name: 'Medium',
-  //     trainedWords: [],
-  //     baseModel: 'SD 3.5 Medium',
-  //     strength: 1,
-  //     minStrength: -1,
-  //     maxStrength: 2,
-  //     canGenerate: true,
-  //     hasAccess: true,
-  //     model: {
-  //       id: 896953,
-  //       name: 'Stable Diffusion 3.5 Medium',
-  //       type: 'Checkpoint',
-  //     },
-  //   } as GenerationResource,
-  // },
-  OpenAI: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1536, height: 1024 },
-      { label: 'Portrait', width: 1024, height: 1536 },
-    ],
-    checkpoint: {
-      id: 1733399,
-      name: '4o Image Gen 1',
-      trainedWords: [],
-      baseModel: 'OpenAI',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1532032,
-        name: `OpenAI's GPT-image-1`,
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-
-  Imagen4: {
-    aspectRatios: [
-      { label: '16:9', width: 16, height: 9 },
-      { label: '4:3', width: 4, height: 3 },
-      { label: '1:1', width: 1, height: 1 },
-      { label: '3:4', width: 3, height: 4 },
-      { label: '9:16', width: 9, height: 16 },
-    ],
-    checkpoint: {
-      id: 1889632,
-      name: 'Imagen 4',
-      trainedWords: [],
-      baseModel: 'Imagen4',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1669468,
-        name: `Google Imagen 4`,
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  NanoBanana: {
-    aspectRatios: nanoBananaProSizes,
-    checkpoint: {
-      id: 2154472,
-      name: 'Nano Banana',
-      trainedWords: [],
-      baseModel: 'NanoBanana',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1903424,
-        name: `Google Nano Banana`,
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  ZImageTurbo: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2442439,
-      name: 'v1.0',
-      trainedWords: [],
-      baseModel: 'ZImageTurbo',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2168935,
-        name: 'ZImageTurbo',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  ZImageBase: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2635223,
-      name: 'Base',
-      trainedWords: [],
-      baseModel: 'ZImageBase',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2342797,
-        name: 'Z Image Base',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-
-  Other: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 164821,
-      name: '',
-      trainedWords: [],
-      baseModel: 'Other',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 147759,
-        name: 'Remacri',
-        type: 'Upscaler',
-      },
-    } as GenerationResource,
-  },
-};
-
-export const generation = {
-  formStoreKey: 'generation-form',
-  samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
-  lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
-  defaultValues: {
-    workflow: 'txt2img',
-    cfgScale: 3.5,
-    steps: 25,
-    sampler: 'DPM++ 2M Karras',
-    scheduler: 'simple',
-    seed: null,
-    clipSkip: 2,
-    quantity: 2,
-    aspectRatio: '1:1',
-    resolution: '2k',
-    prompt: '',
-    negativePrompt: '',
-    nsfw: false,
-    baseModel: 'Flux1',
-    denoise: 0.4,
-    upscale: 1.5,
-    civitaiTip: 0,
-    creatorTip: 0.25,
-    fluxUltraAspectRatio: '4',
-    fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
-    fluxUltraRaw: false,
-    model: generationConfig.Flux1.checkpoint,
-    priority: 'low',
-    sourceImage: null,
-    openAIQuality: 'medium',
-    vae: null,
-    resources: null,
-    outputFormat: 'jpeg',
-  },
-  maxValues: {
-    seed: 4294967295,
-    clipSkip: 3,
-  },
-} as const;
 export const maxRandomSeed = 2147483647;
 // Postgres INT4 (integer) column bounds — the ceiling any value written to an
 // `integer` column (e.g. metric counts) must fit under.
@@ -1670,19 +1172,6 @@ export const PG_INT4_MIN = -2_147_483_648;
 export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;
-
-// export type GenerationBaseModel = keyof typeof generationConfig;
-
-export function getGenerationConfig(baseModel = 'SD1', modelVersionId?: number) {
-  if (!(baseModel in generationConfig)) {
-    return getGenerationConfig(); // fallback to default config
-    // throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
-  }
-
-  const modelConfig = modelVersionId ? generationResourceConfig[modelVersionId] : undefined;
-  const baseModelConfig = generationConfig[baseModel as keyof typeof generationConfig];
-  return { ...baseModelConfig, ...modelConfig };
-}
 
 export const MODELS_SEARCH_INDEX = 'models_v9';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
@@ -1768,12 +1257,21 @@ export const milestoneNotificationFix = '2025-05-28';
 export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
 
+/** Minor-safety bans always remove media: `toggleBan` ignores `removeMedia: false` for these. */
+export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] = [
+  BanReasonCode.SexualMinor,
+  BanReasonCode.SexualMinorGenerator,
+  BanReasonCode.SexualMinorTraining,
+];
+
 export const banReasonDetails: Record<
   BanReasonCode,
   {
     code: BanReasonCode;
     publicBanReasonLabel?: string;
     privateBanReasonLabel: string;
+    /** Set by its own flow, never picked by hand. */
+    systemOnly?: true;
   }
 > = {
   [BanReasonCode.SexualMinor]: {
@@ -1840,6 +1338,12 @@ export const banReasonDetails: Record<
     code: BanReasonCode.RRDViolation,
     publicBanReasonLabel: 'Violated Responsible Resource Development',
     privateBanReasonLabel: 'Violated Responsible Resource Development (e.g., deepfakes)',
+  },
+  [BanReasonCode.Chargeback]: {
+    code: BanReasonCode.Chargeback,
+    publicBanReasonLabel: 'Reversed payment',
+    privateBanReasonLabel: 'Lost payment dispute (chargeback)',
+    systemOnly: true,
   },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,
@@ -1960,6 +1464,7 @@ export const KEY_VALUE_KEYS = {
   MODEL_FILE_OPTIONS: 'modelFileOptions',
   CONTEST_SCORING: 'contestScoring',
   CREATOR_SHOP_FEES: 'creatorShopFees',
+  USER_MENU_DEFAULT_PINS: 'userMenuDefaultPins',
 } as const;
 
 // Snapshot rows are one KeyValue per run: `contestSnapshot:<collectionId>:<takenAt ISO>`.

@@ -2,7 +2,11 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getCreatorScore } from '$lib/server/creator-score';
 import { getGetPaidEstimate } from '$lib/server/creator-program';
-import { callMainApp } from '$lib/server/main-app';
+import { callMainApp, MAIN_APP_URL } from '$lib/server/main-app';
+import { modFallbackFlagEnabled } from '$lib/server/main-app-flags';
+
+// 🔴 Must stay the main app's `creatorJourney` fliptKey.
+const CREATOR_JOURNEY_FLAG = 'creator-journey';
 
 // The Studio gates monetization on Creator Program membership (B1), so a CP member has nothing to join here —
 // send them home. Non-CP members (incl. paying members who haven't cleared the score bar) still see the pitch,
@@ -10,12 +14,16 @@ import { callMainApp } from '$lib/server/main-app';
 export const load: PageServerLoad = async ({ parent, locals }) => {
   const { membership } = await parent();
   if (membership.isCreatorProgramMember) redirect(303, '/dashboard');
-  const [creatorScore, estimate] = await Promise.all([
-    getCreatorScore(locals.user.id),
+  const user = locals.user;
+  const [creatorScore, estimate, creatorJourney] = await Promise.all([
+    getCreatorScore(user.id),
     // Degrades independently — a ClickHouse/buzz-service hiccup shouldn't blank the whole join page.
-    getGetPaidEstimate(locals.user.id).catch(() => null),
+    getGetPaidEstimate(user.id).catch(() => null),
+    modFallbackFlagEnabled(CREATOR_JOURNEY_FLAG, user),
   ]);
-  return { creatorScore, estimate };
+  // The main app 404s /creators/journey while the flag is off for this user, so the link must not render.
+  const creatorJourneyUrl = creatorJourney ? `${MAIN_APP_URL}/creators/journey` : null;
+  return { creatorScore, estimate, creatorJourneyUrl };
 };
 
 // Join the Creator Program — written through the main app (it owns eligibility + the session refresh), forwarding

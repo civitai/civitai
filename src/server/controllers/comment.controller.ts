@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { ModelStatus, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -11,25 +10,37 @@ import type {
   GetAllCommentsSchema,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
-import { commentDetailSelect, getAllCommentsSelect } from '~/server/selectors/comment.selector';
+import {
+  commentDetailSelect,
+  getAllCommentsWithCachedUserSelect,
+} from '~/server/selectors/comment.selector';
 import {
   createOrUpdateComment,
   deleteCommentById,
   getCommentById,
   getCommentReactions,
   getComments,
+  getCommentsViaKysely,
   getPinnedComments,
+  getPinnedCommentsViaKysely,
+  isLegacyCommentHidden,
   toggleHideComment,
   togglePinComment,
   updateCommentById,
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
+import { isKyselyCommentListPage } from '~/server/services/hot-reads-4.reads';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createNotification } from '~/server/services/notification.service';
+import { maskHiddenReactors } from '~/server/services/reaction-privacy.service';
 import {
   getBlockCheckOwnerIdsForModelComment,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsAndProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -50,11 +61,19 @@ export const getCommentsInfiniteHandler = async ({
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
   const { user } = ctx;
-  const comments = await getComments({
-    input: { ...input, limit },
-    user,
-    select: getAllCommentsSelect,
-  });
+  // `kysely-hot-reads-4`, evaluated once for this request: the first page (newest or oldest
+  // first) and the pinned block read through Kysely, on the client the same lag decision picks.
+  // A cursor page or another sort reads through Prisma either way.
+  const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4);
+  const pageInput = { ...input, limit };
+  const comments =
+    viaKysely && isKyselyCommentListPage(pageInput)
+      ? await getCommentsViaKysely({ input: pageInput, user })
+      : await getComments({
+          input: pageInput,
+          user,
+          select: getAllCommentsWithCachedUserSelect,
+        });
 
   let nextCursor: number | undefined;
   if (comments.length > input.limit) {
@@ -63,9 +82,11 @@ export const getCommentsInfiniteHandler = async ({
   }
 
   // Pinned comments surface at the top of the first page only.
-  const pinnedComments = !input.cursor
-    ? await getPinnedComments({ input, user, select: getAllCommentsSelect })
-    : [];
+  const pinnedComments = input.cursor
+    ? []
+    : viaKysely
+    ? await getPinnedCommentsViaKysely({ input, user })
+    : await getPinnedComments({ input, user, select: getAllCommentsWithCachedUserSelect });
 
   const allComments = [...pinnedComments, ...comments];
   const commentIds = allComments.map((c) => c.id);
@@ -80,11 +101,19 @@ export const getCommentsInfiniteHandler = async ({
     GROUP BY c."parentId"
   `;
   const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
+  const [userCosmetics] = await Promise.all([
+    getCosmeticsAndProfilePicturesForUsers(allComments.map((c) => c.user.id)),
+    maskHiddenReactors(
+      allComments.map((c) => c.reactions),
+      user
+    ),
+  ]);
 
   return {
     nextCursor,
     comments: allComments.map((c) => ({
       ...c,
+      user: { ...c.user, ...userCosmetics(c.user.id) },
       _count: { comments: countsMap[c.id] ?? 0 },
     })),
   };
@@ -92,11 +121,14 @@ export const getCommentsInfiniteHandler = async ({
 
 export const getCommentReactionsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetCommentReactionsSchema;
+  ctx: Context;
 }) => {
   try {
     const reactions = await getCommentReactions(input);
+    await maskHiddenReactors([reactions], ctx.user);
 
     return reactions;
   } catch (error) {
@@ -232,7 +264,7 @@ export const deleteUserCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const deleted = await deleteCommentById({ ...input });
+    const deleted = await deleteCommentById({ ...input, byAuthor: !ctx.user.isModerator });
     // if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     await ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id });
@@ -266,6 +298,10 @@ export const getCommentHandler = async ({ input, ctx }: { input: GetByIdInput; c
       if (blocked) throw throwNotFoundError();
     }
 
+    await maskHiddenReactors(
+      [comment.reactions, ...comment.comments.map((c) => c.reactions)],
+      ctx.user
+    );
     return comment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -293,6 +329,10 @@ export const getCommentCommentsHandler = async ({
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
+    await maskHiddenReactors(
+      comment.comments.map((c) => c.reactions),
+      ctx.user
+    );
     return comment.comments;
   } catch (error) {
     throw throwDbError(error);
@@ -322,7 +362,13 @@ export const getCommentCommentsCountHandler = async ({
   }
 };
 
-export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
+export const toggleLockHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   const { id } = input;
 
   try {
@@ -340,6 +386,7 @@ export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
       },
     });
 
+    await maskHiddenReactors([updatedComment.reactions], ctx.user);
     return updatedComment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -359,6 +406,7 @@ export const setTosViolationHandler = async ({
     const { id } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
+    const wasHidden = await isLegacyCommentHidden(id);
     const updatedComment = await updateCommentById({ id, data: { tosViolation: true } });
     if (!updatedComment) throw throwNotFoundError(`No comment with id ${id}`);
 
@@ -367,6 +415,7 @@ export const setTosViolationHandler = async ({
       id: updatedComment.id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: user.id,
     });
     // Reward users for accepted reports
     await Promise.allSettled(
@@ -375,11 +424,12 @@ export const setTosViolationHandler = async ({
       )
     );
 
+    if (wasHidden) return updatedComment;
     await createNotification({
       userId: updatedComment.user.id,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:comment:${uuid()}`,
+      key: `tos-violation:comment:${crypto.randomUUID()}`,
       details: { modelName: updatedComment.model.name, entity: 'comment' },
     }).catch((error) => {
       // Print out any errors

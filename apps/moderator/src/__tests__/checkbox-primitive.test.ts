@@ -1,8 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { stripComments } from '../test/strip-comments';
+import { svelteFiles } from '../test/svelte-files';
 import { hasAttr, tagsNamed, tokenizeTags, walkTags } from '../test/svelte-tags';
 
 /**
@@ -27,17 +28,7 @@ import { hasAttr, tagsNamed, tokenizeTags, walkTags } from '../test/svelte-tags'
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(dir, '..');
 
-function svelteFiles(from: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(from, { withFileTypes: true })) {
-    const full = path.join(from, entry.name);
-    if (entry.isDirectory()) out.push(...svelteFiles(full));
-    else if (entry.name.endsWith('.svelte')) out.push(full);
-  }
-  return out;
-}
-
-const files = svelteFiles(SRC).sort();
+const files = svelteFiles(SRC);
 const source = new Map(
   files.map((f) => [path.relative(SRC, f), stripComments(readFileSync(f, 'utf8'))])
 );
@@ -170,27 +161,14 @@ describe('bulk form fields have exactly one writer', () => {
     expect(checkbox.raw).not.toMatch(/\bname=/);
   });
 
-  it('posts the RENDERED rows: one list feeds the payload and the {#each}', () => {
-    // 🔴 The review's highest-severity finding, and the reason this pin reads two identifiers rather
-    // than one spelling. `posting` was derived from `written` (the whole filtered list) while the rows
-    // rendered from `written.slice(0, limit)`. `ListCard`'s limit SHRINKS as well as grows ("Show
-    // less"), and it is component-local `$state` that resets when the `{#await}` re-enters its pending
-    // branch on reload — so a review ticked at position 30 and then collapsed out of view kept posting,
-    // with Exclude/Include carrying no confirmation to catch it. Under the old `bind:group` that row's
-    // input had unmounted and did NOT post, so this was a regression in blast radius.
-    //
-    // Pinning the RELATIONSHIP — same identifier both sides — rather than the word `visible`, which a
-    // rename would walk straight through.
+  it('posts the whole selection, and the bar counts the part that is off screen', () => {
+    // 🔴 Ticks carry across pages and filters on purpose, so a tick on another page posts too. That
+    // is only safe while the bar says so: Exclude/Include carry no confirmation, and without the
+    // "not on this page" count an action touches rows the moderator cannot see with nothing to warn
+    // them. (This replaced a pin that posted only rendered rows, from when ticks did not persist.)
     const text = read('routes/retool/user-lookup/ReviewsPanel.svelte');
-    const payloadList = text.match(/\{@const posting = postedIds\(\s*(\w+)\s*,/)?.[1];
-    const renderedList = text.match(/\{#each (\w+) as r \(r\.id\)\}/)?.[1];
-    expect(payloadList, 'cannot read the list `posting` is derived from').toBeTruthy();
-    expect(renderedList, 'cannot read the list the rows render from').toBeTruthy();
-    expect(
-      payloadList,
-      `\`posting\` is derived from \`${payloadList}\` but the rows render from \`${renderedList}\`. ` +
-        'A selection can then post rows that are not on screen.'
-    ).toBe(renderedList);
+    expect(text).toMatch(/\{@const posting = \[\.\.\.selectedReviews\]\}/);
+    expect(text).toMatch(/\{num\(posting\.length - onPage\)\} not on this page/);
   });
 
   it('clears the selection once a write lands', () => {
@@ -201,11 +179,11 @@ describe('bulk form fields have exactly one writer', () => {
     );
   });
 
-  it('the count an operator confirms is the payload, not the raw selection', () => {
-    // These two were different quantities before: `selectedReviews.length` counted rows that had been
-    // filtered off screen and were no longer posting. One derivation now feeds both.
+  it('the count an operator confirms is the payload', () => {
+    // The confirmation and the hidden inputs read one list, so the number confirmed is the number
+    // posted. They were different quantities once, under `bind:group`.
     const text = read('routes/retool/user-lookup/ReviewsPanel.svelte');
-    expect(text).toMatch(/\{@const posting = postedIds\(/);
+    expect(text).toMatch(/\{#each posting as id \(id\)\}/);
     expect(text).toMatch(/count=\{posting\.length\}/);
     expect(text).not.toMatch(/count=\{selectedReviews/);
   });
@@ -220,11 +198,23 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'lib/components/BanConfirmForm.svelte',
     'lib/components/ConfirmSubmit.svelte',
     'lib/components/ImageActionBar.svelte',
+    'lib/components/RulingForm.svelte',
     'routes/audit/training-data/[versionId]/CsamReportForm.svelte',
+    // The "reviewed it another way" tick that unlocks Approve on a dataset this app cannot preview.
+    'routes/audit/training-data/workflow/[workflowId]/WorkflowReviewActions.svelte',
     'routes/retool/bulk-ban/+page.svelte',
     'routes/retool/user-lookup/CommentList.svelte',
     'routes/retool/user-lookup/IdentityPanel.svelte',
     'routes/retool/user-lookup/ReviewsPanel.svelte',
+    'routes/text-scan/model-rules/AliasBackfill.svelte',
+    'routes/text-scan/model-rules/SuggestAliases.svelte',
+    'routes/tickets/TicketAccountAction.svelte',
+    'routes/tickets/TicketEscalate.svelte',
+    'routes/tickets/TicketPublishBlock.svelte',
+    'routes/tickets/TicketRatingRuling.svelte',
+    'routes/tickets/TicketReply.svelte',
+    'routes/tickets/TicketRestrictionRuling.svelte',
+    'routes/tickets/TicketStatusMenu.svelte',
   ];
 
   it('is exactly the declared set of files', () => {

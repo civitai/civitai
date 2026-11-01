@@ -1,3 +1,9 @@
+import { TRPCError } from '@trpc/server';
+import {
+  LegalHoldError,
+  LegalHoldStoppedError,
+  legalHoldMessage,
+} from '~/server/services/legal-hold.service';
 import {
   checkUserNotificationsHandler,
   claimCosmeticHandler,
@@ -120,6 +126,7 @@ import type { UserOnboardingSchema } from '~/server/schema/user.schema';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { userCreatorEdgeTag } from '~/server/services/user-creator.service';
 
 export const userRouter = router({
   getCreator: publicProcedure
@@ -130,8 +137,8 @@ export const userRouter = router({
         ttl: CacheTTL.sm,
         tags: (input) =>
           [
-            input?.id ? `user-creator-${input.id}` : undefined,
-            input?.username ? `user-creator-${input.username}` : undefined,
+            input?.id ? userCreatorEdgeTag(input.id) : undefined,
+            input?.username ? userCreatorEdgeTag(input.username) : undefined,
           ].filter(Boolean) as string[],
       })
     )
@@ -306,11 +313,21 @@ export const userRouter = router({
     // records WHO ordered the wipe. The other caller of `removeAllContent`
     // (`/api/mod/remove-all-content`, a secret-authed WebhookEndpoint) has no user
     // identity and correctly passes none.
-    await removeAllContent({ ...input, actorUserId: ctx.user.id });
-    ctx.track.userActivity({
-      type: 'RemoveContent',
-      targetUserId: input.id,
-    });
+    const track = () =>
+      ctx.track.userActivity({
+        type: 'RemoveContent',
+        targetUserId: input.id,
+      });
+    const result = await removeAllContent({ ...input, actorUserId: ctx.user.id }).catch(
+      (e: unknown) => {
+        if (!(e instanceof LegalHoldError)) throw e;
+        // Part of the account was deleted, so it is recorded like a wipe that finished.
+        if (e instanceof LegalHoldStoppedError) track();
+        throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
+      }
+    );
+    track();
+    return { incomplete: result.incomplete, keptModelIds: result.keptModelIds };
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

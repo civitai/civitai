@@ -1,77 +1,123 @@
-import { Anchor, Avatar, Text } from '@mantine/core';
+import { Anchor, Avatar, Badge, Text } from '@mantine/core';
+import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import type { PostAppChip } from '~/server/services/blocks/post-app-chip.logic';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { PostAppChip, PostAppChipItem } from '~/server/services/blocks/post-app-chip.logic';
+import { trpc } from '~/utils/trpc';
 
 /**
- * The post-detail "Published with <app>" attribution chip.
+ * "Made with <app>" on the post and image detail pages: the app's store card under a small label.
  *
  * Posts created by an App Block carry the publishing app's id in
- * `Post.metadata.blockPublishedAppId`; nothing read it, so a viewer could not
- * tell an app-published post from a hand-made one. The server resolves that
- * marker into a {@link PostAppChip} (`post-app-chip.ts` — read its header for
- * the disclosure constraints); this component is only the rendering.
+ * `Post.metadata.blockPublishedAppId`; the server resolves that marker into a {@link PostAppChip}
+ * (`post-app-chip.logic.ts` has the disclosure constraints) and this component only renders it.
+ * The chip says which app, the card comes from `appListings.getAppCard`, which applies the same
+ * store visibility rules as the app's detail page.
  *
- * ## 🔴 "Published WITH", never "by". The wording is the point.
+ * 🔴 "Made WITH", never "by". An approved block's `OauthClient.name` equals the app's own title,
+ * so a "by {app}" line reads as the author. The author is a person; the app is a tool.
+ * `PostPublishedWithApp.browser.test.tsx` pins the label as a whole string.
  *
- * `public-owner.ts` exists *because* the app page rendered `by {appName}` and,
- * since an approved block's `OauthClient.name` equals the app's own title, the
- * AUTHOR slot showed the APP TITLE. The author is a person; the app is a tool.
- * This chip sits in the post header near real author attribution, so the
- * distinction has to survive future edits — `PostPublishedWithApp.browser.test.tsx`
- * pins the rendered sentence as a WHOLE normalised string, so a reword that
- * reintroduces "by" fails rather than quietly shipping.
+ * Three states:
+ *  - `app == null` renders nothing: no marker, a marker that resolves to no app, or a viewer
+ *    without store visibility.
+ *  - `app.slug == null` renders the name, unlinked: the app exists but the store would 404 it, so
+ *    no card is fetched and no link is offered.
+ *  - `app.slug != null` renders the card. While it loads, or if the card read fails, the linked
+ *    name stands in, so the credit never disappears.
  *
- * ## Three states, all reachable in production
- *
- *  - `app == null` → renders NOTHING. Covers a post with no marker, a marker
- *    that resolves to no app (the dev-mint path writes a deliberately
- *    non-resolving id), and a viewer without store visibility.
- *  - `app.slug == null` → the name, UNLINKED. The app exists but the store's own
- *    read would refuse it (not approved, never deployed, or mature on a non-red
- *    host), so `/apps/store-preview/<slug>` would 404. A link to a 404 is worse
- *    than plain text. The server withholds the icon on this branch too — see
- *    `projectPostAppChip` for why that is deliberate.
- *  - `app.slug != null` → the name, linked to the store detail.
- *
- * `iconUrl` is independently nullable and commonly null — a live app has none —
- * so the `Avatar` is rendered only when there is something to show. ⚠️ The three
- * existing listing surfaces (`AppListingCard`, and the two chrome sites) do the
- * opposite: they keep the `Avatar` and let it fall back to a SEEDED MONOGRAM
- * (per-app hue + initial), not Mantine's flat grey. That is right for a grid
- * card, where the icon is the only identifier and a gap would break the row.
- * Here the sentence immediately beside it names the app in full, so a 16 px
- * monogram would restate the initial of a word already on screen. Omitting is a
- * deliberate divergence from those three, for that reason.
- *
- * The name arrives ALREADY SANITIZED (`sanitizeAppChromeName`, applied in the
- * server projector) because it is publisher-controlled. This component does not
- * sanitize and must not be handed a raw name. ⚠️ That sanitizer bounds LENGTH and
- * strips the mechanical spoofing vectors; it deliberately does NOT defend against
- * name-based IMPERSONATION ("Civitai", "Official", homoglyphs), which needs a
- * verified-publisher signal and is tracked separately. So this chip asserts which
- * app wrote the post, not that the app is who it says it is.
+ * The chip name arrives already sanitized (`sanitizeAppChromeName`); this component must not be
+ * handed a raw name. The sanitizer bounds length and strips spoofing characters but does not stop
+ * impersonation ("Civitai", "Official"), so this asserts which app wrote the post, not that the app
+ * is who it says it is.
  */
 export function PostPublishedWithApp({ app }: { app?: PostAppChip | null }) {
   if (!app) return null;
 
   return (
-    <div
-      // `min-w-0` so the sanitizer's 64-code-point ceiling cannot push the header
-      // row wider than its container on a narrow viewport; the text wraps inside
-      // the chip instead.
-      className="flex min-w-0 items-center gap-1"
-      data-testid="post-published-with-app"
-    >
-      {app.iconUrl && (
-        /* Decorative: the sentence beside it already names the app, so a second
-           accessible name here would make a screen reader say it twice. */
-        <Avatar src={app.iconUrl} alt="" radius="sm" size={16} style={{ flexShrink: 0 }} />
+    <div className="flex min-w-0 flex-col gap-1" data-testid="post-published-with-app">
+      {app.slug ? <LinkedApp app={app} slug={app.slug} /> : <AppName app={app} />}
+    </div>
+  );
+}
+
+/** "Made with" (+ "<item> on" when the post came from an app's sub-listing), as one string of text. */
+function MadeWithLabel({ app }: { app: PostAppChip }) {
+  return (
+    <>
+      Made with
+      {app.item && (
+        <>
+          {' '}
+          <ChipItemName item={app.item} /> on
+        </>
       )}
-      <Text size="xs" c="dimmed" className="min-w-0">
-        Published with{' '}
-        {app.slug ? (
-          <Anchor component={Link} href={getListingDetailHref(app.slug)} inherit>
+    </>
+  );
+}
+
+function LinkedApp({ app, slug }: { app: PostAppChip; slug: string }) {
+  const features = useFeatureFlags();
+  const { data: card } = trpc.appListings.getAppCard.useQuery(
+    { slug },
+    { retry: false, staleTime: 5 * 60 * 1000, refetchOnWindowFocus: false }
+  );
+
+  if (!card) return <AppName app={app} slug={slug} />;
+  // The card sets its title in white, which only reads on a dark card; the store grid has the
+  // same assumption. Scoping the dark scheme here keeps the title legible in the light theme.
+  return (
+    <div
+      data-mantine-color-scheme="dark"
+      className="w-full rounded-md"
+      // `data-mantine-color-scheme` switches Mantine's variables but not CSS `light-dark()`, which
+      // follows `color-scheme`: without this the title reads black on the card.
+      style={{ colorScheme: 'dark' }}
+    >
+      <AppListingCard
+        card={card}
+        canOpenPage={features.appBlocksPages}
+        embedded
+        coverBadge={
+          <Badge
+            variant="filled"
+            color="dark"
+            size="md"
+            radius="sm"
+            tt="none"
+            className="pointer-events-auto max-w-full"
+            data-testid="post-published-with-app-label"
+          >
+            <MadeWithLabel app={app} />
+          </Badge>
+        }
+      />
+    </div>
+  );
+}
+
+function AppName({ app, slug }: { app: PostAppChip; slug?: string }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <Text size="sm" c="dimmed" className="px-1">
+        <MadeWithLabel app={app} />
+      </Text>
+      <AppNameRow app={app} slug={slug} />
+    </div>
+  );
+}
+
+function AppNameRow({ app, slug }: { app: PostAppChip; slug?: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 px-1">
+      {app.iconUrl && (
+        /* Decorative: the name beside it already says which app. */
+        <Avatar src={app.iconUrl} alt="" radius="sm" size={20} style={{ flexShrink: 0 }} />
+      )}
+      <Text size="sm" className="min-w-0">
+        {slug ? (
+          <Anchor component={Link} href={getListingDetailHref(slug)} inherit>
             {app.name}
           </Anchor>
         ) : (
@@ -79,5 +125,20 @@ export function PostPublishedWithApp({ app }: { app?: PostAppChip | null }) {
         )}
       </Text>
     </div>
+  );
+}
+
+function ChipItemName({ item }: { item: PostAppChipItem }) {
+  if (!item.href) return <>{item.name}</>;
+  if (item.external)
+    return (
+      <Anchor href={item.href} target="_blank" rel="noopener noreferrer" inherit>
+        {item.name}
+      </Anchor>
+    );
+  return (
+    <Anchor component={Link} href={item.href} inherit>
+      {item.name}
+    </Anchor>
   );
 }

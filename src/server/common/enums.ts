@@ -9,6 +9,7 @@ export enum UploadType {
 export type UploadTypeUnion = `${UploadType}`;
 
 export enum ModelSort {
+  Hot = 'Hot',
   HighestRated = 'Highest Rated',
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
@@ -189,6 +190,9 @@ export enum SignalMessages {
   ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
   ScannerPolicyTestProgress = 'scanner-policy:test-progress',
   ContestScoreRunUpdate = 'contest-score:run-update',
+  EventPointsHat = 'event-points:hat',
+  EventPointsTeams = 'event-points:teams',
+  EventPointsOwner = 'event-points:owner',
 }
 
 export enum BountySort {
@@ -239,6 +243,7 @@ export enum ViolationType {
   RealisticMinorNsfw = 'realisticMinorNsfw',
   AnimatedMinorNsfw = 'animatedMinorNsfw',
   SchoolNsfw = 'schoolNsfw',
+  MinorViolence = 'minorViolence',
   Bestiality = 'bestiality',
   SexualViolence = 'sexualViolence',
   MindAlteredNsfw = 'mindAlteredNsfw',
@@ -362,6 +367,7 @@ export enum BanReasonCode {
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
   RRDViolation = 'RRDViolation',
+  Chargeback = 'Chargeback',
   Other = 'Other',
 }
 
@@ -450,6 +456,7 @@ export enum SignalTopic {
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
   Metric = 'metrics', // with :entityType:entityId
+  EventPoints = 'event-points', // with :event:hat:topicId, :event:owner:topicId, or :event:teams
   ContestScore = 'contest-score', // with :collectionId
 }
 

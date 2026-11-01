@@ -51,6 +51,8 @@ export function CommentDiscussionMenu({
   const deleteMutation = trpc.comment.delete.useMutation({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
+      await queryUtils.comment.getVisibleCountByModel.invalidate();
+      await queryUtils.comment.getVisibleCountsByModel.invalidate();
       closeAllModals();
       dialog.onClose();
     },
@@ -148,10 +150,8 @@ export function CommentDiscussionMenu({
     },
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
-      await queryUtils.comment.getCommentCountByModel.invalidate({
-        modelId: comment.modelId,
-        hidden: true,
-      });
+      await queryUtils.comment.getVisibleCountByModel.invalidate();
+      await queryUtils.comment.getVisibleCountsByModel.invalidate();
     },
     onError(error) {
       showErrorNotification({
@@ -179,6 +179,8 @@ export function CommentDiscussionMenu({
     },
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
+      await queryUtils.comment.getVisibleCountByModel.invalidate();
+      await queryUtils.comment.getVisibleCountsByModel.invalidate();
     },
     onError(error, vars, context) {
       showErrorNotification({

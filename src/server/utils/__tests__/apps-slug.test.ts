@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { scanSource } from '../../../../test/source-scan';
+import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import {
   appRoleIdent,
   appSchemaIdent,
   isValidAppSlug,
+  newBlockIdError,
   normalizeReviewPreviewId,
   reviewPreviewSchemaIdent,
   sanitizeAppSlug,
@@ -145,5 +149,141 @@ describe('apps-slug', () => {
       expect(normalizeReviewPreviewId(null)).toBe(null);
       expect(normalizeReviewPreviewId(42 as unknown as string)).toBe(null);
     });
+  });
+});
+
+describe('newBlockIdError', () => {
+  it.each(['my--app', 'a---b'])('refuses %s', (blockId) => {
+    expect(newBlockIdError(blockId)).toBe(
+      `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`
+    );
+  });
+
+  it.each(['my-app', 'ab-c-d', 'plainapp'])('allows %s', (blockId) => {
+    expect(newBlockIdError(blockId)).toBeNull();
+  });
+
+  // A name with its own DNS record shadows the static server's catch-all for app hosts, so an app
+  // taking it would never be reachable at <blockId>.civit.ai.
+  it.each([
+    ['a-thing', 'a-', 'DNS ownership records'],
+    ['aaaa-thing', 'aaaa-', 'DNS ownership records'],
+    ['cname-thing', 'cname-', 'DNS ownership records'],
+    ['dev-0123456789abcdef', 'dev-', 'dev tunnel hosts'],
+    ['review-0123456789abcdef', 'review-', 'moderator review previews'],
+  ])('refuses the reserved id %s', (blockId, prefix, usedFor) => {
+    expect(newBlockIdError(blockId)).toBe(
+      `blockId "${blockId}" is reserved: ids starting with "${prefix}" are used for ${usedFor}, so the app's address would never reach it. Choose a different blockId.`
+    );
+  });
+
+  it('refuses www', () => {
+    expect(newBlockIdError('www')).toBe('blockId "www" is reserved. Choose a different blockId.');
+  });
+
+  // INVARIANT guard, green before the reserved rule existed too: every app live on 2026-10-27,
+  // plus near-misses of each reserved name, stays registrable.
+  it.each([
+    'ab-img-poster',
+    'app-requests',
+    'arcane-deck',
+    'buzz',
+    'buzz-generator',
+    'character-sheet-studio',
+    'civlings',
+    'continuous-gen',
+    'custom-generators',
+    'dataset-commons',
+    'df-qwen-canvas',
+    'dogfood-manual',
+    'email-builder',
+    'generate-from-model',
+    'gen-matrix',
+    'goods-demo-app',
+    'hello-world',
+    'lora-matrix-tester',
+    'lora-weight-lab',
+    'metadata-medic',
+    'model-benchmarking',
+    'model-notes',
+    'notepad',
+    'oauth-probe',
+    'oauth-test-block',
+    'one-click-workflows',
+    'panorama-360',
+    'paywall-demo',
+    'playable-collections',
+    'poc-prompt-polisher',
+    'pp-fighter',
+    'prompt-library',
+    'prompt-vault',
+    'ramthrust-metadata-inspector',
+    'seed-explorer',
+    'sensei',
+    'service-status',
+    'strength-finder',
+    'style-explorer',
+    'turnaround',
+    'w6-ui-dogfood',
+    'yt-thumbnail',
+    'abc-app',
+    'cnamex',
+    'dev',
+    'devtools',
+    'reviewer',
+    'wwwx',
+    'my-dev-app',
+  ])('allows %s', (blockId) => {
+    expect(newBlockIdError(blockId)).toBeNull();
+  });
+
+  it('the pair it exists to separate: both are pattern-legal and share one storage slug', () => {
+    expect(SLUG_REGEX.test('my-app') && SLUG_REGEX.test('my--app')).toBe(true);
+    expect(sanitizeAppSlug('my--app')).toBe('my_app');
+    expect(sanitizeAppSlug('my-app')).toBe('my_app');
+  });
+
+  /** Every pattern-legal blockId of 3–6 chars over a small alphabet, plus length edges. */
+  function patternLegalIds(): string[] {
+    const alphabet = ['a', 'b', '7', '-'];
+    let frontier = [''];
+    const all: string[] = [];
+    for (let len = 1; len <= 6; len++) {
+      frontier = frontier.flatMap((prefix) => alphabet.map((ch) => prefix + ch));
+      if (len >= 3) all.push(...frontier);
+    }
+    all.push('a' + 'b'.repeat(39), 'a-' + 'b'.repeat(38), 'a' + 'b-'.repeat(19) + 'b');
+    return all.filter((id) => id.length <= 40 && SLUG_REGEX.test(id));
+  }
+
+  it('among accepted pattern-legal blockIds, distinct ids never share a storage slug', () => {
+    const accepted = patternLegalIds().filter((id) => newBlockIdError(id) === null);
+    expect(accepted.length).toBeGreaterThan(1000);
+
+    const idBySlug = new Map<string, string>();
+    for (const id of accepted) {
+      const slug = sanitizeAppSlug(id);
+      expect(slug, id).toBe(id.replaceAll('-', '_'));
+      expect(idBySlug.get(slug!), `${id} collides`).toBeUndefined();
+      idBySlug.set(slug!, id);
+    }
+  });
+
+  it('without the rule the same generated set does collide (the property test can go red)', () => {
+    const slugs = patternLegalIds().map((id) => sanitizeAppSlug(id));
+    expect(new Set(slugs).size).toBeLessThan(slugs.length);
+  });
+
+  it('every file that creates an app block row applies the rule, and no other file does', () => {
+    const scan = scanSource(process.cwd(), {
+      newBlockIdError: 'src/server/utils/apps-slug.ts',
+    });
+    const creates = /\bappBlock\s*\.\s*(create|createMany|createManyAndReturn|upsert)\s*\(/;
+    const creators = scan.files.filter((f) => creates.test(scan.code.get(f)!)).sort();
+    expect(creators).toEqual([
+      'src/pages/api/v1/developer/block-manifests.ts',
+      'src/server/services/blocks/publish-request.service.ts',
+    ]);
+    expect(scan.callersOf('newBlockIdError')).toEqual(creators);
   });
 });

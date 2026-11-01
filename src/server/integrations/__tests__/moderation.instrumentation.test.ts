@@ -402,16 +402,18 @@ describe('a call cut by the REAL abort deadline, at the production default', () 
     // prompt preparation before `start`; the histogram observe, the span attribute and the promise
     // unwinding after the last read).
     //
-    // Measured on this host over 12 runs, that residue was 0.10-0.18 ms. The 1 ms bound is ~5.7x
-    // the worst of those, and it fails on any bias at the milliseconds scale: a timer started a few
-    // ms late, or a constant subtracted from the delta, moves this by exactly that amount.
+    // The bound is about 3x the worst residue seen on a loaded CI runner; the measurements behind
+    // it are in the commit that set it. Measure with the whole file run: this case run alone with
+    // `-t` starts colder and reads several times higher. It still fails on a bias the 50 ms floor
+    // cannot see: a timer started 20-50 ms late, or a constant of that size subtracted from the
+    // delta, moves this by exactly that amount.
     //
     // ⚠️ UNLIKE THE MAGNITUDE FLOOR ABOVE, THIS ONE IS LOAD-EXPOSED, and in the honest direction: a
     // jammed event loop delays the post-settle path more than it delays the recorder's own read, so
     // heavy load grows the residue. If this ever fails while the recorder is demonstrably correct,
-    // widen the bound and say by how much — do not delete it, and do not restate the residue figure
-    // above without re-measuring it.
-    const CLOCK_CONSISTENCY_SLACK_SECONDS = 0.001;
+    // re-measure, widen the bound and say by how much in the commit — do not delete it. Past ~50 ms
+    // it overlaps the magnitude floor and stops catching anything that one misses.
+    const CLOCK_CONSISTENCY_SLACK_SECONDS = 0.02;
     expect(
       seconds,
       `the recorded duration must cover the whole ${(testObservedSeconds * 1000).toFixed(1)}ms ` +

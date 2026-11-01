@@ -1,15 +1,31 @@
 import { sql } from '@civitai/db/kysely';
+import { BOX_OPENING_REWARD_STATUS, MOD_GRANT_SOURCE_PREFIX } from '@civitai/shared/mystery-box';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
-import { clickhouseDate } from './clickhouse-date';
+import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
 import { utcMs } from '$lib/format';
 import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
 import { getModeratorDb } from './moderator-db';
-import { usersByIds } from './users.service';
-import { RATING_ACTIVITIES } from '$lib/mod-activity';
+import { MAX_INT4, usersByIds } from './users.service';
+import {
+  RATING_ACTIVITIES,
+  activityGroup,
+  isFamilyGroup,
+  type ModActivityCount,
+  type ModActivityCursor,
+} from '$lib/mod-activity';
+import { takePage } from './keyset-page';
+import { escapeLike } from './like';
+import { withModerators } from './mod-activity';
 import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
+import { USER_ACCOUNT_TYPES as USER_ACCOUNT_TYPE_LIST } from './buzz-accounts';
+import {
+  getPlacementParties,
+  placementIdOf,
+  type PlacementParties,
+} from './placement-flows.service';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
 // slow enough to need its own: `/api/user-mod-activity` and `/api/user-buzz-history`.
@@ -26,37 +42,166 @@ const capped = <T>(rows: T[], limit: number): Capped<T> => ({
   truncated: rows.length > limit,
 });
 
-// REVIEWS + COMMENTS (Retool's ReviewList / ComboComments), read-only.
-//
-// Retool paired these lists with bulk delete / ToS actions. Those are NOT ported: they are destructive,
-// and the delete path carries side effects (search-index sync, cache busting) that the spoke does not own
-// yet — see the account-actions note in the migration tracker.
+// REVIEWS + COMMENTS (Retool's ReviewList / ComboComments). Reads only; the bulk actions are
+// `bulkReviewAction` / `bulkCommentAction` in user-actions.service.ts.
 export type UserReview = {
   id: number;
   createdAt: Date;
   rating: number | null;
   modelId: number | null;
+  modelName: string | null;
   tosViolation: boolean | null;
   exclude: boolean | null;
   nsfw: boolean | null;
   /** The review TEXT. Retool's pane searched it, and deleting a review on rating and date alone is
    *  deciding without reading it. */
   details: string | null;
+  modelCreatorId: number;
   modelCreator: string | null;
-  imageCount: number;
 };
 
-export async function getReviews(userId: number, limit = 100): Promise<Capped<UserReview>> {
-  // Retool's SubmittedReviewImageCount. This is the body of the `ResourceReviewHelper` VIEW, inlined and
-  // correlated to the row — NEVER join the view itself. It groups over all 71M reviews, and the qual does
-  // not push through, so both a join and a keyed `IN (…)` lookup run past 60s for a user with 51 reviews.
-  // (The main app hit the same wall and commented its copy out: resourceReview.service.ts.) Correlated
-  // per returned row: 0.9s.
-  return dbRead
+const REVIEWS_PER_PAGE = 50;
+
+/** The panel's page and filters. The filters run here rather than in the browser so they cover every
+ *  review, not just the page on screen — "every review on this owner's models" is the question. */
+export type ReviewQuery = {
+  page: number;
+  owner?: number;
+  rating?: number;
+  tos?: boolean;
+  nsfw?: boolean;
+  exclude?: boolean;
+  q?: string;
+};
+
+export type ReviewOwner = { id: number; username: string | null; count: number };
+
+export type ReviewPage = {
+  items: UserReview[];
+  perPage: number;
+  /** Matching the filters. */
+  total: number;
+  /** Every review this user wrote, unfiltered. */
+  all: number;
+  /** Most-reviewed first, across every review — the top entry is the boosting or bombing target. */
+  owners: ReviewOwner[];
+};
+
+const OWNER_OPTIONS = 200;
+
+const positiveInt = (raw: string | null) => {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= MAX_INT4 ? n : undefined;
+};
+const yesNo = (raw: string | null) => (raw === 'yes' ? true : raw === 'no' ? false : undefined);
+
+/** A malformed value is no filter rather than a 400, which would render as a panel that never loads. */
+export function parseReviewQuery(params: URLSearchParams): ReviewQuery {
+  const rating = positiveInt(params.get('rating'));
+  return {
+    page: positiveInt(params.get('page')) ?? 1,
+    owner: positiveInt(params.get('owner')),
+    rating: rating && rating <= 5 ? rating : undefined,
+    tos: yesNo(params.get('tos')),
+    nsfw: yesNo(params.get('nsfw')),
+    exclude: yesNo(params.get('exclude')),
+    q: params.get('q')?.trim() || undefined,
+  };
+}
+
+// A null flag counts as "no", as the panel has always shown it.
+const flag = (column: 'tosViolation' | 'nsfw' | 'exclude', value: boolean) =>
+  sql<boolean>`coalesce(${sql.ref(`rr.${column}`)}, false) = ${value}`;
+
+// Shared by the list, its total and the image counts, so all three see the same rows.
+const filteredReviews = (userId: number, f: ReviewQuery) =>
+  dbRead
     .selectFrom('ResourceReview as rr')
     .innerJoin('Model as m', 'm.id', 'rr.modelId')
     .innerJoin('User as u', 'u.id', 'm.userId')
-    .select((eb) =>
+    .where('rr.userId', '=', userId)
+    .$if(f.owner !== undefined, (qb) => qb.where('m.userId', '=', f.owner!))
+    .$if(f.rating !== undefined, (qb) => qb.where('rr.rating', '=', f.rating!))
+    .$if(f.tos !== undefined, (qb) => qb.where(flag('tosViolation', f.tos!)))
+    .$if(f.nsfw !== undefined, (qb) => qb.where(flag('nsfw', f.nsfw!)))
+    .$if(f.exclude !== undefined, (qb) => qb.where(flag('exclude', f.exclude!)))
+    .$if(!!f.q, (qb) => qb.where(reviewPlainText, 'ilike', `%${escapeLike(f.q!)}%`));
+
+// `plainText` from `$lib/format`, step for step and in the same order, so a search matches the text
+// the panel shows. Change one, change both.
+const reviewPlainText = sql<string>`regexp_replace(
+  replace(replace(replace(replace(replace(replace(
+    regexp_replace(coalesce(rr.details, ''), '<[^>]*>', ' ', 'g'),
+  '&nbsp;', ' '), '&amp;', '&'), '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&#39;', ''''),
+  '\\s+', ' ', 'g')`;
+
+// `id` breaks a `createdAt` tie, which the two page queries would otherwise resolve differently.
+const reviewPage = (userId: number, query: ReviewQuery) =>
+  filteredReviews(userId, query)
+    .orderBy('rr.createdAt', 'desc')
+    .orderBy('rr.id', 'desc')
+    .limit(REVIEWS_PER_PAGE)
+    .offset((query.page - 1) * REVIEWS_PER_PAGE);
+
+export async function getReviews(userId: number, query: ReviewQuery): Promise<ReviewPage> {
+  const [items, matched, owners] = await Promise.all([
+    reviewPage(userId, query)
+      .select([
+        'rr.id',
+        'rr.createdAt',
+        'rr.rating',
+        'rr.modelId',
+        'm.name as modelName',
+        'rr.tosViolation',
+        'rr.exclude',
+        'rr.nsfw',
+        'rr.details',
+        'm.userId as modelCreatorId',
+        'u.username as modelCreator',
+      ])
+      .execute(),
+    filteredReviews(userId, query)
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .executeTakeFirstOrThrow(),
+    dbRead
+      .selectFrom('ResourceReview as rr')
+      .innerJoin('Model as m', 'm.id', 'rr.modelId')
+      .leftJoin('User as u', 'u.id', 'm.userId')
+      .where('rr.userId', '=', userId)
+      .groupBy(['m.userId', 'u.username'])
+      .select((eb) => ['m.userId as id', 'u.username', eb.fn.countAll<string>().as('count')])
+      .orderBy('count', 'desc')
+      .execute(),
+  ]);
+  const counted = owners.map((o) => ({ ...o, count: Number(o.count) }));
+  return {
+    items,
+    perPage: REVIEWS_PER_PAGE,
+    total: Number(matched.n),
+    all: counted.reduce((sum, o) => sum + o.count, 0),
+    owners: counted.slice(0, OWNER_OPTIONS),
+  };
+}
+
+/**
+ * Review id → how many of the reviewer's own images use the reviewed version, for the page and filters
+ * in `query`. Retool's SubmittedReviewImageCount.
+ *
+ * Its own endpoint, not part of `/api/user-account`: per review it walks every image that uses the
+ * version, which is slow for reviewers of popular versions. Driving it from the reviewer's images
+ * instead is slower for prolific reviewers, so neither shape wins.
+ *
+ * The body of the `ResourceReviewHelper` VIEW, inlined and correlated to the row — NEVER join the view
+ * itself. It groups over every review and the qual does not push through, so both a join and a keyed
+ * `IN (…)` lookup time out. (The main app hit the same wall: resourceReview.service.ts.)
+ */
+export async function getReviewImageCounts(
+  userId: number,
+  query: ReviewQuery
+): Promise<Record<number, number>> {
+  const rows = await reviewPage(userId, query)
+    .select((eb) => [
+      'rr.id',
       eb
         .selectFrom('ImageResourceNew as ir')
         .innerJoin('Image as i', (join) =>
@@ -64,29 +209,10 @@ export async function getReviews(userId: number, limit = 100): Promise<Capped<Us
         )
         .select((agg) => agg.fn.count('i.id').distinct().as('count'))
         .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
-        .as('imageCount')
-    )
-    .select([
-      'rr.id',
-      'rr.createdAt',
-      'rr.rating',
-      'rr.modelId',
-      'rr.tosViolation',
-      'rr.exclude',
-      'rr.nsfw',
-      'rr.details',
-      'u.username as modelCreator',
+        .as('imageCount'),
     ])
-    .where('rr.userId', '=', userId)
-    .orderBy('rr.createdAt', 'desc')
-    .limit(limit + 1)
-    .execute()
-    .then((rows) =>
-      capped(
-        rows.map((row) => ({ ...row, imageCount: Number(row.imageCount ?? 0) })),
-        limit
-      )
-    );
+    .execute();
+  return Object.fromEntries(rows.map((row) => [row.id, Number(row.imageCount ?? 0)]));
 }
 
 // Reviews RECEIVED on this user's models (Retool's ReceivedReviews, behind the tab that was never
@@ -207,89 +333,66 @@ export async function getBountyEntries(
 }
 
 export type UserComment = {
+  /** The old `Comment` id, which the bulk actions and the model page's dialog still address. */
   id: number;
   createdAt: Date;
   content: string;
-  nsfw: boolean | null;
   tosViolation: boolean | null;
   modelId: number | null;
 };
 
+/** Rows with an old `Comment` id. Tombstones keep their `userId`, so are excluded. */
 export async function getComments(userId: number, limit = 25): Promise<Capped<UserComment>> {
   return dbRead
-    .selectFrom('Comment')
-    .select(['id', 'createdAt', 'content', 'nsfw', 'tosViolation', 'modelId'])
+    .selectFrom('CommentV3')
+    .select([
+      sql<number>`"legacyV1Id"`.as('id'),
+      'createdAt',
+      'content',
+      'tosViolation',
+      'entityId as modelId',
+    ])
     .where('userId', '=', userId)
+    .where('legacyV1Id', 'is not', null)
+    .where('deletedAt', 'is', null)
     .orderBy('createdAt', 'desc')
     .limit(limit + 1)
     .execute()
     .then((rows) => capped(rows, limit));
 }
 
-// Retool's segmentedControl1 split comments into "Model Comments" (`Comment`) and "Other Comments"
-// (`CommentV2` — image, article, bounty and post threads). Only the first was ported; this is the
-// other half, and it is the larger table on most accounts.
+// Retool's "Other Comments": every comment not on the model page.
 export type UserCommentV2 = {
   id: number;
   createdAt: Date;
   content: string;
   tosViolation: boolean | null;
-  threadId: number;
-  /** What the comment is ON — resolved through the thread, and through its root thread for replies. */
+  /** What the comment is ON. A reply carries its entity on its own row. */
   entityType: string | null;
   entityId: number | null;
 };
 
-// `Thread` carries one nullable FK per commentable type, so resolving what a comment is attached to is
-// a coalesce across all of them — no builder equivalent. A reply's own thread points at the parent
-// comment, so the ROOT thread is what identifies the image or model it ultimately hangs off; Retool's
-// CommentsWithLinks coalesced root first for exactly that reason.
-//
-// (Its name promises a link filter that its SQL does not contain — the filtering was done in the
-// browser. What the query is actually for is this resolution, so that is what is ported.)
-const THREAD_TARGETS = [
-  'imageId',
-  'modelId',
-  'postId',
-  'articleId',
-  'bountyId',
-  'bountyEntryId',
-  'reviewId',
-  'questionId',
-  'answerId',
-] as const;
-
-const threadEntityId = sql<number | null>`coalesce(${sql.join(
-  THREAD_TARGETS.flatMap((c) => [sql`root.${sql.ref(c)}`, sql`t.${sql.ref(c)}`]),
-  sql`, `
-)})`;
-
-const threadEntityType = sql<string | null>`case ${sql.join(
-  THREAD_TARGETS.map(
-    (c) =>
-      sql`when coalesce(root.${sql.ref(c)}, t.${sql.ref(c)}) is not null then ${sql.lit(
-        c.replace(/Id$/, '')
-      )}`
-  ),
-  sql` `
-)} end`;
+/** What each comment hangs off, by id. A comment with no row has no entry. */
+export async function commentParents(
+  commentIds: number[]
+): Promise<Map<number, { type: string; id: number }>> {
+  if (!commentIds.length) return new Map();
+  const rows = await dbRead
+    .selectFrom('CommentV3')
+    .select(['id', 'entityType', 'entityId'])
+    .where('id', 'in', commentIds)
+    .execute();
+  return new Map(rows.map((r) => [r.id, { type: r.entityType, id: r.entityId }]));
+}
 
 export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<UserCommentV2>> {
   return dbRead
-    .selectFrom('CommentV2 as c')
-    .leftJoin('Thread as t', 't.id', 'c.threadId')
-    .leftJoin('Thread as root', 'root.id', 't.rootThreadId')
-    .select([
-      'c.id',
-      'c.createdAt',
-      'c.content',
-      'c.tosViolation',
-      'c.threadId',
-      threadEntityId.as('entityId'),
-      threadEntityType.as('entityType'),
-    ])
-    .where('c.userId', '=', userId)
-    .orderBy('c.createdAt', 'desc')
+    .selectFrom('CommentV3')
+    .select(['id', 'createdAt', 'content', 'tosViolation', 'entityType', 'entityId'])
+    .where('userId', '=', userId)
+    .where('legacyV1Id', 'is', null)
+    .where('deletedAt', 'is', null)
+    .orderBy('createdAt', 'desc')
     .limit(limit + 1)
     .execute()
     .then((rows) => capped(rows, limit));
@@ -608,6 +711,61 @@ export async function getShopPurchases(userId: number, limit = 50): Promise<Capp
     .then((rows) => capped(rows, limit));
 }
 
+// MYSTERY BOXES a moderator granted this user. A grant has no purchase row, so they are found by
+// sourceKey prefix.
+export type GrantedBox = {
+  sourceKey: string;
+  boxName: string;
+  /** When it was granted, or, once opened, when it was opened. */
+  at: Date;
+  state: 'held' | 'opened' | 'takenBack';
+  /** What it gave, once opened. */
+  reward: string | null;
+};
+
+export async function getGrantedBoxes(userId: number, limit = 50): Promise<Capped<GrantedBox>> {
+  const prefix = `${escapeLike(MOD_GRANT_SOURCE_PREFIX)}%`;
+  const [held, opened] = await Promise.all([
+    dbRead
+      .selectFrom('Item as i')
+      .innerJoin('ItemDefinition as box', 'box.id', 'i.itemDefinitionId')
+      .select(['i.sourceKey', 'box.name as boxName', 'i.createdAt as at'])
+      .where('i.holderType', '=', 'user')
+      .where('i.holderId', '=', userId)
+      .where('i.sourceKey', 'like', prefix)
+      .orderBy('i.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+    dbRead
+      .selectFrom('BoxOpening as o')
+      .innerJoin('ItemDefinition as box', 'box.id', 'o.boxDefinitionId')
+      .leftJoin('ItemDefinition as reward', 'reward.id', 'o.rewardDefinitionId')
+      .select([
+        'o.boxSourceKey as sourceKey',
+        'box.name as boxName',
+        'o.createdAt as at',
+        'o.rewardStatus',
+        'reward.name as reward',
+      ])
+      .where('o.userId', '=', userId)
+      .where('o.boxSourceKey', 'like', prefix)
+      .orderBy('o.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+  ]);
+  const rows: GrantedBox[] = [
+    ...held.map((row) => ({ ...row, state: 'held' as const, reward: null })),
+    ...opened.map(({ rewardStatus, ...row }) => ({
+      ...row,
+      state:
+        rewardStatus === BOX_OPENING_REWARD_STATUS.granted
+          ? ('opened' as const)
+          : ('takenBack' as const),
+    })),
+  ].sort((a, b) => b.at.getTime() - a.at.getTime());
+  return capped(rows, limit);
+}
+
 // Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.
 export type AvailableCosmetic = { id: number; name: string };
 
@@ -715,6 +873,10 @@ export async function getResourceGenerations(
     SELECT modelVersionId, sum(count) AS count
     FROM daily_resource_generation_counts
     WHERE createdDate >= subtractDays(toStartOfDay(now()), ${days})
+      -- Upper bound because a legacy import left rows dated 2079 and 2120 holding a
+      -- version's whole all-time total; they satisfy any open-ended window and would
+      -- make a farming check read a lifetime count as this week's.
+      AND createdDate <= today()
       AND modelVersionId IN (${ids})
     GROUP BY modelVersionId
     ORDER BY count DESC
@@ -753,65 +915,159 @@ const ACTIVITY_CONTENT = [
   ['article', 'Article'],
 ] as const;
 
-/** `bucket` filters in SQL, never over the result: the queries below are each limited and then
+const DIRECT_ACTIVITY_TYPES = ['user', 'impersonate'] as const;
+
+/** Every filter applies in SQL, never over the result: the sources below are each limited and then
  *  merged, so narrowing afterwards shrinks a window the discarded rows already truncated. */
+export type ModActivityScope = {
+  userId: number;
+  bucket?: 'enforcement' | 'rating';
+  /** An `activityGroup` key: `buzz:send` matches every send, `minor:true` only itself. */
+  activity?: string;
+  entityType?: string;
+  before?: ModActivityCursor;
+};
+
+/** One query per place an account's activity can live, all over `ModActivity` so they share filters.
+ *
+ *  Owned content is matched with `= ANY(ARRAY(subquery))`, not a join. The largest creator owns ~860k
+ *  images, and a join lets the planner walk the global `createdAt` index backwards until it finds
+ *  enough of them — 6s for a rare activity and worse for each older page. The array pins the plan to
+ *  the account's own ids on the (entityType, entityId, createdAt) index: ~1s there, ~20ms for most. */
+function activitySources({ userId, bucket, activity, entityType, before }: ModActivityScope) {
+  const wants = (type: string) => !entityType || entityType === type;
+  const direct = DIRECT_ACTIVITY_TYPES.filter(wants);
+  const sources = direct.length
+    ? [
+        dbRead
+          .selectFrom('ModActivity as ma')
+          .where('ma.entityType', 'in', direct)
+          .where('ma.entityId', '=', userId),
+      ]
+    : [];
+  for (const [type, table] of ACTIVITY_CONTENT) {
+    if (!wants(type)) continue;
+    const owned = dbRead
+      .selectFrom(table as 'Image')
+      .select('id')
+      .where('userId', '=', userId);
+    sources.push(
+      dbRead
+        .selectFrom('ModActivity as ma')
+        .where('ma.entityType', '=', type)
+        .where(sql<boolean>`ma."entityId" = ANY(ARRAY(${owned}))`)
+    );
+  }
+
+  // Only a key `activityGroup` itself produces for a family matches as a prefix, so the page and the
+  // summary's counts select the same rows — a bare `buzz` must not sweep in every send and deduct.
+  const family = !!activity && isFamilyGroup(activity);
+  return sources.map((qb) =>
+    qb
+      .$if(bucket === 'enforcement', (q) => q.where('ma.activity', 'not in', RATING_ACTIVITIES))
+      .$if(bucket === 'rating', (q) => q.where('ma.activity', 'in', RATING_ACTIVITIES))
+      .$if(!!activity, (q) =>
+        q.where((eb) =>
+          family
+            ? eb.or([
+                eb('ma.activity', '=', activity!),
+                eb('ma.activity', 'like', `${escapeLike(activity!)}:%`),
+              ])
+            : eb('ma.activity', '=', activity!)
+        )
+      )
+      // A row-value comparison against the same (createdAt, id) ordering the pages are read in; two
+      // OR'd predicates are the classic way to drop or repeat the boundary row.
+      .$if(!!before, (q) =>
+        q.where(sql<boolean>`(ma."createdAt", ma.id) < (${before!.at}::timestamp, ${before!.id})`)
+      )
+  );
+}
+
+const newestFirst = (a: { createdAt: Date; id: number }, b: { createdAt: Date; id: number }) =>
+  b.createdAt.getTime() - a.createdAt.getTime() || b.id - a.id;
+
 export async function getModActivity(
   userId: number,
   limit = 40,
   bucket?: 'enforcement' | 'rating'
 ): Promise<ModActivityRow[]> {
-  const select = [
-    // `id` is selected purely so the UI has a stable key — ModActivity is append-only now, so two rows
-    // can share (createdAt, activity, entityId) and a composite key would collide.
-    'ma.id',
-    'ma.activity',
-    'ma.entityType',
-    'ma.entityId',
-    'ma.createdAt',
-    'ma.userId',
-  ] as const;
+  return (await readModActivity({ userId, bucket }, limit)).map(({ cursorAt: _, ...row }) => row);
+}
 
-  const direct = dbRead
-    .selectFrom('ModActivity as ma')
-    .select(select)
-    .where('ma.entityType', 'in', ['user', 'impersonate'])
-    .where('ma.entityId', '=', userId)
-    .$if(bucket === 'enforcement', (qb) => qb.where('ma.activity', 'not in', RATING_ACTIVITIES))
-    .$if(bucket === 'rating', (qb) => qb.where('ma.activity', 'in', RATING_ACTIVITIES))
-    .orderBy('ma.createdAt', 'desc')
-    .limit(limit)
-    .execute();
-
-  const viaContent = ACTIVITY_CONTENT.map(([entityType, table]) =>
-    dbRead
-      .selectFrom('ModActivity as ma')
-      .innerJoin(`${table} as c` as 'Image as c', 'c.id', 'ma.entityId')
-      .select(select)
-      .where('ma.entityType', '=', entityType)
-      .where('c.userId', '=', userId)
-      .$if(bucket === 'enforcement', (qb) => qb.where('ma.activity', 'not in', RATING_ACTIVITIES))
-      .$if(bucket === 'rating', (qb) => qb.where('ma.activity', 'in', RATING_ACTIVITIES))
-      .orderBy('ma.createdAt', 'desc')
-      .limit(limit)
-      .execute()
+export async function getModActivityPage(
+  scope: ModActivityScope,
+  pageSize = 50
+): Promise<{ rows: ModActivityRow[]; next: ModActivityCursor | null }> {
+  const { items, nextCursor } = takePage(
+    await readModActivity(scope, pageSize + 1),
+    pageSize,
+    (r): ModActivityCursor => ({ at: r.cursorAt, id: r.id })
   );
+  return { rows: items.map(({ cursorAt: _, ...row }) => row), next: nextCursor ?? null };
+}
 
-  const rows = (await Promise.all([direct, ...viaContent]))
+/** What the account's history holds, for the filter options — read from the whole history, not from
+ *  a page, or an action older than the page could never be selected. */
+export async function getModActivitySummary(
+  userId: number,
+  bucket?: 'enforcement' | 'rating'
+): Promise<ModActivityCount[]> {
+  const rows = (
+    await Promise.all(
+      activitySources({ userId, bucket }).map((qb) =>
+        qb
+          .select(['ma.activity', 'ma.entityType'])
+          .select((eb) => eb.fn.countAll<string>().as('count'))
+          .groupBy(['ma.activity', 'ma.entityType'])
+          .execute()
+      )
+    )
+  ).flat();
+
+  const counts = new Map<string, ModActivityCount>();
+  for (const r of rows) {
+    const activity = activityGroup(r.activity);
+    const entityType = r.entityType ?? '';
+    const key = `${activity}\u0000${entityType}`;
+    const entry = counts.get(key) ?? { activity, entityType, count: 0 };
+    entry.count += Number(r.count);
+    counts.set(key, entry);
+  }
+  return [...counts.values()];
+}
+
+async function readModActivity(
+  scope: ModActivityScope,
+  limit: number
+): Promise<(ModActivityRow & { cursorAt: string })[]> {
+  const rows = (
+    await Promise.all(
+      activitySources(scope).map((qb) =>
+        qb
+          .select([
+            // `id` is the UI's key and the cursor's tie-break — ModActivity is append-only now, so two
+            // rows can share (createdAt, activity, entityId).
+            'ma.id',
+            'ma.activity',
+            'ma.entityType',
+            'ma.entityId',
+            'ma.createdAt',
+            'ma.userId',
+          ])
+          .select(sql<string>`to_char(ma."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS')`.as('cursorAt'))
+          .orderBy('ma.createdAt', 'desc')
+          .orderBy('ma.id', 'desc')
+          .limit(limit)
+          .execute()
+      )
+    )
+  )
     .flat()
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .sort(newestFirst)
     .slice(0, limit);
 
-  const byId = await usersByIds(rows.map((r) => r.userId ?? 0));
-
-  return rows.map((r) => ({
-    id: r.id,
-    activity: r.activity,
-    entityType: r.entityType ?? '',
-    entityId: r.entityId,
-    createdAt: r.createdAt,
-    moderatorId: r.userId,
-    moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
-  }));
+  return (await withModerators(rows)).map((r) => ({ ...r, entityType: r.entityType ?? '' }));
 }
 
 // RETOOL-ERA MODERATION HISTORY (`ReToolActions`, 131k rows).
@@ -841,12 +1097,10 @@ export async function getRetoolActivity(userId: number, limit = 25): Promise<Ret
     .selectFrom('ReToolActions')
     .select(['id', 'Event as at', 'User as moderator', 'App as app', 'ActionType as action'])
     // 🔴 The id must follow a SUBJECT LABEL, not merely be a standalone number. `ActionType` is free
-    // text and 56% of rows carry more than one — `ToS 5 images from <id>`, `Strike 2 on user <id>`,
+    // text and many rows carry more than one — `ToS 5 images from <id>`, `Strike 2 on user <id>`,
     // `Banned 47 accounts` — so a bare word-boundary match attributed every image COUNT and strike
-    // number to whichever account shares that value. Measured against the moderator database: id 1
-    // matched 22,130 unrelated rows, id 2 matched 7,289, id 5 matched 2,331 (2,204 of them
-    // `ToS 5 images…`), and 101 accounts have an id under 100. Anchoring costs nothing — on real
-    // 6-7 digit subject ids both forms return identical rows.
+    // number to whichever account shares that value: a low id matched thousands of unrelated rows.
+    // Anchoring costs nothing — on real subject ids both forms return identical rows.
     //
     // `from ` requires digits immediately after, which is what excludes `ToS N images from modelId
     // <id>` — that number is a MODEL id, not this account.
@@ -862,6 +1116,121 @@ export async function getRetoolActivity(userId: number, limit = 25): Promise<Ret
     .limit(limit)
     .execute();
   return rows as RetoolActivityRow[];
+}
+
+// IMAGE REMOVALS, from ClickHouse `default.images`. ModActivity finds image actions through the account's
+// current Image rows, and a blocked image is hard-deleted from Postgres after 7 days, so its removal
+// drops off that list. This log is keyed by owner and survives the delete.
+//
+// Owner is recorded from 2024 on; 2023 rows carry ownerId 0 and cannot be attributed. `ownerId` is not
+// in the sort key (time, imageId, userId), but the table is small enough that the scan measured
+// 164–237ms on the two largest accounts (~39k and ~33k removals).
+//
+// A non-owner `Delete` is not always a moderator: several frequent actors are not moderators today
+// (former moderators, or collaborators), so the actor's current role is returned for the UI to show.
+export type ImageRemovalRow = {
+  key: string;
+  type: 'DeleteTOS' | 'Delete' | 'Restore';
+  at: string;
+  imageId: number;
+  actorId: number;
+  actorUsername: string | null;
+  actorIsModerator: boolean;
+  tosReason: string | null;
+  violationType: string | null;
+};
+
+export type ImageRemovalCounts = { tos: number; deletedByOthers: number; restored: number };
+
+export type ImageRemovalCursor = { at: string; imageId: number };
+
+const REMOVALS_SCOPE = (userId: number) => `ownerId = ${userId}
+  AND (type IN ('DeleteTOS', 'Restore') OR (type = 'Delete' AND userId != ownerId))`;
+
+/**
+ * Ends every page on a whole (time, imageId) group. No column is unique per row — one image can be
+ * removed and restored in the same second, and a DeleteTOS can repeat — so a plain keyset cursor drops
+ * whichever row of a tie falls past the page edge. A page runs over `pageSize` by at most the size
+ * of its last group. Not a whole second: a bulk removal logs hundreds of rows in one second.
+ */
+export async function getImageRemovals(
+  userId: number,
+  before?: ImageRemovalCursor,
+  pageSize = 50
+): Promise<{
+  rows: ImageRemovalRow[];
+  next: ImageRemovalCursor | null;
+  counts: ImageRemovalCounts;
+}> {
+  // The ClickHouse helper interpolates with NO escaping.
+  if (before && !(isClickhouseDateTime(before.at) && Number.isInteger(before.imageId)))
+    throw new Error('[image-removals] malformed cursor');
+  const scope = REMOVALS_SCOPE(userId);
+  const olderThan = before
+    ? `AND (time, imageId) < (toDateTime('${before.at}'), ${before.imageId})`
+    : '';
+  const ch = getClickhouse();
+
+  const [keys, countRows] = await Promise.all([
+    ch.$query<{ time: string; imageId: string }>(`
+      SELECT time, imageId FROM default.images WHERE ${scope} ${olderThan}
+      ORDER BY time DESC, imageId DESC LIMIT ${pageSize + 1}
+    `),
+    ch.$query<{ tos: string; deletedByOthers: string; restored: string }>(`
+      SELECT countIf(type = 'DeleteTOS') AS tos, countIf(type = 'Delete') AS deletedByOthers,
+             countIf(type = 'Restore') AS restored
+      FROM default.images WHERE ${scope}
+    `),
+  ]);
+  const counts = {
+    tos: Number(countRows[0]?.tos ?? 0),
+    deletedByOthers: Number(countRows[0]?.deletedByOthers ?? 0),
+    restored: Number(countRows[0]?.restored ?? 0),
+  };
+  if (!keys.length) return { rows: [], next: null, counts };
+
+  const edge = keys[Math.min(pageSize, keys.length) - 1];
+  const boundary = { at: edge.time, imageId: Number(edge.imageId) };
+  // Enum order puts Restore after the removals, so DESC lists a same-second restore above its removal.
+  const rows = await ch.$query<{
+    type: ImageRemovalRow['type'];
+    time: string;
+    imageId: string;
+    userId: string;
+    tosReason: string | null;
+    violationType: string | null;
+  }>(`
+    SELECT type, time, imageId, userId, tosReason, violationType
+    FROM default.images
+    WHERE ${scope} ${olderThan}
+      AND (time, imageId) >= (toDateTime('${boundary.at}'), ${boundary.imageId})
+    ORDER BY time DESC, imageId DESC, type DESC
+  `);
+
+  const actors = await usersByIds(rows.map((r) => Number(r.userId)));
+  return {
+    rows: rows.map((r, i) => {
+      const actorId = Number(r.userId);
+      const actor = actors.get(actorId);
+      return {
+        // The table has no row id and a (time, imageId, type) triple can repeat; the page is replaced
+        // whole on every move, so a positional suffix is stable enough.
+        key: `${r.time}:${r.imageId}:${r.type}:${i}`,
+        type: r.type,
+        at: clickhouseDate(r.time),
+        imageId: Number(r.imageId),
+        actorId,
+        actorUsername: actor?.username ?? null,
+        actorIsModerator: !!actor?.isModerator,
+        tosReason: r.tosReason,
+        violationType: r.violationType,
+      };
+    }),
+    // A page that filled up may have older rows; when the extra row shared the boundary group it is
+    // already on this page, and the next fetch simply comes back empty.
+    next: keys.length > pageSize ? boundary : null,
+    counts,
+  };
 }
 
 // TRAINING RUNS (Retool's NewSubmittedTrainsBrett). The summary line is what a moderator acts on: what
@@ -897,7 +1266,8 @@ export type TrainingRun = {
 
 export async function getTrainingRuns(
   userId: number,
-  limit = 25
+  limit = 25,
+  { charges = true }: { charges?: boolean } = {}
 ): Promise<{ runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null }> {
   const rows = await dbRead
     .selectFrom('Model as m')
@@ -998,7 +1368,7 @@ export async function getTrainingRuns(
     params: r.params,
   }));
 
-  return { runs, truncated, charges: await getTrainingCharges(userId, runs) };
+  return { runs, truncated, charges: charges ? await getTrainingCharges(userId, runs) : null };
 }
 
 export type TrainingChargeRow = {
@@ -1082,9 +1452,12 @@ async function getTrainingCharges(
         JSONExtractString(details, 'workflowId') AS workflowId
       FROM buzzTransactions
       WHERE type = 'training' AND fromAccountId = ${Math.trunc(userId)}
-      ORDER BY date DESC
     `);
     if (!rows.length) return null;
+    // Sorted here, not in the query: `ORDER BY date DESC` on this 1.5B-row table measured 13-30s+
+    // against 0.4-0.55s without it. There was no LIMIT, so only the order moves.
+    const at = (date: string) => utcMs(date) || 0;
+    rows.sort((a, b) => at(b.date) - at(a.date));
 
     // A retrain reuses the version, so one run can account for several charges — every `Submitted` in
     // its history is one. `submittedAt` covers the ~8% of files with no history array.
@@ -1129,9 +1502,8 @@ const BUZZ_COLORS: Record<string, string> = {
   green: 'Green',
 };
 
-/** Account types whose id is a real `User.id`. Everything else transacts in the same integer space
- *  without being a user — see the collision note in `getBuzzLedgerSide`. */
-const USER_ACCOUNT_TYPES = new Set(['user', 'yellow', 'generation', 'blue', 'green']);
+/** See `USER_ACCOUNT_TYPES` in `buzz-accounts.ts`. */
+const USER_ACCOUNT_TYPES = new Set<string>(USER_ACCOUNT_TYPE_LIST);
 
 const counterpartyLabel = (accountType: string, id: number) =>
   id === 0 ? 'Civitai' : accountType || `account ${id}`;
@@ -1214,6 +1586,21 @@ const buzzTypesQuery = (userId: number, direction: 'in' | 'out', days: number) =
   ORDER BY type
 `;
 
+const placementOf = (
+  p: PlacementParties | undefined,
+  users: Map<number, { username: string | null }>
+): BuzzTransaction['placement'] =>
+  p
+    ? {
+        id: p.placementId,
+        surface: p.surface,
+        placerId: p.placerId,
+        placerName: users.get(p.placerId)?.username ?? null,
+        ownerId: p.ownerId,
+        ownerName: users.get(p.ownerId)?.username ?? null,
+      }
+    : null;
+
 /**
  * ONE side of the ledger — payments (money out) or receipts (money in).
  *
@@ -1258,11 +1645,26 @@ export async function getBuzzLedgerSide(
   const page = rows.slice(0, limit);
 
   // A counterparty id is only a USER id when the counterparty is a user-held account. Other account
-  // types reuse the same integer space: `creatorProgramBank` transacts as account 202607/202608, and
-  // those are real, unrelated user ids (`vvendeta`, `sirnofish`) — resolving them would name an innocent
-  // creator as the counterparty of every Creator Program transfer.
+  // types reuse the same integer space: `creatorProgramBank`'s account ids are also real, unrelated
+  // user ids — resolving them would name an innocent creator as the counterparty of every Creator
+  // Program transfer.
   const resolvable = page.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
-  const ids = [...new Set(resolvable.map((r) => Number(r.counterpartyId)))].filter((id) => id > 0);
+  // A placement's legs run through the escrow account, so the counterparty on the row is account 0;
+  // the placement itself names who paid and who was paid. Only escrow rows are read as legs, so no
+  // other row's reference can borrow a placement's parties.
+  const escrowRef = (r: BuzzRow) =>
+    Number(r.counterpartyId) === 0 ? r.externalTransactionId : null;
+  // The labels are extra: if this read fails the rows still show, without them.
+  const placements = await getPlacementParties(page.map(escrowRef)).catch((e) => {
+    console.error('[user-lookup] placement parties unavailable', e);
+    return new Map<number, PlacementParties>();
+  });
+  const ids = [
+    ...new Set([
+      ...resolvable.map((r) => Number(r.counterpartyId)),
+      ...[...placements.values()].flatMap((p) => [p.placerId, p.ownerId]),
+    ]),
+  ].filter((id) => id > 0);
   const byId = await usersByIds(ids);
 
   const mapped: BuzzTransaction[] = page.map((r) => {
@@ -1283,6 +1685,7 @@ export async function getBuzzLedgerSide(
       counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
       counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
       externalTransactionId: r.externalTransactionId || null,
+      placement: placementOf(placements.get(placementIdOf(escrowRef(r)) ?? 0), byId),
     };
   });
 

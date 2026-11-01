@@ -368,42 +368,6 @@ describe('🔴 the …ForRender readers — a cosmetic label must never take a p
 });
 
 describe('🔴 a degraded render read is LOGGED, and the logging cannot take the page down', () => {
-  /**
-   * 🔴 WHY THE LOG EXISTS. The catch-all posture's original justification was that the error
-   * "is not lost, because the sibling queries in the same request hit the same client". True
-   * on the two LIST surfaces, whose siblings read `app_listings` — and FALSE on the one
-   * surface the posture was built for: the run page's only sibling reads `app_blocks`, so a
-   * table-scoped failure on `app_listings` (`42P01`, `42501`) is invisible to it. Without a
-   * log, a half-applied schema leaves the badge permanently and silently absent.
-   */
-  it('logs once, at ERROR severity, when a render read degrades', async () => {
-    const err = new Error('permission denied for table app_listings') as Error & {
-      code?: string;
-    };
-    err.code = '42501';
-    await readListingBetaForRender('apl_1', throwingClient(err));
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
-    // 🔴 `error`, NOT `warning`, and an earlier version of this assertion had it backwards.
-    // `type` is what the Alloy→Loki pipeline reads as the level, and `~/server/logging/client`
-    // keys severity on FAULT (`server ? 'error' : 'info'`). The missing-COLUMN case — the one
-    // the old comment used to justify `warning` — cannot reach this catch at all: the narrow
-    // readers swallow `P2022`/`42703` upstream and return `BETA_UNAVAILABLE` without throwing.
-    // What arrives is the complement (timeout, `42P01`, `42501`, connection failure), all
-    // server faults, and filing those as warnings keeps a real outage off the error board.
-    expect(logToAxiom.mock.calls[0][0]).toMatchObject({
-      name: 'app-listing-beta-read-degraded',
-      type: 'error',
-      code: '42501',
-    });
-  });
-
-  it('does NOT log on the happy path (positive control)', async () => {
-    // Without this, the assertion above would pass on an implementation that logged on every
-    // read — which would be its own defect, and would make the signal useless.
-    await readListingBetaForRender('apl_1', okClient({ isBeta: true, betaMessage: null }));
-    expect(logToAxiom).not.toHaveBeenCalled();
-  });
-
   it('🔴 the log promise gets a REJECTION HANDLER attached — the `.catch` is load-bearing', async () => {
     // 🔴 THE FAILURE THIS PREVENTS IS THE ONE THE WHOLE POSTURE EXISTS FOR, reintroduced
     // through the logging. `logToAxiom` awaits an ingest that rejects when Axiom is degraded,

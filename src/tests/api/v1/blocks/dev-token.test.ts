@@ -304,7 +304,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(arg.userId).toBe(OWNER_ID);
     // AppBlocksSubmit gated the MINT; AIServicesWrite kept the spend scope.
     expect(arg.scopes).toContain('ai:write:budgeted');
-    expect(arg.buzzBudget).toBe(50);
+    expect(arg.buzzBudget).toBe(1000);
     // Every other belt unchanged: forced SFW + page ctx.
     expect(arg.maxBrowsingLevel).toBe(SFW);
     expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
@@ -554,7 +554,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
       'user:read:self',
     ]);
     // Budget defaulted + capped.
-    expect(arg.buzzBudget).toBe(50);
+    expect(arg.buzzBudget).toBe(1000);
 
     const out = res._getJSONData() as Record<string, unknown>;
     expect(out.token).toBe('jwt.signed.value');
@@ -631,12 +631,12 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const { req, res } = authPost({ appBlockId: 'apb_abc', buzzBudget: 100000 });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250); // DEV_BUZZ_BUDGET_CAP
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(5000); // DEV_BUZZ_BUDGET_CAP
   });
 
   // Fix 2 (dogfood follow-up): the dev-token default budget now comes from the
   // resolved app manifest's `page.buzzBudgetPerGen`, so a recipe/app whose budget
-  // exceeds the flat 50 default is dev-testable WITHOUT a manual buzzBudget.
+  // exceeds the flat default is dev-testable WITHOUT a manual buzzBudget.
   it('DEFAULTS the budget to the APPROVED manifest page.buzzBudgetPerGen when no explicit request', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockAppBlockFindUnique.mockResolvedValueOnce(
@@ -648,15 +648,38 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign.mock.calls[0][0].buzzBudget).toBe(180);
   });
 
-  it('clamps an over-cap manifest budget to the dev cap (manifest 5000 → 250)', async () => {
+  // 6301 overshoots the cap without being a multiple of it. An invalid declaration is
+  // ignored by `parseManifestBuzzBudget`, so it mints the default.
+  it.each([
+    ['at the cap', 5000, 5000],
+    ['one over the cap', 5001, 5000],
+    ['far over the cap', 6301, 5000],
+    ['a non-integer', 12.5, 1000],
+    ['negative', -5, 1000],
+  ])(
+    'an approved manifest budget, %s, mints the dev token’s buzzBudget',
+    async (_l, declared, minted) => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockAppBlockFindUnique.mockResolvedValueOnce(
+        pageApp({ manifest: { page: { title: 'X', buzzBudgetPerGen: declared } } })
+      );
+      const { req, res } = authPost({ appBlockId: 'apb_abc' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(minted);
+    }
+  );
+
+  it.each([
+    [5000, 5000],
+    [5001, 5000],
+    [6301, 5000],
+  ])('an explicit requested budget of %i mints %i', async (requested, minted) => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
-    mockAppBlockFindUnique.mockResolvedValueOnce(
-      pageApp({ manifest: { page: { title: 'X', buzzBudgetPerGen: 5000 } } })
-    );
-    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    const { req, res } = authPost({ appBlockId: 'apb_abc', buzzBudget: requested });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250); // DEV_BUZZ_BUDGET_CAP
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(minted);
   });
 
   it('an EXPLICIT requested budget still wins over the manifest default', async () => {
@@ -670,18 +693,18 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign.mock.calls[0][0].buzzBudget).toBe(30);
   });
 
-  it('falls back to the flat default (50) when the approved manifest omits buzzBudgetPerGen', async () => {
+  it('falls back to the flat default (1000) when the approved manifest omits buzzBudgetPerGen', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     // Default pageApp() manifest has no buzzBudgetPerGen.
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(50);
+    expect(mockSign.mock.calls[0][0].buzzBudget).toBe(1000);
   });
 
   it('DEFAULTS the budget to the PENDING manifest page.buzzBudgetPerGen (local-manifest mode)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION); // personal key w/ AIServicesWrite
-    // No approved row → pending path; pending manifest declares a >50 budget.
+    // No approved row → pending path; the pending manifest declares its own budget.
     mockAppBlockFindUnique.mockResolvedValueOnce(null);
     mockPublishRequestFindFirst.mockResolvedValueOnce(
       pendingRequest({
@@ -814,7 +837,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
         'user:read:self',
       ]);
       // Budget defaulted + capped; forced SFW; page ctx.
-      expect(arg.buzzBudget).toBe(50);
+      expect(arg.buzzBudget).toBe(1000);
       expect(arg.maxBrowsingLevel).toBe(SFW);
       expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
       // Synthetic, revocable instance id derived from the publish-request id.
@@ -1028,7 +1051,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
       const { req, res } = authPost({ slug: 'my-pending-app', buzzBudget: 100000 });
       await handler(req as never, res as never);
       expect(res._getStatusCode()).toBe(200);
-      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(5000);
     });
 
     it('forced SFW + self-bound sub hold on the pending path', async () => {
@@ -1156,7 +1179,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
       expect(arg.scopes).toContain('ai:write:budgeted');
       expect(arg.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
       // Budget defaulted + capped; forced SFW; page ctx.
-      expect(arg.buzzBudget).toBe(50);
+      expect(arg.buzzBudget).toBe(1000);
       expect(arg.maxBrowsingLevel).toBe(SFW);
       expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
       // sign blockId = the slug; SYNTHETIC non-resolving appId; synthetic ids.
@@ -1274,7 +1297,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
       });
       await handler(req as never, res as never);
       expect(res._getStatusCode()).toBe(200);
-      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(5000);
     });
 
     it('forced SFW + self-bound sub hold on the no-row path', async () => {
@@ -1456,7 +1479,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
       await handler(req as never, res as never);
       expect(res._getStatusCode()).toBe(200);
       expect(mockSign.mock.calls[0][0].scopes).toEqual(WITH_SPEND);
-      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(50);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(1000);
     });
 
     it('3. NOT-entitled bearer + requestBudgetedSpend:true → EXCLUDED, and the mint SUCCEEDS (strip, never error)', async () => {

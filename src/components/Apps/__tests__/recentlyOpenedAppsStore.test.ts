@@ -19,9 +19,9 @@ import { resolveRecentApp } from '~/components/Apps/recentAppsRail';
  * whole v3 validation layer (`coerce`) exists because anybody can hand-edit
  * `localStorage.recentlyOpenedApps` and every previously-shipped entry shape is
  * still in the wild. The existing coverage lived only in
- * `recents-helper.browser.test.tsx` — and the browser (`component`) project runs
- * only in the PR preview pipeline, report-only and behind a preview build that
- * fails intermittently, so on a PR very little was reliably watching that
+ * `recents-helper.browser.test.tsx` — and the browser (`component`) project ran
+ * only in the PR preview pipeline then, report-only and behind a preview build that
+ * failed intermittently, so on a PR very little was reliably watching that
  * validation. The `unit` project at least runs on every PR
  * (`.github/workflows/lint.yml`), which is why behavioural coverage belongs
  * here; the browser suite keeps its real-`window` prepend/dedup/cap coverage.
@@ -161,6 +161,32 @@ describe('coerce — the untrusted-input validation layer', () => {
     const [entry] = getRecentlyOpenedApps(OWNER);
     expect(entry.hasPage).toBeUndefined();
     expect(resolveRecentApp(entry)!.hasPage).toBe(false);
+  });
+});
+
+// 🔴 A listing icon is gated per viewer, per host and at render time on the server; a stored
+// icon url would render later with no gate in front of it (and entries written before that gate
+// hold raw urls). So the store never reads one back and never writes one.
+describe('🔴 a stored icon url is never rendered', () => {
+  it('drops an icon url already sitting in localStorage (written before the media gate)', () => {
+    seedOwned([
+      { id: 'a', blockId: 'gen', slug: 'gen', kind: 'onsite', name: 'Gen', iconUrl: 'raw-r.png' },
+    ]);
+    const [entry] = getRecentlyOpenedApps(OWNER);
+    expect(entry, 'the entry itself must survive — only the icon goes').toEqual({
+      id: 'a',
+      blockId: 'gen',
+      slug: 'gen',
+      kind: 'onsite',
+      name: 'Gen',
+    });
+    expect(resolveRecentApp(entry)).not.toHaveProperty('iconUrl');
+  });
+
+  it('does not persist an icon url handed to the write path', () => {
+    recordRecentlyOpenedApp({ id: 'b', blockId: 'b', name: 'B', iconUrl: 'gated-now.png' }, OWNER);
+    expect(storage.getItem(RECENTLY_OPENED_APPS_KEY)).not.toContain('gated-now.png');
+    expect(getRecentlyOpenedApps(OWNER)).toEqual([{ id: 'b', blockId: 'b', name: 'B' }]);
   });
 });
 

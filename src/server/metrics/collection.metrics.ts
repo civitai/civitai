@@ -1,13 +1,10 @@
 import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import {
-  executeRefreshWithParams,
-  getAffected,
-  getEntityMetricTasks,
-} from '~/server/metrics/metric-helpers';
+import { executeRefreshWithParams, getAffected } from '~/server/metrics/metric-helpers';
+import { getCollectionItemCountTasks } from '~/server/metrics/collection-item-counts';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { collectionsSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -149,5 +146,5 @@ async function getContributorTasks(ctx: CollectionMetricContext) {
 }
 
 async function getItemTasks(ctx: CollectionMetricContext) {
-  return getEntityMetricTasks(ctx)('Collection', 'itemCount');
+  return getCollectionItemCountTasks(ctx)('Collection');
 }

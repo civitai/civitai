@@ -20,6 +20,8 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const mockNotify = vi.fn(async (..._a: unknown[]) => undefined);
   const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
   const makeDb = () => ({
+    // `approveRequest`'s pre-flight probes the media-split table; no row reads as absent.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
@@ -41,6 +43,9 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       findUnique: vi.fn(
         async (..._a: unknown[]): Promise<unknown> => ({ id: 'apl_existing', kind: 'onsite' })
       ),
+      // approveRequest's up-front "which listing does this approve publish" read (the
+      // publish floor): no draft / reset listing here, so nothing is gated.
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },

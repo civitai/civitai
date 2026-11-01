@@ -9,10 +9,11 @@ import type * as TrpcModule from '~/utils/trpc';
 // test resolves a SECOND copy of React and fails the whole file with "Invalid hook
 // call", reported as `Tests no tests`. A type import is erased at compile time.
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /**
  * The COMBINED code + listing-media review surface (Item 4) — browser-mode render
- * test (report-only in Tekton; the blocking gate for the pairing logic is the
+ * test (`Component tests` in CI; the node-tier gate for the pairing logic is the
  * `unifiedReviewRow` unit suite). Asserts:
  *  - BOTH stacked section headers render (App code review + Listing media);
  *  - the CODE section shows the agent ReportTabs (Scopes/Security/Code review);
@@ -51,7 +52,7 @@ const CODE_REQUEST = {
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const LISTING_ROW = {
@@ -68,7 +69,7 @@ const LISTING_ROW = {
     category: 'utility',
     contentRating: 'PG',
   },
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const SELECTION = {
@@ -158,6 +159,9 @@ const LISTING_PREVIEW = {
     sourceRepoUrl: null,
     isBeta: false,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
   } satisfies ListingDetail,
 };
@@ -174,6 +178,35 @@ const mocks = vi.hoisted(() => ({
 // factory listing only `useFeatureFlags` made this whole FILE fail to import with
 // `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
 // collected rather than as a failure.
+
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
+}));
+
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAgenticReview: true }),

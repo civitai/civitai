@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { useRouter } from 'next/router';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
 import type * as TrpcModule from '~/utils/trpc';
@@ -45,6 +46,13 @@ type AuthoringContext = {
 const state = vi.hoisted(() => ({
   /** The `getAuthoringContext` payload — THE ONLY THING ANY ARM VARIES. */
   context: null as unknown,
+  /** `appFeedback.hasAnyForListing` — `null` while the read is in flight. */
+  feedback: { hasAny: false } as { hasAny: boolean } | null,
+  feedbackError: null as unknown,
+  /** Every input the page asked `hasAnyForListing` about. */
+  feedbackInputs: [] as unknown[],
+  /** The query options the page passed alongside each of those inputs. */
+  feedbackOpts: [] as unknown[],
   flags: { appBlocks: true } as Record<string, boolean>,
 }));
 
@@ -117,6 +125,11 @@ vi.mock('~/components/Apps/ListingPublishingPanel', () => ({
 vi.mock('~/components/Apps/ListingHistoryPanel', () => ({
   ListingHistoryPanel: () => <div data-testid="stub-history" />,
 }));
+vi.mock('~/components/Apps/AppFeedbackInboxPanel', () => ({
+  AppFeedbackInboxPanel: ({ appListingId }: { appListingId: string }) => (
+    <div data-testid="stub-feedback">{appListingId}</div>
+  ),
+}));
 
 // Spread the REAL module and override only `trpc` (per `local-rules/no-wholesale-module-mock`):
 // a hand-written replacement silently drops any export a transitive importer needs, and the
@@ -125,18 +138,26 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({}),
-      appListings: {
-        getAuthoringContext: {
-          useQuery: () => ({
-            data: state.context,
-            isLoading: state.context == null,
-            error: null,
-          }),
+    trpc: makeTrpcProxy({
+      'appListings.getAuthoringContext': {
+        useQuery: () => ({
+          data: state.context,
+          isLoading: state.context == null,
+          error: null,
+        }),
+      },
+      'appFeedback.hasAnyForListing': {
+        useQuery: (input: unknown, opts: unknown) => {
+          state.feedbackInputs.push(input);
+          state.feedbackOpts.push(opts);
+          return {
+            data: state.feedbackError ? undefined : state.feedback ?? undefined,
+            isLoading: state.feedback == null && !state.feedbackError,
+            error: state.feedbackError,
+          };
         },
       },
-    },
+    }),
   };
 });
 
@@ -178,6 +199,10 @@ function renderedTabs(): string[] {
 
 beforeEach(() => {
   state.context = null;
+  state.feedback = { hasAny: false };
+  state.feedbackError = null;
+  state.feedbackInputs = [];
+  state.feedbackOpts = [];
   state.flags = { appBlocks: true };
   openListing();
 });
@@ -259,5 +284,97 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
       'publishing',
       'history',
     ]);
+  });
+});
+
+/**
+ * 🔴 THE FEEDBACK TAB EXISTS ONLY ONCE THE LISTING HAS FEEDBACK (operator decision, 2026-10-09).
+ * The page must ask `appFeedback.hasAnyForListing` about THIS listing and hand the answer to the
+ * tab derivation; every arm below varies only that answer.
+ */
+describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
+  const live = () => contextFor({ status: 'approved', lastModerationAction: null });
+
+  test('🔴 no feedback: no tab', async () => {
+    state.context = live();
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
+    expect(page.getByTestId('apps-edit-tab-feedback').elements()).toHaveLength(0);
+    expect(state.feedbackInputs.at(-1)).toEqual({ appListingId: LISTING_ID });
+  });
+
+  test('🔴 one row: the tab, LAST, and the rest of the strip unchanged', async () => {
+    state.context = live();
+    state.feedback = { hasAny: true };
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-tab-feedback')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual([
+      'details',
+      'media',
+      'manifest',
+      'earnings',
+      'collaborators',
+      'publishing',
+      'history',
+      'feedback',
+    ]);
+  });
+
+  test('🔴 `?tab=feedback` with feedback opens the inbox for THIS listing (the /apps/build badge link)', async () => {
+    openListing('feedback');
+    state.context = contextFor({ role: 'editor', kind: 'offsite', lastModerationAction: 'other' });
+    state.feedback = { hasAny: true };
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('stub-feedback')).toHaveTextContent(LISTING_ID);
+    expect(renderedTabs()).toEqual(['history', 'feedback']);
+  });
+
+  test('🔴 `?tab=feedback` with NO feedback falls back to the default tab, not an empty inbox', async () => {
+    openListing('feedback');
+    state.context = live();
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-panel-details')).toBeInTheDocument();
+    expect(page.getByTestId('stub-feedback').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-edit-panel-feedback').elements()).toHaveLength(0);
+  });
+
+  test('a failed presence read hides the tab rather than blocking the page', async () => {
+    openListing('feedback');
+    state.context = live();
+    state.feedback = null;
+    state.feedbackError = { message: 'nope', data: { code: 'INTERNAL_SERVER_ERROR' } };
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-panel-details')).toBeInTheDocument();
+    expect(page.getByTestId('apps-edit-tab-feedback').elements()).toHaveLength(0);
+  });
+
+  test('the strip waits for the presence read, so a deep link never mounts the default panel first', async () => {
+    openListing('feedback');
+    state.context = live();
+    state.feedback = null;
+    renderWithProviders(<AppListingEditPage />);
+
+    // Positive control: the page rendered its loading state (so the absences below are read off
+    // a rendered page, not an empty tree).
+    await expect.poll(() => document.querySelector('.mantine-Loader-root')).not.toBeNull();
+    expect(page.getByTestId(/^apps-edit-tab-/).elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-edit-panel-details').elements()).toHaveLength(0);
+  });
+
+  // The global query defaults are `staleTime: Infinity`, so without this a `false` cached on an
+  // earlier visit would outlive the first report, and the `/apps/build` badge (fetched fresh) would
+  // link to an editor whose `?tab=feedback` falls back. `useQuery` is stubbed in this suite, so the
+  // cache itself cannot be exercised here: this pins the option that makes every visit re-ask.
+  test('the presence read is never served from an earlier visit (gcTime: 0)', async () => {
+    state.context = live();
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
+    expect(state.feedbackOpts.at(-1)).toMatchObject({ gcTime: 0 });
   });
 });

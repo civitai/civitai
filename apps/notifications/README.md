@@ -18,12 +18,24 @@ One process owns the whole notification write side:
   and applies **no** opt-out filter; each `send-notifications` processor filters in its own SQL. This
   is the path `src/server/jobs/send-notifications.ts` uses, and it is why a processor missing its
   `NOT EXISTS "UserNotificationSettings"` clause is unmuteable.
-- **(B) Fan-out worker** — the ported ~5s poll loop. Claims `PendingNotification` rows, fans each into
+- **(B) Fan-out worker** — the ported ~5s poll loop, run as two lanes: rows with over 1000 recipients
+  (follower fan-outs) go one at a time through a bulk lane, so they never delay the rest. Claims
+  `PendingNotification` rows, fans each into
   `Notification` + `UserNotification` rows (normal / debounced), deletes/reschedules the pending row,
   and POSTs a realtime `notification:new` signal per affected user, bumping that user's redis unread
   counter only if one is already cached (an uncached user is recounted from the DB on the next read).
-- **Ops routes** — `GET /health` (no-dep liveness), `GET /pool-stats` (notif pool snapshots),
-  `GET /metrics` (Prometheus, private-by-XFF).
+  It also hands the newly delivered recipients to the push dispatcher (`worker/push.ts`) and the
+  email dispatcher (`worker/email.ts`, gated on `emailNotificationTypes`; see
+  docs/features/notifications.md "Web push" and "Email").
+- **System notices** — `POST /notifications/notices` (+ `/notifications/notices/get`). Sends one
+  `system-message` or `system-announcement` to up to 50,000 users per call, with `{placeholder}` text
+  filled per recipient. Dry run by default; each recipient gets a given `sendId` at most once; every
+  `sendId` keeps an audit row (`NoticeSend`, `NoticeSendCall`: `containers/notification-db/docker-init/02_notice_send.sql`).
+  A dry run already pins the `sendId` to its type, message and url, so fixing a typo needs a new `sendId`.
+  TypeScript callers use `sendSystemNotices()` from `@civitai/notifications`.
+- **Ops routes** — `GET /health` (liveness; touches no dependency, but returns 503 on a worker pod whose
+  redis commands have all failed for 60s or where either poll-loop lane has stalled for 10 min), `GET /pool-stats`
+  (notif pool snapshots), `GET /metrics` (Prometheus, private-by-XFF).
 
 The producer↔consumer contract is the `PendingNotification` table, not HTTP — so the monolith's
 existing direct writes and this app's producer API can coexist during the transition (plan R3).

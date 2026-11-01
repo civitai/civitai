@@ -13,6 +13,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
+import { isSandboxCopy } from '~/server/utils/stripe-key-mode';
 import { logToAxiom } from '~/server/logging/client';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -53,19 +54,36 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   const user = await dbWrite.user.findUnique({ where: { id }, select: { customerId: true } });
-  if (!user?.customerId) {
-    const customer = await stripe.customers.create({ email });
+  if (user?.customerId) return user.customerId;
 
-    await dbWrite.user.update({ where: { id }, data: { customerId: customer.id } });
+  const customer = await stripe.customers.create({ email, metadata: { userId: String(id) } });
 
-    userUpdateCounter?.inc({ location: 'stripe.service:createCustomer' });
-
-    await refreshSession(id, { caller: 'subscription' });
-
-    return customer.id;
-  } else {
-    return user.customerId;
+  // Only the first checkout to get here records its customer; any other one charges that customer.
+  const { count } = await dbWrite.user.updateMany({
+    where: { id, customerId: null },
+    data: { customerId: customer.id },
+  });
+  if (count === 0) {
+    const winner = await dbWrite.user.findUnique({ where: { id }, select: { customerId: true } });
+    await stripe.customers.del(customer.id).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'stripe-unused-customer-delete',
+        userId: id,
+        customerId: winner?.customerId,
+        unusedCustomerId: customer.id,
+        message: (error as Error).message,
+      })
+    );
+    if (!winner?.customerId) throw throwNotFoundError(`No user with id ${id}`);
+    return winner.customerId;
   }
+
+  userUpdateCounter?.inc({ location: 'stripe.service:createCustomer' });
+
+  await refreshSession(id, { caller: 'subscription' });
+
+  return customer.id;
 };
 
 /**
@@ -393,20 +411,56 @@ export const createSubscribeSession = async ({
         ...(blockAttributionMetadata ?? {}),
       };
 
-      await stripe.subscriptions.update(subscriptionId, {
-        items,
-        billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
-        proration_behavior: 'none',
-        // Makes it so that if a sub. is not paid, it won't start right away. Should cover us for failed payments during upgrades
-        payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
-        // @ts-ignore This is valid as per stripe's documentation
-        discounts,
-        ...(Object.keys(upgradeMetadata).length > 0 ? { metadata: upgradeMetadata } : {}),
-      });
+      const { releaseArmedGiftMonth, restoreArmedGiftMonth } = await import(
+        '~/server/services/membership-gift.service'
+      );
+      const releasedGiftMonth = await releaseArmedGiftMonth({ userId: user.id });
+
+      // 'default_incomplete' applies the new price at once and leaves the subscription past_due,
+      // which ends the plan the member already paid for. 'pending_if_incomplete' holds the price
+      // change until the invoice is paid. A paused subscription was just resumed without payment,
+      // so holding its change would leave it active unpaid; it keeps the old behaviour.
+      const holdUntilPaid = isUpgrade && activeSubscription.status !== 'paused';
+
+      let updated: Stripe.Subscription;
+      try {
+        updated = await stripe.subscriptions.update(subscriptionId, {
+          items,
+          billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
+          proration_behavior: 'none',
+          payment_behavior: holdUntilPaid
+            ? 'pending_if_incomplete'
+            : isUpgrade
+            ? 'default_incomplete'
+            : undefined,
+          expand: holdUntilPaid ? ['latest_invoice'] : undefined,
+          ...(releasedGiftMonth
+            ? { coupon: '' }
+            : {
+                // @ts-ignore This is valid as per stripe's documentation
+                discounts,
+              }),
+          ...(Object.keys(upgradeMetadata).length > 0 ? { metadata: upgradeMetadata } : {}),
+        });
+      } catch (error) {
+        if (releasedGiftMonth) await restoreArmedGiftMonth(releasedGiftMonth);
+        throw error;
+      }
 
       if (sanitizedRefCode) {
         const { bindReferralCodeForUser } = await import('~/server/services/referral.service');
         await bindReferralCodeForUser(user.id, sanitizedRefCode).catch(handleLogError);
+      }
+
+      // The released gifted month is NOT restored here: Stripe removes the coupon immediately
+      // even while the price change is held, and the subscription.updated webhook re-arms it.
+      if (updated.pending_update) {
+        const invoice = updated.latest_invoice;
+        const hostedInvoiceUrl = typeof invoice === 'object' ? invoice?.hosted_invoice_url : null;
+        if (hostedInvoiceUrl) return { sessionId: null, url: hostedInvoiceUrl };
+        throw throwBadRequestError(
+          `Your payment for the upgrade did not go through, so your current membership is unchanged. Please check your payment method and try again.`
+        );
       }
 
       await refreshSession(user.id, { caller: 'subscription' });
@@ -448,6 +502,9 @@ export const createSubscribeSession = async ({
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
+    // A bank debit takes days to clear, but the membership goes active on checkout, so a
+    // bounced first payment has already granted the tier. Link is left out: it can pay from a bank.
+    payment_method_types: ['card'],
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
@@ -511,11 +568,19 @@ export const createDonateSession = async ({
   return { sessionId: session.id, url: session.url };
 };
 
+// Every portal session uses this configuration, so its payment-method settings decide what a
+// member can add from the portal. Unset, Stripe uses the account's default configuration.
+const portalConfiguration = () =>
+  env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID
+    ? { configuration: env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID }
+    : {};
+
 export const createManageSubscriptionSession = async ({ customerId }: { customerId: string }) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/membership`,
   });
@@ -538,6 +603,7 @@ export const createSubscriptionChangeSession = async ({
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/account`,
     flow_data: {
@@ -580,6 +646,7 @@ export const createCancelSubscriptionSession = async ({ customerId }: { customer
   }
 
   const session = await stripe.billingPortal.sessions.create({
+    ...portalConfiguration(),
     customer: customerId,
     return_url: `${baseUrl}/user/account`,
     flow_data: {
@@ -637,7 +704,7 @@ export const cancelSubscriptionWithFallback = async ({
       );
     }
 
-    await stripe.subscriptions.del(subscription.id);
+    await deleteStripeSubscription(stripe, subscription.id);
 
     // Optimistically delete the DB record so the UI reflects the cancellation
     // immediately rather than waiting for the webhook. The webhook handler
@@ -935,8 +1002,17 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     const products = (await dbRead.product.findMany()).filter(
       (p) => !!(p.metadata as any)?.[env.TIER_METADATA_KEY]
     );
-    const billedProduct = products.find((p) =>
-      invoice.lines.data.some((l) => l.price?.product === p.id)
+    // A trial_end push bills the plan at $0, which sells no month. Line amounts are before
+    // discounts, so a gifted or comped month still counts. On a plan switch the renewed plan is the
+    // non-proration line; the old plan's credit and the new plan's prorations don't decide it.
+    // Not amount_paid: a balance-paid renewal has 0 there.
+    const tierLines = invoice.lines.data.filter((l) =>
+      products.some((p) => p.id === l.price?.product)
+    );
+    const billedLine = tierLines.find((l) => !l.proration && l.amount > 0);
+    const billedMonth = !!billedLine;
+    const billedProduct = products.find(
+      (p) => p.id === (billedLine ?? tierLines[0])?.price?.product
     );
 
     if (!billedProduct) {
@@ -951,18 +1027,19 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       return;
     }
 
-    await withRetries(() =>
-      createBuzzTransaction({
-        fromAccountId: 0,
-        toAccountId: user.id,
-        toAccountType: (billedProductMeta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
-        type: TransactionType.Purchase,
-        externalTransactionId: invoice.id,
-        amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
-        description: `Membership bonus`,
-        details: { invoiceId: invoice.id },
-      })
-    ).catch(handleLogError);
+    if (billedMonth)
+      await withRetries(() =>
+        createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: user.id,
+          toAccountType: (billedProductMeta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
+          type: TransactionType.Purchase,
+          externalTransactionId: invoice.id,
+          amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
+          description: `Membership bonus`,
+          details: { invoiceId: invoice.id },
+        })
+      ).catch(handleLogError);
 
     const { bindReferralCodeForUser, recordMembershipPaymentReward } = await import(
       '~/server/services/referral.service'
@@ -1022,18 +1099,19 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     const stripeChargeId =
       typeof invoice.charge === 'string' ? invoice.charge : invoice.charge?.id ?? undefined;
 
-    await recordMembershipPaymentReward({
-      refereeId: user.id,
-      tier: billedProductMeta.tier,
-      monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
-      sourceEventId: invoice.id,
-      payment: {
-        paymentProvider: 'Stripe',
-        stripeInvoiceId: invoice.id,
-        stripePaymentIntentId,
-        stripeChargeId,
-      },
-    }).catch(handleLogError);
+    if (billedMonth)
+      await recordMembershipPaymentReward({
+        refereeId: user.id,
+        tier: billedProductMeta.tier,
+        monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
+        sourceEventId: invoice.id,
+        payment: {
+          paymentProvider: 'Stripe',
+          stripeInvoiceId: invoice.id,
+          stripePaymentIntentId,
+          stripeChargeId,
+        },
+      }).catch(handleLogError);
 
     // -----------------------------------------------------------------
     // W3 flow C — App Blocks MEMBERSHIP attribution. If this membership
@@ -1074,7 +1152,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     // pending zero-everything rows that the confirm-pending cron promotes
     // forever. amount_paid is the correct basis (you only share new money).
     const grossUsdCents = invoice.amount_paid ?? invoice.total ?? 0;
-    if (isAttributableBillingReason && grossUsdCents > 0) {
+    if (isAttributableBillingReason && grossUsdCents > 0 && billedMonth) {
       try {
         const blockAttribution = extractAttribution(
           subscriptionMetadata as Record<string, string | number | null | undefined>
@@ -1212,6 +1290,49 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   }
 };
 
+/**
+ * Stripe refuses to delete an `incomplete` subscription while its first-payment Checkout Session
+ * is open (a declined first charge leaves it open for a retry). Only after that refusal, expire the
+ * subscription's open sessions and delete once more. An open session means nothing was collected,
+ * so a paid subscription is never touched: its del does not fail this way, and its sessions are
+ * `complete`.
+ */
+const deleteStripeSubscription = async (
+  stripe: Stripe,
+  subscriptionId: string,
+  // Leave undefined rather than `{}`: stripe-node rejects an empty options object as an unknown
+  // argument ("Stripe: Unknown arguments") before sending anything.
+  options?: Stripe.RequestOptions
+) => {
+  try {
+    await stripe.subscriptions.del(subscriptionId, {}, options);
+    return;
+  } catch (error) {
+    // `rawType`, not `type`: `type` is the error's class name, which a minified bundle can mangle.
+    if ((error as { rawType?: string })?.rawType !== 'invalid_request_error') throw error;
+    // The SDK's list params have no `status` filter. A failed lookup surfaces the original error,
+    // which callers classify (the GDPR scrub reads `resource_missing` as already cancelled).
+    const sessions = await stripe.checkout.sessions
+      .list({ subscription: subscriptionId, limit: 10 }, options)
+      .catch(() => null);
+    const open =
+      sessions?.data.filter(
+        (session) => session.status === 'open' && session.subscription === subscriptionId
+      ) ?? [];
+    if (!open.length) throw error;
+    for (const session of open) await stripe.checkout.sessions.expire(session.id, {}, options);
+  }
+
+  try {
+    await stripe.subscriptions.del(subscriptionId, {}, options);
+  } catch (error) {
+    // Expiring the session may have ended the subscription already.
+    const live = await stripe.subscriptions.retrieve(subscriptionId, {}, options).catch(() => null);
+    if (live && ['canceled', 'incomplete_expired'].includes(live.status)) return;
+    throw error;
+  }
+};
+
 export const cancelSubscription = async ({
   userId,
   subscriptionId,
@@ -1259,10 +1380,10 @@ export const cancelSubscription = async ({
   // The shared client retries nothing (stripe-node's default is 0), so one transient error
   // would otherwise leave a deleted account billing. The timeout bounds the retries: at the
   // default 80s per attempt, three attempts outlast the gateway and a completed deletion 504s.
-  await stripe.subscriptions.del(
+  await deleteStripeSubscription(
+    stripe,
     subscriptionId,
-    {},
-    removeRecord ? { maxNetworkRetries: 2, timeout: 10_000 } : {}
+    removeRecord ? { maxNetworkRetries: 2, timeout: 10_000 } : undefined
   );
   if (!removeRecord) return;
 
@@ -1301,13 +1422,14 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
 // `price_civitai_buzz_25`) and won't exist in Stripe. Don't reintroduce a flow
 // that passes these IDs back to Stripe without first aligning the catalog.
 export const getBuzzPackages = async () => {
-  const [buzzProduct] = await dbRead.product.findMany({
+  const products = await dbRead.product.findMany({
     where: { active: true, metadata: { path: ['tier'], equals: 'buzz' } },
     select: {
       id: true,
       name: true,
       description: true,
       defaultPriceId: true,
+      metadata: true,
       prices: {
         where: { active: true },
         orderBy: { unitAmount: { sort: 'asc', nulls: 'last' } },
@@ -1321,6 +1443,9 @@ export const getBuzzPackages = async () => {
       },
     },
   });
+  // A sandbox copy of the Buzz product holds only Stripe's real prices, not the synthetic rows
+  // above, and the charge never uses a price id, so the live row serves every key mode.
+  const [buzzProduct] = products.filter((product) => !isSandboxCopy(product.metadata));
 
   return buzzProduct.prices.map(({ metadata, description, ...price }) => {
     const meta = Schema.buzzPriceMetadataSchema.safeParse(metadata);
@@ -1334,13 +1459,16 @@ export const getBuzzPackages = async () => {
   });
 };
 
-const futureUsageNotSupportedPaymentMethods = ['customer_balance', 'wechat_pay'];
+// Buzz is credited the moment the PaymentIntent succeeds, and a bank debit can be returned days
+// later, so the methods are fixed here rather than left to the dashboard or the client.
+// Cash App Pay only takes USD.
+const buzzPaymentMethodTypes = (currency: Currency) =>
+  currency === Currency.USD ? ['card', 'link', 'cashapp'] : ['card', 'link'];
 
 export const getPaymentIntent = async ({
   unitAmount,
   currency = Currency.USD,
   metadata,
-  paymentMethodTypes,
   customerId,
   user,
   domain,
@@ -1450,17 +1578,9 @@ export const getPaymentIntent = async ({
   const paymentIntent = await stripe.paymentIntents.create({
     amount: unitAmount,
     currency,
-    automatic_payment_methods:
-      !paymentMethodTypes && setupFuturePayment
-        ? {
-            enabled: true,
-          }
-        : undefined,
     customer: customerId,
     metadata: { ...(validatedMetadata as MetadataParam), buzzType },
-    payment_method_types: setupFuturePayment
-      ? paymentMethodTypes || undefined
-      : futureUsageNotSupportedPaymentMethods,
+    payment_method_types: buzzPaymentMethodTypes(currency),
     setup_future_usage: setupFuturePayment ? 'off_session' : undefined,
   });
 
@@ -1500,38 +1620,55 @@ export const getPaymentIntentsForBuzz = async ({
       unixStartingAt || unixEndingAt ? { gte: unixStartingAt, lte: unixEndingAt } : undefined,
   });
 
-  const filteredPayments = paymentIntents.data.filter(
+  const pendingPayments = paymentIntents.data.filter(
     (intent) =>
       intent.status === 'succeeded' &&
       intent.metadata.type === 'buzzPurchase' &&
       !intent.metadata.transactionId
   );
-  const batches = chunk(filteredPayments, 10);
+  // Without a recorded buyer there is no one to verify the credit against, so these are left to
+  // an engineer rather than credited to whoever the query names.
+  const legacyPaymentIntentIds = pendingPayments
+    .filter((intent) => !intent.metadata.userId)
+    .map((intent) => intent.id);
+  for (const stripePaymentIntentId of legacyPaymentIntentIds) {
+    logToAxiom(
+      {
+        name: 'buzz-purchase-completion-rejected',
+        type: 'warning',
+        reason: 'legacy purchase without userId',
+        userId,
+        stripePaymentIntentId,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+  const batches = chunk(
+    pendingPayments.filter((intent) => intent.metadata.userId),
+    10
+  );
 
   const processedPurchases: Array<{ transactionId: string }> = [];
+  const failedPaymentIntentIds: string[] = [];
   for (const batch of batches) {
-    const processed = await Promise.all(
+    const results = await Promise.allSettled(
       batch.map((intent) => {
         const metadata = intent.metadata as Schema.PaymentIntentMetadataSchema;
 
         return completeStripeBuzzTransaction({
-          amount: metadata.buzzAmount ?? intent.amount * 10,
+          amount: metadata.buzzAmount,
           stripePaymentIntentId: intent.id,
-          details: {
-            userId,
-            unitAmount: intent.amount,
-            buzzAmount: intent.amount * 10,
-            type: 'buzzPurchase',
-            ...intent.metadata,
-          },
-          userId: metadata.userId ?? userId,
+          userId: metadata.userId,
         });
       })
     );
-    processedPurchases.concat(processed);
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') processedPurchases.push(result.value);
+      else failedPaymentIntentIds.push(batch[i].id);
+    });
   }
 
-  return processedPurchases;
+  return { processed: processedPurchases, legacyPaymentIntentIds, failedPaymentIntentIds };
 };
 
 export const getSetupIntent = async ({

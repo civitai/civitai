@@ -10,14 +10,11 @@ import {
 } from '../shared';
 
 /**
- * Mage Flow (standard + turbo, per workflow), ported from `mage-flow-graph.ts`.
+ * Mage Flow (standard + turbo, per workflow).
  * Version options are WORKFLOW-scoped, but unlike boogu the WORKFLOW wins:
- * the oracle remaps a cross-workflow version to its index-equivalent in the
- * current workflow's list (standard↔standard, turbo↔turbo — probed
- * 2026-09-01). No negative prompt, sampler, or CLIP skip; no LoRAs.
+ * a cross-workflow version remaps to its index-equivalent in the current
+ * workflow's list (standard↔standard, turbo↔turbo). No negative prompt, sampler, or CLIP skip; no LoRAs.
  */
-
-// ---- copied from mage-flow-graph.ts, which dies with the data-graph engine --
 
 export const mageFlowVersionIds = {
   txt2img_standard: 3172038,
@@ -41,7 +38,7 @@ const turboVersionIds = new Set<number>([
   mageFlowVersionIds.edit_turbo,
 ]);
 
-/** v1's index-equivalent mapping across the two workflow lists. */
+/** The index-equivalent mapping across the two workflow lists. */
 const remapAcrossWorkflows: Record<number, Record<'txt2img' | 'img2img:edit', number>> = {
   [mageFlowVersionIds.txt2img_standard]: {
     txt2img: mageFlowVersionIds.txt2img_standard,
@@ -79,8 +76,6 @@ const mageFlowAspectRatios = [
 
 const mageFlowPriorityAspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
-// ---- end of mage-flow-graph.ts copies ---------------------------------------
-
 type MageFlowVariant = 'standard' | 'turbo';
 type MageFlowModeExt = FamilyExt & { model?: unknown };
 
@@ -107,7 +102,7 @@ const turbo = defineGraph<MageFlowModeExt>()
   .field('cfgScale', perModelSlider({ min: 1, max: 2, default: 1, step: 0.1 }))
   .field('steps', perModelSlider({ min: 1, max: 12, default: 4 }));
 
-/** Tagged: v1's `mageFlowVariant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `mageFlowVariant`. */
 const variants = branch('mageFlowVariant', variantOf, { standard, turbo });
 
 const isEditWorkflow = (workflow: string) => workflow.startsWith('img2img:edit');

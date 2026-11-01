@@ -7,12 +7,13 @@
  * `/apps/submit`, `My apps` → `/apps/mine`) with one, so the branch that used to be
  * "which tab did they click" is now this function.
  *
- *   A · pitch     — not an author. The recruiting page: what you get, the toolkit, the
- *                   quickstart, and a request-access CTA. The only PUBLIC-facing state.
- *   B · first-app — an author with nothing yet. Short pitch + quickstart + a button into
- *                   the create flow.
+ *   A · pitch     — not an author. The recruiting page: what you get, the toolkit links, and
+ *                   a request-access CTA — no build route, since this viewer has no access
+ *                   yet. The only PUBLIC-facing state.
+ *   B · first-app — an author with nothing yet. Short pitch + the agent prompt + a button
+ *                   into the create flow.
  *   C · workbench — an author with apps or submission history. Their app list, a
- *                   `+ New app` button, and the pitch demoted to a resources strip.
+ *                   `+ New app` button, and the agent prompt in a collapsed resources strip.
  *
  * 🔴 `hasSubmissions` IS PART OF THE WORKBENCH TEST, NOT JUST `hasEditableApps`, and
  * dropping it is a data-loss bug rather than a cosmetic one. The two answer different
@@ -53,15 +54,14 @@ export type AppsBuildState = (typeof APPS_BUILD_STATES)[number];
  * IS WEAKER THAN THE ONE THAT WAS HERE FIRST, WHICH SAID "THE ONLY TIER ANYTHING BLOCKS ON".
  * **NOTHING in this repo blocks a merge on a check.** `unit` is report-only on a pull request
  * (`continue-on-error: ${{ github.event_name == 'pull_request' }}`,
- * `.github/workflows/lint.yml:405`, with the deliberate "REPORT-ONLY to start" /
- * "FLIP TO BLOCKING once…" note at `:357-365`), and `main` carries branch protection with **no required status checks** at all
- * (`required_status_checks: null`, read live from the API, and stated at `lint.yml:600`).
+ * on the `unit` job in `.github/workflows/lint.yml`, with the deliberate "REPORT-ONLY to
+ * start" / "FLIP TO BLOCKING once…" note in that job's comment), and `main` carries branch
+ * protection with **no required status checks** at all (`required_status_checks: null`, read live
+ * from the API, and stated in `lint.yml`'s own comments).
  *
- * What the move DOES buy, and it is real: the `component` project is report-only
- * EVERYWHERE — no selector in that workflow matches it (`unit*`, `@civitai/*`, `app:*`) and
- * its only CI home is the preview pipeline's `preview / component-tests` — whereas `unit`
- * runs on `push: [main]`, where `continue-on-error` evaluates FALSE. So a regression in this
- * predicate reds the `main` build AFTER it lands, instead of being observed nowhere. That is
+ * What the move DOES buy: `unit` runs on `push: [main]`, where `continue-on-error`
+ * evaluates FALSE (the `component` project now runs there too, as `Component tests`). So a
+ * regression in this predicate reds the `main` build AFTER it lands. That is
  * catch-after-landing, not block-before-merge. Do not restate it as the latter.
  *
  * The browser spec stays as the rendered evidence that the SCREEN is right.

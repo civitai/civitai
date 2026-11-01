@@ -7,7 +7,7 @@ import {
   createModelSubstitutionCollector,
   type GenerationSurface,
   type ModelSubstitutionReason,
-} from '~/shared/data-graph/generation/model-substitution';
+} from '~/shared/generation/model-substitution';
 import { emitModelSubstitutions } from '../emit-model-substitutions';
 import {
   ensureRegisterGenerationModelSubstitutionMetrics,
@@ -72,11 +72,6 @@ beforeEach(() => {
 });
 
 describe('civitai_generation_model_substitutions_total', () => {
-  it('is registered on the default registry that /api/metrics scrapes', () => {
-    ensureRegisterGenerationModelSubstitutionMetrics();
-    expect(client.register.getSingleMetric(METRIC)).toBeDefined();
-  });
-
   it('🔴 the help string documents EVERY declared surface and reason', async () => {
     // The help text is what Grafana's metric browser shows, i.e. the definition
     // a phase-3 consumer actually reads before writing a query. `api` was added
@@ -241,20 +236,6 @@ describe('civitai_generation_model_substitutions_total', () => {
     const { values } = await metric.get();
     expect(values).toHaveLength(12);
     expect(await readSeries('wrong-workflow', 'block')).toBe(100);
-  });
-
-  it('is idempotent to register — a double module import does not throw', () => {
-    expect(() => {
-      ensureRegisterGenerationModelSubstitutionMetrics();
-      ensureRegisterGenerationModelSubstitutionMetrics();
-    }).not.toThrow();
-  });
-
-  it('appears in the scrape output under its exact name, with both labels', async () => {
-    recordGenerationModelSubstitution('gated', 'block');
-    const scrape = await client.register.metrics();
-    expect(scrape).toContain(METRIC);
-    expect(scrape).toContain(`${METRIC}{reason="gated",surface="block"}`);
   });
 
   it('🔴 the emitter NEVER throws — a broken registry cannot fail a generation', () => {

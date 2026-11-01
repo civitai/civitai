@@ -10,13 +10,19 @@ import {
   reorderListingScreenshotsSchema,
   setListingCoverSchema,
   setListingIconSchema,
+  setListingRedMediaSchema,
   updateListingScreenshotCaptionSchema,
 } from '~/server/schema/blocks/app-listing.schema';
 import {
   getAppListingDetailSchema,
+  getForkSessionSchema,
   listAllListingsForModerationSchema,
   listAppListingsSchema,
+  listListingForksSchema,
+  startForkSchema,
+  type ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { FORK_SETTING_DISABLED_MESSAGE } from '~/shared/constants/app-fork.constants';
 import {
   getMyAppListingReviewSchema,
   listAppListingReviewsSchema,
@@ -32,6 +38,7 @@ import {
   listOffsiteRequestsSchema,
   persistListingAssetImageSchema,
   rejectExternalRequestSchema,
+  setListingVisibilitySchema,
   submitExternalListingSchema,
   submitListingRevisionSchema,
   updateListingSchema,
@@ -56,9 +63,15 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
+import {
+  listSubListingQueueSchema,
+  moderateSubListingSchema,
+  withdrawMyCatalogSubListingSchema,
+} from '~/server/schema/blocks/app-sub-listing.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   recordStoreScopeApplied,
@@ -66,10 +79,17 @@ import {
 } from '~/server/prom/store-scope.metrics';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+// TYPE-only: the service itself stays a lazy `await import()` in every proc below.
+import type { ListingViewer } from '~/server/services/blocks/app-listing.service';
+import {
+  isListingAudienceFloor,
+  type ListingAudienceFloor,
+} from '~/shared/utils/app-listing-visibility';
 import {
   isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
   resolveStoreVisibilityScope,
+  resolveViewerAudienceFloor,
   type StoreVisibilityScope,
 } from '~/server/services/app-blocks-flag';
 import {
@@ -81,7 +101,8 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { isHostForColor } from '~/server/utils/server-domain';
+import { isRedCapableHost } from '~/server/utils/server-domain';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 /**
  * App Store Listings (W13) — asset pipeline + off-site submission router (NEW
@@ -176,11 +197,11 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  *   1. MOD-BYPASSING, via `app-listing-assets::loadOwnedListing`, which short-circuits
  *      the ownership check for `user.isModerator` — disagreement D1 in
  *      `app-access.call-site-ledger.test.ts`, where sibling gates deliberately disagree
- *      about the bypass. Reached by `setIcon`, `setCover`, `addScreenshot`,
- *      `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and by
- *      `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
+ *      about the bypass. Reached by `setIcon`, `setCover`, `setRedMedia`,
+ *      `addScreenshot`, `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and
+ *      by `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
  *      `getAssetScanStatuses` carries its OWN equivalent (`user.isModerator ? {} :
- *      { userId: user.id }`). Seven members.
+ *      { userId: user.id }`). Eight members.
  *   2. NO LISTING GATE AT ALL, caller-bound: `persistAssetImage`,
  *      `ingestAssetFromDataUri` create an `Image` owned by the caller and take no
  *      listing id. No bypass to have.
@@ -235,8 +256,16 @@ const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as co
  * same kind rule — see that gate's own header.
  */
 const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
-  const _storeScope = await resolveStoreVisibilityScope({ user: ctx.user });
-  return next({ ctx: { _storeScope } });
+  // 🔴 TWO INDEPENDENT AXES, RESOLVED TOGETHER AND ANDed BY THE DATA LAYER. The scope is
+  // the SURFACE question (may this viewer see the store, and which kinds); the floor is the
+  // per-listing COHORT question (which visibility levels admit them). Resolving them in one
+  // middleware is what stops a proc from applying one and forgetting the other — the
+  // "sees the affordance, 403s on submit" class this file's write gate records.
+  const [_storeScope, _audienceFloor] = await Promise.all([
+    resolveStoreVisibilityScope({ user: ctx.user }),
+    resolveViewerAudienceFloor({ user: ctx.user }),
+  ]);
+  return next({ ctx: { _storeScope, _audienceFloor } });
 });
 
 /**
@@ -301,8 +330,7 @@ const enforceAppListingsWriteFlag = middleware(async ({ ctx, next }) => {
  * Mirrors `blocks.router`'s `isRedCapableRequest`.
  */
 function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): boolean {
-  const host = ctx.req?.headers?.host ?? '';
-  return host !== '' && isHostForColor(host, 'red');
+  return isRedCapableHost(ctx.req?.headers?.host);
 }
 
 /**
@@ -325,6 +353,84 @@ function applyStoreScope(ctx: unknown, entrypoint: StoreScopeEntrypoint): StoreV
   // this branch and the two REST handlers apply the SAME rule instead of three
   // independently-written defaults that disagreed (civitai#3983).
   return narrowStoreScope(raw);
+}
+
+/**
+ * Read the audience floor `enforceAppListingsReadFlag` put on ctx, FAILING CLOSED.
+ *
+ * 🔴 THE FAIL-CLOSED VALUE IS `public`, WHICH READS BACKWARDS. The floor is the NARROWEST
+ * level that admits the viewer, so the WIDEST level is the weakest grant: a floor of
+ * `public` admits only listings whose owner marked them public, which is the least a cohort
+ * can see. An absent or uninterpretable value therefore narrows to `public`, exactly as an
+ * absent scope narrows to `none` — a default is an authorization decision, and this is the
+ * only safe one.
+ */
+function applyAudienceFloor(ctx: unknown): ListingAudienceFloor {
+  const raw = (ctx as { _audienceFloor?: unknown })._audienceFloor;
+  return isListingAudienceFloor(raw) ? raw : 'public';
+}
+
+/**
+ * Read BOTH store gates for one entry point, and record what it actually branched on.
+ *
+ * 🔴 ONE READER FOR TWO GATES, AND THE CONSOLIDATION IS THE GUARD. A proc that applies the
+ * surface scope and forgets the audience floor is the "sees the affordance, 403s on submit"
+ * class this file's write gate already records — and it would be invisible, because an
+ * omitted floor defaults to `public` and simply returns a shorter grid. Returning them
+ * together means a caller cannot take one without the other.
+ *
+ * 🔴 AND THE FLOOR IS INSTRUMENTED, not just defaulted. `store-scope.metrics` exists
+ * because this gate class is SILENT: for the whole of civitai#3983, "resolved `none`" and
+ * "no scope ever arrived" produced byte-identical responses. The floor reproduces that
+ * ambiguity exactly — `public` is both the fail-closed default and a legitimate answer — so
+ * it rides the SAME `applied` counter as a third label rather than a parallel pair, and is
+ * recorded BEFORE the `?? 'public'` narrowing that would erase the distinction.
+ */
+function applyStoreGates(
+  ctx: unknown,
+  entrypoint: StoreScopeEntrypoint
+): { scope: StoreVisibilityScope; floor: ListingAudienceFloor } {
+  const rawScope = (ctx as { _storeScope?: unknown })._storeScope;
+  const rawFloor = (ctx as { _audienceFloor?: unknown })._audienceFloor;
+  recordStoreScopeApplied(
+    rawScope as string | undefined,
+    entrypoint,
+    rawFloor as string | undefined
+  );
+  return { scope: narrowStoreScope(rawScope), floor: applyAudienceFloor(ctx) };
+}
+
+/**
+ * The viewer the store reads use for the viewer-scoped `restrictedAudience` field. Read
+ * from the server-stamped session only — `isModerator` is the same flag
+ * `resolveViewerAudienceFloor` trusts.
+ */
+function listingViewerFromCtx(ctx: {
+  user?: { id: number; isModerator?: boolean | null };
+}): ListingViewer {
+  return { userId: ctx.user?.id ?? null, isModerator: ctx.user?.isModerator === true };
+}
+
+/** Map a `SubListingError` (duck-typed, so the service stays a lazy import) to TRPC. */
+function mapSubListingError(err: unknown): TRPCError {
+  if (err instanceof TRPCError) return err;
+  if (err instanceof Error && err.name === 'SubListingError') {
+    const status = (err as { status?: unknown }).status;
+    const code =
+      status === 403
+        ? 'FORBIDDEN'
+        : status === 404
+        ? 'NOT_FOUND'
+        : status === 409
+        ? 'CONFLICT'
+        : status === 429
+        ? 'TOO_MANY_REQUESTS'
+        : status === 503
+        ? 'SERVICE_UNAVAILABLE'
+        : 'BAD_REQUEST';
+    return new TRPCError({ code, message: err.message, cause: err });
+  }
+  return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Unexpected error', cause: err });
 }
 
 /**
@@ -467,7 +573,7 @@ export const appListingsRouter = router({
   // -------------------------------------------------------------------------
   // OWNER ASSET MUTATIONS.
   //
-  // 🔴 ALL SIX MAP THROUGH `mapOffsiteError`. Under LAZY shadow-revision minting each
+  // 🔴 ALL SEVEN MAP THROUGH `mapOffsiteError`. Under LAZY shadow-revision minting each
   // of these calls `resolveOwnerAssetEditTarget` → `beginListingRevision`, which
   // throws a typed `OffsiteRequestError` (a plain `Error` subclass, NOT a
   // `TRPCError`) — e.g. `INVALID_REVISION` when a moderator delists the listing
@@ -503,6 +609,34 @@ export const appListingsRouter = router({
       );
       try {
         return await setListingCover(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * Set or clear the civitai.red-only icon / cover override (`setListingRedMedia`): the same
+   * owner / revision / moderator rules as `setIcon` / `setCover`.
+   *
+   * Called by the author's listing media editor (`ListingAssetStep`'s civitai.red section) and by
+   * the CLI (`civitai app listing set-icon|set-cover --red`, `clear-red`).
+   *
+   * Annotated with `listingMediaCliScope` on the basis that set's header states: it is shape 1
+   * (`loadOwnedListing`, moderator bypass), the same gate as `setIcon` / `setCover`, and unlike the
+   * withdrawn `getAssets` it ADDS something no annotated proc carries — the only write to these
+   * two slots. It returns only the slot, the image id the caller sent and a scan flag; it reads
+   * no override back, so admitting the token discloses no civitai.red media.
+   */
+  setRedMedia: protectedProcedure
+    .meta(listingMediaCliScope)
+    .use(enforceAppBlocksAuthorFlag)
+    .input(setListingRedMediaSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { setListingRedMedia } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      try {
+        return await setListingRedMedia(input, ctx.user);
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -745,6 +879,17 @@ export const appListingsRouter = router({
     .input(updateListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      // FORK OPT-IN — turning it ON is behind the `app-blocks-fork` rollout flag (fail-closed),
+      // CLI token included. Turning it OFF never is: an author who opted in while the flag was on
+      // must still be able to withdraw consent after a rollback. Evaluated only when the patch
+      // turns it on, so no other edit pays for a flag eval. Ownership is still the service's gate
+      // (`loadOwnedEditableListing`: owner or accepted collaborator).
+      if (input.patch.forkable === true) {
+        const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+        if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: FORK_SETTING_DISABLED_MESSAGE });
+        }
+      }
       const { updateListing } = await import('~/server/services/blocks/offsite-listing.service');
       try {
         return await updateListing({
@@ -1082,7 +1227,7 @@ export const appListingsRouter = router({
    * seat-only caller who owns nothing. Same gate the collaborator router composes.
    *
    * CLI-reachable (`listingMediaCliScope`): THE read behind `civitai app doctor`. It is
-   * the only surface carrying `problems[]` (the 8-code completeness advisory) plus
+   * the only surface carrying `problems[]` (the listing-problems advisory) plus
    * `lastModerationAction`, so without the meta the CLI's OAuth token 403s on the one
    * proc that can tell an author what is wrong with their listing. The set it returns is
    * resolved from ownership ∪ accepted seats in the service; the meta admits a credential,
@@ -1092,6 +1237,20 @@ export const appListingsRouter = router({
     if (!ctx.user) return [];
     const { listMyAppListings } = await import('~/server/services/blocks/app-access.service');
     return listMyAppListings({ userId: ctx.user.id });
+  }),
+
+  /**
+   * OWNER: each of the caller's on-platform apps' document-store usage (production namespace)
+   * against the per-app limits — the card on the `/apps/build` workbench. Owned apps only;
+   * a collaborator seat does not reach it (see the service header). `{ status: 'disabled' }`
+   * when document storage is off, so the client never shows a zero it did not measure.
+   */
+  getMyDocStoreUsage: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+    const { getMyDocStoreUsage } = await import(
+      '~/server/services/apps/doc-store-owner-usage.service'
+    );
+    return getMyDocStoreUsage(ctx.user.id);
   }),
 
   /**
@@ -1245,6 +1404,7 @@ export const appListingsRouter = router({
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
           contentRating: input.contentRating,
+          mediaSplit: input.mediaSplit,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1717,6 +1877,75 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * MOD: store items awaiting review (new items plus staged edits), or the approved / hidden
+   * lists. `moderatorProcedure` is the server half of `isAppReviewer`, the `/apps/review` gate.
+   */
+  listSubListingQueue: moderatorProcedure
+    .input(listSubListingQueueSchema)
+    .query(async ({ input }) => {
+      const { listSubListingQueue } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await listSubListingQueue(input);
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
+
+  /** MOD: the tab-label count — new pending items plus staged edits. 0 while the tables are absent. */
+  countSubListingQueue: moderatorProcedure.query(async () => {
+    const { countSubListingQueue } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    return { count: await countSubListingQueue() };
+  }),
+
+  /**
+   * The signed-in user's own catalog items: what off-site platforms listed under their name
+   * (account settings). Not behind the `app-store-sub-listings` flag, which gates only the store
+   * grid; the platforms sync and moderators review without it.
+   */
+  listMyCatalogSubListings: protectedProcedure.query(async ({ ctx }) => {
+    const { listMyCatalogSubListings } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    try {
+      return await listMyCatalogSubListings(ctx.user.id);
+    } catch (err) {
+      throw mapSubListingError(err);
+    }
+  }),
+
+  /** Withdraw one of the caller's own catalog items. Someone else's item is NOT_FOUND. */
+  withdrawMyCatalogSubListing: protectedProcedure
+    .input(withdrawMyCatalogSubListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { withdrawMyCatalogSubListing } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await withdrawMyCatalogSubListing({ userId: ctx.user.id, id: input.id });
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
+
+  /** MOD: approve / hide / restore / approve-edit / reject-edit. Stamps `moderated_by_id`. */
+  moderateSubListing: moderatorProcedure
+    .input(moderateSubListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { moderateSubListing } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await moderateSubListing({ input, moderatorId: ctx.user.id });
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
+
+  /**
    * MOD: the ALL-STATUS listings management table (W13 post-approval mgmt, P2) —
    * every lifecycle status (draft|pending|approved|rejected|removed), keyset-
    * paginated, optional status/kind/search filters. Read-only `moderatorProcedure`
@@ -1762,15 +1991,199 @@ export const appListingsRouter = router({
     )
     .input(listAppListingsSchema)
     .query(async ({ ctx, input }) => {
-      const scope = applyStoreScope(ctx, 'trpc-list');
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-list');
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
       const { listAvailableListings } = await import(
         '~/server/services/blocks/app-listing.service'
       );
-      return listAvailableListings(input, { redCapable: isRedCapableRequest(ctx), scope });
+      return listAvailableListings(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewer: listingViewerFromCtx(ctx),
+        // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
+        // `SubListingCard` just because the viewer has the flag.
+        includeSubListings:
+          input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
     }),
+
+  /**
+   * OWNER/EDITOR: set the per-listing VISIBILITY LEVEL on a listing they hold a role on.
+   *
+   * `appDeveloperProcedure` is the same gate `updateListing` uses, and like that proc the
+   * ROLE proof happens in the service (`resolveListingAccess`), not here — the router only
+   * establishes that the caller is an authenticated app developer. D1's status gate is in
+   * the service too, because the role resolver is deliberately not status-aware.
+   *
+   * Rate-limited on the same budget as `updateListing`: this is an authored edit, and a
+   * level change busts the store catalog cache, so it is not free to repeat.
+   *
+   * ✅ THE MODERATOR COUNTERPART HAS LANDED — `setListingVisibilityAsModerator`, 44 lines
+   * below. ⚠️ This paragraph said "DEFERRED, NOT DROPPED" and outlived the proc arriving; it
+   * is the kind of claim a maintainer asks ("can a moderator set a level?") and gets a
+   * confident wrong NO from. What still holds: it is a SEPARATE proc rather than a mod bypass
+   * here, with a required audited reason and its event in the same transaction as the write.
+   * It does oblige a human to hand-apply a DDL — the action-CHECK widen
+   * `20261004120000_app_listing_mod_action_set_visibility`.
+   *
+   * ⚠️ WHAT SHIPPING WITHOUT THAT DDL COSTS, CORRECTED: the mod proc REFUSES CLEANLY — it
+   * 500s and writes nothing. This sentence read "shipping without that is exactly how the
+   * first live use changed a level and then 23514'd with no audit row", which is a true
+   * account of the PRE-round-1 code (two separate round trips) and a wrong prediction about
+   * this one: the level write and its event now share one interactive transaction, so the
+   * 23514 rolls the level back with it. Left-as-history is not enough here, because the
+   * sentence was framed as a consequence of shipping — and the wrong version inverts the
+   * remediation, sending a maintainer to reconcile orphaned level changes that cannot exist.
+   */
+  setListingVisibility: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many visibility changes — slow down.',
+      })
+    )
+    .input(setListingVisibilitySchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { setListingVisibilityAsOwner } = await import(
+        '~/server/services/blocks/app-listing-visibility-write.service'
+      );
+      return setListingVisibilityAsOwner({
+        appListingId: input.listingId,
+        visibility: input.visibility,
+        userId: ctx.user.id,
+      });
+    }),
+
+  /**
+   * MOD: set the per-listing VISIBILITY LEVEL on ANY listing — D2's moderator half, which
+   * the backend PR deferred to this one.
+   *
+   * 🔴 A SEPARATE PROC RATHER THAN A MOD BYPASS IN `setListingVisibility`, and the write
+   * service's header says why: admitting a moderator to the owner path would be an
+   * unaudited write on someone else's listing. This one takes a REQUIRED `reason` and
+   * lands a `set-visibility` moderation event in the SAME interactive transaction as the
+   * level write, so a moderator cannot change a stranger's discoverability without leaving
+   * a row the OWNER can read in their own listing history. 🔴 The ATOMICITY is what carries
+   * that, not the write order — the shipped two-round-trip version wrote the event second
+   * and a rejected insert left a committed level change with no audit row.
+   *
+   * 🔴 `moderatorProcedure` IS THE GATE, AND THE SERVICE DOES NOT RE-CHECK IT. That matches
+   * every other mod proc in this file (`delistListing`, `relistListing`, `claimListing`,
+   * `purgeListing`): the router owns the role test, the service owns the lifecycle rules.
+   * The acting moderator is bound to `ctx.user.id` and is never supplied by the client.
+   *
+   * 🔴 THE REVIEW CEILING AND D1 STILL BIND. `applyVisibility` enforces both for every
+   * caller, so a moderator cannot make a `draft` public (they approve it instead) and
+   * cannot set a level on a `removed`/`rejected` listing. Moderator-ness buys the right to
+   * act on someone else's listing, not the right to skip the lifecycle.
+   *
+   * NOT rate-limited, matching its mod siblings — a moderator acting through the queue is
+   * not the abuse shape the owner path's 30/hour budget exists for.
+   */
+  setListingVisibilityAsModerator: moderatorProcedure
+    .input(setListingVisibilityAsModeratorSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { setListingVisibilityAsModerator } = await import(
+        '~/server/services/blocks/app-listing-visibility-write.service'
+      );
+      return setListingVisibilityAsModerator({
+        appListingId: input.appListingId,
+        visibility: input.visibility,
+        reason: input.reason,
+        moderatorUserId: ctx.user.id,
+      });
+    }),
+
+  /**
+   * The PUBLISHED forks of one listing — "N forks" and a paged list on its store page.
+   *
+   * Behind the `app-blocks-fork` rollout flag: off (or absent, or Flipt down) → `null`, and the
+   * page renders no fork section. Same read gates as `getAppDetail`, applied twice: the PARENT
+   * must be a listing this viewer could open (`getStoreVisibleListingSummary` → else `null`, so
+   * this cannot probe a hidden listing), and each FORK is counted and listed only when this viewer
+   * could find it in the store (`listListingForks`). "Forked from …" attribution is NOT here — it
+   * rides `getAppDetail` and is not behind the flag.
+   */
+  listForks: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(listListingForksSchema)
+    .query(async ({ ctx, input }): Promise<ListingForksPage | null> => {
+      const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) return null;
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-forks');
+      if (scope === 'none') return null;
+      const redCapable = isRedCapableRequest(ctx);
+      const { getStoreVisibleListingSummary } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      const parent = await getStoreVisibleListingSummary(
+        { id: input.listingId },
+        { redCapable, scope, floor }
+      );
+      if (!parent) return null;
+      const [{ listListingForks }, { dbRead }] = await Promise.all([
+        import('~/server/services/blocks/app-listing-forks.service'),
+        import('~/server/db/client'),
+      ]);
+      return listListingForks(dbRead, {
+        parentListingId: parent.id,
+        cursor: input.cursor ?? null,
+        limit: input.limit,
+        scope,
+        floor,
+        redCapable,
+      });
+    }),
+
+  /**
+   * FORK — start a fork of a listing for the caller: picks the fork's slug, records the server-side
+   * fork session (the ONLY source of the fork's provenance) and returns the seed the App Assistant
+   * page hands to the sandbox service. Every gate lives in `startAppFork` (App Assistant access,
+   * the `app-blocks-fork` flag, a publicly visible and forkable parent with an approved commit,
+   * the per-user rate limit); the store scope comes from the same middleware every store read uses.
+   */
+  startFork: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .input(startForkSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { scope } = applyStoreGates(ctx, 'trpc-fork-start');
+      const { startAppFork } = await import('~/server/services/blocks/app-fork-start.service');
+      return startAppFork({
+        user: ctx.user,
+        listingId: input.listingId,
+        scope,
+        redCapable: isRedCapableRequest(ctx),
+        req: ctx.req,
+      });
+    }),
+
+  /**
+   * FORK — the caller's own fork session by slug, for the App Assistant page (`?fork=<slug>`).
+   * `null` for a slug that is not the caller's, missing or expired; `seed: null` once the seed URL
+   * has expired. Behind the same rollout flag as `startFork`.
+   */
+  getForkSession: protectedProcedure.input(getForkSessionSchema).query(async ({ ctx, input }) => {
+    const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+    if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) return null;
+    const { getForkSessionForUser } = await import(
+      '~/server/services/blocks/app-fork-start.service'
+    );
+    return getForkSessionForUser({ userId: ctx.user.id, forkSlug: input.forkSlug });
+  }),
 
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
   getAppDetail: publicProcedure
@@ -1784,14 +2197,48 @@ export const appListingsRouter = router({
     )
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
-      const scope = applyStoreScope(ctx, 'trpc-detail');
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
       if (scope === 'none') {
         throw throwNotFoundError('Listing not found');
       }
       const { getListingDetail } = await import('~/server/services/blocks/app-listing.service');
-      const detail = await getListingDetail(input, { redCapable: isRedCapableRequest(ctx), scope });
+      const detail = await getListingDetail(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewer: listingViewerFromCtx(ctx),
+        // For the per-image media gate on a red-capable host (the list read passes the same).
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
+    }),
+
+  getAppCard: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppListingDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
+      if (scope === 'none') {
+        throw throwNotFoundError('Listing not found');
+      }
+      const { getListingCard } = await import('~/server/services/blocks/app-listing.service');
+      const card = await getListingCard(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewer: listingViewerFromCtx(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
+      if (!card) throw throwNotFoundError('Listing not found');
+      return card;
     }),
 
   // -------------------------------------------------------------------------

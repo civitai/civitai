@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { crucibleDetailSelect } from '~/server/selectors/crucible.selector';
 import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
+  getAverageFinishTopPercent,
+  getContentLevelRange,
+  getCrucibleJudgingBadge,
+  getCreatorFinish,
   baseModelMakesMediaType,
+  canSeeCrucibleEntryDetails,
   getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleMinVotes,
+  getCrucibleLiveMinVotes,
+  getCrucibleTimeAdjustedMinVotes,
+  CRUCIBLE_MIN_VOTES_FLOOR,
   getCruciblePrizeAmount,
+  getCruciblePrizeWinners,
   getCrucibleRatingLabel,
   getCrucibleStatusBadge,
   getCrucibleTransactionDescription,
@@ -13,11 +23,42 @@ import {
   getCrucibleEntriesCost,
   getCrucibleTotalPrizePool,
   getFreeEntriesLabel,
+  CRUCIBLE_SFW_LEVELS,
+  getCrucibleEntryBuzzType,
   isCrucibleFinalStretch,
+  areCrucibleEntriesClosed,
+  getCrucibleEntriesCloseAt,
+  isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
   rankCrucibleEntries,
 } from '~/utils/crucible-helpers';
+
+describe('green-site listing rule', () => {
+  it.each([
+    [1, false, true],
+    [1 | 2, false, true],
+    [1, true, false],
+    [1 | 4, false, false],
+    [1 | 8, false, false],
+    [16, false, false],
+    [2 | 16, false, false],
+    [0, false, false],
+    [64, false, false],
+    [1 | 64, false, false],
+  ])('isCrucibleSfw(level %i, textNsfw %s) is %s', (nsfwLevel, textNsfw, expected) => {
+    expect(isCrucibleSfw({ nsfwLevel, textNsfw })).toBe(expected);
+  });
+
+  it('lists exactly the PG / PG-13 combinations for a query to match', () => {
+    expect(CRUCIBLE_SFW_LEVELS).toEqual([1, 2, 3]);
+  });
+
+  it('charges an entrant in the currency of the site they enter on', () => {
+    expect(getCrucibleEntryBuzzType(true)).toBe('green');
+    expect(getCrucibleEntryBuzzType(false)).toBe('yellow');
+  });
+});
 
 describe('parsePrizePositions', () => {
   it('parses the object map the database actually stores', () => {
@@ -133,6 +174,64 @@ describe('getCrucibleStatusBadge', () => {
   });
 });
 
+describe('getCruciblePrizeWinners', () => {
+  const prizePositions = [
+    { position: 1, percentage: 50 },
+    { position: 2, percentage: 30 },
+    { position: 3, percentage: 20 },
+  ];
+  const place = (entryId: number, userId: number, position: number) => ({
+    entryId,
+    userId,
+    position,
+  });
+  const winners = (placed: ReturnType<typeof place>[], positions = prizePositions) =>
+    getCruciblePrizeWinners({ placed, prizePositions: positions, totalPrizePool: 1000 }).map(
+      (w) => [w.entryId, w.prizePlace, w.prizeAmount]
+    );
+
+  it("gives a creator's best placing their one prize and moves the next creators up", () => {
+    expect(
+      winners([place(1, 10, 1), place(2, 10, 2), place(3, 10, 3), place(4, 11, 4), place(5, 12, 5)])
+    ).toEqual([
+      [1, 1, 500],
+      [4, 2, 300],
+      [5, 3, 200],
+    ]);
+  });
+
+  it('reads placings in position order, whatever order they arrive in', () => {
+    expect(winners([place(5, 12, 5), place(2, 10, 2), place(4, 11, 4), place(1, 10, 1)])).toEqual([
+      [1, 1, 500],
+      [4, 2, 300],
+      [5, 3, 200],
+    ]);
+  });
+
+  it('splits the unfilled prizes among the creators there are', () => {
+    expect(winners([place(1, 10, 1), place(2, 10, 2), place(3, 11, 3)])).toEqual([
+      [1, 1, 625],
+      [3, 2, 375],
+    ]);
+  });
+
+  it('pays no one for a prize place the crucible did not configure', () => {
+    const gapped = [
+      { position: 1, percentage: 60 },
+      { position: 3, percentage: 40 },
+    ];
+    expect(winners([place(1, 10, 1), place(2, 11, 2), place(3, 12, 3)], gapped)).toEqual([
+      [1, 1, 600],
+      [3, 3, 400],
+    ]);
+  });
+
+  it('pays nobody without placings or prize places', () => {
+    expect(winners([])).toEqual([]);
+    expect(winners([place(1, 10, 1)], [])).toEqual([]);
+  });
+});
+
 describe('getCruciblePrizeAmount', () => {
   const prizePositions = [
     { position: 1, percentage: 50 },
@@ -215,6 +314,55 @@ describe('isCrucibleFinalStretch', () => {
     expect(isCrucibleFinalStretch({ startAt: null, endAt, now: new Date() })).toBe(false);
     expect(isCrucibleFinalStretch({ startAt, endAt: null, now: new Date() })).toBe(false);
   });
+
+  it("uses the crucible's own share when given one", () => {
+    // 40% of 24h is 9.6h: from 14:24.
+    const at40 = (iso: string) =>
+      isCrucibleFinalStretch({ startAt, endAt, percent: 40, now: new Date(iso) });
+    expect(at40('2026-10-01T14:00:00Z')).toBe(false);
+    expect(at40('2026-10-01T14:30:00Z')).toBe(true);
+  });
+});
+
+describe('crucible entry cutoff', () => {
+  // The page and modal gate on these; without them a crucible reads as open to the end.
+  it('is read by the crucible selector', () => {
+    expect(crucibleDetailSelect).toMatchObject({
+      startAt: true,
+      endAt: true,
+      entryWarningPercent: true,
+      entryCutoffPercent: true,
+    });
+  });
+
+  const startAt = new Date('2026-10-01T00:00:00Z');
+  const endAt = new Date('2026-10-02T00:00:00Z'); // 24h, so 10% is 2.4h: entries close at 21:36
+  const window = (entryCutoffPercent: number) => ({ startAt, endAt, entryCutoffPercent });
+
+  it('closes entries the cutoff share of the run before the end', () => {
+    expect(getCrucibleEntriesCloseAt(window(10))).toEqual(new Date('2026-10-01T21:36:00Z'));
+  });
+
+  it('is open until the close time and closed from it', () => {
+    expect(areCrucibleEntriesClosed(window(10), new Date('2026-10-01T21:35:59Z'))).toBe(false);
+    expect(areCrucibleEntriesClosed(window(10), new Date('2026-10-01T21:36:00Z'))).toBe(true);
+  });
+
+  it('with no cutoff, closes only at the end', () => {
+    expect(getCrucibleEntriesCloseAt(window(0))).toEqual(endAt);
+    expect(areCrucibleEntriesClosed(window(0), new Date('2026-10-01T23:59:59Z'))).toBe(false);
+    expect(areCrucibleEntriesClosed(window(0), endAt)).toBe(true);
+  });
+
+  it('without a start, ignores the cutoff and closes at the end', () => {
+    const noStart = { startAt: null, endAt, entryCutoffPercent: 10 };
+    expect(areCrucibleEntriesClosed(noStart, new Date('2026-10-01T23:00:00Z'))).toBe(false);
+    expect(areCrucibleEntriesClosed(noStart, new Date('2026-10-02T00:00:01Z'))).toBe(true);
+  });
+
+  it('never closes a crucible with no end', () => {
+    expect(areCrucibleEntriesClosed({ startAt, endAt: null, entryCutoffPercent: 10 })).toBe(false);
+  });
 });
 
 describe('rankCrucibleEntries', () => {
@@ -265,40 +413,46 @@ describe('getCrucibleManageActions', () => {
       canEdit: false,
       canCancel: false,
       canRemoveEntries: false,
+      canTakeDown: false,
     });
     expect(actions(CrucibleStatus.Active, past, { isCreator: true })).toEqual({
       canEdit: false,
       canCancel: false,
       canRemoveEntries: false,
+      canTakeDown: false,
     });
   });
 
-  it('offers nothing on a completed crucible, moderators included', () => {
+  it('offers a moderator only a takedown on a completed crucible', () => {
     expect(actions(CrucibleStatus.Completed, past, { isModerator: true })).toEqual({
       canEdit: false,
       canCancel: false,
       canRemoveEntries: false,
+      canTakeDown: true,
     });
   });
 
-  it('lets a moderator edit, cancel and remove entries from a running crucible', () => {
+  it('lets a moderator edit, cancel, remove entries from and take down a running crucible', () => {
     expect(actions(CrucibleStatus.Active, future, { isModerator: true })).toEqual({
       canEdit: true,
       canCancel: true,
       canRemoveEntries: true,
+      canTakeDown: true,
     });
   });
 
-  it('lets the creator edit a running crucible but cancel only before it starts', () => {
+  it('lets the creator edit and remove entries from a running crucible but cancel only before it starts', () => {
     expect(actions(CrucibleStatus.Active, future, { isCreator: true })).toEqual({
       canEdit: true,
       canCancel: false,
-      canRemoveEntries: false,
+      canRemoveEntries: true,
+      canTakeDown: false,
     });
     expect(actions(CrucibleStatus.Pending, future, { isCreator: true })).toEqual({
       canEdit: true,
       canCancel: true,
       canRemoveEntries: false,
+      canTakeDown: false,
     });
   });
 
@@ -307,7 +461,24 @@ describe('getCrucibleManageActions', () => {
       canEdit: false,
       canCancel: false,
       canRemoveEntries: false,
+      canTakeDown: false,
     });
+  });
+
+  it('offers the takedown to moderators only, and only once', () => {
+    const takenDownAt = new Date();
+    for (const status of [CrucibleStatus.Pending, CrucibleStatus.Active, CrucibleStatus.Cancelled])
+      expect(actions(status, future, { isCreator: true }).canTakeDown).toBe(false);
+    expect(
+      getCrucibleManageActions({
+        status: CrucibleStatus.Cancelled,
+        endAt: future,
+        isCreator: false,
+        isModerator: true,
+        takenDownAt,
+      }).canTakeDown
+    ).toBe(false);
+    expect(actions(CrucibleStatus.Cancelled, future, { isModerator: true }).canTakeDown).toBe(true);
   });
 
   it('offers removing entries only while it runs, since an upcoming one has none', () => {
@@ -454,5 +625,305 @@ describe('free entries', () => {
     [3, 3, 'Free to enter'],
   ])('labels %i free of %i as %s', (freeEntriesPerUser, entryLimit, label) => {
     expect(getFreeEntriesLabel({ freeEntriesPerUser, entryLimit })).toBe(label);
+  });
+});
+
+describe('canSeeCrucibleEntryDetails', () => {
+  const stranger = { isModerator: false, isOwnEntry: false };
+
+  it.each([CrucibleStatus.Pending, CrucibleStatus.Active])(
+    "hides other people's entries from a judge while %s",
+    (status) => {
+      expect(canSeeCrucibleEntryDetails({ status, ...stranger })).toBe(false);
+    }
+  );
+
+  it.each([CrucibleStatus.Completed, CrucibleStatus.Cancelled])(
+    'reveals every entry once %s',
+    (status) => {
+      expect(canSeeCrucibleEntryDetails({ status, ...stranger })).toBe(true);
+    }
+  );
+
+  it('shows an entrant their own entries while running', () => {
+    expect(
+      canSeeCrucibleEntryDetails({
+        status: CrucibleStatus.Active,
+        isModerator: false,
+        isOwnEntry: true,
+      })
+    ).toBe(true);
+  });
+
+  it('shows moderators every entry while running', () => {
+    expect(
+      canSeeCrucibleEntryDetails({
+        status: CrucibleStatus.Active,
+        isModerator: true,
+        isOwnEntry: false,
+      })
+    ).toBe(true);
+  });
+});
+
+describe('getCreatorFinish', () => {
+  it('ranks each creator by their best entry, so extra entries take no extra places', () => {
+    const placed = [
+      { userId: 3, position: 5 },
+      { userId: 1, position: 2 },
+      { userId: 3, position: 4 },
+      { userId: 2, position: 3 },
+      { userId: 1, position: 1 },
+    ];
+
+    expect(getCreatorFinish({ placed, userId: 3 })).toEqual({ rank: 3, field: 3 });
+    expect(getCreatorFinish({ placed, userId: 1 })).toEqual({ rank: 1, field: 3 });
+    expect(getCreatorFinish({ placed, userId: 9 })).toBeNull();
+  });
+});
+
+describe('getAverageFinishTopPercent', () => {
+  it('averages the top percent of each counted field and never reads as top 0%', () => {
+    const firstOfMany = { rank: 1, field: 400 };
+    expect(getAverageFinishTopPercent([firstOfMany, firstOfMany, firstOfMany])).toBe(1);
+    expect(
+      getAverageFinishTopPercent([
+        { rank: 6, field: 6 },
+        { rank: 1, field: 10 },
+        { rank: 5, field: 10 },
+      ])
+    ).toBe(53);
+  });
+
+  it('rounds to the nearest percent', () => {
+    const firstOfEight = { rank: 1, field: 8 };
+    expect(getAverageFinishTopPercent([firstOfEight, firstOfEight, firstOfEight])).toBe(13);
+  });
+});
+
+describe('getCrucibleJudgingBadge', () => {
+  it('shows nothing until the viewer has judged the crucible', () => {
+    expect(getCrucibleJudgingBadge(undefined)).toBeNull();
+    expect(
+      getCrucibleJudgingBadge({ judged: false, available: true, votesUsedUp: false })
+    ).toBeNull();
+  });
+
+  it('says judging is available while pairs are left', () => {
+    expect(
+      getCrucibleJudgingBadge({ judged: true, available: true, votesUsedUp: false })
+    ).toMatchObject({ kind: 'available', label: 'You have pairs to judge here' });
+  });
+
+  it('says caught up once the votes are used up', () => {
+    expect(
+      getCrucibleJudgingBadge({ judged: true, available: false, votesUsedUp: true })
+    ).toMatchObject({ kind: 'caughtUp', label: "You're caught up here" });
+  });
+
+  it('shows nothing when no pairs are left only because entries are hidden', () => {
+    expect(
+      getCrucibleJudgingBadge({ judged: true, available: false, votesUsedUp: false })
+    ).toBeNull();
+  });
+});
+
+describe('getContentLevelRange', () => {
+  const { PG, PG13, R, X, XXX } = { PG: 1, PG13: 2, R: 4, X: 8, XXX: 16 };
+
+  it('collapses an unbroken run into one range, keyed to the highest level', () => {
+    expect(getContentLevelRange(PG | PG13 | R | X | XXX)).toEqual({ label: 'PG–XXX', level: XXX });
+    expect(getContentLevelRange(R | X)).toEqual({ label: 'R–X', level: X });
+  });
+
+  it('keeps a single level as itself', () => {
+    expect(getContentLevelRange(PG13)).toEqual({ label: 'PG-13', level: PG13 });
+  });
+
+  it('refuses a run with a gap, which a range would misstate', () => {
+    expect(getContentLevelRange(PG | X)).toBeNull();
+  });
+
+  it('returns nothing for no displayable level', () => {
+    expect(getContentLevelRange(0)).toBeNull();
+  });
+});
+
+describe('getCrucibleTimeAdjustedMinVotes', () => {
+  const HOUR = 3_600_000;
+  const startAt = new Date('2026-01-01T00:00:00Z');
+  const endAt = new Date(startAt.getTime() + 100 * HOUR);
+  const at = (hours: number) => new Date(startAt.getTime() + hours * HOUR);
+
+  it('asks less of a late entry than an early one', () => {
+    // Exposures 100h and 20h: expected 500 and 100 of 600 votes. The early entry's 375 is capped
+    // at the old bar, 75% of the 300 average.
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 500, createdAt: at(0) },
+        { voteCount: 100, createdAt: at(80) },
+      ],
+      { startAt, endAt }
+    );
+    expect(bars).toEqual([225, 75]);
+  });
+
+  it('never asks more than the old bar of an entry that was live longer than the rest', () => {
+    const entries = [
+      { voteCount: 32, createdAt: at(0) },
+      { voteCount: 14, createdAt: at(90) },
+      { voteCount: 14, createdAt: at(90) },
+    ];
+    const oldBar = getCrucibleMinVotes({ totalVotes: 60, entryCount: 3 });
+    const bars = getCrucibleTimeAdjustedMinVotes(entries, { startAt, endAt });
+    // The early entry's share alone would be 38.
+    expect(bars[0]).toBe(oldBar);
+    expect(Math.max(...bars)).toBeLessThanOrEqual(oldBar);
+  });
+
+  it('floors a last-hour entry at the minimum', () => {
+    const [early, late] = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 990, createdAt: at(0) },
+        { voteCount: 10, createdAt: at(99) },
+      ],
+      { startAt, endAt }
+    );
+    expect(early).toBeGreaterThan(CRUCIBLE_MIN_VOTES_FLOOR);
+    expect(late).toBe(CRUCIBLE_MIN_VOTES_FLOOR);
+  });
+
+  it('never makes the floor stricter than the old bar in a low-vote crucible', () => {
+    const entries = [
+      { voteCount: 6, createdAt: at(0) },
+      { voteCount: 4, createdAt: at(99) },
+    ];
+    const bars = getCrucibleTimeAdjustedMinVotes(entries, { startAt, endAt });
+    const oldBar = getCrucibleMinVotes({ totalVotes: 10, entryCount: 2 });
+    expect(oldBar).toBeLessThan(CRUCIBLE_MIN_VOTES_FLOOR);
+    expect(bars[1]).toBe(oldBar);
+  });
+
+  it('falls back to the old bar when nobody was live', () => {
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 80, createdAt: at(100) },
+        { voteCount: 40, createdAt: at(120) },
+      ],
+      { startAt, endAt }
+    );
+    const oldBar = getCrucibleMinVotes({ totalVotes: 120, entryCount: 2 });
+    expect(bars).toEqual([oldBar, oldBar]);
+  });
+
+  it('counts an entry created before the start from the start', () => {
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 200, createdAt: at(-50) },
+        { voteCount: 200, createdAt: at(0) },
+      ],
+      { startAt, endAt }
+    );
+    expect(bars[0]).toBe(bars[1]);
+  });
+
+  it('does not round an exact 75% up', () => {
+    // Equal exposure: each expects 100 of 200 votes, so exactly 75.
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 100, createdAt: at(0) },
+        { voteCount: 100, createdAt: at(0) },
+      ],
+      { startAt, endAt }
+    );
+    expect(bars).toEqual([75, 75]);
+  });
+
+  it('treats a missing start as the entry time', () => {
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 100, createdAt: at(0) },
+        { voteCount: 100, createdAt: at(50) },
+      ],
+      { startAt: null, endAt }
+    );
+    // Exposures 100h and 50h: expected 133.33 and 66.67 of 200 votes, 75% of each is 100 and 50;
+    // the first is capped at the old bar, 75.
+    expect(bars).toEqual([75, 50]);
+  });
+
+  it('returns nothing for no entries', () => {
+    expect(getCrucibleTimeAdjustedMinVotes([], { startAt, endAt })).toEqual([]);
+  });
+});
+
+describe('getCrucibleLiveMinVotes', () => {
+  const HOUR = 3_600_000;
+  const startAt = new Date('2026-01-01T00:00:00Z');
+  const endAt = new Date(startAt.getTime() + 100 * HOUR);
+  const at = (hours: number) => new Date(startAt.getTime() + hours * HOUR);
+
+  it('projects the vote rate so far over the time left', () => {
+    // 400 votes over 50 entry-hours so far is 8/h; 50h left expects 400, 75% is 300.
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 400, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(50),
+      })
+    ).toBe(300);
+  });
+
+  it('asks less the later it is', () => {
+    const entries = [{ voteCount: 400, createdAt: at(0) }];
+    const early = getCrucibleLiveMinVotes({ entries, startAt, endAt, now: at(50) });
+    const late = getCrucibleLiveMinVotes({ entries, startAt, endAt, now: at(75) });
+    expect(late).toBeLessThan(early);
+  });
+
+  it('never asks more than the old bar early in the run', () => {
+    // 10h in, 90h left would project 3600 votes, but the old bar is 75% of the 400 so far.
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 400, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(10),
+      })
+    ).toBe(getCrucibleMinVotes({ totalVotes: 400, entryCount: 1 }));
+  });
+
+  it('floors at the minimum when little time is left', () => {
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 1000, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(99),
+      })
+    ).toBe(CRUCIBLE_MIN_VOTES_FLOOR);
+  });
+
+  it('caps the floor at the old bar when votes are scarce', () => {
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 4, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(99),
+      })
+    ).toBe(getCrucibleMinVotes({ totalVotes: 4, entryCount: 1 }));
+  });
+
+  it('returns the old bar when no entry has been live yet', () => {
+    const entries = [{ voteCount: 40, createdAt: at(10) }];
+    expect(getCrucibleLiveMinVotes({ entries, startAt, endAt, now: at(10) })).toBe(
+      getCrucibleMinVotes({ totalVotes: 40, entryCount: 1 })
+    );
+  });
+
+  it('is zero with no entries', () => {
+    expect(getCrucibleLiveMinVotes({ entries: [], startAt, endAt, now: at(10) })).toBe(0);
   });
 });

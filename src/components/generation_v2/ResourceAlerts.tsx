@@ -18,7 +18,7 @@ import { useRef } from 'react';
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useAppContext } from '~/providers/AppProvider';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
 import {
@@ -27,7 +27,7 @@ import {
   BoostFeeNote,
 } from '~/components/ResourceLoad/download-lanes';
 import { DownloadEtaCompare } from '~/components/ResourceLoad/DownloadEtaCompare';
-import { useWhatIfContext } from './WhatIfProvider';
+import { useWhatIfContext } from '~/components/form-graph/generation/WhatIfProvider';
 
 // =============================================================================
 // Types

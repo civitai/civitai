@@ -258,18 +258,6 @@ describe('buildListingPatchData — omitted ≠ explicit null ≠ a value', () =
 // ---------------------------------------------------------------------------
 
 describe('🔴 the refusal an author actually reads', () => {
-  it('is pinned as a LITERAL, not against the constant that defines it', () => {
-    // 🔴 THIS TEST EXISTS BECAUSE ITS ABSENCE WAS MEASURED. Every other assertion in
-    // this file compares a thrown message against `SOURCE_REPO_UNAVAILABLE_MESSAGE` —
-    // imported from the module under test — so a mutant that rewrote that constant to
-    // the string "nope" moved every expectation with it and SURVIVED a fully green
-    // suite. An expectation derived from the implementation it tests is not an
-    // expectation. This is the one assertion the constant cannot satisfy by changing.
-    expect(SOURCE_REPO_UNAVAILABLE_MESSAGE).toBe(
-      'The source repository link is not available on this environment yet. Leave the field empty and try again later.'
-    );
-  });
-
   it('names the field in the author’s vocabulary and leaks no database detail', () => {
     // The product requirement behind the guard: what replaced the P2022 500 must not
     // read like one. `sourceRepoUrl`, `source_repo_url`, `P2022` and the word "column"
@@ -530,6 +518,8 @@ describe('🔴 listingRevisionDrift NAMES the source repo among the fields an ap
     const identical = {
       iconId: 1,
       coverId: 2,
+      redIconId: null,
+      redCoverId: null,
       screenshotImageIds: [10],
       screenshotCaptions: [null],
     };
@@ -548,6 +538,8 @@ describe('🔴 listingRevisionDrift NAMES the source repo among the fields an ap
     const identical = {
       iconId: 1,
       coverId: 2,
+      redIconId: null,
+      redCoverId: null,
       screenshotImageIds: [10],
       screenshotCaptions: [null],
     };

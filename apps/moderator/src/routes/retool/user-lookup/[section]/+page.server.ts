@@ -1,9 +1,9 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess, requiresGrant } from '$lib/server/access';
-import { parseForm, userIdSchema } from '$lib/server/query';
-import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
+import { canAccess, denied, requiresGrant } from '$lib/server/access';
+import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
+import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
   addUserNote,
@@ -12,7 +12,6 @@ import {
 } from '$lib/server/moderation-memory.service';
 import {
   addSocial,
-  addTimedMute,
   BUZZ_TRANSACTION_TYPE_KEYS,
   BUZZ_TYPES,
   bulkCommentAction,
@@ -22,35 +21,65 @@ import {
   removeCosmetic,
   refundShopPurchase,
   sendBuzz,
+  mintMembershipCode,
+  revokeMembershipCode,
+  grantCreatorScore,
+  revokeCreatorScoreGrant,
   setRewardsEligibility,
-  clearProfileText,
   deleteAccount,
+  deleteAccountHold,
+  countReactions,
+  removeReactions,
   purgeAllContent,
   removeSocial,
   resolveRestriction,
   setModerationFlag,
+  takeBackGrantedBox,
   forceLogout,
   refreshSessionCache,
   resetSubscriptionCaches,
   revokeTimedMute,
-  setBanned,
   toggleModerator,
   updateUserIdentity,
-  setMuted,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import {
+  boxGrantFields,
+  BoxGrantRefused,
+  grantMysteryBoxes,
+} from '$lib/server/mystery-box-grant.service';
+import { ITEM_HOLDER_BUSY_MESSAGE } from '$lib/server/item-holder-lock';
+import { accountEnforcementActions } from '$lib/server/account-actions';
+import { sendAsCivitai } from '$lib/server/message-as-civitai';
+import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
+import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
+import {
+  CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
+  CREATOR_SCORE_GRANT_MAX_AMOUNT,
+  CREATOR_SCORE_GRANT_REASON_MAX,
+  type CreatorScoreGrantResult,
+} from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
-import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
+import { HOLD_UNKNOWN_REFUSAL, LEGAL_HOLD_REFUSAL, type DeleteHold } from '$lib/legal-hold';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, locals, parent }) => {
   // A retired section keeps working: its slug is in tickets and pasted lookup URLs, and 404ing one
   // reads as the account being gone rather than the tab having moved.
   const moved = RETIRED_SECTIONS[params.section];
   if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
-  return { section: params.section };
+  // Only where the Delete account and Purge buttons render, and only for someone who may press one.
+  let deleteHold: DeleteHold | null = null;
+  if (
+    params.section === 'admin' &&
+    (locals.grants['user.deleteAccount'] || locals.grants['user.purge'])
+  ) {
+    const { result } = await parent();
+    if (result) deleteHold = await deleteAccountHold(result.identity.id);
+  }
+  return { section: params.section, deleteHold };
 };
 
 const NOTE_MAX = 5000;
@@ -63,13 +92,20 @@ const identityFail = (message: string) => fail(400, { scope: 'identity' as const
 const noteFail = (status: number, message: string) =>
   fail(status, { scope: 'notes' as const, error: message });
 const socialsFail = (message: string) => fail(400, { scope: 'socials' as const, error: message });
-const profileFail = (message: string) => fail(400, { scope: 'profile' as const, error: message });
 const contentFail = (message: string) => fail(400, { scope: 'content' as const, error: message });
 const buzzFail = (message: string) => fail(400, { scope: 'buzz' as const, error: message });
+const membershipCodeFail = (message: string) =>
+  fail(400, { scope: 'membershipCode' as const, error: message });
+const creatorScoreFail = (message: string) =>
+  fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
+const reactionsFail = (message: string) =>
+  fail(400, { scope: 'reactions' as const, error: message });
 const cosmeticsFail = (message: string) =>
   fail(400, { scope: 'cosmetics' as const, error: message });
 const notifyFail = (message: string) => fail(400, { scope: 'notify' as const, error: message });
+const messageFail = (message: string) =>
+  fail(400, { scope: 'message' as const, error: message });
 
 const noteSchema = z.object({ notes: z.string().trim().min(1).max(NOTE_MAX) });
 
@@ -105,22 +141,8 @@ export const actions: Actions = {
 
   // ENFORCEMENT. Every action below is gated on `/users` or on a named grant, never on this page: reaching User Lookup
   // is an investigation permission, acting on an account is a different one.
-  setMuted: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
-    const input = parseForm(
-      userIdSchema.extend({ muted: z.enum(['true', 'false']) }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return accountFail(input);
-
-    const result = await setMuted({
-      userId: input.userId,
-      muted: input.muted === 'true',
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return accountFail(result.error);
-    return { success: true };
-  },
+  // Ban, mute, timed mute and clearing profile text are shared with the user report queue.
+  ...accountEnforcementActions,
 
   // Ruling on a Pending system restriction, which the mute toggle above cannot do: it clears `muted`
   // and leaves the row Pending, the subscription cancelled and the user untold.
@@ -131,15 +153,19 @@ export const actions: Actions = {
         userRestrictionId: z.coerce.number().int().positive(),
         status: z.enum(['Overturned', 'Upheld']),
         resolvedMessage: z.string().trim().max(1000).optional(),
+        ...resolutionReasonFields,
       }),
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
+    const reason = checkedResolutionReason('restriction', input.status, input);
+    if (typeof reason === 'string') return accountFail(reason);
 
     const result = await resolveRestriction({
       userRestrictionId: input.userRestrictionId,
       status: input.status,
       resolvedMessage: input.resolvedMessage || undefined,
+      ...reason,
       userId: input.userId,
       moderatorId: locals.user.id,
     });
@@ -202,28 +228,6 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  clearProfileText: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return profileFail('Not permitted.');
-    const form = await request.formData();
-    const input = parseForm(userIdSchema, form);
-    if (typeof input === 'string') return profileFail(input);
-
-    // Checkboxes: absent when unticked, so they are read off the raw FormData rather than the parsed
-    // object, which only carries the last value for a repeated name.
-    const fields = form
-      .getAll('fields')
-      .map(String)
-      .filter((f): f is ProfileField => (PROFILE_FIELD_KEYS as string[]).includes(f));
-
-    const result = await clearProfileText({
-      userId: input.userId,
-      fields,
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return profileFail(result.error);
-    return { success: true };
-  },
-
   removeSocial: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return socialsFail('Not permitted.');
     const input = parseForm(
@@ -268,10 +272,10 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  // Issuing a strike NOTIFIES the user, so it is gated on the enforcement permission rather than the
-  // note permission it sits beside.
+  // Issuing a strike NOTIFIES the user, so it is gated on the `user.strike` action grant — the one every
+  // page that strikes checks — rather than the note permission it sits beside.
   addStrike: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return noteFail(403, 'Not permitted.');
+    if (!locals.grants['user.strike']) return noteFail(403, denied('user.strike'));
     const author = locals.user.username;
     if (!author) return noteFail(400, 'Your account has no username to attribute the strike to.');
 
@@ -347,9 +351,10 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  // Notifying a user is an enforcement-adjacent act, not a note, so it takes the same gate.
+  // Notifying a user is an enforcement-adjacent act, not a note, so it takes the strike's grant, as the
+  // report queues' Notify does.
   sendNotification: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return notifyFail('Not permitted.');
+    if (!locals.grants['user.strike']) return notifyFail(denied('user.strike'));
     const input = parseForm(
       userIdSchema.extend({
         message: z.string().trim().min(1).max(1000),
@@ -384,6 +389,20 @@ export const actions: Actions = {
     return { success: true };
   },
 
+  messageAsCivitai: requiresGrant('user.message.asCivitai', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        message: z.string().trim().min(1).max(MESSAGE_AS_CIVITAI_MAX_LENGTH),
+        idempotencyKey: z.string().min(8).max(128),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return messageFail(input);
+    const result = await sendAsCivitai(input);
+    if (!result.ok) return messageFail(result.error);
+    return { success: true, chatId: result.value.chatId, deduped: result.value.deduped };
+  }),
+
   refundPurchase: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return shopFail('Not permitted.');
     const input = parseForm(
@@ -398,7 +417,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return shopFail(result.error);
-    return { success: true };
+    return { success: true, warning: result.warning };
   },
 
   grantCosmetic: requiresGrant('user.cosmetics.grant', async ({ request, locals }) => {
@@ -415,6 +434,49 @@ export const actions: Actions = {
     });
     if (!result.ok) return shopFail(result.error);
     return { success: true };
+  }),
+
+  grantBox: requiresGrant('items.boxes.grant', async ({ request, locals }) => {
+    const input = parseForm(
+      userIdSchema.extend({ boxId: int4Id, ...boxGrantFields }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return shopFail(input);
+
+    try {
+      const result = await grantMysteryBoxes({
+        boxId: input.boxId,
+        userIds: [input.userId],
+        count: input.count,
+        grantId: input.grantId,
+        moderatorId: locals.user.id,
+      });
+      if (result.busyUserIds.length) return shopFail(ITEM_HOLDER_BUSY_MESSAGE);
+      if (result.failedUserIds.length)
+        return shopFail('The grant failed. Nothing was given; try again.');
+      if (result.alreadyGrantedUserIds.length)
+        return shopFail('This grant was already made. Reload to grant again.');
+      return { success: true };
+    } catch (e) {
+      if (e instanceof BoxGrantRefused) return shopFail(e.message);
+      throw e;
+    }
+  }),
+
+  takeBackGrantedBox: requiresGrant('items.boxes.grant', async ({ request, locals }) => {
+    const input = parseForm(
+      userIdSchema.extend({ sourceKey: z.string().trim().min(1).max(200) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return shopFail(input);
+
+    const result = await takeBackGrantedBox({
+      userId: input.userId,
+      sourceKey: input.sourceKey,
+      moderatorId: locals.user.id,
+    });
+    if (!result.ok) return shopFail(result.error);
+    return { success: true, warning: result.warning };
   }),
 
   removeCosmetic: async ({ request, locals }) => {
@@ -435,7 +497,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return cosmeticsFail(result.error);
-    return { success: true };
+    return { success: true, warning: result.warning };
   },
 
   sendBuzz: requiresGrant('user.buzz.send', async ({ request, locals }) => {
@@ -492,6 +554,82 @@ export const actions: Actions = {
         transactionType: input.transactionType,
       },
     };
+  }),
+
+  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
+  mintMembershipCode: requiresGrant('user.membership.code', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        tier: z.enum(MEMBERSHIP_CODE_TIERS),
+        months: z.coerce.number().int().min(1).max(MEMBERSHIP_CODE_MAX_MONTHS),
+        reason: z.string().trim().min(1).max(500),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCodeFail(input);
+
+    const result = await mintMembershipCode(input);
+    if (!result.ok) return membershipCodeFail(result.error);
+    return {
+      success: true,
+      minted: {
+        code: result.code,
+        expiresAt: result.expiresAt,
+        tier: input.tier,
+        months: input.months,
+      },
+    };
+  }),
+
+  revokeMembershipCode: requiresGrant('user.membership.code', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ code: z.string().regex(/^MB-[A-Z0-9]{4}-[A-Z0-9]{4}$/) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCodeFail(input);
+
+    const result = await revokeMembershipCode(input);
+    if (!result.ok) return membershipCodeFail(result.error);
+    return { success: true, revoked: input.code };
+  }),
+
+  grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request, locals }) => {
+    const maxAmount = locals.grants['user.creatorScore.grantLarge']
+      ? CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT
+      : CREATOR_SCORE_GRANT_MAX_AMOUNT;
+    const input = parseForm(
+      userIdSchema.extend({
+        amount: z.coerce.number().int().min(1).max(maxAmount),
+        reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return creatorScoreFail(input);
+
+    const result = await grantCreatorScore(input);
+    if (!result.ok) return creatorScoreFail(result.error);
+    const outcome: CreatorScoreGrantResult = {
+      kind: 'granted',
+      amount: input.amount,
+      total: result.total,
+    };
+    return { success: true, outcome };
+  }),
+
+  revokeCreatorScoreGrant: requiresGrant('user.creatorScore.grant', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        grantId: z.coerce.number().int().positive(),
+        reason: z.string().trim().min(1).max(CREATOR_SCORE_GRANT_REASON_MAX),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return creatorScoreFail(input);
+
+    const result = await revokeCreatorScoreGrant(input);
+    if (!result.ok) return creatorScoreFail(result.error);
+    const outcome: CreatorScoreGrantResult = { kind: 'revoked', total: result.total };
+    return { success: true, outcome };
   }),
 
   // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a
@@ -554,6 +692,7 @@ export const actions: Actions = {
         success: true,
         op: input.op,
         affected: result.affected ?? 0,
+        retainedHidden: result.retainedHidden ?? 0,
         requested: commentIds.length + commentV2Ids.length,
       };
     }
@@ -587,7 +726,7 @@ export const actions: Actions = {
 
     const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
-    return { success: true };
+    return { success: true, warning: result.warning };
   }),
 
   // No confirmation check here: the endpoint owns it, and a second copy would drift from it.
@@ -601,6 +740,10 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
+    // The endpoint refuses a held account too; this answers before anything is sent.
+    const hold = await deleteAccountHold(input.userId);
+    if (hold === 'held') return accountFail(LEGAL_HOLD_REFUSAL);
+    if (hold !== 'clear') return accountFail(HOLD_UNKNOWN_REFUSAL);
 
     const flag = (v: 'true' | 'false' | undefined) => (v === undefined ? undefined : v === 'true');
     const result = await deleteAccount({
@@ -613,62 +756,29 @@ export const actions: Actions = {
     return { success: true };
   }),
 
-  setBanned: requiresGrant('user.ban', async ({ request, locals }) => {
-    // reasonCode is validated against the SAME list the main app's endpoint parses. It rejects anything
-    // else with a 500 before the ban happens, so an unchecked value here is a ban that silently does not
-    // occur.
-    const input = parseForm(
-      banFieldsSchema.extend({ ...userIdSchema.shape, ban: z.enum(['true', 'false']) }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return accountFail(input);
-    const unexplained = input.ban === 'true' ? rejectUnexplainedOther(input) : null;
-    if (unexplained) return accountFail(unexplained);
-
-    const result = await setBanned({
-      userId: input.userId,
-      ban: input.ban === 'true',
-      reasonCode: input.reasonCode,
-      detailsInternal: input.detailsInternal || undefined,
-      detailsExternal: input.detailsExternal || undefined,
-      ...banRemovalArgs(input, input.ban === 'true'),
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return accountFail(result.error);
-    return { success: true };
+  countReactions: requiresGrant('user.removeReactions', async ({ request }) => {
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return reactionsFail(input);
+    const result = await countReactions(input.userId);
+    if (!result.ok) return reactionsFail(result.error);
+    return { success: true, reactionCounts: result.counts };
   }),
 
-  addTimedMute: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
-
-    // Either a preset duration or an explicit end (Retool's `muteEnd`); the panel submits one or the
-    // other. `until` arrives as an ISO instant, not the raw `datetime-local` value — see the panel.
+  // The username confirmation is the endpoint's, as on deleteAccount.
+  removeReactions: requiresGrant('user.removeReactions', async ({ request }) => {
     const input = parseForm(
-      userIdSchema.extend({
-        hours: z.coerce.number().positive().max(8760).optional(),
-        until: z.coerce.date().optional(),
-        reason: z.string().trim().min(1).max(500),
-      }),
+      userIdSchema.extend({ username: z.string().optional() }),
       await request.formData()
     );
-    if (typeof input === 'string') return accountFail(input);
-
-    const until =
-      input.until ?? (input.hours ? new Date(Date.now() + input.hours * 3_600_000) : null);
-    if (!until) return accountFail('Pick a duration or an end date.');
-    // A past end time would lift the mute the instant it is applied and read as a silent failure.
-    if (until.getTime() <= Date.now()) return accountFail('That end time has already passed.');
-    if (until.getTime() > Date.now() + 8760 * 3_600_000)
-      return accountFail('A timed mute cannot run more than a year.');
-    const result = await addTimedMute({
-      userId: input.userId,
-      until,
-      reason: input.reason,
-      moderatorId: locals.user.id,
-    });
-    if (!result.ok) return accountFail(result.error);
-    return { success: true };
-  },
+    if (typeof input === 'string') return reactionsFail(input);
+    const result = await removeReactions(input);
+    if (!result.ok) return reactionsFail(result.error);
+    return {
+      success: true,
+      reactionsRemoved: result.removed,
+      reactionsRemaining: result.remaining,
+    };
+  }),
 
   // No mute id any more: the mute lives on the account, so the account id is the whole scope. The old
   // id + userId pair existed to stop one account's side-table row unmuting another.

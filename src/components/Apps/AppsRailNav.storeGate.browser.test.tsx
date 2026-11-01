@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 // Type-only namespace import (NOT `typeof import('...')`, which
 // @typescript-eslint/consistent-type-imports rejects) so the spread below keeps the
 // real module's type.
@@ -84,21 +85,20 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 // load with 0 tests collected and no failing assertion.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    blocks: {
-      getNavSummary: {
-        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
-          mocks.navSummaryEnabled.push(opts?.enabled);
-          // Honour `enabled` like the real hook: a disabled query never resolves,
-          // so `data` stays undefined and the container falls back to EMPTY_SUMMARY.
-          return { data: opts?.enabled ? mocks.navSummary : undefined };
-        },
+  trpc: makeTrpcProxy({
+    'blocks.getNavSummary': {
+      useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
+        mocks.navSummaryEnabled.push(opts?.enabled);
+        // Honour `enabled` like the real hook: a disabled query never resolves,
+        // so `data` stays undefined and the container falls back to EMPTY_SUMMARY.
+        return { data: opts?.enabled ? mocks.navSummary : undefined };
       },
     },
-  },
+  }),
 }));
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
+const { useAppsNavSections } = await import('./useAppsNavSections');
 
 function link(name: string) {
   return page.getByRole('link', { name });
@@ -508,5 +508,66 @@ describe('the rail — the getNavSummary query gate stays on appBlocks', () => {
     expect(renderedSections()).toEqual([]); // the store gate returned null
     expect(mocks.navSummaryEnabled.length).toBeGreaterThan(0); // …but the hook did run
     expect(mocks.navSummaryEnabled.every((e) => e === false)).toBe(true);
+  });
+});
+
+/**
+ * Build follows `resolveAppsBuildPageMode` — the page's own gate — now that `/apps/build` also
+ * hosts the App Assistant (`/apps/assistant` 301s there and lost its own row). So the App
+ * Assistant gate ADMITS a non-author to the Build entry, exactly as the page renders the workspace
+ * for them, and a signed-out viewer (whom the page 404s) gets no entry.
+ */
+describe('the rail — Build follows the page mode, App Assistant included', () => {
+  const ASSISTANT_FLAGS = { appBlocks: true, appAssistant: true };
+
+  /**
+   * The hook's sections BEFORE the layout's `< 2` collapse. The last row below qualifies for
+   * Marketplace alone, so its rail collapses and an absent Build there would prove nothing; the
+   * probe still lists what the viewer qualified for.
+   */
+  function SectionsProbe() {
+    const labels = useAppsNavSections().map((s) => s.label);
+    return <div data-testid="sections-probe" data-labels={labels.join('|')} />;
+  }
+  const probedSections = () =>
+    (page.getByTestId('sections-probe').element().getAttribute('data-labels') ?? '')
+      .split('|')
+      .filter(Boolean);
+
+  // [label, flags, Build shown, the rail renders]
+  test.each([
+    ['the assistant flags, not an author → Build shown', ASSISTANT_FLAGS, true, true],
+    ['the block runtime alone, not an author → no Build', { appBlocks: true }, false, true],
+    [
+      'the assistant flag without the block runtime → no Build',
+      { appListings: true, appAssistant: true },
+      false,
+      false,
+    ],
+  ])('signed in with %s', async (_label, flags, shown, railRenders) => {
+    mocks.flags = flags;
+    mocks.user = { id: 21, username: 'palette_maker', isModerator: false };
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <AppsPageLayout>
+        <SectionsProbe />
+      </AppsPageLayout>
+    );
+    await expect.element(page.getByTestId('sections-probe')).toBeInTheDocument();
+    // Positive first: every one of these viewers holds a store flag, so Marketplace qualifies.
+    // Without it, a "no Build" row would also pass for a gate that showed this viewer nothing.
+    expect(probedSections()).toContain('Marketplace');
+    expect(probedSections().includes('Build')).toBe(shown);
+    expect(renderedSections().includes('Marketplace')).toBe(railRenders);
+    expect(renderedSections().includes('Build')).toBe(shown);
+    expect(probedSections()).not.toContain('App Assistant');
+  });
+
+  test('signed out with the assistant flags → no Build entry and no App Assistant link', async () => {
+    mocks.flags = ASSISTANT_FLAGS;
+    mocks.user = null;
+    await renderRail();
+    expect(renderedSections()).not.toContain('Build');
+    expect(document.querySelector('a[href^="/apps/assistant"]')).toBeNull();
   });
 });

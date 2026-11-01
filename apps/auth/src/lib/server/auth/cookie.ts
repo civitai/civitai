@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
-import { isSecureCookie } from '@civitai/auth';
+import type { Cookies } from '@sveltejs/kit';
+import { allCookieNames, HOST_COOKIE_PREFIX, isSecureCookie } from '@civitai/auth';
 
 // Single source of truth for the auth cookies' `Domain` attribute (session + device). The Domain MUST be a
 // suffix of the hub's own host or the browser silently drops the Set-Cookie — and a hub whose session cookie
@@ -49,3 +50,18 @@ export const cookieDomain = (): string | undefined => {
   const parts = host.split('.');
   return parts.length >= 2 ? `.${parts.slice(-2).join('.')}` : undefined;
 };
+
+/** Logout: expire every other name `base` is stored under on this request (`current` is cleared by the caller). */
+export function clearOtherCookieNames(cookies: Cookies, base: string, current: string): void {
+  const domain = cookieDomain();
+  for (const name of allCookieNames(base)) {
+    if (name === current || cookies.get(name) === undefined) continue;
+    if (name.startsWith(HOST_COOKIE_PREFIX)) {
+      cookies.delete(name, { path: '/', secure: true });
+      continue;
+    }
+    const secure = name !== base;
+    cookies.delete(name, { path: '/', secure });
+    if (domain) cookies.delete(name, { path: '/', secure, domain });
+  }
+}

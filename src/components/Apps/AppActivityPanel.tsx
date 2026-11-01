@@ -1,4 +1,5 @@
-import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text } from '@mantine/core';
+import { Anchor, Badge, Center, Group, Loader, Stack, Table, Text } from '@mantine/core';
+import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
 import { IconHistory } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
@@ -84,6 +85,8 @@ const SCOPE_ACTION_LABELS: Record<string, string> = {
   'social:tip:self': 'Tip',
   'goods:read:self': 'Read owned items',
   'goods:purchase:self': 'Buy an item',
+  'apps:store:items:write': 'Listed an item in the App Store',
+  'social:react:self': 'Reacted to an image',
 };
 
 export function humaniseScopeInvocation(scope: string, endpoint?: string): string {
@@ -655,9 +658,12 @@ export function AppActivityPanel({
       </Table>
       {hasNextPage && (
         <Center>
-          <Button variant="default" size="xs" loading={isFetchingNextPage} onClick={loadMore}>
-            Load more
-          </Button>
+          <LoadMoreButton
+            variant="default"
+            size="xs"
+            loading={isFetchingNextPage}
+            onClick={loadMore}
+          />
         </Center>
       )}
     </Stack>

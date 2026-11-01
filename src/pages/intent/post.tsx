@@ -1,66 +1,31 @@
-import {
-  Button,
-  Code,
-  Container,
-  Group,
-  Loader,
-  Paper,
-  Stack,
-  Text,
-  ThemeIcon,
-  Timeline,
-  Title,
-} from '@mantine/core';
-import { IconCheck, IconMinus, IconX } from '@tabler/icons-react';
+import { Alert, Code, Container, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { IconAlertCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useEffect, useState } from 'react';
-import * as z from 'zod';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
-import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
+import type { CheckedIntentMedia } from '~/components/Post/Intent/check-intent-media';
+import { checkIntentMedia } from '~/components/Post/Intent/check-intent-media';
+import type { IntentComposeValues } from '~/components/Post/Intent/IntentComposeSheet';
+import { IntentComposeSheet } from '~/components/Post/Intent/IntentComposeSheet';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
+import type { OpenIntentQuery } from '~/shared/utils/post-intent';
+import {
+  appendSourceLink,
+  openIntentQuerySchema,
+  resolveIntentMode,
+  withPostedParam,
+} from '~/shared/utils/post-intent';
 import {
   orchestratorMediaTransmitter,
   useExternalMetaStore,
 } from '~/store/post-image-transmitter.store';
-import { createImageElement } from '~/utils/image-utils';
 import { getLoginLink } from '~/utils/login-helpers';
-import { getVideoData } from '~/utils/media-preprocessors';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatBytes } from '~/utils/number-helpers';
-import { titleCase } from '~/utils/string-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 const TRANSMITTER_KEY = 'post-intent';
-
-const postQuerySchema = z.object({
-  /**
-   *  Absolute url of the media to post
-   */
-  mediaUrl: z.url(),
-  /**
-   * Title to use for the post
-   */
-  title: z.string().optional(),
-  /**
-   * Text to use in the description of the post
-   */
-  description: z.string().optional(),
-  /**
-   * Url we should call to get additional parameters for the media.
-   * They can include parameters specific to your service so that people can have a better idea of how the media was made on your service.
-   * Only for approved domains - contact us to be added
-   */
-  detailsUrl: z.url().optional(),
-  /**
-   * Tags to apply to the post (comma delimited)
-   * Maximum of 5
-   */
-  tags: commaDelimitedStringArray().optional(),
-});
-type PostQuerySchema = z.infer<typeof postQuerySchema>;
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -78,358 +43,217 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-type ParseProgress = {
-  title: 'Parsing params' | 'Checking media';
-  status: 'success' | 'failed' | 'skipped' | undefined;
-  errors: React.ReactNode[];
-  msg?: React.ReactNode;
-};
+function IntentShell({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Meta title="Create a Post | Civitai" deIndex={true} />
+      {children}
+    </>
+  );
+}
 
-export default function IntentPost() {
+function IntentMessage({ title, children }: { title: string; children?: React.ReactNode }) {
+  return (
+    <Container size="xs" px="md" my="lg">
+      <Stack>
+        <Title order={2}>Create a post</Title>
+        <Alert color="red" icon={<IconAlertCircle size={16} />} title={title}>
+          {children}
+        </Alert>
+      </Stack>
+    </Container>
+  );
+}
+
+function IntentLoading({ label }: { label: string }) {
+  return (
+    <Container size="xs" px="md" my="xl">
+      <Group justify="center" gap="sm">
+        <Loader size="sm" />
+        <Text c="dimmed">{label}</Text>
+      </Group>
+    </Container>
+  );
+}
+
+function AppIntent({ manifestUrl }: { manifestUrl: string }) {
+  const router = useRouter();
+  const stage = trpc.postIntent.stage.useMutation();
+  const publish = trpc.postIntent.publish.useMutation();
+  const [values, setValues] = useState<IntentComposeValues>({
+    title: '',
+    description: '',
+    tags: [],
+  });
+  const [busy, setBusy] = useState<'primary' | 'editor'>();
+
+  useEffect(() => {
+    stage.mutate(
+      { manifestUrl },
+      {
+        onSuccess: (data) =>
+          setValues({
+            title: data.title ?? '',
+            description: data.description ?? '',
+            tags: data.tags,
+          }),
+      }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manifestUrl]);
+
+  const submit = (asPublished: boolean) => {
+    setBusy(asPublished ? 'primary' : 'editor');
+    publish.mutate(
+      {
+        manifestUrl,
+        title: values.title || null,
+        description: values.description || null,
+        tags: values.tags,
+        publish: asPublished,
+      },
+      {
+        onSuccess: async ({ postId, returnUrl }) => {
+          if (!asPublished) return router.replace(`/posts/${postId}/edit`);
+          showSuccessNotification({ title: 'Posted!', message: 'Your post is live on Civitai.' });
+          if (returnUrl) window.location.assign(withPostedParam(returnUrl, postId));
+          else await router.replace(`/posts/${postId}`);
+        },
+        onSettled: (_data, error) => {
+          if (error) setBusy(undefined);
+        },
+      }
+    );
+  };
+
+  if (stage.error)
+    return <IntentMessage title="We couldn't open this share">{stage.error.message}</IntentMessage>;
+  if (!stage.data) return <IntentLoading label="Getting your post ready..." />;
+
+  return (
+    <IntentComposeSheet
+      media={stage.data.media}
+      values={values}
+      onChange={setValues}
+      appName={stage.data.app.name}
+      itemName={stage.data.app.itemName}
+      primaryLabel="Publish"
+      onPrimary={() => submit(true)}
+      onOpenEditor={() => submit(false)}
+      busy={busy}
+      error={publish.error?.message}
+    />
+  );
+}
+
+function OpenIntent({ query }: { query: OpenIntentQuery }) {
   const router = useRouter();
   const queryUtils = trpc.useUtils();
-  const [readyData, setReadyData] = useState<PostQuerySchema | undefined>();
-  const [creatingPost, setCreatingPost] = useState<string | undefined>();
-  const [previewUrl, setPreviewUrl] = useState<{ url: string; type: 'video' | 'image' }>();
-  const [progress, setProgress] = useState<ParseProgress[]>([
-    { title: 'Parsing params', status: undefined, errors: [] },
-    { title: 'Checking media', status: undefined, errors: [] },
-  ]);
+  const showCreatePostError = useShowCreatePostError();
+  const createPost = trpc.post.create.useMutation();
+  const [media, setMedia] = useState<CheckedIntentMedia[]>();
+  const [mediaError, setMediaError] = useState<string>();
+  const [values, setValues] = useState<IntentComposeValues>({
+    title: query.title ?? '',
+    description: query.description ?? '',
+    tags: query.tags ?? [],
+  });
+  const [busy, setBusy] = useState<'primary'>();
 
-  const createPostMutation = trpc.post.create.useMutation();
+  useEffect(() => {
+    Promise.all(query.mediaUrls.map((url) => checkIntentMedia(url)))
+      .then(setMedia)
+      .catch((e: Error) => setMediaError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const doCreate = () => {
-    // if (currentUser?.muted) return;
-    if (!readyData) return;
-
-    setCreatingPost('Preparing post...');
-
-    createPostMutation.mutate(
-      { title: readyData.title, detail: readyData.description, tags: readyData.tags },
+  const proceed = () => {
+    if (!media) return;
+    setBusy('primary');
+    createPost.mutate(
+      {
+        title: values.title || undefined,
+        detail: appendSourceLink(values.description || undefined, query.link),
+        tags: values.tags,
+      },
       {
         onSuccess: async (res) => {
           queryUtils.post.getEdit.setData({ id: res.id }, () => res);
-
-          orchestratorMediaTransmitter.setUrls(TRANSMITTER_KEY, [{ url: readyData.mediaUrl }]);
-
+          orchestratorMediaTransmitter.setUrls(
+            TRANSMITTER_KEY,
+            media.map(({ url }) => ({ url }))
+          );
+          if (query.detailsUrl) useExternalMetaStore.getState().setUrl(query.detailsUrl);
           showSuccessNotification({
             title: 'Success!',
             message: "Please check the data and publish the post when you're ready.",
             autoClose: 10000,
           });
-
-          setCreatingPost('Redirecting...');
-
-          // await router.push({
-          //   pathname: `/posts/${res.id}/edit`,
-          //   query: { src: TRANSMITTER_KEY },
-          // });
           await router.replace(
-            {
-              pathname: `/posts/${res.id}/edit`,
-              query: { src: TRANSMITTER_KEY },
-            },
+            { pathname: `/posts/${res.id}/edit`, query: { src: TRANSMITTER_KEY } },
             undefined,
-            {
-              shallow: true,
-            }
+            { shallow: true }
           );
-          setCreatingPost(undefined);
         },
         onError(error) {
-          showErrorNotification({
-            title: 'Failed to create post',
-            error: new Error(error.message),
-          });
-          setCreatingPost(undefined);
+          showCreatePostError(error.message);
+          setBusy(undefined);
         },
       }
     );
   };
 
-  const transformProgress = (prev: ParseProgress[], update: ParseProgress) => {
-    return prev.map((p) => {
-      if (p.title === update.title) return update;
-      return p;
-    });
-  };
-
-  useEffect(() => {
-    const queryParse = postQuerySchema.safeParse(router.query);
-
-    if (!queryParse.success) {
-      setProgress((prev) =>
-        transformProgress(prev, {
-          title: 'Parsing params',
-          status: 'failed',
-          errors: queryParse.error.issues.map((i, idx) => (
-            <Group key={idx}>
-              <Code>{i.path.join('.')}</Code>
-              <Text c="dimmed" size="sm">
-                {i.message}
-              </Text>
-            </Group>
-          )),
-        })
-      );
-      return;
-    }
-
-    const { data } = queryParse;
-
-    if (data.tags && data.tags.length > POST_TAG_LIMIT) {
-      setProgress((prev) =>
-        transformProgress(prev, {
-          title: 'Parsing params',
-          status: 'failed',
-          errors: [
-            <Group key="tagfail">
-              <Code>tags</Code>
-              <Text c="dimmed" size="sm">
-                Maximum of {POST_TAG_LIMIT} tags allowed (found {data.tags!.length})
-              </Text>
-            </Group>,
-          ],
-        })
-      );
-      return;
-    }
-
-    setProgress((prev) =>
-      transformProgress(prev, {
-        title: 'Parsing params',
-        status: 'success',
-        errors: [],
-      })
-    );
-
-    const fetchBlob = async (src: string) => {
-      let blob;
-      try {
-        const response = await fetch(src);
-        blob = await response.blob();
-      } catch (e) {
-        console.log(e);
-        throw new Error('Could not fetch media from that url');
-      }
-
-      if (!blob.type || blob.type.length === 0) {
-        throw new Error('Could not fetch media from that url');
-      }
-
-      const bytes = blob.size;
-      const mediaType = MEDIA_TYPE[blob.type];
-
-      if (mediaType !== 'image' && mediaType !== 'video') {
-        throw new Error(
-          `Unsupported file type: "${
-            !!blob.type && blob.type.length > 0 ? blob.type : 'unknown'
-          }". Accepted types: ${[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE].join(', ')} `
-        );
-      }
-
-      const objUrl = URL.createObjectURL(blob);
-
-      if (mediaType === 'image') {
-        if (bytes > constants.mediaUpload.maxImageFileSize) {
-          throw new Error(
-            `Image (${formatBytes(bytes)}) should not exceed ${formatBytes(
-              constants.mediaUpload.maxImageFileSize
-            )}.`
-          );
-        }
-
-        createImageElement(objUrl)
-          .catch((e) => {
-            console.log(e);
-            throw new Error('Could not fetch media from that url');
-          })
-          .finally(() => {
-            URL.revokeObjectURL(objUrl);
-            setProgress((prev) =>
-              transformProgress(prev, {
-                title: 'Checking media',
-                status: 'success',
-                errors: [],
-                msg: (
-                  <Stack gap={6}>
-                    <Text>Success!</Text>
-                    <Text>Found 1 image ({formatBytes(bytes)})</Text>
-                  </Stack>
-                ),
-              })
-            );
-            setPreviewUrl({ url: data.mediaUrl, type: 'image' });
-            return;
-          });
-      } else {
-        if (bytes > constants.mediaUpload.maxVideoFileSize) {
-          throw new Error(
-            `Video (${formatBytes(bytes)}) should not exceed ${formatBytes(
-              constants.mediaUpload.maxVideoFileSize
-            )}.`
-          );
-        }
-
-        getVideoData(objUrl)
-          .then((vidData) => {
-            if (
-              vidData.duration &&
-              vidData.duration > constants.mediaUpload.maxVideoDurationSeconds
-            )
-              throw new Error(
-                `Video duration cannot be longer than ${constants.mediaUpload.maxVideoDurationSeconds} seconds. Please trim your video and try again.`
-              );
-            if (
-              vidData.width > constants.mediaUpload.maxVideoDimension ||
-              vidData.height > constants.mediaUpload.maxVideoDimension
-            )
-              throw new Error(
-                `Videos cannot be larger than ${constants.mediaUpload.maxVideoDimension}px from either side. Please resize your image or video and try again.`
-              );
-          })
-          .catch((e) => {
-            console.log(e);
-            throw new Error('Could not fetch media from that url');
-          })
-          .finally(() => {
-            URL.revokeObjectURL(objUrl);
-            setProgress((prev) =>
-              transformProgress(prev, {
-                title: 'Checking media',
-                status: 'success',
-                errors: [],
-                msg: (
-                  <Stack gap={6}>
-                    <Text>Success!</Text>
-                    <Text>Found 1 video ({formatBytes(bytes)})</Text>
-                  </Stack>
-                ),
-              })
-            );
-            setPreviewUrl({ url: data.mediaUrl, type: 'video' });
-            return;
-          });
-      }
-    };
-
-    fetchBlob(data.mediaUrl)
-      .then(() => {
-        if (data.detailsUrl) {
-          useExternalMetaStore.getState().setUrl(data.detailsUrl);
-        }
-        setReadyData(data);
-      })
-      .catch((e: Error) => {
-        setProgress((prev) =>
-          transformProgress(prev, {
-            title: 'Checking media',
-            status: 'failed',
-            errors: [
-              <Text key={e.message} c="dimmed" size="sm">
-                {e.message.split('. ').map((m, idx) => (
-                  <p key={idx}>{m}</p>
-                ))}
-              </Text>,
-            ],
-          })
-        );
-      });
-  }, []);
-
-  let activeStep = progress.findIndex((p) => p.status !== 'success' && p.status !== 'skipped');
-  if (activeStep === -1) {
-    activeStep = progress.length;
-  }
-  const hasError = progress.find((p) => p.status === 'failed');
+  if (mediaError)
+    return <IntentMessage title="We couldn't use that media">{mediaError}</IntentMessage>;
+  if (!media) return <IntentLoading label="Checking media..." />;
 
   return (
-    <>
-      <Meta title="Create a Post | Civitai" deIndex={true} />
-      <Container my="lg" size="xs">
-        <Stack>
-          <Title order={2}>Create New Post</Title>
-          <Paper p="sm" className="bg-gray-1 dark:bg-dark-6" withBorder>
-            <Timeline color="green" active={activeStep} bulletSize={22} lineWidth={1}>
-              {progress.map((p, idx) => {
-                const Icon =
-                  p.status === 'success'
-                    ? IconCheck
-                    : p.status === 'skipped'
-                    ? IconMinus
-                    : p.status === 'failed'
-                    ? IconX
-                    : idx === activeStep
-                    ? Loader
-                    : IconMinus;
-                // const color = p.status === undefined ? 'gray' : p.status === 'failed' ? 'red' : 'green';
-                const color =
-                  p.status === undefined
-                    ? 'gray'
-                    : p.status === 'skipped'
-                    ? 'cyan'
-                    : p.status === 'success'
-                    ? 'green'
-                    : 'red';
-                return (
-                  <Timeline.Item
-                    key={p.title}
-                    // bullet={<Icon size={12} />}
-                    bullet={
-                      <ThemeIcon color={color} radius="xl" size={24}>
-                        <Icon size={12} />
-                      </ThemeIcon>
-                    }
-                    title={p.title}
-                    // color={color}
-                  >
-                    <Group justify="start" align="start">
-                      <Stack mt="xs" gap={6}>
-                        {p.errors.length > 0 ? (
-                          p.errors.map((e, idx) => (
-                            <Group wrap="nowrap" key={idx}>
-                              <IconX color="red" size={16} style={{ flex: '0 0 auto' }} />
-                              {e}
-                            </Group>
-                          ))
-                        ) : p.status !== undefined ? (
-                          <Text c="dimmed" size="sm">
-                            {p.msg ?? `${titleCase(p.status)}!`}
-                          </Text>
-                        ) : (
-                          <></>
-                        )}
-                      </Stack>
-                      {p.title === 'Checking media' && !!previewUrl && (
-                        <Group justify="center" style={{ flexGrow: 1 }}>
-                          <EdgeMedia
-                            width={150}
-                            src={previewUrl.url}
-                            type={previewUrl.type}
-                            style={{
-                              height: '150px',
-                              objectFit: 'cover',
-                            }}
-                          />
-                        </Group>
-                      )}
-                    </Group>
-                  </Timeline.Item>
-                );
-              })}
-            </Timeline>
-          </Paper>
-          <Group justify="flex-end">
-            <Button
-              disabled={!readyData || !!hasError}
-              loading={!!creatingPost}
-              onClick={() => doCreate()}
-            >
-              {creatingPost ?? (!readyData && !hasError ? 'Parsing...' : 'Proceed')}
-            </Button>
-          </Group>
-        </Stack>
-      </Container>
-    </>
+    <IntentComposeSheet
+      media={media}
+      values={values}
+      onChange={setValues}
+      sourceLink={query.link}
+      primaryLabel="Continue"
+      onPrimary={proceed}
+      busy={busy}
+    />
+  );
+}
+
+export default function IntentPost() {
+  const router = useRouter();
+  const features = useFeatureFlags();
+  const mode = useMemo(
+    () => resolveIntentMode(router.query, !!features.appPostIntent),
+    [router.query, features.appPostIntent]
+  );
+  const openQuery = useMemo(() => openIntentQuerySchema.safeParse(router.query), [router.query]);
+
+  if (!router.isReady) return <IntentShell>{null}</IntentShell>;
+  if (mode.mode === 'app')
+    return (
+      <IntentShell>
+        <AppIntent manifestUrl={mode.manifestUrl} />
+      </IntentShell>
+    );
+  if (!openQuery.success)
+    return (
+      <IntentShell>
+        <IntentMessage title="This link is missing something">
+          <Stack gap={4}>
+            {openQuery.error.issues.map((issue, idx) => (
+              <Group key={idx} gap="xs" wrap="nowrap">
+                <Code>{issue.path.join('.') || 'link'}</Code>
+                <Text size="sm">{issue.message}</Text>
+              </Group>
+            ))}
+          </Stack>
+        </IntentMessage>
+      </IntentShell>
+    );
+  return (
+    <IntentShell>
+      <OpenIntent query={openQuery.data} />
+    </IntentShell>
   );
 }

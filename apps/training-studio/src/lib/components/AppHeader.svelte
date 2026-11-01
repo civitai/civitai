@@ -144,6 +144,7 @@
           {#if logoutUrl}
             <a
               href={logoutUrl}
+              data-sveltekit-reload
               class="block rounded px-3 py-2 text-sm text-dark-2 transition-colors hover:bg-dark-5 hover:text-white"
             >
               Sign out

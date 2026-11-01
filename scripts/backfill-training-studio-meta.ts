@@ -28,7 +28,7 @@
  * DATABASE_URL, ORCHESTRATOR_ENDPOINT/MODE, and the redis + ApiKey machinery behind
  * getOrchestratorToken.
  */
-import { getWorkflow, updateWorkflow } from '@civitai/client';
+import { getWorkflow, updateWorkflow } from '@civitai/orchestration-client';
 import { dbRead } from '~/server/db/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';

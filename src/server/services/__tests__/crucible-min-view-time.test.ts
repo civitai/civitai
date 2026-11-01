@@ -43,7 +43,7 @@ beforeEach(() => {
     userId: where.id === 10 ? 101 : 102,
   }));
   processVote.mockResolvedValue({ winnerElo: 1532, loserElo: 1468 });
-  redisMock.sysRedis.sRem.mockResolvedValue(1);
+  redisMock.sysRedis.eval.mockResolvedValue(1);
 });
 
 describe('submitVote — minimum view time', () => {
@@ -83,7 +83,8 @@ describe('submitVote — minimum view time', () => {
 
     const { sysRedis } = await import('~/server/redis/client');
     expect(sysRedis.sAdd).not.toHaveBeenCalled();
-    expect(sysRedis.sRem).not.toHaveBeenCalled();
+    expect(sysRedis.eval).not.toHaveBeenCalled();
+    expect(sysRedis.hIncrBy).not.toHaveBeenCalled();
   });
 });
 

@@ -1,6 +1,7 @@
 // App shim for @civitai/telemetry. Re-exports the generic prom helpers + metric
 // definitions, and registers the DB pool-depth gauges here — they compose the db
 // pools + prom helpers, which is app-level glue, not infrastructure.
+import { createHash } from 'crypto';
 import client from 'prom-client';
 import {
   PROM_PREFIX,
@@ -65,9 +66,9 @@ const redisMetricsBridge = {
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics =
   redisMetricsBridge;
 
-// pgPoolAcquireHistogram is registered in @civitai/db's db-helpers, not here, to avoid
-// a module-init cycle (this module imports pgDb → db-helpers, which would import the
-// histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
+// The pg pool acquire histogram is registered in ~/server/db/db-helpers (instrumentationRegistry),
+// not here, to avoid a module-init cycle (this module imports pgDb → db-helpers, which would import
+// the histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
 
 // `heavyBulkheadGaugeInitialized` was declared here and is gone: a globalThis flag guarding a
 // per-graph registry is the bug this file documents at length below, not a pattern to reach for.
@@ -86,7 +87,8 @@ declare global {
 // so they must NOT hit Postgres on every /metrics scrape (~15s). The queries are served
 // from an in-process cache with a short TTL and refreshed lazily off the scrape path
 // (fire-and-forget) — a scrape only ever kicks a background refresh, never blocks on
-// it, and reads the last-known values.
+// it, and reads the last-known values. When a shared store is installed, a refresh reads the
+// fleet's result from it and at most one process per TTL runs the queries.
 //
 // DB SAFETY (backlog query): the Image table is enormous and Scanned dominates it, so an unfiltered
 // GROUP BY over `ingestion` would seq-scan the whole table. Instead each working state is counted
@@ -123,6 +125,19 @@ const SCAN_QUEUE_SQL = `
   SELECT count(*) AS depth, EXTRACT(EPOCH FROM now() - min("createdAt"))::float8 AS oldest_age
     FROM "JobQueue" WHERE type='ImageScan'`;
 
+// Names the shared snapshot's key, so processes on releases whose queries differ (a new stuck
+// window, a new status) never serve each other's values: those pass the shape check but mean
+// something else. Bump the tag when IngestionGaugeSnapshot's fields change.
+const ingestionGaugeSnapshotVersionOf = (queries: string[]) =>
+  createHash('sha256')
+    .update(['snapshot-v1', ...queries].join('\0'))
+    .digest('hex')
+    .slice(0, 12);
+const INGESTION_GAUGE_SNAPSHOT_VERSION = ingestionGaugeSnapshotVersionOf([
+  INGESTION_BACKLOG_SQL,
+  SCAN_QUEUE_SQL,
+]);
+
 type IngestionBacklogQueryRow = {
   status: string;
   backlog: string;
@@ -138,6 +153,66 @@ let stuckPendingCache: Record<string, number> = {};
 let scanQueueCache: { depth: number; oldestAgeSeconds: number } | null = null;
 let ingestionBacklogFetchedAt = 0;
 let ingestionBacklogInflight: Promise<void> | null = null;
+
+type IngestionGaugeSnapshot = {
+  computedAt: number;
+  backlog: IngestionBacklogRow[];
+  stuckPending: Record<string, number>;
+  scanQueue: { depth: number; oldestAgeSeconds: number };
+};
+
+// The values are the same in every process, so one process per TTL computes them and the rest
+// read its result. Covers both statements at their statement_timeout plus a margin: a holder that
+// dies is replaced once this lapses.
+const INGESTION_GAUGE_LOCK_MS = 2 * INGESTION_GAUGE_STATEMENT_TIMEOUT_MS + 5_000;
+// Long enough that a process booting during a refresh outage still gets last-known values; the
+// refreshed-timestamp gauge carries their real age.
+const INGESTION_GAUGE_SHARED_RETENTION_MS = 10 * 60_000;
+
+/**
+ * Fleet-wide store for the snapshot, one slot (and lock) per snapshot version. Every call must be
+ * bounded: the refresh awaits them.
+ */
+export type IngestionGaugeSharedStore = {
+  read(version: string): Promise<string | null>;
+  tryLock(version: string, ttlMs: number): Promise<boolean>;
+  write(version: string, value: string, ttlMs: number): Promise<void>;
+};
+
+// On globalThis, not module scope: the gauges' collect() closes over whichever webpack graph's copy
+// of this module registered first, and the store is installed from the other one.
+type IngestionGaugeStoreGlobal = { __civitaiIngestionGaugeStore?: IngestionGaugeSharedStore };
+
+export function setIngestionGaugeSharedStore(store: IngestionGaugeSharedStore | undefined) {
+  (globalThis as IngestionGaugeStoreGlobal).__civitaiIngestionGaugeStore = store;
+}
+
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+// Checked field by field because collect() throws on a non-numeric value, which would fail the
+// whole scrape, and processes on different releases read each other's snapshots during a rollout.
+// A rejected value is treated as missing, so the next refresh replaces it.
+function parseIngestionGaugeSnapshot(raw: string | null): IngestionGaugeSnapshot | null {
+  if (!raw) return null;
+  let s: IngestionGaugeSnapshot;
+  try {
+    s = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const valid =
+    isNumber(s?.computedAt) &&
+    Array.isArray(s.backlog) &&
+    s.backlog.every(
+      (r) => typeof r?.status === 'string' && isNumber(r.backlog) && isNumber(r.oldestAgeSeconds)
+    ) &&
+    typeof s.stuckPending === 'object' &&
+    s.stuckPending !== null &&
+    Object.values(s.stuckPending).every(isNumber) &&
+    isNumber(s.scanQueue?.depth) &&
+    isNumber(s.scanQueue.oldestAgeSeconds);
+  return valid ? s : null;
+}
 
 async function queryIngestionBacklog() {
   // SET LOCAL binds the statement_timeout to this backend for the txn only, so the
@@ -163,27 +238,75 @@ async function queryIngestionBacklog() {
   }
 }
 
+async function computeIngestionGaugeSnapshot(): Promise<IngestionGaugeSnapshot> {
+  const { backlog, queue } = await queryIngestionBacklog();
+  const computedAt = Date.now();
+  const pending = backlog.find((r) => r.status === 'Pending');
+  return {
+    computedAt,
+    backlog: backlog.map((r) => ({
+      status: r.status,
+      backlog: Number(r.backlog),
+      oldestAgeSeconds: r.oldest != null ? (computedAt - new Date(r.oldest).getTime()) / 1000 : 0,
+    })),
+    stuckPending: {
+      image: Number(pending?.stuck_image ?? 0),
+      video: Number(pending?.stuck_video ?? 0),
+      audio: Number(pending?.stuck_audio ?? 0),
+    },
+    scanQueue: {
+      depth: Number(queue?.depth ?? 0),
+      oldestAgeSeconds: Number(queue?.oldest_age ?? 0),
+    },
+  };
+}
+
+function applyIngestionGaugeSnapshot(snapshot: IngestionGaugeSnapshot) {
+  ingestionBacklogCache = snapshot.backlog;
+  stuckPendingCache = snapshot.stuckPending;
+  scanQueueCache = snapshot.scanQueue;
+  ingestionBacklogFetchedAt = snapshot.computedAt;
+}
+
+// A shared snapshot can be older than one this process computed itself while the store was down.
+function applySharedIngestionGaugeSnapshot(snapshot: IngestionGaugeSnapshot) {
+  if (snapshot.computedAt >= ingestionBacklogFetchedAt) applyIngestionGaugeSnapshot(snapshot);
+}
+
+async function refreshIngestionGaugeSnapshot() {
+  const store = (globalThis as IngestionGaugeStoreGlobal).__civitaiIngestionGaugeStore;
+  if (!store) return applyIngestionGaugeSnapshot(await computeIngestionGaugeSnapshot());
+
+  let shared: IngestionGaugeSnapshot | null = null;
+  let compute: boolean;
+  try {
+    shared = parseIngestionGaugeSnapshot(await store.read(INGESTION_GAUGE_SNAPSHOT_VERSION));
+    if (shared && Date.now() - shared.computedAt < INGESTION_GAUGE_TTL_MS)
+      return applySharedIngestionGaugeSnapshot(shared);
+    compute = await store.tryLock(INGESTION_GAUGE_SNAPSHOT_VERSION, INGESTION_GAUGE_LOCK_MS);
+  } catch {
+    // Store unreachable: compute in-process, as every process did before the store existed.
+    compute = true;
+  }
+  if (!compute) {
+    if (shared) applySharedIngestionGaugeSnapshot(shared);
+    return;
+  }
+
+  const snapshot = await computeIngestionGaugeSnapshot();
+  applyIngestionGaugeSnapshot(snapshot);
+  await store
+    .write(
+      INGESTION_GAUGE_SNAPSHOT_VERSION,
+      JSON.stringify(snapshot),
+      INGESTION_GAUGE_SHARED_RETENTION_MS
+    )
+    .catch(() => undefined);
+}
+
 function refreshIngestionBacklog() {
   if (ingestionBacklogInflight) return ingestionBacklogInflight;
-  ingestionBacklogInflight = queryIngestionBacklog()
-    .then(({ backlog, queue }) => {
-      ingestionBacklogCache = backlog.map((r) => ({
-        status: r.status,
-        backlog: Number(r.backlog),
-        oldestAgeSeconds: r.oldest != null ? (Date.now() - new Date(r.oldest).getTime()) / 1000 : 0,
-      }));
-      const pending = backlog.find((r) => r.status === 'Pending');
-      stuckPendingCache = {
-        image: Number(pending?.stuck_image ?? 0),
-        video: Number(pending?.stuck_video ?? 0),
-        audio: Number(pending?.stuck_audio ?? 0),
-      };
-      scanQueueCache = {
-        depth: Number(queue?.depth ?? 0),
-        oldestAgeSeconds: Number(queue?.oldest_age ?? 0),
-      };
-      ingestionBacklogFetchedAt = Date.now();
-    })
+  ingestionBacklogInflight = refreshIngestionGaugeSnapshot()
     .catch(() => {
       // Swallow (incl. statement_timeout): keep the last-known values so a transient
       // DB hiccup can't break the /metrics scrape. A stale gauge beats a 500.
@@ -195,6 +318,12 @@ function refreshIngestionBacklog() {
 }
 
 export const __refreshIngestionGaugesForTest = () => refreshIngestionBacklog();
+export const __ingestionGaugeSnapshotVersionForTest = () => INGESTION_GAUGE_SNAPSHOT_VERSION;
+export const __ingestionGaugeSnapshotVersionOfForTest = ingestionGaugeSnapshotVersionOf;
+export const __ingestionGaugeStateForTest = () => ({
+  computedAt: ingestionBacklogFetchedAt,
+  backlog: ingestionBacklogCache,
+});
 
 function maybeRefreshIngestionBacklog() {
   if (Date.now() - ingestionBacklogFetchedAt > INGESTION_GAUGE_TTL_MS)
@@ -346,10 +475,9 @@ registerInstrumentationMetric(
 // moving them to `instrumentationRegistry` does make them appear in the scrape. But a
 // collect()-based metric needs BOTH halves shared: the registry it registers into AND the state
 // its closure reads. The bulkhead has both — `request-bulkhead.ts` pins its maps on globalThis.
-// These do not: `src/server/db/pgDb.ts` globalThis-pins the pools ONLY in the `!isProd` branch, so
-// in production every emitted copy of that module builds its OWN pg pools. The graph that wins
-// registration is the instrumentation graph, whose pools serve nothing but the ingestion-backlog
-// query in this file.
+// When this was tried, `src/server/db/pgDb.ts` globalThis-pinned the pools only outside
+// production, so every emitted copy of that module built its OWN pg pools, and the graph that won
+// registration (instrumentation) read pools that served nothing but the ingestion-backlog query.
 //
 // Measured on a preview running exactly that change: `node_postgres_read_total_count` read 1 while
 // idle and still 1 under 30 concurrent `/api/v1/images` requests, with every write-pool gauge at 0
@@ -357,9 +485,9 @@ registerInstrumentationMetric(
 // absence they have today. It is the same false-all-clear class as an `or vector(0)` on a panel
 // whose metric does not exist: an absent metric prompts a question, a confident 0 ends one.
 //
-// Making them real means pinning the pools in `pgDb.ts` for prod too. That changes production DB
-// connection topology (today: one pool set per emitted graph), so it is its own change with its
-// own blast radius, not a rider on a metrics fix.
+// pgDb.ts now pins the pools process-wide in every environment, which is the precondition the
+// move was missing. The move itself is still a separate change: re-measure the frozen-gauge case
+// above on a preview before shipping it.
 if (!global.pgGaugeInitialized) {
   new client.Gauge({
     name: 'node_postgres_read_total_count',
@@ -452,6 +580,27 @@ if (!global.pgGaugeInitialized) {
  * last attempt — reporting for a while and then going permanently silent with
  * the money still parked.
  */
+export const serviceDealExhaustedLegsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'service_deal_exhausted_legs',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'service_deal_exhausted_legs',
+      help: 'Creator Services payout legs that have exhausted their retries and still hold Buzz in escrow',
+      registers: [instrumentationRegistry],
+    })
+);
+
+/** Deals whose hold outcome is still unknown past the reconcile delay: "confirming payment". */
+export const serviceDealUnconfirmedHoldsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'service_deal_unconfirmed_holds',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'service_deal_unconfirmed_holds',
+      help: 'Creator Services deals still confirming payment past the reconcile delay',
+      registers: [instrumentationRegistry],
+    })
+);
+
 export const placementExhaustedLegsGauge = registerInstrumentationMetric(
   PROM_PREFIX + 'placement_exhausted_legs',
   () =>

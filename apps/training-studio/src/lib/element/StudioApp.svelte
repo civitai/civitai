@@ -11,7 +11,8 @@
   let {
     location,
     reloadTick = 0,
-  }: { location: StudioLocation; reloadTick?: number } = $props();
+    enabledModelFlags = [],
+  }: { location: StudioLocation; reloadTick?: number; enabledModelFlags?: string[] } = $props();
 
   // The shell seeds the balance from its server load; the element must pull it through the host's
   // getBuzzBalances (null when the host has none) — without this, the Review step's Yellow/Green
@@ -36,9 +37,9 @@
     {#await pricesPromise}
       <div class="grid place-items-center py-20 font-mono text-sm text-dark-2">Loading pricing…</div>
     {:then prices}
-      <TrainingFlow {prices} onExit={() => navigate({ view: 'home' })} />
+      <TrainingFlow {prices} {enabledModelFlags} onExit={() => navigate({ view: 'home' })} />
     {:catch}
-      <TrainingFlow prices={{}} onExit={() => navigate({ view: 'home' })} />
+      <TrainingFlow prices={{}} {enabledModelFlags} onExit={() => navigate({ view: 'home' })} />
     {/await}
   {/if}
 {:else if rowsPromise}

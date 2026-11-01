@@ -96,15 +96,9 @@ export function currentMonthRange(today = new Date()): DateRange {
   return monthRange(today.getUTCFullYear(), today.getUTCMonth());
 }
 
-/** The most recent month that has fully elapsed. */
-export function lastCompletedMonthRange(today = new Date()): DateRange {
-  return monthRange(today.getUTCFullYear(), today.getUTCMonth() - 1);
-}
-
 /** Parse ?from&to into a **calendar-month** range — snapping to the month that contains `from`, so even a stale
- *  rolling-window URL resolves to a clean month. Falls back to the last COMPLETED month when absent/invalid:
- *  defaulting to the current one puts a part-month against a whole one, which on the 1st is one day against
- *  thirty-one and reads as a collapse in earnings. The month picker still reaches the current month. */
+ *  rolling-window URL resolves to a clean month. Falls back to the current month when absent/invalid; its comparison
+ *  is clipped to the same elapsed days by `clipCompareToElapsed`. */
 export function parseMonthRange(
   fromParam: string | null,
   _toParam: string | null,
@@ -114,7 +108,18 @@ export function parseMonthRange(
     const d = new Date(`${fromParam}T00:00:00Z`);
     if (!Number.isNaN(d.getTime())) return monthRange(d.getUTCFullYear(), d.getUTCMonth());
   }
-  return lastCompletedMonthRange(today);
+  return currentMonthRange(today);
+}
+
+const MONTH_PARAM_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** Validate a `?month=YYYY-MM` deep-link param into that full calendar month. Null when absent, malformed, or a
+ *  month that hasn't started yet (a future month is always empty) — callers then fall back to the saved period. */
+export function parseMonthParam(param: string | null, today = new Date()): DateRange | null {
+  if (!param || !MONTH_PARAM_RE.test(param)) return null;
+  const todayKey = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}`;
+  if (param > todayKey) return null;
+  return monthKeyToRange(param);
 }
 
 /** 'YYYY-MM' key of a month range. */
@@ -145,6 +150,19 @@ export function resolveCompareMonth(cmp: string | null, range: DateRange): Compa
   if (!key || key >= primaryKey) key = shiftMonthKey(primaryKey, -1);
   const [y, m] = key.split('-').map(Number);
   return { key, label: cmpMonthFmt.format(Date.UTC(y, m - 1, 1)), range: monthKeyToRange(key) };
+}
+
+/** When `range` is the month containing `today`, end the comparison at the same day-of-month (capped at its own
+ *  month length), so a part month is measured against the same days of the earlier one rather than all of it. Any
+ *  other range is a finished month and compares whole. */
+export function clipCompareToElapsed(
+  range: DateRange,
+  compare: CompareBaseline,
+  today = new Date()
+): CompareBaseline {
+  if (monthKey(range) !== monthKey(currentMonthRange(today))) return compare;
+  const to = shiftIso(compare.range.from, today.getUTCDate() - 1);
+  return to < compare.range.to ? { ...compare, range: { from: compare.range.from, to } } : compare;
 }
 
 /** Percent change of `current` vs `previous`; null when there's no usable baseline — "% of zero" is undefined, and a
@@ -201,9 +219,8 @@ const df = new Intl.DateTimeFormat('en-US', {
   year: 'numeric',
   timeZone: 'UTC',
 });
-/** Human label for a range, e.g. "Jul 1 – Jul 31, 2026". */
-export function formatRange(r: DateRange): string {
-  return `${df.format(Date.parse(`${r.from}T00:00:00Z`))} – ${df.format(
-    Date.parse(`${r.to}T00:00:00Z`)
-  )}`;
+/** Human label for a range, e.g. "Jul 1 – Jul 31, 2026". A range running past `today` reads through today. */
+export function formatRange(r: DateRange, today = new Date()): string {
+  const to = r.to < iso(today) ? r.to : iso(today);
+  return `${df.format(Date.parse(`${r.from}T00:00:00Z`))} – ${df.format(Date.parse(`${to}T00:00:00Z`))}`;
 }

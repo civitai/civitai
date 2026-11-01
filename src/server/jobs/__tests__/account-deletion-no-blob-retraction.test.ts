@@ -8,9 +8,8 @@ import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 /**
  * 🔴 REACHABILITY GUARD, not a unit test of a filter.
  *
- * `remove-blocked-images` is the one job allowed to ask the image-cache service to destroy the
- * SHARED, content-addressed stored object behind an image — which removes the full-resolution
- * original for every byte-identical image of every other owner. It first asked for that on the
+ * `remove-blocked-images` asks the image-cache service to retract an image's public copies on a
+ * moderator takedown. It first asked for that on the
  * reasoning that "Blocked, still Blocked, not AiNotVerified, and past the retention window" made
  * every image it deletes a moderation takedown.
  *
@@ -97,6 +96,13 @@ vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(async () => undefined),
 }));
 
+// Hand-listed, as above: the takedown sync loads clients this file does not boot.
+vi.mock('~/server/services/cdn-access.service', () => ({
+  persistDeletedTakedowns: vi.fn(async () => ({ sent: 0, queued: 0, skipped: 0 })),
+  reserveTakedownRetractions: vi.fn(async () => null),
+  settleTakedownReservations: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/services/post.service', () => ({
   bustCachesForPosts: vi.fn(async () => undefined),
 }));
@@ -152,10 +158,28 @@ function candidates(within: (deletedAt: Date) => boolean, direction: 'asc' | 'de
 }
 
 async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
-  const sql = strings.join('?');
+  // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
+  const sql = Array.isArray(strings)
+    ? strings.join('?')
+    : (strings as unknown as { sql: string }).sql;
 
-  // remove-blocked-images: open CSAM reports. None in this fixture.
-  if (sql.includes('FROM "CsamReport"') && sql.includes('GROUP BY')) return [];
+  // remove-blocked-images: users under a legal hold. None in this fixture.
+  if (sql.includes('FROM "CsamReport"')) return [];
+
+  // remove-blocked-images: its two queue reads, each passed as one `Prisma.sql` value.
+  if (sql.includes('FROM "JobQueue" j')) {
+    const bound = Array.isArray(strings)
+      ? values
+      : (strings as unknown as { values: unknown[] }).values;
+    const ids = (bound.find(Array.isArray) as number[] | undefined) ?? [];
+    if (sql.includes('AND EXISTS (SELECT 1 FROM unnest(')) {
+      const cutoff = bound.find((v) => v instanceof Date) as Date;
+      return store.queue.filter((q) => ids.includes(q.entityId) && q.createdAt <= cutoff);
+    }
+    return store.queue
+      .filter((q) => !ids.includes(q.entityId))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
 
   // remove-deleted-user-images: the two account-state re-reads. They differ by whether the
   // predicate also inspects the stored removal choice.
@@ -207,6 +231,10 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return touched;
   }
 
+  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): both exist, as
+  // on prod. The marker holds nobody (below).
+  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
+
   // remove-deleted-user-images: does the account still own anything the grace pass has not hidden?
   if (sql.includes('AS "hasPending"')) {
     const userId = values[0] as number;
@@ -250,10 +278,20 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return [...out].map(([entityId, lastActedAt]) => ({ entityId, lastActedAt }));
   }
 
-  // remove-blocked-images: images held back because an appeal is pending on them.
-  if (sql.includes(`"needsReview" = 'appeal'`)) {
+  // remove-blocked-images: images held back by a pending review flag the query names.
+  const reviewFlags = sql.match(/"needsReview" IN \(([^)]*)\)/);
+  if (reviewFlags) {
+    const named = [...reviewFlags[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
     return store.images
-      .filter((i) => i.needsReview === 'appeal' && i.ingestion === 'Blocked')
+      .filter((i) => i.needsReview && named.includes(i.needsReview) && i.ingestion === 'Blocked')
+      .map((i) => ({ id: i.id, needsReview: i.needsReview }));
+  }
+
+  // remove-blocked-images: the blocked images of users under a legal hold.
+  if (sql.includes('FROM "Image"') && sql.includes('"userId" = ANY')) {
+    const owners = (values.find(Array.isArray) as number[] | undefined) ?? [];
+    return store.images
+      .filter((i) => owners.includes(i.userId) && i.ingestion === 'Blocked')
       .map((i) => ({ id: i.id }));
   }
 
@@ -264,6 +302,11 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       .filter((i) => ids.includes(i.id) && i.ingestion === 'Blocked')
       .map((i) => ({ id: i.id, userId: i.userId, blockedFor: i.blockedFor }));
   }
+
+  // remove-blocked-images: owners under a hold marker or any other account hold. This fixture
+  // holds no one.
+  if (sql.includes('FROM "EvidenceHeldUser"')) return [];
+  if (sql.includes('SELECT c."userId" FROM')) return [];
 
   throw new Error(`unrouted query in fixture: ${sql.replace(/\s+/g, ' ').trim().slice(0, 160)}`);
 }
@@ -358,13 +401,6 @@ beforeEach(() => {
   dbMock.dbRead.$queryRaw.mockImplementation(runQuery);
   dbMock.dbWrite.$queryRaw.mockImplementation(runQuery);
   dbMock.dbWrite.$executeRaw.mockImplementation(runExec);
-  dbMock.dbRead.jobQueue.findMany.mockImplementation(
-    async ({ where }: { where?: { entityId?: { notIn?: number[] } } }) => {
-      // Stand in for the DB actually applying the held-media exclusion.
-      const excluded = where?.entityId?.notIn ?? [];
-      return store.queue.filter((q) => !excluded.includes(q.entityId));
-    }
-  );
 });
 
 describe('self-service account deletion never reaches blob retraction', () => {
@@ -399,13 +435,12 @@ describe('self-service account deletion never reaches blob retraction', () => {
     expect(retractionFor(GRACE_IMAGE)).not.toBeUndefined();
     expect(retractionFor(MODERATED_IMAGE)).not.toBeUndefined();
 
-    // 🔴 THE REGRESSION. Nothing about this image was moderated, so destroying the shared stored
-    // object — and with it the original of every byte-identical image of every other owner — is
-    // not something this flow may ask for.
+    // 🔴 THE REGRESSION. Nothing about this image was moderated, so retracting its public copies
+    // is not something this flow may ask for.
     expect(
       retractionFor(GRACE_IMAGE),
       'an account-deletion grace block reached the retracting call: a user deleting their own ' +
-        'account must not destroy other owners’ stored bytes'
+        'account is not a takedown'
     ).toBe(false);
 
     // Both directions. Turning retraction off wholesale would satisfy the assertion above while

@@ -54,7 +54,7 @@ const installThreadLookup = () =>
   db.thread.findUnique.mockImplementation((async ({ where }: { where: { id?: number } }) =>
     where.id != null ? { imageId: 1 } : null) as never);
 const isOwnerWalk = (strings: TemplateStringsArray) =>
-  strings.join('?').includes('muteable_threads');
+  strings.join('?').includes('thread_ancestors');
 dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
   isOwnerWalk(strings) ? [{ id: 1, rooted: true }] : []) as never);
 dbMock.dbWrite.$transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) =>
@@ -133,7 +133,11 @@ describe('upsertComment — block enforcement on create', () => {
 
   it('allows a non-blocked author to create', async () => {
     await expect(upsertComment({ ...baseCreate })).resolves.toMatchObject({ id: 999 });
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 100 });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: 7,
+      targetUserId: 100,
+      confirmOnPrimary: true,
+    });
     expect(db.tx.commentV2.create).toHaveBeenCalledTimes(1);
   });
 
@@ -158,6 +162,20 @@ describe('upsertComment — block enforcement on create', () => {
       upsertComment({ ...baseCreate, id: 5 } as Parameters<typeof upsertComment>[0])
     ).resolves.toMatchObject({ id: 5 });
     // The edit runs inside the transaction now, alongside the sticker charge.
+    expect(db.tx.commentV2.update).toHaveBeenCalledTimes(1);
+  });
+
+  // `includeHidden` widens only the edit's target (the challenge judge's own hidden comment): its
+  // LLM-written text is checked like any author's.
+  it('keeps the content and block checks on an includeHidden edit', async () => {
+    const hiddenEdit = { ...baseCreate, id: 5, includeHidden: true } as Parameters<
+      typeof upsertComment
+    >[0];
+    await upsertComment(hiddenEdit);
+    expect(throwOnBlockedCommentContent).toHaveBeenCalledWith('hello', { isModerator: undefined });
+
+    amIBlockedByUser.mockResolvedValue(true);
+    await expect(upsertComment(hiddenEdit)).rejects.toThrow();
     expect(db.tx.commentV2.update).toHaveBeenCalledTimes(1);
   });
 
@@ -192,8 +210,16 @@ describe('upsertComment — block enforcement on a reply create', () => {
   it('checks the parent author and the content owner the stored chain resolves', async () => {
     db.commentV2.findUnique.mockResolvedValueOnce({ userId: 55, threadId: 1 });
     await upsertComment(reply);
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 55 });
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 100 });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: 7,
+      targetUserId: 55,
+      confirmOnPrimary: true,
+    });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: 7,
+      targetUserId: 100,
+      confirmOnPrimary: true,
+    });
   });
 
   // The thread-lock walk refuses an unresolved chain too, with the same message; this pins that the

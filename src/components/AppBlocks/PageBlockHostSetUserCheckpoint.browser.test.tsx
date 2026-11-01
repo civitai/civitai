@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * PageBlockHost SET_USER_CHECKPOINT — fail-fast NACK parity (gotcha-#73).
@@ -52,7 +53,10 @@ vi.mock('~/utils/trpc', () => ({
       unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     // PageBlockHost wires the workflow + storage bridges at render; stub so it
     // mounts network-free. SET_USER_CHECKPOINT makes NO tRPC call on a page (it
     // NACKs in-host), so none of these are exercised here.
@@ -203,6 +207,7 @@ describe('PageBlockHost SET_USER_CHECKPOINT (fail-fast NACK — no silent hang)'
       // empty/undefined error would surface a useless message to the user.
       expect(typeof payload.error).toBe('string');
       expect((payload.error ?? '').length).toBeGreaterThan(0);
+      expectReplyKeys('SET_USER_CHECKPOINT', 'error', ['error', 'ok'], payload);
     });
     replies.stop();
   });

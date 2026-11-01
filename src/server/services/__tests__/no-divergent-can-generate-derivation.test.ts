@@ -141,7 +141,7 @@ describe('canGenerate is derived in one place', () => {
 /**
  * The second half of the same rule: an ecosystem that pins its checkpoint gets no staged expansion.
  *
- * `createCheckpointGraph` rewrites a checkpoint id outside the workflow's own list back to the
+ * `checkpointDef` rewrites a checkpoint id outside the workflow's own list back to the
  * default, on the SERVER parse as well as in the form, so a community checkpoint on one of those
  * ecosystems reaches no handler however it was selected — and the staged rule was offering it as a
  * paid load anyway. Held to the live rule instead, which admits a checkpoint only through
@@ -194,5 +194,21 @@ describe('a model-locked ecosystem gets no staged expansion', () => {
     expect(isGenerationEligible({ ...qwenCheckpoint, covered: true, coveredLive: undefined })).toBe(
       false
     );
+  });
+});
+
+// The orchestrator refuses a creator's MOSS checkpoint while `mini/[id]` answers canGenerate:false,
+// so re-locking the MOSS ecosystem turns this red.
+describe('MOSS Image community checkpoints', () => {
+  it('admits one under the staged rule', () => {
+    expect(
+      isGenerationEligible({
+        covered: true,
+        coveredLive: false,
+        baseModel: 'MOSS Image',
+        modelType: ModelType.Checkpoint,
+        flags: 0,
+      })
+    ).toBe(true);
   });
 });

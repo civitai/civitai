@@ -7,8 +7,9 @@ import {
   Stack,
   Badge,
   createPolymorphicComponent,
-  UnstyledButton
+  UnstyledButton,
 } from '@mantine/core';
+import { useRouter } from 'next/router';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps, Icon } from '@tabler/icons-react';
 import {
@@ -85,7 +86,7 @@ const holidayButton: SupportButtonOption = {
   href: '/pricing?utm_campaign=holiday_promo',
 };
 
-export const SupportButton = () => {
+export function useSupportOption() {
   const { seed } = useAppContext();
   const features = useFeatureFlags();
   const selectedOption = new Random(seed).fromArray(options);
@@ -93,6 +94,13 @@ export const SupportButton = () => {
   // funnel users to the buzz purchase flow where NoCryptoUpsell pitches the
   // membership in context.
   const href = features.isGreen ? selectedOption.href : '/purchase/buzz';
+
+  return { ...selectedOption, href };
+}
+
+export const SupportButton = () => {
+  const selectedOption = useSupportOption();
+  const { href } = selectedOption;
 
   return (
     <HoverCard withArrow openDelay={400} closeDelay={100}>
@@ -127,6 +135,25 @@ export const SupportButton = () => {
   );
 };
 
+function getVariantStyles(variant: Variant) {
+  switch (variant) {
+    case 'primary':
+      return classes.supportButtonPrimary;
+    case 'gift':
+      return classes.supportButtonGift;
+    case 'heart':
+      return classes.supportButtonHeart;
+    case 'sparkle':
+      return classes.supportButtonSparkle;
+    case 'royal':
+      return classes.supportButtonRoyal;
+    case 'premium':
+      return classes.supportButtonPremium;
+    default:
+      return classes.supportButtonPrimary;
+  }
+}
+
 interface SupportButtonBaseProps
   extends UnstyledButtonProps,
     Omit<React.ComponentPropsWithoutRef<'button'>, keyof UnstyledButtonProps> {
@@ -137,25 +164,6 @@ interface SupportButtonBaseProps
 
 const SupportButtonBase = forwardRef<HTMLButtonElement, SupportButtonBaseProps>(
   ({ position, icon: Icon, children, className, classVariant = 'primary', ...props }, ref) => {
-    const getVariantStyles = (variant: SupportButtonOption['variant']) => {
-      switch (variant) {
-        case 'primary':
-          return classes.supportButtonPrimary;
-        case 'gift':
-          return classes.supportButtonGift;
-        case 'heart':
-          return classes.supportButtonHeart;
-        case 'sparkle':
-          return classes.supportButtonSparkle;
-        case 'royal':
-          return classes.supportButtonRoyal;
-        case 'premium':
-          return classes.supportButtonPremium;
-        default:
-          return classes.supportButtonPrimary;
-      }
-    };
-
     return (
       <HoverCard withArrow openDelay={400} closeDelay={100} position={position} withinPortal>
         <HoverCard.Target>
@@ -198,3 +206,34 @@ export const SupportButtonPolymorphic = createPolymorphicComponent<
   'button',
   SupportButtonBaseProps
 >(SupportButtonBase);
+
+/**
+ * The membership offer as a pill small enough to sit under a name. A span with a link role, not an
+ * anchor: the user menu renders it inside the profile link.
+ */
+export function SupportChip({ onClick }: { onClick?: () => void }) {
+  const { href, icon: Icon, variant } = useSupportOption();
+  const router = useRouter();
+  const open = (event: React.SyntheticEvent, newTab = false) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onClick?.();
+    if (newTab) window.open(href, '_blank', 'noopener');
+    else void router.push(href);
+  };
+  return (
+    <span
+      role="link"
+      tabIndex={0}
+      onClick={(event) => open(event, event.metaKey || event.ctrlKey)}
+      onAuxClick={(event) => event.button === 1 && open(event, true)}
+      onKeyDown={(event) => event.key === 'Enter' && open(event, event.metaKey || event.ctrlKey)}
+      className={clsx(classes.supportButton, classes.supportChip, getVariantStyles(variant))}
+    >
+      <Text component="span" size="xs" fw={700} className={classes.supportButtonText}>
+        Become a member
+      </Text>
+      <Icon size={14} className={classes.supportButtonIcon} />
+    </span>
+  );
+}

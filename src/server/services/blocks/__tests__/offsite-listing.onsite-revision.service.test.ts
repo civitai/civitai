@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { stripComments, stripCommentsAndStrings } from '../../../../../test/strip-comments';
@@ -48,6 +49,8 @@ import { APP_LISTING_CATALOG_TAG } from '~/server/services/blocks/app-listing-ca
 
 const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   const makeClient = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -86,6 +89,16 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
 const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefined) }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 /**
  * 🔴 PARTIAL mock — spread the REAL module and override ONE export.
  *
@@ -238,6 +251,12 @@ describe('approveExternalRequest — ONSITE media revision is ASSETS-ONLY (cap-a
     expect(copy.data).not.toHaveProperty('description');
     expect(copy.data).not.toHaveProperty('category');
     expect(copy.data).not.toHaveProperty('contentRating');
+  });
+
+  it('an on-site media revision hands the history nothing — it writes no rating', async () => {
+    stageRevisionApprove('onsite');
+    await approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD });
+    expect(recordRatingChange).not.toHaveBeenCalled();
   });
 
   it('does NOT derive/raise contentRating from the shadow assets (resolveApprovalContentRating skipped → no nsfwLevel read)', async () => {
@@ -583,8 +602,9 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
     );
     expect(selects).toHaveLength(3);
     for (const select of selects) {
-      expect(select.icon).toEqual({ select: { url: true } });
-      expect(select.cover).toEqual({ select: { url: true } });
+      // `id` + `nsfwLevel` for the review's click-to-reveal (`reviewMedia`) — moderator-only.
+      expect(select.icon).toEqual({ select: { id: true, url: true, nsfwLevel: true } });
+      expect(select.cover).toEqual({ select: { id: true, url: true, nsfwLevel: true } });
       expect(select.metric).toEqual({ select: { openCount: true } });
       // The LISTING's kind — what `cardOpenCount` discriminates on.
       expect(select.kind).toBe(true);

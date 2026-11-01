@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -51,6 +52,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: kind === 'onsite' ? 0 : null,
+    restrictedAudience: null,
     kindData:
       kind === 'onsite'
         ? {
@@ -97,25 +99,34 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    appListings: {
-      listAvailable: {
-        useInfiniteQuery: (input: Record<string, unknown>) => {
-          mocks.lastArgs = input;
-          return {
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-            isLoading: false,
-            isFetchingNextPage: false,
-            fetchNextPage: vi.fn(),
-            hasNextPage: false,
-          };
-        },
+  trpc: makeTrpcProxy({
+    'appListings.listAvailable': {
+      useInfiniteQuery: (input: Record<string, unknown>) => {
+        mocks.lastArgs = input;
+        return {
+          data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+          isLoading: false,
+          isFetchingNextPage: false,
+          fetchNextPage: vi.fn(),
+          hasNextPage: false,
+        };
       },
     },
-  },
+  }),
 }));
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+
+/** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
+function StoreWithControls() {
+  return (
+    <>
+      <AppsStoreFeedFilters />
+      <AppListingsMarketplaceBody />
+    </>
+  );
+}
 
 // NOTE the disable is the LAST comment line before the statement — an
 // `eslint-disable-next-line` followed by MORE comment lines disables the next
@@ -164,6 +175,9 @@ let replaceCalls = 0;
  */
 function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
   const [, force] = useReducer((x: number) => x + 1, 0);
+  // The store is mounted only once `replace` is patched: the sub-nav controls read it on their
+  // first render, which (unlike the store body) does not wait on a data load.
+  const [patched, setPatched] = useState(false);
   useEffect(() => {
     forceRerender = force;
     const original = router.replace;
@@ -180,13 +194,14 @@ function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
         }, latencyMs);
       });
     }) as typeof router.replace;
+    setPatched(true);
     return () => {
       router.replace = original;
       forceRerender = null;
     };
   }, [latencyMs]);
 
-  return <AppListingsMarketplaceBody />;
+  return patched ? <StoreWithControls /> : null;
 }
 
 /** Simulate a browser Back / an external navigation to `next`. */
@@ -271,6 +286,65 @@ describe('(a) the search box tracks an EXTERNAL query change', () => {
   });
 });
 
+/**
+ * (d) WHITESPACE IS NOT A DISAGREEMENT. The echo into the URL compares TRIMMED values ('Alpha '
+ * and 'Alpha' are the same search), so it skips a write when only whitespace changed. The adopt
+ * effect compared RAW values, so it read that skipped write as `router.query` having moved and
+ * reset the box to the URL: a space typed after a pause vanished, and a space deleted came back.
+ * Every one of these waits out the 300ms debounce, because that is when it happened.
+ */
+describe('(d) a space in the search box survives the URL round-trip', () => {
+  const PAST_DEBOUNCE_MS = 700;
+
+  test('🔴 a trailing space typed after a pause stays in the box', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    await search.fill('Alpha ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha ');
+  });
+
+  test('🔴 a trailing space deleted after a pause stays deleted', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha ');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha ' }));
+
+    await search.fill('Alpha');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha');
+  });
+
+  test('a leading space typed into an empty box stays', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill(' ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe(' ');
+  });
+
+  test('a Back to a genuinely different term is still adopted', async () => {
+    // The control that keeps the fix honest: ignoring whitespace must not make the box deaf to
+    // an external change.
+    router.query = { query: 'Alpha' };
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toHaveValue('Alpha');
+
+    navigateTo({ query: 'Bravo' });
+    await vi.waitFor(() => expect((search.element() as HTMLInputElement).value).toBe('Bravo'));
+  });
+});
+
 describe('(b) two fast filter clicks must not drop one', () => {
   test('🔴 kind then category, both inside the in-flight window, both survive', async () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
@@ -297,11 +371,32 @@ describe('(b) two fast filter clicks must not drop one', () => {
     await openFilters();
     await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     // Close the panel and change sort immediately.
-    await userEvent.click(page.getByLabelText('Sort').first());
-    await userEvent.click(page.getByRole('option', { name: 'Newest' }));
+    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     await vi.waitFor(() => {
       expect(currentQuery()).toMatchObject({ kind: 'offsite', sort: 'newest' });
     });
+  });
+
+  test('a sort click while the search write is in flight keeps the search term', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
+    await userEvent.fill(page.getByLabelText('Search'), 'matrix');
+    // The 300ms debounce has fired and the search write is on its way (the router applies it
+    // ROUTER_LATENCY_MS later), but the URL does not carry the term yet.
+    await vi.waitFor(() => expect(replaceCalls).toBeGreaterThanOrEqual(1));
+    expect(currentQuery()).not.toHaveProperty('query');
+
+    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
+
+    await vi.waitFor(
+      () => expect(currentQuery()).toMatchObject({ query: 'matrix', sort: 'newest' }),
+      { timeout: 4000 }
+    );
+    // …and the box was not rewritten from the URL while the dust settled.
+    await new Promise((resolve) => setTimeout(resolve, ROUTER_LATENCY_MS * 2));
+    await expect.element(page.getByLabelText('Search')).toHaveValue('matrix');
+    expect(currentQuery()).toMatchObject({ query: 'matrix', sort: 'newest' });
   });
 
   test('clearing a filter still CLEARS it (the merge must not resurrect defaults)', async () => {

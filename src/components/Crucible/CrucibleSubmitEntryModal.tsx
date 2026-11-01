@@ -27,7 +27,7 @@ import {
   IconVideo,
   IconX,
 } from '@tabler/icons-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
@@ -40,8 +40,14 @@ import {
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
-import { clipLengthAllowed } from '~/shared/constants/crucible.constants';
+import {
+  clipLengthAllowed,
+  CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+} from '~/shared/constants/crucible.constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import { formatDuration, numberWithCommas } from '~/utils/number-helpers';
 import { Currency, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
@@ -54,12 +60,15 @@ import {
   getCrucibleEntriesCost,
   getCrucibleRatingLabel,
   getFreeEntriesLabel,
+  areCrucibleEntriesClosed,
+  getCrucibleEntriesCloseAt,
   isCrucibleFinalStretch,
 } from '~/utils/crucible-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import clsx from 'clsx';
+import { formatDate } from '~/utils/date-helpers';
 
 /**
  * Props for the CrucibleSubmitEntryModal
@@ -75,12 +84,20 @@ export interface CrucibleSubmitEntryModalProps {
   nsfwLevel: number;
   contentType: MediaType;
   currentEntryCount: number;
+  /** Every entry made so far, withdrawn ones included, for the free-entry math. */
+  entriesSoFar?: number;
   /** Longest clip this crucible accepts, in seconds. Null or absent means no limit. */
   maxClipSeconds?: number | null;
   /** Whether entries must be made with one of the crucible's required models. */
   requiresResources?: boolean;
+  /** Entries must be made with a checkpoint of one of these base models. */
+  allowedBaseModels?: string[];
   startAt?: Date | null;
   endAt?: Date | null;
+  /** Share of the run, counted back from the end, in which entrants are warned. */
+  entryWarningPercent?: number;
+  /** Share of the run, counted back from the end, in which entries are closed. */
+  entryCutoffPercent?: number;
   /** Optional array of allowed resource names to display in requirements */
   allowedResourceNames?: string[];
   onSuccess?: () => void;
@@ -332,15 +349,20 @@ export default function CrucibleSubmitEntryModal({
   nsfwLevel,
   contentType,
   currentEntryCount,
+  entriesSoFar = currentEntryCount,
   maxClipSeconds,
   requiresResources = false,
+  allowedBaseModels = [],
   allowedResourceNames,
   startAt = null,
   endAt = null,
+  entryWarningPercent = CRUCIBLE_ENTRY_WARNING_PERCENT.default,
+  entryCutoffPercent = 0,
   onSuccess,
 }: CrucibleSubmitEntryModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
   const queryUtils = trpc.useUtils();
   const isVideo = contentType === MediaType.video;
   const noun = isVideo ? 'video' : 'image';
@@ -350,10 +372,17 @@ export default function CrucibleSubmitEntryModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadedCount, setUploadedCount] = useState(0);
   const [activeTab, setActiveTab] = useState<string | null>('library');
-  const [entryPostId, setEntryPostId] = useState<number | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   // Media added from this modal is selected for the user once its scan settles.
   const [awaitingScan, setAwaitingScan] = useState<number[]>([]);
+  // A generator submit enters its media as soon as every scan has settled.
+  const [autoSubmit, setAutoSubmit] = useState<{
+    expected: number;
+    valid: number[];
+    failed: number;
+  } | null>(null);
+  const countAutoSubmitFailure = () =>
+    setAutoSubmit((prev) => prev && { ...prev, failed: prev.failed + 1 });
 
   const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
   const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
@@ -365,6 +394,7 @@ export default function CrucibleSubmitEntryModal({
       queryUtils.image.getMyImages.invalidate();
     },
     onError: (error) => {
+      countAutoSubmitFailure();
       showErrorNotification({ title: `Failed to add ${noun}`, error: new Error(error.message) });
     },
   });
@@ -393,11 +423,13 @@ export default function CrucibleSubmitEntryModal({
           })
         );
       } else if (props.status === 'error') {
+        countAutoSubmitFailure();
         showErrorNotification({
           title: 'Upload failed',
           error: new Error(`Failed to upload ${noun}. Please try again.`),
         });
       } else if (props.status === 'blocked') {
+        countAutoSubmitFailure();
         showErrorNotification({
           title: `${isVideo ? 'Video' : 'Image'} blocked`,
           error: new Error(
@@ -410,27 +442,29 @@ export default function CrucibleSubmitEntryModal({
     },
   });
 
-  const ensureEntryPost = async () => {
-    if (entryPostId) return entryPostId;
-    const post = await createEntryPostMutation.mutateAsync({ crucibleId });
-    setEntryPostId(post.id);
-    return post.id;
-  };
-
+  /** Resolves to how many files started uploading. */
   const addToLibrary = async (
     fileData: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]
   ) => {
-    if (!fileData.length || currentUser?.muted) return;
+    if (!fileData.length || currentUser?.muted) return 0;
+    const postIds: number[] = [];
     try {
-      const postId = await ensureEntryPost();
-      uploadImages(fileData, { postId });
-      setActiveTab('library');
+      // A post per file, so entering one image schedules only that image.
+      for (const file of fileData) {
+        const post = await createEntryPostMutation.mutateAsync({ crucibleId });
+        postIds.push(post.id);
+        uploadImages([file], { postId: post.id });
+      }
     } catch (error) {
       showErrorNotification({
         title: `Unable to add ${nounPlural}`,
         error: error instanceof Error ? error : new Error('Unknown error'),
       });
     }
+    if (postIds.length) {
+      setActiveTab('library');
+    }
+    return postIds.length;
   };
 
   const handleDrop = (files: File[]) => {
@@ -438,13 +472,15 @@ export default function CrucibleSubmitEntryModal({
     addToLibrary(files.map((file) => ({ file })));
   };
 
-  const handleImportGenerator = async () => {
+  const handleGeneratorSubmit = async () => {
     setIsImporting(true);
     try {
-      const files = await downloadGeneratorImages(generatorSelected);
+      const files = await downloadGeneratorImages(generatorSelected.slice(0, remainingEntries));
       if (!files.length) throw new Error('Failed to download generator media. Please try again.');
       deselectAllGenerator();
-      await addToLibrary(files);
+      setAutoSubmit({ expected: files.length, valid: [], failed: 0 });
+      const started = await addToLibrary(files);
+      setAutoSubmit((prev) => (started && prev ? { ...prev, expected: started } : null));
     } catch (error) {
       showErrorNotification({
         title: 'Import failed',
@@ -474,9 +510,16 @@ export default function CrucibleSubmitEntryModal({
     fetchNextPage,
     isFetchingNextPage,
   } = trpc.image.getMyImages.useInfiniteQuery(
-    { mediaTypes: [contentType], limit: 40, publishedOnly: true },
+    {
+      mediaTypes: [contentType],
+      limit: 40,
+      publishedOnly: true,
+      // Media added here sits in an unpublished post until it is entered.
+      includeEntryDrafts: true,
+    },
     {
       enabled: !!currentUser,
+      placeholderData: (previous) => previous,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       refetchInterval: (query) =>
         query.state.data?.pages.some((page) =>
@@ -487,10 +530,15 @@ export default function CrucibleSubmitEntryModal({
     }
   );
 
-  const inFinalStretch = isCrucibleFinalStretch({ startAt, endAt });
+  const entryWindow = { startAt, endAt, entryCutoffPercent };
+  const entriesClosed = areCrucibleEntriesClosed(entryWindow);
+  const entriesCloseAt = entryCutoffPercent ? getCrucibleEntriesCloseAt(entryWindow) : null;
+  const inFinalStretch =
+    !entriesClosed && isCrucibleFinalStretch({ startAt, endAt, percent: entryWarningPercent });
   const { data: minVotesToPlace } = trpc.crucible.getMinVotesToPlace.useQuery(
     { id: crucibleId },
-    { enabled: !!currentUser && inFinalStretch }
+    // The estimate shrinks as the run's time left does, so a cached one goes stale.
+    { enabled: !!currentUser && inFinalStretch, staleTime: 60 * 1000 }
   );
   const minVotes = inFinalStretch ? minVotesToPlace?.minVotes ?? 0 : 0;
 
@@ -522,7 +570,11 @@ export default function CrucibleSubmitEntryModal({
 
   // Calculate how many more entries the user can submit
   const remainingEntries = entryLimit - currentEntryCount;
-  const canSubmitMore = remainingEntries > 0;
+  // The ban covers every image, so it gets one notice and not a badge on each. The server's answer
+  // is the truth; the session meta only shows it before any image has been checked.
+  const contestBanned =
+    isContestBanned || !!eligibility?.some(({ reasons }) => reasons.includes('contest-banned'));
+  const canSubmitMore = remainingEntries > 0 && !entriesClosed && !contestBanned;
 
   // Validate image and check if it's selectable
   // Returns detailed validation criteria for hover card display
@@ -555,9 +607,13 @@ export default function CrucibleSubmitEntryModal({
     const ineligibleReasons = ineligibleReasonsById.get(image.id);
     const eligibilityPending = ineligibleReasons === undefined;
     const isRecentEnough = !ineligibleReasons?.includes('created-before-start');
+    const levelAllowedByModels = !ineligibleReasons?.includes('required-model-level');
     const hasNoResources = !!ineligibleReasons?.includes('no-resources');
     const usesRequiredModel =
       !hasNoResources && !ineligibleReasons?.includes('missing-required-resource');
+    const usesAllowedBaseModel =
+      !hasNoResources && !ineligibleReasons?.includes('wrong-base-model');
+    const requiresBaseModel = allowedBaseModels.length > 0;
     const requiredModelLabel = allowedResourceNames?.length
       ? `Uses ${allowedResourceNames.join(' or ')}`
       : 'Uses a required model';
@@ -577,6 +633,20 @@ export default function CrucibleSubmitEntryModal({
             },
           ]
         : []),
+      ...(requiresBaseModel
+        ? [
+            {
+              label: `Made with a ${allowedBaseModels.join(' or ')} checkpoint`,
+              passes: usesAllowedBaseModel,
+              pending: eligibilityPending,
+              failReason: eligibilityPending
+                ? 'Checking the models used…'
+                : hasNoResources
+                ? 'No models detected on this image'
+                : 'Not made with an allowed base model',
+            },
+          ]
+        : []),
       {
         label: 'Created after the crucible started',
         passes: isRecentEnough,
@@ -593,9 +663,11 @@ export default function CrucibleSubmitEntryModal({
       },
       {
         label: 'Content level',
-        passes: isCompatibleNsfw,
+        passes: isCompatibleNsfw && levelAllowedByModels,
         passText: `${imageNsfwLabel} content`,
-        failReason: `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`,
+        failReason: !isCompatibleNsfw
+          ? `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`
+          : `${imageNsfwLabel} content (a required model allows only PG and PG-13)`,
       },
       ...(maxClipSeconds
         ? [
@@ -620,7 +692,8 @@ export default function CrucibleSubmitEntryModal({
         !eligibilityPending &&
         ineligibleReasons.length === 0 &&
         isRecentEnough &&
-        (!requiresResources || usesRequiredModel),
+        (!requiresResources || usesRequiredModel) &&
+        (!requiresBaseModel || usesAllowedBaseModel),
       isAlreadySubmitted,
       isChecking:
         eligibilityPending &&
@@ -640,10 +713,14 @@ export default function CrucibleSubmitEntryModal({
           `Too long (${formatDuration(Math.ceil(clipSeconds ?? 0))}, max ${formatDuration(
             maxClipSeconds as number
           )})`
+        : !levelAllowedByModels
+        ? 'A required model allows only PG and PG-13'
         : !isRecentEnough
         ? 'Created before this crucible started'
         : requiresResources && !usesRequiredModel
         ? 'Does not use a required model'
+        : requiresBaseModel && !usesAllowedBaseModel
+        ? 'Not made with an allowed base model'
         : undefined,
     };
   };
@@ -657,15 +734,21 @@ export default function CrucibleSubmitEntryModal({
   }).length;
 
   const totalCost = getCrucibleEntriesCost({
-    entriesSoFar: currentEntryCount,
+    entriesSoFar,
     count: validSelectedCount,
     freeEntriesPerUser,
     entryFee,
   });
   const freeEntriesLabel = getFreeEntriesLabel({ freeEntriesPerUser, entryLimit });
-  const submitLabel = `Submit ${validSelectedCount} ${
-    validSelectedCount === 1 ? 'Entry' : 'Entries'
-  }`;
+  const entriesLabel = (count: number) => `Submit ${count} ${count === 1 ? 'Entry' : 'Entries'}`;
+  const submitLabel = entriesLabel(validSelectedCount);
+  const generatorEntryCount = Math.max(0, Math.min(generatorSelected.length, remainingEntries));
+  const generatorCost = getCrucibleEntriesCost({
+    entriesSoFar,
+    count: generatorEntryCount,
+    freeEntriesPerUser,
+    entryFee,
+  });
 
   // Can't select more than remaining entries
   const canSelectMore = selectedImages.length < remainingEntries;
@@ -687,16 +770,35 @@ export default function CrucibleSubmitEntryModal({
     });
   };
 
+  // A scan that sends an upload to review or blocks it drops it from the list instead of settling
+  // it, so an upload seen and then gone counts as failed rather than holding the batch forever.
+  const seenAwaitingScan = useRef(new Set<number>());
   useEffect(() => {
     if (!awaitingScan.length) return;
+    const listedIds = new Set(images.map((image) => image.id));
+    for (const id of awaitingScan) if (listedIds.has(id)) seenAwaitingScan.current.add(id);
+    const vanished = awaitingScan.filter(
+      (id) => seenAwaitingScan.current.has(id) && !listedIds.has(id)
+    );
     const settled = images.filter(
       (image) =>
         awaitingScan.includes(image.id) &&
         !validateImage(image).isChecking &&
         ineligibleReasonsById.has(image.id)
     );
-    if (!settled.length) return;
-    setAwaitingScan((prev) => prev.filter((id) => !settled.some((image) => image.id === id)));
+    if (!settled.length && !vanished.length) return;
+    setAwaitingScan((prev) =>
+      prev.filter((id) => !vanished.includes(id) && !settled.some((image) => image.id === id))
+    );
+    const settledValid = settled.filter((image) => validateImage(image).isValid);
+    setAutoSubmit(
+      (prev) =>
+        prev && {
+          ...prev,
+          valid: [...prev.valid, ...settledValid.map((image) => image.id)],
+          failed: prev.failed + vanished.length + settled.length - settledValid.length,
+        }
+    );
     setSelectedImages((prev) => {
       const next = [...prev];
       for (const image of settled) {
@@ -709,9 +811,9 @@ export default function CrucibleSubmitEntryModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [images, awaitingScan, remainingEntries, ineligibleReasonsById]);
 
-  // Submit entries mutation
+  // A refused submit means the page's entry count disagrees with the server's, so resync on failure too.
   const submitEntryMutation = trpc.crucible.submitEntry.useMutation({
-    onSuccess: () => {
+    onSettled: () => {
       queryUtils.crucible.getById.invalidate({ id: crucibleId });
       queryUtils.crucible.getEntries.invalidate({ crucibleId });
     },
@@ -720,22 +822,11 @@ export default function CrucibleSubmitEntryModal({
   // Track last error for retry functionality
   const [lastError, setLastError] = useState<Error | null>(null);
 
-  // Handle submit
-  const handleSubmit = async () => {
-    if (validSelectedCount === 0) return;
-
+  const submitImages = async (validImageIds: number[]) => {
     setIsSubmitting(true);
     setLastError(null);
 
     try {
-      // Submit each selected image
-      const validImageIds = selectedImages.filter((id) => {
-        const img = images.find((i) => i.id === id);
-        if (!img) return false;
-        const { isValid } = validateImage(img);
-        return isValid;
-      });
-
       for (const imageId of validImageIds) {
         await submitEntryMutation.mutateAsync({
           crucibleId,
@@ -782,6 +873,30 @@ export default function CrucibleSubmitEntryModal({
       setIsSubmitting(false);
     }
   };
+
+  const handleSubmit = () => {
+    const validImageIds = selectedImages.filter((id) => {
+      const img = images.find((i) => i.id === id);
+      return !!img && validateImage(img).isValid;
+    });
+    if (validImageIds.length) return submitImages(validImageIds);
+  };
+
+  useEffect(() => {
+    if (!autoSubmit || isSubmitting) return;
+    if (autoSubmit.valid.length + autoSubmit.failed < autoSubmit.expected) return;
+    setAutoSubmit(null);
+    if (autoSubmit.failed)
+      showErrorNotification({
+        title: `${autoSubmit.failed} couldn't be entered`,
+        error: new Error(
+          `They weren't published. Hover them in My ${isVideo ? 'Videos' : 'Images'} to see why.`
+        ),
+      });
+    if (autoSubmit.valid.length) submitImages(autoSubmit.valid);
+    // submitImages is recreated each render; autoSubmit is what decides to call it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSubmit, isSubmitting]);
 
   // Retry handler for network errors
   const handleRetry = () => {
@@ -837,6 +952,11 @@ export default function CrucibleSubmitEntryModal({
               >
                 {isVideo ? 'Videos only' : 'Images only'}
               </Badge>
+              {allowedBaseModels.length > 0 && (
+                <Badge {...requirementBadgeProps} leftSection={<IconCube size={12} />}>
+                  {allowedBaseModels.join(' / ')}
+                </Badge>
+              )}
               <CrucibleContentLevelBadges nsfwLevel={nsfwLevel} className="contents" />
             </div>
           </div>
@@ -867,11 +987,24 @@ export default function CrucibleSubmitEntryModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 pb-5">
+          {contestBanned && (
+            <Alert color="red" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
+              {CONTEST_BANNED_MESSAGE}
+            </Alert>
+          )}
+          {entriesClosed && (
+            <Alert color="red" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
+              {CRUCIBLE_ENTRIES_CLOSED_MESSAGE}
+            </Alert>
+          )}
           {minVotes > 0 && (
             <Alert color="yellow" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
               This crucible is close to ending. An entry needs about {numberWithCommas(minVotes)}{' '}
               {minVotes === 1 ? 'vote' : 'votes'} to place and win a prize, and a new one may not
               get there in time.
+              {entriesCloseAt && (
+                <> Entries close {formatDate(entriesCloseAt, 'MMM D [at] h:mm A')}.</>
+              )}
             </Alert>
           )}
           <Tabs value={activeTab} onChange={setActiveTab} classNames={{ panel: 'pt-4' }}>
@@ -1055,15 +1188,28 @@ export default function CrucibleSubmitEntryModal({
               </Button>
 
               {activeTab === 'generator' ? (
-                <Button
-                  className="flex-1"
-                  onClick={handleImportGenerator}
-                  loading={isImporting}
-                  disabled={generatorSelected.length === 0}
-                  leftSection={<IconSparkles size={16} />}
-                >
-                  Add {generatorSelected.length} to library
-                </Button>
+                generatorCost > 0 ? (
+                  <BuzzTransactionButton
+                    className="flex-1"
+                    buzzAmount={generatorCost}
+                    onPerformTransaction={handleGeneratorSubmit}
+                    loading={isImporting || !!autoSubmit}
+                    disabled={generatorEntryCount === 0}
+                    label={entriesLabel(generatorEntryCount)}
+                    exactAccountTypes={buzzType ? [buzzType] : undefined}
+                    showPurchaseModal
+                  />
+                ) : (
+                  <Button
+                    className="flex-1"
+                    onClick={handleGeneratorSubmit}
+                    loading={isImporting || !!autoSubmit}
+                    disabled={generatorEntryCount === 0}
+                    leftSection={<IconSparkles size={16} />}
+                  >
+                    {entriesLabel(generatorEntryCount)}
+                  </Button>
+                )
               ) : totalCost > 0 ? (
                 <BuzzTransactionButton
                   className="flex-1"

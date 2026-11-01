@@ -207,11 +207,6 @@ declare global {
   };
 
   interface Window {
-    logSignal: (target: string, selector?: (args: unknown) => unknown) => void;
-    ping: () => void;
-    signalsDump: () => void;
-    signalsStatus: () => void;
-    signalsVerbose: () => void;
     Twitch: any;
     isAuthed?: boolean;
     authChecked?: boolean;

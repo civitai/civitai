@@ -4,7 +4,12 @@
 // checkNotUpToDate(lsn), dbKV) keep their signatures.
 export * from '@civitai/db/db-helpers';
 
-import { createPool } from '@civitai/db/db-helpers';
+import {
+  createPgPoolAcquireHistogram,
+  createPool,
+  PG_POOL_ACQUIRE_HISTOGRAM_NAME,
+} from '@civitai/db/db-helpers';
+import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai/telemetry/client';
 import { loadDbEnv, type DbConfig, type DbLogFn } from '@civitai/db';
 import {
   getCurrentLSN as _getCurrentLSN,
@@ -26,13 +31,20 @@ export type ClientInstanceType =
   | 'primaryRead'
   | 'primaryReadLong'
   | 'datapacketRead'
-  | 'apps';
+  | 'apps'
+  | 'appdata';
 
 export type GetClientOptions = Partial<DbConfig> & {
   instance?: ClientInstanceType;
   /** Debug logger (app-defined). Defaults to a no-op. */
   log?: DbLogFn;
 };
+
+// The pools are process-global (pgDb.ts), so whichever module graph builds them first owns their
+// closures; the acquire histogram must therefore live in the cross-graph registry /api/metrics reads.
+const pgPoolAcquireHistogram = registerInstrumentationMetric(PG_POOL_ACQUIRE_HISTOGRAM_NAME, () =>
+  createPgPoolAcquireHistogram([instrumentationRegistry])
+);
 
 export function getClient(options: GetClientOptions = {}) {
   const { instance = 'primary', log: logOption, ...envOverrides } = options;
@@ -47,11 +59,24 @@ export function getClient(options: GetClientOptions = {}) {
     // App Blocks KV datastore — empty-string sentinel when unset; appsDb never calls getClient
     // unless APPS_DATABASE_URL is configured (see src/server/db/appsDb.ts).
     apps: config.appsUrl ?? '',
+    // App Blocks document store (least-privilege role) — same sentinel; appdataDb
+    // never calls getClient unless APPDATA_DATABASE_URL is configured.
+    appdata: config.appdataUrl ?? '',
   };
 
-  const envUrl = instanceUrlMap[instance];
+  const envUrl =
+    instance === 'appdata'
+      ? withHostOverride(instanceUrlMap.appdata, config.appdataHost, config.appdataPort)
+      : instanceUrlMap[instance];
+  const isAppdata = instance === 'appdata';
   const appBaseName =
-    instance === 'datapacketRead' ? 'dp-read-pg' : instance === 'apps' ? 'apps-pg' : 'node-pg';
+    instance === 'datapacketRead'
+      ? 'dp-read-pg'
+      : instance === 'apps'
+      ? 'apps-pg'
+      : instance === 'appdata'
+      ? 'appdata-pg'
+      : 'node-pg';
 
   // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter — datapacketRead sets
   // it per-connection via SET instead (createPool wires it).
@@ -66,9 +91,15 @@ export function getClient(options: GetClientOptions = {}) {
     connectionTimeoutMillis: config.isDatapacket
       ? config.connectionTimeout || 5000
       : config.connectionTimeout,
-    max: config.poolMax,
-    // trying this for leaderboard job
-    idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : config.poolIdleTimeout,
+    // The document store has its own, smaller pool (APPDATA_POOL_MAX): it must not take a full
+    // DATABASE_POOL_MAX of connections per process on top of the main pools.
+    max: isAppdata ? config.appdataPoolMax : config.poolMax,
+    idleTimeoutMillis:
+      instance === 'primaryReadLong'
+        ? 300_000 // trying this for leaderboard job
+        : isAppdata
+        ? config.appdataPoolIdleTimeout ?? config.poolIdleTimeout
+        : config.poolIdleTimeout,
     statementTimeout:
       instance === 'datapacketRead' && config.isDatapacket
         ? undefined // DP: set per-connection (PgBouncer ignores startup params)
@@ -77,5 +108,33 @@ export function getClient(options: GetClientOptions = {}) {
         : config.writeTimeout,
     perConnectionStatementTimeout,
     log,
+    acquireHistogram: pgPoolAcquireHistogram,
   });
+}
+
+/**
+ * Replace the host and/or port of a connection string, keeping its user, password, database and
+ * query — so the document-store pool can be pointed at a connection pooler without editing the
+ * secret that holds its URL. Neither set → the string is returned untouched.
+ *
+ * Pooler compatibility of what this pool sends: node-postgres's startup packet carries `user`,
+ * `database`, `application_name` and — only when DATABASE_WRITE_TIMEOUT is set — `statement_timeout`.
+ * A pooler that rejects unknown startup parameters must be told to ignore `statement_timeout` (and
+ * then does not apply it). The document store keeps no session state: its settings are
+ * `set_config(…, true)` inside each transaction, its statements are unnamed, and it never LISTENs, so
+ * it is safe under transaction pooling.
+ */
+function withHostOverride(url: string, host: string | undefined, port: number | undefined): string {
+  if (!url || (host === undefined && port === undefined)) return url;
+  const parsed = new URL(url);
+  if (host !== undefined) {
+    parsed.hostname = host;
+    // The host setter silently truncates at '/', ':' or '@' instead of throwing; refuse rather than
+    // connect to a host nobody configured. The env schema rejects these first.
+    if (parsed.hostname.toLowerCase() !== host.toLowerCase()) {
+      throw new Error('APPDATA_DATABASE_HOST is not a bare hostname or IPv4 address');
+    }
+  }
+  if (port !== undefined) parsed.port = String(port);
+  return parsed.toString();
 }

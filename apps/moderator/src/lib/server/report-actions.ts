@@ -1,26 +1,37 @@
+import { sendAsCivitai } from './message-as-civitai';
+import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { fail, type Actions } from '@sveltejs/kit';
 import { z } from 'zod';
-import { canAccess } from './access';
+import { canAccess, denied } from './access';
 import { parseForm, parseIdList, userIdSchema, checkboxField } from './query';
 import { issueStrike, restoreImages, setImageFlag } from './user-actions.service';
 import { countBlockedImages, removeImagesWithFollowUps } from './bulk-image.service';
 import { sendModNotification } from './moderation-memory.service';
 import { setReportStatus } from './reports.service';
+import { saveNotesAction } from './report-queue-actions';
+import { HELD_FOLLOW_UPS_NOTE, heldRemovalMessage } from './removal-hold';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4 } from './users.service';
-import { ReportStatus } from '$lib/reports';
+import { REPORT_RULINGS } from '$lib/reports';
 import { imageFlagValueSchema, splitImageFlagValue } from '$lib/image-flags';
+import type { PermissionId } from '$lib/permissions';
 
 /**
  * The action half of a report queue: rule on the report, act on the content, act on the owner.
  *
  * A FACTORY taking the gate path, not a bare object: `apps/moderator/CLAUDE.md` requires an action to be
  * gated on its own page's path, and welding one in here would make that a property of the shared module
- * instead of a per-page decision.
+ * instead of a per-page decision. The path gates the REPORT — its ruling and notes. Acting on the
+ * content or the owner is an action grant (`image.moderate`, `user.strike`), the same one every other
+ * page making those writes checks.
  */
 
-type Scope = 'report' | 'strike' | 'notify' | 'images';
+type Scope = 'report' | 'strike' | 'notify' | 'message' | 'images';
 const scopedFail = (scope: Scope, message: string) => fail(400, { scope, error: message });
+
+// Scoped like every other refusal here, so it lands on the form that was submitted — `requiresGrant`'s
+// `denied` scope has no form to show on.
+const refuse = (scope: Scope, id: PermissionId) => fail(403, { scope, error: denied(id) });
 
 const idsSchema = z.object({
   imageIds: z
@@ -43,7 +54,7 @@ export function reportModerationActions(pagePath: string) {
           id: z.coerce.number().int().positive().max(MAX_INT4),
           // Claiming was removed at the team's request, so `Processing` is no longer reachable from a
           // queue. It is still a status they FILTER on — reports carrying it predate the removal.
-          status: z.enum([ReportStatus.Actioned, ReportStatus.Unactioned]),
+          status: z.enum(REPORT_RULINGS),
         }),
         await request.formData()
       );
@@ -59,11 +70,15 @@ export function reportModerationActions(pagePath: string) {
       return { success: true };
     },
 
+    // A report's internal notes, gated as the ruling is, on the page path. The one notes action, shared
+    // with the tables.
+    saveNotes: saveNotesAction(permitted),
+
     // Retool's InsertStrike + LogStrike + InsertStrikeNotif. Writes the MAIN APP's strike system: a row
     // in the moderator database's legacy `UserStrikes` gets no escalation, points, expiry, typed
     // notification or void path. See issueStrike.
     strike: async ({ request, locals }) => {
-      if (!permitted(locals)) return scopedFail('strike', 'Not permitted.');
+      if (!locals.grants['user.strike']) return refuse('strike', 'user.strike');
       const input = parseForm(
         userIdSchema.extend({ reason: z.string().trim().min(1).max(1000) }),
         await request.formData()
@@ -84,7 +99,7 @@ export function reportModerationActions(pagePath: string) {
     // Retool's strikeCheckbox path: acting on a report means removing the images it is about, from the
     // same screen. The endpoints are the ones Bulk Image Manager uses.
     remove: async ({ request, locals }) => {
-      if (!permitted(locals)) return scopedFail('images', 'Not permitted.');
+      if (!locals.grants['image.moderate']) return refuse('images', 'image.moderate');
       const input = parseForm(
         idsSchema.extend({
           reason: z.string().trim().max(500).optional(),
@@ -97,9 +112,21 @@ export function reportModerationActions(pagePath: string) {
         await request.formData()
       );
       if (typeof input === 'string') return scopedFail('images', input);
+      // Striking the owners rides on the removal, so it needs the strike grant as the strike form does.
+      if (input.strikeOwners && !locals.grants['user.strike'])
+        return refuse('images', 'user.strike');
 
-      const result = await removeImagesWithFollowUps({ ...input, moderatorId: locals.user.id });
+      const result = await removeImagesWithFollowUps({
+        ...input,
+        moderatorId: locals.user.id,
+        canConfirmReRemoval: !!locals.grants['image.removal.confirm'],
+      });
       if (!result.ok) return scopedFail('images', result.error);
+      const heldNote = result.held.length
+        ? ` ${heldRemovalMessage(result.held)}${
+            input.strikeOwners || input.alsoFlag ? ` ${HELD_FOLLOW_UPS_NOTE}` : ''
+          }`
+        : '';
 
       // A silent flag failure is worse than none: the moderator believes the images are marked.
       const flagNote = result.flag?.applied
@@ -120,12 +147,13 @@ export function reportModerationActions(pagePath: string) {
         imageResult:
           `Removed ${result.removed - result.alreadyBlocked} of ${input.imageIds.length}` +
           `${result.alreadyBlocked > 0 ? ` (${result.alreadyBlocked} already blocked)` : ''}.` +
-          `${flagNote}${strikeNote}`,
+          `${flagNote}${strikeNote}${heldNote}`,
+        imageHeld: result.held.length > 0,
       };
     },
 
     restore: async ({ request, locals }) => {
-      if (!permitted(locals)) return scopedFail('images', 'Not permitted.');
+      if (!locals.grants['image.moderate']) return refuse('images', 'image.moderate');
       const input = parseForm(idsSchema, await request.formData());
       if (typeof input === 'string') return scopedFail('images', input);
 
@@ -142,7 +170,7 @@ export function reportModerationActions(pagePath: string) {
     },
 
     setFlag: async ({ request, locals }) => {
-      if (!permitted(locals)) return scopedFail('images', 'Not permitted.');
+      if (!locals.grants['image.moderate']) return refuse('images', 'image.moderate');
       const input = parseForm(
         idsSchema.extend({ flagValue: imageFlagValueSchema }),
         await request.formData()
@@ -160,7 +188,7 @@ export function reportModerationActions(pagePath: string) {
 
     // Retool's SendNotification2 / PostNotification / SendCorrectNotif — three call sites, one action.
     notify: async ({ request, locals }) => {
-      if (!permitted(locals)) return scopedFail('notify', 'Not permitted.');
+      if (!locals.grants['user.strike']) return refuse('notify', 'user.strike');
       const input = parseForm(
         userIdSchema.extend({ message: z.string().trim().min(1).max(1000) }),
         await request.formData()
@@ -174,6 +202,26 @@ export function reportModerationActions(pagePath: string) {
       });
       if (!result.ok) return scopedFail('notify', result.error);
       return { success: true };
+    },
+
+    // Two-way, unlike Notify: the user can answer, and the report rides along as context.
+    messageAsCivitai: async ({ request, locals }) => {
+      if (!locals.grants['user.message.asCivitai'])
+        return refuse('message', 'user.message.asCivitai');
+      const input = parseForm(
+        userIdSchema.extend({
+          message: z.string().trim().min(1).max(MESSAGE_AS_CIVITAI_MAX_LENGTH),
+          idempotencyKey: z.string().min(8).max(128),
+          reportId: z.coerce.number().int().positive().max(MAX_INT4).optional(),
+        }),
+        await request.formData()
+      );
+      if (typeof input === 'string') return scopedFail('message', input);
+
+      const { reportId, ...rest } = input;
+      const result = await sendAsCivitai({ ...rest, context: reportId ? { reportId } : undefined });
+      if (!result.ok) return scopedFail('message', result.error);
+      return { success: true, chatId: result.value.chatId, deduped: result.value.deduped };
     },
   } satisfies Actions;
 }

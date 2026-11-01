@@ -13,8 +13,6 @@ import {
   upsertArticleInput,
   articleRateLimits,
   unpublishArticleSchema,
-  createArticleRatingReviewSchema,
-  getMyArticleRatingReviewSchema,
   resolveArticleImageScanSchema,
   rescanArticleImageSchema,
   setArticleOfficialSchema,
@@ -24,15 +22,13 @@ import {
   deleteArticleById,
   getArticleById,
   getArticles,
+  getOfficialArticleTag,
   setArticleOfficial,
   getArticleScanStatus,
   isArticleProcessing,
-  getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
   rescanArticle,
-  createArticleRatingReview,
-  getArticleRatingReviewForOwner,
   resolveArticleImageScan,
   rescanArticleImage,
 } from '~/server/services/article.service';
@@ -71,15 +67,23 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getInfiniteArticlesSchema)
     .query(({ input, ctx }) =>
-      getArticles({ ...input, sessionUser: ctx?.user, include: ['cosmetics'] })
+      getArticles({
+        ...input,
+        sessionUser: ctx?.user,
+        include: ['cosmetics'],
+        // Uncached per viewer, so a flagged viewer may see decorations before launch.
+        eventDecorationViewer: ctx?.user,
+      })
     ),
   getCivitaiNews: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getCivitaiNews()),
-  getEvents: publicProcedure
+  // `tag.getAll` hides adminOnly tags from non-admins; the feed's chip row needs this one's id.
+  getOfficialTag: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
-    .query(() => getCivitaiEvents()),
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(() => getOfficialArticleTag()),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
@@ -162,39 +166,11 @@ export const articleRouter = router({
         isModerator: ctx.user.isModerator,
       })
     ),
-  createRatingReview: protectedProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .input(createArticleRatingReviewSchema)
-    .mutation(async ({ input, ctx }) => {
-      const review = await createArticleRatingReview({
-        ...input,
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
-      // Fire-and-forget: Tracker.send is already non-blocking, but `await`
-      // still waits on session resolution. Skip the await so a slow CH
-      // session lookup can't add latency to the user-facing mutation.
-      ctx.track
-        .articleRatingReview({
-          articleId: review.articleId,
-          fromLevel: review.currentLevel,
-          toLevel: review.suggestedLevel,
-          hasComment: !!review.userComment,
-        })
-        .catch(() => undefined);
-      return review;
-    }),
   // Moderator-only, exactly like `model.setOfficial`. This is a provenance claim, so the
   // authority is the procedure, not anything in the payload.
   setOfficial: moderatorProcedure
     .input(setArticleOfficialSchema)
     .mutation(({ input, ctx }) =>
       setArticleOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
-    ),
-  getMyArticleRatingReview: protectedProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .input(getMyArticleRatingReviewSchema)
-    .query(({ input, ctx }) =>
-      getArticleRatingReviewForOwner({ articleId: input.articleId, userId: ctx.user.id })
     ),
 });

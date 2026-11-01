@@ -1,24 +1,21 @@
+import type { ReactNode } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcModule from '~/utils/trpc';
-
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+import type * as ResourceResidencyModule from '~/components/ResourceLoad/ResourceResidency';
 
 // The panel uses a bare Zustand hook and two independently gated tRPC queries.
 // Keep those dependencies controlled while exercising both render and local-file paths.
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
     ...actual,
-    trpc: {
-      // Resource residency is fetched in a batch by the upstream panel wrapper.
-      useQueries: vi.fn(() => []),
-      generation: {
-        getGenerationData: { useQuery: vi.fn() },
-        resolveImageMeta: { useQuery: vi.fn() },
-      },
-    },
+    trpc: makeTrpcProxy({
+      'generation.getGenerationData': { useQuery: vi.fn() },
+      'generation.resolveImageMeta': { useQuery: vi.fn() },
+    }),
   };
 });
 
@@ -33,6 +30,12 @@ vi.mock('~/utils/metadata', () => ({
 
 vi.mock('~/components/EdgeMedia/EdgeVideo', () => ({
   EdgeVideo: ({ src }: { src: string }) => <div data-testid="edge-video" data-src={src} />,
+}));
+
+// The panel tests resource rendering; residency needs session and network context.
+vi.mock('~/components/ResourceLoad/ResourceResidency', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceResidencyModule>()),
+  ResidencyBatchProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 vi.mock('./ResourceItemContent', () => ({

@@ -30,7 +30,17 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 
 import { reviewCreatorShopItem, updateCreatorShopItem } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+// Shop artwork is a bare upload key; this one's issue record names the creator (user 11).
+const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
+beforeEach(() => {
+  redisMock.sysRedis.mGet.mockResolvedValue(['11'] as never);
+});
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
 dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
@@ -146,7 +156,12 @@ describe('creator shop item history', () => {
       unitAmount: 900,
       meta: { ...requestedChangesItem.meta, history: afterEdit },
     });
-    await reviewCreatorShopItem({ id: 42, reviewerId: 99, action: 'approve' });
+    await reviewCreatorShopItem({
+      id: 42,
+      reviewerId: 99,
+      action: 'approve',
+      stickersEnabled: false,
+    });
 
     const afterApproval = historyOf(1);
     expect(afterApproval).toHaveLength(4);
@@ -171,13 +186,13 @@ describe('creator shop item history', () => {
       // A moderator swap doesn't re-affirm the rights, so the edit doesn't need
       // a `rightsAffirmed` flag it would otherwise be rejected without.
       isModerator: true,
-      imageUrl: 'new-art',
+      imageUrl: ART_KEY,
     });
 
     expect(historyOf(0)[2].changes).toContainEqual({
       field: 'artwork',
       from: 'old-art',
-      to: 'new-art',
+      to: ART_KEY,
     });
   });
 
@@ -191,6 +206,7 @@ describe('creator shop item history', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'reject',
       rejectionReason: 'Traced artwork',
     });

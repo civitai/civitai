@@ -1,16 +1,7 @@
-import {
-  Button,
-  Group,
-  LoadingOverlay,
-  Popover,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
+import { Button, Group, LoadingOverlay, Stack, Text, TextInput, Title } from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -35,7 +26,7 @@ import { QS } from '~/utils/qs';
 import { sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { TemplateSelect } from './TemplateSelect';
+import { TemplatePicker } from './TemplateSelect';
 import { useWizardAutoResume } from './useWizardAutoResume';
 import { useWizardStepSave } from './useWizardStepSave';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
@@ -106,11 +97,21 @@ const CreateSteps = ({
   const modelVersionId = result.success ? result.data.modelVersionId : undefined;
   const src = result.success ? result.data.src : undefined;
 
-  const { data: templateFields, isInitialLoading: isTemplateLoading } =
-    trpc.model.getTemplateFields.useQuery(
-      { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
-      { enabled: !!templateId }
-    );
+  const {
+    data: templateFields,
+    isInitialLoading: isTemplateLoading,
+    error: templateError,
+  } = trpc.model.getTemplateFields.useQuery(
+    { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
+    { enabled: !!templateId }
+  );
+  useEffect(() => {
+    if (templateError)
+      showErrorNotification({
+        title: 'Could not load the template',
+        error: new Error(templateError.message),
+      });
+  }, [templateError]);
   const { data: bountyFields, isInitialLoading: isBountyLoading } =
     trpc.model.getModelTemplateFieldsFromBounty.useQuery(
       { id: bountyId as number },
@@ -498,7 +499,6 @@ export function ModelWizard() {
   const step = isNumber(routeStep) && routeStep >= 1 && routeStep <= MAX_STEPS ? routeStep : 1;
 
   const isNew = router.pathname.includes('/create');
-  const [opened, setOpened] = useState(false);
   const isTransitioning = useIsChangingLocation();
 
   const {
@@ -617,25 +617,7 @@ export function ModelWizard() {
                 />
               </Group>
               {isNew && !isTraining && currentUser?.username && (
-                <Popover
-                  opened={opened}
-                  width={400}
-                  position="bottom-end"
-                  onChange={setOpened}
-                  withArrow
-                >
-                  <Popover.Target>
-                    <Button variant="subtle" onClick={() => setOpened(true)}>
-                      {templateId ? 'Swap template' : 'Use a template'}
-                    </Button>
-                  </Popover.Target>
-                  <Popover.Dropdown p={4}>
-                    <TemplateSelect
-                      username={currentUser.username}
-                      onSelect={() => setOpened(false)}
-                    />
-                  </Popover.Dropdown>
-                </Popover>
+                <TemplatePicker username={currentUser.username} hasTemplate={!!templateId} />
               )}
             </Group>
           </Stack>

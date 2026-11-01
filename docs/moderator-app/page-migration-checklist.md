@@ -111,7 +111,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 > Most of this cluster funnels through **`image.service.ts`** (~7.9K lines) and **`report.service.ts`** — port those shared services once (see [Shared backend services](#shared-backend-services)).
 
-- [x] **`/moderator/images`** — **Migrated.** All 9 views (minor/poi/tag/newUser/modRule/remixSource/csam/reported/appeals) live under the spoke's `/images/[slug]` (kind-discriminated payload; per-card immediate actions with optimistic dimming). Main-app page deleted; `/moderator/images` + subtree redirect via the catchall (`MIGRATED_ROUTES` in `src/shared/constants/migrated-moderator-routes.ts` includes `images`; longest matching key wins, so one entry covers the subtree). Access gated per-slug in the spoke's `hooks.server.ts` (pathname).
+- [x] **`/moderator/images`** — **Migrated.** All 9 views are served by the shared image-queue page (`$lib/components/image-queue/`, `$lib/server/image-queue.ts`): eight under `/images/[slug]`, and `reported` at `/reports/image` since 2026-10-15 (`/images/reported` redirects there). Originally: all 9 views (minor/poi/tag/newUser/modRule/remixSource/csam/reported/appeals) live under the spoke's `/images/[slug]` (kind-discriminated payload; per-card immediate actions with optimistic dimming). Main-app page deleted; `/moderator/images` + subtree redirect via the catchall (`MIGRATED_ROUTES` in `src/shared/constants/migrated-moderator-routes.ts` includes `images`; longest matching key wins, so one entry covers the subtree). Access gated per-slug in the spoke's `hooks.server.ts` (pathname).
   - Spoke queries: `image-review.service.ts` (`getImageReviewQueue`, `getReportedImageQueue`, `getAppealImageQueue`, `getImageReviewCounts`, `getModerationRuleDefinitions`) — all Kysely.
   - Spoke mutations: `image-moderation.service.ts` (`acceptImage`=unblock, `blockImage`=TOS, `resolveImageAppeal`) + `reports.service.ts` `setReportStatus`. Spoke owns writes; only main-app call is the Meilisearch enqueue.
   - **Main-app trim:** deleted `images.tsx`; removed orphaned `report.bulkUpdateStatus` (+ handler + `bulkUpdateReportStatusSchema`), `report.resolveAppeal` procedure (+ handler; **kept** `resolveAppealSchema`/`resolveEntityAppeal` service — still used by `handleUnblockImages`), and `image.getModeratorPOITags` (+ service + `POITag` type). **Kept** `image.moderate` (shared with NeedsReviewBadge/UnblockImage/comics). The review-queue procedures were kept at the time for an output type referenced by `src/types/router.ts`; that follow-up trim has since landed and neither the procedures nor the reference remain.
@@ -189,11 +189,12 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `article.schema.ts` (`getModeratorArticlesSchema` extends `infiniteQuerySchema`)
   - Infra: **Postgres only.** `ArticleContextMenu` may issue extra mutations — verify.
 
-- [x] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute` — **Migrated** (commit 1603e46e0; spoke owns mutations, optimistic resolve).
+- [x] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute` — **Migrated** (commit 1603e46e0; spoke owns mutations, optimistic resolve), **then retired**: the spoke's `/ratings` queue (`RatingReview`, every rated entity) replaced it, and the old path redirects there. The procedures below no longer exist.
   - Procedures: `article.getRatingReviews`, `article.getRatingReviewCounts` (queries)
   - Services: `article.service.ts` → `getArticleRatingReviews`, `getArticleRatingReviewCounts`
   - Schemas: `article.schema.ts` (`getArticleRatingReviewsSchema`) + `ReportStatus` enum
   - Infra: **Postgres only** (secondary image lookup for cover images)
+  - Generalized to `/ratings` (all rated entities) by text-scan plan 05; `/articles/ratings` redirects; `ArticleRatingReview` is frozen history, dropped in plan 06.
 
 - [ ] **`/moderator/models`** — `src/pages/moderator/models/index.tsx` — flag: none (`requireModerator`)
   - Procedures: `model.getAllPagedSimple` (query); `model.declineReview`, `modelVersion.declineReview` (mutations)
@@ -206,10 +207,14 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
     `getTrainingAnnouncement`/`setTrainingAnnouncement`) — all Kysely; the announcement is the same
     `KeyValue` row `training.getAnnouncement` still reads, and `cannotPublish` is a jsonb `||` merge on
     `Model.meta` plus the Meilisearch enqueue. Ban reuses `setBanned`.
-  - Training-data zip: the spoke's `/api/training-data/[versionId]` PROXIES the main app's
-    `/api/download/models/{id}?type=Training%20Data` with the moderator's own cookie, and JSZip unpacks it
-    client-side. Deliberately not a presign — resolving `ModelFile.url` goes through the storage resolver
-    with a delivery-worker fallback, which the spoke would have to re-derive.
+  - Training-data zip: the spoke's `/api/training-data/[versionId]` asks the main app's
+    `trainingData.resolve` moderator endpoint for a signed URL as the moderator, streams the bytes itself,
+    and JSZip unpacks them client-side. The resolve stays in the main app because `ModelFile.url` goes
+    through the storage resolver with a delivery-worker fallback, which the spoke would have to re-derive.
+  - Training Studio versions have no zip: their `Training Data` row points at the trained model. The
+    version page reads their dataset from the training workflow and renders it with
+    `$lib/components/WorkflowDataset.svelte`, shared with `/audit/training-data/workflow/[workflowId]`,
+    and `trainingData.resolve` refuses that row.
   - Filters: username is an EXACT match (as in the main app), plus workflow id, created-date range and
     publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
   - **Main-app trim:** deleted the page + its SCSS; removed `moderator.models.queryTraining`,
@@ -225,16 +230,18 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 - [ ] **`/moderator/generation-config`** — `generation-config.tsx` + `components/Moderation/GenerationConfig/` (`GateRulesSection`, `GeneratorMessagesSection`, `target-inputs`) — flag: none
   - Procedures: `getGateRules`, `getGeneratorMessages` (queries); `saveGateRule`, `deleteGateRule`, `saveGeneratorMessage`, `deleteGeneratorMessage` (mutations)
   - Services: `generation/generation.service.ts` (the same names)
-  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
+  - Schemas: `shared/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
   - Infra: **Redis** — sysRedis hashes `GENERATION.GATE_RULES` / `GENERATION.MESSAGES` (one field per entry, migrated on first use from `SYSTEM.FEATURES`; the status cards still read `SYSTEM.FEATURES`) **+ Flipt** (`GENERATION_TESTING`)
 - [x] **`/moderator/generation-restrictions`** — **Migrated** to the spoke at
-  **`/audit/generator-restrictions`** (label "Generator Restrictions").
+  **`/audit/generator-restrictions`** (label "Generator Restrictions"). Its `scam` type has since moved
+  to **`/users/scam-restrictions`** (Users nav section, own grant); `?type=scam` redirects there.
   - Spoke: `user-restriction.service.ts` reads the queue with Kysely and writes suspicious matches to the
     SAME `system:suspicious-audit-matches` list (shared Redis, 1000-entry trim) that
     `userRestriction.getSuspiciousMatches` still serves `/moderator/suspicious-audit-matches` from.
   - Rulings go through the EXISTING `resolveRestriction` (`/api/mod/restriction/resolve`) — main owns the
     mute clear, the subscription, the notification and the session refresh in one write. Ban reuses
-    `setBanned` and then upholds, as the main app did.
+    `setBanned` and then upholds, as the main app did; an account already banned is upheld without a
+    second ban. The bulk ruling retries a 429 once its `Retry-After` has passed.
   - Trigger prompts are highlighted by `@civitai/mod-utils/prompt-audit` server-side rather than by
     re-running each row's stored `matchedRegex` in the browser; the recorded match and regex still render
     beside the prompt.
@@ -288,7 +295,7 @@ Deliberately deferred; none blocks the three pages above.
   their own blocks there — they have no fields and a different confirmation shape, and folding them in
   would mean a `mode` prop switching off two-thirds of the body.
 - **Shared shapes extracted:** `TrainingAssetViewer` (fetch + progress + abort + revoke, used by both
-  training pages), `Pager` (offset) and `CursorPager` (keyset) — plus `NumberedPager` (shadcn
+  training pages for zip datasets), `Pager` (offset) and `CursorPager` (keyset) — plus `NumberedPager` (shadcn
   `Pagination`, for the image grids), added later,
   `HighlightedText`, and a single `ActionResult`. `TrainingDataSheet` moved page-local.
 - **Both feature flags are retired.** `trainingModelsModeration` and `reviewTrainingData` had no reader

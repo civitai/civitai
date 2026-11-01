@@ -18,9 +18,7 @@ import * as z from 'zod';
 import {
   IconBrush,
   IconCube,
-  IconGavel,
   IconUpload,
-  IconBook,
   IconPencil,
   IconX,
   IconTrophy,
@@ -38,30 +36,50 @@ import {
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
   getFreeEntriesLabel,
+  getCrucibleEntryBuzzType,
+  isCrucibleSfw,
   isFreeCrucibleEntry,
-  toCrucibleBuzzType,
   parsePrizePositions,
+  CRUCIBLE_PRIZE_BUZZ_TYPE,
+  areCrucibleEntriesClosed,
+  getCrucibleEntriesCloseAt,
 } from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
+import type { CrucibleBuzzType } from '~/components/Crucible/crucible-create-form';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
+import { openCrucibleOwnerRemoveEntryModal } from '~/components/Crucible/CrucibleOwnerRemoveEntryModal';
+import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
+import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
+import { CrucibleDiscussion } from '~/components/Crucible/CrucibleDiscussion';
+import { CrucibleEventTagsPanel } from '~/components/Crucible/CrucibleEventTagsPanel';
+import { CrucibleTakeDownPanel } from '~/components/Crucible/CrucibleTakeDownPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
+import {
+  CrucibleCaughtUpNotice,
+  CrucibleStartJudgingButton,
+} from '~/components/Crucible/CrucibleStartJudgingButton';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
-import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
+import {
+  CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
+  crucibleRankingsAreFinal,
+} from '~/shared/constants/crucible.constants';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
   Currency,
   ImageIngestionStatus,
   MediaType,
+  PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -103,6 +121,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const entryBuzzType = getCrucibleEntryBuzzType(!!features.isGreen);
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
 
@@ -121,6 +140,21 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     { crucibleId: id },
     { enabled: !!id }
   );
+  // The global staleTime is Infinity; judging on the judge page changes this.
+  const { data: judgingProgress } = trpc.crucible.getJudgingProgress.useQuery(
+    { crucibleId: id, browsingLevel },
+    {
+      // Guarded procedure: a muted or unverified viewer gets FORBIDDEN.
+      enabled:
+        !!currentUser &&
+        !currentUser.muted &&
+        !requiresEmailVerification(currentUser) &&
+        crucible?.status === CrucibleStatus.Active &&
+        (!crucible.endAt || new Date(crucible.endAt) > new Date()),
+      staleTime: 0,
+      refetchOnMount: 'always',
+    }
+  );
 
   // `?submit=1` (from the featured hero's "Enter Competition") opens the submit modal once, and is
   // stripped first so a refresh or back-nav doesn't reopen it. Keyed by id because Next reuses this
@@ -138,9 +172,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       crucible.status === CrucibleStatus.Active &&
       !!currentUser &&
       currentUser.id !== crucible.userId &&
-      crucible.viewerEntries.length < getMaxUserEntries(crucible);
-    if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible));
-  }, [crucible, router, currentUser]);
+      !areCrucibleEntriesClosed(crucible) &&
+      crucible.viewerEntryCount < getMaxUserEntries(crucible);
+    if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType));
+  }, [crucible, router, currentUser, entryBuzzType]);
 
   const cancelMutation = trpc.crucible.cancel.useMutation({
     onSuccess: (result) => {
@@ -198,13 +233,43 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     },
   });
 
+  const withdrawEntryMutation = trpc.crucible.withdrawEntry.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        title: 'Entry removed',
+        message: 'Your entry slot is open again.',
+      });
+      queryUtils.crucible.getById.invalidate({ id });
+      queryUtils.crucible.getEntries.invalidate({ crucibleId: id });
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Could not remove entry', error: new Error(error.message) });
+    },
+  });
+
   if (isLoading) return <PageLoader />;
   if (!crucible) return <NotFound />;
+  if (crucible.takenDownAt && !currentUser?.isModerator)
+    return (
+      <Container size="sm" py="xl">
+        <Alert color="red" title="Removed by moderators">
+          <Text size="sm">
+            {crucible.name} was removed by moderators and is no longer visible to anyone else.
+          </Text>
+          {crucible.takedownReason && (
+            <Text size="sm" mt="sm">
+              Reason: {crucible.takedownReason}
+            </Text>
+          )}
+        </Alert>
+      </Container>
+    );
 
   const judgesCount = judgesData?.count ?? 0;
 
   const prizePositions = parsePrizePositions(crucible.prizePositions);
-  const entryCount = crucible._count?.entries ?? 0;
+  // What the grid lists, not the raw row count: entries hidden from this viewer are not claimed.
+  const entryCount = entriesData?.pages[0]?.visibleCount ?? crucible._count?.entries ?? 0;
   const { paidEntryCount } = crucible;
   const entryFeePool = crucible.entryFee * paidEntryCount;
   const totalPrizePool = getCrucibleTotalPrizePool({
@@ -217,19 +282,22 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isCreator = !!currentUser && currentUser.id === crucible.userId;
   const isOpen = isActive && (!crucible.endAt || new Date(crucible.endAt) > new Date());
   const canSubmitEntries = isOpen;
+  const entriesClosed = areCrucibleEntriesClosed(crucible);
+  const entriesCloseAt = crucible.entryCutoffPercent ? getCrucibleEntriesCloseAt(crucible) : null;
   const canJudge = isOpen;
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
   const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
+  const podiumEntries = entriesData?.pages[0]?.podium ?? [];
+  // A winner the page can't show (image deleted, hidden, outside the viewer's level) still holds
+  // their prize place on the leaderboard.
+  const leaderboardEntries = [
+    ...loadedEntries.filter(hasScore),
+    ...podiumEntries.filter(({ id }) => !loadedEntries.some((entry) => entry.id === id)),
+  ];
   const userEntries = crucible.viewerEntries;
 
-  // The detail view pages through the list it is handed, so hand it the entries in grid
-  // order: the viewer's own first, then everyone else's as loaded.
-  const openEntry = async ({ imageId }: { imageId: number }) => {
-    const gridOrder = [
-      ...userEntries,
-      ...loadedEntries.filter((entry) => entry.userId !== currentUser?.id),
-    ].map((entry) => entry.imageId);
+  const openEntry = async ({ imageId }: { imageId: number }, gridOrder: number[]) => {
     const at = Math.max(0, gridOrder.indexOf(imageId));
     const nearby = gridOrder.slice(Math.max(0, at - 100), at + 100);
 
@@ -253,7 +321,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       state: { imageId, images: images?.some((x) => x.id === imageId) ? images : undefined },
     });
   };
-  const userEntryCount = userEntries.length;
+  const userEntryCount = crucible.viewerEntryCount;
   const maxUserEntries = getMaxUserEntries(crucible);
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
   const allEntriesUsed = !!currentUser && userEntryCount >= maxUserEntries;
@@ -262,7 +330,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     entryLimit: maxUserEntries,
   });
   const nextEntryFree = isFreeCrucibleEntry({
-    entriesSoFar: userEntryCount,
+    entriesSoFar: crucible.viewerEntriesSoFar,
     freeEntriesPerUser: crucible.freeEntriesPerUser,
   });
 
@@ -271,16 +339,27 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     : [];
 
   const isModerator = currentUser?.isModerator ?? false;
-  const isOffDomain =
-    !!features.isGreen && crucible.buzzType !== 'green' && !isCreator && !isModerator;
-  const { canEdit, canCancel, canRemoveEntries } = getCrucibleManageActions({
+  const isOffDomain = !!features.isGreen && !isCrucibleSfw(crucible) && !isCreator && !isModerator;
+  const { canEdit, canCancel, canRemoveEntries, canTakeDown } = getCrucibleManageActions({
     status: crucible.status,
     endAt: crucible.endAt,
     isCreator,
     isModerator,
+    takenDownAt: crucible.takenDownAt,
   });
 
   const handleRemoveEntry = (entry: CrucibleEntryData) => {
+    // A moderator who owns the crucible removes as a moderator: no cap, no reason.
+    if (!isModerator) {
+      openCrucibleOwnerRemoveEntryModal({
+        crucibleId: crucible.id,
+        entryId: entry.id,
+        entrantName: entry.user.username,
+        entryFee: crucible.entryFee,
+        removalsLeft: crucible.ownerRemovalsLeft ?? 0,
+      });
+      return;
+    }
     openConfirmModal({
       title: 'Remove entry',
       children: (
@@ -294,6 +373,28 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       labels: { cancel: 'Keep it', confirm: 'Remove entry' },
       confirmProps: { color: 'red' },
       onConfirm: () => removeEntryMutation.mutate({ entryId: entry.id }),
+    });
+  };
+
+  const handleWithdrawEntry = (entry: CrucibleEntryData) => {
+    openConfirmModal({
+      title: 'Remove your entry',
+      children: (
+        <Stack gap="sm">
+          <Text size="sm">
+            Remove this entry from the crucible? It leaves judging and its slot opens up again.
+          </Text>
+          <Text size="sm" fw={600}>
+            {crucible.entryFee > 0
+              ? `There are no refunds, and entering again in this slot costs the full ${crucible.entryFee.toLocaleString()} Buzz fee.`
+              : "This can't be undone."}
+          </Text>
+        </Stack>
+      ),
+      centered: true,
+      labels: { cancel: 'Keep it', confirm: 'Remove entry' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => withdrawEntryMutation.mutate({ entryId: entry.id }),
     });
   };
 
@@ -348,6 +449,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
         {/* Hero Section */}
         <CrucibleHeader
           className="-mt-3"
+          entryCount={entryCount}
           crucible={{
             id: crucible.id,
             name: crucible.name,
@@ -356,7 +458,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             nsfwLevel: crucible.nsfwLevel,
             entryFee: crucible.entryFee,
             seededPrizePool: crucible.seededPrizePool,
-            buzzType: toCrucibleBuzzType(crucible.buzzType),
+            buzzType: CRUCIBLE_PRIZE_BUZZ_TYPE,
             startAt: crucible.startAt,
             endAt: crucible.endAt,
             contentType: crucible.contentType,
@@ -365,16 +467,19 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             heroImage: crucible.heroImage,
             _count: crucible._count,
             paidEntryCount,
+            entrantCount: crucible.entrantCount,
           }}
         />
 
         {crucible.status === CrucibleStatus.Completed && (
+          <PrizeClaimBanner sourceType={PrizeSourceType.Crucible} sourceId={crucible.id} />
+        )}
+
+        {crucible.status === CrucibleStatus.Completed && (
           <CruciblePodium
-            entries={loadedEntries}
-            prizePositions={prizePositions}
-            entryCount={crucible.placedEntryCount ?? entryCount}
-            totalPrizePool={totalPrizePool}
-            buzzType={toCrucibleBuzzType(crucible.buzzType)}
+            entries={podiumEntries}
+            prizeWinners={crucible.prizeWinners}
+            buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
           />
         )}
 
@@ -392,32 +497,19 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               </div>
 
               {/* CTA Button - Start Judging */}
-              {canJudge && (
-                <Button
-                  size="xl"
-                  fullWidth
-                  leftSection={<IconGavel size={24} />}
-                  className="mb-8"
-                  styles={{
-                    root: {
-                      background: 'linear-gradient(135deg, #228be6 0%, #40c057 100%)',
-                      boxShadow: '0 8px 24px rgba(34, 139, 230, 0.3)',
-                      fontWeight: 600,
-                      fontSize: '1.125rem',
-                      padding: '1.25rem 2.5rem',
-                      transition: 'all 300ms',
-                      '&:hover': {
-                        background: 'linear-gradient(135deg, #1c7ec0 0%, #37b24d 100%)',
-                        transform: 'translateY(-2px)',
-                        boxShadow: '0 12px 32px rgba(34, 139, 230, 0.4)',
-                      },
-                    },
-                  }}
-                  onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
-                >
-                  Start Judging Now
-                </Button>
-              )}
+              {canJudge &&
+                (judgingProgress?.votesUsedUp ? (
+                  <CrucibleCaughtUpNotice />
+                ) : (
+                  <CrucibleStartJudgingButton
+                    onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
+                  />
+                ))}
+
+              {/* Discussion sits before the entries feed, as on the challenge page */}
+              <div className="mb-8">
+                <CrucibleDiscussion crucibleId={crucible.id} userId={crucible.user.id} />
+              </div>
 
               {/* Entry Grid with User Entries section */}
               <CrucibleEntryGrid
@@ -428,7 +520,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 isLoadingMore={isLoadingMoreEntries}
                 onLoadMore={loadMoreEntries}
                 onEntryClick={openEntry}
+                status={crucible.status}
                 onRemoveEntry={canRemoveEntries ? handleRemoveEntry : undefined}
+                onWithdrawEntry={isOpen ? handleWithdrawEntry : undefined}
                 title="All Entries"
                 showRanks={rankingsVisible}
                 completed={crucible.status === CrucibleStatus.Completed}
@@ -455,6 +549,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     <Text size="sm" c="dimmed" className="mb-4">
                       You created this crucible, so you can&apos;t enter it. You can still judge it.
                     </Text>
+                  ) : entriesClosed ? (
+                    <Alert color="gray" radius="md" className="mb-4">
+                      {CRUCIBLE_ENTRIES_CLOSED_MESSAGE}
+                    </Alert>
                   ) : allEntriesUsed ? (
                     <Alert color="green" radius="md" className="mb-4">
                       You&apos;ve submitted all your entries. Good luck!
@@ -471,7 +569,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                         variant="light"
                         fullWidth
                         leftSection={<IconUpload size={16} />}
-                        onClick={() => openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible))}
+                        onClick={() =>
+                          openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType))
+                        }
                         disabled={!currentUser}
                       >
                         Submit Entry
@@ -491,7 +591,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                       ) : (
                         <CurrencyBadge
                           currency={Currency.BUZZ}
-                          type={toCrucibleBuzzType(crucible.buzzType)}
+                          type={entryBuzzType}
                           unitAmount={crucible.entryFee}
                           size="md"
                           fw={600}
@@ -538,7 +638,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   crucibleId={crucible.id}
                   versionIds={allowedResources}
                   onGenerate={
-                    canSubmitEntries && !isCreator && !allEntriesUsed && !currentUser?.muted
+                    canSubmitEntries &&
+                    !entriesClosed &&
+                    !isCreator &&
+                    !allEntriesUsed &&
+                    !currentUser?.muted
                       ? (versionId) => openCrucibleGenerator(crucible.contentType, [versionId])
                       : undefined
                   }
@@ -548,14 +652,14 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               {/* Prize Pool & Standings */}
               {rankingsVisible ? (
                 <CrucibleLeaderboard
-                  entries={loadedEntries.filter(hasScore)}
+                  entries={leaderboardEntries}
                   totalCount={entryCount}
-                  placedCount={crucible.placedEntryCount}
+                  prizeWinners={crucible.prizeWinners}
                   hasMore={!!hasMoreEntries}
                   onLoadMore={loadMoreEntries}
                   prizePositions={prizePositions}
                   totalPrizePool={totalPrizePool}
-                  buzzType={toCrucibleBuzzType(crucible.buzzType)}
+                  buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
                   awarded={crucible.status === CrucibleStatus.Completed}
                 />
               ) : (
@@ -565,13 +669,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     totalPrizePool={totalPrizePool}
                     entryFee={crucible.entryFee}
                     hasFreeEntries={crucible.freeEntriesPerUser > 0}
-                    buzzType={toCrucibleBuzzType(crucible.buzzType)}
+                    buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
                   />
                   <YourStandingPanel entries={userEntries} hasAccount={!!currentUser} />
                 </>
               )}
 
-              <RulesPanel
+              <CrucibleRulesPanel
                 rules={[
                   {
                     label: 'Entries Per Person',
@@ -583,9 +687,23 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     visible: !!freeEntriesLabel,
                   },
                   {
+                    label: 'Base Model',
+                    value: `Made with a ${crucible.allowedBaseModels.join(' or ')} checkpoint`,
+                    visible: crucible.allowedBaseModels.length > 0,
+                  },
+                  {
                     label: 'Total Entry Cap',
                     value: `${numberWithCommas(crucible.maxTotalEntries ?? 0)} entries`,
                     visible: !!crucible.maxTotalEntries,
+                  },
+                  {
+                    label: 'Entries Close',
+                    value: entriesCloseAt
+                      ? `${formatDate(entriesCloseAt, 'MMM D [at] h:mm A')}, in the last ${
+                          crucible.entryCutoffPercent
+                        }% of the run`
+                      : '',
+                    visible: !!entriesCloseAt,
                   },
                   {
                     label: 'Max Clip Length',
@@ -604,6 +722,18 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   { label: 'Ties', value: 'The earlier entry ranks higher' },
                 ]}
               />
+
+              {isModerator && <CrucibleEventTagsPanel crucibleId={crucible.id} />}
+
+              {isModerator && (
+                <CrucibleTakeDownPanel
+                  crucibleId={crucible.id}
+                  canTakeDown={canTakeDown}
+                  hasRefunds={crucible.status !== CrucibleStatus.Completed}
+                  takenDownAt={crucible.takenDownAt}
+                  takedownReason={crucible.takedownReason}
+                />
+              )}
 
               {(canEdit || canCancel) && (
                 <Paper className="rounded-lg p-6" bg="dark.6">
@@ -663,21 +793,25 @@ type CrucibleDetail = NonNullable<RouterOutput['crucible']['getById']>;
 
 const getMaxUserEntries = (crucible: CrucibleDetail) => crucible.entryLimit ?? 5;
 
-const getSubmitEntryProps = (crucible: CrucibleDetail) => ({
+const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: CrucibleBuzzType) => ({
   crucibleId: crucible.id,
   crucibleName: crucible.name,
   entryFee: crucible.entryFee,
-  buzzType: toCrucibleBuzzType(crucible.buzzType),
+  buzzType: entryBuzzType,
   entryLimit: getMaxUserEntries(crucible),
   freeEntriesPerUser: crucible.freeEntriesPerUser,
   nsfwLevel: crucible.nsfwLevel,
   contentType: crucible.contentType,
-  currentEntryCount: crucible.viewerEntries.length,
+  currentEntryCount: crucible.viewerEntryCount,
+  entriesSoFar: crucible.viewerEntriesSoFar,
   maxClipSeconds: crucible.maxClipSeconds,
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,
+  allowedBaseModels: crucible.allowedBaseModels,
   startAt: crucible.startAt,
   endAt: crucible.endAt,
+  entryWarningPercent: crucible.entryWarningPercent,
+  entryCutoffPercent: crucible.entryCutoffPercent,
 });
 
 // Required resources are alternatives ("at least one of"), so only the first is preselected.
@@ -848,31 +982,6 @@ const countdownStat = (crucible: Pick<CrucibleDetail, 'status' | 'startAt' | 'en
       : undefined,
   };
 };
-
-function RulesPanel({ rules }: { rules: { label: string; value: string; visible?: boolean }[] }) {
-  return (
-    <Paper className="rounded-lg p-6" bg="dark.6">
-      <Title order={5} className="mb-4 flex items-center gap-2 uppercase tracking-wider text-white">
-        <IconBook size={16} />
-        Rules
-      </Title>
-      <Stack gap="md">
-        {rules
-          .filter((rule) => rule.visible !== false)
-          .map((rule) => (
-            <div key={rule.label}>
-              <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
-                {rule.label}
-              </Text>
-              <Text size="sm" fw={600} c="white">
-                {rule.value}
-              </Text>
-            </div>
-          ))}
-      </Stack>
-    </Paper>
-  );
-}
 
 function EligibleModelsPanel({
   crucibleId,

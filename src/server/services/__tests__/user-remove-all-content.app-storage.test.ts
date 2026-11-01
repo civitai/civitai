@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -165,6 +166,11 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
   };
 });
 
+// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+}));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -185,13 +191,28 @@ vi.mock('~/server/metrics', async (importOriginal) => {
   const m = { queueUpdate: vi.fn(async () => undefined) };
   return { ...actual, userMetrics: m, articleMetrics: m };
 });
+// The mocked raw reads answer every query, so the wipe finds models to soft-delete; that path is
+// not this suite's.
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  deleteModelById: vi.fn(async () => null),
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteImageById: vi.fn(async () => undefined),
+  deleteImages: vi.fn(async () => []),
+}));
+const { settleBountyPayout, refundUnpayableBountyAward } = vi.hoisted(() => ({
+  settleBountyPayout: vi.fn(),
+  refundUnpayableBountyAward: vi.fn(async () => false),
+}));
+vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  settleBountyPayout,
+  refundUnpayableBountyAward,
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteBidsForModel: vi.fn(async () => undefined),
+  refundBidsForVersions: vi.fn(async () => undefined),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -204,6 +225,8 @@ const MOD = 9;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The wipe's re-check after its evidence deletes: still unheld.
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ held: false }] as never);
   fake.reset();
   fake.kv.push(
     { user_id: TARGET, key: 'gone-a', size_bytes: 101 },
@@ -232,6 +255,10 @@ beforeEach(() => {
   );
   dbMock.dbWrite.appListingModerationEvent.update.mockResolvedValue({});
 });
+
+/** A tagged-template `$executeRaw` call as the one statement it sends, nested fragments flattened. */
+const flatten = ([strings, ...values]: unknown[]) =>
+  Prisma.sql(strings as TemplateStringsArray, ...(values as never[]));
 
 describe('removeAllContent → App Blocks per-user storage', () => {
   it('destroys the wiped account rows and leaves every other account alone', async () => {
@@ -309,7 +336,10 @@ describe('removeAllContent → App Blocks per-user storage', () => {
       Object.assign(new Error('new row violates check constraint'), { code: '23514' })
     );
 
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: ['app-storage'],
+      keptModelIds: [],
+    });
 
     const lines = warn.mock.calls.map((c) => String(c[0]));
     const incomplete = lines.find((l) => l.includes('purge INCOMPLETE'));
@@ -332,7 +362,10 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     fake.extraSchemas = APP_USER_STORAGE_MAX_SCHEMAS + 1;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: ['app-storage-truncated'],
+      keptModelIds: [],
+    });
 
     const truncated = warn.mock.calls
       .map((c) => String(c[0]))
@@ -363,7 +396,10 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Positive control for the guard above: the warning must not fire on the
     // happy path, or it is noise that trains an operator to ignore it.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: [],
+      keptModelIds: [],
+    });
     expect(
       warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[removeAllContent]'))
     ).toEqual([]);
@@ -389,7 +425,10 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     fake.poolDown = 'apps database unreachable';
 
     // Must RESOLVE, not reject.
-    await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toBeUndefined();
+    await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toEqual({
+      incomplete: ['app-storage'],
+      keptModelIds: [],
+    });
 
     // 🔴 Same anti-vacuity point: a build that never calls the purge also never
     // rejects, so "it resolved" alone is satisfied by the bug this whole commit
@@ -400,8 +439,15 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // And the main-DB wipe must have happened in full regardless. These are the
     // deletes that define the wipe; if the purge could abort it, they would be
     // missing or partial.
-    for (const model of ['model', 'image', 'post', 'article', 'collection', 'comment'] as const) {
-      expect(dbMock.dbWrite[model].deleteMany).toHaveBeenCalledWith({ where: { userId: TARGET } });
+    expect(dbMock.dbWrite.collection.deleteMany).toHaveBeenCalledWith({
+      where: { userId: TARGET },
+    });
+    // The evidence deletes are raw, so each can carry the legal hold in its own statement.
+    for (const table of ['Model', 'Image', 'Post', 'Article', 'Comment']) {
+      const deleted = dbMock.dbWrite.$executeRaw.mock.calls
+        .map(flatten)
+        .some((sql) => sql.text.includes(`DELETE FROM "${table}"`) && sql.values.includes(TARGET));
+      expect(deleted, table).toBe(true);
     }
   });
 });

@@ -22,13 +22,20 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { canRetriggerBuild } from '~/components/Apps/deploy-status';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { getPlayCountLabel } from '~/components/Apps/appListingCardView';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
-import { compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
+import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
+import {
+  compactRelativeTime,
+  REVIEW_RELATIVE_TICK_MS,
+  useNowTick,
+} from '~/components/Apps/reviewRelativeTime';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
+  failedBuildSummary,
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
@@ -66,17 +73,13 @@ export type VersionHistoryTarget = {
   title: string;
 };
 
-/**
- * How often the relative-age column re-renders, in ms.
- *
- * 🔴 ONE TIMER FOR THE WHOLE LIST, not one per row. The Pending tab already repaints on its
- * own 15s poll, but the history tabs do not poll at all, so without this an Approved row
- * opened in a background tab would keep reading `5h` for a day. `DaysFromNow`'s `live` tick
- * is the precedent; this is that tick hoisted to the list so a 50-row page has one interval
- * rather than 50. A minute is the finest granularity the ladder can express past the `now`
- * rung, so a faster tick could not change a single label.
+/*
+ * 🔴 THE TICK AND ITS HOOK MOVED TO `reviewRelativeTime.ts`, beside the ladder they drive.
+ * `REVIEW_RELATIVE_TICK_MS` is re-exported here because this module's own tests and the
+ * `/apps/review` page import it from this path; the rationale (one timer for the whole list,
+ * and why a minute is the floor) now lives on the hook.
  */
-export const REVIEW_RELATIVE_TICK_MS = 60_000;
+export { REVIEW_RELATIVE_TICK_MS };
 
 /**
  * What the Plays column does and does not mean.
@@ -101,15 +104,6 @@ export const PLAYS_CAVEAT =
   `still flag-limited, so this reflects internal opens rather than public traffic. A ` +
   `${STANDALONE_KIND_LABEL} listing can never record one: its CTA leaves the site, so an ` +
   'em dash there means unmeasurable, not zero.';
-
-function useNowTick(intervalMs: number): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
 
 export function UnifiedReviewList({
   onsiteItems,
@@ -297,7 +291,15 @@ export function UnifiedReviewList({
  * `null` case: an approval whose build never started looked, until now, exactly
  * like a healthy one in the mod queue.
  */
-function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: string }) {
+function DeployStateChip({
+  state,
+  rowKey,
+  buildSignals,
+}: {
+  state: string | null;
+  rowKey: string;
+  buildSignals?: BuildAttemptSignals | null;
+}) {
   const testId = `apps-unified-review-deploy-${rowKey}`;
   if (state === null || state === undefined) {
     return (
@@ -321,9 +323,11 @@ function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: stri
       : state.startsWith('preview-')
       ? 'grape'
       : 'blue';
+  // A failed build names its step and class: structured fields, never the excerpt.
+  const summary = state === 'failed' ? failedBuildSummary(buildSignals) : null;
   return (
     <Badge size="sm" color={color} variant="light" data-testid={testId}>
-      {state}
+      {summary ? `${state} · ${summary}` : state}
     </Badge>
   );
 }
@@ -502,12 +506,20 @@ function UnifiedReviewRowView({
             interactive child in a whole-row-clickable cell, i.e. a second thing one click
             could do. */}
         <Group gap="sm" wrap="nowrap">
-          <ListingIconThumb
-            url={row.iconUrl}
-            name={row.title}
-            imgTestId={`apps-unified-review-icon-${row.key}`}
-            placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
-          />
+          {/* Blurred, without the overlay, when it is above SFW on civitai.com: 40px cannot
+              carry the reveal button, and the row opens the review, which reveals it. */}
+          <ReviewMediaReveal
+            image={row.reviewMedia?.icon}
+            explain={false}
+            testId={`apps-unified-review-icon-reveal-${row.key}`}
+          >
+            <ListingIconThumb
+              url={row.iconUrl}
+              name={row.title}
+              imgTestId={`apps-unified-review-icon-${row.key}`}
+              placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
+            />
+          </ReviewMediaReveal>
           <Stack gap={0} style={{ minWidth: 0 }}>
             {row.slug && <Code>{row.slug}</Code>}
             {row.title && row.title !== row.slug && (
@@ -586,7 +598,11 @@ function UnifiedReviewRowView({
         <Table.Td>
           {deploy ? (
             <Stack gap={4} align="flex-start">
-              <DeployStateChip state={deploy.state} rowKey={row.key} />
+              <DeployStateChip
+                state={deploy.state}
+                rowKey={row.key}
+                buildSignals={deploy.buildSignals}
+              />
               {onRetriggerBuild && (
                 <RetriggerBuildButton
                   publishRequestId={deploy.publishRequestId}

@@ -1,9 +1,11 @@
 import { randomUUID } from 'crypto';
 import { json } from '@sveltejs/kit';
+import { decodeProtectedHeader } from 'jose';
 import type { RequestHandler } from './$types';
 import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
-import { mintUserSession } from '$lib/server/auth/session';
+import { mintSession } from '$lib/server/auth/session';
+import { addDeviceFamily } from '$lib/server/auth/lineage';
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { isInternalRequest } from '$lib/server/auth/internal';
 
@@ -30,6 +32,11 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   const legacyToken = typeof body.legacyToken === 'string' ? body.legacyToken : '';
   if (!legacyToken) return json({ error: 'bad_request' }, { status: 400 });
 
+  // Legacy next-auth cookies only. The shared verifier also accepts our own ES256 civ-tokens, so without this a
+  // current civ-token would be exchanged for another one. A next-auth cookie is a compact JWE: five segments and
+  // an `enc` in the protected header. Anything else (a JWS, an unreadable header) is not a legacy cookie.
+  if (!isLegacyJwe(legacyToken)) return json({ error: 'unauthorized' }, { status: 401 });
+
   // Re-decode to PROVE identity (mirrors the main app's getLegacySession: `sub`, falling back to `user.id`).
   const claims = await verifier.verifyToken(legacyToken).catch(() => null);
   const userId = Number(claims?.sub ?? claims?.user?.id);
@@ -44,7 +51,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   // banned user still needs a session to be shown why they were banned and to appeal.
   if (user.bannedAt || user.deletedAt) return json({ error: 'account_disabled' }, { status: 403 });
 
-  const token = await mintUserSession(user);
+  const { token, family } = await mintSession(user);
 
   // Establish this browser in the device set so the upgraded session gets an account-switcher entry, exactly
   // like an interactive hub login (establishSession) — without this, upgrade-on-read produced a civ-token but
@@ -52,7 +59,20 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   // → don't orphan a device set the browser already has) and we MINT one only when absent. We register the
   // account and hand the id back for the spoke to set as its civ-device. Best-effort: a redis-less touch just
   // means no switcher entry, never a failed upgrade.
-  const deviceId = getDeviceId(cookies) ?? randomUUID();
+  let deviceId = getDeviceId(cookies) ?? randomUUID();
+  if ((await addDeviceFamily(deviceId, family)) === 'rotate') {
+    deviceId = randomUUID();
+    await addDeviceFamily(deviceId, family);
+  }
   await touchAccount(deviceId, userId);
   return json({ token, deviceId });
 };
+
+function isLegacyJwe(token: string): boolean {
+  if (token.split('.').length !== 5) return false;
+  try {
+    return typeof decodeProtectedHeader(token).enc === 'string';
+  } catch {
+    return false;
+  }
+}

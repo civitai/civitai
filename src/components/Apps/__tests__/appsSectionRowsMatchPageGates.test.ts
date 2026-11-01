@@ -56,8 +56,7 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * 🔴 WHY A SOURCE SCAN AND AN `eval`, RATHER THAN A RENDER. `appsSections` is exported, but
  * it pulls `@tabler/icons-react` and the rail that renders it pulls React, Mantine and
  * tRPC, so importing either into the node `unit` project — the tier that actually blocks
- * — is not what this guard should depend on. The browser
- * tier that could mount it is report-only. `appsMenuEntry.test.ts` solves the identical
+ * — is not what this guard should depend on. `appsMenuEntry.test.ts` solves the identical
  * problem the identical way, for the same reason.
  *
  * 🔴 AND IT IS BEHAVIOURAL, NOT A SPELLING CHECK. The predicate is EXTRACTED from the real
@@ -489,5 +488,17 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
         'Give the row the predicate its page enforces — see `canAccessAppsBuild` for the ' +
         'shared-predicate pattern.'
     ).toEqual([]);
+  });
+});
+
+// The App Assistant lives on `/apps/build` now (`/apps/assistant` 301s there); the page's matrix,
+// assistant included, is pinned in `src/tests/pages/apps/build-page.test.ts`, and the rail's Build
+// row for an assistant viewer in `AppsRailNav.storeGate.browser.test.tsx`.
+describe('App Assistant', () => {
+  const rows = parseRows(code(read(SUBNAV)));
+
+  it('has no row of its own — a row into `/apps/assistant` would be a link into a redirect', () => {
+    expect(rows.length).toBeGreaterThan(3); // control: the extractor found the table
+    expect(rows.filter((r) => r.href === '/apps/assistant')).toEqual([]);
   });
 });

@@ -8,7 +8,21 @@ $black: var(--mantine-color-black, #000000);
   grid-template-rows: repeat(var(--rows, 2), auto);
   grid-auto-rows: 0;
   overflow: hidden;
-  margin-top: -8px;
+  // Hat room (ITEM_BLEED less the items' 8px margin) as padding undone by negative margin, so no card
+  // moves. The clip crops a hat that grows on hover, hence the fixed scale.
+  margin-top: -36px;
+  margin-left: -28px;
+  padding-top: 28px;
+  padding-left: 28px;
+  // The profile's scroller clips 12px (ProfileLayout2's gutter) plus the cards' 8px margin left of
+  // the first card, so the hat gets that much beside it and the full 36px above.
+  --event-decoration-allowance: 20px;
+  --event-decoration-allowance-top: 36px;
+  --event-decoration-grow: 1;
+  // The padding above overlaps the section header; only the cards take the pointer.
+  pointer-events: none;
+  --loading-inset-top: 28px;
+  --loading-inset-left: 28px;
 
   &::-webkit-scrollbar {
     background: transparent;
@@ -20,8 +34,9 @@ $black: var(--mantine-color-black, #000000);
     border-radius: 4px;
   }
 
-  &>* {
+  & > * {
     margin: 8px;
+    pointer-events: auto;
   }
 
   @container (max-width: theme('screens.sm')) {
@@ -30,12 +45,15 @@ $black: var(--mantine-color-black, #000000);
     grid-template-rows: auto;
     scroll-snap-type: x mandatory;
     overflow-x: auto;
-    margin-right: -$spacing-md;
-    margin-left: -$spacing-md;
+    margin-left: 0;
     padding-left: $spacing-md;
     padding-right: $spacing-md;
+    --loading-inset-left: 0px;
+    // Must track padding-left plus the cards' 8px margin.
+    --event-decoration-allowance: calc(#{$spacing-md} + 8px);
+    --event-decoration-allowance-top: 36px;
 
-    &>* {
+    & > * {
       scroll-snap-align: center;
     }
   }
@@ -47,20 +65,27 @@ $black: var(--mantine-color-black, #000000);
   grid-template-columns: repeat(var(--item-count), var(--default-width, 280px));
   grid-template-rows: auto;
   overflow: visible;
-  margin-right: -$spacing-md;
-  margin-left: -$spacing-md;
+  // Hat room lives on .scroll-area.
+  --event-decoration-allowance: 36px;
+  --event-decoration-allowance-top: 36px;
+  margin-top: -8px;
+  --loading-inset-top: 0px;
+  --loading-inset-left: 0px;
+  margin-left: 0;
+  padding-top: 0;
   padding-left: $spacing-md;
   padding-right: $spacing-md;
+  pointer-events: auto;
 
-  &>* {
+  & > * {
     scroll-snap-align: initial;
   }
 
   @container (max-width: theme('screens.sm')) {
-
     scroll-snap-type: x mandatory;
+    --event-decoration-allowance: 36px;
 
-    &>* {
+    & > * {
       scroll-snap-align: center;
     }
   }
@@ -76,10 +101,7 @@ $black: var(--mantine-color-black, #000000);
       }
 
       &::-webkit-scrollbar-thumb {
-        background-color: light-dark(
-          rgba($black, 0.5),
-          rgba($white, 0.5)
-        );
+        background-color: light-dark(rgba($black, 0.5), rgba($white, 0.5));
       }
     }
   }
@@ -88,9 +110,14 @@ $black: var(--mantine-color-black, #000000);
 .scroll-area {
   overflow: auto;
   scroll-snap-type: auto;
+  // Same hat room as .grid, on the element that clips. The snap area stays where the cards were.
+  margin-top: -36px;
+  margin-left: -28px;
+  padding-top: 36px;
+  padding-left: 28px;
+  scroll-padding-left: 28px;
 
   @container (max-width: theme('screens.sm')) {
-
     scroll-snap-type: x mandatory;
   }
 

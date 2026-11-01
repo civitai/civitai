@@ -1,6 +1,7 @@
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
+import type { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -26,12 +27,13 @@ const logWebhook = (data: MixedObject) => {
   ).catch();
 };
 
-export const getModelData = async ({ input }: { input: GetByIdInput }) => {
+export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const model = await getModel({
       id: input.id,
       select: {
         id: true,
+        userId: true,
         name: true,
         status: true,
         type: true,
@@ -61,18 +63,23 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
         },
       },
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    // The training wizard is the owner's; its dataset files carry their storage urls, so only the
+    // owner and moderators may read it. `userId` is used for that check and dropped from the
+    // response — adding it to the returned shape would change the public query type.
+    if (!model || (!ctx.user?.isModerator && ctx.user?.id !== model.userId))
+      throw throwNotFoundError(`No model with id ${input.id}`);
+    const { userId: _ownerId, ...modelData } = model;
 
     // TODO(replica-toast): overlay is a workaround — the data-packet logical subscriber drops
     // TOASTed jsonb on UPDATE, leaving trainingResults empty. Remove once replication is fixed.
-    const fileIds = model.modelVersions.flatMap((v) => v.files.map((f) => f.id));
+    const fileIds = modelData.modelVersions.flatMap((v) => v.files.map((f) => f.id));
     if (fileIds.length) {
       const fresh = await dbWrite.modelFile.findMany({
         where: { id: { in: fileIds } },
         select: { id: true, metadata: true },
       });
       const metaById = new Map(fresh.map((f) => [f.id, f.metadata]));
-      for (const version of model.modelVersions) {
+      for (const version of modelData.modelVersions) {
         for (const file of version.files) {
           const m = metaById.get(file.id);
           if (m !== undefined) file.metadata = m;
@@ -80,7 +87,7 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
       }
     }
 
-    return model;
+    return modelData;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -150,7 +157,8 @@ const getWorkflowFromVersion = async (modelVersionId: number) => {
   // the addressing for a privileged gate release, so an owner could point the file a moderator is
   // reviewing at a different run and have the ruling land there. The tag is written by us at submit
   // time (training.orch.ts) and the reviewed user cannot set it, so it — not the metadata — is what
-  // says which version this workflow belongs to.
+  // says which version this workflow belongs to. Keep it even though modelFile writes now drop
+  // client trainingResults: files saved before that still carry whatever metadata they were given.
   if (!workflow.tags?.includes(`modelVersion:${modelVersionId}`)) {
     logWebhook({
       message: 'Workflow does not belong to this model version; refusing to touch its gate',

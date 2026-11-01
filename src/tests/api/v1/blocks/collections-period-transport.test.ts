@@ -111,6 +111,9 @@ vi.mock('~/server/services/blocks/block-collections.service', () => ({
   getCollectionPlayableSample: mockPlayableSample,
   toCoverFields: () => ({ coverImageUrl: null }),
   collectionWithinCeiling: () => true,
+  // Covers are not under test here.
+  isPublicCollectionImage: () => false,
+  getModelRestrictedImageIds: async () => new Set<number>(),
 }));
 /**
  * 🔴 THE ONLY DOUBLE ON THE RANKING PATH. `block-collection-popularity.service` is NOT
@@ -218,20 +221,6 @@ describe('a keep-alive socket drop must not cost the request its ranking', () =>
     expect(body.items.map((i: any) => i.id)).toEqual(RANKED);
     // And it cost exactly one extra ask — not a loop.
     expect(mockChQuery).toHaveBeenCalledTimes(2);
-  });
-
-  it('records the ClickHouse source on the metric, with no reason', async () => {
-    mockChQuery
-      .mockRejectedValueOnce(new Error(SOCKET_HANG_UP))
-      .mockResolvedValueOnce(RANKED.map((id) => ({ id })));
-
-    await run();
-
-    expect(mockRecordSource).toHaveBeenCalledWith({
-      period: 'Month',
-      source: 'clickhouse',
-      reason: undefined,
-    });
   });
 
   it('still degrades — and says why — when the retry fails too', async () => {

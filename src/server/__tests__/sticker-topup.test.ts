@@ -115,6 +115,28 @@ describe('purchaseStickerUses', () => {
     refreshOwnedStickerCache.mockResolvedValue(undefined);
   });
 
+  // An event item (data.event) is sold only through the shop purchase, which
+  // checks the event window, the buyer's team and paid Buzz. A top-up checks
+  // none of them, so it must not sell one.
+  it('refuses an event-gated sticker before any charge', async () => {
+    findCosmetic.mockResolvedValue({
+      id: COSMETIC_ID,
+      name: 'party cat',
+      type: 'Sticker',
+      createdById: CREATOR,
+      data: {
+        slug: 'party_cat',
+        url: 'img',
+        uses: 100,
+        pricePerUse: PRICE_PER_USE,
+        event: 'any-event',
+      },
+    });
+
+    await expect(call()).rejects.toThrow("Event stickers can't be topped up");
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
   // A sticker sold only inside packs has no listing of its own. Without this the
   // top-up refuses and "packs inherit per-use pricing" is decorative.
   describe('authorised by a pack rather than its own listing', () => {

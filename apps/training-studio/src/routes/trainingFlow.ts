@@ -3,11 +3,15 @@ import {
   LORA_TYPES,
   MODEL_CARDS,
   TE_TRAINING_UNSUPPORTED,
+  allowsCustomBase,
   cardByType,
   extraParamCapabilities,
   extraParamDefaults,
+  isProdigy,
+  MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
+  ecosystemTakesSampleImages,
   versionStepDefault,
   versionSuffix,
   type ExtraParamField,
@@ -17,6 +21,7 @@ import {
   type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
+import type { TrainingItem } from '$lib/train-core';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
@@ -129,6 +134,14 @@ export function runVersionLabel(run: Run): string {
   return versionSuffix(card.name, v?.label);
 }
 
+/** The version choices a card offers on Select: its catalog versions, then Custom where allowed. */
+export function versionOptions(card: ModelCard): { key: string; label: string }[] {
+  return [
+    ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+    ...(allowsCustomBase(card) ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }] : []),
+  ];
+}
+
 export function newRun(card: ModelCard): Run {
   const first = card.versions[0];
   if (!first) throw new Error(`Base-model card ${card.type} has no versions`);
@@ -156,7 +169,20 @@ export function recommendedCardFor(
 
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature';
+export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
+
+/** File-browser order — natural (`clip2` before `clip10`) and case-insensitive. A zip's entry order is
+ *  whatever the archiver wrote (a tester reported theirs arriving sorted by video duration; their zip
+ *  wasn't inspected), which made a failed upload impossible to place against the user's own folder. */
+export const compareFileNames: (a: string, b: string) => number = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+}).compare;
+
+let imgSeq = 0;
+/** Client id for a dataset tile. Module-level because the flow keeps `images` across Back/Continue
+ *  while the Data step remounts. */
+export const nextImgId = () => ++imgSeq;
 
 /** A dataset item: its source file, upload/scan state against the orchestrator, and its label.
  *  Owned by the flow so it survives Back/Continue. Once uploaded the bytes live in the orchestrator
@@ -185,17 +211,39 @@ export interface Img {
   /** Set once auto-labeling has attempted this image (success, empty, or failure), so the automatic
    *  drain labels each image at most once. A failed attempt falls back to manual editing. */
   labelTried?: boolean;
+  /** Why the last auto-label submit for this image was refused, shown on the tile. */
+  labelError?: string;
   /** The label text this item ARRIVED with (a zip's .txt, a reused dataset's caption), verbatim.
    *  A label-format switch re-applies this instead of discarding it and re-auto-labeling — wiping
    *  a user's own caption files on a mode toggle is how tester data got silently destroyed. */
   sourceLabel?: string;
+  /** SHA-256 of the file's bytes, when the item came from a local file — edit pairs group by it. */
+  hash?: string;
+  /** The workflow that produced a blob-backed item whose URL needs an authenticated fetch (a
+   *  generation's edit source), so `backend().datasetBlob` can read its bytes. */
+  sourceWorkflowId?: string;
   tags: string[];
   caption: string;
+}
+
+/** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
+ *  here, at submit, rather than when its result lands — a tile whose result never maps back can't be
+ *  resent by the drain. Results map back by position, not tile id: when two tiles shared an id, the
+ *  second was never marked and was resent every pass until the user's Buzz ran out. */
+export function startLabelPass(targets: Img[]) {
+  const byKey = new Map(targets.map((t, i) => [String(i), t]));
+  for (const t of targets) Object.assign(t, { labeling: true, labelTried: true });
+  const items = [...byKey].map(([key, t]) => ({ key, mediaUrl: t.blobUrl ?? '' }));
+  return { byKey, items };
 }
 
 /** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
 export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
+}
+
+export function isFailed(img: Img): boolean {
+  return img.status === 'blocked' || img.status === 'error';
 }
 
 /** The training-data `air` reference for a blob-backed item (a generation / reused dataset). The
@@ -205,6 +253,27 @@ export function isTrainable(img: Img): boolean {
 export function blobAirFromUrl(url: string): string {
   return url.split('?')[0];
 }
+
+/** A dataset item's bytes, for a zip: an upload's own File, else its URLs — a reused or hydrated item's
+ *  `previewUrl` is the local object URL already fetched — and, once those have expired, `readBlob`
+ *  (the authenticated read) for an item that names the workflow it came from. */
+export async function imgBytes(
+  img: Img,
+  readBlob?: (air: string, workflowId: string) => Promise<Blob>
+): Promise<Blob> {
+  if (img.file) return img.file;
+  for (const url of [img.previewUrl, img.blobUrl]) {
+    if (!url) continue;
+    const res = await fetch(url).catch(() => null);
+    if (res?.ok) return res.blob();
+  }
+  const air = img.blobId ?? img.blobUrl;
+  if (readBlob && air && img.sourceWorkflowId) return readBlob(air, img.sourceWorkflowId);
+  throw new Error(`${img.name} unavailable`);
+}
+
+/** "1 pair", "3 pairs". */
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Per-run training parameters chosen on the Review step (mirrors the prod trainer's fields). */
 export interface RunParams {
@@ -333,9 +402,9 @@ export function defaultStepsForRun(run: Run): number {
 }
 
 /** A run's Review-step params from its chosen model's defaults — per run, since a sweep can mix models. */
-export function defaultRunParams(run: Run): RunParams {
+export function defaultRunParams(run: Run, trigger = ''): RunParams {
   const d = paramsForVersion(runCard(run), run.versionKey);
-  const x = extraParamDefaults(runCard(run), run.versionKey);
+  const x = extraParamDefaults(runCard(run), run.versionKey, !!trigger.trim());
   return {
     steps: defaultStepsForRun(run),
     epochs: d.epochs,
@@ -362,6 +431,24 @@ export function runExtraCapabilities(run: Run, labelMode: LabelType) {
 
 /** The text-encoder rate is locked at 0 for models whose backend can't train it. */
 export const teLocked = (run: Run): boolean => TE_TRAINING_UNSUPPORTED.has(run.versionKey);
+
+/** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
+ *  1 (the text encoder too, unless the model can't train it); switching away puts a Prodigy-level
+ *  rate back to the model's recommendation and leaves a rate the user picked alone. */
+export function optimizerLrParams(
+  run: Run,
+  params: RunParams
+): Pick<RunParams, 'unetLr' | 'textEncoderLr'> {
+  const { unetLr, textEncoderLr } = params;
+  if (isProdigy(params.optimizer))
+    return { unetLr: '1', textEncoderLr: teLocked(run) ? textEncoderLr : '1' };
+  const defaults = defaultRunParams(run);
+  const reset = (v: NumericInput, d: NumericInput) => (Number(v) >= MAX_NON_PRODIGY_LR ? d : v);
+  return {
+    unetLr: reset(unetLr, defaults.unetLr),
+    textEncoderLr: reset(textEncoderLr, defaults.textEncoderLr),
+  };
+}
 
 export interface ParamDeviation {
   field: keyof RunParams;
@@ -390,9 +477,10 @@ function paramEquals(a: NumericInput | boolean, b: NumericInput | boolean): bool
 export function paramDeviations(
   run: Run,
   params: RunParams,
-  labelMode: LabelType
+  labelMode: LabelType,
+  trigger = ''
 ): ParamDeviation[] {
-  const defaults = defaultRunParams(run);
+  const defaults = defaultRunParams(run, trigger);
   const caps = runExtraCapabilities(run, labelMode);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
@@ -420,6 +508,84 @@ export const runParamsKey = (run: Run): string => `${run.id}:${run.cardType}:${r
 export interface SamplePrompt {
   id: number;
   text: string;
+  /** The input image an image-conditioned sample is rendered from (`runTakesSampleImages`). */
+  image?: SampleImage;
+}
+
+/** An uploaded sample input image. `url` is the scanned blob's media URL — what the orchestrator
+ *  conditions the sample on, the same reference auto-labeling sends it. */
+export interface SampleImage {
+  url: string;
+  name: string;
+}
+
+export const MAX_SAMPLE_PROMPTS = 6;
+
+/** The list with one more, empty, prompt row (an id past every existing one), or unchanged at the cap.
+ *  Empty, not example text: whatever the row holds is submitted unless the user rewrites it. */
+export function addSamplePrompt(prompts: SamplePrompt[]): SamplePrompt[] {
+  if (prompts.length >= MAX_SAMPLE_PROMPTS) return prompts;
+  const id = Math.max(-1, ...prompts.map((p) => p.id)) + 1;
+  return [...prompts, { id, text: '' }];
+}
+
+/** The filled sample prompts, trimmed. An added row starts empty, and an empty sample prompt is not a
+ *  test image anyone asked for. */
+export function filledPrompts(texts: string[]): string[] {
+  return texts.map((t) => t.trim()).filter((t) => t.length > 0);
+}
+
+/** The sample prompts a run is submitted with: the filled ones, or the rows as they are when none is
+ *  filled. Blank prompts generate no images either way; an all-blank list keeps the shape every
+ *  trainer has always sent rather than an empty array no submit path has been seen to accept. */
+export function submittedPrompts(texts: string[]): string[] {
+  const filled = filledPrompts(texts);
+  return filled.length ? filled : texts;
+}
+
+/** Whether a run trains an edit LoRA from before/after pairs. Every run in a selection agrees — the
+ *  Select step won't mix them, since the two datasets don't share a shape. */
+export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
+
+/** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
+ *  its label format and on whether it is pairs. */
+export function sweepCompatible(card: ModelCard, primary: ModelCard): boolean {
+  return labelOptions(card).includes(primary.label) && !!card.pairs === !!primary.pairs;
+}
+
+/** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to
+ *  its card's primary version, so it follows that ecosystem like every other run-level check. */
+export const runTakesSampleImages = (run: Run): boolean =>
+  ecosystemTakesSampleImages(runVersion(run).ecosystem);
+
+/** The rows that are submitted: the filled ones, or all of them when none is (`submittedPrompts`). */
+function submittedRows(prompts: SamplePrompt[]): SamplePrompt[] {
+  const filled = prompts.filter((p) => p.text.trim().length > 0);
+  return filled.length ? filled : prompts;
+}
+
+/** Why the sample input images can't be submitted as they stand, or null. The orchestrator pairs
+ *  `sourceImages[i]` with `prompts[i]`, so either every submitted prompt has an image or none does —
+ *  and an image on a blank row would be dropped with the row. */
+export function sampleImagesProblem(prompts: SamplePrompt[]): string | null {
+  if (prompts.some((p) => p.image && !p.text.trim()))
+    return 'A sample with an input image needs a prompt describing the edit.';
+  const rows = submittedRows(prompts);
+  const withImage = rows.filter((p) => p.image).length;
+  if (withImage > 0 && withImage < rows.length)
+    return 'Add an input image to every sample prompt, or remove them all.';
+  return null;
+}
+
+/** The input images a run's samples are rendered from, index-aligned to its submitted prompts — or
+ *  undefined when the samples are text-only (no image set, or a run whose model can't take them).
+ *  Throws on a `sampleImagesProblem` rather than quietly submitting the run text-only. */
+export function submittedSampleImages(run: Run, prompts: SamplePrompt[]): string[] | undefined {
+  if (!runTakesSampleImages(run)) return undefined;
+  const problem = sampleImagesProblem(prompts);
+  if (problem) throw new Error(problem);
+  const urls = submittedRows(prompts).flatMap((p) => (p.image ? [p.image.url] : []));
+  return urls.length ? urls : undefined;
 }
 
 /** Whether a sample prompt already carries the trigger word (`findTrigger`). Always true when there
@@ -489,21 +655,25 @@ function num(value: NumericInput, fallback: number): number {
 
 /** Assemble the Start payload: one run per training run, each carrying the shared uploaded-blob dataset
  *  (labels resolved by the dataset's single label type), the chosen params, prompts, trigger, and the
- *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. */
+ *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. An
+ *  edit LoRA passes its pairs as path-placed `items` (`pairItems`), which replace the image list. */
 export function buildTrainingRuns(
   selection: Selection,
   images: Img[],
   trigger: string,
   name: string,
   launched: LaunchedRun[],
-  prompts: string[],
+  prompts: SamplePrompt[],
   currencies: string[],
-  labelMode: LabelType
+  labelMode: LabelType,
+  edit?: { items: TrainingItem[]; pairs: number }
 ): TrainingRunPayload[] {
   const mode = labelMode;
-  const items = images
-    .filter((i) => i.status === 'uploaded' && !!i.blobId)
-    .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
+  const items = edit
+    ? edit.items
+    : images
+        .filter((i) => i.status === 'uploaded' && !!i.blobId)
+        .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
@@ -537,7 +707,9 @@ export function buildTrainingRuns(
       flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
-      prompts,
+      ...(edit ? { editTraining: true } : {}),
+      prompts: submittedPrompts(prompts.map((p) => p.text)),
+      sourceImages: submittedSampleImages(run, prompts),
       currencies,
       meta: {
         name: name.trim() || t || selection.loraType,
@@ -545,7 +717,7 @@ export function buildTrainingRuns(
         loraType: selection.loraType,
         cardType: run.cardType,
         versionKey: run.versionKey,
-        imageCount: items.length,
+        imageCount: edit?.pairs ?? items.length,
         trigger: t,
       },
     };

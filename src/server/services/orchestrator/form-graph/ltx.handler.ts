@@ -1,7 +1,6 @@
 /**
- * LTX handler for the form-graph lane (LTXV2 + LTXV23 + LTXV25). Converts
- * `generationHub.parse().data` into @civitai/client steps — same routing as
- * the data-graph handler it mirrors:
+ * LTX handler (LTXV2 + LTXV23 + LTXV25). Converts `generationHub.parse().data`
+ * into @civitai/orchestration-client steps:
  * - LTXV2 / txt2vid → ltx2 createVideo; img2vid → firstLastFrameToVideo
  * - LTXV23 / txt2vid (+ ref2vid) → ltx2.3 createVideo; img2vid →
  *   firstLastFrameToVideo; vid2vid:edit → editVideo; vid2vid:extend → extendVideo
@@ -18,7 +17,7 @@ import type {
   ComfyLtx2CreateVideoInput,
   ComfyLtx2FirstLastFrameToVideoInput,
   VideoGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { resolveImageDimensions } from '~/utils/aspect-ratio-helpers';
 import {
@@ -29,8 +28,8 @@ import {
   DISTILLED_IDS,
   SULPHUR2_IDS,
 } from '~/shared/form-graph/generation/video/ltx.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
-import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
+import { defineHandler } from '../handlers/handler-factory';
+import type { GenerationHandlerCtx, StepInput } from '../handlers';
 import { createChainedPromptEnhancementStep } from '~/server/services/orchestrator/promptEnhancement';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
@@ -83,7 +82,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
     const resolution = data.resolution ?? '720p';
     const aspectRatios =
       ltxv25AspectRatiosByResolution[resolution] ?? ltxv25AspectRatiosByResolution['720p'];
-    const guidanceScale = distilled ? 1 : data.cfgScale;
+    const cfgScale = distilled ? 1 : data.cfgScale;
     const stepCount = distilled ? 8 : data.steps;
 
     let videoStep: VideoGenStepTemplate;
@@ -100,7 +99,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
           width,
           height,
           model,
-          guidanceScale,
+          cfgScale,
           steps: stepCount,
           duration: data.duration,
           firstFrame: images?.[0]?.url,
@@ -123,7 +122,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
           width: data.aspectRatio?.width,
           height: data.aspectRatio?.height,
           model,
-          guidanceScale,
+          cfgScale,
           steps: stepCount,
           duration: data.duration,
           quantity: data.quantity,
@@ -145,7 +144,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
     const resolution = data.resolution ?? '720p';
     const aspectRatios =
       ltxv23AspectRatiosByResolution[resolution] ?? ltxv23AspectRatiosByResolution['720p'];
-    const guidanceScale = distilled ? 1 : data.cfgScale;
+    const cfgScale = distilled ? 1 : data.cfgScale;
     const stepCount = distilled ? 8 : data.steps;
     // Sulphur 2 is a community LTXV23 fine-tune — its AIR rides `diffusionModel`
     // to override the transformer while leaving CLIPs/VAEs/upscale-LoRA intact.
@@ -174,7 +173,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
             height,
             model,
             diffusionModel,
-            guidanceScale,
+            cfgScale,
             steps: stepCount,
             duration: data.duration,
             firstFrame: images?.[0]?.url,
@@ -201,7 +200,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
             height: data.video?.metadata?.height,
             model,
             diffusionModel,
-            guidanceScale,
+            cfgScale,
             steps: stepCount,
             duration: data.duration,
             sourceVideo: data.video?.url,
@@ -229,7 +228,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
             height: data.video?.metadata?.height,
             model,
             diffusionModel,
-            guidanceScale,
+            cfgScale,
             steps: stepCount,
             sourceVideo: data.video?.url,
             numFrames: data.numFrames,
@@ -255,7 +254,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
             height: data.aspectRatio?.height,
             model,
             diffusionModel,
-            guidanceScale,
+            cfgScale,
             steps: stepCount,
             duration: data.duration,
             quantity: data.quantity,
@@ -274,7 +273,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
 
   // LTXV2
   const distilled = data.model?.id === LTXV2_DISTILLED_ID;
-  const guidanceScale = distilled ? 1 : data.cfgScale;
+  const cfgScale = distilled ? 1 : data.cfgScale;
   const stepCount = distilled ? 8 : data.steps;
 
   let videoStep: VideoGenStepTemplate;
@@ -294,7 +293,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
         negativePrompt,
         width,
         height,
-        guidanceScale,
+        cfgScale,
         steps: stepCount,
         duration: data.duration,
         firstFrame: images?.[0]?.url,
@@ -315,7 +314,7 @@ export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) =>
         negativePrompt,
         width: data.aspectRatio?.width,
         height: data.aspectRatio?.height,
-        guidanceScale,
+        cfgScale,
         steps: stepCount,
         duration: data.duration,
         quantity: data.quantity ?? 1,

@@ -18,8 +18,8 @@ const act = (React as unknown as { act: typeof actType }).act;
  * write, so without this the UI offers Reply and Edit into a box that cannot accept them.
  *
  * This lives in a `.test.ts` because the `unit` project's include is `src/**\/*.test.ts` — `.tsx`
- * is excluded, and `*.browser.test.tsx` is a separate project that no CI job runs. A browser-only
- * assertion here would be reassurance, not a gate. Hence `React.createElement` rather than JSX.
+ * is excluded, and `*.browser.test.tsx` is a separate project (`Component tests` in CI). Hence
+ * `React.createElement` rather than JSX.
  *
  * What is read is the value handed to the render child, which is the same object
  * `useCommentsContext()` returns — so this is what `CreateComment` and `CommentProvider` actually

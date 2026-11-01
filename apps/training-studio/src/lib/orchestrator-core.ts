@@ -1,7 +1,7 @@
 // Client-safe orchestrator reads: everything here takes an already-built SDK client, so it runs
 // in the browser (the web-component build) as well as in the shell's server routes, which wrap
 // these with an env-configured client (lib/server/orchestrator.ts).
-import type { createCivitaiClient } from '@civitai/client';
+import type { createCivitaiClient } from '@civitai/orchestration-client';
 import {
   getConsumerBlobUploadUrl,
   getWorkflow,
@@ -11,13 +11,14 @@ import {
   type BlobArchiveEntry,
   type BuzzClientAccount,
   type WorkflowStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   CIVITAI_TAG,
   TRAINING_TAG,
-  epochArchiveEntries,
+  epochArchiveParts,
   workflowToDetail,
   workflowToRow,
+  type ArchiveKind,
   type GenerationItem,
   type TrainingDetail,
   type TrainingRow,
@@ -25,6 +26,21 @@ import {
 import type { Media } from '$lib/data/trainingModels';
 
 export type OrchestratorClient = ReturnType<typeof createCivitaiClient>;
+
+// The Buzz accounts a Studio workflow may draw from — a caller's `currencies` is filtered to this set
+// so a tampered/garbage body can't send an arbitrary account to the orchestrator.
+const ALLOWED_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue', 'green'];
+
+/** `input` filtered to the allowed accounts, in its order; `fallback` when nothing valid is left. */
+export function resolveCurrencies(
+  input: string[] | undefined,
+  fallback: BuzzClientAccount[]
+): BuzzClientAccount[] {
+  const picked = (input ?? []).filter((c): c is BuzzClientAccount =>
+    ALLOWED_CURRENCIES.includes(c as BuzzClientAccount)
+  );
+  return picked.length ? picked : fallback;
+}
 
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 export const RETENTION_DAYS = 30;
@@ -35,11 +51,24 @@ export function isFlux2(engine?: string): boolean {
   return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
 }
 
+const isHtmlPage = (body: string) => /^\s*<(!doctype|html)/i.test(body);
+
+/** An edge error page (Cloudflare's 5xx) comes back as a whole HTML document — never show the markup. */
+function describeHtmlPage(body: string): string {
+  const status = body.match(/cf-error-(\d{3})|Error reference number:\s*(\d{3})/i);
+  const code = status?.[1] ?? status?.[2];
+  return `the training service is unavailable right now${
+    code ? ` (HTTP ${code})` : ''
+  } — try again in a minute`;
+}
+
 /** A rejected step comes back as RFC-9110 ProblemDetails (`.title` + a `.errors` field→messages map), a
  *  plain error as `.detail`; surface whichever is present, including the per-field validation errors so a
- *  bad body says which field, not just "One or more validation errors occurred". */
-export function describeSubmitError(error: unknown): string {
-  if (typeof error === 'string') return error;
+ *  bad body says which field, not just "One or more validation errors occurred". `status` (the response's,
+ *  when the caller has it) names an otherwise empty failure, e.g. a 502 during an outage. */
+export function describeSubmitError(error: unknown, status?: number): string {
+  if (typeof error === 'string' && error)
+    return isHtmlPage(error) ? describeHtmlPage(error) : error;
   const e = error as
     | { detail?: string; title?: string; errors?: Record<string, string[] | string> }
     | undefined;
@@ -49,7 +78,11 @@ export function describeSubmitError(error: unknown): string {
       .join(' | ');
     if (fields) return `${e.title ?? 'validation failed'} — ${fields}`;
   }
-  return e?.detail ?? e?.title ?? 'no data returned';
+  return (
+    e?.detail ??
+    e?.title ??
+    (status ? `the training service answered HTTP ${status}` : 'no data returned')
+  );
 }
 
 /** Reduce a dataset `air` to the blob id the consumer endpoint wants. Three stored forms: an uploaded blob
@@ -76,22 +109,31 @@ export function consumerBlobUrl(endpoint: string, air: string, workflowId?: stri
 
 /** The caller's training runs from the orchestrator, newest first, mapped to list rows. */
 export async function listTrainingWorkflows(client: OrchestratorClient): Promise<TrainingRow[]> {
+  const workflows = await queryRecentWorkflows(client, [CIVITAI_TAG, TRAINING_TAG]);
+  return workflows.map(workflowToRow).filter((r): r is TrainingRow => r !== null);
+}
+
+/** The caller's workflows carrying every one of `tags`, newest first, within the retention window. */
+export async function queryRecentWorkflows(client: OrchestratorClient, tags: string[]) {
   const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await queryWorkflows({
     client,
-    query: { tags: [CIVITAI_TAG, TRAINING_TAG], take: 100, fromDate, hideMatureContent: false },
+    query: { tags, take: 100, fromDate, hideMatureContent: false },
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
-  return (data.items ?? []).map(workflowToRow).filter((r): r is TrainingRow => r !== null);
+  return data.items ?? [];
 }
+
+/** Workflow statuses that end a run — a poll stops on any of them. */
+export const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 const GENERATION_TAG = 'gen';
 const MEDIA_TAG: Record<Media, string> = { image: 'img', video: 'vid', audio: 'aud' };
 /** A picker grid caps out well before this; enough to cover a heavy day of generations. */
-const MAX_GENERATION_ITEMS = 200;
+export const MAX_GENERATION_ITEMS = 200;
 
 /** One output blob off a raw workflow step, across all media shapes (image/video/audio). */
-interface OutputBlob {
+export interface OutputBlob {
   id: string;
   available: boolean;
   url?: string | null;
@@ -100,6 +142,10 @@ interface OutputBlob {
   type?: string;
   nsfwLevel?: string | null;
 }
+/** An output blob a dataset or picker can use: scanned clean, available, and with a URL. */
+export const isUsableBlob = (blob: OutputBlob): blob is OutputBlob & { url: string } =>
+  blob.available && !blob.blockedReason && !!blob.url;
+
 interface RawStep {
   $type?: string;
   output?: {
@@ -162,24 +208,18 @@ export async function listGenerations(
   client: OrchestratorClient,
   media: Media
 ): Promise<GenerationItem[]> {
-  const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await queryWorkflows({
-    client,
-    query: {
-      tags: [CIVITAI_TAG, GENERATION_TAG, MEDIA_TAG[media]],
-      take: 100,
-      fromDate,
-      hideMatureContent: false,
-    },
-  });
-  if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
+  const workflows = await queryRecentWorkflows(client, [
+    CIVITAI_TAG,
+    GENERATION_TAG,
+    MEDIA_TAG[media],
+  ]);
 
   const items: GenerationItem[] = [];
   const seen = new Set<string>();
-  for (const workflow of data.items ?? []) {
+  for (const workflow of workflows) {
     for (const step of (workflow.steps ?? []) as RawStep[]) {
       for (const blob of stepBlobsForMedia(step, media)) {
-        if (blob.available && !blob.blockedReason && blob.url && !seen.has(blob.id)) {
+        if (isUsableBlob(blob) && !seen.has(blob.id)) {
           seen.add(blob.id);
           items.push({
             blobId: blob.id,
@@ -204,7 +244,22 @@ const WHATIF_IMAGE_COUNT = 20;
 const WHATIF_SAMPLE_PROMPTS = ['sample prompt', 'sample prompt', 'sample prompt'];
 // Which Buzz wallets may pay — the standard user spend set. It gates the payment source, not the price,
 // so the estimated total is the same for any non-empty set; required on the workflow body regardless.
-const WHATIF_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
+export const WHATIF_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
+
+/** Price one step without submitting it (`whatif`): the total Buzz cost, or null when unpriced. */
+export async function whatIfCost(
+  client: OrchestratorClient,
+  step: WorkflowStepTemplate,
+  what: string
+): Promise<number | null> {
+  const { data, error } = await submitWorkflow({
+    client,
+    body: { steps: [step], currencies: WHATIF_CURRENCIES },
+    query: { whatif: true },
+  });
+  if (!data) throw new Error(`${what} failed: ${describeSubmitError(error)}`);
+  return data.cost?.total ?? null;
+}
 
 /**
  * Every field the ORCHESTRATOR prices must be expressible here, because Review's "this is what
@@ -225,6 +280,8 @@ export interface TrainingWhatIfInput {
   engine?: string;
   /** Ecosystem-specific version selector (e.g. the `qwen` ecosystem's `version` field). */
   version?: string;
+  /** An edit LoRA (`isEditTraining`), priced as the submit will run it. */
+  editTraining?: boolean;
   /** Omit for the "from" floor — the orchestrator then prices its per-ecosystem default step budget. */
   steps?: number;
   /** Saved-checkpoint count — it moves the real price (~±5⚡ per checkpoint around the default 10). */
@@ -271,6 +328,7 @@ export async function trainingWhatIf(
           ...(input.model ? { model: input.model } : {}),
           ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
           ...(input.version ? { version: input.version } : {}),
+          ...(input.editTraining ? { isEditTraining: true } : {}),
           trainingData: { type: 'zip', sourceUrl: 'https://fake', count },
           samples: { prompts: WHATIF_SAMPLE_PROMPTS },
           ...(input.steps ? { steps: input.steps } : {}),
@@ -278,13 +336,7 @@ export async function trainingWhatIf(
         },
       }) as unknown as WorkflowStepTemplate;
 
-  const { data, error } = await submitWorkflow({
-    client,
-    body: { steps: [step], currencies: WHATIF_CURRENCIES },
-    query: { whatif: true },
-  });
-  if (!data) throw new Error(`training whatif failed: ${describeSubmitError(error)}`);
-  return data.cost?.total ?? null;
+  return whatIfCost(client, step, 'training whatif');
 }
 
 /** Mint a short-lived presigned URL for a single dataset blob. The browser POSTs the file straight to
@@ -331,35 +383,47 @@ export class ArchiveRejectedError extends Error {}
 export interface EpochArchive {
   /** Signed URL that streams the zip. */
   url: string;
+  archiveName: string;
   entryCount: number;
   expiresAt?: string;
 }
 
-/** One zip of every checkpoint's weights (plus each epoch's samples) for a run — the orchestrator's
- *  blobArchive recipe over the run's own blobs. The workflow is re-read here rather than trusting a
- *  client-supplied blob list, so a caller can only archive blobs the token already scopes to. The zip
- *  is built and streamed by the orchestrator; nothing is buffered here. */
+/** A run's checkpoint weights (or its sample images) as zips — the orchestrator's blobArchive recipe
+ *  over the run's own blobs, one archive per part of `epochArchiveParts` (usually one). The workflow is
+ *  re-read here rather than trusting a client-supplied blob list, so a caller can only archive blobs
+ *  the token already scopes to. The zips are built and streamed by the orchestrator; nothing is
+ *  buffered here. */
 export async function createEpochArchive(
   client: OrchestratorClient,
-  workflowId: string
-): Promise<EpochArchive> {
+  workflowId: string,
+  kind: ArchiveKind
+): Promise<EpochArchive[]> {
   const { data: wf, error: getError } = await getWorkflow({ client, path: { workflowId } });
   if (!wf) {
     if (getError?.status === 404) throw new RunNotFoundError('archive: run not found');
     throw new Error(`archive: getWorkflow failed (${getError?.detail ?? 'no data returned'})`);
   }
-  const { entries, archiveName } = epochArchiveEntries(wf);
-  if (entries.length === 0)
-    throw new NothingToArchiveError('archive: no checkpoint weights are ready yet');
-  const { data, error } = await invokeBlobArchiveStepTemplate({
-    client,
-    body: { entries: entries as BlobArchiveEntry[], archiveName, format: 'zip' },
-  });
-  if (!data?.url) {
-    const status = (error as { status?: number } | undefined)?.status;
-    if (typeof status === 'number' && status >= 400 && status < 500)
-      throw new ArchiveRejectedError(`archive refused: ${describeSubmitError(error)}`);
-    throw new Error(`archive failed: ${describeSubmitError(error)}`);
+  const parts = epochArchiveParts(wf, kind);
+  if (parts.length === 0)
+    throw new NothingToArchiveError(`archive: no ${kind} are ready to download yet`);
+  const archives: EpochArchive[] = [];
+  for (const { entries, archiveName } of parts) {
+    const { data, error, response } = await invokeBlobArchiveStepTemplate({
+      client,
+      body: { entries: entries as BlobArchiveEntry[], archiveName, format: 'zip' },
+    });
+    if (!data?.url) {
+      const status = response?.status ?? (error as { status?: number } | undefined)?.status;
+      if (typeof status === 'number' && status >= 400 && status < 500)
+        throw new ArchiveRejectedError(`archive refused: ${describeSubmitError(error, status)}`);
+      throw new Error(`archive failed: ${describeSubmitError(error, status)}`);
+    }
+    archives.push({
+      url: data.url,
+      archiveName,
+      entryCount: data.entryCount,
+      expiresAt: data.expiresAt ?? undefined,
+    });
   }
-  return { url: data.url, entryCount: data.entryCount, expiresAt: data.expiresAt ?? undefined };
+  return archives;
 }
