@@ -6580,7 +6580,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       401,
       { message: 'workflow submit requires authenticated viewer' },
       true,
-      ['checkBlockSubmitRateLimit("bki_char", "anon")'],
+      ['checkBlockSubmitRateLimit("bki_char", "anon")', 'checkBlockSubmitUserRateLimit("anon")'],
       [],
       ['ai:write:budgeted']
     ),
@@ -6664,7 +6664,10 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       404,
       { message: 'model version not found' },
       true,
-      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
@@ -6676,7 +6679,10 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       404,
       { message: 'model version not found' },
       true,
-      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',

@@ -119,7 +119,7 @@ export type AppBlockEndpoint =
   // deliberate multi-second hold into the p95 of the SPEND path, and a spend
   // failure disappears into the volume of estimates. They also charge DIFFERENT
   // rate-limit buckets — `poll` its own `:poll:` bucket, `estimate`/`cancel` the
-  // catalog bucket, `submit` its own `:submit:` bucket — which is the other
+  // catalog bucket, `submit` its own `:submit:` and `:submit-user:` buckets — which is the other
   // dimension these series get read for.
   | 'workflows_submit'
   | 'workflows_estimate'
@@ -1939,7 +1939,8 @@ export type AppBlockRateLimitBucket =
   | 'post-app'
   | 'poll'
   | 'estimate-cells'
-  | 'submit';
+  | 'submit'
+  | 'submit-user';
 
 /**
  * Fail-soft emit of ONE bridge rate-limit refusal.

@@ -720,3 +720,24 @@ export async function checkBlockSubmitRateLimit(
     BLOCK_SUBMIT_RATE_LIMIT_WINDOW_SECONDS
   );
 }
+
+// SUBMIT-USER bucket: the same subject across EVERY install, so the pre-spend work one
+// viewer can cause does not grow with the number of install tokens they hold. Twice the
+// per-install submit ceiling, so a viewer running two apps flat out still fits.
+export const BLOCK_SUBMIT_USER_RATE_LIMIT_MAX = 2 * BLOCK_SUBMIT_RATE_LIMIT_MAX;
+export const BLOCK_SUBMIT_USER_RATE_LIMIT_WINDOW_SECONDS = BLOCK_SUBMIT_RATE_LIMIT_WINDOW_SECONDS;
+
+/**
+ * Records ONE `submitWorkflow` call against `subject`'s window across all installs.
+ *
+ * @param subject the verified token's `sub` claim.
+ */
+export async function checkBlockSubmitUserRateLimit(
+  subject: string
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:submit-user:${subject}`,
+    BLOCK_SUBMIT_USER_RATE_LIMIT_MAX,
+    BLOCK_SUBMIT_USER_RATE_LIMIT_WINDOW_SECONDS
+  );
+}

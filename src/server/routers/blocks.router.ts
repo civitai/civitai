@@ -71,6 +71,7 @@ import {
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
   checkBlockSubmitRateLimit,
+  checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -6603,8 +6604,8 @@ export const blocksRouter = router({
    * as block lifecycle errors but expects budget rejections as workflow
    * outcomes the block can recover from (e.g. by opening BuyBuzzModal).
    *
-   * RATE LIMIT: the `:submit:` bucket (`checkBlockSubmitRateLimit`), per install and per
-   * token subject, charged above every `kind` branch, so a submit refused before
+   * RATE LIMIT: two buckets, charged above every `kind` branch: `:submit:` per (install,
+   * token subject) and `:submit-user:` per subject across all installs, so a submit refused before
    * `reserveAppSpend` still counts. It fails open on a Redis error like every blocks
    * limiter; `reserveAppSpend` (per-app generation velocity, per-user and per-app daily
    * Buzz) fails closed and still bounds accepted generations.
@@ -6646,6 +6647,14 @@ export const blocksRouter = router({
       const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
       if (!rate.allowed) {
         recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const userRate = await checkBlockSubmitUserRateLimit(claims.sub);
+      if (!userRate.allowed) {
+        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit-user');
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',

@@ -15,6 +15,7 @@ import {
   checkBlockCatalogRateLimit,
   checkBlockEstimateCellsRateLimit,
   checkBlockSubmitRateLimit,
+  checkBlockSubmitUserRateLimit,
   BLOCK_CATALOG_RATE_LIMIT_MAX,
   BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS,
 } from '../block-catalog-rate-limit';
@@ -197,5 +198,38 @@ describe('checkBlockSubmitRateLimit', () => {
   it('redis throws → FAIL OPEN, like every sibling bucket', async () => {
     mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
     expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({ allowed: true });
+  });
+});
+
+describe('checkBlockSubmitUserRateLimit', () => {
+  const USER_KEY = 'blocks:token-rate-limit:submit-user:user:42';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedis.expire.mockResolvedValue(true);
+    mockRedis.ttl.mockResolvedValue(10);
+  });
+
+  it('charges one call on a key holding the subject alone, never the install', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
+    expect(mockRedis.incrBy).toHaveBeenCalledWith(USER_KEY, 1);
+    expect(mockRedis.expire).toHaveBeenCalledWith(USER_KEY, 10);
+  });
+
+  it('allows twice the per-install submit ceiling a window and refuses one more', async () => {
+    mockRedis.incrBy.mockResolvedValue(4 * BLOCK_CATALOG_RATE_LIMIT_MAX);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
+    mockRedis.incrBy.mockResolvedValue(4 * BLOCK_CATALOG_RATE_LIMIT_MAX + 1);
+    mockRedis.ttl.mockResolvedValue(6);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({
+      allowed: false,
+      retryAfterSeconds: 6,
+    });
+  });
+
+  it('redis throws → FAIL OPEN, like every sibling bucket', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
   });
 });

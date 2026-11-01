@@ -500,6 +500,7 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   // makes every call through it throw `No "…" export is defined on the mock`.
   checkBlockPollRateLimit: async () => ({ allowed: true }),
   checkBlockSubmitRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitUserRateLimit: async () => ({ allowed: true }),
 }));
 // 🔴 `getResourceData` IS HERE ON PURPOSE, AND IS NOT MOCKED AWAY AT THE SERVICE
 // BOUNDARY. The customComfy INLINE arm's entitlement belt

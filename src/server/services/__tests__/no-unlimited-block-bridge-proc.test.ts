@@ -99,6 +99,7 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockEstimateCellsRateLimit: 'estimate-cells',
   checkBlockUploadAppRateLimit: 'upload-app',
   checkBlockSubmitRateLimit: 'submit',
+  checkBlockSubmitUserRateLimit: 'submit-user',
 });
 
 type Decision = {
@@ -222,8 +223,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     why: 'NONE OF THESE BUCKETS, ON PURPOSE. It is charged the SITE’S own per-user reaction quota through the rateLimit middleware with sharedKey reaction:toggle, so an app’s reactions and the viewer’s clicks share ONE budget instead of the app adding one (maintainer decision, civitai-app-starters#669). That middleware is not one of the primitives this file derives; the shared key is pinned in block-reaction.rate-limit-key.test.ts and blocks.router.appReactions.test.ts.',
   },
   submitWorkflow: {
-    buckets: ['submit'],
-    why: 'Its own :submit: bucket per (install, token subject), at twice the catalog ceiling estimateWorkflow charges, above every kind branch so a submit refused before reserveAppSpend still counts. reserveAppSpend still bounds accepted generations.',
+    buckets: ['submit', 'submit-user'],
+    why: 'Its own :submit: bucket per (install, token subject), at twice the catalog ceiling estimateWorkflow charges, plus :submit-user: per subject across all installs at twice that, both above every kind branch so a submit refused before reserveAppSpend still counts. reserveAppSpend still bounds accepted generations.',
   },
   updateUserSettings: {
     buckets: [],

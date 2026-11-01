@@ -1437,7 +1437,10 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   },
   'blocks.submitWorkflow': {
     'valid token': PASSED(
-      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
@@ -1446,19 +1449,25 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     'missing scope': E(
       'FORBIDDEN',
       'block lacks ai:write:budgeted scope',
-      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       ['bridge-auth:ok']
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'workflow submit requires authenticated viewer',
-      ['checkBlockSubmitRateLimit("bki_char", "anon")'],
+      ['checkBlockSubmitRateLimit("bki_char", "anon")', 'checkBlockSubmitUserRateLimit("anon")'],
       ['bridge-auth:ok']
     ),
     'flag off': E(
       'UNAUTHORIZED',
       'Apps are not enabled',
-      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
@@ -1468,11 +1477,17 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok']
     ),
     "session user is not the token subject (session user's run flag off)": PASSED(
-      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     "session user is not the token subject (session user's run flag on)": PASSED(
-      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
