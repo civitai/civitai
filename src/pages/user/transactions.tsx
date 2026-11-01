@@ -38,6 +38,7 @@ import {
   filterTransactionsByDisplayType,
   getServerTransactionType,
   getTransactionBadgeLabel,
+  mergeWorkflowRefundsByPage,
 } from '~/utils/buzz-transaction-display';
 import { capitalize } from '~/utils/string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -116,7 +117,8 @@ export default function UserTransactions() {
   const transactions = useMemo(
     () =>
       filterTransactionsByDisplayType(
-        data?.pages.flatMap((page) => page.transactions) ?? [],
+        // Per page, so a charge and refund split across pages stay two rows and nothing refetches.
+        mergeWorkflowRefundsByPage(data?.pages.map((page) => page.transactions) ?? []),
         typeChoice
       ),
     [data, typeChoice]
@@ -271,7 +273,7 @@ export default function UserTransactions() {
         ) : transactions.length ? (
           <Stack gap="md">
             {transactions.map((transaction, index) => {
-              const { amount, date, fromUser, toUser, details, type } = transaction;
+              const { amount, date, fromUser, toUser, details, type, workflowRefund } = transaction;
               let description = transaction.description ?? undefined;
               const isDebit = amount < 0;
               const accountType = isDebit ? transaction.fromAccountType : transaction.toAccountType;
@@ -330,6 +332,15 @@ export default function UserTransactions() {
                       </Text>
                     )}
                     {description && <Text c="dimmed">{description}</Text>}
+                    {workflowRefund && (
+                      // Both gross legs stay visible so a net row can be reconciled against the
+                      // export, which still lists the charge and the refund separately.
+                      <Text c="dimmed" size="xs" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        Charged {Math.abs(workflowRefund.grossAmount).toLocaleString()}, refunded{' '}
+                        {workflowRefund.refundAmount.toLocaleString()} on{' '}
+                        {formatDate(workflowRefund.refundDate)}
+                      </Text>
+                    )}
                     {isImage && details?.entityId ? (
                       <RoutedDialogLink
                         name="imageDetail"

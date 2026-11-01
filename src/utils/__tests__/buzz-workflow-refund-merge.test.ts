@@ -108,7 +108,10 @@ describe('mergeWorkflowRefunds', () => {
   });
 
   it('leaves a pair split across pages unmerged, without merging across the page boundary', () => {
-    const merged = mergeWorkflowRefundsByPage([[refundAlpha, chargeBravo, refundBravo], [chargeAlpha]]);
+    const merged = mergeWorkflowRefundsByPage([
+      [refundAlpha, chargeBravo, refundBravo],
+      [chargeAlpha],
+    ]);
 
     expect(merged.map((row) => [row.description, row.amount])).toEqual([
       ['refund wf-alpha', 29],
