@@ -72,6 +72,7 @@ const setupProbe = vi.hoisted(() => {
       updateRankingRules: record('updateRankingRules'),
       updateFilterableAttributes: record('updateFilterableAttributes'),
       updateTypoTolerance: record('updateTypoTolerance'),
+      updateFaceting: record('updateFaceting'),
     },
   };
 });
@@ -870,7 +871,7 @@ describe('🔴 onIndexSetup hands the ENGINE the frozen lists — behaviourally,
     return setupProbe.received;
   }
 
-  it('writes exactly these six settings, and nothing else', async () => {
+  it('writes exactly these seven settings, and nothing else', async () => {
     // 🔴 THE NON-VACUITY ASSERTION THE REST OF THIS DESCRIBE RESTS ON. A stub that is never called
     // records nothing, and `received.find(...) === undefined` would then read as a clean absence in
     // every case below rather than as a broken probe. Pinned as its own case so the failure names
@@ -886,6 +887,7 @@ describe('🔴 onIndexSetup hands the ENGINE the frozen lists — behaviourally,
       "onIndexSetup's write set moved — an EMPTY received list means the client/index mocks are not reaching it, a DIFFERENT list means a settings write was added or removed"
     ).toEqual([
       'updateDisplayedAttributes',
+      'updateFaceting',
       'updateFilterableAttributes',
       'updateRankingRules',
       'updateSearchableAttributes',
