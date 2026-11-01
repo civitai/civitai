@@ -2015,6 +2015,20 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('refuses a token the step arms refuse before reading its input', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ ctx: { slotId: 'model.sidebar_top', entityType: 'model', modelId: 5 } })
+    );
+    const make = () => ({
+      kind: 'step' as const,
+      step: 'convert-image',
+      params: { image: CDN, note: 'a'.repeat(4.1 * 1024 * 1024), output: { format: 'png' } },
+    });
+    const refusal = { code: 'FORBIDDEN', message: 'registry steps are page-only' };
+    await expect(estimate(make())).rejects.toMatchObject(refusal);
+    await expect(submit(make())).rejects.toMatchObject(refusal);
+  });
+
   it('refuses registry params too large to read whole, on estimate AND submit', async () => {
     const make = () => ({
       kind: 'step' as const,

@@ -442,9 +442,12 @@ function idnaCostOf(host: string) {
   // Past this, mapping it would cost the most of all; no message holds a run that long.
   if (host.length > 64 * 1024) return OPAQUE_INPUT_MAX_IDNA_COST + 1;
   // A run of combining marks is reordered, by the mapping below and by a parser, in its length
-  // squared: charged first, so an over-budget run is refused before it is mapped.
+  // squared: charged first, so an over-budget run is refused before it is mapped. A parser
+  // deletes ignorable characters first, rejoining a run they split, and two halfwidth katakana
+  // marks map to combining marks.
   let marks = 0;
-  for (const [run] of host.matchAll(/\p{M}+/gu)) marks += run.length * run.length;
+  const visible = host.replace(/\p{Default_Ignorable_Code_Point}/gu, '');
+  for (const [run] of visible.matchAll(/[\p{M}\uFF9E\uFF9F]+/gu)) marks += run.length * run.length;
   if (marks > OPAQUE_INPUT_MAX_IDNA_COST) return marks;
   const mapped = host.normalize('NFKC');
   const work = /%[0-9a-f]{2}|xn--/i.test(mapped)

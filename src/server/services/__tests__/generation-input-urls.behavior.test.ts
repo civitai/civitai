@@ -961,6 +961,22 @@ describe('opaqueInputUrlsIn', () => {
     } finally {
       normalize.mockRestore();
     }
+    // A run split by marks NFKC makes (halfwidth katakana), or by characters a parser deletes
+    // (a soft hyphen), is one run to the parser: charged whole, refused before it is mapped.
+    const ch = (code: number) => String.fromCharCode(code);
+    const halfwidth = `a${(ch(0x300) + ch(0xff9e)).repeat(32_000)}`;
+    const softSplit = `a${(ch(0x300) + ch(0xad)).repeat(16_000)}${(ch(0x316) + ch(0xad)).repeat(
+      16_000
+    )}`;
+    for (const host of [halfwidth, softSplit]) {
+      const spy = vi.spyOn(String.prototype, 'normalize');
+      try {
+        expect(opaqueInputUrlsIn({ u: `ws://${host}/` }).tooLarge).toBe(true);
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    }
     expect(opaqueInputUrlsIn({ u: `ws://${marks(2000)}/` }).tooLarge).toBe(false);
     expect(opaqueInputUrlsIn({ u: `ws://${marks(3000)}/` }).tooLarge).toBe(true);
     // The marks add to the rest of the host's cost.
