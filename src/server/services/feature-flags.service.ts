@@ -1199,13 +1199,15 @@ export type FeatureAccess = Record<FeatureFlagKey, boolean>;
  * `fliptContext` as `prepareFliptContext` returns it: a frozen copy carrying its Flipt eval-cache
  * key, so evaluating every flag for this user builds that key once. Same values, same cache
  * entries. The plain context when the Flipt module (or a test's stand-in for it) has no
- * `prepareFliptContext`.
+ * `prepareFliptContext` — checked with `in`, because a hand-listed `vi.mock` of the client module
+ * throws on a READ of an export it does not list.
  */
 function prepareForFlipt(
   user: SessionUser | undefined,
   fliptContext: Record<string, string>
 ): Record<string, string> {
-  const prepare = _fliptModule?.prepareFliptContext;
+  const mod = _fliptModule;
+  const prepare = mod && 'prepareFliptContext' in mod ? mod.prepareFliptContext : undefined;
   return typeof prepare === 'function' ? prepare(fliptEntityId(user), fliptContext) : fliptContext;
 }
 
