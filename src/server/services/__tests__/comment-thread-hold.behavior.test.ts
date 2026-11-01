@@ -922,14 +922,18 @@ describe("a held author's rows under a deleted parent", () => {
       });
     });
 
-    it('backfills a pre-table record once, as open, with its amount and charge', async () => {
+    it('backfills a pre-table record once, as open, with its amount, charge, owner and winner', async () => {
       await seedReleased();
-      await recordLegacy();
+      await db.exec(`UPDATE "Bounty" SET "userId" = NULL, "payoutWinnerUserId" = ${OTHER},
+        meta = '{"removedWithOwner": true, "userIdBeforeRemoval": ${OWNER}}' WHERE id = 60`);
+      await db.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+        VALUES (${SUPPORTER}, 'bountyAwardUnpaid', 'bounty', 60, '2026-11-01T02:00:00Z'),
+          (${SUPPORTER}, 'bountyAwardUnpaid', 'bounty', 60, '2026-11-01T01:00:00Z')`);
       await db.exec(unpaidAwardMigration);
       await db.exec(unpaidAwardMigration);
       expect(
         await rows(`SELECT "bountyId", "userId", "unitAmount", "buzzTransactionIds", "ownerId",
-          "recordedById", "resolvedAt" FROM "BountyUnpaidAward"`)
+          "winnerUserId", "recordedById", "recordedAt", "resolvedAt" FROM "BountyUnpaidAward"`)
       ).toEqual([
         {
           bountyId: 60,
@@ -937,11 +941,25 @@ describe("a held author's rows under a deleted parent", () => {
           unitAmount: 100,
           buzzTransactionIds: ['bounty-60-7-1'],
           ownerId: OWNER,
+          winnerUserId: OTHER,
           recordedById: null,
+          recordedAt: new Date('2026-11-01T01:00:00Z'),
           resolvedAt: null,
         },
       ]);
       expect(await deleteSettledKeptBounties()).toBe(0);
+    });
+
+    it('does not reopen a resolved award when the backfill runs again', async () => {
+      await seedReleased();
+      await recordLegacy();
+      await db.exec(unpaidAwardMigration);
+      await resolveAward();
+      await db.exec(unpaidAwardMigration);
+      expect(await rows(`SELECT ruling FROM "BountyUnpaidAward"`)).toEqual([
+        { ruling: 'paid_winner' },
+      ]);
+      expect(await deleteSettledKeptBounties()).toBe(1);
     });
   });
 

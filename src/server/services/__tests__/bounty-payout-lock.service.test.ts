@@ -158,7 +158,17 @@ const matchesAwardedAt = (b: Benefactor, filter: AwardedAtFilter) => {
   return b.awardedAt != null && (!('gt' in filter) || b.awardedAt > filter.gt);
 };
 
-function transactionClient(held: (() => void)[]) {
+type Rows = {
+  bounty: BountyRow | null;
+  benefactors: Benefactor[];
+  modActivityRows: ModActivityRow[];
+  unpaidAwards: Map<number, UnpaidAward>;
+};
+const snapshotRows = (): Rows =>
+  structuredClone({ bounty, benefactors, modActivityRows, unpaidAwards });
+
+/** `locked.rows` is what the transaction saw once it held the row lock, to roll back to. */
+function transactionClient(held: (() => void)[], locked: { rows?: Rows } = {}) {
   return {
     // The comment-thread detach ahead of a delete; nothing here has threads.
     $executeRaw: async () => 0,
@@ -189,6 +199,7 @@ function transactionClient(held: (() => void)[]) {
       }
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);
       held.push(await rowLock.acquire());
+      locked.rows ??= snapshotRows();
       return bounty ? [{ meta: null, ...bounty }] : [];
     },
     bountyEntry: {
@@ -304,10 +315,14 @@ function transactionClient(held: (() => void)[]) {
         return data;
       },
       // Only the ModActivity-only record, before the table existed, is read.
-      findFirst: async ({ where }: { where: { userId: number; activity: string } }) => {
+      findFirst: async ({ where }: { where: ModActivityRow }) => {
         await tick();
         const row = modActivityRows.find(
-          (r) => r.userId === where.userId && r.activity === where.activity
+          (r) =>
+            r.userId === where.userId &&
+            r.activity === where.activity &&
+            r.entityType === where.entityType &&
+            r.entityId === where.entityId
         );
         return row ? { createdAt: new Date(0) } : null;
       },
@@ -333,17 +348,18 @@ function transactionClient(held: (() => void)[]) {
         unpaidAwards.set(data.userId, { ...data });
         return { ...data };
       },
-      update: async ({
+      updateMany: async ({
         where,
         data,
       }: {
-        where: { bountyId_userId: { userId: number } };
+        where: { userId: number; resolvedAt: null };
         data: Partial<UnpaidAward>;
       }) => {
         await tick();
-        const row = unpaidAwards.get(where.bountyId_userId.userId)!;
+        const row = unpaidAwards.get(where.userId);
+        if (!row || row.resolvedAt) return { count: 0 };
         Object.assign(row, data);
-        return { ...row };
+        return { count: 1 };
       },
     },
     imageConnection: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
@@ -392,10 +408,15 @@ beforeEach(() => {
     strings.join('?').includes('to_regclass') ? [{ present: awardTable }] : []) as never);
   dbMock.dbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
     const held: (() => void)[] = [];
+    // A throw rolls back what the transaction wrote under the row lock, as Postgres would.
+    const locked: { rows?: Rows } = {};
     try {
-      const result = await cb(transactionClient(held));
+      const result = await cb(transactionClient(held, locked));
       events.push('commit');
       return result;
+    } catch (e) {
+      if (locked.rows) ({ bounty, benefactors, modActivityRows, unpaidAwards } = locked.rows);
+      throw e;
     } finally {
       held.forEach((release) => release());
     }
@@ -1707,12 +1728,21 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
     await expect(moderatorDelete()).rejects.toMatchObject({
       code: 'CONFLICT',
       message: expect.stringMatching(
-        /NOT deleted.*were refunded, and 1 award\(s\) were recorded for manual resolution/
+        /hidden but NOT deleted.*were refunded, and 1 award\(s\) were recorded for manual resolution/
       ),
     });
     expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
     expect(refunded()).toEqual(['bounty-4-7-3']);
-    expect(bounty).toMatchObject({ complete: true, refunded: true });
+    expect(bounty).toMatchObject({
+      complete: true,
+      refunded: true,
+      availability: 'Private',
+      userId: null,
+      meta: { removedWithOwner: true, userIdBeforeRemoval: 5 },
+    });
+    expect(vi.mocked(SearchIndexUpdate.queueUpdate)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ items: [{ id: 4, action: 'Delete' }] })
+    );
     expect(isPayoutPending(bounty!)).toBe(false);
     expect(modActivityRows).toEqual([
       { userId: 5, entityType: 'bounty', entityId: 4, activity: 'bountyAwardUnpaid' },
@@ -1889,7 +1919,7 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       expect(bounty).toMatchObject({ payoutWinnerUserId: 9 });
     });
 
-    it('hides and detaches the bounty on a second delete, keeping it and its supporter rows', async () => {
+    it('keeps it hidden and detached on a second delete, with its supporter rows', async () => {
       expect(await moderatorDelete()).toMatchObject({ id: 4 });
       expect(bounty).toMatchObject({
         availability: 'Private',
@@ -1900,6 +1930,12 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       expect(searchDeletes()).toEqual([{ id: 4, action: 'Delete' }]);
       expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
       expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    });
+
+    it('keeps it from an owner delete too', async () => {
+      await deleteBountyById({ id: 4, isModerator: false, userId: 5 });
+      expect(bounty).toMatchObject({ availability: 'Private', userId: null });
+      expect(benefactors.map((b) => b.userId)).toEqual([5, 6, 7]);
     });
 
     it('deletes once the award is resolved', async () => {
@@ -1955,15 +1991,23 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
         buzzTransactionIds: ['bounty-4-5-1'],
         winnerUserId: 9,
         ownerId: 5,
+        recordedAt: new Date(0),
         ruling: 'paid_winner',
         resolvedById: 99,
       });
     });
 
-    it('refuses to resolve on a bounty that is gone, unserialised', async () => {
+    it('resolves a recorded award whose bounty is gone', async () => {
+      bounty = null;
+      expect(await resolve()).toEqual({ recorded: true });
+      expect(unpaidAwards.get(5)).toMatchObject({ ruling: 'paid_winner', resolvedById: 99 });
+    });
+
+    it('refuses an award recorded only before the table existed, once its bounty is gone', async () => {
+      unpaidAwards.clear();
       bounty = null;
       await expect(resolve()).rejects.toMatchObject({ code: 'NOT_FOUND' });
-      expect(unpaidAwards.get(5)?.resolvedAt).toBeUndefined();
+      expect(unpaidAwards.size).toBe(0);
     });
 
     it('refuses to resolve while the table is missing', async () => {
@@ -1971,6 +2015,32 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       await expect(resolve()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
       expect(unpaidAwards.get(5)?.resolvedAt).toBeUndefined();
     });
+  });
+
+  it('records the owner of a bounty already detached from its owner', async () => {
+    recordStuckAward();
+    Object.assign(bounty!, {
+      userId: null,
+      meta: { removedWithOwner: true, availabilityBeforeRemoval: 'Public', userIdBeforeRemoval: 5 },
+    });
+    await expect(moderatorDelete()).rejects.toThrow('NOT deleted');
+    expect(unpaidAwards.get(5)?.ownerId).toBe(5);
+  });
+
+  it('rolls the release back when its record cannot be written, and moves no refund', async () => {
+    recordStuckAward();
+    unpaidAwards.set(5, {
+      bountyId: 4,
+      userId: 5,
+      unitAmount: 1,
+      buzzTransactionIds: [],
+      winnerUserId: null,
+      ownerId: null,
+    });
+    await expect(moderatorDelete()).rejects.toThrow('duplicate key');
+    expect(bounty).toMatchObject({ refunded: false, complete: false, availability: 'Public' });
+    expect(refunded()).toEqual([]);
+    expect(modActivityRows).toEqual([]);
   });
 
   it('refuses the release while the table is missing, and moves no refund', async () => {

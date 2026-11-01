@@ -836,6 +836,7 @@ export const deleteBountyById = async ({
   const claim = await claimBountyRefundForDelete(id);
   if (!claim) return null;
 
+  let release: Awaited<ReturnType<typeof releaseStuckBountyAward>> = null;
   if (claim.owed) {
     const settled = await settleBountyPayout(id, {
       firstAttempt: claim.firstAttempt,
@@ -844,21 +845,14 @@ export const deleteBountyById = async ({
         : 'Refund reason: owner deleted bounty',
     });
     if (!settled && !(isModerator && (await refundUnpayableBountyAward(id)))) {
-      const release = isModerator ? await releaseStuckBountyAward(id, userId) : null;
-      if (release)
+      // A release keeps the bounty: the hide below takes the delete's effect on visibility now.
+      release = isModerator ? await releaseStuckBountyAward(id, userId) : null;
+      if (!release)
         throw new TRPCError({
-          code: 'CONFLICT',
-          message: `The bounty was NOT deleted. Its award could not be paid in full, so it was closed instead: the other awards were paid, supporters who had not awarded ${
-            release.refundSettled
-              ? 'were refunded'
-              : 'are not all refunded yet (failed refunds are retried or logged for follow-up)'
-          }, and ${release.unpaidAwards} award(s) were recorded for manual resolution.`,
+          code: 'INTERNAL_SERVER_ERROR',
+          message:
+            'The bounty could not be paid out, so it was not deleted. The payout is retried automatically; try deleting it again later.',
         });
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message:
-          'The bounty could not be paid out, so it was not deleted. The payout is retried automatically; try deleting it again later.',
-      });
     }
   }
 
@@ -898,6 +892,17 @@ export const deleteBountyById = async ({
     await SearchIndexUpdate.queueUpdate({
       indexName: BOUNTIES_SEARCH_INDEX,
       items: [{ id, action: SearchIndexUpdateQueueAction.Delete }],
+    });
+  if (release)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `The bounty was hidden but NOT deleted. Its award could not be paid in full, so it was closed instead: the other awards were paid, supporters who had not awarded ${
+        release.refundSettled
+          ? 'were refunded'
+          : 'are not all refunded yet (failed refunds are retried or logged for follow-up)'
+      }, and ${
+        release.unpaidAwards
+      } award(s) were recorded for manual resolution. It is deleted once they are resolved.`,
     });
   return result.bounty;
 };
@@ -1643,12 +1648,13 @@ export async function resolveUnpaidBountyAward({
       message: `No award from user ${userId} on bounty ${bountyId} is recorded for manual resolution`,
     });
   const recorded = await dbWrite.$transaction(async (tx) => {
+    // Serialises resolutions while the bounty exists; a record outlives its bounty.
     const locked = await lockBountyForPayout(tx, bountyId);
-    if (!locked) throw notFound();
     const key = { bountyId_userId: { bountyId, userId } };
     let award = await tx.bountyUnpaidAward.findUnique({ where: key });
-    // Recorded in ModActivity before the table existed.
+    // Recorded in ModActivity before the table existed, read from the supporter row.
     if (!award) {
+      if (!locked) throw notFound();
       const legacy = await tx.modActivity.findFirst({
         where: {
           entityType: 'bounty',
@@ -1685,10 +1691,12 @@ export async function resolveUnpaidBountyAward({
         message: `That award is already resolved as ${award.ruling}`,
       });
     }
-    await tx.bountyUnpaidAward.update({
-      where: key,
+    const { count } = await tx.bountyUnpaidAward.updateMany({
+      where: { bountyId, userId, resolvedAt: null },
       data: { ruling, ledgerReference, resolvedById: moderatorId, resolvedAt: new Date() },
     });
+    if (!count)
+      throw new TRPCError({ code: 'CONFLICT', message: 'That award was resolved meanwhile' });
     await tx.modActivity.create({
       data: {
         userId: moderatorId,

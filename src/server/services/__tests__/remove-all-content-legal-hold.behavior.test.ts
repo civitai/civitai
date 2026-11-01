@@ -2107,6 +2107,16 @@ describe('an open bounty with supporters, in a content wipe', () => {
     });
   });
 
+  it('keeps it, hidden, for an award recorded only before the table existed', async () => {
+    await holder.db.exec(`
+      TRUNCATE "BountyBenefactor";
+      INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+        VALUES (${BYSTANDER}, 'bountyAwardUnpaid', 'bounty', ${BOUNTY});`);
+    await removeAllContent({ id: CLEAN });
+
+    expect((await bountyRow())?.availability).toBe('Private');
+  });
+
   it('deletes it once that award is resolved', async () => {
     await holder.db.exec(`
       TRUNCATE "BountyBenefactor";
