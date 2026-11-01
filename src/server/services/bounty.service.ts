@@ -34,6 +34,8 @@ import {
 import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import {
+  BOUNTY_PAYOUT_RETRY_AFTER_MS,
+  isPayoutOverdue,
   isPayoutPending,
   lockBountyForPayout,
   nextPayoutRecordedAt,
@@ -930,7 +932,8 @@ async function lockBenefactorForSupport(
 ) {
   const locked = await lockBountyForPayout(tx, bountyId);
   if (!locked) throw throwNotFoundError('Bounty not found');
-  if (locked.complete || locked.refunded) throw throwBadRequestError('Bounty is already complete');
+  if (locked.complete || locked.refunded || isPayoutOverdue(locked))
+    throw throwBadRequestError('Bounty is already complete');
 
   const benefactor = await tx.bountyBenefactor.findUnique({
     where: { bountyId_userId: { userId, bountyId } },
@@ -1490,7 +1493,6 @@ export async function refundUnpayableBountyAward(bountyId: number) {
   return true;
 }
 
-const BOUNTY_PAYOUT_RETRY_AFTER_MS = 10 * 60 * 1000;
 const BOUNTY_PAYOUT_RETRY_BATCH_SIZE = 100;
 const BOUNTY_PAYOUT_RETRY_MAX_BATCHES = 20;
 

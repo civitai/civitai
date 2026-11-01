@@ -1432,6 +1432,48 @@ describe('addBenefactorUnitAmount', () => {
     expect(find(6)!.unitAmount).toBe(50);
   });
 
+  describe('a bounty whose award payout is pending', () => {
+    const pendingFor = (minutes: number) => {
+      const at = new Date(Date.now() - minutes * 60_000);
+      Object.assign(find(5)!, { awardedToId: 10, awardedAt: at });
+      Object.assign(bounty!, { payoutRecordedAt: at, payoutWinnerUserId: 8 });
+    };
+
+    it('refuses support once the retry job has it, as it would a closed bounty', async () => {
+      pendingFor(11);
+      await expect(topUp(6)).rejects.toThrow('Bounty is already complete');
+      expect(moved('charge')).toBe(0);
+      expect(find(6)!.unitAmount).toBe(50);
+    });
+
+    it('still takes support once that award has settled, however long ago', async () => {
+      pendingFor(60);
+      bounty!.payoutSettledAt = bounty!.payoutRecordedAt;
+      await topUp(6);
+      expect(find(6)!.unitAmount).toBe(80);
+    });
+
+    it('still takes support while the first attempt is in its window (control)', async () => {
+      pendingFor(9);
+      await topUp(6);
+      expect(find(6)!.unitAmount).toBe(80);
+    });
+
+    it('refuses an award once the retry job has it, as it would a closed bounty', async () => {
+      pendingFor(11);
+      await expect(awardBountyEntry({ id: 11, userId: 6 })).rejects.toThrow(
+        'Bounty is already complete'
+      );
+      expect(find(6)!.awardedAt).toBeUndefined();
+    });
+
+    it('still takes an award while the first attempt is in its window (control)', async () => {
+      pendingFor(9);
+      await awardBountyEntry({ id: 11, userId: 6 });
+      expect(find(6)!.awardedToId).toBe(11);
+    });
+  });
+
   it('refunds the charge when the supporter awards while it is in flight', async () => {
     let releaseCharge!: () => void;
     const chargeHeld = new Promise<void>((resolve) => (releaseCharge = resolve));

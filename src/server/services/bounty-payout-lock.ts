@@ -24,6 +24,23 @@ export function isPayoutPending(state: {
   );
 }
 
+/** How long a payout stays pending before the retry job takes it over. */
+export const BOUNTY_PAYOUT_RETRY_AFTER_MS = 10 * 60 * 1000;
+
+/**
+ * A pending payout the retry job has taken over, read from the same `payoutRecordedAt` it selects
+ * on. Such a bounty takes no new support or awards.
+ */
+export function isPayoutOverdue(
+  state: { payoutRecordedAt: Date | null; payoutSettledAt: Date | null },
+  now = Date.now()
+) {
+  return (
+    isPayoutPending(state) &&
+    (state.payoutRecordedAt?.getTime() ?? 0) <= now - BOUNTY_PAYOUT_RETRY_AFTER_MS
+  );
+}
+
 /**
  * The `payoutRecordedAt` (and an award's `awardedAt`) for a claim made under the lock: later than
  * the last settlement and the last record even when clocks disagree, so the claim reads as pending
