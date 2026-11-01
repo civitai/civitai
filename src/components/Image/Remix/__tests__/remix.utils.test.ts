@@ -95,6 +95,18 @@ describe('getEngineRefusal', () => {
     expect(getEngineRefusal(image({ blockedFor: 'AiNotVerified' }))).toMatch(/blocked/);
   });
 
+  it('names a video as a video in the refusal', () => {
+    const video = (o: object) => image({ type: MediaType.video, ...o });
+    expect(getEngineRefusal(video({ ingestion: ImageIngestionStatus.Blocked }))).toBe(
+      'This video was blocked, so it cannot be remixed.'
+    );
+    expect(getEngineRefusal(video({ minor: true }))).toMatch(/^Videos that may depict a minor/);
+    expect(getEngineRefusal(video({ poi: true }))).toBe('Videos of real people cannot be remixed.');
+    expect(
+      getEngineRefusal(video({ nsfwLevel: 8, ingestion: ImageIngestionStatus.Pending }))
+    ).toMatch(/^This video is still being reviewed/);
+  });
+
   it('refuses minor and poi images', () => {
     expect(getEngineRefusal(image({ minor: true }))).toMatch(/minor/);
     expect(getEngineRefusal(image({ poi: true }))).toMatch(/real people/);

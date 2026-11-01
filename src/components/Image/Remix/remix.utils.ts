@@ -1,4 +1,5 @@
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { MAX_EDGE_WIDTH, videoStillEdgeOptions } from '~/client-utils/edge-url';
 import { recordGallerySourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import type { RemixEngine, RemixKind, RemixTier } from '~/shared/constants/remix.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
@@ -59,6 +60,8 @@ const UNVERDICTED_INGESTION = new Set<string>([
   ImageIngestionStatus.PendingManualAssignment,
 ]);
 
+const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
+
 const FALLBACK_DIMENSIONS = { width: 512, height: 512 };
 
 /**
@@ -74,10 +77,12 @@ const FALLBACK_DIMENSIONS = { width: 512, height: 512 };
  * in place of the verdict we do not have.
  */
 export function getEngineRefusal(image: RemixSourceImage): string | undefined {
+  const noun = image.type === 'video' ? 'video' : 'image';
+  const plural = `${noun}s`;
   if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor)
-    return 'This image was blocked, so it cannot be remixed.';
-  if (image.minor) return 'Images that may depict a minor cannot be remixed.';
-  if (image.poi) return 'Images of real people cannot be remixed.';
+    return `This ${noun} was blocked, so it cannot be remixed.`;
+  if (image.minor) return `${capitalize(plural)} that may depict a minor cannot be remixed.`;
+  if (image.poi) return `${capitalize(plural)} of real people cannot be remixed.`;
   // Rated mature by a human before the classifiers ran. `minor`/`poi` are NOT
   // NULL columns defaulting to false, so the checks above cannot tell that state
   // apart from a scanned-and-clean one — `ingestion` is the only discriminator.
@@ -95,7 +100,7 @@ export function getEngineRefusal(image: RemixSourceImage): string | undefined {
     image.ingestion != null &&
     UNVERDICTED_INGESTION.has(image.ingestion)
   )
-    return 'This image is still being reviewed. Try again once it finishes scanning.';
+    return `This ${noun} is still being reviewed. Try again once it finishes scanning.`;
   return undefined;
 }
 
@@ -121,7 +126,10 @@ export function getRemixKinds(image: RemixSourceImage): RemixKind[] {
  */
 export function getRemixSourceUrl(image: RemixSourceImage) {
   return image.type === 'video'
-    ? getEdgeUrl(image.url, { type: 'image', transcode: true, anim: false, width: 1800 })
+    ? getEdgeUrl(image.url, {
+        ...videoStillEdgeOptions,
+        width: Math.min(image.width ?? MAX_EDGE_WIDTH, MAX_EDGE_WIDTH),
+      })
     : getEdgeUrl(image.url, { original: true });
 }
 

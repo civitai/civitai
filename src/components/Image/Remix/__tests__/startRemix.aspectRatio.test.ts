@@ -94,6 +94,21 @@ describe('startRemix on a video', () => {
     expect(params.aspectRatio).toEqual({ value: '832:1216', ...SOURCE });
   });
 
+  it.each([
+    [720, 800],
+    [4000, 1800],
+  ])(
+    'a %ipx-wide video requests a %ipx still (next CDN width, capped at 1800)',
+    async (width, requested) => {
+      await startRemix({
+        kind: 'video',
+        image: image({ type: MediaType.video, nsfwLevel: 1, width, height: 500 }),
+      });
+
+      expect(setData.mock.calls[0][0].params.images[0].url).toContain(`width=${requested}/`);
+    }
+  );
+
   it('still seeds the original for an image', async () => {
     await startRemix({ kind: 'video', image: image({ nsfwLevel: 1 }) });
 

@@ -72,9 +72,17 @@ describe('Animate on a gallery image carries its rating to the source', () => {
 
 describe('Animate on a video carries its rating to the frame url', () => {
   it.each([
-    ['R', 4, true],
-    ['PG', 1, false],
-  ])('a %s video', async (_label, nsfwLevel, mature) => {
-    expect(await animate(nsfwLevel, MediaType.video)).toBe(mature);
-  });
+    ['R', 4, 'r'],
+    ['PG', 1, 'pg'],
+  ])(
+    'a %s video: the rating is keyed by the frame, not the mp4',
+    async (_label, nsfwLevel, key) => {
+      await animate(nsfwLevel, MediaType.video);
+      const frameUrl: string = setData.mock.calls[0][0].params.images[0].url;
+
+      expect(frameUrl).toContain('anim=false');
+      expect(frameUrl).toMatch(/\.jpeg$/);
+      expect(sourceMetadataStore.getMetadata(frameUrl)?.nsfwLevel).toBe(key);
+    }
+  );
 });
