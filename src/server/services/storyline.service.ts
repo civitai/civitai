@@ -73,6 +73,7 @@ import {
   getStorylineChapterTombstone,
   isStorylineCeilingLevel,
   isStorylineChapterRemoved,
+  getStorylineRootHiddenReason,
   STORYLINE_MINOR_CEILING,
   storylineCeiling,
   storylineLevelAllowed,
@@ -152,17 +153,39 @@ const storylineTitleLevelSelect = {
   moderatorNsfwLevel: true,
 } satisfies Prisma.StorylineSelect;
 
+/**
+ * Chapter 1, as `isStorylineHidden` judges it. Its level is also the story's level for the reader's
+ * browsing-level gate.
+ */
+const storylineRootChapterSelect = {
+  where: { depth: 0 },
+  select: {
+    id: true,
+    postId: true,
+    removedAt: true,
+    post: {
+      select: {
+        nsfwLevel: true,
+        publishedAt: true,
+        tosViolation: true,
+        user: { select: { bannedAt: true, deletedAt: true } },
+      },
+    },
+  },
+} satisfies Prisma.Storyline$chaptersArgs;
+
 /** What the read paths need to decide whether the storyline is hidden from a viewer. */
 const storylineReadSelect = {
   ...storylineSelect,
   ...storylineTitleLevelSelect,
   user: { select: { id: true, username: true, bannedAt: true, deletedAt: true } },
-  // The first chapter's level is the story's level for the reader's browsing-level gate.
-  chapters: {
-    where: { depth: 0 },
-    select: { id: true, postId: true, post: { select: { nsfwLevel: true } } },
-  },
+  chapters: storylineRootChapterSelect,
 } satisfies Prisma.StorylineSelect;
+
+type StorylineRootChapter = Prisma.StorylineChapterGetPayload<typeof storylineRootChapterSelect>;
+
+const rootHiddenReason = (root: StorylineRootChapter | undefined) =>
+  root ? getStorylineRootHiddenReason({ post: root.post, removed: !!root.removedAt }) : null;
 
 /** An invited collaborator has no say until they accept. */
 const acceptedCollaboratorWhere = {
@@ -226,19 +249,27 @@ async function trackStorylineModEdit({
   }
 }
 
+type StorylineVisibilityFields = {
+  id: number;
+  userId: number;
+  tosViolation: boolean;
+  user: { bannedAt: Date | null; deletedAt: Date | null };
+  chapters: StorylineRootChapter[];
+};
+
 /**
  * `chapters` is the storyline's chapter-1 row, if any. A storyline started before its first post
  * has none until that post is published, and until then it is its owner's draft.
+ *
+ * A chapter 1 that is removed, unpublished or unrated (`getStorylineRootHiddenReason`) hides the
+ * storyline from everyone but its owner, moderators and its participants (`participating`, from
+ * `getParticipatingStorylineIds`). The feed applies the same rule in SQL.
  */
 function isStorylineHidden(
-  storyline: {
-    userId: number;
-    tosViolation: boolean;
-    user: { bannedAt: Date | null; deletedAt: Date | null };
-    chapters: unknown[];
-  },
+  storyline: StorylineVisibilityFields,
   viewer: Viewer,
-  blockedUserIds: ReadonlySet<number>
+  blockedUserIds: ReadonlySet<number>,
+  participating: ReadonlySet<number>
 ) {
   if (viewer?.isModerator) return false;
   if (viewer?.id === storyline.userId) return false;
@@ -247,8 +278,38 @@ function isStorylineHidden(
     storyline.tosViolation ||
     !!storyline.user.bannedAt ||
     !!storyline.user.deletedAt ||
-    blockedUserIds.has(storyline.userId)
+    blockedUserIds.has(storyline.userId) ||
+    (!!rootHiddenReason(storyline.chapters[0]) && !participating.has(storyline.id))
   );
+}
+
+/**
+ * Of these storylines, the ones this viewer participates in: an accepted collaborator, or the
+ * author of any chapter in it. Read only for storylines whose chapter 1 would hide them from the
+ * viewer, so most reads make no query.
+ */
+async function getParticipatingStorylineIds(
+  storylines: Pick<StorylineVisibilityFields, 'id' | 'userId' | 'chapters'>[],
+  viewer: Viewer
+): Promise<ReadonlySet<number>> {
+  if (!viewer || viewer.isModerator) return new Set();
+  const ids = [
+    ...new Set(
+      storylines
+        .filter((s) => s.userId !== viewer.id && rootHiddenReason(s.chapters[0]))
+        .map((s) => s.id)
+    ),
+  ];
+  if (!ids.length) return new Set();
+  const rows = await dbRead.$queryRaw<{ storylineId: number }[]>`
+    SELECT sc."storylineId" FROM "StorylineCollaborator" sc
+    WHERE sc."userId" = ${viewer.id} AND sc."storylineId" = ANY(${ids}::int[])
+      AND ${acceptedCollaboratorSql('sc')}
+    UNION
+    SELECT c."storylineId" FROM "StorylineChapter" c
+    WHERE c."userId" = ${viewer.id} AND c."storylineId" = ANY(${ids}::int[])
+  `;
+  return new Set(rows.map((row) => row.storylineId));
 }
 
 /**
@@ -269,6 +330,12 @@ const outsideBrowsingLevel = (nsfwLevel: number, browsingLevel: number) =>
   nsfwLevel !== 0 && (nsfwLevel & browsingLevel) === 0;
 
 /**
+ * Chapter 1's level as the story's level. A wholly Blocked chapter 1 is a tombstone, not a rating, so
+ * the storyline falls back to its ceiling for the participants who still see it.
+ */
+const rootLevel = (level: number | undefined) => (level === NsfwLevel.Blocked ? 0 : level ?? 0);
+
+/**
  * Whether the story as a whole is outside the reader's browsing level, in which case nothing of
  * it is served. The story is judged by its first chapter's level (its ceiling when that chapter
  * is gone or unrated), raised to its title's rating.
@@ -286,7 +353,7 @@ function isStorylineOutsideLevel(
 ) {
   if (viewer?.isModerator || viewer?.id === storyline.userId) return false;
   const storyLevel = raiseNsfwLevel(
-    storyline.chapters[0]?.post?.nsfwLevel || storyline.maxNsfwLevel,
+    rootLevel(storyline.chapters[0]?.post?.nsfwLevel) || storyline.maxNsfwLevel,
     storyline.moderatorNsfwLevel ?? storyline.nsfwLevel
   );
   return outsideBrowsingLevel(storyLevel, browsingLevel);
@@ -304,8 +371,18 @@ function raiseNsfwLevel(level: number, floor: number) {
 
 /** The SQL twin of the level `isStorylineOutsideLevel` judges, for the feed query. */
 const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l', 'lv.f'))}
-  FROM (SELECT COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel") AS l,
+  FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${
+    NsfwLevel.Blocked
+  }), st."maxNsfwLevel") AS l,
     COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
+
+/**
+ * `getStorylineRootHiddenReason` is null, in SQL: chapter 1 `rc` (joined), its post `rp` and that
+ * post's author `ru` (both LEFT JOINed). Change both together.
+ */
+const storylineRootVisibleSql = Prisma.sql`(rp.id IS NOT NULL AND rc."removedAt" IS NULL
+  AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
+  AND rp."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND rp."publishedAt" < now())`;
 
 /** `storylineCeiling` in SQL, for a storyline aliased `st`. */
 export const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
@@ -2566,9 +2643,12 @@ export async function getStoryline({
     },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  const blockedUserIds = await getViewerExcludedIds(viewer);
+  const [blockedUserIds, participating] = await Promise.all([
+    getViewerExcludedIds(viewer),
+    getParticipatingStorylineIds([storyline], viewer),
+  ]);
   if (
-    isStorylineHidden(storyline, viewer, blockedUserIds) ||
+    isStorylineHidden(storyline, viewer, blockedUserIds, participating) ||
     isStorylineOutsideLevel(storyline, viewer, browsingLevel)
   )
     throw throwNotFoundError('Storyline not found');
@@ -2693,6 +2773,9 @@ export async function getStoryline({
     titleAppealable,
     titleAppeal,
     rootChapterId: root?.id ?? null,
+    // Why chapter 1 keeps it from the public, for the chip its owner, participants and moderators
+    // see. Anyone else who got this far has none.
+    rootHiddenReason: rootHiddenReason(root),
     // Chapter 1's post id, whatever this reader may see of it: for the discussion thread, not a
     // cover. Take a cover from the reading path, which tombstones chapter 1 where it must.
     rootPostId: root?.postId ?? null,
@@ -3086,7 +3169,7 @@ export async function getStorylinesForPosts({
             tosViolation: true,
             ...storylineTitleLevelSelect,
             user: { select: { bannedAt: true, deletedAt: true } },
-            chapters: { where: { depth: 0 }, select: { post: { select: { nsfwLevel: true } } } },
+            chapters: storylineRootChapterSelect,
           },
         },
       },
@@ -3094,6 +3177,10 @@ export async function getStorylinesForPosts({
     getViewerExcludedIds(viewer),
   ]);
 
+  const participating = await getParticipatingStorylineIds(
+    chapters.map((c) => c.storyline),
+    viewer
+  );
   const byPost: Record<
     number,
     { chapterId: number; depth: number; storylineId: number; title: string }
@@ -3103,7 +3190,7 @@ export async function getStorylinesForPosts({
     // As getStorylineChapterTombstone: only moderators are shown a removed chapter.
     if (!viewer?.isModerator && isStorylineChapterRemoved({ post: c.post, removed: !!c.removedAt }))
       continue;
-    if (isStorylineHidden(c.storyline, viewer, blockedUserIds)) continue;
+    if (isStorylineHidden(c.storyline, viewer, blockedUserIds, participating)) continue;
     if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;
     // The post's own author is told it is a chapter whatever their level, as the owner is.
     const isAuthor = viewer?.id === c.post.userId;
@@ -3163,9 +3250,12 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
     select: storylineReadSelect,
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  const blockedUserIds = await getViewerExcludedIds(viewer);
+  const [blockedUserIds, participating] = await Promise.all([
+    getViewerExcludedIds(viewer),
+    getParticipatingStorylineIds([storyline], viewer),
+  ]);
   if (
-    isStorylineHidden(storyline, viewer, blockedUserIds) ||
+    isStorylineHidden(storyline, viewer, blockedUserIds, participating) ||
     isStorylineOutsideLevel(storyline, viewer, browsingLevel)
   )
     throw throwNotFoundError('Storyline not found');
@@ -3878,7 +3968,20 @@ export async function getStorylinesInfinite({
     // As `isStorylineHidden`, including a storyline with no chapter 1 yet, except that a taken-down
     // one is out of the feed for its owner and moderators too. They still open it by its URL.
     Prisma.sql`st."tosViolation" = false`,
-    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
+    // A chapter 1 that hides the storyline still leaves it listed for its participants, as
+    // `getParticipatingStorylineIds` reads them.
+    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      AND (${storylineRootVisibleSql}
+        OR EXISTS (
+          SELECT 1 FROM "StorylineCollaborator" pc
+          WHERE pc."storylineId" = st.id AND pc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+      'pc'
+    )}
+        )
+        OR EXISTS (
+          SELECT 1 FROM "StorylineChapter" pch
+          WHERE pch."storylineId" = st.id AND pch."userId" = ${viewerId}
+        ))))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];
   // One array parameter, not one bind per id: the list can run to tens of thousands.
@@ -3920,8 +4023,12 @@ export async function getStorylinesInfinite({
       minorByScan: boolean;
       whoCanContinue: StorylineWhoCanContinue;
       isCollaborator: boolean;
+      rootChapterId: number | null;
+      rootRemovedAt: Date | null;
       rootPostId: number | null;
       rootNsfwLevel: number | null;
+      rootBannedAt: Date | null;
+      rootDeletedAt: Date | null;
       rootPublishedAt: Date | null;
       rootTosViolation: boolean | null;
       storylineMode: string | null;
@@ -3942,8 +4049,10 @@ export async function getStorylinesInfinite({
     'vc'
   )}
       ) AS "isCollaborator",
+      rc.id AS "rootChapterId", rc."removedAt" AS "rootRemovedAt",
       rc."postId" AS "rootPostId", rp."nsfwLevel" AS "rootNsfwLevel",
       rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation",
+      ru."bannedAt" AS "rootBannedAt", ru."deletedAt" AS "rootDeletedAt",
       ss.mode AS "storylineMode", ss.price AS "storylinePrice",
       us.mode AS "userMode", us.price AS "userPrice",
       cc."chapterCount", cc."contributorCount", st."createdAt", st."coverImageId"
@@ -3951,6 +4060,7 @@ export async function getStorylinesInfinite({
     JOIN "User" u ON u.id = st."userId"
     LEFT JOIN "StorylineChapter" rc ON rc."storylineId" = st.id AND rc.depth = 0
     LEFT JOIN "Post" rp ON rp.id = rc."postId"
+    LEFT JOIN "User" ru ON ru.id = rp."userId"
     LEFT JOIN "PlacementSpace" ss
       ON ss.surface = 'storyline' AND ss."entityType" = 'storyline' AND ss."entityId" = st.id
     LEFT JOIN "PlacementSpace" us
@@ -4025,9 +4135,13 @@ export async function getStorylinesInfinite({
       deletedAt: _deletedAt,
       coverImageId,
       isCollaborator,
-      rootNsfwLevel: _rootNsfwLevel,
-      rootPublishedAt: _rootPublishedAt,
-      rootTosViolation: _rootTosViolation,
+      rootChapterId,
+      rootRemovedAt,
+      rootNsfwLevel,
+      rootPublishedAt,
+      rootTosViolation,
+      rootBannedAt,
+      rootDeletedAt,
       storylineMode,
       storylinePrice,
       userMode,
@@ -4048,6 +4162,23 @@ export async function getStorylinesInfinite({
         row.whoCanContinue === 'Anyone' || viewer?.id === userId || isCollaborator;
       return {
         ...row,
+        // Why chapter 1 keeps it from the public, for the chip its owner, participants and
+        // moderators see; the public is never listed one.
+        rootHiddenReason:
+          rootChapterId == null
+            ? null
+            : getStorylineRootHiddenReason({
+                removed: !!rootRemovedAt,
+                post:
+                  row.rootPostId == null
+                    ? null
+                    : {
+                        nsfwLevel: rootNsfwLevel ?? 0,
+                        publishedAt: rootPublishedAt,
+                        tosViolation: !!rootTosViolation,
+                        user: { bannedAt: rootBannedAt, deletedAt: rootDeletedAt },
+                      },
+              }),
         // The ceiling chapters are held to, which the card's rating chip shows.
         maxNsfwLevel: storylineCeiling({ maxNsfwLevel: row.maxNsfwLevel, minorByScan }),
         user: ownerById.get(userId) ?? { id: userId, username },

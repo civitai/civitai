@@ -80,7 +80,19 @@ const xStory = {
   moderatorNsfwLevel: null,
   createdAt: new Date('2026-10-01'),
   user: { id: OWNER, username: 'owner', ...notBanned },
-  chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.X } }],
+  chapters: [
+    {
+      id: 1,
+      postId: 101,
+      removedAt: null,
+      post: {
+        nsfwLevel: NsfwLevel.X,
+        publishedAt: new Date(0),
+        tosViolation: false,
+        user: { bannedAt: null, deletedAt: null },
+      },
+    },
+  ],
   collaborators: [],
 };
 
@@ -156,7 +168,19 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
     r.storyline.findUnique.mockResolvedValue({
       ...xStory,
       maxNsfwLevel: NsfwLevel.R,
-      chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: NsfwLevel.PG,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     } as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 1 } as never);
     r.$queryRaw.mockResolvedValue([
@@ -256,7 +280,19 @@ describe('storyline router: who may call the engagement procedures', () => {
     dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
     r.storyline.findUnique.mockResolvedValue({
       ...xStory,
-      chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: NsfwLevel.PG,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     } as never);
     dbMock.dbWrite.storylineChapterEdge.findUnique.mockResolvedValue({ chapterId: 2 } as never);
     await callerFor(READER).trackBranchChoice({

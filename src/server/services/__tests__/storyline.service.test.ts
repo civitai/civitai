@@ -13,6 +13,7 @@ import type * as NotificationService from '~/server/services/notification.servic
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
+import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
 
 const {
   enforceBlockedBrowsingTags,
@@ -98,6 +99,7 @@ import {
   removePendingChapter,
   removeStorylineCollaborator,
   acceptStorylineInvite,
+  assertStorylineVisible,
   setCanonChapter,
   updateStoryline,
   writeChapterEdgeForPlacement,
@@ -132,7 +134,19 @@ const storylineRow = (overrides: Record<string, unknown> = {}) => ({
   createdAt: new Date('2026-10-01'),
   user: { id: OWNER, username: 'owner', ...notBanned },
   // Chapter 1, PG: inside every reader level used here unless a test says otherwise.
-  chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+  chapters: [
+    {
+      id: 1,
+      postId: 101,
+      removedAt: null,
+      post: {
+        nsfwLevel: NsfwLevel.PG,
+        publishedAt: new Date(0),
+        tosViolation: false,
+        user: { bannedAt: null, deletedAt: null },
+      },
+    },
+  ],
   ...overrides,
 });
 
@@ -1079,7 +1093,19 @@ describe('getStoryline', () => {
         user: { id: 6, username: 'gone', bannedAt: new Date(), deletedAt: null },
       },
     ],
-    chapters: [{ id: 20, postId: 500, post: { nsfwLevel: rootLevel } }],
+    chapters: [
+      {
+        id: 20,
+        postId: 500,
+        removedAt: null,
+        post: {
+          nsfwLevel: rootLevel,
+          publishedAt: new Date(0),
+          tosViolation: false,
+          user: { bannedAt: null, deletedAt: null },
+        },
+      },
+    ],
   });
   const banned = (field: 'bannedAt' | 'deletedAt') => ({
     user: { id: OWNER, username: 'o', ...notBanned, [field]: new Date() },
@@ -1201,7 +1227,17 @@ describe('getStorylinesForPosts', () => {
       nsfwLevel: 0,
       moderatorNsfwLevel: null,
       user: notBanned,
-      chapters: [{ post: { nsfwLevel: NsfwLevel.PG } }],
+      chapters: [
+        {
+          removedAt: null,
+          post: {
+            nsfwLevel: NsfwLevel.PG,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
       ...overrides,
     },
   });
@@ -1231,6 +1267,163 @@ describe('getStorylinesForPosts', () => {
     });
     expect(Object.keys(asAuthor)).toEqual(['1', '3']);
     expect(result[1]).toEqual({ chapterId: 1001, depth: 1, storylineId: 10, title: 'A story' });
+  });
+});
+
+// Mod Lead ruling: a storyline whose chapter 1 is removed, unpublished or unrated is not public.
+// Its owner, participants and moderators still see it, told why. Do not narrow the viewers here
+// without that ruling changing.
+describe('a storyline whose chapter 1 keeps it from the public', () => {
+  const PG = NsfwLevel.PG;
+  /** An accepted collaborator or a chapter author: what the participants read answers for. */
+  const PARTICIPANT = 6;
+  const shownPost = {
+    nsfwLevel: PG,
+    publishedAt: new Date(0),
+    tosViolation: false,
+    user: notBanned,
+  };
+  const root = (overrides: Record<string, unknown> = {}) => ({
+    id: 1,
+    postId: 101,
+    removedAt: null,
+    post: shownPost,
+    ...overrides,
+  });
+  const cases: [string, Record<string, unknown>, StorylineRootHiddenReason][] = [
+    ['its post is deleted', { postId: null, post: null }, 'removed'],
+    ['it is removed', { removedAt: new Date() }, 'removed'],
+    ['its post is taken down', { post: { ...shownPost, tosViolation: true } }, 'removed'],
+    [
+      "its post's author is banned",
+      { post: { ...shownPost, user: { bannedAt: new Date(), deletedAt: null } } },
+      'removed',
+    ],
+    [
+      "its post's author is deleted",
+      { post: { ...shownPost, user: { bannedAt: null, deletedAt: new Date() } } },
+      'removed',
+    ],
+    [
+      'its post is wholly Blocked',
+      { post: { ...shownPost, nsfwLevel: NsfwLevel.Blocked } },
+      'removed',
+    ],
+    ['its post is unpublished', { post: { ...shownPost, publishedAt: null } }, 'unpublished'],
+    [
+      'its post is scheduled',
+      { post: { ...shownPost, publishedAt: new Date(Date.now() + 86_400_000) } },
+      'unpublished',
+    ],
+    ['its post is unrated', { post: { ...shownPost, nsfwLevel: 0 } }, 'pendingRating'],
+  ];
+  const insiders = [
+    ['owner', { id: OWNER }],
+    ['moderator', { id: MODERATOR, isModerator: true }],
+    ['participant', { id: PARTICIPANT }],
+  ] as const;
+  const outsiders = [
+    ['stranger', { id: STRANGER }],
+    ['signed-out reader', undefined],
+  ] as const;
+
+  beforeEach(() => {
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      Promise.resolve(
+        strings.join('?').includes('"StorylineCollaborator" sc') && values[0] === PARTICIPANT
+          ? [{ storylineId: 10 }]
+          : []
+      )) as never);
+  });
+
+  describe('its page', () => {
+    const page = (rootOverrides: Record<string, unknown>) =>
+      r.storyline.findUnique.mockResolvedValue({
+        ...storylineRow({ maxNsfwLevel: PG }),
+        collaborators: [],
+        chapters: [root(rootOverrides)],
+      } as never);
+
+    it('is public, with no reason, when chapter 1 is shown', async () => {
+      page({});
+      for (const [, viewer] of [...outsiders, ...insiders])
+        await expect(getStoryline({ id: 10, viewer, browsingLevel: PG })).resolves.toMatchObject({
+          rootHiddenReason: null,
+        });
+    });
+
+    it.each(cases)('when %s, is not found for the public', async (_n, overrides) => {
+      page(overrides);
+      for (const [name, viewer] of outsiders) {
+        await expect(
+          getStoryline({ id: 10, viewer, browsingLevel: PG }),
+          name
+        ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        await expect(assertStorylineVisible(10, viewer, PG), name).rejects.toMatchObject({
+          code: 'NOT_FOUND',
+        });
+      }
+    });
+
+    it.each(cases)(
+      'when %s, is shown to its owner, moderators and participants, saying why',
+      async (_n, overrides, reason) => {
+        page(overrides);
+        for (const [name, viewer] of insiders) {
+          await expect(
+            getStoryline({ id: 10, viewer, browsingLevel: PG }),
+            name
+          ).resolves.toMatchObject({ rootHiddenReason: reason });
+          await expect(assertStorylineVisible(10, viewer, PG), name).resolves.toBeDefined();
+        }
+      }
+    );
+  });
+
+  describe('its pill', () => {
+    // Chapter 5, itself shown to everyone: only chapter 1 can hide the storyline's title.
+    const pill = (rootOverrides: Record<string, unknown>) =>
+      r.storylineChapter.findMany.mockResolvedValue([
+        {
+          id: 1005,
+          postId: 5,
+          depth: 4,
+          removedAt: null,
+          post: { nsfwLevel: PG, userId: AUTHOR_OF_POSTS, tosViolation: false, user: notBanned },
+          storyline: {
+            id: 10,
+            title: 'A story',
+            userId: OWNER,
+            // PG: with no rating from chapter 1 the story's level is its ceiling, and a
+            // participant is still held to their browsing level.
+            maxNsfwLevel: PG,
+            minorByScan: false,
+            tosViolation: false,
+            nsfwLevel: 0,
+            moderatorNsfwLevel: null,
+            user: notBanned,
+            chapters: [root(rootOverrides)],
+          },
+        },
+      ] as never);
+    const titleFor = async (viewer: { id: number; isModerator?: boolean } | undefined) =>
+      (await getStorylinesForPosts({ postIds: [5], viewer, browsingLevel: PG }))[5]?.title;
+
+    it('names the storyline on a chapter-5 image when chapter 1 is shown', async () => {
+      pill({});
+      for (const [name, viewer] of [...outsiders, ...insiders])
+        expect(await titleFor(viewer), name).toBe('A story');
+    });
+
+    it.each(cases)(
+      'when %s, is not shown on a chapter-5 image to the public, and is to insiders',
+      async (_n, overrides) => {
+        pill(overrides);
+        for (const [name, viewer] of outsiders)
+          expect(await titleFor(viewer), name).toBeUndefined();
+        for (const [name, viewer] of insiders) expect(await titleFor(viewer), name).toBe('A story');
+      }
+    );
   });
 });
 
@@ -2080,7 +2273,19 @@ describe('getStorylineCanonAhead', () => {
   it('serves nothing when the story is outside the reader level', async () => {
     r.storyline.findUnique.mockResolvedValue(
       storylineRow({
-        chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.X } }],
+        chapters: [
+          {
+            id: 1,
+            postId: 101,
+            removedAt: null,
+            post: {
+              nsfwLevel: NsfwLevel.X,
+              publishedAt: new Date(0),
+              tosViolation: false,
+              user: { bannedAt: null, deletedAt: null },
+            },
+          },
+        ],
       }) as never
     );
     await expect(
@@ -2784,7 +2989,17 @@ describe('a chapter whose placement was removed', () => {
         nsfwLevel: 0,
         moderatorNsfwLevel: null,
         user: notBanned,
-        chapters: [{ post: { nsfwLevel: NsfwLevel.PG } }],
+        chapters: [
+          {
+            removedAt: null,
+            post: {
+              nsfwLevel: NsfwLevel.PG,
+              publishedAt: new Date(0),
+              tosViolation: false,
+              user: { bannedAt: null, deletedAt: null },
+            },
+          },
+        ],
       },
     });
     r.storylineChapter.findMany.mockResolvedValue([
@@ -4011,7 +4226,19 @@ describe('title moderation', () => {
         titled({
           maxNsfwLevel: X,
           nsfwLevel: title,
-          chapters: [{ id: 1, postId: 101, post: { nsfwLevel: chapterLevel } }],
+          chapters: [
+            {
+              id: 1,
+              postId: 101,
+              removedAt: null,
+              post: {
+                nsfwLevel: chapterLevel,
+                publishedAt: new Date(0),
+                tosViolation: false,
+                user: { bannedAt: null, deletedAt: null },
+              },
+            },
+          ],
         }) as never
       );
       const read = getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: PG_READER });
@@ -4052,7 +4279,17 @@ describe('title moderation', () => {
           nsfwLevel: 0,
           moderatorNsfwLevel: null,
           user: notBanned,
-          chapters: [{ post: { nsfwLevel: PG } }],
+          chapters: [
+            {
+              removedAt: null,
+              post: {
+                nsfwLevel: PG,
+                publishedAt: new Date(0),
+                tosViolation: false,
+                user: { bannedAt: null, deletedAt: null },
+              },
+            },
+          ],
           ...storyline,
         },
       });
@@ -4087,7 +4324,7 @@ describe('title moderation', () => {
       const { sql } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
       expect(sql.replace(/\s+/g, ' ')).toContain(
         `OR ((SELECT ${raiseNsfwLevelText('lv.l', 'lv.f')} ` +
-          `FROM (SELECT COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel") AS l, ` +
+          `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ?), st."maxNsfwLevel") AS l, ` +
           `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv) & ?::int) <> 0)`
       );
     });
@@ -4299,7 +4536,17 @@ describe('a storyline the title scan holds as about a minor', () => {
             nsfwLevel: 0,
             moderatorNsfwLevel: null,
             user: notBanned,
-            chapters: [{ post: { nsfwLevel: NsfwLevel.PG } }],
+            chapters: [
+              {
+                removedAt: null,
+                post: {
+                  nsfwLevel: NsfwLevel.PG,
+                  publishedAt: new Date(0),
+                  tosViolation: false,
+                  user: { bannedAt: null, deletedAt: null },
+                },
+              },
+            ],
           },
         },
       ] as never);

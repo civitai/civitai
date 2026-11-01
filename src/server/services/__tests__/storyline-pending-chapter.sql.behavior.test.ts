@@ -264,6 +264,141 @@ describe('the storylines feed', () => {
     });
   });
 
+  // Mod Lead ruling: a chapter 1 that is removed, unpublished or unrated takes the storyline out
+  // of public listings. Its owner, participants and moderators still see it, told why. The rule
+  // lives in this SQL and in `getStorylineRootHiddenReason`; this runs the SQL.
+  describe('a storyline whose chapter 1 keeps it from the public', () => {
+    const HIDDEN = 6;
+    const COLLABORATOR = 4;
+    const CONTRIBUTOR = 5;
+    const INVITEE = 7;
+    beforeAll(() =>
+      db.pg.exec(`
+        INSERT INTO "User" (id, username) VALUES
+          (4, 'collaborator'), (5, 'contributor'), (6, 'author'), (7, 'invitee');
+        INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt") VALUES
+          (140, 1, 1, now() - interval '1 day'), (141, 5, 1, now() - interval '1 day');
+        INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt") VALUES
+          (6, 1, 'Chapter 1 in question', 1, now());
+        INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth) VALUES
+          (14, 6, 140, 1, 0), (15, 6, 141, 5, 1);
+        INSERT INTO "StorylineCollaborator" ("storylineId", "userId", "acceptedAt") VALUES
+          (6, 4, now()), (6, 7, NULL);
+      `)
+    );
+    afterAll(() =>
+      db.pg.exec(`
+        DELETE FROM "StorylineCollaborator" WHERE "storylineId" = 6;
+        DELETE FROM "StorylineChapter" WHERE id IN (14, 15);
+        DELETE FROM "Storyline" WHERE id = 6;
+        DELETE FROM "Post" WHERE id IN (140, 141);
+        DELETE FROM "User" WHERE id IN (4, 5, 6, 7);
+      `)
+    );
+    afterEach(() =>
+      db.pg.exec(`
+        UPDATE "StorylineChapter" SET "postId" = 140, "removedAt" = NULL WHERE id = 14;
+        UPDATE "Post" SET "userId" = 1, "nsfwLevel" = 1, "publishedAt" = now() - interval '1 day',
+          "tosViolation" = false WHERE id = 140;
+        UPDATE "User" SET "bannedAt" = NULL, "deletedAt" = NULL WHERE id = 6;
+      `)
+    );
+
+    const cases: [string, string, string][] = [
+      [
+        'its post is deleted',
+        `UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 14`,
+        'removed',
+      ],
+      [
+        'it is removed',
+        `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 14`,
+        'removed',
+      ],
+      [
+        'its post is taken down',
+        `UPDATE "Post" SET "tosViolation" = true WHERE id = 140`,
+        'removed',
+      ],
+      [
+        "its post's author is banned",
+        `UPDATE "Post" SET "userId" = 6 WHERE id = 140; UPDATE "User" SET "bannedAt" = now() WHERE id = 6`,
+        'removed',
+      ],
+      [
+        "its post's author is deleted",
+        `UPDATE "Post" SET "userId" = 6 WHERE id = 140; UPDATE "User" SET "deletedAt" = now() WHERE id = 6`,
+        'removed',
+      ],
+      [
+        'its post is wholly Blocked',
+        `UPDATE "Post" SET "nsfwLevel" = ${NsfwLevel.Blocked} WHERE id = 140`,
+        'removed',
+      ],
+      [
+        'its post is unpublished',
+        `UPDATE "Post" SET "publishedAt" = NULL WHERE id = 140`,
+        'unpublished',
+      ],
+      [
+        'its post is scheduled',
+        `UPDATE "Post" SET "publishedAt" = now() + interval '1 day' WHERE id = 140`,
+        'unpublished',
+      ],
+      ['its post is unrated', `UPDATE "Post" SET "nsfwLevel" = 0 WHERE id = 140`, 'pendingRating'],
+    ];
+    const insiders = [
+      ['owner', { id: OWNER }],
+      ['moderator', { id: MODERATOR, isModerator: true }],
+      ['accepted collaborator', { id: COLLABORATOR }],
+      ['author of a later chapter', { id: CONTRIBUTOR }],
+    ] as const;
+    const outsiders = [
+      ['stranger', { id: STRANGER }],
+      ['invitee who has not accepted', { id: INVITEE }],
+      ['signed-out reader', undefined],
+    ] as const;
+    const card = async (viewer?: { id: number; isModerator?: boolean }) =>
+      (
+        await getStorylinesInfinite({
+          filter: 'all',
+          sort: 'newest',
+          limit: 20,
+          viewer,
+          browsingLevel: NsfwLevel.PG,
+        })
+      ).items.find((item) => item.id === HIDDEN);
+
+    it('is listed for everyone, with no reason, while chapter 1 is shown', async () => {
+      for (const [name, viewer] of [...outsiders, ...insiders])
+        expect(await card(viewer), name).toMatchObject({ rootHiddenReason: null });
+    });
+
+    it.each(cases)('when %s, is out of the feed for the public', async (_n, sql) => {
+      await db.pg.exec(sql);
+      for (const [name, viewer] of outsiders) expect(await card(viewer), name).toBeUndefined();
+    });
+
+    it.each(cases)(
+      'when %s, is listed for its owner, moderators and participants, saying why',
+      async (_n, sql, reason) => {
+        await db.pg.exec(sql);
+        for (const [name, viewer] of insiders)
+          expect(await card(viewer), name).toMatchObject({ rootHiddenReason: reason });
+      }
+    );
+
+    // Nothing caches this read: the next one after chapter 1 is rated lists the storyline.
+    it('appears to the public as soon as chapter 1 is rated', async () => {
+      await db.pg.exec(`UPDATE "Post" SET "nsfwLevel" = 0 WHERE id = 140`);
+      expect(await card({ id: STRANGER })).toBeUndefined();
+      expect(await card(undefined)).toBeUndefined();
+      await db.pg.exec(`UPDATE "Post" SET "nsfwLevel" = ${NsfwLevel.PG} WHERE id = 140`);
+      expect(await card({ id: STRANGER })).toMatchObject({ rootHiddenReason: null });
+      expect(await card(undefined)).toMatchObject({ rootHiddenReason: null });
+    });
+  });
+
   it('gives the owner their empty storyline with no chapter 1 and no cover', async () => {
     const { items } = await getStorylinesInfinite({
       filter: 'all',

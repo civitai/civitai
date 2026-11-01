@@ -160,7 +160,19 @@ beforeAll(async () => {
     moderatorNsfwLevel: null,
     createdAt: new Date('2026-10-01'),
     user: { id: 1, username: 'owner', bannedAt: null, deletedAt: null },
-    chapters: [{ id: 1, postId: null, post: null }],
+    chapters: [
+      {
+        id: 1,
+        postId: null,
+        removedAt: null,
+        post: {
+          nsfwLevel: NsfwLevel.PG,
+          publishedAt: new Date(0),
+          tosViolation: false,
+          user: { bannedAt: null, deletedAt: null },
+        },
+      },
+    ],
   } as never);
 });
 
