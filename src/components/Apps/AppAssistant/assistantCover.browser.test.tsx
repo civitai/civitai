@@ -30,7 +30,10 @@ const ctx = { signal: new AbortController().signal, conversationId: 'c', files: 
 const conv = { conversationId: 'c', reply: 1 };
 
 function setup() {
-  const listing = vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING);
+  // The offer's listing read and the press's are separate, so "no press started" is observable: a
+  // press reads the listing before anything else, synchronously from the click.
+  const offerListing = vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING);
+  const pressListing = vi.fn(async (_app: string): Promise<CoverListing | null> => LISTING);
   const price = vi.fn(async (_w: AppCoverWorkflow) => PRICE);
   let finish: (url: string) => void = () => undefined;
   const generate = vi.fn(
@@ -42,8 +45,8 @@ function setup() {
   const gate = createAssistantGate({
     openApp: () => APP,
     cover: {
-      offer: { currentApp: () => APP, listing, price, seed: () => 9 },
-      press: { listing, generate, attach },
+      offer: { currentApp: () => APP, listing: offerListing, price, seed: () => 9 },
+      press: { listing: pressListing, generate, attach },
     },
   });
   /** Runs a call through the gate as the chat does, and tells the gate of its result. */
@@ -61,15 +64,20 @@ function setup() {
       output,
       state: 'done',
     } as ChatToolCall) as HTMLElement | undefined;
-  return { gate, call, render, generate, attach, price, finish: (url = IMAGE_URL) => finish(url) };
+  return {
+    gate,
+    call,
+    render,
+    offerListing,
+    pressListing,
+    generate,
+    attach,
+    price,
+    finish: (url = IMAGE_URL) => finish(url),
+  };
 }
 
 const buttons = (card: HTMLElement) => [...card.querySelectorAll('button')];
-/**
- * Lets anything already started run on: a cover made without a press reads the listing (awaited)
- * before it generates, so a "not generated" check straight after a render could not see it.
- */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 const pressButton = (card: HTMLElement) =>
   buttons(card).find((b) => b.textContent === coverButtonText({ buzz: PRICE }));
 
@@ -82,7 +90,11 @@ describe('the store cover card', () => {
     expect(card.textContent).toContain('Generate a cover for tip-calc for ~23 Buzz?');
     expect(pressButton(card)).toBeDefined();
     expect(s.price).toHaveBeenCalledTimes(1);
-    await settle();
+    // The offer read the listing and the card shows its button. A press reads the listing first,
+    // synchronously from the click (the runner case below shows that read is seen), so none here
+    // means no press started.
+    await vi.waitFor(() => expect(s.offerListing).toHaveBeenCalledTimes(1));
+    expect(s.pressListing).not.toHaveBeenCalled();
     expect(s.generate).not.toHaveBeenCalled();
     expect(s.attach).not.toHaveBeenCalled();
   });
@@ -164,9 +176,11 @@ describe('the store cover card', () => {
       isError: false,
     });
     const card = s.render(fromRunner)!;
-    await settle();
+    expect(pressButton(card)).toBeDefined();
+    expect(s.pressListing).not.toHaveBeenCalled();
     expect(s.generate).not.toHaveBeenCalled();
     pressButton(card)!.click();
+    expect(s.pressListing).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(s.generate).toHaveBeenCalledTimes(1));
     expect(s.generate.mock.calls[0]![0]).toMatchObject({ externalId: 'app-cover-run-7-cover-1' });
     expect(s.generate.mock.calls[0]![0].steps[0].input).toMatchObject({

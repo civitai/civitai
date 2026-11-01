@@ -94,7 +94,32 @@ describe('generate_app_cover: an offer, never a spend', () => {
       width: 64,
       steps: [{ $type: 'videoGen' }],
     });
-    expect(deps.price.mock.calls[0]![0]).toEqual(appCoverWorkflow('a calculator', SEED));
+    // Pinned literally, not from `appCoverWorkflow`: a recipe change has to change this test.
+    const priced = deps.price.mock.calls[0]![0];
+    expect(priced).toEqual({
+      steps: [
+        {
+          $type: 'textToImage',
+          input: {
+            model: APP_COVER_MODEL,
+            prompt: 'a calculator',
+            negativePrompt: 'text, words, letters, watermark, logo, signature, blurry, lowres',
+            width: 1344,
+            height: 768,
+            steps: 25,
+            cfgScale: 7,
+            seed: SEED,
+            quantity: 1,
+            outputFormat: 'jpeg',
+          },
+        },
+      ],
+    });
+    // None of the call's own model, width or steps reached the priced workflow.
+    expect(priced.steps).toHaveLength(1);
+    expect(priced.steps[0].input.model).not.toBe('urn:air:other');
+    expect(priced.steps[0].input.width).not.toBe(64);
+    expect(priced.steps[0].$type).not.toBe('videoGen');
   });
 
   it('cuts the prompt to its cap', async () => {

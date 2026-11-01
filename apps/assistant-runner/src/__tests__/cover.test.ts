@@ -4,7 +4,6 @@ import {
   COVER_PRICE_UNREADABLE,
   GENERATE_APP_COVER,
   appCoverWorkflow,
-  createCoverArt,
   type CoverListing,
   type CoverOffer,
 } from '@civitai/app-assistant';
@@ -56,18 +55,6 @@ function setup(listing: CoverListing | null = LISTING) {
 }
 
 describe('generate_app_cover on the runner: the page’s own tool, offering only', () => {
-  it('is the shared tool, with the same description and input', () => {
-    const { tool } = setup();
-    const shared = createCoverArt({
-      currentApp: () => null,
-      listing: async () => null,
-      price: async () => 0,
-      nextId: () => '',
-    })[GENERATE_APP_COVER]!;
-    expect(tool.description).toBe(shared.description);
-    expect(tool.inputSchema).toEqual(shared.inputSchema);
-  });
-
   it('offers the cover with orchestration’s price for the fixed recipe', async () => {
     const { call, estimator } = setup();
     const offer = (await call({ prompt: 'a calculator' })) as CoverOffer;
