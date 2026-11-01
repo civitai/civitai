@@ -193,16 +193,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS because a two-flag order that nobody records is a
   // trap rather than a safeguard.
   TRAINING_DATA_PURGE_DRY_RUN = 'training-data-purge-dry-run',
-  IMAGE_TRAINING = 'image-training',
-  VIDEO_TRAINING = 'video-training',
   AI_TOOLKIT_SD15 = 'ai-toolkit-sd15',
   AI_TOOLKIT_SDXL = 'ai-toolkit-sdxl',
   AI_TOOLKIT_FLUX = 'ai-toolkit-flux',
-  AI_TOOLKIT_SD35 = 'ai-toolkit-sd35',
   AI_TOOLKIT_HUNYUAN = 'ai-toolkit-hunyuan',
   AI_TOOLKIT_WAN = 'ai-toolkit-wan',
-  AI_TOOLKIT_CHROMA = 'ai-toolkit-chroma',
-  QWEN_TRAINING = 'qwen-training',
   FLUX2_TRAINING = 'flux2-training',
   ZIMAGE_TURBO_TRAINING = 'zimage-turbo-training',
   ZIMAGE_BASE_TRAINING = 'zimage-base-training',
@@ -210,8 +205,6 @@ export enum FLIPT_FEATURE_FLAGS {
   LTX2_TRAINING = 'ltx2-training',
   LTX23_TRAINING = 'ltx23-training',
   LTX25_TRAINING = 'ltx25-training',
-  WAN22_TRAINING = 'wan22-training',
-  IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
   // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
   // column points at the pairwise ladder still runs the legacy absolute path until this is on.
