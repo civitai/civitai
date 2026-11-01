@@ -146,6 +146,9 @@ export function StorylineEndOfChapter({
     midStory && pathEnd?.post && canonAhead.ahead.length < STORYLINE_PATH_LIMIT - 1
       ? { chapterId: pathEnd.chapterId, depth: pathEnd.depth, post: pathEnd.post }
       : undefined;
+  // Nothing to write until the ways on are read (and, mid-story, the end): before then an action
+  // would continue this chapter, which is the accidental branch. A failed read offers none.
+  const writeReady = children !== undefined && (!midStory || canonAhead.isSuccess);
   // Priced against the chapter the continuation is placed on: the end, not the one on screen.
   const endTerms = useStorylineContinueTerms(isOwner ? undefined : endTarget?.post.id);
   const router = useRouter();
@@ -304,7 +307,7 @@ export function StorylineEndOfChapter({
           </div>
           <div className="flex flex-col gap-3 @md:flex-row @md:items-start @md:justify-between">
             <div className="flex flex-col items-stretch gap-2 @md:items-start">
-              {midStory ? (
+              {!writeReady ? null : midStory ? (
                 <>
                   {endTarget && (isOwner || endTerms?.open) && (
                     <div className="flex flex-col items-stretch gap-1 @md:items-start">
