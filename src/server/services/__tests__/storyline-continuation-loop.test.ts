@@ -296,6 +296,26 @@ describe('the storyline continuation loop', () => {
     ]);
   });
 
+  it("leaves a collaborator's continuation in the owner's queue when they are removed while it is being paid for", async () => {
+    charge(100);
+    // Removed after the submission decided on auto-approval, before the approval runs.
+    createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+      await dbMock.dbWrite.storylineCollaborator.deleteMany({
+        where: { storylineId: STORYLINE, userId: COLLABORATOR },
+      });
+      return { transactionCount: 1 };
+    });
+    const { id } = await submit(COLLABORATOR, COLLABORATOR_POST, 100);
+
+    expect(db.row('placement', { id })).toMatchObject({ status: 'pending', resolvedAt: null });
+    expect(chapterFor(id)).toBeUndefined();
+    expect(moneyCalls().payouts).toEqual([]);
+
+    // Still the owner's to take, as any other continuation would be.
+    await actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' });
+    expect(db.row('placement', { id })).toMatchObject({ status: 'approved', resolvedById: OWNER });
+  });
+
   it('orders an endorsed chapter before a community one', async () => {
     // The first approved one takes the main path; the order is about the paths after it.
     for (const postId of [STRANGER_POST, ANOTHER_STRANGER_POST]) {

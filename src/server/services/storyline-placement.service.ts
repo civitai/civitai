@@ -514,7 +514,14 @@ export async function settleStorylineContinuation({
       if (readiness !== 'ready') throw throwBadRequestError(STORYLINE_REFUSALS.notReady);
 
       await writeChapterEdgeForPlacement(
-        { placementId, parentPostId, postId, placerId: pending.placerId },
+        {
+          placementId,
+          parentPostId,
+          postId,
+          placerId: pending.placerId,
+          // No actor is an auto-approval, which only a collaborator gets.
+          asCollaborator: actorId == null,
+        },
         tx
       );
     },
