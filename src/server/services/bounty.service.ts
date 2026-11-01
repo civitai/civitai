@@ -1714,7 +1714,8 @@ export async function releaseStuckBountyAward(
  * Moderator exit for a refund that waits only on legacy supporters the ledger cannot confirm were
  * refunded: an attempt made before `legacyRefundKey` may or may not have paid them, and no retry
  * pays them. Records each for a manual ruling, as an unpaid award with no winner, and stamps the
- * refund settled. Moves no Buzz. Needs a day-old refund recorded before `LEGACY_REFUND_KEYED_SINCE`
+ * refund settled. Pays no legacy supporter; its reads retry keyed refunds as a settle does. A ruling
+ * checks the ledger for `legacyRefundKey` first: a concurrent first attempt may have paid. Needs a day-old refund recorded before `LEGACY_REFUND_KEYED_SINCE`
  * whose only failures are those supporters on two reads. Returns the recorded count, or null when it
  * does not apply.
  */
@@ -1805,6 +1806,7 @@ export async function releaseUnconfirmedBountyRefund(
       bountyId,
       userId: supporter.userId,
       unitAmount: supporter.unitAmount,
+      refundKey: legacyRefundKey(bountyId, supporter.userId),
       moderatorId,
     }).catch(() => null);
   return { unconfirmedRefunds: unconfirmed.length };
@@ -1881,6 +1883,11 @@ export async function resolveUnpaidBountyAward({
         message: `That award is already resolved as ${award.ruling}`,
       });
     }
+    if (ruling === 'paid_winner' && award.winnerUserId == null)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'That record is a supporter refund with no winner; it cannot be ruled paid_winner',
+      });
     const { count } = await tx.bountyUnpaidAward.updateMany({
       where: { bountyId, userId, resolvedAt: null },
       data: { ruling, ledgerReference, resolvedById: moderatorId, resolvedAt: new Date() },
