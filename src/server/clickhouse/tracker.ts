@@ -1172,6 +1172,9 @@ export class Tracker {
       errorMsg: values.errorMsg ?? '',
       payload: JSON.stringify(values.payload),
       affected: values.affected ? JSON.stringify(values.affected) : '',
+      // Replicated inserts dedupe identical blocks; a repeated call with a server-filled
+      // createdAt is byte-identical and silently dropped.
+      createdAt: new Date(),
     });
   }
 
