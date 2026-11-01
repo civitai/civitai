@@ -88,3 +88,37 @@ describe('main-app logout finishes through the hub', () => {
     expect(hubJar).toEqual([{ name: '__Host-civ-device' }]);
   });
 });
+
+describe('main-app logout names the browser to the hub', () => {
+  const ORIGINAL_ENV = { ...process.env };
+  beforeEach(() => vi.resetModules());
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.doUnmock('@civitai/auth');
+  });
+
+  it("sends the browser's device id with the revoke, so the hub signs out the whole browser", async () => {
+    const revoke = vi.fn(async () => undefined);
+    vi.doMock('@civitai/auth', async (importOriginal) => ({
+      ...(await importOriginal<Record<string, unknown>>()),
+      createSessionTokenClient: () => ({ revoke }),
+    }));
+    process.env.AUTH_JWT_ISSUER = HUB;
+    const { default: handler } = await import('~/pages/api/auth/logout');
+    const cookies = {
+      'civ-token': 'tok',
+      '__Secure-civ-token': 'tok',
+      'civ-device': 'dev-1',
+      '__Secure-civ-device': 'dev-1',
+    };
+    await handler(
+      {
+        query: {},
+        cookies,
+        headers: { host: 'civitai.com', 'x-forwarded-proto': 'https' },
+      } as never,
+      { setHeader: () => undefined, redirect: () => undefined } as never
+    );
+    expect(revoke).toHaveBeenCalledWith('tok', { deviceId: 'dev-1' });
+  });
+});

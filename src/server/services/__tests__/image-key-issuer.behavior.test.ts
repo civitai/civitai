@@ -102,6 +102,13 @@ const outcome = (url: string, now = AFTER) =>
   );
 
 describe('assertClientKeysIssuedToCaller', () => {
+  it('accepts a key with no record and no row through 2026-11-18 15:59Z, and refuses it from 16:00Z', async () => {
+    expect(await outcome(KEY, new Date('2026-11-18T15:59:59.999Z'))).toBe('accepted');
+    const refused = outcomeCount('unrecorded_refused');
+    expect(await outcome(KEY, new Date('2026-11-18T16:00:00Z'))).toBe('refused');
+    expect(outcomeCount('unrecorded_refused')).toBe(refused + 1);
+  });
+
   it('accepts a key issued to the caller', async () => {
     await recordUploadKeyOwner(KEY, CALLER);
     expect(await outcome(KEY)).toBe('accepted');

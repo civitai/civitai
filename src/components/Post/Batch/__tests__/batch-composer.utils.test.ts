@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   POST_BATCH_CHUNK_MAX_IMAGES,
   POST_BATCH_CHUNK_POSTS,
@@ -22,6 +22,7 @@ import {
   serializeDraft,
   shuffle,
   toBatchImage,
+  withoutReuploads,
 } from '~/components/Post/Batch/batch-composer.utils';
 import type { ComposerDraft, UploadedMedia } from '~/components/Post/Batch/batch-composer.utils';
 
@@ -380,5 +381,81 @@ describe('draft serialisation', () => {
         shared: { ...draft().shared, tools: [], tags: [] },
       })
     ).toBe(true);
+  });
+});
+
+describe('withoutReuploads', () => {
+  const key = (n: number) => `${String(n).padStart(8, '0')}-ef56-4a7b-8c9d-0e1f2a3b4c5d`;
+  const draftOf = (urls: string[]) =>
+    ({
+      media: urls.map((url) => ({ url, status: 'added' })),
+      imagesPerPost: 3,
+      seed: 42,
+    } as unknown as ComposerDraft);
+
+  it('drops the uploads the check marks, counts them, and keeps the rest of the draft', async () => {
+    const draft = draftOf([key(1), key(2), key(3)]);
+    const result = await withoutReuploads(draft, async () => [key(2)], 64);
+    expect(result).toEqual({
+      draft: { ...draft, media: [draft.media[0], draft.media[2]] },
+      dropped: 1,
+    });
+  });
+
+  it('keeps the whole draft when a later check fails', async () => {
+    const draft = draftOf([key(1), key(2), key(3)]);
+    const check = vi
+      .fn<(keys: string[]) => Promise<string[]>>()
+      .mockResolvedValueOnce([key(1)])
+      .mockRejectedValueOnce(new Error('offline'));
+    expect(await withoutReuploads(draft, check, 2)).toEqual({ draft, dropped: 0 });
+  });
+
+  it('sends one check at a time', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const check = async () => {
+      most = Math.max(most, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return [] as string[];
+    };
+    await withoutReuploads(draftOf([key(1), key(2), key(3)]), check, 1);
+    expect(most).toBe(1);
+  });
+
+  it('keeps the whole draft when the checks do not answer in time', async () => {
+    vi.useFakeTimers();
+    try {
+      const draft = draftOf([key(1)]);
+      const result = withoutReuploads(
+        draft,
+        () => new Promise<string[]>(() => undefined),
+        64,
+        5_000
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await result).toEqual({ draft, dropped: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the whole draft when a check fails', async () => {
+    const draft = draftOf([key(1), key(2)]);
+    const result = await withoutReuploads(
+      draft,
+      async () => {
+        throw new Error('offline');
+      },
+      64
+    );
+    expect(result).toEqual({ draft, dropped: 0 });
+  });
+
+  it('checks upload keys only, at most perCheck at a time', async () => {
+    const check = vi.fn<(keys: string[]) => Promise<string[]>>(async () => []);
+    await withoutReuploads(draftOf([key(1), 'blob:https://x/y', key(2), key(3)]), check, 2);
+    expect(check.mock.calls).toEqual([[[key(1), key(2)]], [[key(3)]]]);
   });
 });

@@ -145,6 +145,7 @@ export default AuthedEndpoint(
         slug: result.slug,
         version: result.version,
         status: 'pending',
+        listing: result.listing ?? null,
       });
     } catch (err) {
       // Service throws plain Errors with human-readable messages (bundle too

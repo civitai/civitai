@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Box, Code, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
 import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
+import { fetchDevTunnelEntryUrl } from '~/components/AppBlocks/devTunnelEntryUrl';
 import { Meta } from '~/components/Meta/Meta';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -35,7 +36,9 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
   useSession: true,
   resolver: async ({ features, ctx, session }) => {
-    // GATE FIRST, fail-closed. Author capability + the dev-tunnel kill-switch.
+    // GATE FIRST, fail-closed: a gated account is notFound even before sign-in is asked for. The
+    // full gate set (re-checking these) is `resolveDevTunnelPageFrame`, shared with the Retry's
+    // `/api/apps/dev/entry-url`.
     if (!features?.appBlocks || !features?.appBlocksAuthor) {
       return { notFound: true };
     }
@@ -48,21 +51,16 @@ export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
         },
       };
     }
-    const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
-    if (!(await isAppBlocksDevTunnelEnabled({ user }))) {
-      return { notFound: true };
-    }
 
     const rawBlockId = ctx.params?.blockId;
     const blockId =
       typeof rawBlockId === 'string' ? rawBlockId : Array.isArray(rawBlockId) ? rawBlockId[0] : '';
-    if (!blockId) return { notFound: true };
 
-    // null (foreign or absent app) → the same notFound, no oracle.
-    const { resolveDevTunnelFrame } = await import(
-      '~/server/services/blocks/dev-tunnel-frame.service'
+    // null (kill switch off, foreign or absent app) → the same notFound, no oracle.
+    const { resolveDevTunnelPageFrame } = await import(
+      '~/server/services/blocks/dev-tunnel-page-frame.service'
     );
-    const frame = await resolveDevTunnelFrame(user, blockId);
+    const frame = await resolveDevTunnelPageFrame(user, blockId ?? '', features);
     if (!frame) return { notFound: true };
     const { host } = frame;
 
@@ -146,6 +144,18 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
     if (hostChanged) routerRef.current.reload();
   }, [hostChanged]);
 
+  // The frame's Retry: a freshly signed entry URL, swapped in by the host without a remount (so
+  // its auto-retry budget carries over). A URL on a host other than the framed one is never handed
+  // over — this document's CSP frames only that host — so the page reloads for a fresh document.
+  const refreshEntryUrl = useCallback(async () => {
+    const fresh = await fetchDevTunnelEntryUrl(blockId);
+    if (fresh.host !== host) {
+      routerRef.current.reload();
+      throw new Error('The dev tunnel moved to a new host');
+    }
+    return fresh.iframeSrc;
+  }, [blockId, host]);
+
   return (
     <>
       <Meta title={`${appName} — Dev tunnel — Civitai Apps`} deIndex />
@@ -186,10 +196,7 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
             // The app reloaded itself (Vite live reload): re-run the server props in place,
             // as the DNS gate does, for a freshly signed entry URL.
             onGuestReloaded={() => void router.replace(router.asPath, undefined, { scroll: false })}
-            // No `refreshEntryUrl` yet: this page's only source of a signed entry URL is its
-            // server props, and re-running them remounts the host (resetting its auto-retry
-            // budget). So the frame's Retry here reloads the URL this page was served, which the
-            // edge refuses once its entry token has expired; reloading the page recovers.
+            refreshEntryUrl={refreshEntryUrl}
             tokenErrorFallback={
               // Owner-specific copy: the public host's generic "Couldn't authenticate
               // this app" would mislead here.

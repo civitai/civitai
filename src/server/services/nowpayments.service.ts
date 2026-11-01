@@ -8,6 +8,7 @@ import {
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbKV } from '~/server/db/db-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
   findHandGrantsForDeposit,
@@ -21,6 +22,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import dayjs from '~/shared/utils/dayjs';
 import {
   getChainConfig,
@@ -31,7 +33,11 @@ import {
   OPEN_DEPOSIT_STATUSES,
   UNVERIFIED_DEPOSIT_STATUSES,
 } from '~/server/common/chain-config';
-import type { OpenDepositDigestItem } from '~/server/email/templates/openCryptoDepositDigest.email';
+import type {
+  ListedPaymentDigestItem,
+  ListedPaymentState,
+  OpenDepositDigestItem,
+} from '~/server/email/templates/openCryptoDepositDigest.email';
 
 /** IPN callback URL — configurable for dev (webhook.site) vs prod */
 const getIpnCallbackUrl = () =>
@@ -89,7 +95,20 @@ const resolvePayinHash = async (paymentId: number, event: NOWPayments.WebhookEve
 /** Max number of concurrent requests when fetching min amounts for currencies */
 const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
 
+/**
+ * Chains a deposit address may be created for: the static configs, plus every chain the supported
+ * currency list maps a NowPayments network to (so a newly enabled currency still works without a
+ * code change). Anything else is refused before it can take a lock or create a payment.
+ */
+export const isSupportedDepositChain = async (chain: string) => {
+  if (getChainConfig(chain)) return true;
+  const groups = await getSupportedCurrencies();
+  return groups.some((group) => group.networks.some((network) => network.chain === chain));
+};
+
 export const getDepositAddress = async (userId: number, chain = 'evm') => {
+  if (!(await isSupportedDepositChain(chain))) throwBadRequestError('Unsupported deposit chain');
+
   // Use explicit config if available, otherwise fall back to chain name as targetCurrency
   const config = getChainConfig(chain) ?? {
     chain,
@@ -1006,12 +1025,113 @@ export const getOpenDepositReport = async () => {
   };
 };
 
+/** Payment ids whose IPN never arrived, so no CryptoDeposit row exists to poll. Kept out of the repo. */
+export const WATCH_PAYMENT_IDS_KEY = 'nowpayments:watch-payment-ids';
+/** Listed ids support has confirmed nobody paid by hand. */
+export const WATCH_CREDIT_OK_KEY = 'nowpayments:watch-payment-ids-credit-ok';
+
+const readPaymentIdList = async (key: string): Promise<number[]> => {
+  let value: unknown;
+  try {
+    value = await dbKV.get<unknown>(key, []);
+  } catch (e) {
+    await log({
+      message: 'Watch list unreadable',
+      key,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return [];
+  }
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    await log({ message: 'Watch list is not an array; ignored', key });
+    return [];
+  }
+  const ids = value.filter((v): v is number => Number.isSafeInteger(v) && (v as number) > 0);
+  if (ids.length !== value.length)
+    await log({ message: 'Watch list has entries that are not payment ids; skipped', key });
+  return [...new Set(ids)];
+};
+
+/** NowPayments statuses that close a payment without paying it; recording one never credits. */
+const CLOSED_UNPAID_STATUSES = ['failed', 'expired', 'refunded'];
+
+/**
+ * Listed ids the row-driven watch did not poll. Writes a row only for a closed-unpaid status, or for
+ * an id on the credit-ok list: a row in flight would let the row-driven watch credit it unconfirmed.
+ */
+const watchListedPayments = async (
+  listed: number[],
+  creditOk: Set<number>,
+  polled: Set<number>,
+  heldBack: Map<number, string>
+) => {
+  if (!listed.length) return [];
+  const rows = await dbRead.cryptoDeposit.findMany({
+    where: { paymentId: { in: listed.map((id) => BigInt(id)) } },
+    select: { paymentId: true, status: true },
+  });
+  const rowStatus = new Map(rows.map((r) => [Number(r.paymentId), r.status]));
+
+  return mapWithConcurrency(
+    listed,
+    RECONCILE_FETCH_CONCURRENCY,
+    async (paymentId): Promise<ListedPaymentDigestItem> => {
+      const existing = rowStatus.get(paymentId) ?? null;
+      const report = (state: ListedPaymentState, status: string | null) => ({
+        paymentId: String(paymentId),
+        state,
+        status,
+      });
+      const npStatusHeldBack = heldBack.get(paymentId);
+      if (npStatusHeldBack) return report('awaiting_ok', npStatusHeldBack);
+      if (polled.has(paymentId)) return report('has_row', existing);
+      if (existing === HELD) return report('held', existing);
+      if (existing && !OPEN_DEPOSIT_STATUSES.includes(existing)) return report('has_row', existing);
+
+      try {
+        const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
+        if (!payment || Number(payment.payment_id) !== paymentId)
+          throw new Error('not found on NowPayments');
+        const status = payment.payment_status;
+        if (status === 'waiting') return report(existing ? 'has_row' : 'no_row', status);
+        if (!creditOk.has(paymentId) && !CLOSED_UNPAID_STATUSES.includes(status)) {
+          await log({
+            type: 'warning',
+            message: 'Listed payment not confirmed for credit; left alone',
+            paymentId,
+            status,
+          });
+          return report(isDepositComplete(status) ? 'awaiting_ok' : 'in_flight', status);
+        }
+        await processDeposit(paymentId, status, eventFromPayment(payment));
+        return report('recorded', status);
+      } catch (e) {
+        await log({
+          message: 'Listed payment check failed',
+          paymentId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        return report('lookup_failed', existing);
+      }
+    }
+  );
+};
+
 /**
  * Polls NOWPayments once for each paid deposit still in flight. The reconcile job only lists
  * payments created in the last 72h, so a payment that settles later is otherwise credited only
  * if its IPN arrives. Settled payments go through processDeposit, closed ones record their status.
+ * Then checks the listed ids (WATCH_PAYMENT_IDS_KEY) that have no row to poll. A listed id is
+ * credited only once it is also on WATCH_CREDIT_OK_KEY, including one whose open row this loop polls.
  */
 export const watchOpenDeposits = async () => {
+  const listed = await readPaymentIdList(WATCH_PAYMENT_IDS_KEY);
+  const creditOk = new Set(listed.length ? await readPaymentIdList(WATCH_CREDIT_OK_KEY) : []);
+  const awaitingOk = new Set(listed.filter((id) => !creditOk.has(id)));
+  // Listed ids whose row this loop would have credited: the row may predate the listing (an IPN).
+  const heldBack = new Map<number, string>();
+
   const open = await dbRead.cryptoDeposit.findMany({
     where: openDepositWhere(),
     select: { paymentId: true, status: true },
@@ -1022,10 +1142,17 @@ export const watchOpenDeposits = async () => {
     try {
       const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
       if (!payment) throw new Error('not found on NowPayments');
+      if (awaitingOk.has(paymentId) && isDepositComplete(payment.payment_status)) {
+        heldBack.set(paymentId, payment.payment_status);
+        return { lookupFailed: false, closed: false };
+      }
       if (payment.payment_status !== row.status || isDepositComplete(payment.payment_status)) {
         await processDeposit(paymentId, payment.payment_status, eventFromPayment(payment));
       }
-      return { lookupFailed: false, closed: !OPEN_DEPOSIT_STATUSES.includes(payment.payment_status) };
+      return {
+        lookupFailed: false,
+        closed: !OPEN_DEPOSIT_STATUSES.includes(payment.payment_status),
+      };
     } catch (e) {
       await log({
         message: 'Open deposit check failed',
@@ -1036,6 +1163,13 @@ export const watchOpenDeposits = async () => {
     }
   });
 
+  const listedReport = await watchListedPayments(
+    listed,
+    creditOk,
+    new Set(open.map((r) => Number(r.paymentId))),
+    heldBack
+  );
+
   const report = await getOpenDepositReport();
   return {
     checked: open.length,
@@ -1043,6 +1177,7 @@ export const watchOpenDeposits = async () => {
     lookupFailed: outcomes.filter((o) => o.lookupFailed).length,
     counts: report.counts,
     digest: report.items.filter((i) => !i.held && i.daysOpen >= OPEN_DEPOSIT_DIGEST_AFTER_DAYS),
+    listed: listedReport,
   };
 };
 
@@ -1222,6 +1357,8 @@ const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(async
 
   return result;
 }, SUPPORTED_CURRENCIES_INPROC_TTL_MS, undefined, { freeze: true });
+
+export const clearSupportedCurrenciesMemo = () => getSupportedCurrenciesMemo.clear();
 
 export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]> => {
   try {

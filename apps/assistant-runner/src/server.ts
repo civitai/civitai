@@ -145,7 +145,6 @@ const runner = new Runner({
   stopGraceMs: config.stopGraceMs,
   // Serving viewers without the sandbox service would answer App Assistant with no tools at all.
   ...(civitai && !civitai.sandboxUrl ? { startRefusal: TOOLS_NOT_SET_UP } : {}),
-  // A chat that follows the page's default is not saved as having picked it.
   defaultModel: APP_ASSISTANT_DEFAULT_MODEL,
 });
 

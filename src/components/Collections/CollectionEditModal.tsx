@@ -89,7 +89,12 @@ function SubmissionsMemberNotice({ write }: { write?: CollectionWriteConfigurati
   );
 }
 
+// Keyed so a modal reused for another collection starts a fresh form instead of carrying edits over.
 export default function CollectionEditModal({ collectionId }: { collectionId?: number }) {
+  return <CollectionEditForm key={collectionId ?? 'new'} collectionId={collectionId} />;
+}
+
+function CollectionEditForm({ collectionId }: { collectionId?: number }) {
   const router = useRouter();
   const dialog = useDialogContext();
   const queryUtils = trpc.useUtils();
@@ -123,6 +128,9 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
     upsertCollectionMutation.mutate(
       {
         ...data,
+        // A cover hidden from this editor reads back as no cover; sending that would remove it.
+        image:
+          collection?.coverHidden && !form.formState.dirtyFields.image ? undefined : data.image,
         mode: data.mode || null,
         metadata: {
           ...(data.metadata ?? {}),
@@ -155,7 +163,8 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
         mode: collection.mode,
         metadata: collection.metadata ?? {},
       });
-      if (result.success) form.reset({ ...result.data });
+      // A refetch while the form is open must not drop what the editor already changed.
+      if (result.success) form.reset({ ...result.data }, { keepDirtyValues: true });
       else console.error(result.error);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

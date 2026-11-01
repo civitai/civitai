@@ -67,6 +67,7 @@ import {
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import type { FloorAsset } from '~/shared/utils/listing-publish-floor';
 import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
@@ -134,6 +135,8 @@ export type ReviewedRequestCommon = {
   appListingId?: string | null;
   /** Set when approving re-rates a listing from its imagery, starting from `declared`. */
   approveRating?: { listingId: string; declared: string | null } | null;
+  /** Icon / cover the listing this approve publishes lacks; non-empty ⇒ the server refuses Approve. */
+  approveFloorMissing?: FloorAsset[];
 };
 
 export type PendingRequest = ReviewedRequestCommon;

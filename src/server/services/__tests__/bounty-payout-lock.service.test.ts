@@ -17,6 +17,7 @@ const { buzz, events, fileCheck } = vi.hoisted(() => ({
     refundTransaction: vi.fn(),
     createBuzzTransaction: vi.fn(),
     createBuzzTransactionMany: vi.fn(),
+    createMultiAccountBuzzTransaction: vi.fn(),
     getMultiAccountTransactionsByPrefix: vi.fn(),
     getTransactionByExternalId: vi.fn(),
   },
@@ -31,7 +32,6 @@ vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   ...buzz,
-  createMultiAccountBuzzTransaction: vi.fn(),
   getUserBuzzAccount: vi.fn(async () => [{ balance: 1_000_000 }]),
 }));
 // Hand-listed, as in bounty-locked-properties.service.test.ts: each pulls a large graph at load.
@@ -72,6 +72,7 @@ const { awardBountyEntry, deleteBountyEntry } = await import(
   '~/server/services/bountyEntry.service'
 );
 const {
+  addBenefactorUnitAmount,
   deleteBountyById,
   refundBounty,
   refundBountyBenefactorFunds,
@@ -138,6 +139,14 @@ function transactionClient(held: (() => void)[]) {
     $executeRaw: async () => 0,
     $queryRaw: async (strings: TemplateStringsArray) => {
       const sql = strings.join('?');
+      // deleteBountyById deletes or keeps the bounty in one statement.
+      if (sql.includes('DELETE FROM "Bounty"')) {
+        await tick();
+        const gone = !!bounty;
+        bounty = null;
+        if (gone) events.push('delete');
+        return [{ gone }];
+      }
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);
       held.push(await rowLock.acquire());
       return bounty ? [{ meta: null, ...bounty }] : [];
@@ -224,7 +233,7 @@ function transactionClient(held: (() => void)[]) {
       },
     },
     bounty: {
-      findUnique: async () => (bounty ? { type: 'ModelCreation' } : null),
+      findUnique: async () => (bounty ? { type: 'ModelCreation', ...bounty } : null),
       update: async ({ data }: { data: Partial<BountyRow> }) => {
         await tick();
         Object.assign(bounty!, data);
@@ -344,6 +353,7 @@ beforeEach(() => {
   });
   buzz.refundTransaction.mockImplementation(moved('refund'));
   buzz.createBuzzTransaction.mockImplementation(moved('buzz'));
+  buzz.createMultiAccountBuzzTransaction.mockImplementation(moved('charge'));
   buzz.createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => {
     events.push('award');
     return { transactions: transactions.map((_, i) => `t${i}`), conflicts: [] };
@@ -1329,5 +1339,105 @@ describe('deleting an open bounty with an award not yet paid', () => {
     await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('kept arriving');
     expect(bounty).not.toBeNull();
     expect(bounty?.refunded).toBe(false);
+  });
+});
+
+describe('addBenefactorUnitAmount', () => {
+  const topUp = (userId: number, unitAmount = 30) =>
+    addBenefactorUnitAmount({ bountyId: 4, unitAmount, userId, buzzType: 'yellow' });
+
+  it('adds support to an open bounty', async () => {
+    await topUp(6);
+    expect(moved('charge')).toBe(1);
+    expect(find(6)!.unitAmount).toBe(80);
+    expect(find(6)!.buzzTransactionId).toHaveLength(2);
+  });
+
+  it('refuses support beyond the balance, and moves no Buzz', async () => {
+    await expect(topUp(6, 2_000_000)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(moved('charge')).toBe(0);
+    expect(find(6)!.unitAmount).toBe(50);
+  });
+
+  it('refuses support from a supporter whose award has been paid, and moves no Buzz', async () => {
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(moved('award')).toBe(1);
+    events.length = 0;
+
+    await expect(topUp(5)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(events.filter((e) => e !== 'commit')).toEqual([]);
+    expect(find(5)!.unitAmount).toBe(100);
+    await topUp(6);
+    expect(find(6)!.unitAmount).toBe(80);
+  });
+
+  it.each([
+    ['whose awarded entry was deleted', { awardedToId: null, awardedAt: new Date() }],
+    ['with an award not yet stamped', { awardedToId: 10, awardedAt: null }],
+  ])('refuses support from a supporter %s', async (_, award) => {
+    Object.assign(find(5)!, award);
+    await expect(topUp(5)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(moved('charge')).toBe(0);
+  });
+
+  it.each([
+    ['complete', { complete: true }],
+    ['refunded', { complete: true, refunded: true }],
+    ['refunded past an unpayable award', { refunded: true }],
+  ])('refuses support on a %s bounty, and moves no Buzz', async (_, state) => {
+    Object.assign(bounty!, state);
+    await expect(topUp(6)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(moved('charge')).toBe(0);
+    expect(find(6)!.unitAmount).toBe(50);
+  });
+
+  it('refunds the charge when the supporter awards while it is in flight', async () => {
+    let releaseCharge!: () => void;
+    const chargeHeld = new Promise<void>((resolve) => (releaseCharge = resolve));
+    let charging!: () => void;
+    const chargeStarted = new Promise<void>((resolve) => (charging = resolve));
+    buzz.createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+      events.push('charge');
+      charging();
+      await chargeHeld;
+      return {};
+    });
+
+    const pending = topUp(5);
+    await chargeStarted;
+    await awardBountyEntry({ id: 10, userId: 5 });
+    releaseCharge();
+
+    await expect(pending).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(moved('charge')).toBe(1);
+    expect(moved('refund')).toBe(1);
+    expect(find(5)!.unitAmount).toBe(100);
+  });
+
+  it('logs a charge it could not refund, and still refuses the support', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+      events.push('charge');
+      Object.assign(bounty!, { complete: true });
+      return {};
+    });
+    buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
+
+    await expect(topUp(6)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: expect.stringMatching(/^bounty-4-6-/),
+      })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', message: expect.stringContaining('refund failed') })
+    );
+    expect(find(6)!.unitAmount).toBe(50);
+  });
+
+  it('counts two top-ups made at once', async () => {
+    await Promise.all([topUp(6, 30), topUp(6, 20)]);
+    expect(moved('charge')).toBe(2);
+    expect(find(6)!.unitAmount).toBe(100);
+    expect(find(6)!.buzzTransactionId).toHaveLength(3);
   });
 });

@@ -1072,7 +1072,6 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     );
     expect(picked.status).toBe(201);
     expect(ended(await events(picked.body!.runId as string, 'u-first-model')).status).toBe('done');
-    // What the chat reads back once the run ended: the chip, and the model of the next start.
     expect((await store.load('u-first-model', 'c-first-model'))?.model).toBe('long');
 
     const followsDefault = await post(

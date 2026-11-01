@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
+import { assertGenerationInputsUsable } from '~/server/services/generation-input-urls';
 import * as z from 'zod';
 import {
   boostWorkflow,
@@ -468,6 +469,7 @@ export const orchestratorRouter = router({
         currencies: resolveGenerationCurrencies(ctx.features, buzzType),
         isModerator: ctx.user.isModerator,
         track: ctx.track,
+        inputGate: { entry: 'generateFromGraph', isApiCaller: ctx.apiKeyId != null },
         civitaiTip,
         creatorTip,
         tags,
@@ -584,6 +586,7 @@ export const orchestratorRouter = router({
           experimental: ctx.experimental,
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
           downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
+          inputGate: { entry: 'whatIfFromGraph', isApiCaller: ctx.apiKeyId != null },
         });
       } catch (e) {
         // ~94% of failures here are EXPECTED client-fault validation (BAD_REQUEST
@@ -706,9 +709,15 @@ export const orchestratorRouter = router({
   imageUpload: orchestratorGuardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(z.object({ sourceImage: z.string() }))
-    .mutation(({ ctx, input }) =>
-      imageUpload({ token: ctx.token, allowMatureContent: ctx.allowMatureContent, ...input })
-    ),
+    .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: [input.sourceImage],
+        userId: ctx.user.id,
+        entry: 'imageUpload',
+        isApiCaller: ctx.apiKeyId != null,
+      });
+      return imageUpload({ token: ctx.token, allowMatureContent: ctx.allowMatureContent, ...input });
+    }),
   // #endregion
 
   // #region [image training]
@@ -815,6 +824,12 @@ export const orchestratorRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: [input.sourceImageUrl, ...(input.referenceImages ?? []).map((ref) => ref.url)],
+        userId: ctx.user.id,
+        entry: 'iterateGenerate',
+        isApiCaller: ctx.apiKeyId != null,
+      });
       const modelConfig = getPresetModelConfig(input.baseModel, DEFAULT_ITERATE_MODEL);
       const effectiveVersionId =
         input.sourceImageUrl && modelConfig.img2imgVersionId
@@ -912,6 +927,13 @@ export const orchestratorRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      // Outside the try: a refused url is an answer, not an estimate failure.
+      await assertGenerationInputsUsable({
+        urls: [input.sourceImage?.url, ...(input.referenceImages ?? []).map((ref) => ref.url)],
+        userId: ctx.user.id,
+        entry: 'getIterateCostEstimate',
+        isApiCaller: ctx.apiKeyId != null,
+      });
       try {
         const token = await getOrchestratorToken(ctx.user!.id, ctx);
         const modelConfig = getPresetModelConfig(input.baseModel, DEFAULT_ITERATE_MODEL);

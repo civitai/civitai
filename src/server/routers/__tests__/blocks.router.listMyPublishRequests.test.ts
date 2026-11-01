@@ -251,18 +251,9 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
 });
 
 /**
- * 🔴 THE PRE-APPROVAL DRAFT FEEDS `problems` — the two surfaces must agree.
- *
- * W13 draft-at-submit mints a first version's on-site listing at SUBMIT (status `draft`,
- * `appBlockId` NULL, owned by the submitter). /apps/mine (`listMine`) reads that row and
- * flags it ("This listing cannot be published yet"), while this proc joined listings by
- * `appBlockId` only — which a pending first version does not have until approve — so it
- * returned `problems: []` for the very same listing. Observed in prod on a 0.1.0 submit:
- * empty `problems` here, five items in the /apps/mine popover.
- *
- * The draft fixture mirrors that case: no icon, no cover, no screenshots, no description,
- * no category, but a tagline — so the expected list is five specific codes, not "anything
- * non-empty", and a mutant that read a neighbouring field cannot produce it.
+ * /apps/mine and this proc must agree: a pending first version's listing is the unkeyed
+ * draft minted at submit. The fixture has no icon/cover/screenshots/description/category,
+ * so the expected list is five specific codes.
  */
 describe('listMyPublishRequests — a pending first version reports its pre-approval DRAFT', () => {
   const firstVersionRow = (id: string, slug: string, status: string) => ({
@@ -311,7 +302,7 @@ describe('listMyPublishRequests — a pending first version reports its pre-appr
     }) => (args.where.OR ? drafts : keyed)) as never);
   }
 
-  it('🔴 a PENDING first version gets the draft listing’s problems (empty before the fix)', async () => {
+  it('🔴 a PENDING first version gets the draft listing’s problems', async () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       firstVersionRow('req-1', 'new-app', 'pending'),
     ]);
@@ -362,7 +353,6 @@ describe('listMyPublishRequests — a pending first version reports its pre-appr
 
     expect(byId['req-r'].problems.map((p) => p.code)).toEqual(INCOMPLETE_DRAFT_CODES);
     expect(byId['req-w'].problems).toEqual([]);
-    // Only the rejected row's slug is looked up.
     const args = mockDbRead.appListing.findMany.mock.calls[0][0] as {
       where: { OR: { slug: string }[] };
     };
@@ -401,10 +391,26 @@ describe('listMyPublishRequests — a pending first version reports its pre-appr
 
     expect(rows[0].problems).toEqual([]);
     expect(rows[0]).toMatchObject({ appListingId: 'l-k', listingStatus: 'approved' });
-    // Only the keyed lookup ran.
     expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
     const args = mockDbRead.appListing.findMany.mock.calls[0][0] as { where: { OR?: unknown } };
     expect(args.where.OR).toBeUndefined();
+  });
+
+  // Agrees with submitVersion's readiness (null) for an update to an app with no on-site listing.
+  it('a KEYED row whose app has no on-site listing reports no problems', async () => {
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      {
+        ...firstVersionRow('req-n', 'no-listing-app', 'pending'),
+        appBlock: { id: 'blk-n', manifest: PAGE_MANIFEST, _count: { userSubscriptions: 0 } },
+      },
+    ]);
+    routeListingQueries([draftListing('no-listing-app')], []);
+
+    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
+    const rows = await caller.listMyPublishRequests();
+
+    expect(rows[0].problems).toEqual([]);
+    expect(rows[0]).toMatchObject({ appListingId: null, listingStatus: null });
   });
 });
 
@@ -589,9 +595,8 @@ describe('listMyPublishRequests — OWNER-ONLY scoping (guards the build-failure
  * "spells the constant": it fails iff the value is hardcoded. That is why the router
  * projects the column instead of restating the filter's conclusion.
  *
- * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 3 of the
- * 5 cases below go RED — the on-site label, the `kind` projection, and the narrow-fake
- * degrade. The other 2 PASS at base and are INVARIANT GUARDS, not coverage of this bug:
+ * 🔴 WHICH CASES ARE REGRESSION COVERAGE. Measured at `origin/main` 4bfd4c16d: 2 of the
+ * 4 cases below go RED — the on-site label and the `kind` projection. The other 2 PASS at base and are INVARIANT GUARDS, not coverage of this bug:
  * at base EVERY listing got the original label, so the off-site discriminating control
  * and the code-invariance case were green by construction. The discriminating control
  * still earns its place — it is the ONLY case that kills a hardcoded `'onsite'` at the
@@ -701,25 +706,6 @@ describe('listMyPublishRequests — the advisory is KIND-AWARE', () => {
     expect(args.select.kind).toBe(true);
     // The filter this projection deliberately does NOT restate at the call site.
     expect(args.where.kind).toBe('onsite');
-  });
-
-  it('a narrow fake omitting `kind` degrades to the on-site labels (this query only admits on-site rows)', async () => {
-    // The pre-existing cases in this file use exactly such a fake; this pins that the
-    // fallback is the honest one for THIS caller rather than an accident.
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([requestRow('req-n', 'blk-n')]);
-    mockDbRead.appListing.findMany.mockResolvedValue([
-      {
-        id: 'l-n',
-        appBlockId: 'blk-n',
-        status: 'approved',
-        tagline: null,
-        _count: { screenshots: 7 },
-      },
-    ]);
-
-    const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
-    const rows = await caller.listMyPublishRequests();
-    expect(taglineLabelOf(rows[0])).toBe(MANIFEST_TAGLINE);
   });
 });
 

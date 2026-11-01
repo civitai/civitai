@@ -47,11 +47,17 @@ describe('watch-open-nowpayments job', () => {
       lookupFailed: 0,
       counts,
       digest: [item],
+      listed: [],
     });
 
     const result = await run();
 
-    expect(sendDigest).toHaveBeenCalledWith({ to: 'hello@civitai.com', items: [item], counts });
+    expect(sendDigest).toHaveBeenCalledWith({
+      to: 'hello@civitai.com',
+      items: [item],
+      listed: [],
+      counts,
+    });
     expect(result).toMatchObject({ digestSent: 1, counts });
   });
 
@@ -62,12 +68,30 @@ describe('watch-open-nowpayments job', () => {
       lookupFailed: 0,
       counts: { ...counts, open: 0, oldestOpenDays: 0 },
       digest: [],
+      listed: [],
     });
 
     const result = await run();
 
     expect(sendDigest).not.toHaveBeenCalled();
     expect(result.digestSent).toBe(0);
+  });
+
+  it('mails the digest for listed payment ids even when no row has been open 3+ days', async () => {
+    const listed = [{ paymentId: '1000000002', state: 'awaiting_ok', status: 'finished' }];
+    watchOpenDeposits.mockResolvedValueOnce({
+      checked: 0,
+      closed: 0,
+      lookupFailed: 0,
+      counts: { ...counts, open: 0, oldestOpenDays: 0 },
+      digest: [],
+      listed,
+    });
+
+    const result = await run();
+
+    expect(sendDigest).toHaveBeenCalledWith(expect.objectContaining({ items: [], listed }));
+    expect(result.listed).toEqual(listed);
   });
 
   it('finishes and logs the error when the digest cannot be sent', async () => {
@@ -77,6 +101,7 @@ describe('watch-open-nowpayments job', () => {
       lookupFailed: 0,
       counts,
       digest: [item],
+      listed: [],
     });
     sendDigest.mockRejectedValueOnce(new Error('smtp down'));
 

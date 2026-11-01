@@ -150,7 +150,9 @@ import {
   isAppBlocksAppReactionsEnabled,
   isAppBlocksEnabled,
   isAppBlocksPostCreationEnabled,
+  resolveViewerAudienceFloor,
 } from '~/server/services/app-blocks-flag';
+import { listingVisibleInStore } from '~/shared/utils/app-listing-visibility';
 import { rateLimit } from '~/server/middleware.trpc';
 // The SITE's reaction limits, imported rather than restated: the app wrapper shares them.
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
@@ -193,13 +195,13 @@ import { updateBlockUserSettingsFromClaims } from '~/server/services/blocks/user
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
 import {
   computeListingProblems,
+  listingProblemInput,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
 // The ONE spelling of "which moderation actions can explain a removal". Value import:
 // it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
 import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isRedCapableHost } from '~/server/utils/server-domain';
-import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -1953,6 +1955,7 @@ async function createBlockTextToImageStep(opts: {
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
     isWhatIf: opts.whatIf,
     isGreen: opts.isGreen,
+    inputGate: { entry: 'appBlocks', isApiCaller: false },
   });
   // The block path is plain txt2img with no snippet fan-out, so the graph
   // always yields exactly one step. Fail closed if that invariant breaks rather
@@ -2020,6 +2023,56 @@ function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: n
       message: 'this app session belongs to a different account; reload the page to continue',
     });
   }
+}
+
+/**
+ * May this viewer read `blocks.getAppDetail` for this app block, as far as the backing
+ * LISTING's visibility level is concerned?
+ *
+ * 🔴 WHY IT EXISTS: `getAppDetail` reads `app_blocks` by id and never consulted the
+ * listing's level. Its only audience gate was `app-blocks-enabled`, which stood in for
+ * "the tester cohort" only while that flag was cohort-segmented; civitai/flipt-state#263
+ * widens it to everyone, after which any id-holder could read a testers-only or private
+ * app's detail.
+ *
+ * THE RULE, in order:
+ *   1. A MODERATOR is admitted (unchanged; server-stamped session flag).
+ *   2. The app's OWNER or an accepted COLLABORATOR is admitted, whatever the level — they
+ *      must be able to inspect their own app. ⚠️ This is WIDER than the store's own detail
+ *      read (`appListings.getAppDetail`), which applies the level to owners too. Deliberate:
+ *      this procedure backs `AppDetailsModal`, which an owner opens on their own app.
+ *   3. Everyone else: the block's canonical listing must be visible to their audience floor
+ *      under EXACTLY the predicate the store detail uses (`listingVisibleInStore`, the
+ *      app-layer twin of `listingLevelVisibilityFilter`). So `private` is refused to every
+ *      non-owner: "anyone with the link can still open it" is a promise about the RUN route,
+ *      which never reads the level — the store detail 404s a private listing too.
+ *   4. No listing at all → refused (fail closed: there is no level to admit anyone by).
+ *
+ * A refusal is surfaced by the caller as the SAME `NOT_FOUND` a missing app produces.
+ */
+async function appBlockDetailVisibleTo(
+  appBlockId: string,
+  user: SessionUser | undefined
+): Promise<boolean> {
+  if (user?.isModerator === true) return true;
+  if (user) {
+    const { resolveAppAccess } = await import('~/server/services/blocks/app-access.service');
+    const access = await resolveAppAccess(appBlockId, user.id);
+    if (access?.role) return true;
+  }
+  const listing = await dbRead.appListing.findFirst({
+    where: { appBlockId, revisionOfId: null },
+    select: { id: true, status: true },
+  });
+  if (!listing) return false;
+  const { readListingVisibility } = await import(
+    '~/server/services/blocks/app-listing-visibility.service'
+  );
+  const [level, floor] = await Promise.all([
+    readListingVisibility(listing.id, dbRead),
+    resolveViewerAudienceFloor({ user }),
+  ]);
+  return listingVisibleInStore({ status: listing.status, visibility: level.visibility, floor });
 }
 
 export const blocksRouter = router({
@@ -3118,35 +3171,6 @@ export const blocksRouter = router({
     // live/removed listing state. A publish request stays `approved` after an owner
     // unpublish, so the request status alone can't tell live from owner-hidden. One
     // batched findMany (NOT per-row) keyed by appBlockId.
-    // Additive projection (advisory listing-completeness warning on
-    // /apps/my-submissions): the asset ids + key text fields + a screenshot
-    // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
-    // helper below. Purely additive — the owner-controls fields are unchanged.
-    const listingByBlockId = new Map<
-      string,
-      {
-        id: string;
-        status: string;
-        iconId: number | null;
-        coverId: number | null;
-        description: string | null;
-        tagline: string | null;
-        category: string | null;
-        screenshotCount: number;
-        contentRating: string | null;
-        /**
-         * The listing's kind, threaded into `computeListingProblems` so the three
-         * empty-text problems name the right remedy.
-         *
-         * 🔴 PROJECTED, NOT ASSUMED, even though the `where` below filters
-         * `kind: 'onsite'`. A literal `'onsite'` at the call site would be a SECOND
-         * place that has to stay in step with that filter, and it would go wrong
-         * SILENTLY (wrong advice, no error) if the filter is ever widened. Reading
-         * the column costs nothing and cannot drift.
-         */
-        kind: string;
-      }
-    >();
     // The listing projection both queries below select — the keyed backing listing and the
     // pre-approval draft — so the two feed `computeListingProblems` identically.
     const listingSelect = {
@@ -3174,7 +3198,7 @@ export const blocksRouter = router({
       appBlockId: string | null;
       slug?: string;
       status: string;
-      kind?: string | null;
+      kind: ListingProblemKind;
       iconId: number | null;
       coverId: number | null;
       description: string | null;
@@ -3183,41 +3207,18 @@ export const blocksRouter = router({
       contentRating?: string | null;
       _count: { screenshots: number };
     };
-    const toListingFacts = (l: ProjectedListing) => ({
-      id: l.id,
-      status: l.status,
-      // A narrow test fake that ignores `select` yields `undefined`; both `where`
-      // clauses admit only on-site rows, so that is the honest fallback.
-      kind: l.kind ?? 'onsite',
-      iconId: l.iconId,
-      coverId: l.coverId,
-      description: l.description,
-      tagline: l.tagline,
-      category: l.category,
-      screenshotCount: l._count.screenshots,
-      contentRating: l.contentRating ?? null,
-    });
+    const listingByBlockId = new Map<string, ProjectedListing>();
 
-    // 🔴 THE PRE-APPROVAL DRAFT OF A FIRST-VERSION REQUEST. W13 draft-at-submit mints the
-    // app's on-site listing at SUBMIT (`submitVersion`: status='draft', appBlockId=NULL,
-    // userId=submitter), and that is the row /apps/mine reads and flags. Keyed on
-    // `appBlockId` alone, this read never found it — a pending first version has no
-    // AppBlock until approve — so `problems` came back EMPTY for exactly the listing
-    // /apps/mine was reporting as "cannot be published yet": two surfaces running the
-    // same `computeListingProblems` over the same listing and disagreeing. Resolved with
-    // `approveRequest`'s OWN `draftTransitionWhere` (slug + owner + draft + unkeyed), so
-    // the listing flagged here is the one that approve will transition — never a draft
-    // another user holds on a released slug. Only for unkeyed PENDING / REJECTED rows: a
-    // withdraw deletes the draft (a later draft on the slug is not that row's), and a
-    // reject keeps it for the resubmit.
-    //
-    // Deliberately feeds `problems` ONLY. `appListingId` / `listingStatus` stay the
-    // backing (keyed) listing's — their consumers drive owner unpublish/republish, which
-    // a pre-approval draft is not eligible for.
+    // Pre-approval draft of an unkeyed pending/rejected first version (no AppBlock until
+    // approve). Uses approveRequest's draftTransitionWhere so we flag the listing approve
+    // will transition, never another user's draft on a released slug. Withdraw deletes the
+    // draft, so it is read only for pending/rejected. Feeds `problems` ONLY:
+    // appListingId/listingStatus drive owner unpublish/republish, which a draft is not
+    // eligible for.
     const readsDraft = (r: RawRow) =>
       !r.appBlock?.id && (r.status === 'pending' || r.status === 'rejected');
     const draftSlugs = [...new Set(rows.filter(readsDraft).map((r: RawRow) => r.slug))];
-    const draftBySlug = new Map<string, ReturnType<typeof toListingFacts>>();
+    const draftBySlug = new Map<string, ProjectedListing>();
     if (draftSlugs.length) {
       const { draftTransitionWhere } = await import(
         '~/server/services/blocks/publish-request.service'
@@ -3229,7 +3230,7 @@ export const blocksRouter = router({
         },
         select: listingSelect,
       })) as ProjectedListing[];
-      for (const d of drafts) if (d.slug) draftBySlug.set(d.slug, toListingFacts(d));
+      for (const d of drafts) if (d.slug) draftBySlug.set(d.slug, d);
     }
 
     if (appBlockIds.length) {
@@ -3238,9 +3239,22 @@ export const blocksRouter = router({
         select: listingSelect,
       })) as ProjectedListing[];
       for (const l of listings) {
-        if (l.appBlockId) listingByBlockId.set(l.appBlockId, toListingFacts(l));
+        if (l.appBlockId) listingByBlockId.set(l.appBlockId, l);
       }
     }
+    // The scan dimension of `problems` (blocked / still-scanning media), batched over every
+    // listing the page reports on, as /apps/mine reads it.
+    const { loadListingAssetScansBatch } = await import(
+      '~/server/services/blocks/app-listing-assets.service'
+    );
+    const problemListings = [
+      ...new Map(
+        [...listingByBlockId.values(), ...draftBySlug.values()].map((l) => [l.id, l])
+      ).values(),
+    ];
+    const scansByListingId = await loadListingAssetScansBatch(
+      problemListings.map((l) => ({ id: l.id, iconId: l.iconId, coverId: l.coverId }))
+    );
 
     // For every REMOVED backing listing, its MOST-RECENT STATUS-CHANGING moderation-event
     // action — so the UI distinguishes an owner-hidden listing (last event
@@ -3310,22 +3324,13 @@ export const blocksRouter = router({
         // listing. Empty only when there is no listing row at all (a legacy pending
         // request from before draft-at-submit, or a draft create that failed).
         problems: problemsListing
-          ? computeListingProblems({
-              kind: problemsListing.kind as ListingProblemKind,
-              iconId: problemsListing.iconId,
-              coverId: problemsListing.coverId,
-              screenshotCount: problemsListing.screenshotCount,
-              description: problemsListing.description,
-              tagline: problemsListing.tagline,
-              category: problemsListing.category,
-              status: problemsListing.status,
-              contentRating: problemsListing.contentRating,
-              declaredContentRating: declaredListingRating({
+          ? computeListingProblems(
+              listingProblemInput(problemsListing, {
                 kind: problemsListing.kind,
                 appRating: r.appBlock?.contentRating,
-                listingRating: problemsListing.contentRating,
-              }),
-            }).problems
+                assetScans: scansByListingId.get(problemsListing.id) ?? [],
+              })
+            ).problems
           : [],
         // Whether the manifest declares a launchable page (drives the Open-live →
         // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
@@ -4127,24 +4132,15 @@ export const blocksRouter = router({
 
   /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
-   * and/or a free-text query. Cursor-paginated. Public, ANON-CAPABLE (F-E E1):
-   * any viewer the appBlocks flag grants can browse the marketplace without a
-   * session; install requires auth (the Install CTA opens LoginModal for anon).
+   * and/or a free-text query. Cursor-paginated. LEGACY: backs only the retired
+   * `MarketplaceBody` (no importer); the store reads `appListings.listAvailable`.
    *
-   * GATING INVARIANT (E1) — this is anon-capable but stays DARK until launch:
-   *   - `enforceAppBlocksFlag` runs FIRST and evaluates `isAppBlocksEnabled`
-   *     with `ctx.user`. For a real anon / non-mod viewer the flag is the live
-   *     mod-segmented `app-blocks-enabled`, which can never match without a
-   *     moderator context → the middleware sets `_appBlocksDisabled` → we
-   *     return empty below. So removing the prior hardcoded `isModerator` gate
-   *     does NOT widen access today: the flag gate keeps it dark. The procedure
-   *     only starts serving real anon callers once the SEGMENT is widened at
-   *     launch (a deliberate, separate Flipt change). The earlier
-   *     `if (!ctx.user?.isModerator) return []` was a redundant Phase-2 belt on
-   *     top of the flag gate; it has to go for the segment-widen to actually
-   *     expose this to anon, but the flag gate is the real control.
+   * GATING: `enforceAppBlocksFlag` runs first (flag off → empty), THEN a
+   * moderator check (non-moderator → empty). The procedure was once designed to
+   * open to anon by widening the flag alone; that design is retired — see the
+   * 🔴 paragraph at the end of this block.
    *
-   * EXPOSURE / SECURITY (what an anon caller can fetch once the segment widens):
+   * EXPOSURE / SECURITY (what the moderator caller receives):
    *   - ONLY `status='approved'` rows (the service WHERE-clause filters
    *     pending/rejected/withdrawn apps out — never returned).
    *   - ONLY an explicit PUBLIC-FIELD ALLOWLIST projection of each row
@@ -4160,6 +4156,15 @@ export const blocksRouter = router({
    * Anon rate-limiting: keyed on IP for anon (ctx.user?.id ?? ctx.ip in the
    * rateLimit middleware), consistent with other public procedures. Mods/dev/
    * test are exempt by the middleware itself.
+   *
+   * 🔴 MODERATOR-ONLY, AND NOT BECAUSE OF THE FLAG. The service SQL reads `app_blocks`
+   * with no join to `app_listings`, so per-listing visibility (testers-only, private) is
+   * never applied. While `app-blocks-enabled` was cohort-segmented that was masked; once
+   * it widens to every user (civitai/flipt-state#263) a flag-only gate would let any
+   * caller, signed out included, enumerate testers-only and private apps. Nothing in the
+   * product calls this for a non-moderator any more: the store reads
+   * `appListings.listAvailable`, which does apply visibility. So a non-moderator gets the
+   * same empty answer a disabled flag gives. Teach it visibility before reopening it.
    */
   listAvailable: publicProcedure
     .use(enforceAppBlocksFlag)
@@ -4175,14 +4180,13 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [], nextCursor: undefined };
       }
-      // PAGE-ONLY LAUNCH GATE: the public (non-mod) audience sees launch (page)
-      // apps only; moderators are grandfathered (see everything, incl. the
-      // mod-only model-slot apps like generate-from-model). Mod status comes
-      // from the server-stamped session `ctx.user?.isModerator` (cannot be
-      // spoofed client-side — same source as every other belt in this router).
+      // MODERATOR-ONLY (see the docblock): the SQL applies no listing visibility.
+      // Server-stamped session flag, never client-supplied.
+      if (ctx.user?.isModerator !== true) return { items: [], nextCursor: undefined };
+      // `launchOnly` = false: only moderators reach here, and they see every app.
       return BlockRegistry.listAvailable(
         input,
-        !ctx.user?.isModerator,
+        false,
         // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the listing off .red.
         isRedCapableRequest(ctx)
       );
@@ -4250,19 +4254,21 @@ export const blocksRouter = router({
         isRedCapableRequest(ctx)
       );
       if (!detail) throw throwNotFoundError('App block not found');
+      // LISTING-VISIBILITY GATE: a testers-only / private app the viewer may not see is
+      // indistinguishable from a missing one. See `appBlockDetailVisibleTo`.
+      if (!(await appBlockDetailVisibleTo(input.appBlockId, ctx.user))) {
+        throw throwNotFoundError('App block not found');
+      }
       return detail;
     }),
 
   /**
-   * Featured rail — the curated, approved staff-picks (F-E E4). Public,
-   * ANON-CAPABLE; backs the "Featured" rail above the marketplace grid.
+   * Featured rail — the curated, approved staff-picks (F-E E4). LEGACY: backs
+   * only the retired `MarketplaceBody` rail (no importer).
    *
-   * GATING INVARIANT (E4) — anon-capable but DARK until launch (same as E1/E2):
-   *   - `enforceAppBlocksFlag` runs FIRST. For a real anon / non-mod viewer the
-   *     mod-segmented `app-blocks-enabled` flag never matches → the middleware
-   *     marks `_appBlocksDisabled` → this query returns an EMPTY rail (the same
-   *     posture as `listAvailable` for a disabled flag; no data leaks). The rail
-   *     only serves real anon callers once the SEGMENT is widened at launch.
+   * GATING: `enforceAppBlocksFlag` runs first (flag off → empty rail), THEN a
+   * moderator check (non-moderator → empty rail), same as `listAvailable`. See
+   * the 🔴 paragraph at the end of this block.
    *
    * EXPOSURE / SECURITY — returns the SAME public `AvailableBlock` allowlist the
    * marketplace LISTING uses (no widening): the service hard-filters
@@ -4272,6 +4278,15 @@ export const blocksRouter = router({
    * per-user data.
    *
    * Anon rate-limiting: same posture as `listAvailable`.
+   *
+   * 🔴 MODERATOR-ONLY, AND NOT BECAUSE OF THE FLAG. The service SQL reads `app_blocks`
+   * with no join to `app_listings`, so per-listing visibility (testers-only, private) is
+   * never applied. While `app-blocks-enabled` was cohort-segmented that was masked; once
+   * it widens to every user (civitai/flipt-state#263) a flag-only gate would let any
+   * caller, signed out included, enumerate testers-only and private apps. Nothing in the
+   * product calls this for a non-moderator any more: the store reads
+   * `appListings.listAvailable`, which does apply visibility. So a non-moderator gets the
+   * same empty answer a disabled flag gives. Teach it visibility before reopening it.
    */
   getFeaturedBlocks: publicProcedure
     .use(enforceAppBlocksFlag)
@@ -4287,11 +4302,12 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [] };
       }
-      // PAGE-ONLY LAUNCH GATE: same public-vs-mod split as listAvailable — the
-      // non-mod featured rail carries launch (page) apps only; mods see all.
+      // MODERATOR-ONLY (see the docblock): the SQL applies no listing visibility.
+      if (ctx.user?.isModerator !== true) return { items: [] };
+      // `launchOnly` = false: only moderators reach here, and they see every app.
       const items = await BlockRegistry.getFeaturedBlocks(
         input.limit,
-        !ctx.user?.isModerator,
+        false,
         // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the featured rail off .red.
         isRedCapableRequest(ctx)
       );

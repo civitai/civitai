@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DevTunnelFrameService from '~/server/services/blocks/dev-tunnel-frame.service';
 
 /**
@@ -163,9 +163,8 @@ async function loadRunResolver() {
 }
 
 describe('/apps/dev/[blockId] SSR resolver', () => {
-  const prev = process.env.NEXTAUTH_SECRET;
   beforeEach(() => {
-    process.env.NEXTAUTH_SECRET = SECRET;
+    vi.stubEnv('NEXTAUTH_SECRET', SECRET);
     mockResolveDev.mockReset();
     mockGetActiveTunnel.mockReset();
     mockUnsubmittedSpend.mockReset();
@@ -198,8 +197,8 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     await resolver(makeCtx({ user: AUTHOR, setHeader: () => undefined }));
     expect(mockResolveFrame).toHaveBeenCalledTimes(1);
   });
-  afterAll(() => {
-    process.env.NEXTAUTH_SECRET = prev;
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('author + owner + active tunnel → iframeSrc set (server-derived host) + route-scoped CSP', async () => {

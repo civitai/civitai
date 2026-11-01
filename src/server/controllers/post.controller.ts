@@ -463,6 +463,7 @@ export const updatePostHandler = async ({
               imageIds: images.map((i) => i.id),
               userId: ctx.user.id,
               tagId: collectionTagId,
+              isModerator: ctx.user.isModerator,
               canAccessUserChallenges: ctx.features.userChallenges,
             },
             permissions,

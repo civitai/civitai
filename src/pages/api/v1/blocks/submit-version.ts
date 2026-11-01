@@ -56,7 +56,9 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *
  * Body `{ bundleBase64: "<base64 zip>" }`, same ~72 MiB body ceiling +
  * MAX_BUNDLE_SIZE_BYTES schema cap as the session route. Returns
- * `{ publishRequestId, slug, version, status }`.
+ * `{ publishRequestId, slug, version, status, listing }`, where `listing` is the store
+ * listing's readiness (`SubmitListingReadiness`: `approvalBlocked`, `missing`, `nextStep`,
+ * `problems`) or `null`.
  */
 export const config = {
   api: {
@@ -241,13 +243,15 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       sourceCommit: parsed.data.sourceCommit,
       sourceDirty: parsed.data.sourceDirty,
     });
-    // The service returns a richer object; the CLI contract is the stable subset.
+    // The service returns a richer object; the CLI contract is the stable subset (plus the
+    // listing readiness, so `civitai app submit` can say what a moderator will need).
     // `status` is always 'pending' for a fresh submission (mod review queue).
     res.status(200).json({
       publishRequestId: result.publishRequestId,
       slug: result.slug,
       version: result.version,
       status: 'pending',
+      listing: result.listing ?? null,
     });
   } catch (err) {
     // The service throws plain Errors with human-readable messages (bundle too

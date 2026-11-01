@@ -27,6 +27,7 @@ import {
   getWindowedCollectionRanking,
   isWindowedPeriod,
 } from '~/server/services/blocks/block-collection-popularity.service';
+import { getServableCoverCollectionIds } from '~/server/services/collection-cover-visibility';
 import { recordBlockCollectionRankingSource } from '~/server/prom/block-collection-ranking.metrics';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
@@ -254,18 +255,23 @@ const chHydrateWidth = (limit: number) => Math.min(limit * 24 + 1, CH_HYDRATE_MA
 type PrimaryCoverImage = { id: number; url: string | null } & PublicCollectionImageFields;
 
 /**
- * The ids of the collections whose own cover image can be served: it has a url, passes
- * `isPublicCollectionImage`, and is not refused by `getAllImages`' restricted base model
+ * The ids of the collections whose own cover image can be served: it has a url, may be shown
+ * to a stranger (`getServableCoverCollectionIds`), passes `isPublicCollectionImage`, and is not refused by `getAllImages`' restricted base model
  * condition. That condition only refuses an image whose own level has a mature bit, so
  * only those candidates are looked up. Every other collection falls back to
  * `getFallbackCoverImages`, which applies the same rule in SQL.
  */
 async function getUsablePrimaryCovers(
-  collections: { id: number; image?: PrimaryCoverImage | null }[],
+  collections: { id: number; userId: number; image?: PrimaryCoverImage | null }[],
   browsingLevel: number
 ): Promise<Set<number>> {
+  const servable = await getServableCoverCollectionIds(
+    collections.flatMap((c) =>
+      c.image?.url ? [{ collectionId: c.id, collectionOwnerId: c.userId, imageId: c.image.id }] : []
+    )
+  );
   const candidates = collections.filter(
-    (c) => !!c.image?.url && isPublicCollectionImage(c.image, browsingLevel)
+    (c) => !!c.image?.url && servable.has(c.id) && isPublicCollectionImage(c.image, browsingLevel)
   );
   const matureIds = candidates
     .filter((c) => Flags.intersects(c.image!.nsfwLevel, nsfwBrowsingLevelsFlag))

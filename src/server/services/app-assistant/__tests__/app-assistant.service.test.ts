@@ -451,7 +451,12 @@ describe('mintAppAssistantToken', () => {
 });
 
 describe('getAppAssistantPreview', () => {
-  const frame = { blockId: 'my-app', iframeSrc: 'https://dev-0123456789abcdef.civit.ai/?dev=t' };
+  // `host` rides along: the client checks the entry URL is on it (`fetchPreviewFrame`).
+  const frame = {
+    blockId: 'my-app',
+    host: 'dev-0123456789abcdef.civit.ai',
+    iframeSrc: 'https://dev-0123456789abcdef.civit.ai/?dev=t',
+  };
 
   it('returns the frame when the caller authors, has dev tunnels, and the tunnel is live', async () => {
     featuresMock.mockReturnValue({ ...ON, appBlocksAuthor: true });

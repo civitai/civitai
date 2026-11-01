@@ -154,7 +154,9 @@ describe('CI coverage for commits on main', () => {
   it.each([
     ['the whole-repo typecheck', 'pnpm run typecheck'],
     ['the unit suite', 'test:unit:run'],
-    ['the app suites', 'test:apps:run'],
+    // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
+    // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
+    ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
     ['the app typecheck', 'scripts/ci/typecheck-apps.mjs'],
   ])('runs %s on a push to main', (_label, needle) => {
     const hit = pushReachable()
@@ -174,7 +176,9 @@ describe('CI coverage for commits on main', () => {
   // list is the obvious thing to copy onto `push:`, and doing so would make a missing entry
   // invisible on `main` too.
   it.each([
-    ['the app suites', 'test:apps:run'],
+    // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
+    // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
+    ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
     ['the app typecheck', 'scripts/ci/typecheck-apps.mjs'],
   ])('runs %s on EVERY push to main, with no path filter', (_label, needle) => {
     const hit = pushReachable()
