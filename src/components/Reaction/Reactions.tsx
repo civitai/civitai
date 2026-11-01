@@ -216,6 +216,56 @@ export function Reactions({
   );
 }
 
+/**
+ * The Buzz tip badge on its own, for a layout that places it outside the reaction bar.
+ * Pair it with `disableBuzzTip` on `<Reactions>` so the tip is not drawn twice.
+ */
+export function ImageBuzzTip({
+  entityId,
+  targetUserId,
+  tippedAmountCount,
+  metricsUnknown: metricsUnknownFromServer,
+  readonly,
+  className,
+}: {
+  entityId: number;
+  targetUserId: number;
+  tippedAmountCount?: number;
+  metricsUnknown?: boolean;
+  readonly?: boolean;
+  className?: string;
+}) {
+  const { hideReactions } = useReactionSettingsContext();
+  const features = useFeatureFlags();
+  const metricsUnknown = !!metricsUnknownFromServer && !!features.reactionCountsUnknown;
+
+  if (hideReactions) return null;
+
+  return (
+    <LoginPopover message="You must be logged in to react to this">
+      <div
+        className={className}
+        onClick={(e) => {
+          if (!readonly) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+      >
+        <BuzzTippingBadge
+          toUserId={targetUserId}
+          tippedAmountCount={tippedAmountCount ?? 0}
+          countUnknown={metricsUnknown}
+          entityType="image"
+          entityId={entityId}
+          hideLoginPopover
+          readonly={readonly}
+        />
+      </div>
+    </LoginPopover>
+  );
+}
+
 const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
 const keyMap = keys.reduce<Record<string, keyof ReactionMetrics>>(
   (acc, key) => ({ ...acc, [key]: `${key.toLowerCase()}Count` as keyof ReactionMetrics }),
