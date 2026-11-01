@@ -344,19 +344,26 @@ describe('host mode: a browser arriving with only a shared-slot hub token', () =
   });
 
   it('a request behind a winner that died holding the lock signs in once the lock lapses', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] });
+    const start = Date.now();
     sharedSession();
     await h.sys.eval(`redis.call('SET', KEYS[1], '1', 'NX', 'EX', '5') return 1`, {
       keys: [upgradeKey(REDIS_SYS_KEYS.SESSION.HUB_UPGRADE_LOCK)],
       arguments: [],
     });
 
-    const pending = visit(jar({ [SHARED()]: J0 }));
-    await new Promise((r) => setTimeout(r, 700));
-    vi.setSystemTime(Date.now() + 5_000);
-    const locals = await pending;
+    let locals: Awaited<ReturnType<typeof visit>> | undefined;
+    const pending = visit(jar({ [SHARED()]: J0 })).then((l) => (locals = l));
+    // Fake time only: the clock moves only while the request waits on a timer, so the redis fake's own async
+    // work never races it. Bounded in fake time so a request that never signs in fails instead of hanging.
+    while (!locals && Date.now() - start < 10_000) {
+      await new Promise((r) => setImmediate(r));
+      if (vi.getTimerCount() > 0) await vi.advanceTimersByTimeAsync(50);
+    }
+    expect(locals).toBeDefined();
+    await pending;
 
-    expect(locals.session?.sub).toBe('100');
+    expect(locals?.session?.sub).toBe('100');
     expect(mintedJtis().size).toBe(1);
   });
 
@@ -578,6 +585,38 @@ describe('an account change the hub did not make, after /authorize made a host-o
     const after = await visit(cookies);
 
     expect(after.session?.sub).toBe('200');
+  });
+
+  it.each([
+    ['fails verification', () => 'not-a-token'],
+    [
+      'is signed out',
+      () => {
+        const other = { sub: '200', jti: 'j1', signedAt: Date.now() };
+        h.tokens.set(fakeJwt(other), other);
+        void h.sys.hSet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, 'j1', 'invalid');
+        return fakeJwt(other);
+      },
+    ],
+    [
+      'is no longer honoured',
+      () => {
+        const other = { sub: '200', jti: 'j1', sid: 'fam-b', signedAt: Date.now() - 40 * DAY_MS };
+        h.tokens.set(fakeJwt(other), other);
+        return fakeJwt(other);
+      },
+    ],
+  ])('keeps the copy when the shared-slot token %s', async (_, sharedToken) => {
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0 });
+    await authorize(cookies);
+    const copy = cookies.get(HOST());
+    cookies.values.set(SHARED(), sharedToken());
+
+    const locals = await visit(cookies);
+
+    expect(locals.session).toBeUndefined();
+    expect(cookies.get(HOST())).toBe(copy);
   });
 
   it('keeps a copy of the session the hub reads', async () => {
