@@ -212,6 +212,23 @@ describe('search backend unavailable', () => {
     expect(body).toEqual(rejection);
     expect(retryAfter).toBeUndefined();
   });
+
+  it('a 2xx whose body cannot be read is a 502 with no Retry-After', async () => {
+    fetchMock.mockResolvedValue(new Response('{"results": [', { status: 200 }));
+    const { status, body, retryAfter } = await post(['multi-search'], query);
+    expect(status).toBe(502);
+    expect(body.code).toBe('search_unavailable');
+    expect(retryAfter).toBeUndefined();
+  });
+
+  it('search with no host configured is a 503 with no Retry-After, and nothing is fetched', async () => {
+    setEnv({ NEXT_PUBLIC_SEARCH_HOST: undefined });
+    const { status, body, retryAfter } = await post(['multi-search'], query);
+    expect(status).toBe(503);
+    expect(body).toMatchObject({ code: 'search_unavailable', message: 'Search is not configured' });
+    expect(retryAfter).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('rate limit', () => {
