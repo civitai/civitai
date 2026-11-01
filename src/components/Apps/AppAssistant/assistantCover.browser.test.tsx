@@ -43,8 +43,13 @@ function setup() {
   // The re-quote at the press; separate from the offer's so a case can move the price between.
   const pressPrice = vi.fn(async (_w: AppCoverWorkflow) => PRICE);
   let finish: (url: string) => void = () => undefined;
+  // Held until `finish`, or until the press is aborted (a `pagehide`), as a real run's wait is.
   const generate = vi.fn(
-    (_w: AppCoverWorkflow, _s?: AbortSignal) => new Promise<string>((resolve) => (finish = resolve))
+    (_w: AppCoverWorkflow, signal?: AbortSignal) =>
+      new Promise<string>((resolve, reject) => {
+        finish = resolve;
+        signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      })
   );
   const attach = vi.fn(async (_id: string, _url: string, _app: string) => ({
     scanPending: false,
@@ -326,7 +331,9 @@ describe('the store cover card', () => {
         window.dispatchEvent(event);
         return event.defaultPrevented;
       };
-      expect(unload()).toBe(false);
+      // Earlier cases leave presses running; leaving ends them, and with them their prompts.
+      leave();
+      await vi.waitFor(() => expect(unload()).toBe(false));
       pressButton(card)!.click();
       await vi.waitFor(() => expect(orchestration.waitForWorkflow).toHaveBeenCalledTimes(1));
       expect(unload()).toBe(true);

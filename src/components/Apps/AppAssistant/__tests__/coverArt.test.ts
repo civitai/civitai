@@ -537,7 +537,11 @@ describe('the page’s cover: priced and made on the user’s own token and proc
           coverWorkflowFor(OFFER),
           new AbortController().signal
         )
-      ).rejects.toThrow(COVER_SUBMIT_UNCONFIRMED);
+      ).rejects.toThrow(
+        // Pinned as text too: the constant alone would match any error if it were missing.
+        'Civitai could not confirm whether your cover was started, so you may have been charged for it. Check your Buzz transactions before you try again; nothing was put on your listing.'
+      );
+      expect(COVER_SUBMIT_UNCONFIRMED).toContain('may have been charged');
     }
   });
 
