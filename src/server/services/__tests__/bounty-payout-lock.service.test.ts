@@ -2199,8 +2199,7 @@ describe('a refund whose legacy supporter no retry can confirm', () => {
   const at = (time: number) => vi.useFakeTimers({ toFake: ['Date'], now: time });
   afterEach(() => vi.useRealTimers());
 
-  // Moving it earlier could pay a supporter twice: it must stay days after the release carrying the
-  // fixed refund key was served. Change it only with that serve time in hand.
+  // See LEGACY_REFUND_KEYED_SINCE: moving it earlier can pay a supporter twice.
   it('is set to a fixed date after the key shipped', () => {
     expect(LEGACY_REFUND_KEYED_SINCE.toISOString()).toBe('2026-11-10T00:00:00.000Z');
   });
@@ -2344,6 +2343,28 @@ describe('a refund whose legacy supporter no retry can confirm', () => {
         })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
       expect(unpaidAwards.get(5)?.resolvedAt).toBeUndefined();
+    });
+
+    it('can be ruled refunded_supporter, and then the bounty deletes', async () => {
+      recordRefund();
+      expect(await releaseUnconfirmedBountyRefund(4, 99)).toEqual({ unconfirmedRefunds: 1 });
+      expect(
+        await resolveUnpaidBountyAward({
+          bountyId: 4,
+          userId: 5,
+          ruling: 'refunded_supporter',
+          ledgerReference: 'manual refund to the supporter',
+          moderatorId: 99,
+        })
+      ).toEqual({ recorded: true });
+      expect(unpaidAwards.get(5)).toMatchObject({
+        ruling: 'refunded_supporter',
+        resolvedAt: expect.any(Date),
+      });
+      vi.clearAllMocks();
+      await moderatorDelete();
+      expect(bounty).toBeNull();
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
     });
 
     it('refuses when the keyed refund turns up on the second read', async () => {

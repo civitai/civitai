@@ -1214,7 +1214,7 @@ export async function refundBountyBenefactorFunds({
       } else if (!(await getTransactionByExternalId(legacyRefundKey(bountyId, userId)))) {
         // Waiting on a moderator once a day old: a warning, so the retry job does not flood errors.
         const waiting =
-          !!recordedAt && recordedAt.getTime() <= Date.now() - UNCONFIRMED_REFUND_RELEASE_AFTER_MS;
+          !!recordedAt && recordedAt.getTime() <= Date.now() - MODERATOR_RELEASE_AFTER_MS;
         logBountyPayoutError({
           bountyId,
           userId,
@@ -1237,11 +1237,13 @@ export async function refundBountyBenefactorFunds({
 /**
  * Set days after the release that added `legacyRefundKey` was served: a refund recorded later was
  * only ever attempted under that key, so a retry may pay its legacy supporters under it. A refund is
- * recorded once, when the bounty becomes refunded. Late is safe; early could pay a supporter twice.
+ * recorded once, when the bounty becomes refunded. Late is safe; never move it earlier, which could
+ * pay a supporter twice.
  */
 export const LEGACY_REFUND_KEYED_SINCE = new Date('2026-11-10T00:00:00Z');
 
-const UNCONFIRMED_REFUND_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
+/** How long a payout waits before a moderator may release it for a manual ruling. */
+const MODERATOR_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const legacyRefundKey = (bountyId: number, userId: number) =>
   `bounty-refund-b${bountyId}-u${userId}`;
@@ -1607,7 +1609,49 @@ export async function refundUnpayableBountyAward(bountyId: number) {
 const BOUNTY_PAYOUT_RETRY_BATCH_SIZE = 100;
 const BOUNTY_PAYOUT_RETRY_MAX_BATCHES = 20;
 
-const STUCK_AWARD_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
+/** The owner a record names: a kept bounty is detached, its owner kept in meta.userIdBeforeRemoval. */
+const bountyOwnerId = (locked: { userId: number | null; meta: unknown }) =>
+  locked.userId ??
+  (locked.meta as { userIdBeforeRemoval?: number } | null)?.userIdBeforeRemoval ??
+  null;
+
+/** Records supporters for a manual ruling: one unpaid-award row and one mod activity each. */
+async function recordUnpaidAwards(
+  tx: Prisma.TransactionClient,
+  {
+    bountyId,
+    locked,
+    moderatorId,
+    winnerUserId,
+    rows,
+  }: {
+    bountyId: number;
+    locked: { userId: number | null; meta: unknown };
+    moderatorId: number;
+    winnerUserId: number | null;
+    rows: { userId: number; unitAmount: number; buzzTransactionIds?: string[] }[];
+  }
+) {
+  await tx.bountyUnpaidAward.createMany({
+    data: rows.map((b) => ({
+      bountyId,
+      userId: b.userId,
+      unitAmount: b.unitAmount,
+      buzzTransactionIds: b.buzzTransactionIds ?? [],
+      winnerUserId,
+      ownerId: bountyOwnerId(locked),
+      recordedById: moderatorId,
+    })),
+  });
+  await tx.modActivity.createMany({
+    data: rows.map(({ userId }) => ({
+      userId,
+      entityType: 'bounty',
+      entityId: bountyId,
+      activity: BOUNTY_AWARD_UNPAID_ACTIVITY,
+    })),
+  });
+}
 
 /**
  * Moderator exit for an award that a supporter with no charge on record keeps from settling.
@@ -1647,7 +1691,7 @@ export async function releaseStuckBountyAward(
   });
   if (
     unpaid.length !== unpriceable.length ||
-    unpaid.some((b) => !b.awardedAt || b.awardedAt.getTime() > now - STUCK_AWARD_RELEASE_AFTER_MS)
+    unpaid.some((b) => !b.awardedAt || b.awardedAt.getTime() > now - MODERATOR_RELEASE_AFTER_MS)
   )
     return null;
 
@@ -1666,24 +1710,15 @@ export async function releaseStuckBountyAward(
       where: { id: bountyId },
       data: { complete: true, refunded: true, payoutRecordedAt: nextPayoutRecordedAt(locked) },
     });
-    const meta = locked.meta as { userIdBeforeRemoval?: number } | null;
-    await tx.bountyUnpaidAward.createMany({
-      data: unpaid.map((b) => ({
-        bountyId,
+    await recordUnpaidAwards(tx, {
+      bountyId,
+      locked,
+      moderatorId,
+      winnerUserId: read.payoutWinnerUserId,
+      rows: unpaid.map((b) => ({
         userId: b.userId,
         unitAmount: b.unitAmount,
         buzzTransactionIds: b.buzzTransactionId ?? [],
-        winnerUserId: read.payoutWinnerUserId,
-        ownerId: locked.userId ?? meta?.userIdBeforeRemoval ?? null,
-        recordedById: moderatorId,
-      })),
-    });
-    await tx.modActivity.createMany({
-      data: unpaid.map(({ userId }) => ({
-        userId,
-        entityType: 'bounty',
-        entityId: bountyId,
-        activity: BOUNTY_AWARD_UNPAID_ACTIVITY,
       })),
     });
     return true;
@@ -1714,10 +1749,10 @@ export async function releaseStuckBountyAward(
  * Moderator exit for a refund that waits only on legacy supporters the ledger cannot confirm were
  * refunded: an attempt made before `legacyRefundKey` may or may not have paid them, and no retry
  * pays them. Records each for a manual ruling, as an unpaid award with no winner, and stamps the
- * refund settled. Pays no legacy supporter; its reads retry keyed refunds as a settle does. A ruling
- * checks the ledger for `legacyRefundKey` first: a concurrent first attempt may have paid. Needs a day-old refund recorded before `LEGACY_REFUND_KEYED_SINCE`
- * whose only failures are those supporters on two reads. Returns the recorded count, or null when it
- * does not apply.
+ * refund settled. Pays no legacy supporter. A ruling must first check the ledger for
+ * `legacyRefundKey`, since a concurrent first attempt may have paid. Applies only to a refund at least
+ * a day old and recorded at or before `LEGACY_REFUND_KEYED_SINCE`, whose only failures are those
+ * supporters on two reads. Returns the recorded count, or null when it does not apply.
  */
 export async function releaseUnconfirmedBountyRefund(
   bountyId: number,
@@ -1735,7 +1770,7 @@ export async function releaseUnconfirmedBountyRefund(
     !read?.refunded ||
     !isPayoutPending(read) ||
     !recordedAt ||
-    recordedAt > now - UNCONFIRMED_REFUND_RELEASE_AFTER_MS ||
+    recordedAt > now - MODERATOR_RELEASE_AFTER_MS ||
     recordedAt > LEGACY_REFUND_KEYED_SINCE.getTime()
   )
     return null;
@@ -1771,24 +1806,12 @@ export async function releaseUnconfirmedBountyRefund(
       locked.payoutRecordedAt?.getTime() !== recordedAt
     )
       return false;
-    const meta = locked.meta as { userIdBeforeRemoval?: number } | null;
-    await tx.bountyUnpaidAward.createMany({
-      data: unconfirmed.map((b) => ({
-        bountyId,
-        userId: b.userId,
-        unitAmount: b.unitAmount,
-        winnerUserId: null,
-        ownerId: locked.userId ?? meta?.userIdBeforeRemoval ?? null,
-        recordedById: moderatorId,
-      })),
-    });
-    await tx.modActivity.createMany({
-      data: unconfirmed.map(({ userId }) => ({
-        userId,
-        entityType: 'bounty',
-        entityId: bountyId,
-        activity: BOUNTY_AWARD_UNPAID_ACTIVITY,
-      })),
+    await recordUnpaidAwards(tx, {
+      bountyId,
+      locked,
+      moderatorId,
+      winnerUserId: null,
+      rows: unconfirmed,
     });
     await tx.bounty.update({
       where: { id: bountyId },
@@ -1813,7 +1836,8 @@ export async function releaseUnconfirmedBountyRefund(
 }
 
 /**
- * Records the ruling on an award `releaseStuckBountyAward` recorded as unpaid. Moves no Buzz: the
+ * Records the ruling on an award recorded as unpaid by `releaseStuckBountyAward` or
+ * `releaseUnconfirmedBountyRefund` (a supporter refund, with no winner). Moves no Buzz: the
  * ruling is settled in the ledger first, and this only lets the bounty be deleted again.
  */
 export async function resolveUnpaidBountyAward({
@@ -1863,7 +1887,6 @@ export async function resolveUnpaidBountyAward({
           select: { unitAmount: true, buzzTransactionId: true },
         }));
       if (!supporter) throw notFound();
-      const meta = locked.meta as { userIdBeforeRemoval?: number } | null;
       award = await tx.bountyUnpaidAward.create({
         data: {
           bountyId,
@@ -1871,7 +1894,7 @@ export async function resolveUnpaidBountyAward({
           unitAmount: supporter.unitAmount,
           buzzTransactionIds: supporter.buzzTransactionId ?? [],
           winnerUserId: locked.payoutWinnerUserId,
-          ownerId: locked.userId ?? meta?.userIdBeforeRemoval ?? null,
+          ownerId: bountyOwnerId(locked),
           recordedAt: legacy.createdAt,
         },
       });
