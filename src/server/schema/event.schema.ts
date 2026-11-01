@@ -50,7 +50,7 @@ export const teamRosterSchema = eventSchema.extend({
 export type PlaceableContentPageInput = z.infer<typeof placeableContentPageSchema>;
 export const placeableContentPageSchema = eventSchema.extend({
   entityType: z.enum(CosmeticEntity),
-  // Images: the id to page below. Models and articles: an offset into the caller's own list.
+  // Images: the last image id shown. Models and articles: an offset into the caller's own list.
   cursor: z.number().int().min(0).optional(),
 });
 
