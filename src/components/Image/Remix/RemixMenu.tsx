@@ -41,6 +41,12 @@ const kindLabels: Record<RemixKind, RemixOption> = {
   },
 };
 
+const videoFrameOption: RemixOption = {
+  ...kindLabels.video,
+  label: 'Animate first frame',
+  description: 'Turn the first frame into a new video',
+};
+
 const reuseOption: RemixOption = {
   label: 'Reuse prompt & resources',
   description: "Start from this image's settings",
@@ -216,7 +222,12 @@ export function RemixMenu({
           </Menu.Item>
         )}
         {options.map((key) => {
-          const option = key === 'reuse' ? reuseOption : kindLabels[key];
+          const option =
+            key === 'reuse'
+              ? reuseOption
+              : key === 'video' && image.type === 'video'
+              ? videoFrameOption
+              : kindLabels[key];
           return (
             <Menu.Item
               key={key}

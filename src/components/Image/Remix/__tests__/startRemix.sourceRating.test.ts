@@ -26,13 +26,13 @@ vi.mock('~/store/generation-graph.store', async (importOriginal) => ({
 
 const { startRemix } = await import('../remix.utils');
 
-async function animate(nsfwLevel: number) {
+async function animate(nsfwLevel: number, type: MediaType = MediaType.image) {
   await startRemix({
     kind: 'video',
     image: {
       id: 1,
       url: 'abc-123',
-      type: MediaType.image,
+      type,
       ingestion: ImageIngestionStatus.Scanned,
       width: 832,
       height: 1216,
@@ -67,5 +67,14 @@ describe('Animate on a gallery image carries its rating to the source', () => {
     ['unrated', 0],
   ])('a %s image does not', async (_label, nsfwLevel) => {
     expect(await animate(nsfwLevel)).toBe(false);
+  });
+});
+
+describe('Animate on a video carries its rating to the frame url', () => {
+  it.each([
+    ['R', 4, true],
+    ['PG', 1, false],
+  ])('a %s video', async (_label, nsfwLevel, mature) => {
+    expect(await animate(nsfwLevel, MediaType.video)).toBe(mature);
   });
 });

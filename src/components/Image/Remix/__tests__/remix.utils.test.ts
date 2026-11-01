@@ -121,8 +121,12 @@ describe('getRemixKinds', () => {
     expect(getRemixKinds(image())).toEqual(['edit', 'video']);
   });
 
-  it.each([MediaType.video, MediaType.audio])('offers no engine kinds for %s', (type) => {
-    expect(getRemixKinds(image({ type }))).toEqual([]);
+  it('offers only animate for a video, whose first frame is the input', () => {
+    expect(getRemixKinds(image({ type: MediaType.video }))).toEqual(['video']);
+  });
+
+  it('offers no engine kinds for audio', () => {
+    expect(getRemixKinds(image({ type: MediaType.audio }))).toEqual([]);
   });
 });
 

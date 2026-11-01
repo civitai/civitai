@@ -110,7 +110,19 @@ export function isReuseRefused(image: RemixSourceImage): boolean {
 
 /** Remix kinds that need only the image itself. */
 export function getRemixKinds(image: RemixSourceImage): RemixKind[] {
-  return image.type === 'image' ? ['edit', 'video'] : [];
+  if (image.type === 'image') return ['edit', 'video'];
+  if (image.type === 'video') return ['video'];
+  return [];
+}
+
+/**
+ * The still the engine receives. A video's stored file is an mp4, and `original: true` returns it
+ * untouched whatever else is asked, so frame 0 needs a capped width instead.
+ */
+export function getRemixSourceUrl(image: RemixSourceImage) {
+  return image.type === 'video'
+    ? getEdgeUrl(image.url, { type: 'image', transcode: true, anim: false, width: 1800 })
+    : getEdgeUrl(image.url, { original: true });
 }
 
 /** One thing the Remix button can do for this viewer: a remix kind, or prompt reuse. */
@@ -191,7 +203,7 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
   const engine = getRemixEngine(kind, image);
   generationGraphPanel.open(undefined, { preserveEntryAction: true });
 
-  const sourceUrl = getEdgeUrl(image.url, { original: true });
+  const sourceUrl = getRemixSourceUrl(image);
   const { result, superseded } = await withExternalFetch(() =>
     Promise.all([
       resolveDimensions(image, sourceUrl),
