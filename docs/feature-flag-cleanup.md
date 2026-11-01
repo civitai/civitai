@@ -105,8 +105,8 @@ Derive it, don't trust the prose: the current split is 19 safe and 6 not.
 | `largerGenerationImages` | `toggleable` with `default: false`, so it is **off** unless a user opts in. The old "toggleable but defaulted" annotation reads the wrong way round. |
 
 Three more were removed from this list entirely rather than annotated: `imageSearch`
-(`availability: []` plus a live `image-search` key — image search is retired, so inlining re-ships
-it against a deleted index with no flag left to switch it off), `challengePlatform` (a live
+(`availability: []` — image search is retired, so inlining re-ships it against a deleted index;
+its `image-search` Flipt key, which never existed in flag state, was removed), `challengePlatform` (a live
 kill-switch key), and `vault` (`['user']`).
 
 Condition 3 is load-bearing, and not through its `default: true` half. The registry has exactly six

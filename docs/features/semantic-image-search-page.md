@@ -7,8 +7,9 @@ test surface for now, shown only to those with the `semanticImageSearch` feature
 
 ## Access
 
-- Flag `semanticImageSearch` (Flipt key `semantic-image-search`). Without Flipt it falls back to
-  moderators only. Flipt overrides that in both directions, so add moderators to the Flipt rule too.
+- Flag `semanticImageSearch`: moderators only. It has no Flipt key (no flag was ever created); to
+  open it to testers, create the flag and add `fliptKey: 'semantic-image-search'`. Flipt then
+  overrides the static list in both directions, so add moderators to the Flipt rule too.
 - The page's `getServerSideProps` and both procedures (`semanticImageSearch.search`, `.feedback`)
   check the same flag, and both procedures require a signed-in user.
 - Env: `QDRANT_URL`, `QDRANT_API_KEY`. A read-only key is enough. When the variables are unset,
