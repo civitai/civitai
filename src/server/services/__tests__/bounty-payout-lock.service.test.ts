@@ -76,10 +76,13 @@ const {
   deleteBountyById,
   refundBounty,
   refundBountyBenefactorFunds,
+  releaseStuckBountyAward,
   retryUnsettledBountyPayouts,
   settleBountyPayout,
 } = await import('~/server/services/bounty.service');
-const { isPayoutPending } = await import('~/server/services/bounty-payout-lock');
+const { BOUNTY_PAYOUT_RETRY_AFTER_MS, isPayoutOverdue, isPayoutPending } = await import(
+  '~/server/services/bounty-payout-lock'
+);
 
 type Benefactor = {
   userId: number;
@@ -106,6 +109,7 @@ type BountyRow = {
 let bounty: BountyRow | null;
 let benefactors: Benefactor[];
 let entryFiles: { metadata: Record<string, unknown> }[];
+let modActivityRows: { userId: number; activity: string }[];
 const entry = { id: 10, bountyId: 4, userId: 8 };
 // Who owns each entry a supporter may award; entry 11 is a second entrant's.
 const entryOwners: Record<number, number> = { 10: 8, 11: 9 };
@@ -252,6 +256,13 @@ function transactionClient(held: (() => void)[]) {
       findMany: async () => entryFiles.map((f) => ({ ...f })),
       deleteMany: async () => ({ count: 0 }),
     },
+    modActivity: {
+      createMany: async ({ data }: { data: { userId: number; activity: string }[] }) => {
+        await tick();
+        modActivityRows.push(...data);
+        return { count: data.length };
+      },
+    },
     imageConnection: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     image: { deleteMany: async () => ({ count: 0 }) },
   };
@@ -263,6 +274,7 @@ beforeEach(() => {
   rowLock = mutex();
   fileCheck.on = false;
   entryFiles = [];
+  modActivityRows = [];
   bounty = {
     id: 4,
     userId: 5,
@@ -453,13 +465,15 @@ describe('refundBounty', () => {
 
 describe('deleteBountyById', () => {
   it('refunds the creator before the row, and its benefactors, are deleted', async () => {
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(events).toEqual(['claim', 'commit', 'refund', 'refund', 'delete', 'commit']);
   });
 
   it('keeps the bounty when the refund fails, so a retry still has what it needs', async () => {
     buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
-    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('not deleted');
+    await expect(deleteBountyById({ id: 4, isModerator: true, userId: 1 })).rejects.toThrow(
+      'not deleted'
+    );
     expect(bounty).not.toBeNull();
     expect(bounty?.refunded).toBe(true);
     expect(moved('delete')).toBe(0);
@@ -467,14 +481,14 @@ describe('deleteBountyById', () => {
 
   it('settles a recorded but unpaid refund before deleting', async () => {
     Object.assign(bounty!, { complete: true, refunded: true, payoutRecordedAt: new Date() });
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(events).toEqual(['commit', 'refund', 'refund', 'delete', 'commit']);
   });
 
   it('refunds nothing when the bounty was refunded before payouts were recorded', async () => {
     bounty!.complete = true;
     bounty!.refunded = true;
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(moved('refund')).toBe(0);
     expect(bounty).toBeNull();
   });
@@ -972,7 +986,7 @@ describe('a moderator going past an award no retry can pay', () => {
 
   it('refunds the supporters instead, then deletes the bounty', async () => {
     recordAward({ payoutWinnerUserId: null });
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(moved('award')).toBe(0);
     expect(
       buzz.refundMultiAccountTransaction.mock.calls.map(
@@ -986,7 +1000,7 @@ describe('a moderator going past an award no retry can pay', () => {
   it('logs every supporter row before deleting when that refund fails too', async () => {
     recordAward({ payoutWinnerUserId: null });
     buzz.refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(bounty).toBeNull();
     const log = loggingMock.logToAxiom.mock.calls.find(
       ([entry]) => entry.name === 'bounty-refund' && Array.isArray(entry.benefactors)
@@ -1011,7 +1025,9 @@ describe('a moderator going past an award no retry can pay', () => {
   it('still blocks a moderator on a payout that failed for a payable award', async () => {
     recordAward();
     buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
-    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('not deleted');
+    await expect(deleteBountyById({ id: 4, isModerator: true, userId: 1 })).rejects.toThrow(
+      'not deleted'
+    );
     expect(bounty).not.toBeNull();
     expect(moved('refund')).toBe(0);
   });
@@ -1022,7 +1038,7 @@ describe('a moderator going past an award no retry can pay', () => {
     bounty!.payoutSettledAt = new Date(2000);
     Object.assign(benefactors[1], { awardedToId: 11, awardedAt: new Date(3000) });
 
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
 
     // Only supporter 6's unpaid award is refunded; supporter 5 was paid.
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
@@ -1036,7 +1052,7 @@ describe('a moderator going past an award no retry can pay', () => {
     buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
 
     // Nothing awarded since the settlement: the award is unpayable, so it becomes a refund.
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(bounty).toBeNull();
     // Supporter 5's paid award keeps its marks and is not refunded.
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
@@ -1044,7 +1060,9 @@ describe('a moderator going past an award no retry can pay', () => {
 
   it('gives an owner no override', async () => {
     recordAward({ payoutWinnerUserId: null });
-    await expect(deleteBountyById({ id: 4, isModerator: false })).rejects.toThrow('not deleted');
+    await expect(deleteBountyById({ id: 4, isModerator: false, userId: 1 })).rejects.toThrow(
+      'not deleted'
+    );
     expect(bounty).not.toBeNull();
     expect(moved('refund')).toBe(0);
   });
@@ -1103,6 +1121,47 @@ describe('several awards on one bounty', () => {
     expect(await settleBountyPayout(4, { firstAttempt: true })).toBe(true);
     expect(ledgerRows()).toEqual([['bounty-award-b4-u5-yellow', 8, 100]]);
     expect(buzz.createBuzzTransactionMany).toHaveBeenCalledTimes(1);
+  });
+
+  describe('one supporter whose award fails', () => {
+    // Supporter 5 fails and is listed first: the supporters after it must still be paid.
+    const recordBoth = (complete: boolean) => {
+      const at = new Date(1000);
+      Object.assign(benefactors[0], { awardedToId: 10, awardedAt: at });
+      Object.assign(benefactors[1], { awardedToId: 11, awardedAt: at });
+      if (!complete)
+        benefactors.push({ ...benefactors[1], userId: 7, awardedToId: null, awardedAt: null });
+      Object.assign(bounty!, { complete, payoutRecordedAt: at, payoutWinnerUserId: 9 });
+    };
+
+    it.each([true, false])(
+      'with no charge on record, still pays the others and leaves the bounty pending (complete: %s)',
+      async (complete) => {
+        recordBoth(complete);
+        buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) =>
+          prefix === 'bounty-4-5-1' ? [] : [{ accountType: 'yellow', amount: 50 }]
+        );
+        expect(await settleBountyPayout(4)).toBe(false);
+        expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+        expect(bounty?.complete).toBe(complete);
+        expect(bounty?.refunded).toBe(false);
+        expect(isPayoutPending(bounty!)).toBe(true);
+        expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'bounty-award', type: 'error', bountyId: 4, userId: 5 })
+        );
+      }
+    );
+
+    it('with a failed charge lookup, still pays the others', async () => {
+      recordBoth(true);
+      buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => {
+        if (prefix === 'bounty-4-5-1') throw new Error('buzz down');
+        return [{ accountType: 'yellow', amount: 50 }];
+      });
+      expect(await settleBountyPayout(4)).toBe(false);
+      expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+      expect(isPayoutPending(bounty!)).toBe(true);
+    });
   });
 
   // An award a settlement already paid, under the old bounty-wide key or this one, is not paid again.
@@ -1291,7 +1350,7 @@ describe('claims recorded behind a settlement stamped by a clock ahead of this o
   });
 
   it('deleteBountyById still refunds before deleting', async () => {
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(moved('refund')).toBe(2);
     expect(bounty).toBeNull();
   });
@@ -1304,7 +1363,7 @@ describe('deleting an open bounty with an award not yet paid', () => {
   });
 
   it('pays the award, then refunds the supporters who did not award', async () => {
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(buzz.createBuzzTransactionMany).toHaveBeenCalledWith([
       expect.objectContaining({
         toAccountId: 8,
@@ -1317,14 +1376,16 @@ describe('deleting an open bounty with an award not yet paid', () => {
 
   it('keeps the bounty when that award cannot be paid', async () => {
     buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
-    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('not deleted');
+    await expect(deleteBountyById({ id: 4, isModerator: true, userId: 1 })).rejects.toThrow(
+      'not deleted'
+    );
     expect(bounty).not.toBeNull();
     expect(bounty?.refunded).toBe(false);
   });
 
   it('lets a moderator go past an award with no winner, refunding instead', async () => {
     bounty!.payoutWinnerUserId = null;
-    await deleteBountyById({ id: 4, isModerator: true });
+    await deleteBountyById({ id: 4, isModerator: true, userId: 1 });
     expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
     expect(bounty).toBeNull();
@@ -1336,7 +1397,9 @@ describe('deleting an open bounty with an award not yet paid', () => {
       bounty!.payoutRecordedAt = new Date(bounty!.payoutRecordedAt!.getTime() + 1000);
       return { transactions: ['t'], conflicts: [] };
     });
-    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('kept arriving');
+    await expect(deleteBountyById({ id: 4, isModerator: true, userId: 1 })).rejects.toThrow(
+      'kept arriving'
+    );
     expect(bounty).not.toBeNull();
     expect(bounty?.refunded).toBe(false);
   });
@@ -1391,6 +1454,48 @@ describe('addBenefactorUnitAmount', () => {
     expect(find(6)!.unitAmount).toBe(50);
   });
 
+  describe('a bounty whose award payout is pending', () => {
+    const pendingFor = (minutes: number) => {
+      const at = new Date(Date.now() - minutes * 60_000);
+      Object.assign(find(5)!, { awardedToId: 10, awardedAt: at });
+      Object.assign(bounty!, { payoutRecordedAt: at, payoutWinnerUserId: 8 });
+    };
+
+    it('refuses support once the retry job has it, as it would a closed bounty', async () => {
+      pendingFor(11);
+      await expect(topUp(6)).rejects.toThrow('Bounty is already complete');
+      expect(moved('charge')).toBe(0);
+      expect(find(6)!.unitAmount).toBe(50);
+    });
+
+    it('still takes support once that award has settled, however long ago', async () => {
+      pendingFor(60);
+      bounty!.payoutSettledAt = bounty!.payoutRecordedAt;
+      await topUp(6);
+      expect(find(6)!.unitAmount).toBe(80);
+    });
+
+    it('still takes support while the first attempt is in its window (control)', async () => {
+      pendingFor(9);
+      await topUp(6);
+      expect(find(6)!.unitAmount).toBe(80);
+    });
+
+    it('refuses an award once the retry job has it, as it would a closed bounty', async () => {
+      pendingFor(11);
+      await expect(awardBountyEntry({ id: 11, userId: 6 })).rejects.toThrow(
+        'Bounty is already complete'
+      );
+      expect(find(6)!.awardedAt).toBeUndefined();
+    });
+
+    it('still takes an award while the first attempt is in its window (control)', async () => {
+      pendingFor(9);
+      await awardBountyEntry({ id: 11, userId: 6 });
+      expect(find(6)!.awardedToId).toBe(11);
+    });
+  });
+
   it('refunds the charge when the supporter awards while it is in flight', async () => {
     let releaseCharge!: () => void;
     const chargeHeld = new Promise<void>((resolve) => (releaseCharge = resolve));
@@ -1439,5 +1544,225 @@ describe('addBenefactorUnitAmount', () => {
     expect(moved('charge')).toBe(2);
     expect(find(6)!.unitAmount).toBe(100);
     expect(find(6)!.buzzTransactionId).toHaveLength(3);
+  });
+});
+
+describe('isPayoutOverdue', () => {
+  it('is overdue from the retry cutoff on, as the retry job selects it', () => {
+    const payoutRecordedAt = new Date(1_000_000);
+    const at = (ms: number) =>
+      isPayoutOverdue({ payoutRecordedAt, payoutSettledAt: null }, 1_000_000 + ms);
+    expect(at(BOUNTY_PAYOUT_RETRY_AFTER_MS)).toBe(true);
+    expect(at(BOUNTY_PAYOUT_RETRY_AFTER_MS - 1)).toBe(false);
+  });
+});
+
+describe('a moderator closing a bounty whose award has a supporter with no charge on record', () => {
+  const HOUR = 60 * 60 * 1000;
+  // Supporter 5's award has no charge on record; 6 awarded entry 11 (owner 9); 7 never awarded.
+  let ledger: Map<string, { toAccountId: number; amount: number }>;
+  const refunded = () =>
+    buzz.refundMultiAccountTransaction.mock.calls.map(
+      ([input]) => input.externalTransactionIdPrefix
+    );
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * HOUR);
+  const recordStuckAward = ({ unpricedHoursAgo = 25, paidHoursAgo = unpricedHoursAgo } = {}) => {
+    Object.assign(benefactors[0], { awardedToId: 10, awardedAt: hoursAgo(unpricedHoursAgo) });
+    Object.assign(benefactors[1], { awardedToId: 11, awardedAt: hoursAgo(paidHoursAgo) });
+    benefactors.push({
+      userId: 7,
+      bountyId: 4,
+      unitAmount: 20,
+      currency: 'BUZZ',
+      buzzTransactionId: ['bounty-4-7-3'],
+      awardedToId: null,
+      awardedAt: null,
+    });
+    Object.assign(bounty!, {
+      payoutRecordedAt: hoursAgo(Math.min(unpricedHoursAgo, paidHoursAgo)),
+      payoutWinnerUserId: 9,
+    });
+  };
+  const moderatorDelete = () => deleteBountyById({ id: 4, isModerator: true, userId: 99 });
+  const ledgerRows = () => [...ledger].map(([key, t]) => [key, t.toAccountId, t.amount]);
+
+  beforeEach(() => {
+    ledger = new Map();
+    buzz.createBuzzTransactionMany.mockImplementation(
+      async (
+        transactions: { externalTransactionId: string; toAccountId: number; amount: number }[]
+      ) => {
+        const made = transactions.filter((t) => !ledger.has(t.externalTransactionId));
+        made.forEach((t) => ledger.set(t.externalTransactionId, t));
+        return {
+          transactions: made.map((t) => t.externalTransactionId),
+          conflicts: transactions
+            .filter((t) => !made.includes(t))
+            .map((t) => t.externalTransactionId),
+        };
+      }
+    );
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) =>
+      prefix === 'bounty-4-5-1' ? [] : [{ accountType: 'yellow', amount: 50 }]
+    );
+    const base = dbMock.dbWrite.bountyBenefactor.findMany.getMockImplementation()!;
+    dbMock.dbWrite.bountyBenefactor.findMany.mockImplementation(
+      async (args: { where: { userId?: { in: number[] } } }) => {
+        const { userId, ...where } = args.where;
+        const rows = await base({ ...args, where });
+        return userId ? rows.filter((b: Benefactor) => userId.in.includes(b.userId)) : rows;
+      }
+    );
+  });
+
+  it('pays the other award, refunds who never awarded, records the unpriced one, and keeps the bounty', async () => {
+    recordStuckAward();
+    await expect(moderatorDelete()).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringMatching(
+        /NOT deleted.*were refunded, and 1 award\(s\) were recorded for manual resolution/
+      ),
+    });
+    expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+    expect(refunded()).toEqual(['bounty-4-7-3']);
+    expect(bounty).toMatchObject({ complete: true, refunded: true });
+    expect(isPayoutPending(bounty!)).toBe(false);
+    expect(modActivityRows).toEqual([
+      { userId: 5, entityType: 'bounty', entityId: 4, activity: 'bountyAwardUnpaid' },
+    ]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bounty-award',
+        type: 'error',
+        bountyId: 4,
+        userId: 5,
+        unitAmount: 100,
+        buzzTransactionId: ['bounty-4-5-1'],
+        winnerUserId: 9,
+        moderatorId: 99,
+      })
+    );
+  });
+
+  it('a second release moves nothing more', async () => {
+    recordStuckAward();
+    await expect(moderatorDelete()).rejects.toThrow('NOT deleted');
+    vi.clearAllMocks();
+    expect(await releaseStuckBountyAward(4, 99)).toBeNull();
+    expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(modActivityRows).toHaveLength(1);
+  });
+
+  it('says the refund is still owed when it fails, and leaves it to the retry job', async () => {
+    recordStuckAward();
+    buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
+    await expect(moderatorDelete()).rejects.toThrow(
+      'are not all refunded yet (failed refunds are retried or logged for follow-up)'
+    );
+    expect(bounty).toMatchObject({ refunded: true });
+    expect(isPayoutPending(bounty!)).toBe(true);
+    expect(modActivityRows).toHaveLength(1);
+
+    expect(await settleBountyPayout(4)).toBe(true);
+    expect(refunded()).toEqual(['bounty-4-7-3', 'bounty-4-7-3']);
+    expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+  });
+
+  const refusesAndMovesNoRefund = async () => {
+    await expect(moderatorDelete()).rejects.toThrow('The payout is retried automatically');
+    expect(bounty).toMatchObject({ refunded: false });
+    expect(refunded()).toEqual([]);
+    expect(modActivityRows).toEqual([]);
+  };
+
+  it("refuses before the unpriced supporter's own award is a day old", async () => {
+    recordStuckAward({ unpricedHoursAgo: 23, paidHoursAgo: 25 });
+    await refusesAndMovesNoRefund();
+  });
+
+  it("counts the day from the unpriced supporter's award, not a later one", async () => {
+    recordStuckAward({ unpricedHoursAgo: 25, paidHoursAgo: 1 });
+    await expect(moderatorDelete()).rejects.toThrow('NOT deleted');
+  });
+
+  it('refuses a fresh unpriced award behind an award an earlier settlement paid', async () => {
+    recordStuckAward({ unpricedHoursAgo: 1, paidHoursAgo: 30 });
+    bounty!.payoutSettledAt = hoursAgo(29);
+    await refusesAndMovesNoRefund();
+  });
+
+  it('refuses while an award recorded inside the retry window may still be settling', async () => {
+    recordStuckAward();
+    bounty!.payoutRecordedAt = new Date(Date.now() - 5 * 60_000);
+    await refusesAndMovesNoRefund();
+  });
+
+  it('refuses when a lookup that came back empty finds the charge on a repeat', async () => {
+    recordStuckAward();
+    let lookups = 0;
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) =>
+      prefix === 'bounty-4-5-1' && ++lookups === 1 ? [] : [{ accountType: 'yellow', amount: 50 }]
+    );
+    expect(await releaseStuckBountyAward(4, 99)).toBeNull();
+    expect(bounty?.refunded).toBe(false);
+    expect(refunded()).toEqual([]);
+    expect(modActivityRows).toEqual([]);
+    expect(ledgerRows().map(([key]) => key)).toContain('bounty-award-b4-u5-yellow');
+  });
+
+  it('records only a supporter whose lookup came back empty on both passes', async () => {
+    recordStuckAward();
+    let lookupsFor6 = 0;
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => {
+      if (prefix === 'bounty-4-5-1') return [];
+      return ++lookupsFor6 === 1 ? [{ accountType: 'yellow', amount: 50 }] : [];
+    });
+    expect(await releaseStuckBountyAward(4, 99)).toEqual({ unpaidAwards: 1, refundSettled: true });
+    expect(modActivityRows.map((r) => r.userId)).toEqual([5]);
+    expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+  });
+
+  it('refunds a legacy supporter who never awarded, once', async () => {
+    recordStuckAward();
+    benefactors[2].buzzTransactionId = [];
+    await expect(moderatorDelete()).rejects.toThrow('NOT deleted');
+    expect(buzz.createBuzzTransaction).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ toAccountId: 7, amount: 20 })
+    );
+  });
+
+  it('refuses when a charge lookup failed rather than came back empty (control)', async () => {
+    recordStuckAward();
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => {
+      if (prefix === 'bounty-4-5-1') throw new Error('buzz down');
+      return [{ accountType: 'yellow', amount: 50 }];
+    });
+    await refusesAndMovesNoRefund();
+  });
+
+  it('refuses when another award could not be paid', async () => {
+    recordStuckAward();
+    buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
+    await refusesAndMovesNoRefund();
+  });
+
+  it('refuses when an award is recorded while it pays', async () => {
+    recordStuckAward();
+    const pay = buzz.createBuzzTransactionMany.getMockImplementation()!;
+    buzz.createBuzzTransactionMany.mockImplementation(async (transactions: never) => {
+      bounty!.payoutRecordedAt = new Date(bounty!.payoutRecordedAt!.getTime() + 1);
+      return pay(transactions);
+    });
+    await refusesAndMovesNoRefund();
+  });
+
+  it('gives an owner no exit', async () => {
+    recordStuckAward();
+    await expect(deleteBountyById({ id: 4, isModerator: false, userId: 5 })).rejects.toThrow(
+      'not deleted'
+    );
+    expect(refunded()).toEqual([]);
+    expect(bounty?.refunded).toBe(false);
   });
 });

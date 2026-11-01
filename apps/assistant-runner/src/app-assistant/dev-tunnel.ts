@@ -2,7 +2,16 @@ import type { Logger } from '../core/interfaces';
 
 /** civitai's endpoints the runner opens, keeps and closes a run's dev tunnel at, relative to `CIVITAI_URL`. */
 export const DEV_TUNNEL_PATH = 'api/internal/app-assistant/dev-tunnel';
+/** How long a keep-alive or a stop waits for civitai. */
 const REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * How long a start waits. civitai answers a start only once the tunnel's route has been applied,
+ * which it waits up to 180 s for (`renderDevTunnelRoute`), and it keeps the tunnel it opened even
+ * when the caller has gone. A start the runner gives up on sooner is one civitai still opens: the
+ * sandbox never connects to it, yet civitai lists it as live, so the page shows a preview that can
+ * only fail to load. Most starts answer in seconds; this covers civitai's own bound with margin.
+ */
+const START_TIMEOUT_MS = 200_000;
 
 /** What civitai's `start` answers: the tunnel's id (the runner's alone), its host and sish's host key. */
 export interface StartedTunnel {
@@ -67,11 +76,15 @@ export class CivitaiDevTunnels {
   }
 
   forRun(grant: () => Promise<string | null>): DevTunnels {
-    const post = (action: string, body: Record<string, unknown>, signal?: AbortSignal) =>
-      this.#post(action, grant, body, signal);
+    const post = (
+      action: string,
+      body: Record<string, unknown>,
+      signal?: AbortSignal,
+      timeoutMs = REQUEST_TIMEOUT_MS
+    ) => this.#post(action, grant, body, signal, timeoutMs);
     return {
       start: async (input, signal) => {
-        const answer = await post('start', { ...input }, signal);
+        const answer = await post('start', { ...input }, signal, START_TIMEOUT_MS);
         const { sessionId, host, sshHostPublicKey } = (answer ?? {}) as Record<string, unknown>;
         if (
           typeof sessionId !== 'string' ||
@@ -97,7 +110,8 @@ export class CivitaiDevTunnels {
     action: string,
     grant: () => Promise<string | null>,
     body: Record<string, unknown>,
-    signal?: AbortSignal
+    signal: AbortSignal | undefined,
+    timeoutMs: number
   ): Promise<unknown> {
     const { civitaiUrl, secret, log } = this.#options;
     const token = await grant();
@@ -108,7 +122,7 @@ export class CivitaiDevTunnels {
         'invalid_grant'
       );
     const doFetch = this.#options.fetch ?? fetch;
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const timeout = AbortSignal.timeout(timeoutMs);
     let response: Response;
     try {
       response = await doFetch(`${civitaiUrl.replace(/\/+$/, '')}/${DEV_TUNNEL_PATH}/${action}`, {
