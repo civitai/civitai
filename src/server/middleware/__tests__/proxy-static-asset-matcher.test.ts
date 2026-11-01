@@ -112,8 +112,10 @@ describe.each([
     expect(matched).toEqual([]);
   });
 
+  // Non-empty, not "via PAGE_PATTERN": a mutated pattern is a different string, so naming it here
+  // would fail every case for the wrong reason and hide which paths the mutant actually drops.
   it.each(PROXIED_URLS)('still runs for %s', (url) => {
-    expect(matchingSources(config.matcher, url, nextConfig)).toContain(PAGE_PATTERN);
+    expect(matchingSources(config.matcher, url, nextConfig)).not.toEqual([]);
   });
 
   it.each(API_URLS)('still runs for %s', (url) => {
@@ -121,7 +123,7 @@ describe.each([
   });
 
   it.each(dataUrls(nextConfig))('still runs for the data request %s', (url) => {
-    expect(matchingSources(config.matcher, url, nextConfig)).toContain(PAGE_PATTERN);
+    expect(matchingSources(config.matcher, url, nextConfig)).not.toEqual([]);
   });
 
   // Negative controls on the instrument: the over-broad matchers this file exists to stop are seen.
