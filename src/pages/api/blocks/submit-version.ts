@@ -145,9 +145,6 @@ export default AuthedEndpoint(
         slug: result.slug,
         version: result.version,
         status: 'pending',
-        // The store listing's readiness: whether a moderator can approve this yet (icon +
-        // cover), the plain-words next step, and every blocking / advisory listing problem.
-        // `null` when it could not be read. Additive — older clients ignore it.
         listing: result.listing ?? null,
       });
     } catch (err) {

@@ -79,6 +79,7 @@ const {
   holdLookup,
   appealedIds,
   csamFlaggedIds,
+  csamBlockedIds,
   evidenceHeldUserIds,
   accountHeldIds,
   markerView,
@@ -93,6 +94,7 @@ const {
   const holdLookup = { error: null as Error | null };
   const appealedIds: number[] = [];
   const csamFlaggedIds: number[] = [];
+  const csamBlockedIds: number[] = [];
   // Owners under a hold marker.
   const evidenceHeldUserIds: number[] = [];
   // Blocked images of accounts under any other account hold.
@@ -201,10 +203,12 @@ const {
     const reviewFlags = sql.match(/"needsReview" IN \(([^)]*)\)/);
     if (reviewFlags) {
       const named = [...reviewFlags[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      const blocks = sql.includes(`"blockedFor" = 'CSAM'`);
       return [
-        ...appealedIds.map((id) => ({ id, needsReview: 'appeal' })),
-        ...csamFlaggedIds.map((id) => ({ id, needsReview: 'csam' })),
-      ].filter((r) => named.includes(r.needsReview));
+        ...appealedIds.map((id) => ({ id, needsReview: 'appeal', blockedFor: null })),
+        ...csamFlaggedIds.map((id) => ({ id, needsReview: 'csam', blockedFor: null })),
+        ...csamBlockedIds.map((id) => ({ id, needsReview: null, blockedFor: 'CSAM' })),
+      ].filter((r) => (r.needsReview ? named.includes(r.needsReview) : blocks));
     }
     // The moderator-activity lookup that gates blob retraction. Routed before the catch-all
     // below, which would otherwise answer it with Image rows.
@@ -244,6 +248,7 @@ const {
     holdLookup,
     appealedIds,
     csamFlaggedIds,
+    csamBlockedIds,
     evidenceHeldUserIds,
     accountHeldIds,
     markerView,
@@ -400,6 +405,7 @@ beforeEach(() => {
   heldUsers.length = 0;
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
+  csamBlockedIds.length = 0;
   evidenceHeldUserIds.length = 0;
   accountHeldIds.length = 0;
   markerView.present = true;
@@ -731,6 +737,20 @@ describe('remove-blocked-images retention clock', () => {
     expect(result.csamHeld).toBe(0);
   });
 
+  it('holds a CSAM-blocked image with no other hold on its owner', async () => {
+    heldUsers.length = 0;
+    extraImages.push({ id: 9, userId: 999, blockedFor: 'CSAM' });
+    extraQueue.push({ entityId: 9, createdAt: EXPIRED });
+    csamBlockedIds.push(9);
+    const result = await runJob();
+
+    expect(deletedIds()).not.toContain(9);
+    expect(queuePruneIds()).not.toContain(9);
+    expect(result.csamBlockHeld).toBe(1);
+    expect(batchWhere()?.entityId?.notIn).toEqual([9]);
+    expect(result.csamReviewHeld).toBe(0);
+  });
+
   // Neither mock evaluates these, so they are pinned here. Dropping the ingestion predicate puts
   // every flagged image on the site, blocked or not, into the batch's notIn list; reading from
   // the replica misses a flag set inside the lag window.
@@ -745,7 +765,7 @@ describe('remove-blocked-images retention clock', () => {
     expect(onRead).toEqual([]);
     expect(onWrite).toHaveLength(1);
     expect(onWrite[0]).toMatch(
-      /WHERE "needsReview" IN \('appeal', 'csam'\)\s+AND ingestion = 'Blocked'::"ImageIngestionStatus"\s*$/
+      /WHERE \("needsReview" IN \('appeal', 'csam'\) OR "blockedFor" = 'CSAM'\)\s+AND ingestion = 'Blocked'::"ImageIngestionStatus"\s*$/
     );
   });
 

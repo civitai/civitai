@@ -30,7 +30,11 @@ const h = vi.hoisted(() => {
 vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn(), logToAxiom: vi.fn() }));
 vi.mock('$lib/server/auth/verifier', () => ({ verifier: { verifyToken: h.verifyToken } }));
 vi.mock('$lib/server/auth/registry', () => ({
-  sessions: { trackToken: vi.fn(async () => undefined), invalidateToken: h.invalidateToken },
+  sessions: {
+    trackToken: vi.fn(async () => undefined),
+    invalidateToken: h.invalidateToken,
+    invalidateFamily: vi.fn(async () => undefined),
+  },
 }));
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: vi.fn(async (id: number) => ({ id, username: `u${id}` })),
@@ -48,7 +52,7 @@ vi.mock('$lib/server/auth/device', async (importOriginal) => ({
 }));
 vi.mock('$lib/server/auth/session', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionModule>()),
-  getSigner: () => ({ mintSessionToken: async () => 'fresh-token' }),
+  reissueSession: async () => 'fresh-token',
   mintUserSession: async () => 'minted-token',
   setSessionCookie: vi.fn(),
   clearSession: vi.fn(),

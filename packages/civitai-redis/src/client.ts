@@ -2618,6 +2618,10 @@ export const REDIS_SYS_KEYS = {
     FAMILY_STATE: 'session:family-state',
     // `session:user-cut:${userId}` → epoch ms; tokens of that user signed before it are revoked.
     USER_CUT: 'session:user-cut',
+    // Hash `familyId → last seen (epoch ms)`, a 30-day sliding window per field.
+    FAMILY_LIVE: 'session:family-live',
+    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
+    DEVICE_FAMILIES: 'session:device-families',
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
     // Single-use identity for an in-flight authorization whose spoke is OUTSIDE the hub's cookie scope
     // (e.g. civitai.red) — `session:pending-authz:${id}` → { userId, domain }, short TTL, deleted once

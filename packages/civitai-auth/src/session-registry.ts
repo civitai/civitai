@@ -27,7 +27,15 @@ export interface SessionRegistryRedis {
   ): Promise<{ cursor: number; tuples: Array<{ field: string; value: string }> }>;
   get(key: string): Promise<string | null | undefined>;
   set(key: string, value: string, opts?: { EX?: number }): Promise<unknown>;
+  /** When present, a field and its TTL are written in one script, so the field can't outlive a failed TTL write. */
+  eval?(script: string, opts: { keys: string[]; arguments: string[] }): Promise<unknown>;
 }
+
+const SET_FIELD_WITH_TTL = `
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  redis.call('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', '1', ARGV[1])
+  return 1
+`;
 
 export type InvalidateInfo = { scope: 'token' | 'user' | 'all'; tokenId?: string; userId?: number };
 
@@ -76,6 +84,8 @@ export interface SessionRegistry {
   trackToken(tokenId: string, userId: number): Promise<void>;
   /** Mark a single session invalid (logout). */
   invalidateToken(tokenId: string, userId?: number): Promise<void>;
+  /** End every session descended from one sign-in (logout). */
+  invalidateFamily(familyId: string): Promise<void>;
   /** Mark every tracked session for a user invalid (ban). Requires redis.hGetAll. */
   invalidateUserSessions(userId: number): Promise<void>;
   /** Global cutoff — revokes every token signed before now (mass logout). */
@@ -217,6 +227,18 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
     await config.onInvalidate?.({ scope: 'token', tokenId, userId });
   }
 
+  async function invalidateFamily(familyId: string) {
+    if (redis.eval) {
+      await redis.eval(SET_FIELD_WITH_TTL, {
+        keys: [keys.familyState],
+        arguments: [familyId, 'invalid', String(markerTtl * 1000)],
+      });
+      return;
+    }
+    await redis.hSet(keys.familyState, familyId, 'invalid');
+    if (redis.hExpire) await redis.hExpire(keys.familyState, familyId, markerTtl);
+  }
+
   async function invalidateUserSessions(userId: number) {
     if (!redis.hGetAll)
       throw new Error('[@civitai/auth] invalidateUserSessions requires redis.hGetAll');
@@ -285,6 +307,7 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   return {
     trackToken,
     invalidateToken,
+    invalidateFamily,
     invalidateUserSessions,
     invalidateAll,
     markForRefresh,

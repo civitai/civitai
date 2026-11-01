@@ -17,23 +17,3 @@ export async function holdsModeratorAccess(user: {
   });
   return !!held;
 }
-
-/**
- * {@link holdsModeratorAccess} for a user id, read fresh and unioned with `alsoHeld` (e.g. a cached
- * session copy), so either source holding access counts. A missing row counts as holding it.
- */
-export async function userHoldsModeratorAccess(
-  userId: number,
-  alsoHeld?: { isModerator?: boolean | null; roles?: string[] }
-): Promise<boolean> {
-  const user = await dbWrite.user.findUnique({
-    where: { id: userId },
-    select: { isModerator: true, roles: { select: { role: true } } },
-  });
-  if (!user) return true;
-  const roles = new Set([...user.roles.map(({ role }) => role), ...(alsoHeld?.roles ?? [])]);
-  return holdsModeratorAccess({
-    isModerator: user.isModerator || !!alsoHeld?.isModerator,
-    roles: [...roles],
-  });
-}

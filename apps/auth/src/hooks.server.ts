@@ -1,16 +1,35 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
-import { SESSION_COOKIE } from '$lib/server/auth/session';
+import type { SessionClaims, SessionUser } from '@civitai/auth';
+import { reissueSession, SESSION_COOKIE, setSessionCookie } from '$lib/server/auth/session';
+import { acceptHubSession } from '$lib/server/auth/lineage';
 import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
 import { isAdminRequest, isHubAdmin } from '$lib/server/auth/admin';
 import { isHubPageRequest, isTrustedSessionCaller } from '$lib/server/auth/same-origin';
 import { authS2sRequestsTotal, unhandledErrorsTotal } from '$lib/server/metrics';
-import { getDeviceId } from '$lib/server/auth/device';
+import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { callerShape, readInternalCaller } from '$lib/server/auth/s2s';
 import { logAxiomError } from '$lib/server/axiom';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+const UPDATE_AGE_MS = (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60) * 1000;
+
+// The hub's own cookie is re-signed on a page navigation once it is older than UPDATE_AGE, as spokes roll theirs.
+// Impersonation sessions are left to run out.
+function shouldRoll(request: Request, claims: SessionClaims, user: SessionUser | undefined) {
+  return (
+    request.method === 'GET' &&
+    request.headers.get('sec-fetch-mode') === 'navigate' &&
+    !!claims.jti &&
+    claims.impersonatedBy == null &&
+    !!user &&
+    !user.bannedAt &&
+    !user.deletedAt &&
+    Date.now() - (claims.signedAt ?? 0) >= UPDATE_AGE_MS
+  );
+}
 
 // Session-acting routes, each with the callers it accepts. SvelteKit's form-origin check is off app-wide (see
 // svelte.config.js), so these carry their own. Consent approval is body-dependent and checked in its route.
@@ -92,11 +111,17 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (token) {
     const claims = await verifier.verifyToken(token).catch(() => null);
     const userId = Number(claims?.sub);
-    if (claims && Number.isFinite(userId)) {
+    if (claims && Number.isFinite(userId) && (internal || (await acceptHubSession(claims)))) {
       event.locals.user = (await getOrProduceSessionUser(userId).catch(() => null)) ?? undefined;
+      event.locals.session = claims;
       event.locals.tokenId = claims.jti;
       // Impersonation (F): the moderator's id, if this is an impersonation session — read by the exit route.
       event.locals.impersonatedBy = claims.impersonatedBy;
+      if (!internal && shouldRoll(event.request, claims, event.locals.user)) {
+        const fresh = await reissueSession(claims, userId, claims.jti!).catch(() => null);
+        if (fresh) setSessionCookie(event.cookies, fresh);
+        if (fresh && event.locals.deviceId) await touchAccount(event.locals.deviceId, userId);
+      }
     }
   }
 

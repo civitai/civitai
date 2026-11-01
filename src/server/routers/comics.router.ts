@@ -130,6 +130,7 @@ import {
 } from '~/server/services/image-url-ownership';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import {
+  assertGenerationInputsUsable,
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
 } from '~/server/services/generation-input-urls';
@@ -2124,6 +2125,12 @@ export const comicsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: [input?.sourceImage?.url, ...(input?.userReferenceImages ?? []).map((r) => r.url)],
+        userId: ctx.user.id,
+        entry: 'comicsCostEstimate',
+        isApiCaller: ctx.apiKeyId != null,
+      });
       try {
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         const modelConfig = getComicModelConfig(input?.baseModel);
