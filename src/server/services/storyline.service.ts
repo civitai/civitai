@@ -699,6 +699,13 @@ export async function getPendingChapterForPost({
     },
   });
   if (!link || (link.userId !== userId && !isModerator)) return null;
+  // The parent already has a main-path chapter, so this one starts a branch, as of now.
+  const startsBranch = link.parentChapter
+    ? !!(await dbWrite.storylineChapterEdge.findFirst({
+        where: { parentChapterId: link.parentChapter.id, canon: true },
+        select: { chapterId: true },
+      }))
+    : false;
   const { minorByScan, tosViolation, ...storyline } = link.storyline;
   return {
     postId: link.postId,
@@ -710,7 +717,7 @@ export async function getPendingChapterForPost({
     },
     // Null for chapter 1. `depth` is the parent's first-parent depth; on a route that reaches the
     // parent another way its number can differ (see `onRoute`).
-    parentChapter: link.parentChapter,
+    parentChapter: link.parentChapter && { ...link.parentChapter, startsBranch },
   };
 }
 

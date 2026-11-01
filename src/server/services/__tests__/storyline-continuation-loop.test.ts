@@ -316,6 +316,18 @@ describe('the storyline continuation loop', () => {
     expect(db.row('placement', { id })).toMatchObject({ status: 'approved', resolvedById: OWNER });
   });
 
+  // The owner is told, before accepting, whether it joins the main path or starts a branch.
+  it("tells the owner's queue whether accepting starts a branch", async () => {
+    const queue = async () =>
+      (await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS })).items;
+    await submit(STRANGER, STRANGER_POST);
+    expect((await queue()).map((item) => item.startsBranch)).toEqual([false]);
+
+    // A collaborator's chapter takes the main path out of chapter 1 first.
+    await submit(COLLABORATOR, COLLABORATOR_POST);
+    expect((await queue()).map((item) => item.startsBranch)).toEqual([true]);
+  });
+
   it('orders an endorsed chapter before a community one', async () => {
     // The first approved one takes the main path; the order is about the paths after it.
     for (const postId of [STRANGER_POST, ANOTHER_STRANGER_POST]) {

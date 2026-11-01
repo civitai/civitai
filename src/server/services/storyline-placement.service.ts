@@ -997,6 +997,7 @@ export async function getPendingStorylineContinuations({
     dbRead.storylineChapter.findMany({
       where: { postId: { in: parentIds } },
       select: {
+        id: true,
         postId: true,
         storyline: {
           select: {
@@ -1023,6 +1024,17 @@ export async function getPendingStorylineContinuations({
       },
     ])
   );
+  // Parents that already have a main-path chapter: approving under one starts a branch.
+  const canonEdges = chapters.length
+    ? await dbRead.storylineChapterEdge.findMany({
+        where: { parentChapterId: { in: chapters.map((chapter) => chapter.id) }, canon: true },
+        select: { parentChapterId: true },
+      })
+    : [];
+  const withCanon = new Set(canonEdges.map((edge) => edge.parentChapterId));
+  const branchParents = new Set(
+    chapters.filter((chapter) => withCanon.has(chapter.id)).map((chapter) => chapter.postId)
+  );
 
   const items: StorylineContinuationQueueItem[] = [];
   for (const row of rows) {
@@ -1040,6 +1052,8 @@ export async function getPendingStorylineContinuations({
       post: toPostSummary(post, domainLevels),
       parentPost: toPostSummary(parentPost, domainLevels),
       storyline,
+      // As of this read; approval decides.
+      startsBranch: branchParents.has(row.targetId),
     });
   }
   return { items, nextCursor };

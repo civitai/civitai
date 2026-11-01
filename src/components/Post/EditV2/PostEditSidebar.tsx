@@ -198,6 +198,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           if (result?.storyline) {
             const { link, message, ...said } = storylinePublishMessage(result.storyline, {
               chapterNumber: storylineChapterNumber,
+              startsBranch: storylineDraft?.parentChapter?.startsBranch,
             });
             showNotification({
               ...said,
