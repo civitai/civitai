@@ -404,8 +404,10 @@ describe('startDevTunnel', () => {
     expect(appliedIr.spec.routes[0].services[0].port).toBe(80);
     expect(appliedIr.spec.routes[0].middlewares[0].namespace).toBe('apps-dev-tunnel');
     expect(mockWaitForApplyJob).toHaveBeenCalledTimes(1);
-    // persisted the 4 index keys (cred/session/host/user-block)
-    expect(sysRedis.set).toHaveBeenCalledTimes(4);
+    // persisted the 3 record keys (cred/session/host) with SET; the user-block pointer is written
+    // by the listing script, with the ban index, and names this session
+    expect(sysRedis.set).toHaveBeenCalledTimes(3);
+    expect(sysRedis._store.get('system:blocks:dev-tunnel:user:555:my-app')).toBe('bki_testsession');
     // the credential is keyed by pubkey fingerprint (sish authz lookup index)
     const credKeys = [...sysRedis._store.keys()].filter((k) => k.includes(':cred:'));
     expect(credKeys.length).toBe(1);
