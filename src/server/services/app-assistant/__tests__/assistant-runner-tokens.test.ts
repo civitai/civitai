@@ -25,9 +25,6 @@ function testKeyPair() {
 const keys = testKeyPair();
 const GRANT = { userId: 42, conversationId: 'c-1', idempotencyKey: 'k-1' };
 
-/** The steps of a Restart preview before its tunnel's start: the app's wait, maybe a dev server. */
-const SETUP_MS = 2 * 60_000;
-
 /**
  * An `export const` of the runner's, evaluated from its source (the runner and this app share no
  * code): a numeric literal, or a sum of literals and other such constants.
@@ -36,6 +33,7 @@ function runnerConstant(name: string): number {
   const root = path.resolve(__dirname, '../../../../..');
   const source = [
     'apps/assistant-runner/src/app-assistant/preview-restart.ts',
+    'apps/assistant-runner/src/app-assistant/preview.ts',
     'apps/assistant-runner/src/app-assistant/dev-tunnel.ts',
     'apps/assistant-runner/src/app-assistant/sandbox.ts',
     'apps/assistant-runner/src/minter.ts',
@@ -104,15 +102,15 @@ describe('the runner’s credentials, as the runner reads them', () => {
   });
 
   it('a preview grant is still good at the end of the slowest Restart preview the runner makes', async () => {
-    // Every call of a Restart preview is made with this grant: up to `SETUP_MS` of steps before
-    // the tunnel's start, then the runner's `TUNNEL_START_BUDGET_MS` (the start, a token mint, the
-    // sandbox's connect, the stop). A grant that ran out before the last of them leaves civitai a
-    // tunnel nothing connects to and nothing can close. The budget is read from the runner's own
-    // source, so a change to it on either side goes red here.
+    // Every call of a Restart preview is made with this grant: the steps before the tunnel's
+    // start (waiting for an app the page just started, then maybe its dev server), then the
+    // runner's `TUNNEL_START_BUDGET_MS`. All are read from the runner's own source, so raising
+    // any of them on that side, or shortening the grant on this one, goes red here.
+    const setup = runnerConstant('RESTART_WAIT_MS') + runnerConstant('DEV_SERVER_WAIT_MS');
     const budget = runnerConstant('TUNNEL_START_BUDGET_MS');
     expect(budget).toBeGreaterThan(0);
     const { token } = await signRunGrant({ ...GRANT, use: 'preview' });
-    vi.useFakeTimers({ now: Date.now() + SETUP_MS + budget, toFake: ['Date'] });
+    vi.useFakeTimers({ now: Date.now() + setup + budget, toFake: ['Date'] });
     try {
       expect(await verifyRunGrant(token)).toMatchObject({ userId: 42, use: 'preview' });
     } finally {
