@@ -31,6 +31,47 @@ export function teamPositionsOverTime(history: TeamHistory[]) {
   return history.map(({ team }) => ({ team, positions: positions.get(team)! }));
 }
 
+export type StandingsPoint = { x: number; y: number };
+export type StandingsSeries = { team: string; points: StandingsPoint[] };
+
+/**
+ * The chart's series per team: the hourly history, ended at the live total (points) or live rank
+ * (positions) stamped `now` while the totals are live, so a line ends at the number beside it.
+ * Nothing is added when it would repeat the last history value.
+ */
+export function buildStandingsSeries({
+  mode,
+  history,
+  teams,
+  liveTotals,
+  now,
+}: {
+  mode: 'points' | 'position';
+  history: TeamHistory[];
+  teams: { team: string; score: number; rank: number }[];
+  liveTotals: boolean;
+  now: number;
+}): StandingsSeries[] {
+  const series: StandingsSeries[] =
+    mode === 'points'
+      ? history.map(({ team, scores }) => ({
+          team,
+          points: scores.map((s) => ({ x: s.date.getTime(), y: s.score })),
+        }))
+      : teamPositionsOverTime(history).map(({ team, positions }) => ({
+          team,
+          points: positions.map((p) => ({ x: p.date.getTime(), y: p.position })),
+        }));
+  if (!liveTotals) return series;
+  return series.map(({ team, points }) => {
+    const live = teams.find((t) => t.team === team);
+    if (!live) return { team, points };
+    const y = mode === 'points' ? live.score : live.rank;
+    if (points.at(-1)?.y === y) return { team, points };
+    return { team, points: [...points, { x: now, y }] };
+  });
+}
+
 const ENTITY_NOUNS: Record<string, string> = {
   Image: 'images',
   Model: 'models',

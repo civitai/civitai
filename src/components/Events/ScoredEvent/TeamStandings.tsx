@@ -15,8 +15,8 @@ import { Line } from 'react-chartjs-2';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import {
+  buildStandingsSeries,
   EVENT_CARD_SURFACE,
-  teamPositionsOverTime,
 } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -49,27 +49,25 @@ export function TeamStandings({
   const hatOf = (team: string) => standings.teamHats.find((h) => h.team === team)?.url;
   const charted = standings.history.some((h) => h.scores.length);
 
-  const data = useMemo(() => {
-    if (mode === 'points')
-      return {
-        datasets: standings.history.map(({ team, scores }) => ({
-          label: team,
-          data: scores.map((s) => ({ x: s.date.getTime(), y: s.score })),
-          borderColor: teamColor(team),
-          backgroundColor: teamColor(team),
-          borderWidth: team === myTeam ? 4 : 2,
-        })),
-      };
-    return {
-      datasets: teamPositionsOverTime(standings.history).map(({ team, positions }) => ({
+  // `teams` changes with every live push, so the tip is re-stamped then.
+  const data = useMemo(
+    () => ({
+      datasets: buildStandingsSeries({
+        mode,
+        history: standings.history,
+        teams: standings.teams,
+        liveTotals: !!standings.liveTotals,
+        now: Date.now(),
+      }).map(({ team, points }) => ({
         label: team,
-        data: positions.map((p) => ({ x: p.date.getTime(), y: p.position })),
+        data: points,
         borderColor: teamColor(team),
         backgroundColor: teamColor(team),
         borderWidth: team === myTeam ? 4 : 2,
       })),
-    };
-  }, [mode, standings.history, teamColor, myTeam]);
+    }),
+    [mode, standings.history, standings.teams, standings.liveTotals, teamColor, myTeam]
+  );
 
   const options = useMemo<ChartOptions<'line'>>(
     () => ({
@@ -106,9 +104,12 @@ export function TeamStandings({
         color={myTeam && teamColor(myTeam)}
         subtitle={
           <>
-            {standings.liveTotals ? 'Points live · graph updated hourly' : 'Updated hourly'} · last
-            update{' '}
-            {standings.updatedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+            {standings.liveTotals
+              ? 'Points live'
+              : `Updated hourly · last update ${standings.updatedAt.toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}`}
           </>
         }
       />
