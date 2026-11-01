@@ -13,6 +13,7 @@ import type * as NotificationService from '~/server/services/notification.servic
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
 
 const {
@@ -99,6 +100,7 @@ import {
   removePendingChapter,
   removeStorylineCollaborator,
   acceptStorylineInvite,
+  assertCanContinueStoryline,
   assertStorylineVisible,
   setCanonChapter,
   updateStoryline,
@@ -120,6 +122,20 @@ const r = dbMock.dbRead;
 const tx = w as never;
 
 const notBanned = { bannedAt: null, deletedAt: null };
+/** Chapter 1 as a public storyline has it: published, rated and not taken down. */
+const shownRootChapters = [
+  {
+    id: 1,
+    postId: 101,
+    removedAt: null,
+    post: {
+      nsfwLevel: NsfwLevel.PG,
+      publishedAt: new Date(0),
+      tosViolation: false,
+      user: notBanned,
+    },
+  },
+];
 
 const storylineRow = (overrides: Record<string, unknown> = {}) => ({
   id: 10,
@@ -209,6 +225,7 @@ describe('writeChapterEdgeForPlacement', () => {
       maxNsfwLevel: NsfwLevel.R,
       tosViolation: false,
       whoCanContinue: 'Anyone',
+      chapters: shownRootChapters,
     },
   };
 
@@ -560,6 +577,7 @@ describe('linkPendingChapter', () => {
               minorByScan: false,
               tosViolation: false,
               whoCanContinue: 'Anyone',
+              chapters: shownRootChapters,
               ...storyline,
             },
           }
@@ -1376,6 +1394,65 @@ describe('a storyline whose chapter 1 keeps it from the public', () => {
           ).resolves.toMatchObject({ rootHiddenReason: reason });
           await expect(assertStorylineVisible(10, viewer, PG), name).resolves.toBeDefined();
         }
+      }
+    );
+  });
+
+  // Continuing reaches the storyline by a chapter-2+ post, which stays public: refused as for a
+  // post that is no chapter, the price and the submit would otherwise show it exists.
+  describe('continuing it', () => {
+    const LIVE_CHAPTER_AUTHOR = 7;
+    const parentFor = (rootOverrides: Record<string, unknown>) => {
+      w.storylineChapter.findUnique.mockResolvedValue({
+        id: 1005,
+        storylineId: 10,
+        depth: 4,
+        userId: AUTHOR_OF_POSTS,
+        removedAt: null,
+        storyline: {
+          userId: OWNER,
+          maxNsfwLevel: NsfwLevel.R,
+          minorByScan: false,
+          tosViolation: false,
+          whoCanContinue: 'Anyone',
+          chapters: [root(rootOverrides)],
+        },
+      } as never);
+      w.storylineCollaborator.findUnique.mockImplementation((({ where }: never) =>
+        Promise.resolve(
+          (where as { storylineId_userId: { userId: number } }).storylineId_userId.userId ===
+            PARTICIPANT
+            ? { acceptedAt: new Date() }
+            : null
+        )) as never);
+      // The query asks for a chapter that is not removed; the fake answers only for its author.
+      w.storylineChapter.findFirst.mockImplementation((({ where }: never) =>
+        Promise.resolve(
+          (where as { userId: number; removedAt: null }).userId === LIVE_CHAPTER_AUTHOR &&
+            (where as { removedAt: unknown }).removedAt === null
+            ? { id: 1006 }
+            : null
+        )) as never);
+    };
+    const attempt = (placerId: number) => assertCanContinueStoryline({ parentPostId: 5, placerId });
+
+    it('is open to anyone while chapter 1 is shown', async () => {
+      parentFor({});
+      await expect(attempt(STRANGER)).resolves.toMatchObject({ storylineId: 10 });
+    });
+
+    it.each(cases)(
+      'when %s, refuses a stranger or a signed-out price check as no chapter, and not insiders',
+      async (_n, overrides) => {
+        parentFor(overrides);
+        for (const placerId of [STRANGER, 0])
+          await expect(attempt(placerId), `user ${placerId}`).rejects.toMatchObject({
+            message: STORYLINE_REFUSALS.notAChapter,
+          });
+        for (const placerId of [OWNER, PARTICIPANT, LIVE_CHAPTER_AUTHOR])
+          await expect(attempt(placerId), `user ${placerId}`).resolves.toMatchObject({
+            storylineId: 10,
+          });
       }
     );
   });
@@ -3084,6 +3161,7 @@ describe('a chapter whose placement was removed', () => {
                 maxNsfwLevel: NsfwLevel.R,
                 tosViolation: false,
                 whoCanContinue: 'Anyone',
+                chapters: shownRootChapters,
               },
             }
           : null
@@ -4321,12 +4399,16 @@ describe('title moderation', () => {
         TemplateStringsArray,
         ...unknown[]
       ];
-      const { sql } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
-      expect(sql.replace(/\s+/g, ' ')).toContain(
+      const { sql, values: bound } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+      const text = sql.replace(/\s+/g, ' ');
+      const level =
         `OR ((SELECT ${raiseNsfwLevelText('lv.l', 'lv.f')} ` +
-          `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ?), st."maxNsfwLevel") AS l, ` +
-          `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv) & ?::int) <> 0)`
-      );
+        `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ?), st."maxNsfwLevel") AS l, ` +
+        `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv) & ?::int) <> 0)`;
+      expect(text).toContain(level);
+      // A wholly Blocked chapter 1 falls back to the ceiling, as an unrated one does.
+      const at = text.slice(0, text.indexOf(level) + level.indexOf('?')).split('?').length - 1;
+      expect(bound[at]).toBe(NsfwLevel.Blocked);
     });
   });
 

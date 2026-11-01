@@ -285,7 +285,7 @@ function isStorylineHidden(
 
 /**
  * Of these storylines, the ones this viewer participates in: an accepted collaborator, or the
- * author of any chapter in it. Read only for storylines whose chapter 1 would hide them from the
+ * author of a chapter in it that is not removed. Read only for storylines whose chapter 1 would hide them from the
  * viewer, so most reads make no query.
  */
 async function getParticipatingStorylineIds(
@@ -308,6 +308,7 @@ async function getParticipatingStorylineIds(
     UNION
     SELECT c."storylineId" FROM "StorylineChapter" c
     WHERE c."userId" = ${viewer.id} AND c."storylineId" = ANY(${ids}::int[])
+      AND c."removedAt" IS NULL
   `;
   return new Set(rows.map((row) => row.storylineId));
 }
@@ -646,6 +647,7 @@ export async function assertCanContinueStoryline(
           minorByScan: true,
           tosViolation: true,
           whoCanContinue: true,
+          chapters: storylineRootChapterSelect,
         },
       },
     },
@@ -654,19 +656,29 @@ export async function assertCanContinueStoryline(
     throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
   const ownerId = parent.storyline.userId;
-  const [ownerBlocked, authorBlocked, collaborator] = await Promise.all([
+  const isOwner = placerId === ownerId;
+  const [ownerBlocked, authorBlocked, collaborator, liveChapter] = await Promise.all([
     isBlockedPair(db, ownerId, placerId),
     isBlockedPair(db, parent.userId, placerId),
     db.storylineCollaborator.findUnique({
       where: { storylineId_userId: { storylineId: parent.storylineId, userId: placerId } },
       select: { acceptedAt: true },
     }),
+    !isOwner && rootHiddenReason(parent.storyline.chapters[0])
+      ? db.storylineChapter.findFirst({
+          where: { storylineId: parent.storylineId, userId: placerId, removedAt: null },
+          select: { id: true },
+        })
+      : null,
   ]);
+  const isCollaborator = !isOwner && !!collaborator?.acceptedAt;
+  // Hidden by its chapter 1, the storyline is as absent to a non-participant here as on its page
+  // (`isStorylineHidden`): the same refusal as a post that is no chapter, so neither the price
+  // nor the submit tells them it exists.
+  if (!isOwner && rootHiddenReason(parent.storyline.chapters[0]) && !isCollaborator && !liveChapter)
+    throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
   if (ownerBlocked || authorBlocked)
     throw throwBadRequestError('Continuations are not available on this chapter');
-
-  const isOwner = placerId === ownerId;
-  const isCollaborator = !isOwner && !!collaborator?.acceptedAt;
   if (parent.storyline.whoCanContinue === 'Collaborators' && !isOwner && !isCollaborator)
     throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
 
@@ -3980,7 +3992,7 @@ export async function getStorylinesInfinite({
         )
         OR EXISTS (
           SELECT 1 FROM "StorylineChapter" pch
-          WHERE pch."storylineId" = st.id AND pch."userId" = ${viewerId}
+          WHERE pch."storylineId" = st.id AND pch."userId" = ${viewerId} AND pch."removedAt" IS NULL
         ))))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];

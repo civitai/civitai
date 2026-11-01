@@ -35,6 +35,19 @@ const givenStoryline = (status: 'Ongoing' | 'Complete') =>
       maxNsfwLevel: 4,
       whoCanContinue: 'Anyone',
       user: { username: 'o' },
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: 1,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     },
   });
 
