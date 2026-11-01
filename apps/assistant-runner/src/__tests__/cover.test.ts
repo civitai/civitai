@@ -21,6 +21,12 @@ import {
 import { OrchestrationClient } from '../orchestration';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
+/** The chat's call context; the tool reads only its signal. */
+const CALL_CONTEXT = {
+  signal: new AbortController().signal,
+  conversationId: 'c-cover',
+  files: [],
+} as never;
 // TEST-ONLY placeholders: never real credentials or hosts.
 const CIVITAI = 'https://civitai.example';
 const SECRET = 'test-only-runner-secret-cover';
@@ -45,7 +51,7 @@ function setup(listing: CoverListing | null = LISTING) {
     tool,
     listings,
     estimator,
-    call: (input: Record<string, unknown>) => Promise.resolve(tool.execute(input)),
+    call: (input: Record<string, unknown>) => Promise.resolve(tool.execute(input, CALL_CONTEXT)),
   };
 }
 
@@ -175,7 +181,7 @@ describe('the cover’s price on the run’s chat token', () => {
         })[GENERATE_APP_COVER]!,
       };
     })();
-    await expect(Promise.resolve(tool.execute({ prompt: 'a' }))).rejects.toThrow(
+    await expect(Promise.resolve(tool.execute({ prompt: 'a' }, CALL_CONTEXT))).rejects.toThrow(
       COVER_PRICE_UNREADABLE
     );
   });
