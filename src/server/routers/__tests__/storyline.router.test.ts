@@ -188,6 +188,26 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
   });
 });
 
+// A profile's Storylines tab is this feed narrowed to one owner, under the feed's own gates.
+describe("storyline router: the feed narrowed to one owner's storylines", () => {
+  const ownerClauses = async (input: { userId?: number }) => {
+    r.$queryRaw.mockReset();
+    r.$queryRaw.mockResolvedValue([] as never);
+    await callerFor(READER).getInfinite({ filter: 'all', sort: 'newest', ...input });
+    const [strings, ...values] = r.$queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const composed = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return (composed.sql.match(/st\."userId" = \?/g) ?? []).length;
+  };
+
+  it('adds the owner to the feed query, and only when asked', async () => {
+    const without = await ownerClauses({});
+    expect(await ownerClauses({ userId: OWNER })).toBe(without + 1);
+  });
+});
+
 describe('storyline router: flag', () => {
   it('refuses a reader without the storylines flag', async () => {
     r.storyline.findUnique.mockResolvedValue(xStory as never);
