@@ -666,6 +666,15 @@ beforeEach(() => {
   });
   dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: SUBJECT_ID });
   dbMock.dbRead.user.findUnique.mockReset().mockResolvedValue({ id: 77, deletedAt: null });
+  // Only the submit's restriction read gets a row; every other route's user read stays empty.
+  dbMock.dbWrite.user.findUnique.mockReset().mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : null) as never);
   h.grantedScopes = [];
   env.APP_BLOCK_OAUTH_TOKENS_ENABLED = false;
 });

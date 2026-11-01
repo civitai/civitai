@@ -258,6 +258,15 @@ const caller = () => blocksRouter.createCaller(fakeCtx() as never);
 const REFUSED = { allowed: false as const, retryAfterSeconds: 7 };
 
 beforeEach(() => {
+  // Only the submit's account-restriction read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   for (const fn of [
     mockVerifyBlockToken,
     mockParseSubjectUserId,

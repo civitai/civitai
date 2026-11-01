@@ -296,6 +296,21 @@ describe('PHASE 3 private-run mint — the grant path [REG]', () => {
     }
   });
 
+  it('a restricted viewer mints without the spend scope or a budget', async () => {
+    mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'owner',
+      block: BLOCK(),
+      viewerMuted: true,
+    });
+    const res = await invoke(BODY());
+    expect(res._status).toBe(200);
+    const signed = mockTokenService.sign.mock.calls[0][0];
+    expect(signed.scopes).not.toContain('ai:write:budgeted');
+    expect(signed.scopes).toContain('models:read:self');
+    expect(signed.buzzBudget).toBeUndefined();
+  });
+
   it('SCOPES come from the approved SNAPSHOT through the private-run clamp', async () => {
     // The manifest here declares MORE than the snapshot; only the snapshot may reach
     // the token, and only after the clamp.

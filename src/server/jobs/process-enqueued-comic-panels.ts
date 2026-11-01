@@ -100,16 +100,24 @@ export const processEnqueuedComicPanelsJob = createJob(
       const firstPanel = userPanels[0];
       const user = firstPanel.chapter.project.user;
 
-      // Skip deleted or banned users — this job bypasses tRPC auth middleware
-      if (user.deletedAt || user.bannedAt) {
-        log(`User ${userId}: Skipping — account is ${user.deletedAt ? 'deleted' : 'banned'}`);
+      // This job bypasses tRPC auth middleware. Failed rather than left Enqueued: the fetch window
+      // above is shared, and panels that never leave it would starve everyone queued behind them.
+      const refusal = user.deletedAt
+        ? 'deleted'
+        : user.bannedAt
+        ? 'banned'
+        : user.muted
+        ? 'restricted'
+        : null;
+      if (refusal) {
+        log(`User ${userId}: Skipping — account is ${refusal}`);
         // Mark their panels as failed so they don't get retried
         for (const panel of userPanels) {
           await dbWrite.comicPanel.update({
             where: { id: panel.id },
             data: {
               status: ComicPanelStatus.Failed,
-              errorMessage: `User account is ${user.deletedAt ? 'deleted' : 'banned'}`,
+              errorMessage: `User account is ${refusal}`,
             },
           });
           totalFailed++;

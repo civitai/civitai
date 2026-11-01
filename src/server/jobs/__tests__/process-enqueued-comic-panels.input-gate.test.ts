@@ -40,7 +40,7 @@ const CDN = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=tr
 type Panel = { id: number; status: ComicPanelStatus; errorMessage?: string };
 let panels: Panel[];
 
-function givenPanel(url: string) {
+function givenPanel(url: string, owner: Record<string, unknown> = {}) {
   panels = [{ id: 1, status: ComicPanelStatus.Enqueued }];
   dbMock.dbRead.comicPanel.findMany.mockImplementation((async () =>
     panels
@@ -55,7 +55,14 @@ function givenPanel(url: string) {
         chapter: {
           project: {
             userId: OWNER,
-            user: { id: OWNER, deletedAt: null, bannedAt: null, isModerator: false },
+            user: {
+              id: OWNER,
+              deletedAt: null,
+              bannedAt: null,
+              muted: false,
+              isModerator: false,
+              ...owner,
+            },
           },
         },
       }))) as never);
@@ -126,5 +133,18 @@ describe('process-enqueued-comic-panels: reference image re-check', () => {
     await run();
     expect(h.submitPresetImageGen).toHaveBeenCalledTimes(1);
     expect(panels[0].status).toBe(ComicPanelStatus.Generating);
+  });
+});
+
+describe('process-enqueued-comic-panels: account restriction', () => {
+  it("fails a muted owner's queued panel without submitting it", async () => {
+    givenPanel(CDN, { muted: true });
+    givenPrivateImageOf(OWNER);
+    await run();
+    expect(panels[0]).toMatchObject({
+      status: ComicPanelStatus.Failed,
+      errorMessage: 'User account is restricted',
+    });
+    expect(h.submitPresetImageGen).not.toHaveBeenCalled();
   });
 });
