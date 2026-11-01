@@ -18,10 +18,11 @@ import type * as UnionTransformer from '~/shared/utils/trpc-union-transformer';
  * state `trpcState` was serialised from (patches/@trpc__next@11.17.0.patch), instead of having
  * `withTRPC` parse the string the same request just wrote. Everything here goes through the real
  * `createServerSideProps` and the real `trpc.withTRPC`; only the router, the session layer and the
- * flag are stubbed.
+ * flag are stubbed. Outside production the handed-over state is deep-frozen, so a render that
+ * writes into query data in place throws instead of changing an object a cache may share.
  */
 
-const { flags, writer, probeData } = vi.hoisted(() => {
+const { flags, writer, hub, probeData } = vi.hoisted(() => {
   // Everything a devalue write can carry that JSON cannot.
   const probeData = (tag: string) => {
     const shared = { tag, role: 'shared' };
@@ -39,8 +40,9 @@ const { flags, writer, probeData } = vi.hoisted(() => {
     };
   };
   return {
-    flags: { skipReparse: false },
+    flags: { skipReparse: false, entities: [] as (string | undefined)[] },
     writer: { devalue: true },
+    hub: { session: null as null | { user: Record<string, unknown> } },
     probeData,
   };
 });
@@ -49,7 +51,7 @@ vi.mock('~/server/auth/bearer-token', () => ({
   getSessionFromBearerToken: vi.fn(async () => null),
 }));
 vi.mock('~/server/auth/session-client', () => ({
-  getHubSession: vi.fn(async () => null),
+  getHubSession: vi.fn(async () => hub.session),
   maybeRollHubCookie: vi.fn(async () => undefined),
   maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
@@ -62,8 +64,11 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
-    isFliptSync: (flag: string, ...rest: [string?, Record<string, string>?]) =>
-      flag === 'ssr-skip-trpcstate-reparse' ? flags.skipReparse : actual.isFliptSync(flag, ...rest),
+    isFliptSync: (flag: string, ...rest: [string?, Record<string, string>?]) => {
+      if (flag !== 'ssr-skip-trpcstate-reparse') return actual.isFliptSync(flag, ...rest);
+      flags.entities.push(rest[0]);
+      return flags.skipReparse;
+    },
   };
 });
 // The SSR pool's dehydrate writer, switchable between devalue (`TRPC_WRITE_DEVALUE=true`) and
@@ -79,12 +84,17 @@ vi.mock('~/shared/utils/trpc-union-transformer', async (importOriginal) => {
 });
 vi.mock('~/server/routers', async () => {
   const { publicProcedure, router } = await import('~/server/trpc');
+  // A real source that hands every request the same object: an in-process cache of parsed files.
+  const { getStaticContent } = await import('~/server/services/content.service');
   return {
     appRouter: router({
       probe: router({
         page: publicProcedure
           .input((value) => value as { tag: string })
           .query(({ input }) => probeData(input.tag)),
+        content: publicProcedure
+          .input((value) => value as { slug: string[] })
+          .query(({ input, ctx }) => getStaticContent({ slug: input.slug, ctx })),
       }),
     }),
   };
@@ -95,7 +105,12 @@ const { createServerSideProps, SSR_DEHYDRATED_STATE } = await import(
 );
 const { unionDeserialize } = await import('~/shared/utils/trpc-union-transformer');
 
-type Ssg = { probe: { page: { prefetch: (input: { tag: string }) => Promise<void> } } };
+type Ssg = {
+  probe: {
+    page: { prefetch: (input: { tag: string }) => Promise<void> };
+    content: { prefetch: (input: { slug: string[] }) => Promise<void> };
+  };
+};
 type PageProps = Record<PropertyKey, unknown> & { trpcState?: unknown; tag?: string };
 type Dehydrated = { queries: { state: { data: unknown } }[] };
 
@@ -105,7 +120,9 @@ const makePage = (prefetch: 'once' | 'always') =>
     prefetch,
     resolver: async ({ ssg, ctx }) => {
       const tag = String(ctx.query.tag);
-      if (ssg) await (ssg as unknown as Ssg).probe.page.prefetch({ tag });
+      const probe = (ssg as unknown as Ssg | undefined)?.probe;
+      if (tag.startsWith('content:')) await probe?.content.prefetch({ slug: [tag.slice(8)] });
+      else await probe?.page.prefetch({ tag });
       return { props: { tag } };
     },
   });
@@ -132,13 +149,14 @@ async function loadTrpcSideReactQuery(): Promise<typeof ReactQuery> {
 }
 
 /** Server-render the page props the way Next does: through `_app`'s `trpc.withTRPC`. */
-async function render(gsspProps: PageProps) {
+async function render(gsspProps: PageProps, writeDuringRender?: (data: unknown) => void) {
   const { trpc } = await import('~/utils/trpc');
   const { useQueryClient } = await loadTrpcSideReactQuery();
   const seen: { client?: QueryClient } = {};
   function Probe() {
     const client = useQueryClient();
     seen.client = client;
+    writeDuringRender?.(client.getQueryCache().getAll()[0]?.state.data);
     const rows = client
       .getQueryCache()
       .getAll()
@@ -166,10 +184,13 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-01-02T03:04:05.000Z'));
   flags.skipReparse = false;
+  flags.entities = [];
   writer.devalue = true;
+  hub.session = null;
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 describe('ssr-skip-trpcstate-reparse', () => {
@@ -270,5 +291,113 @@ describe('ssr-skip-trpcstate-reparse', () => {
     expect(typeof on.trpcState).toBe('string');
     expect(rawState(on)).toBeUndefined();
     expect(JSON.stringify(on)).toBe(JSON.stringify(off));
+  });
+});
+
+type ProbeData = Exclude<ReturnType<typeof probeData>, { instance: unknown }>;
+type StaticContent = { title: string; lastmod?: Date; content: string };
+const stateData = (props: PageProps) => rawState(props)?.queries[0].state.data;
+
+describe('the freeze guard on the handed-over state', () => {
+  it('turns an in-place write during the server render into a TypeError', async () => {
+    flags.skipReparse = true;
+    const props = await load('alpha');
+    expect(Object.isFrozen(stateData(props))).toBe(true);
+
+    const writes: [string, (data: ProbeData) => unknown][] = [
+      ['a property', (data) => (data.tag = 'changed')],
+      ['a nested array', (data) => (data.nested.list as unknown[]).push(2)],
+      ['a shared reference', (data) => (data.second.role = 'changed')],
+      ['a Date', (data) => data.at.setFullYear(1999)],
+      ['a nested Date', (data) => (data.nested.list[2] as { when: Date }).when.setTime(0)],
+      ['a Map', (data) => data.byTag.set('x', 1)],
+      ['a Set', (data) => data.tags.add('x')],
+    ];
+    for (const [what, write] of writes) {
+      await expect(
+        render(props, (data) => write(data as ProbeData)),
+        `writing ${what}`
+      ).rejects.toThrow(TypeError);
+    }
+    expect(stateData(props)).toStrictEqual(probeData('alpha'));
+  });
+
+  it('is off on a production server unless SSR_TRPCSTATE_FREEZE=1', async () => {
+    flags.skipReparse = true;
+    vi.stubEnv('NODE_ENV', 'production');
+    const unguarded = await load('alpha');
+    vi.stubEnv('SSR_TRPCSTATE_FREEZE', '1');
+    const optedIn = await load('alpha');
+    vi.unstubAllEnvs();
+
+    expect(Object.isFrozen(stateData(unguarded))).toBe(false);
+    const { data } = await render(unguarded, (value) => {
+      (value as ProbeData).tag = 'changed';
+    });
+    expect(data.tag, 'without the guard the write goes through').toBe('changed');
+    await expect(
+      render(optedIn, (value) => {
+        (value as ProbeData).tag = 'changed';
+      })
+    ).rejects.toThrow(TypeError);
+  });
+
+  // `getStaticContent` keeps parsed files in an in-process Map and returns the cached object itself.
+  it('stops a render from writing into an object a cache shares with the next request', async () => {
+    flags.skipReparse = true;
+    vi.stubEnv('NODE_ENV', 'production');
+    const first = await load('content:careers');
+    const second = await load('content:careers');
+    vi.unstubAllEnvs();
+    expect(stateData(second), 'both requests got the cached object').toBe(stateData(first));
+    // Unguarded: the first render's write is what the second request renders.
+    await render(first, (value) => {
+      (value as StaticContent).title = 'changed';
+    });
+    expect((await render(second)).html).toContain('changed');
+
+    const guarded = await load('content:advertising');
+    const next = await load('content:advertising');
+    expect(stateData(next)).toBe(stateData(guarded));
+    const original = (stateData(guarded) as StaticContent).title;
+    await expect(
+      render(guarded, (value) => {
+        (value as StaticContent).title = 'changed';
+      })
+    ).rejects.toThrow(TypeError);
+    expect((stateData(next) as StaticContent).title).toBe(original);
+  });
+});
+
+describe('freezeRenderState', () => {
+  it('freezes cycles and Map keys, and leaves typed arrays writable', async () => {
+    const { freezeRenderState } = await import('~/server/utils/freeze-render-state');
+    const key = { k: 1 };
+    const node: Record<string, unknown> = { bytes: new Uint8Array(2), map: new Map([[key, 1]]) };
+    node.self = node;
+    freezeRenderState(node);
+
+    expect(Object.isFrozen(node)).toBe(true);
+    expect(Object.isFrozen(key)).toBe(true);
+    (node.bytes as Uint8Array)[0] = 7;
+    expect((node.bytes as Uint8Array)[0]).toBe(7);
+  });
+});
+
+describe('ssr-skip-trpcstate-reparse evaluation', () => {
+  it('uses the user id, and spreads anonymous requests over buckets', async () => {
+    const random = vi.spyOn(Math, 'random');
+    try {
+      random.mockReturnValue(0);
+      await load('alpha');
+      random.mockReturnValue(0.999);
+      await load('alpha');
+    } finally {
+      random.mockRestore();
+    }
+    hub.session = { user: { id: 4242, username: 'probe', bannedAt: null } };
+    await load('alpha');
+
+    expect(flags.entities).toEqual(['anonymous-0', 'anonymous-63', '4242']);
   });
 });

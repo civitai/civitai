@@ -33,7 +33,8 @@ import {
 } from '~/server/shell/shell-response';
 import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
-import { isFliptSync } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
 
 /**
  * The page-props key the patched `withTRPC` (patches/@trpc__next@11.17.0.patch) reads the
@@ -41,7 +42,16 @@ import { isFliptSync } from '~/server/flipt/client';
  * page's `__NEXT_DATA__` and `/_next/data` responses — never carries it.
  */
 export const SSR_DEHYDRATED_STATE = Symbol.for('civitai.trpc.ssrDehydratedState');
-const SSR_SKIP_TRPCSTATE_REPARSE_FLAG = 'ssr-skip-trpcstate-reparse';
+
+/** Anonymous requests spread over this many entities, so a percentage rollout splits them too. */
+const ANONYMOUS_ROLLOUT_BUCKETS = 64;
+
+function skipsTrpcStateReparse(session: Session | null) {
+  const entityId = session?.user
+    ? String(session.user.id)
+    : `anonymous-${Math.floor(Math.random() * ANONYMOUS_ROLLOUT_BUCKETS)}`;
+  return isFliptSync(FLIPT_FEATURE_FLAGS.SSR_SKIP_TRPCSTATE_REPARSE, entityId) === true;
+}
 
 /** One request's slot for the value its helpers' dehydrate handed the transformer. */
 export type DehydratedStateCapture = { state?: unknown };
@@ -71,7 +81,10 @@ function capturingTransformer(
 function attachSsrDehydratedState(pageProps: unknown, capture: DehydratedStateCapture | undefined) {
   const props = pageProps as Record<PropertyKey, unknown>;
   if (!capture || capture.state === undefined || typeof props.trpcState !== 'string') return;
-  props[SSR_DEHYDRATED_STATE] = capture.state;
+  // The render then holds the resolvers' own objects, which a cache may share across requests.
+  props[SSR_DEHYDRATED_STATE] = shouldFreezeRenderState()
+    ? freezeRenderState(capture.state)
+    : capture.state;
 }
 
 export const getServerProxySSGHelpers = async (
@@ -226,7 +239,7 @@ export function createServerSideProps<P>({
 
     // Only a full page load renders on the server; a `/_next/data` response is JSON alone.
     const capture: DehydratedStateCapture | undefined =
-      useSSG && !isClient && isFliptSync(SSR_SKIP_TRPCSTATE_REPARSE_FLAG) === true ? {} : undefined;
+      useSSG && !isClient && skipsTrpcStateReparse(session) ? {} : undefined;
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
         ? await getServerProxySSGHelpers(context, session, features, capture)
