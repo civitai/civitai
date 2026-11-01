@@ -78,6 +78,8 @@ const {
   refundBounty,
   refundBountyBenefactorFunds,
   releaseStuckBountyAward,
+  releaseUnconfirmedBountyRefund,
+  refundUnpayableBountyAward,
   resolveUnpaidBountyAward,
   retryUnsettledBountyPayouts,
   settleBountyPayout,
@@ -424,8 +426,13 @@ beforeEach(() => {
     }
   });
   dbMock.dbWrite.bountyBenefactor.findMany.mockImplementation(
-    async ({ where }: { where: { awardedToId?: null; awardedAt?: { not: null } | null } }) =>
+    async ({
+      where,
+    }: {
+      where: { awardedToId?: null; awardedAt?: { not: null } | null; userId?: { in: number[] } };
+    }) =>
       benefactors
+        .filter((b) => !where.userId || where.userId.in.includes(b.userId))
         .filter((b) => !('awardedToId' in where) || b.awardedToId === null)
         .filter(
           (b) => !('awardedAt' in where) || (where.awardedAt === null) === (b.awardedAt == null)
@@ -961,6 +968,14 @@ describe('settleBountyPayout — the winner and the money basis', () => {
       expect(await settleBountyPayout(4)).toBe(true);
     });
 
+    it('leaves the bounty pending when a retry cannot confirm a legacy refund', async () => {
+      benefactors[0].buzzTransactionId = [];
+      bounty!.payoutRecordedAt = new Date();
+      expect(await settleBountyPayout(4)).toBe(false);
+      expect(bounty?.payoutSettledAt).not.toBeInstanceOf(Date);
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    });
+
     it('refunds a pre-multi-account charge by its transaction id', async () => {
       benefactors[0].buzzTransactionId = ['legacy-tx'];
       expect(await settleBountyPayout(4, { refundDescription: 'Reason: test' })).toBe(true);
@@ -1027,7 +1042,7 @@ describe('refundBountyBenefactorFunds', () => {
     benefactors[0].awardedToId = 10;
     expect(
       await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ', onlyUnawarded: true })
-    ).toEqual({ refunded: [6], failed: [] });
+    ).toEqual({ refunded: [6], failed: [], unconfirmed: [] });
     expect(dbMock.dbWrite.bountyBenefactor.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { bountyId: 4, currency: 'BUZZ', awardedToId: null, awardedAt: null },
@@ -1039,7 +1054,7 @@ describe('refundBountyBenefactorFunds', () => {
     Object.assign(benefactors[0], { awardedToId: null, awardedAt: new Date() });
     expect(
       await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ', onlyUnawarded: true })
-    ).toEqual({ refunded: [6], failed: [] });
+    ).toEqual({ refunded: [6], failed: [], unconfirmed: [] });
   });
 
   it('logs a failed refund with the bounty and carries on', async () => {
@@ -1049,18 +1064,31 @@ describe('refundBountyBenefactorFunds', () => {
     expect(await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ' })).toEqual({
       refunded: [6],
       failed: [5],
+      unconfirmed: [],
     });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'bounty-refund', type: 'error', bountyId: 4, userId: 5 })
     );
   });
 
-  it('skips a legacy supporter on a retry, since its refund cannot be deduplicated', async () => {
-    benefactors[0].buzzTransactionId = [];
-    expect(
-      await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ', includeLegacy: false })
-    ).toEqual({ refunded: [6], failed: [] });
-    expect(moved('buzz')).toBe(0);
+  describe('a legacy supporter on a retry', () => {
+    const retry = () =>
+      refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ', includeLegacy: false });
+    beforeEach(() => {
+      benefactors[0].buzzTransactionId = [];
+    });
+
+    it('is not paid, and counts as failed when the ledger has no refund under its key', async () => {
+      expect(await retry()).toEqual({ refunded: [6], failed: [5], unconfirmed: [5] });
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+      expect(buzz.getTransactionByExternalId).toHaveBeenCalledWith('bounty-refund-b4-u5');
+    });
+
+    it('counts as refunded when the ledger has its keyed refund', async () => {
+      buzz.getTransactionByExternalId.mockResolvedValueOnce({ transactionId: 't1' });
+      expect(await retry()).toEqual({ refunded: [5, 6], failed: [], unconfirmed: [] });
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    });
   });
 
   describe('a legacy supporter refunded twice', () => {
@@ -1085,26 +1113,26 @@ describe('refundBountyBenefactorFunds', () => {
     it('counts a refusal as refunded when that key is on the ledger', async () => {
       buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
       buzz.getTransactionByExternalId.mockResolvedValueOnce({ transactionId: 't1' });
-      expect(await refundAll()).toEqual({ refunded: [5, 6], failed: [] });
+      expect(await refundAll()).toEqual({ refunded: [5, 6], failed: [], unconfirmed: [] });
       expect(buzz.getTransactionByExternalId).toHaveBeenCalledWith('bounty-refund-b4-u5');
     });
 
     it('fails a refusal whose key is not on the ledger (control)', async () => {
       buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
-      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5], unconfirmed: [] });
     });
 
     it('fails any other error, even with the key on the ledger', async () => {
       buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(500, 'Server error'));
       buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 't1' });
-      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5], unconfirmed: [] });
       expect(buzz.getTransactionByExternalId).not.toHaveBeenCalledWith('bounty-refund-b4-u5');
     });
 
     it('fails a refusal whose ledger lookup failed', async () => {
       buzz.createBuzzTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
       buzz.getTransactionByExternalId.mockRejectedValueOnce(new Error('buzz down'));
-      expect(await refundAll()).toEqual({ refunded: [6], failed: [5] });
+      expect(await refundAll()).toEqual({ refunded: [6], failed: [5], unconfirmed: [] });
     });
   });
 });
@@ -2150,5 +2178,198 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
     awardTable = false;
     await refusesAndMovesNoRefund();
     expect(unpaidAwards.size).toBe(0);
+  });
+});
+
+describe('a refund whose legacy supporter no retry can confirm', () => {
+  const HOUR = 60 * 60 * 1000;
+  // Any date: no date makes a retry pay a supporter without a charge id.
+  const base = Date.parse('2026-12-01T00:00:00Z');
+  const moderatorDelete = () => deleteBountyById({ id: 4, isModerator: true, userId: 99 });
+  const recordRefund = (recordedAt = base - 3 * 24 * HOUR) => {
+    benefactors[0].buzzTransactionId = [];
+    Object.assign(bounty!, {
+      userId: 3,
+      complete: true,
+      refunded: true,
+      payoutRecordedAt: new Date(recordedAt),
+      payoutWinnerUserId: null,
+    });
+  };
+  const at = (time: number) => vi.useFakeTimers({ toFake: ['Date'], now: time });
+  afterEach(() => vi.useRealTimers());
+
+  it('a retry with no keyed refund on the ledger moves no Buzz and reports it unconfirmed', async () => {
+    recordRefund(base - HOUR);
+    at(base);
+    expect(await settleBountyPayout(4)).toBe(false);
+    expect(
+      await refundBountyBenefactorFunds({
+        bountyId: 4,
+        currency: 'BUZZ',
+        onlyUnawarded: true,
+        includeLegacy: false,
+      })
+    ).toMatchObject({ failed: [5], unconfirmed: [5] });
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(isPayoutPending(bounty!)).toBe(true);
+  });
+
+  it('logs an error while the refund is under a day old, then a warning', async () => {
+    const recordedAt = base - 3 * 24 * HOUR;
+    recordRefund(recordedAt);
+    const level = () =>
+      loggingMock.logToAxiom.mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.name === 'bounty-refund' && event.userId === 5)
+        .map((event) => event.type);
+    at(recordedAt + 24 * HOUR - 1);
+    await settleBountyPayout(4);
+    at(recordedAt + 24 * HOUR);
+    await settleBountyPayout(4);
+    expect(level()).toEqual(['error', 'warning']);
+  });
+
+  describe('a moderator release', () => {
+    beforeEach(() => at(base));
+
+    it('records the supporter for a ruling, settles the refund, keeps the bounty, and pays nothing', async () => {
+      recordRefund();
+      await expect(moderatorDelete()).rejects.toThrow('could not be confirmed');
+      expect(unpaidAwards.get(5)).toMatchObject({
+        bountyId: 4,
+        userId: 5,
+        unitAmount: 100,
+        winnerUserId: null,
+        ownerId: 3,
+        recordedById: 99,
+      });
+      expect([...unpaidAwards.keys()]).toEqual([5]);
+      expect(modActivityRows).toEqual([
+        { userId: 5, entityType: 'bounty', entityId: 4, activity: 'bountyAwardUnpaid' },
+      ]);
+      expect(isPayoutPending(bounty!)).toBe(false);
+      expect(bounty).not.toBeNull();
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+      expect(await retryUnsettledBountyPayouts()).toEqual({ settled: 0 });
+    });
+
+    const refuses = async () => {
+      expect(await releaseUnconfirmedBountyRefund(4, 99)).toBeNull();
+      expect(unpaidAwards.size).toBe(0);
+      expect(modActivityRows).toEqual([]);
+      expect(isPayoutPending(bounty!)).toBe(true);
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    };
+
+    it('refuses a refund under a day old', async () => {
+      recordRefund(base - 23 * HOUR);
+      await refuses();
+    });
+
+    it('waits a day from an award turned refund, not from the award', async () => {
+      recordRefund();
+      Object.assign(bounty!, { refunded: false });
+      buzz.createBuzzTransaction.mockRejectedValue(new BuzzApiError(500, 'Server error'));
+      expect(await refundUnpayableBountyAward(4)).toBe(true);
+      buzz.createBuzzTransaction.mockClear();
+      await refuses();
+      at(base + 24 * HOUR);
+      expect(await releaseUnconfirmedBountyRefund(4, 99)).toEqual({ unconfirmedRefunds: 1 });
+    });
+
+    it('refuses while the table is missing', async () => {
+      recordRefund();
+      awardTable = false;
+      await refuses();
+    });
+
+    it('refuses while another refund is failing too', async () => {
+      recordRefund();
+      buzz.refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
+      await refuses();
+    });
+
+    it('releases a refund exactly a day old', async () => {
+      recordRefund(base - 24 * HOUR);
+      expect(await releaseUnconfirmedBountyRefund(4, 99)).toEqual({ unconfirmedRefunds: 1 });
+    });
+
+    it('refuses when a second supporter turns unconfirmed on the second read', async () => {
+      recordRefund();
+      benefactors[1].buzzTransactionId = [];
+      let readsFor6 = 0;
+      buzz.getTransactionByExternalId.mockImplementation(async (key: string) =>
+        key === 'bounty-refund-b4-u6' && ++readsFor6 === 1 ? { transactionId: 't1' } : null
+      );
+      await refuses();
+    });
+
+    it('refuses when a supporter row is gone before it is recorded', async () => {
+      recordRefund();
+      const base = dbMock.dbWrite.bountyBenefactor.findMany.getMockImplementation()!;
+      dbMock.dbWrite.bountyBenefactor.findMany.mockImplementation(
+        async (args: { where: { userId?: unknown } }) => (args.where.userId ? [] : base(args))
+      );
+      await refuses();
+    });
+
+    it('refuses when a settle stamps the refund before the release takes the lock', async () => {
+      recordRefund();
+      let reads = 0;
+      buzz.getTransactionByExternalId.mockImplementation(async () => {
+        if (++reads === 2) bounty!.payoutSettledAt = new Date();
+        return null;
+      });
+      expect(await releaseUnconfirmedBountyRefund(4, 99)).toBeNull();
+      expect(unpaidAwards.size).toBe(0);
+      expect(modActivityRows).toEqual([]);
+    });
+
+    it('cannot be ruled paid_winner, having no winner', async () => {
+      recordRefund();
+      await releaseUnconfirmedBountyRefund(4, 99);
+      await expect(
+        resolveUnpaidBountyAward({
+          bountyId: 4,
+          userId: 5,
+          ruling: 'paid_winner',
+          ledgerReference: 'x',
+          moderatorId: 99,
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(unpaidAwards.get(5)?.resolvedAt).toBeUndefined();
+    });
+
+    it('can be ruled refunded_supporter, and then the bounty deletes', async () => {
+      recordRefund();
+      expect(await releaseUnconfirmedBountyRefund(4, 99)).toEqual({ unconfirmedRefunds: 1 });
+      expect(
+        await resolveUnpaidBountyAward({
+          bountyId: 4,
+          userId: 5,
+          ruling: 'refunded_supporter',
+          ledgerReference: 'manual refund to the supporter',
+          moderatorId: 99,
+        })
+      ).toEqual({ recorded: true });
+      expect(unpaidAwards.get(5)).toMatchObject({
+        ruling: 'refunded_supporter',
+        resolvedAt: expect.any(Date),
+      });
+      vi.clearAllMocks();
+      await moderatorDelete();
+      expect(bounty).toBeNull();
+      expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the keyed refund turns up on the second read', async () => {
+      recordRefund();
+      buzz.getTransactionByExternalId
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ transactionId: 't1' });
+      await refuses();
+    });
   });
 });

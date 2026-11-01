@@ -841,6 +841,7 @@ export const deleteBountyById = async ({
   if (!claim) return null;
 
   let release: Awaited<ReturnType<typeof releaseStuckBountyAward>> = null;
+  let refundRelease: Awaited<ReturnType<typeof releaseUnconfirmedBountyRefund>> = null;
   if (claim.owed) {
     const settled = await settleBountyPayout(id, {
       firstAttempt: claim.firstAttempt,
@@ -851,7 +852,9 @@ export const deleteBountyById = async ({
     if (!settled && !(isModerator && (await refundUnpayableBountyAward(id)))) {
       // A release keeps the bounty: the hide below takes the delete's effect on visibility now.
       release = isModerator ? await releaseStuckBountyAward(id, userId) : null;
-      if (!release)
+      refundRelease =
+        isModerator && !release ? await releaseUnconfirmedBountyRefund(id, userId) : null;
+      if (!release && !refundRelease)
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message:
@@ -895,6 +898,11 @@ export const deleteBountyById = async ({
     await SearchIndexUpdate.queueUpdate({
       indexName: BOUNTIES_SEARCH_INDEX,
       items: [{ id, action: SearchIndexUpdateQueueAction.Delete }],
+    });
+  if (refundRelease)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `The bounty was hidden but NOT deleted. ${refundRelease.unconfirmedRefunds} supporter refund(s) could not be confirmed, so they were recorded for manual resolution instead of being paid again. It is deleted once they are resolved.`,
     });
   // The release moved Buzz: report it even if the bounty went before the hide.
   if (release)
@@ -1106,16 +1114,21 @@ function logBountyPayoutError({
   message,
   name = 'bounty-refund',
   transactionPrefix,
+  type = 'error',
+  details,
 }: {
   bountyId: number;
   userId?: number | null;
   message: string;
   name?: 'bounty-refund' | 'bounty-award';
   transactionPrefix?: string;
+  type?: 'error' | 'warning';
+  details?: MixedObject;
 }) {
   logToAxiom({
+    ...details,
     name,
-    type: 'error',
+    type,
     message: `Bounty ${bountyId}: ${message}`,
     bountyId,
     userId,
@@ -1144,7 +1157,10 @@ async function refundBountyPrefix(txId: string, description: string, details: Mi
  * and the rest continue.
  *
  * Refunds by transaction id are safe to repeat. Legacy rows without ids are paid under a fixed
- * key, but one paid before that key existed is not, so a retry (`includeLegacy: false`) skips them.
+ * key, but one paid before that key existed is not, so a retry (`includeLegacy: false`) never pays
+ * them: it counts one refunded only when that key is on the ledger, and otherwise failed and
+ * `unconfirmed`, for `releaseUnconfirmedBountyRefund`. Pass `recordedAt` to log those at warning
+ * once the refund is a day old.
  */
 export async function refundBountyBenefactorFunds({
   bountyId,
@@ -1152,14 +1168,20 @@ export async function refundBountyBenefactorFunds({
   onlyUnawarded = false,
   includeLegacy = true,
   description = 'Reason: Bounty refund',
+  recordedAt,
 }: {
   bountyId: number;
   currency: Currency;
   onlyUnawarded?: boolean;
   includeLegacy?: boolean;
   description?: string;
-}): Promise<{ refunded: number[]; failed: number[] }> {
-  const outcome = { refunded: [] as number[], failed: [] as number[] };
+  recordedAt?: Date | null;
+}): Promise<{ refunded: number[]; failed: number[]; unconfirmed: number[] }> {
+  const outcome = {
+    refunded: [] as number[],
+    failed: [] as number[],
+    unconfirmed: [] as number[],
+  };
   if (currency !== Currency.BUZZ) return outcome;
   const benefactors = await dbWrite.bountyBenefactor.findMany({
     // An award keeps `awardedAt` after its entry is deleted and `awardedToId` is nulled.
@@ -1192,8 +1214,18 @@ export async function refundBountyBenefactorFunds({
         }
       } else if (includeLegacy) {
         await refundLegacyBenefactor({ bountyId, userId, unitAmount, description });
-      } else {
-        logBountyPayoutError({ bountyId, userId, message: 'Legacy refund not retried' });
+      } else if (!(await getTransactionByExternalId(legacyRefundKey(bountyId, userId)))) {
+        // A warning, not an error, so the retry job does not flood errors while a moderator is pending.
+        const waiting =
+          !!recordedAt && recordedAt.getTime() <= Date.now() - MODERATOR_RELEASE_AFTER_MS;
+        logBountyPayoutError({
+          bountyId,
+          userId,
+          message: 'Legacy refund not confirmed',
+          type: waiting ? 'warning' : 'error',
+        });
+        outcome.failed.push(userId);
+        outcome.unconfirmed.push(userId);
         continue;
       }
       outcome.refunded.push(userId);
@@ -1204,6 +1236,12 @@ export async function refundBountyBenefactorFunds({
   }
   return outcome;
 }
+
+/** How long a payout waits before a moderator may release it for a manual ruling. */
+const MODERATOR_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+const legacyRefundKey = (bountyId: number, userId: number) =>
+  `bounty-refund-b${bountyId}-u${userId}`;
 
 /**
  * Pays back a supporter whose charge has no transaction id, under one key per bounty and supporter,
@@ -1221,7 +1259,7 @@ async function refundLegacyBenefactor({
   unitAmount: number;
   description: string;
 }) {
-  const externalTransactionId = `bounty-refund-b${bountyId}-u${userId}`;
+  const externalTransactionId = legacyRefundKey(bountyId, userId);
   try {
     await createBuzzTransaction({
       fromAccountId: 0,
@@ -1448,7 +1486,7 @@ async function payAwardingSupporter(bountyId: number, supporter: AwardedFunds, p
 /**
  * Moves the Buzz for a recorded award or refund and stamps `payoutSettledAt`. Safe to repeat: awards
  * pay under fixed keys and refunds treat an already-refunded charge as done. Returns whether the
- * bounty owes nothing more. `firstAttempt` is false for retries, which skip legacy refunds.
+ * bounty owes nothing more. `firstAttempt` is false for retries, which never pay legacy refunds.
  */
 export async function settleBountyPayout(
   bountyId: number,
@@ -1478,6 +1516,7 @@ export async function settleBountyPayout(
             onlyUnawarded: true,
             includeLegacy: firstAttempt,
             description: refundDescription,
+            recordedAt: bounty.payoutRecordedAt,
           })
         ).failed.length === 0
       : await payBountyAward(bountyId, bounty.payoutWinnerUserId, bounty.payoutSettledAt).then(
@@ -1528,7 +1567,12 @@ export async function refundUnpayableBountyAward(bountyId: number) {
     });
     await tx.bounty.update({
       where: { id: bountyId },
-      data: { refunded: true, payoutWinnerUserId: null },
+      // A fresh record: the refund is a new attempt, so a release waits a day from now.
+      data: {
+        refunded: true,
+        payoutWinnerUserId: null,
+        payoutRecordedAt: nextPayoutRecordedAt(locked),
+      },
     });
     return true;
   });
@@ -1562,7 +1606,49 @@ export async function refundUnpayableBountyAward(bountyId: number) {
 const BOUNTY_PAYOUT_RETRY_BATCH_SIZE = 100;
 const BOUNTY_PAYOUT_RETRY_MAX_BATCHES = 20;
 
-const STUCK_AWARD_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
+/** The owner a record names: a kept bounty is detached, its owner kept in meta.userIdBeforeRemoval. */
+const bountyOwnerId = (locked: { userId: number | null; meta: unknown }) =>
+  locked.userId ??
+  (locked.meta as { userIdBeforeRemoval?: number } | null)?.userIdBeforeRemoval ??
+  null;
+
+/** Records supporters for a manual ruling: one unpaid-award row and one mod activity each. */
+async function recordUnpaidAwards(
+  tx: Prisma.TransactionClient,
+  {
+    bountyId,
+    locked,
+    moderatorId,
+    winnerUserId,
+    rows,
+  }: {
+    bountyId: number;
+    locked: { userId: number | null; meta: unknown };
+    moderatorId: number;
+    winnerUserId: number | null;
+    rows: { userId: number; unitAmount: number; buzzTransactionIds?: string[] }[];
+  }
+) {
+  await tx.bountyUnpaidAward.createMany({
+    data: rows.map((b) => ({
+      bountyId,
+      userId: b.userId,
+      unitAmount: b.unitAmount,
+      buzzTransactionIds: b.buzzTransactionIds ?? [],
+      winnerUserId,
+      ownerId: bountyOwnerId(locked),
+      recordedById: moderatorId,
+    })),
+  });
+  await tx.modActivity.createMany({
+    data: rows.map(({ userId }) => ({
+      userId,
+      entityType: 'bounty',
+      entityId: bountyId,
+      activity: BOUNTY_AWARD_UNPAID_ACTIVITY,
+    })),
+  });
+}
 
 /**
  * Moderator exit for an award that a supporter with no charge on record keeps from settling.
@@ -1602,7 +1688,7 @@ export async function releaseStuckBountyAward(
   });
   if (
     unpaid.length !== unpriceable.length ||
-    unpaid.some((b) => !b.awardedAt || b.awardedAt.getTime() > now - STUCK_AWARD_RELEASE_AFTER_MS)
+    unpaid.some((b) => !b.awardedAt || b.awardedAt.getTime() > now - MODERATOR_RELEASE_AFTER_MS)
   )
     return null;
 
@@ -1621,24 +1707,15 @@ export async function releaseStuckBountyAward(
       where: { id: bountyId },
       data: { complete: true, refunded: true, payoutRecordedAt: nextPayoutRecordedAt(locked) },
     });
-    const meta = locked.meta as { userIdBeforeRemoval?: number } | null;
-    await tx.bountyUnpaidAward.createMany({
-      data: unpaid.map((b) => ({
-        bountyId,
+    await recordUnpaidAwards(tx, {
+      bountyId,
+      locked,
+      moderatorId,
+      winnerUserId: read.payoutWinnerUserId,
+      rows: unpaid.map((b) => ({
         userId: b.userId,
         unitAmount: b.unitAmount,
         buzzTransactionIds: b.buzzTransactionId ?? [],
-        winnerUserId: read.payoutWinnerUserId,
-        ownerId: locked.userId ?? meta?.userIdBeforeRemoval ?? null,
-        recordedById: moderatorId,
-      })),
-    });
-    await tx.modActivity.createMany({
-      data: unpaid.map(({ userId }) => ({
-        userId,
-        entityType: 'bounty',
-        entityId: bountyId,
-        activity: BOUNTY_AWARD_UNPAID_ACTIVITY,
       })),
     });
     return true;
@@ -1666,7 +1743,94 @@ export async function releaseStuckBountyAward(
 }
 
 /**
- * Records the ruling on an award `releaseStuckBountyAward` recorded as unpaid. Moves no Buzz: the
+ * Moderator exit for a refund that waits only on legacy supporters the ledger cannot confirm were
+ * refunded: an attempt made before `legacyRefundKey` may or may not have paid them, and no retry
+ * pays them. Records each for a manual ruling, as an unpaid award with no winner, and stamps the
+ * refund settled; pays no one. A ruling must first check the ledger for `legacyRefundKey`, since a
+ * concurrent first attempt may have paid. Returns the recorded count, or null when it does not apply.
+ */
+export async function releaseUnconfirmedBountyRefund(
+  bountyId: number,
+  moderatorId: number,
+  now = Date.now()
+) {
+  if (!(await bountyUnpaidAwardTableExists(dbWrite))) return null;
+  const read = await dbWrite.bounty.findUnique({
+    where: { id: bountyId },
+    select: { refunded: true, payoutRecordedAt: true, payoutSettledAt: true },
+  });
+  const recordedAt = read?.payoutRecordedAt?.getTime();
+  if (
+    !read?.refunded ||
+    !isPayoutPending(read) ||
+    !recordedAt ||
+    recordedAt > now - MODERATOR_RELEASE_AFTER_MS
+  )
+    return null;
+
+  const refund = () =>
+    refundBountyBenefactorFunds({
+      bountyId,
+      currency: Currency.BUZZ,
+      onlyUnawarded: true,
+      includeLegacy: false,
+      recordedAt: read.payoutRecordedAt,
+    });
+  const onlyUnconfirmed = (o: Awaited<ReturnType<typeof refund>>) =>
+    o.unconfirmed.length > 0 && o.failed.every((id) => o.unconfirmed.includes(id));
+  const first = await refund();
+  if (!onlyUnconfirmed(first)) return null;
+  const second = await refund();
+  if (!onlyUnconfirmed(second) || second.unconfirmed.some((id) => !first.unconfirmed.includes(id)))
+    return null;
+
+  const unconfirmed = await dbWrite.bountyBenefactor.findMany({
+    where: { bountyId, userId: { in: second.unconfirmed } },
+    select: { userId: true, unitAmount: true },
+  });
+  if (unconfirmed.length !== second.unconfirmed.length) return null;
+
+  const claimed = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, bountyId);
+    if (
+      !locked ||
+      !locked.refunded ||
+      !isPayoutPending(locked) ||
+      locked.payoutRecordedAt?.getTime() !== recordedAt
+    )
+      return false;
+    await recordUnpaidAwards(tx, {
+      bountyId,
+      locked,
+      moderatorId,
+      winnerUserId: null,
+      rows: unconfirmed,
+    });
+    await tx.bounty.update({
+      where: { id: bountyId },
+      data: { payoutSettledAt: new Date(Math.max(Date.now(), recordedAt)) },
+    });
+    return true;
+  });
+  if (!claimed) return null;
+
+  for (const supporter of unconfirmed)
+    logBountyPayoutError({
+      bountyId,
+      userId: supporter.userId,
+      message: `refund to user ${supporter.userId} is not confirmed on the ledger; recorded for a manual ruling`,
+      details: {
+        unitAmount: supporter.unitAmount,
+        refundKey: legacyRefundKey(bountyId, supporter.userId),
+        moderatorId,
+      },
+    });
+  return { unconfirmedRefunds: unconfirmed.length };
+}
+
+/**
+ * Records the ruling on an award recorded as unpaid by `releaseStuckBountyAward` or
+ * `releaseUnconfirmedBountyRefund` (a supporter refund, with no winner). Moves no Buzz: the
  * ruling is settled in the ledger first, and this only lets the bounty be deleted again.
  */
 export async function resolveUnpaidBountyAward({
@@ -1716,7 +1880,6 @@ export async function resolveUnpaidBountyAward({
           select: { unitAmount: true, buzzTransactionId: true },
         }));
       if (!supporter) throw notFound();
-      const meta = locked.meta as { userIdBeforeRemoval?: number } | null;
       award = await tx.bountyUnpaidAward.create({
         data: {
           bountyId,
@@ -1724,7 +1887,7 @@ export async function resolveUnpaidBountyAward({
           unitAmount: supporter.unitAmount,
           buzzTransactionIds: supporter.buzzTransactionId ?? [],
           winnerUserId: locked.payoutWinnerUserId,
-          ownerId: locked.userId ?? meta?.userIdBeforeRemoval ?? null,
+          ownerId: bountyOwnerId(locked),
           recordedAt: legacy.createdAt,
         },
       });
@@ -1736,6 +1899,11 @@ export async function resolveUnpaidBountyAward({
         message: `That award is already resolved as ${award.ruling}`,
       });
     }
+    if (ruling === 'paid_winner' && award.winnerUserId == null)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'That record is a supporter refund with no winner; it cannot be ruled paid_winner',
+      });
     const { count } = await tx.bountyUnpaidAward.updateMany({
       where: { bountyId, userId, resolvedAt: null },
       data: { ruling, ledgerReference, resolvedById: moderatorId, resolvedAt: new Date() },
