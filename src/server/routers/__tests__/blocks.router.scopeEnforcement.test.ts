@@ -186,6 +186,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  checkBlockSubmitRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) => mockResolveCanGenerateForVersions(...args),
