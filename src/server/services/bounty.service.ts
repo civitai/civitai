@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { bountyThreadParents, detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { isRemovedWithOwner, notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
@@ -104,8 +105,10 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { logToAxiom } from '~/server/logging/client';
 
+// Unique per request: a refund by prefix must never reach another request's charge. The
+// timestamp stays last because award pricing reads it from there.
 export const getBountyTransactionPrefix = (bountyId: number, userId: number) => {
-  return `bounty-${bountyId}-${userId}-${new Date().getTime()}`;
+  return `bounty-${bountyId}-${userId}-${randomBytes(6).toString('hex')}-${Date.now()}`;
 };
 
 export const isBountyTransactionPrefix = (prefix: string) => {
@@ -1013,21 +1016,21 @@ export const addBenefactorUnitAmount = async ({
   if ((account[0]?.balance ?? 0) < unitAmount) throw throwInsufficientFundsError();
 
   const prefix = getBountyTransactionPrefix(bountyId, userId);
-  await createMultiAccountBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountTypes: [buzzType],
-    externalTransactionIdPrefix: prefix,
-    toAccountId: 0,
-    amount: unitAmount,
-    type: TransactionType.Bounty,
-    description: 'You have supported a bounty',
-    details: { entityId: bountyId, entityType: 'Bounty' },
-  });
-
   try {
+    await createMultiAccountBuzzTransaction({
+      fromAccountId: userId,
+      fromAccountTypes: [buzzType],
+      externalTransactionIdPrefix: prefix,
+      toAccountId: 0,
+      amount: unitAmount,
+      type: TransactionType.Bounty,
+      description: 'You have supported a bounty',
+      details: { entityId: bountyId, entityType: 'Bounty' },
+    });
     return await addSupport(prefix);
   } catch (error) {
-    // The charge is already taken; any failure to record support must refund it.
+    // A charge that threw may still be on the ledger: the client retries a lost response and
+    // gets a 409. Refunding by prefix reverses whatever landed, and nothing when nothing did.
     await refundBountyPrefix(prefix, 'Refund reason: bounty support was not added', {
       bountyId,
       userId,
@@ -1036,6 +1039,7 @@ export const addBenefactorUnitAmount = async ({
       logBountyPayoutError({
         bountyId,
         userId,
+        transactionPrefix: prefix,
         message: `Support charge ${prefix} was not added and its refund failed: ${String(
           refundError
         )}`,
@@ -1090,11 +1094,13 @@ function logBountyPayoutError({
   userId,
   message,
   name = 'bounty-refund',
+  transactionPrefix,
 }: {
   bountyId: number;
   userId?: number | null;
   message: string;
   name?: 'bounty-refund' | 'bounty-award';
+  transactionPrefix?: string;
 }) {
   logToAxiom({
     name,
@@ -1102,6 +1108,7 @@ function logBountyPayoutError({
     message: `Bounty ${bountyId}: ${message}`,
     bountyId,
     userId,
+    transactionPrefix,
   }).catch(() => null);
 }
 

@@ -1638,13 +1638,45 @@ describe('addBenefactorUnitAmount', () => {
     buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
 
     await expect(topUp(6)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledWith(
+    const [[{ externalTransactionIdPrefix: prefix }]] =
+      buzz.refundMultiAccountTransaction.mock.calls;
+    expect(prefix).toMatch(/^bounty-4-6-/);
+    // The line an operator searches for to reverse the charge by hand.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
-        externalTransactionIdPrefix: expect.stringMatching(/^bounty-4-6-/),
+        type: 'error',
+        bountyId: 4,
+        userId: 6,
+        transactionPrefix: prefix,
+        message: expect.stringContaining('refund failed'),
       })
     );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: expect.stringContaining('refund failed') })
+    expect(find(6)!.unitAmount).toBe(50);
+  });
+
+  it('refunds a charge the ledger recorded before the call threw', async () => {
+    // The response was lost and the client's retry was refused as a duplicate.
+    buzz.createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+      events.push('charge');
+      throw new BuzzApiError(409, 'Conflict');
+    });
+
+    await expect(topUp(6)).rejects.toThrow('Conflict');
+    const [[charge]] = buzz.createMultiAccountBuzzTransaction.mock.calls;
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: charge.externalTransactionIdPrefix })
+    );
+    expect(moved('refund')).toBe(1);
+    expect(find(6)!.unitAmount).toBe(50);
+  });
+
+  it('still reports a charge that never reached the ledger as its own error', async () => {
+    buzz.createMultiAccountBuzzTransaction.mockRejectedValueOnce(new Error('buzz down'));
+    buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new BuzzApiError(404, 'Not found'));
+
+    await expect(topUp(6)).rejects.toThrow('buzz down');
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error' })
     );
     expect(find(6)!.unitAmount).toBe(50);
   });
@@ -1654,6 +1686,21 @@ describe('addBenefactorUnitAmount', () => {
     expect(moved('charge')).toBe(2);
     expect(find(6)!.unitAmount).toBe(100);
     expect(find(6)!.buzzTransactionId).toHaveLength(3);
+  });
+
+  it('gives two top-ups in the same millisecond their own charge prefix', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      await Promise.all([topUp(6, 30), topUp(6, 20)]);
+    } finally {
+      vi.mocked(Date.now).mockRestore();
+    }
+    const prefixes = buzz.createMultiAccountBuzzTransaction.mock.calls.map(
+      ([input]) => input.externalTransactionIdPrefix
+    );
+    expect(new Set(prefixes).size).toBe(2);
+    // Award pricing reads the charge time from the end of the prefix.
+    for (const prefix of prefixes) expect(prefix).toMatch(/^bounty-4-6-.+-1700000000000$/);
   });
 });
 
