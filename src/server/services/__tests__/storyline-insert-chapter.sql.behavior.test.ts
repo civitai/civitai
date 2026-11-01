@@ -660,14 +660,18 @@ describe('a chapter add whose parent changes after its first read', () => {
           );
           return { count: affectedRows ?? 0 };
         }) as never);
+        // Refuses any other filter, so narrowing the read (say to unmarked chapters) fails here.
         w.storylineChapter.findMany.mockImplementation((async ({
           where,
         }: {
           where: { placementId: { in: number[] } };
-        }) =>
-          rows(`SELECT id FROM "StorylineChapter" WHERE "placementId" = ANY($1::int[])`, [
+        }) => {
+          if (Object.keys(where).join() !== 'placementId')
+            throw new Error(`unexpected filter: ${JSON.stringify(where)}`);
+          return rows(`SELECT id FROM "StorylineChapter" WHERE "placementId" = ANY($1::int[])`, [
             where.placementId.in,
-          ])) as never);
+          ]);
+        }) as never);
       });
       const takeDown = async (chapterId: number, placementId: number) => {
         await db.pg.query(`UPDATE "StorylineChapter" SET "placementId" = $2 WHERE id = $1`, [
@@ -697,6 +701,14 @@ describe('a chapter add whose parent changes after its first read', () => {
         expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 60, canon: true });
       });
 
+      // A takedown pressed again, or one from before removals cleared the route.
+      it('clears the route when a chapter already marked is taken down again', async () => {
+        await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 60`);
+        await takeDown(60, 900);
+
+        expect(await edgeOf(60)).toEqual({ parentChapterId: 6, canon: false });
+      });
+
       it('walks up past an earlier tombstone when the leaf under it is taken down', async () => {
         await takeDown(6, 902);
         expect(await edgeOf(6)).toEqual({ parentChapterId: 5, canon: true });
@@ -709,6 +721,24 @@ describe('a chapter add whose parent changes after its first read', () => {
         const { chapterId } = await addAtEnd();
         expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5, canon: true });
       });
+    });
+
+    // A route can still end at one: an insert or "Make main path" racing a removal, or a route
+    // from before removals cleared it. Adding at the end moves it back to the last live chapter.
+    it('adds after the last live chapter when the main path ends at tombstones', async () => {
+      await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id IN (6, 60)`);
+
+      const { chapterId } = await addOwnerChapterAtEnd({
+        storylineId: STORY,
+        postId: await post(),
+        userId: OWNER,
+      });
+
+      expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 5, canon: true });
+      expect([await edgeOf(60), await edgeOf(6)]).toEqual([
+        { parentChapterId: 6, canon: false },
+        { parentChapterId: 5, canon: false },
+      ]);
     });
 
     it('refuses rather than branch when the end moves while it adds', async () => {

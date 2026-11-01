@@ -1747,16 +1747,29 @@ export async function addOwnerChapterAtEnd({
   return dbWrite.$transaction(async (tx) => {
     await lockStorylineForAdd(tx, storylineId);
     // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
-    const [end] = await tx.$queryRaw<{ id: number }[]>`
-      WITH RECURSIVE main AS (
-        SELECT ${root.id}::int AS id, 1 AS step
-        UNION ALL
-        SELECT e."chapterId", main.step + 1 FROM main
-        JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
-        WHERE main.step < 100000
-      )
-      SELECT id FROM main ORDER BY step DESC LIMIT 1
-    `;
+    const findEnd = async () =>
+      (
+        await tx.$queryRaw<{ id: number; removed: boolean }[]>`
+          WITH RECURSIVE main AS (
+            SELECT ${root.id}::int AS id, 1 AS step
+            UNION ALL
+            SELECT e."chapterId", main.step + 1 FROM main
+            JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+            WHERE main.step < 100000
+          )
+          SELECT main.id, c."removedAt" IS NOT NULL AS removed
+          FROM main JOIN "StorylineChapter" c ON c.id = main.id
+          ORDER BY step DESC LIMIT 1
+        `
+      )[0];
+    let end = await findEnd();
+    // Removals keep the route off a tombstone, but an insert or "Make main path" racing one, or a
+    // route from before they did, can still end at one. Nothing continues a tombstone, so the
+    // route is moved back to the last live chapter here, where it would otherwise stay stuck.
+    if (end.removed) {
+      await clearTombstoneTips([end.id], tx);
+      end = await findEnd();
+    }
     const { chapterId } = await writeOwnerChapter(tx, {
       parentChapterId: end.id,
       postId,
