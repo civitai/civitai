@@ -173,10 +173,10 @@ describe('checkBlockSubmitRateLimit', () => {
     expect(mockRedis.expire).toHaveBeenCalledWith(SUBMIT_KEY, 10);
   });
 
-  it('allows 300 calls a window, twice the catalog ceiling, and refuses the 301st', async () => {
+  it('allows twice the catalog ceiling a window and refuses one more', async () => {
     mockRedis.incrBy.mockResolvedValue(2 * BLOCK_CATALOG_RATE_LIMIT_MAX);
     expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({ allowed: true });
-    mockRedis.incrBy.mockResolvedValue(301);
+    mockRedis.incrBy.mockResolvedValue(2 * BLOCK_CATALOG_RATE_LIMIT_MAX + 1);
     mockRedis.ttl.mockResolvedValue(4);
     expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({
       allowed: false,

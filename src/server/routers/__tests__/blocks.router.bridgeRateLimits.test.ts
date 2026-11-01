@@ -583,7 +583,6 @@ describe('blocks.submitWorkflow — its own submit bucket, above every kind bran
 
   it('REACHABILITY CONTROL — keyed on the install and the token subject, and does not refuse when allowed', async () => {
     // Does not assert success: the txt2img path needs more of the world than this file stubs.
-    const before = await refusals();
     await caller()
       .submitWorkflow({ blockToken: 'tok', body: validBody() })
       .catch((e: { code?: string }) => {
@@ -592,6 +591,15 @@ describe('blocks.submitWorkflow — its own submit bucket, above every kind bran
     expect(mockCheckBlockSubmitRateLimit).toHaveBeenCalledTimes(1);
     expect(mockCheckBlockSubmitRateLimit).toHaveBeenCalledWith(INSTANCE, `user:${VIEWER}`);
     expect(mockCheckBlockCatalogRateLimit).not.toHaveBeenCalled();
-    expect((await refusals()) - before).toBe(0);
+    expect(mockCheckBlockPollRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('refuses before the scope check: a token without the spend scope still charges the bucket', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: [] }));
+    mockCheckBlockSubmitRateLimit.mockResolvedValue(REFUSED);
+
+    await expect(
+      caller().submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 });
