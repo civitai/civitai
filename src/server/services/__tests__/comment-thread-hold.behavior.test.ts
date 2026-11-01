@@ -151,7 +151,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyBenefactor" (
       "bountyId" int NOT NULL REFERENCES "Bounty"(id) ON DELETE CASCADE, "userId" int,
-      "unitAmount" int NOT NULL DEFAULT 0, "buzzTransactionId" text[] NOT NULL DEFAULT '{}'
+      "unitAmount" int NOT NULL DEFAULT 0, "buzzTransactionId" text[] DEFAULT '{}'
     );
     CREATE TABLE "ModActivity" (
       id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
@@ -948,6 +948,16 @@ describe("a held author's rows under a deleted parent", () => {
         },
       ]);
       expect(await deleteSettledKeptBounties()).toBe(0);
+    });
+
+    it('backfills a supporter row with no charge array as an empty one', async () => {
+      await seedReleased();
+      await db.exec(`UPDATE "BountyBenefactor" SET "buzzTransactionId" = NULL`);
+      await recordLegacy();
+      await db.exec(unpaidAwardMigration);
+      expect(await rows(`SELECT "buzzTransactionIds" FROM "BountyUnpaidAward"`)).toEqual([
+        { buzzTransactionIds: [] },
+      ]);
     });
 
     it('does not reopen a resolved award when the backfill runs again', async () => {

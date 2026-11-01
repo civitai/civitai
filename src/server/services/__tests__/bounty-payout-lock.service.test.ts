@@ -328,8 +328,9 @@ function transactionClient(held: (() => void)[], locked: { rows?: Rows } = {}) {
       },
     },
     bountyUnpaidAward: {
-      createMany: async ({ data }: { data: UnpaidAward[] }) => {
+      createMany: async ({ data, ...rest }: { data: UnpaidAward[] }) => {
         await tick();
+        if (Object.keys(rest).length) throw new Error(`unmodelled ${Object.keys(rest)}`);
         if (!awardTable) throw new Error('relation "BountyUnpaidAward" does not exist');
         for (const row of data) {
           if (unpaidAwards.has(row.userId)) throw new Error('duplicate key');
@@ -408,7 +409,8 @@ beforeEach(() => {
     strings.join('?').includes('to_regclass') ? [{ present: awardTable }] : []) as never);
   dbMock.dbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
     const held: (() => void)[] = [];
-    // A throw rolls back what the transaction wrote under the row lock, as Postgres would.
+    // A throw rolls back what the transaction wrote under the row lock, as Postgres would. Every
+    // transaction here locks before it writes; one that wrote first would not be rolled back.
     const locked: { rows?: Rows } = {};
     try {
       const result = await cb(transactionClient(held, locked));
@@ -1936,6 +1938,7 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       await deleteBountyById({ id: 4, isModerator: false, userId: 5 });
       expect(bounty).toMatchObject({ availability: 'Private', userId: null });
       expect(benefactors.map((b) => b.userId)).toEqual([5, 6, 7]);
+      expect(searchDeletes()).toEqual([{ id: 4, action: 'Delete' }]);
     });
 
     it('deletes once the award is resolved', async () => {
@@ -2027,7 +2030,7 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
     expect(unpaidAwards.get(5)?.ownerId).toBe(5);
   });
 
-  it('rolls the release back when its record cannot be written, and moves no refund', async () => {
+  it('rolls the release claim back when its record cannot be written, before any refund', async () => {
     recordStuckAward();
     unpaidAwards.set(5, {
       bountyId: 4,

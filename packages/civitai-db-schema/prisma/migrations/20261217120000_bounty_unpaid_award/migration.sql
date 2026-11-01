@@ -22,7 +22,8 @@ INSERT INTO "BountyUnpaidAward" (
   "recordedById", "recordedAt"
 )
 SELECT DISTINCT ON (m."entityId", m."userId")
-  m."entityId", m."userId", bb."unitAmount", bb."buzzTransactionId", b."payoutWinnerUserId",
+  m."entityId", m."userId", bb."unitAmount", COALESCE(bb."buzzTransactionId", ARRAY[]::TEXT[]),
+  b."payoutWinnerUserId",
   COALESCE(b."userId", (b.meta ->> 'userIdBeforeRemoval')::int), NULL, m."createdAt"
 FROM "ModActivity" m
 JOIN "BountyBenefactor" bb ON bb."bountyId" = m."entityId" AND bb."userId" = m."userId"

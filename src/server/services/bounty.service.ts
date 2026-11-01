@@ -887,12 +887,12 @@ export const deleteBountyById = async ({
       SELECT EXISTS (SELECT 1 FROM gone) AS gone`;
     return { bounty: stored, gone };
   });
-  if (!result) return null;
-  if (!result.gone)
+  if (result && !result.gone)
     await SearchIndexUpdate.queueUpdate({
       indexName: BOUNTIES_SEARCH_INDEX,
       items: [{ id, action: SearchIndexUpdateQueueAction.Delete }],
     });
+  // The release moved Buzz: report it even if the bounty went before the hide.
   if (release)
     throw new TRPCError({
       code: 'CONFLICT',
@@ -904,7 +904,7 @@ export const deleteBountyById = async ({
         release.unpaidAwards
       } award(s) were recorded for manual resolution. It is deleted once they are resolved.`,
     });
-  return result.bounty;
+  return result?.bounty ?? null;
 };
 
 export const getBountyImages = async ({
@@ -1582,7 +1582,7 @@ export async function releaseStuckBountyAward(
         bountyId,
         userId: b.userId,
         unitAmount: b.unitAmount,
-        buzzTransactionIds: b.buzzTransactionId,
+        buzzTransactionIds: b.buzzTransactionId ?? [],
         winnerUserId: read.payoutWinnerUserId,
         ownerId: locked.userId ?? meta?.userIdBeforeRemoval ?? null,
         recordedById: moderatorId,
@@ -1677,7 +1677,7 @@ export async function resolveUnpaidBountyAward({
           bountyId,
           userId,
           unitAmount: supporter.unitAmount,
-          buzzTransactionIds: supporter.buzzTransactionId,
+          buzzTransactionIds: supporter.buzzTransactionId ?? [],
           winnerUserId: locked.payoutWinnerUserId,
           ownerId: locked.userId ?? meta?.userIdBeforeRemoval ?? null,
           recordedAt: legacy.createdAt,
