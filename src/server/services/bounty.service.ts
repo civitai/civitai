@@ -1567,7 +1567,12 @@ export async function refundUnpayableBountyAward(bountyId: number) {
     });
     await tx.bounty.update({
       where: { id: bountyId },
-      data: { refunded: true, payoutWinnerUserId: null },
+      // A fresh record: the refund is a new attempt, so a release waits a day from now.
+      data: {
+        refunded: true,
+        payoutWinnerUserId: null,
+        payoutRecordedAt: nextPayoutRecordedAt(locked),
+      },
     });
     return true;
   });

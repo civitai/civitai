@@ -79,6 +79,7 @@ const {
   refundBountyBenefactorFunds,
   releaseStuckBountyAward,
   releaseUnconfirmedBountyRefund,
+  refundUnpayableBountyAward,
   resolveUnpaidBountyAward,
   retryUnsettledBountyPayouts,
   settleBountyPayout,
@@ -2265,6 +2266,17 @@ describe('a refund whose legacy supporter no retry can confirm', () => {
     it('refuses a refund under a day old', async () => {
       recordRefund(base - 23 * HOUR);
       await refuses();
+    });
+
+    it('waits a day from an award turned refund, not from the award', async () => {
+      recordRefund();
+      Object.assign(bounty!, { refunded: false });
+      buzz.createBuzzTransaction.mockRejectedValue(new BuzzApiError(500, 'Server error'));
+      expect(await refundUnpayableBountyAward(4)).toBe(true);
+      buzz.createBuzzTransaction.mockClear();
+      await refuses();
+      at(base + 24 * HOUR);
+      expect(await releaseUnconfirmedBountyRefund(4, 99)).toEqual({ unconfirmedRefunds: 1 });
     });
 
     it('refuses while the table is missing', async () => {
