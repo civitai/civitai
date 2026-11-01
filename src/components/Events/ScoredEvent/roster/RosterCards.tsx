@@ -36,6 +36,8 @@ export type RosterCardContext = {
   sort: RosterSort;
   prices: number[];
   now: Date;
+  /** When the event opened: earlier joiners show as joining then. */
+  startDate?: Date;
   onVisible: (topicId: string, inView: boolean) => void;
 };
 
@@ -191,7 +193,7 @@ function Stats({
   /** Counts roll only on screen (AnimatedCount's cost is per element). */
   inView: boolean;
 }) {
-  const days = daysOnTeam(item.joinedAt, ctx.now);
+  const days = daysOnTeam(item.joinedAt, ctx.now, ctx.startDate);
   return (
     <div
       className="grid grid-cols-3 rounded-md bg-gray-1 dark:bg-dark-8"
@@ -359,7 +361,7 @@ export const RosterShelfCard = memo(function RosterShelfCard({
   const { ref, inView } = useLiveWhileVisible(item.topicId, ctx.onVisible);
   const hats = cardHats(item);
   const worn = hats.find((h) => h.worn);
-  const isNew = isNewMember(item.joinedAt, ctx.now);
+  const isNew = isNewMember(item.joinedAt, ctx.now, ctx.startDate);
 
   return (
     <Paper
@@ -432,7 +434,7 @@ export const RosterPodiumCard = memo(function RosterPodiumCard({
 }) {
   const { ref, inView } = useLiveWhileVisible(item.topicId, ctx.onVisible);
   const { hero, label, rest } = podiumHero(cardHats(item));
-  const isNew = isNewMember(item.joinedAt, ctx.now);
+  const isNew = isNewMember(item.joinedAt, ctx.now, ctx.startDate);
 
   return (
     <div

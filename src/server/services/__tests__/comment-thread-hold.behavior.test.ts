@@ -516,7 +516,7 @@ describe('the production delete paths keep held threads', () => {
           payoutSettledAt: null,
         } as never);
       },
-      run: () => deleteBountyById({ id: 60, isModerator: true }),
+      run: () => deleteBountyById({ id: 60, isModerator: true, userId: 1 }),
       parentGone: async () => (await db.query(`SELECT id FROM "Bounty"`)).rows.length === 0,
     },
     deleteBountyEntry: {
@@ -717,7 +717,7 @@ describe("a held author's rows under a deleted parent", () => {
     async (_, entrant) => {
       await seedEnteredBounty(entrant);
 
-      await deleteBountyById({ id: 60, isModerator: true });
+      await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
 
       expect(await keptBounty()).toEqual([
         {
@@ -737,8 +737,8 @@ describe("a held author's rows under a deleted parent", () => {
   it('keeps the first removal record when a kept bounty is deleted again', async () => {
     await seedEnteredBounty(HELD);
 
-    await deleteBountyById({ id: 60, isModerator: true });
-    await deleteBountyById({ id: 60, isModerator: true });
+    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
+    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
 
     expect(await keptBounty()).toEqual([
       expect.objectContaining({ userId: null, before: 'Public', owner: OWNER }),
@@ -776,7 +776,7 @@ describe("a held author's rows under a deleted parent", () => {
     'deletes a kept bounty once %s is released, and not before',
     async (_, entrant, heldOwners) => {
       await seedEnteredBounty(entrant);
-      await deleteBountyById({ id: 60, isModerator: true });
+      await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
       for (const owner of heldOwners)
         await db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${owner})`);
 
@@ -794,7 +794,7 @@ describe("a held author's rows under a deleted parent", () => {
   it('deletes a bounty only an unheld user entered, with the entry (control)', async () => {
     await seedEnteredBounty(OTHER);
 
-    await deleteBountyById({ id: 60, isModerator: true });
+    await deleteBountyById({ id: 60, isModerator: true, userId: 1 });
 
     expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
     expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([]);

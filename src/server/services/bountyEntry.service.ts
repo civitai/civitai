@@ -28,6 +28,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import {
+  isPayoutOverdue,
   isPayoutPending,
   lockBountyForPayout,
   nextPayoutRecordedAt,
@@ -241,7 +242,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       // A refund that claimed the bounty first holds this lock until it commits, and
       // then reads complete here.
       const bounty = await lockBountyForPayout(tx, entry.bountyId);
-      if (!bounty || bounty.complete || bounty.refunded) {
+      if (!bounty || bounty.complete || bounty.refunded || isPayoutOverdue(bounty)) {
         log('error', 'Bounty already complete', { refunded: bounty?.refunded });
         throw throwBadRequestError('Bounty is already complete.');
       }
