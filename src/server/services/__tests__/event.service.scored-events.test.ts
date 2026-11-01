@@ -1,4 +1,4 @@
-import { PGlite } from '@electric-sql/pglite';
+import { PGlite, types } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -468,7 +468,11 @@ const postImages = (post: number, n: number, from: number): SeedImage[] =>
   Array.from({ length: n }, (_, i) => ({ id: from - i, post }));
 function usePostgresImages() {
   beforeAll(async () => {
-    pg.db = new PGlite();
+    // Prisma reads `timestamp` as UTC; PGlite's default reads it as local time, which shifts the
+    // cursor's publishedAt on any machine not in UTC.
+    pg.db = new PGlite({
+      parsers: { [types.TIMESTAMP]: (v: string) => new Date(`${v.replace(' ', 'T')}Z`) },
+    });
     await pg.db.exec(`
       CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp(3));
       CREATE TABLE "Image" (
