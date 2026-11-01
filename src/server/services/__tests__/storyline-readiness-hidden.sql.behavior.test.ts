@@ -61,7 +61,10 @@ const FROM = {
 const OTHER_STORY = 6;
 /** A stranger's continuation of a post that is no chapter. */
 const NOT_A_CHAPTER = 7;
-/** A stranger's continuation of chapter 2 whose own post was taken down: doomed. */
+/**
+ * A stranger's continuation of chapter 2 whose own post was taken down: doomed, so selected by
+ * the doomed arm. It guards against the hold moving out of the ready arm to the whole statement.
+ */
 const DOOMED = 8;
 const EVERYONE = [1, 2, 3, 4, 5, 6, 7, 8];
 /** Rows a waiting chapter 1 of storyline 1 does not hold back. */
@@ -207,7 +210,7 @@ describe('the readiness selection while chapter 1 hides the storyline', () => {
     ['wholly Blocked', `UPDATE "Post" SET "nsfwLevel" = ${NsfwLevel.Blocked} WHERE id = 100`],
     ['by a banned author', `UPDATE "User" SET "bannedAt" = now() WHERE id = 1`],
     ['by a deleted author', `UPDATE "User" SET "deletedAt" = now() WHERE id = 1`],
-  ])('still selects every row while chapter 1 is %s, unpublished or not', async (_n, sql) => {
+  ])('still selects every row while chapter 1 is %s and unpublished', async (_n, sql) => {
     await db.pg.exec(unpublished + sql);
     await expect(select()).resolves.toEqual(EVERYONE);
   });
@@ -232,5 +235,17 @@ describe('the readiness selection while chapter 1 hides the storyline', () => {
   ])('still selects a stranger’s row when %s, though chapter 1 is unpublished', async (_n, sql) => {
     await db.pg.exec(unpublished + sql);
     await expect(select()).resolves.toEqual(EVERYONE);
+  });
+
+  // Only chapter 1 can hold a row: an unpublished chapter 2 (the parent) does not.
+  it('holds nothing while chapter 1 is shown and a later chapter is unpublished', async () => {
+    await db.pg.exec(`UPDATE "Post" SET "publishedAt" = NULL WHERE id IN (101, 102)`);
+    try {
+      await expect(select()).resolves.toEqual(EVERYONE);
+    } finally {
+      await db.pg.exec(
+        `UPDATE "Post" SET "publishedAt" = now() - interval '1 day' WHERE id IN (101, 102)`
+      );
+    }
   });
 });
