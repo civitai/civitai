@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   APP_FEEDBACK_TOOLS,
   CREATE_APP,
@@ -89,6 +91,15 @@ export function reportOf(result: ChatToolResult): ChatToolResult {
           }
         : null,
   };
+}
+
+/**
+ * A page card's offer id: unique per offer, not per tool set. The runner opens tools again for the
+ * same run mid-reply (`reopenTools`), and a recovered run opens them in another process, so a
+ * counter would name a later offer as an earlier one and the page would show that one's card.
+ */
+function offerId(runId: string, kind: 'cover' | 'feedback'): string {
+  return `${runId}-${kind}-${randomUUID()}`;
 }
 
 /** Enough of a sandbox result for the page's gate: `exit_code:` and `render:` come first. */
@@ -213,8 +224,6 @@ export class AppAssistantTools implements ToolProvider {
 
     let preview: RunnerPreview | undefined;
     let apps: Sandbox[] | undefined;
-    let feedbackOffers = 0;
-    let coverOffers = 0;
     try {
       apps = await client.list();
     } catch (error) {
@@ -310,14 +319,14 @@ export class AppAssistantTools implements ToolProvider {
         ? runnerCoverTools({
             currentApp: () => sandbox.active?.app ?? null,
             ...covers,
-            nextId: () => `${runId}-cover-${++coverOffers}`,
+            nextId: () => offerId(runId, 'cover'),
             signal,
           })
         : unconfiguredCoverTools();
       const feedback = createFeedbackTools({
         current: () => sandbox.active?.app ?? null,
         source: this.#options.appFeedback?.(runId, signal) ?? unconfiguredFeedbackSource,
-        nextId: () => `${runId}-feedback-${++feedbackOffers}`,
+        nextId: () => offerId(runId, 'feedback'),
       });
       const pageTools: Record<string, ChatTool> = {
         ...appTools.tools,
