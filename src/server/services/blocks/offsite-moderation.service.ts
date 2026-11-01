@@ -2185,9 +2185,9 @@ export async function republishOwnListing(opts: {
  * 🔴 THE ICON+COVER FLOOR IS PRE-CHECKED HERE, BEFORE ANYTHING IS WRITTEN, and it is not
  * decoration. `approveExternalRequest` asserts the floor and does NOT exempt on-site, while
  * a listing can have reached `removed` without art (ungated paths: see
- * `listing-publish-floor.ts`). Routing such a listing
- * to review without this check strands it: it sits `pending`, its app is suspended, and the
- * moderator's approve fails on the floor every time, with no owner-reachable way out.
+ * `listing-publish-floor.ts`). Routing such a listing to review without this check strands
+ * it: it sits `pending`, its app is suspended, and the moderator's approve fails on the floor
+ * every time, with no owner-reachable way out.
  * Failing HERE turns that into an ordinary, actionable "add an icon and a cover" error and
  * leaves the listing `removed` where the owner can still edit it.
  *

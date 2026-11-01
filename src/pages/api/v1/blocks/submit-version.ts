@@ -251,7 +251,6 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       slug: result.slug,
       version: result.version,
       status: 'pending',
-      // null when it could not be read
       listing: result.listing ?? null,
     });
   } catch (err) {

@@ -77,10 +77,8 @@ export interface TurnStart {
    */
   edit?: boolean;
   /**
-   * The chat's own model, kept in a new head: a chat picks its model before anything is saved and
-   * sends it with its first run only, so the head the first run makes is where it is kept (the
-   * browser runner saves it with the chat's first save). A head that exists keeps its own; a model
-   * change after the first save reaches it as a patch.
+   * The chat's own model. A chat picks it before anything is saved and sends it with its first run
+   * only, so a new head keeps it; an existing head keeps its own (a later change arrives as a patch).
    */
   model?: string;
 }

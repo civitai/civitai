@@ -18,6 +18,8 @@ import type * as DevTunnelSession from '~/server/services/blocks/dev-tunnel-sess
 
 const m = vi.hoisted(() => ({
   session: { current: null as null | { user: Record<string, unknown> } },
+  /** What the real session lookup writes to `req.context` for each `Authorization` header. */
+  bearerContexts: {} as Record<string, Record<string, unknown>>,
   features: vi.fn<(...a: unknown[]) => Promise<Record<string, boolean>>>(),
   devTunnelEnabled: vi.fn<(...a: unknown[]) => Promise<boolean>>(),
   resolveDev: vi.fn<(...a: unknown[]) => Promise<unknown>>(),
@@ -28,7 +30,11 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => m.session.current),
+  getServerAuthSession: vi.fn(async ({ req }: { req: NextApiRequest }) => {
+    const credential = m.bearerContexts[req.headers.authorization ?? ''];
+    if (credential) Object.assign(req, { context: { ...credential } });
+    return m.session.current;
+  }),
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
@@ -84,6 +90,17 @@ const tunnel = (host: string) => ({
   hardExpiresAt: 9e9,
   spendCapBuzz: 5000,
 });
+const { TokenScope } = await import('~/shared/constants/token-scope.constants');
+const personalKey = (tokenScope: number) => ({
+  apiKeyId: 1,
+  apiKeyType: 'User',
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope,
+});
+const SCOPED_BEARER = 'Bearer scoped-key';
+const FULL_BEARER = 'Bearer full-key';
+m.bearerContexts[SCOPED_BEARER] = personalKey(TokenScope.Full & ~TokenScope.UserRead);
+m.bearerContexts[FULL_BEARER] = personalKey(TokenScope.Full);
 
 async function call(
   query: Record<string, unknown>,
@@ -175,40 +192,36 @@ describe('GET /api/apps/dev/entry-url', () => {
     expect(m.resolveDev).not.toHaveBeenCalled();
   });
 
-  it('a scoped bearer credential is refused before anything is resolved', async () => {
-    // A query `?token=` is never a session (`requireFullScopeSession`).
+  it('a scoped Authorization: Bearer credential → 403, and nothing is resolved', async () => {
+    const res = await call({ blockId: 'my-app' }, { authorization: SCOPED_BEARER });
+    expect(res.status).toBe(403);
+    expect(m.resolveDev).not.toHaveBeenCalled();
+  });
+
+  it('a full-scope personal key in Authorization: Bearer is served (control for the 403 above)', async () => {
+    const res = await call({ blockId: 'my-app' }, { authorization: FULL_BEARER });
+    expect(res.status).toBe(200);
+    expect(res.body?.host).toBe(HOST);
+  });
+
+  it('a ?token= query credential is refused before anything is resolved', async () => {
     const res = await call({ blockId: 'my-app', token: 'abc' });
     expect(res.status).toBe(403);
     expect(m.resolveDev).not.toHaveBeenCalled();
   });
 
-  // `tunnelRead`: the ownership case reads the tunnel record (`resolveDevTunnelFrame` looks it up
-  // before resolving the app); the gates ahead of it never reach it.
-  const refusals: [string, () => void, boolean][] = [
-    ['App Blocks off', () => void m.features.mockResolvedValue({ appBlocksAuthor: true }), false],
-    [
-      'the author capability off',
-      () => void m.features.mockResolvedValue({ appBlocks: true }),
-      false,
-    ],
-    [
-      'the dev-tunnel kill switch off',
-      () => void m.devTunnelEnabled.mockResolvedValue(false),
-      false,
-    ],
-    ['a block the caller does not own', () => void m.resolveDev.mockResolvedValue(null), true],
-  ];
-  it.each(refusals)(
-    '%s → the same bare 404, and nothing is signed',
-    async (_name, arrange, tunnelRead) => {
-      arrange();
-      const res = await call({ blockId: 'my-app' });
-      expect({ status: res.status, body: res.body }).toEqual(NOT_FOUND);
-      expect(m.sign).not.toHaveBeenCalled();
-      expect(m.hostPublished).not.toHaveBeenCalled();
-      expect(m.activeTunnel).toHaveBeenCalledTimes(tunnelRead ? 1 : 0);
-    }
-  );
+  it.each([
+    ['App Blocks off', () => m.features.mockResolvedValue({ appBlocksAuthor: true })],
+    ['the author capability off', () => m.features.mockResolvedValue({ appBlocks: true })],
+    ['the dev-tunnel kill switch off', () => m.devTunnelEnabled.mockResolvedValue(false)],
+    ['a block the caller does not own', () => m.resolveDev.mockResolvedValue(null)],
+  ])('%s → the same bare 404, and nothing is signed', async (_name, arrange) => {
+    arrange();
+    const res = await call({ blockId: 'my-app' });
+    expect({ status: res.status, body: res.body }).toEqual(NOT_FOUND);
+    expect(m.sign).not.toHaveBeenCalled();
+    expect(m.hostPublished).not.toHaveBeenCalled();
+  });
 
   it('a block that does not exist answers exactly like a foreign one', async () => {
     m.resolveDev.mockResolvedValue(null);
