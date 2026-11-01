@@ -213,4 +213,14 @@ describe('adding at the end of the main path', () => {
       .element(page.getByText('Added to your storyline as the next chapter.'))
       .toBeVisible();
   });
+
+  test("the server's refusal is shown and the dialog stays", async () => {
+    mocks.refusal = 'This storyline is complete';
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Add chapter' }).click();
+
+    await expect.element(page.getByText('This storyline is complete')).toBeVisible();
+    expect(page.getByText('Added to your storyline as the next chapter.').query()).toBeNull();
+  });
 });

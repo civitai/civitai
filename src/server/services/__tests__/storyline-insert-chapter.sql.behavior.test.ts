@@ -792,7 +792,9 @@ describe('a chapter add whose parent changes after its first read', () => {
       ]);
     });
 
-    // The end-of-chapter card read 60 as the end; another chapter has landed after it since.
+    // The server half of the end-of-chapter card's main-path "use a post": the card read 60 as the
+    // end, another chapter has landed since, and the add still goes on the main path. The card's
+    // side (sending the storyline, not 60) is pinned in StorylineInsertChapterModal.browser.test.
     it('lands after a chapter added since the card read the end, where adding after that chapter would branch', async () => {
       const { chapterId: moved } = await addOwnerChapter({
         parentChapterId: 60,
