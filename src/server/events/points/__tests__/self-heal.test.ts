@@ -5,6 +5,7 @@ import type { EventScoring } from '~/server/events/base.event';
 import type { EventPointsRedis } from '~/server/events/points/award';
 import type { SelfHealDeps } from '~/server/events/points/self-heal';
 import type { JobLockRedis } from '~/server/jobs/job-lock';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
@@ -31,9 +32,10 @@ const { COUNT_BASE_MARK, encodeHat, eventPointKeys, eventSeasonKeys } = await im
  * doing, not a fake's.
  */
 
-// Strings with SET NX / EX, the job lock's two scripts, and hashes and streams for the engine.
+// Strings with SET NX / EX, the job lock's scripts, and hashes and streams for the engine.
 function fakeRedis() {
   const strings = new Map<string, string>();
+  const lua = createLuaRedis(0, { strings });
   const ttls = new Map<string, number>();
   const hashes = new Map<string, Map<string, string>>();
   const sets = new Map<string, Set<string>>();
@@ -44,11 +46,9 @@ function fakeRedis() {
       if (opts?.EX) ttls.set(key, opts.EX);
       return 'OK';
     },
-    async eval(script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) {
-      if (strings.get(keys[0]) !== args[0]) return 0;
-      if (/redis\.call\(["']del["']/i.test(script)) return Number(strings.delete(keys[0]));
-      ttls.set(keys[0], Number(args[1]));
-      return 'OK';
+    // The job lock's scripts run for real, in the Lua harness, over the same strings.
+    async eval(script: string, opts: { keys: string[]; arguments: string[] }) {
+      return lua.eval(script, opts);
     },
     async hGet(key: string, field: string) {
       return hashes.get(key)?.get(field) ?? null;
