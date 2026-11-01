@@ -38,6 +38,12 @@ export type ReactionMetrics = {
   tippedAmountCount?: number;
 };
 
+/**
+ * `'container'` renders both forms and lets a CSS container query pick one, so the choice follows
+ * the width of the surrounding row with no measuring pass and no flash on first paint.
+ */
+export type CountFormat = boolean | 'container';
+
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
@@ -111,7 +117,7 @@ export function Reactions({
   showAll?: boolean;
   invisibleEmpty?: boolean;
   disableBuzzTip?: boolean;
-  abbreviate?: boolean;
+  abbreviate?: CountFormat;
 }) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
@@ -294,7 +300,7 @@ function ReactionsList({
 
   readonly?: boolean;
   invisibleEmpty?: boolean;
-  abbreviate?: boolean;
+  abbreviate?: CountFormat;
 }) {
   const currentUser = useCurrentUser();
 
@@ -379,7 +385,7 @@ function ReactionBadge({
   countUnknown?: boolean;
   reaction: ReviewReactions;
   canClick: boolean;
-  abbreviate?: boolean;
+  abbreviate?: CountFormat;
   resetKey?: string | number;
 } & Omit<ButtonProps, 'children'> &
   React.ComponentPropsWithoutRef<'button'>) {
@@ -407,6 +413,15 @@ function ReactionBadge({
         <Text inherit lh={1}>
           {countUnknown ? (
             '–'
+          ) : abbreviate === 'container' ? (
+            <>
+              <span data-count="full">
+                <AnimatedCount value={count} abbreviate={false} resetKey={resetKey} />
+              </span>
+              <span data-count="abbr">
+                <AnimatedCount value={count} abbreviate animate={false} />
+              </span>
+            </>
           ) : (
             <AnimatedCount value={count} abbreviate={abbreviate ?? false} resetKey={resetKey} />
           )}

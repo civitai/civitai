@@ -16,7 +16,6 @@ import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacement
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
-import { useElementSize } from '@mantine/hooks';
 import clsx from 'clsx';
 
 export function ImageCard({ data }: Props) {
@@ -75,31 +74,27 @@ export function ImageCard({ data }: Props) {
   );
 }
 
-// Below these row widths the four reaction counts do not fit at full width (1,455 needs about 285px,
-// 12,345 about 325px), so they abbreviate (1.5K) and take the whole row, leaving the tip and
-// sticker badges the next line.
-const NARROW_ACTION_ROW_PX = 300;
-const NARROW_ACTION_ROW_BIG_COUNTS_PX = 340;
-const BIG_COUNT = 10000;
+const countFormatter = new Intl.NumberFormat('en-US');
+const MAX_COUNT_LENGTH = 9;
 
 function ImageCardActionRow({ data }: Props) {
   const features = useFeatureFlags();
-  // The width is 0 until measured, which reads as narrow: abbreviating first never overflows.
-  const { ref, width } = useElementSize();
   const biggest = Math.max(
     data.stats?.likeCountAllTime ?? 0,
     data.stats?.heartCountAllTime ?? 0,
     data.stats?.laughCountAllTime ?? 0,
     data.stats?.cryCountAllTime ?? 0
   );
-  const narrow =
-    width < (biggest >= BIG_COUNT ? NARROW_ACTION_ROW_BIG_COUNTS_PX : NARROW_ACTION_ROW_PX);
+  const countLength = Math.min(countFormatter.format(biggest).length, MAX_COUNT_LENGTH);
   const hasMetaButton = features.imageCardInfoButton && data.hasMeta;
 
   return (
-    <div ref={ref} className="flex flex-wrap items-center gap-1">
+    <div
+      className={clsx(cardClasses.actionRow, 'flex flex-wrap items-center gap-1')}
+      data-count-len={Math.max(countLength, 5)}
+    >
       <Reactions
-        className={clsx(cardClasses.reactions, narrow && 'w-full')}
+        className={clsx(cardClasses.reactions, cardClasses.reactionsFill)}
         entityId={data.id}
         entityType="image"
         reactions={data.reactions}
@@ -112,7 +107,7 @@ function ImageCardActionRow({ data }: Props) {
           cryCount: data.stats?.cryCountAllTime,
         }}
         targetUserId={data.user.id}
-        abbreviate={narrow}
+        abbreviate="container"
         disableBuzzTip
       />
       {!data.poi && (

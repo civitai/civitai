@@ -106,7 +106,7 @@ const onCardClick = vi.fn();
 async function renderCard(counts: number, width: number = CARD_WIDTH) {
   renderWithProviders(
     <IntersectionObserverProvider>
-      <div style={{ width }} onClick={onCardClick}>
+      <div data-testid="card-root" style={{ width }} onClick={onCardClick}>
         <ImageCard data={imageData(counts)} />
       </div>
     </IntersectionObserverProvider>
@@ -114,6 +114,10 @@ async function renderCard(counts: number, width: number = CARD_WIDTH) {
   await vi.waitFor(() => {
     expect(document.body.querySelectorAll('[aria-label$="reaction"]').length).toBeGreaterThan(0);
   });
+}
+
+function resizeCard(width: number) {
+  (document.querySelector('[data-testid="card-root"]') as HTMLElement).style.width = `${width}px`;
 }
 
 function actionRowHeight() {
@@ -129,7 +133,7 @@ function reactionBarOverflow() {
 
 function reactionLabels() {
   return [...document.body.querySelectorAll('[aria-label$="reaction"]')].map(
-    (b) => b.textContent ?? ''
+    (b) => (b as HTMLElement).innerText
   );
 }
 
@@ -183,6 +187,32 @@ describe('ImageCard action row at four-digit reaction counts', () => {
 
     await renderCard(12345, WIDE_CARD_WIDTH);
     expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('12,345')));
+    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
+  });
+
+  // The form follows the row's own width, so the same card flips both ways. This is what fails
+  // if the container query stops applying: the labels would stay in one form.
+  test('the same card flips between abbreviated and full as its width changes', async () => {
+    await renderCard(1455, NARROW_CARD_WIDTH);
+    expect(reactionLabels()[0]).toContain('1.5K');
+
+    resizeCard(WIDE_CARD_WIDTH);
+    await vi.waitFor(() => expect(reactionLabels()[0]).toContain('1,455'));
+
+    resizeCard(NARROW_CARD_WIDTH);
+    await vi.waitFor(() => expect(reactionLabels()[0]).toContain('1.5K'));
+  });
+
+  // The width a count needs grows with its length, so the point where it abbreviates does too:
+  // 123,456 does not fit a 365px card in full.
+  test('six-digit counts abbreviate where they would clip in full', async () => {
+    await renderCard(123456, 365);
+    expect(reactionLabels()[0]).toContain('123.5K');
+    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
+    await cleanup();
+
+    await renderCard(123456, 450);
+    expect(reactionLabels()[0]).toContain('123,456');
     expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
   });
 });
