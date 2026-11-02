@@ -112,6 +112,7 @@ describe('the full-ci label', () => {
   // drafts already) and `unit` is gated by UNIT_PR_GATE, which implies it.
   it.each([
     ['lint.yml', 'typecheck'],
+    ['lint.yml', 'typecheck-tests'],
     ['lint.yml', 'packages'],
     ['lint.yml', 'component'],
     ['apps.yml', 'apps'],
@@ -122,7 +123,7 @@ describe('the full-ci label', () => {
   // Ledger: the job set the assertions above were written against. A new job fails here so its
   // author decides which draft gate it takes.
   it.each([
-    ['lint.yml', ['component', 'eslint', 'packages', 'typecheck', 'unit']],
+    ['lint.yml', ['component', 'eslint', 'packages', 'typecheck', 'typecheck-tests', 'unit']],
     ['apps.yml', ['apps']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
