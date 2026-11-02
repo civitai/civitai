@@ -166,7 +166,7 @@ export const getAllowedResources = (resources: ResourceHelper[], advancedMode: b
       if (isDefined(baseModel)) {
         const options =
           (getGenerationBaseModelResourceOptions(baseModel) as AllowedResource[]) ?? [];
-        return options.filter((t) => t.type !== 'Checkpoint');
+        return options.filter((t) => t.type !== ModelType.Checkpoint);
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {

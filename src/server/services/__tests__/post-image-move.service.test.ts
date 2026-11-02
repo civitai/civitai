@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ImageService from '~/server/services/image.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as Metrics from '~/server/metrics';
@@ -343,6 +344,9 @@ describe('moveImagesToPost', () => {
     ).rejects.toThrow(new RegExp(`^${IMAGES_NOT_MOVABLE}$`));
     expect(db.$transaction).not.toHaveBeenCalled();
     expectNothingWritten();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'account-legal-hold', message: 'Image move refused' })
+    );
   });
 
   it('refuses when the account check cannot be read', async () => {

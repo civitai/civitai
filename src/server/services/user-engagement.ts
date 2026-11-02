@@ -101,3 +101,15 @@ export async function clearUserEngagement({
 
   return count > 0;
 }
+
+/** Remove `type` from every pair `userId` holds it on, and only `type`. */
+export async function clearAllUserEngagements({
+  userId,
+  type,
+}: {
+  userId: number;
+  type: UserEngagementType;
+}): Promise<number> {
+  const { count } = await dbWrite.userEngagement.deleteMany({ where: { userId, type } });
+  return count;
+}

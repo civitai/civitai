@@ -473,7 +473,7 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     expect(source).toMatch(
       /const blurAndDiscardCarriedText = \(\) => \{\s*carriedSearchText\.current = '';\s*blurInput\(\);\s*\};/
     );
-    expect(source).toContain("['Escape', blurAndDiscardCarriedText]");
+    expect(source).toContain("['esc', blurAndDiscardCarriedText]");
     expect(source).toMatch(
       /const handleSubmit = \(\) => \{[\s\S]{0,400}?blurAndDiscardCarriedText\(\);/
     );

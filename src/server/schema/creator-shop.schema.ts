@@ -100,6 +100,18 @@ export const MAX_ANIMATION_FPS = 30;
 // (~30.3fps) encode of a nominal 30fps animation isn't rejected by rounding.
 export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS);
 
+export const LOOP_SEAM_CHECK_LABEL = 'No empty frame where the loop restarts';
+export const LOOP_SEAM_FIX_HINT = 'The last frame is blank: remove it and re-export';
+// A lone transparent final frame (a video→webp export sampling past the clip's end) flashes
+// empty once per loop; an intentional fade has an empty first frame or a run of them.
+export function hasEmptyLoopSeam(frameHasContent: {
+  first: boolean;
+  penultimate: boolean;
+  last: boolean;
+}) {
+  return frameHasContent.first && frameHasContent.penultimate && !frameHasContent.last;
+}
+
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
 /** Review-queue filter value for packs, which have no CosmeticType of their own. */
 export const PACK_FILTER_VALUE = 'Pack' as const;

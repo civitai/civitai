@@ -23,11 +23,11 @@ import {
   Input,
   RangeSlider,
   SegmentedControl,
-  Select,
   Stack,
   Text,
   Tooltip,
 } from '@mantine/core';
+import { SheetSelect } from './SheetSelect';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { IconEraser, IconPhoto, IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -448,7 +448,7 @@ function ControlNetEditor({
         </Button>
       )}
 
-      <Select
+      <SheetSelect
         label="Category"
         data={categoryOptions}
         value={currentCategory}
@@ -470,7 +470,7 @@ function ControlNetEditor({
         comboboxProps={{ withinPortal: true }}
       />
 
-      <Select
+      <SheetSelect
         label="Preprocessor"
         data={preprocessorSelectData}
         value={entry.preprocessor}

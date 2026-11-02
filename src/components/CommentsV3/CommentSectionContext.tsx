@@ -1,5 +1,13 @@
 import { useRouter } from 'next/router';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ThreadSort } from '~/server/common/enums';
@@ -95,9 +103,11 @@ export function CommentSectionProvider({
   const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
   const { highlightedId, parentFocus } = useLinkedFocus(deepLinks);
 
+  // Queries never go stale by default, and a notification link reuses this key: refetch on every
+  // mount and every new link, or a reply posted since the reader last opened the page stays missing.
   const section = trpc.commentv3.getSection.useInfiniteQuery(
     { entityType, entityId, sort },
-    { getNextPageParam: (page) => page.nextCursor ?? undefined }
+    { getNextPageParam: (page) => page.nextCursor ?? undefined, refetchOnMount: 'always' }
   );
   const firstPage = section.data?.pages[0];
   const linkedFocus =
@@ -113,6 +123,13 @@ export function CommentSectionProvider({
     key: linkKey,
   });
   if (focusState.key !== linkKey) setFocusState({ key: linkKey });
+  const { refetch: refetchSection } = section;
+  const mountedLinkKey = useRef(linkKey);
+  useEffect(() => {
+    if (mountedLinkKey.current === linkKey) return;
+    mountedLinkKey.current = linkKey;
+    void refetchSection();
+  }, [linkKey, refetchSection]);
   const focusedOverride = focusState.key === linkKey ? focusState.id : undefined;
   const wantedFocus = focusedOverride === undefined ? linkedFocus : focusedOverride ?? undefined;
 

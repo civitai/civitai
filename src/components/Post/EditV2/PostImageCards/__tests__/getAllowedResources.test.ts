@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { selectableVersions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getAllowedResources } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import type { ResourceHelper } from '~/server/services/post.service';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -14,6 +15,19 @@ const resource = (modelType: ModelType, modelVersionBaseModel: string) =>
 
 const offeredBaseModels = (allowed: ReturnType<typeof getAllowedResources>, type: ModelType) =>
   allowed.find((t) => t.type === type)?.baseModels ?? [];
+
+/** Whether `selectableVersions` (the picker's per-version filter) lets a checkpoint on `baseModel` through. */
+const pickerAcceptsCheckpoint = (
+  allowed: ReturnType<typeof getAllowedResources>,
+  baseModel: string
+) =>
+  selectableVersions([{ id: 1, baseModel }], {
+    skipBaseModel: false,
+    modelBaseModels: allowed
+      .filter((t) => t.type === ModelType.Checkpoint)
+      .flatMap((t) => t.baseModels),
+    excludedIds: [],
+  }).length === 1;
 
 describe('getAllowedResources', () => {
   describe('advanced mode off', () => {
@@ -38,9 +52,9 @@ describe('getAllowedResources', () => {
   // models) — the same state an image with no resources gets.
   describe('advanced mode on', () => {
     it('leaves the picker unrestricted after a checkpoint, so other families and a second checkpoint are offered', () => {
-      expect(getAllowedResources([resource(ModelType.Checkpoint, FIRST_BASE_MODEL)], true)).toEqual(
-        []
-      );
+      const allowed = getAllowedResources([resource(ModelType.Checkpoint, FIRST_BASE_MODEL)], true);
+      expect(allowed).toEqual([]);
+      expect(pickerAcceptsCheckpoint(allowed, OTHER_FAMILY_BASE_MODEL)).toBe(true);
     });
 
     it('leaves the picker unrestricted after a LoRA', () => {

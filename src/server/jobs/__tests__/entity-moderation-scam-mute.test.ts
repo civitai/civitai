@@ -22,6 +22,7 @@ describe('Clavata scam auto-mute', () => {
     ['Chat', 'chatMessages'],
     ['Comment', 'comments'],
     ['CommentV2', 'commentsV2'],
+    ['CommentV3', 'commentsV2'],
   ] as const)('%s mutes with cleanup %s', async (type, cleanup) => {
     await autoMuteIfScamAccount({ type, entityId: 9, userId: 5, matches: [TAG], value: 'x' });
     expect(autoMuteScamAccount).toHaveBeenCalledExactlyOnceWith(

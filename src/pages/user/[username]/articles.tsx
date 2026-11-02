@@ -1,4 +1,4 @@
-import { Box, Group, Stack } from '@mantine/core';
+import { Box, Center, Group, Loader, Stack } from '@mantine/core';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
@@ -14,7 +14,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ArticleSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { postgresSlugify } from '~/utils/string-helpers';
+import { isViewer } from '~/utils/is-viewer';
+import { trpc } from '~/utils/trpc';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
@@ -48,24 +49,40 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function UserArticlesPage() {
-  const currentUser = useCurrentUser();
   const router = useRouter();
+  const username = (router.query.username as string) ?? '';
+  const { data: user, isLoading } = trpc.userProfile.get.useQuery(
+    { username },
+    { enabled: !!username }
+  );
+
+  // currently not showing any content if the username is undefined
+  if (!username) return <NotFound />;
+  if (isLoading)
+    return (
+      <Center p="xl">
+        <Loader />
+      </Center>
+    );
+  if (!user) return <NotFound />;
+
+  return <UserArticlesFeed profileUserId={user.id} />;
+}
+
+function UserArticlesFeed({ profileUserId }: { profileUserId: number }) {
+  const currentUser = useCurrentUser();
   const {
     replace,
     query: { followed = undefined, ...query },
   } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? ArticleSort.Newest;
-  const username = (router.query.username as string) ?? '';
-  const selfView =
-    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+  const selfView = isViewer(currentUser, profileUserId);
 
   const [section, setSection] = useState<'published' | 'draft'>(
     selfView ? query.section ?? 'published' : 'published'
   );
   const viewingPublished = section === 'published';
-  // currently not showing any content if the username is undefined
-  if (!username) return <NotFound />;
 
   return (
     <Box mt="md">

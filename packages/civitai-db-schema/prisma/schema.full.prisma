@@ -1145,6 +1145,8 @@ model Model {
 
   @@index([name])
   @@index([status, nsfw])
+  @@index([createdAt])
+  @@index([updatedAt, id])
 }
 
 /// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
@@ -5337,6 +5339,8 @@ model CommentV3 {
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
   legacyV1Id    Int?
+  // Deleted by its author while a legal hold kept it: a ToS restore must not republish it.
+  removedByAuthor Boolean @default(false)
 
   reactions CommentV3Reaction[]
   reports   CommentV3Report[]

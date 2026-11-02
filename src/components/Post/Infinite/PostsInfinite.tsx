@@ -19,6 +19,7 @@ export type PostsInfiniteState = {
   modelVersionId?: number; // not hooked up to service/schema yet
   tags?: number[];
   username?: string | null;
+  userId?: number;
   period?: MetricTimeframe;
   sort?: PostSort;
   collectionId?: number;

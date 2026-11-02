@@ -513,6 +513,10 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(apiKeys).toHaveLength(0);
     expect(alertNames()).toContain('system-account-api-key-revoked');
     expect(alertNames()).not.toContain('system-account-api-key-revoke-failed');
+    // Deliberately 'error', not 'info': a revoke only ever cleans up a mint that failed or was refused.
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'system-account-api-key-revoked', type: 'error' })
+    );
   });
 
   it('still refuses with 403, and alerts, when revoking the refused key fails', async () => {
@@ -558,14 +562,12 @@ describe('POST /api/admin/system-account-api-key', () => {
 
     expect(apiKeys).toHaveLength(0);
     expect(trackModActivity).toHaveBeenCalledTimes(1);
-    expect(
-      logToAxiom.mock.calls.some(
-        ([data]) => (data as { name?: string }).name === 'system-account-api-key-minted'
-      )
-    ).toBe(true);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'system-account-api-key-minted', type: 'error' })
+    );
   });
 
-  it('audits and alerts on every mint, with neither the key nor its hash', async () => {
+  it('audits and logs every mint at info, with neither the key nor its hash', async () => {
     await call({ userId: SYSTEM_ID, actorUserId: 9 });
     await call({ userId: SYSTEM_ID, actorUserId: 9 });
 
@@ -579,7 +581,7 @@ describe('POST /api/admin/system-account-api-key', () => {
       ([data]) => (data as { name?: string }).name === 'system-account-api-key-minted'
     );
     expect(alerts).toHaveLength(2);
-    expect(alerts.every(([data]) => (data as { type: string }).type === 'error')).toBe(true);
+    expect(alerts.every(([data]) => (data as { type: string }).type === 'info')).toBe(true);
     expect(alerts[0][0]).toMatchObject({
       details: { asserted_actor: 9, userId: SYSTEM_ID, name: 'system' },
     });
@@ -588,6 +590,18 @@ describe('POST /api/admin/system-account-api-key', () => {
     const recorded = JSON.stringify([trackModActivity.mock.calls, logToAxiom.mock.calls]);
     expect(recorded).not.toContain('fake-plaintext');
     expect(recorded).not.toContain('fake-hash-of');
+  });
+
+  it('logs a mint at error when its audit row could not be written', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('db down'));
+    expect((await call({ userId: SYSTEM_ID })).status).toBe(201);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'system-account-api-key-minted',
+        details: expect.objectContaining({ auditRecorded: false }),
+      })
+    );
   });
 
   it('refuses any method but POST', async () => {

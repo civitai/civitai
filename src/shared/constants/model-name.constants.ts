@@ -1,6 +1,6 @@
 // Names saved before the cap may be longer. The cap applies only when a name is created or changed,
 // so an untouched long name keeps saving.
-export const MODEL_NAME_MAX_LENGTH = 100;
+export const MODEL_NAME_MAX_LENGTH = 150;
 
 export const MODEL_NAME_TOO_LONG_MESSAGE = `Model name must be ${MODEL_NAME_MAX_LENGTH} characters or fewer.`;
 

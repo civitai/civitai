@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@civitai/auth": "workspace:*",
-    "@civitai/orchestration-client": "0.2.0-beta.125",
+    "@civitai/orchestration-client": "0.2.0-beta.126",
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/redis": "workspace:*",

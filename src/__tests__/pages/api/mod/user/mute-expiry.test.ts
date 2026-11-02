@@ -27,12 +27,19 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/utils/endpoint-helpers', () => ({
-  handleEndpointError: (
-    res: { status: (n: number) => { json: (b: unknown) => unknown } },
-    e: unknown
-  ) => res.status(500).json({ error: 'error', message: (e as Error).message }),
-}));
+vi.mock('~/server/utils/endpoint-helpers', async () => {
+  const { TRPCError } = await import('@trpc/server');
+  const { getHTTPStatusCodeFromError } = await import('@trpc/server/http');
+  return {
+    handleEndpointError: (
+      res: { status: (n: number) => { json: (b: unknown) => unknown } },
+      e: unknown
+    ) =>
+      res
+        .status(e instanceof TRPCError ? getHTTPStatusCodeFromError(e) : 500)
+        .json({ error: 'error', message: (e as Error).message }),
+  };
+});
 
 const setUserMuted = vi.fn(
   async (): Promise<{ sessionInvalidated: boolean }> => ({
@@ -100,7 +107,19 @@ describe('user.mute — the expiry it writes', () => {
   it('answers with a retryable error when the sessions could not be ended', async () => {
     setUserMuted.mockResolvedValueOnce({ sessionInvalidated: false });
     const { status } = await call({ userId: 42 });
-    expect(status).toBeGreaterThanOrEqual(500);
+    expect(status).toBe(503);
+  });
+
+  // The mute committed, so the audit row must not read as a failed action.
+  it('audits that committed-but-retryable call as a warning, and a real failure as an error', async () => {
+    setUserMuted.mockResolvedValueOnce({ sessionInvalidated: false });
+    await call({ userId: 42 });
+    expect(mockAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: 'warning', affected: { userIds: [42] } })
+    );
+    setUserMuted.mockRejectedValueOnce(new Error('db down'));
+    await call({ userId: 42 });
+    expect(mockAudit).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: 'error' }));
   });
 
   it('refuses an unparseable expiry rather than muting indefinitely by accident', async () => {

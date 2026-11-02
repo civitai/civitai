@@ -7,6 +7,7 @@ import {
   getTextScanMode,
   isTextScanEnabled,
   readTextScanRollouts,
+  rolloutFor,
 } from '~/server/services/text-scan/mode';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
@@ -58,6 +59,13 @@ export const CLAVATA_TARGETS: Readonly<Record<CutoverEntityType, ClavataTarget>>
   BountyEntry: standard('BountyEntry', async () => ids(await dbRead.bountyEntry.findMany(recent))),
   Comment: standard('Comment', async () => ids(await dbRead.comment.findMany(recent))),
   CommentV2: standard('CommentV2', async () => ids(await dbRead.commentV2.findMany(recent))),
+  CommentV3: standard('CommentV3', async () =>
+    ids(
+      await dbRead.$queryRaw<
+        { id: number }[]
+      >`SELECT id FROM "CommentV3" ORDER BY id DESC LIMIT ${PROBE}`
+    )
+  ),
   ResourceReview: standard('ResourceReview', async () =>
     ids(await dbRead.resourceReview.findMany(recent))
   ),
@@ -142,7 +150,7 @@ export async function getTextScanOwnedClavataKeys(): Promise<Set<string>> {
     CutoverEntityType,
     ClavataTarget
   ][]) {
-    if (cutover.has(target.clavataKey) && rollouts[entityType]?.active === 100)
+    if (cutover.has(target.clavataKey) && rolloutFor(rollouts, entityType)?.active === 100)
       owned.add(target.clavataKey);
   }
   return owned;
@@ -168,7 +176,7 @@ async function assertActiveEverywhere(entityType: CutoverEntityType, target: Cla
   // The same rule the Clavata job uses to step aside: below it, the drain would delete queued rows
   // for ids that text scan only shadows.
   const [textScanOn, rollouts] = await Promise.all([isTextScanEnabled(), readTextScanRollouts()]);
-  if (!textScanOn || rollouts[entityType]?.active !== 100)
+  if (!textScanOn || rolloutFor(rollouts, entityType)?.active !== 100)
     throw new ClavataCutoverRefused(entityType, 'not-fully-active');
   const probeIds = await target.recentIds();
   if (!probeIds.length) throw new ClavataCutoverRefused(entityType, 'nothing-to-probe');

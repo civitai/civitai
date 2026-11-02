@@ -293,7 +293,10 @@ export function CommentItem({
                       leftSection={<IconFlag size={14} stroke={1.5} />}
                       onClick={() =>
                         openReportModal({
-                          entityType: ReportEntity.CommentV2,
+                          // Reports on a CommentV3-write surface are filed against CommentV3.
+                          entityType: constants.comments.v3WriteSurfaces.includes(entityType)
+                            ? ReportEntity.CommentV3
+                            : ReportEntity.CommentV2,
                           entityId: comment.id,
                         })
                       }
