@@ -62,6 +62,7 @@ const m = vi.hoisted(() => ({
     ) => void;
     onReplyResume?: (trigger: 'retry' | 'visible' | 'online') => boolean;
     onChatChange?: (chatId: string | null) => void;
+    onReady?: () => void;
     subagents?: unknown;
     composerTop?: ReactNode;
     threadEnd?: ReactNode;
@@ -85,6 +86,10 @@ const m = vi.hoisted(() => ({
   suspend: vi.fn(),
   remove: vi.fn(),
   newChat: vi.fn(),
+  /** The chat's `chatId`: the chat open now. */
+  chatId: null as string | null,
+  /** Each saved chat the page asked the chat to open (`conversationId`), in order. */
+  opened: [] as string[],
   /** The chat's message box. */
   box: '',
   /** The chat is listing a just-added app's tools, so it holds as it does for `holdReason`. */
@@ -301,6 +306,11 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
         if (!props.chatRef) return;
         m.element ??= Object.defineProperties(new EventTarget(), {
           newChat: { value: m.newChat },
+          chatId: { get: () => m.chatId },
+          conversationId: {
+            get: () => m.opened.at(-1),
+            set: (id: string) => m.opened.push(id),
+          },
           send: { value: m.send },
           compose: { value: m.compose },
           draft: { get: () => m.box },
@@ -313,6 +323,8 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
         });
         props.chatRef.current = m.element;
       });
+      // As the real one, once it has started (`chatRef` set).
+      useLayoutEffect(() => props.onReady?.(), []);
       // A new `holdReason` re-renders the element, which announces a change of `canSend`.
       useLayoutEffect(() => m.announce(), [props.holdReason]);
       // 0.14.0 starts listing a new server's tools in its next update: `canSend` reads true until then.
@@ -625,6 +637,8 @@ beforeEach(() => {
   m.suspend.mockReset();
   m.remove.mockReset();
   m.newChat.mockReset();
+  m.chatId = null;
+  m.opened = [];
   m.send.mockClear();
   m.askAgain.mockClear();
   m.reasked = [];
@@ -1822,6 +1836,132 @@ describe('AppAssistantWorkspace on a visit', () => {
     screen.rerender(<Workspace />);
     await settle();
     await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
+  });
+});
+
+describe('AppAssistantWorkspace chats follow the app', () => {
+  /** The chat announces `id` as the chat open now (`chat-change`). */
+  async function chatOpens(id: string) {
+    m.chatId = id;
+    m.chat!.onChatChange!(id);
+    await settle();
+  }
+  /** The assistant, in the open chat, chooses the open app (`use_open_app`), as it does before changing it. */
+  async function chatChooses(app: string) {
+    const input = { app };
+    const output = await m.chat!.tools.use_open_app.execute(input, ctx);
+    m.chat!.onToolResult!({ name: 'use_open_app', input, output, isError: false });
+  }
+  /** Opens app-aaaa in chat-a and app-bbbb in a new chat, chat-b; app-bbbb stays open. */
+  async function workOnBoth() {
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    await openFromSwitcher('app-bbbb');
+    await chatOpens('chat-b');
+    await chatChooses('app-bbbb');
+  }
+
+  test('🔴 switching to another app leaves the open app’s chat: a new chat when the app has none', async () => {
+    await mount();
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    expect(m.newChat).not.toHaveBeenCalled();
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+    expect(m.opened).toEqual([]);
+  });
+
+  test('🔴 switching back to an app opens the chat it was chosen in, each way', async () => {
+    await mount();
+    await workOnBoth();
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+
+    await openFromSwitcher('app-aaaa');
+    expect(m.opened).toEqual(['chat-a']);
+    await chatOpens('chat-a');
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.opened).toEqual(['chat-a', 'chat-b']);
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+  });
+
+  test('🔴 a reload opens the picked app’s own chat, not the chat used last', async () => {
+    const screen = await mount();
+    await workOnBoth();
+    // Back in app-aaaa's chat (from the chat list) with app-bbbb open: the chat used last is chat-a.
+    await chatOpens('chat-a');
+    screen.unmount();
+
+    m.chat = null;
+    m.element = null;
+    m.opened = [];
+    m.newChat.mockReset();
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await vi.waitFor(() => expect(m.opened).toEqual(['chat-b']));
+    expect(m.newChat).not.toHaveBeenCalled();
+  });
+
+  test('🔴 a reload with no chat known for the picked app starts one when the chat opened is another app’s', async () => {
+    const screen = await mount();
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    screen.unmount();
+
+    m.chat = null;
+    m.element = null;
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    m.chatId = null;
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    expect(m.newChat).not.toHaveBeenCalled();
+    // The chat opens the chat used last, app-aaaa's.
+    await chatOpens('chat-a');
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+    expect(m.opened).toEqual([]);
+  });
+
+  test('NEGATIVE CONTROL: a reload whose chat is no app’s, or the picked app’s, keeps it', async () => {
+    m.list = [sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' })];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await chatOpens('chat-x');
+    expect(m.newChat).not.toHaveBeenCalled();
+    expect(m.opened).toEqual([]);
+  });
+
+  test('NEGATIVE CONTROL: opening an app from none keeps a chat that is no app’s, and picking the open app changes nothing', async () => {
+    await mount();
+    await chatOpens('chat-x');
+    await openFromSwitcher('app-aaaa');
+    await openFromSwitcher('app-aaaa');
+    expect(m.newChat).not.toHaveBeenCalled();
+    expect(m.opened).toEqual([]);
+  });
+
+  test('a chat that chooses another app is no longer the first app’s', async () => {
+    await mount();
+    await workOnBoth();
+    // chat-b, open with app-bbbb, is then asked to work on app-aaaa.
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-b');
+    await chatChooses('app-aaaa');
+    m.opened = [];
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.opened).toEqual([]);
+    expect(m.newChat).toHaveBeenCalledTimes(2);
   });
 });
 

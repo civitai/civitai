@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { MantineThemeProvider } from '@mantine/core';
 import { ModalsProvider } from '@mantine/modals';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import type * as TrpcMod from '~/utils/trpc';
@@ -11,6 +12,7 @@ import {
   renderAtViewport,
 } from '../../../../test/geometry-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
+import { theme as siteTheme } from '~/providers/ThemeProvider';
 
 const BASE = 'https://sandbox.example';
 
@@ -291,5 +293,69 @@ describe.each(WIDE)('App Assistant at $width px (wide)', (viewport) => {
     await createApp();
     await startPreview();
     expectSideBySide();
+  });
+});
+
+describe.each([
+  { width: 390, height: 844 },
+  { width: 1280, height: 800 },
+])('App Assistant app menu at $width px', (viewport) => {
+  const app = (key: string, lastActivityAt: string): Sandbox => ({
+    name: `sbx-${key}`,
+    app: key,
+    state: 'running',
+    mcpUrl: `${BASE}/s/${key}/mcp`,
+    createdAt: null,
+    lastActivityAt,
+    expiresAt: null,
+  });
+  const overlap = (a: ReturnType<typeof box>, b: ReturnType<typeof box>) =>
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+  test('🔴 an app’s actions menu paints over the app list: each item is what a tap on it hits', async () => {
+    m.list = [
+      app('first-app', '2026-10-03T10:00:00Z'),
+      app('second-app', '2026-10-02T10:00:00Z'),
+      app('third-app', '2026-10-01T10:00:00Z'),
+    ];
+    // The site's own theme, whose popovers render in place (no portal), as on civitai.com.
+    await renderAtViewport(
+      <MantineThemeProvider theme={siteTheme}>
+        <ModalsProvider>
+          <AppAssistantWorkspace canPreview sandboxUrl={BASE} />
+        </ModalsProvider>
+      </MantineThemeProvider>,
+      viewport
+    );
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label^="Switch app: first-app"]')).not.toBeNull()
+    );
+    document.querySelector<HTMLElement>('[aria-label^="Switch app"]')!.click();
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    await nextLayout();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    dialog.querySelector<HTMLElement>('[aria-label="Actions for first-app"]')!.click();
+    await vi.waitFor(() => expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(3));
+    await nextLayout();
+
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Pause',
+      'ExportDownload as zip',
+      'Delete app',
+    ]);
+    // POSITIVE CONTROL: the menu lies over the next app's row, so a row painted over it would show.
+    const nextRow = dialog.querySelectorAll('li')[1];
+    expect(items.some((item) => overlap(box(item), box(nextRow)))).toBe(true);
+    await vi.waitFor(() => {
+      for (const item of items) {
+        const b = box(item);
+        const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        expect(
+          item.contains(hit),
+          `${item.textContent} is under ${hit?.outerHTML.slice(0, 160)}`
+        ).toBe(true);
+      }
+    });
   });
 });
