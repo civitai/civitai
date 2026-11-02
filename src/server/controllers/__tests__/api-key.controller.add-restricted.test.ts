@@ -114,4 +114,26 @@ describe('apiKey.add when a ban or deletion lands during the insert', () => {
     expect(keys).toHaveLength(1);
     expect(keys[0].expiresAt).toBeInstanceOf(Date);
   });
+
+  it('still refuses when expiring the keys fails', async () => {
+    dbMock.dbWrite.user.findUnique
+      .mockResolvedValueOnce(OPEN as never)
+      .mockResolvedValueOnce(OPEN as never)
+      .mockResolvedValue({ ...OPEN, bannedAt: new Date('2026-10-01') } as never);
+    dbMock.dbWrite.apiKey.findMany.mockRejectedValue(new Error('primary unavailable'));
+    await expect(add()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: RESTRICTED_ACCOUNT_MESSAGE,
+    });
+  });
+
+  // A failed read is not a refusal: expiring here would cut off every key of an open account.
+  it('expires nothing when the check after the insert cannot read the account', async () => {
+    dbMock.dbWrite.user.findUnique
+      .mockResolvedValueOnce(OPEN as never)
+      .mockResolvedValueOnce(OPEN as never)
+      .mockRejectedValue(new Error('primary unavailable'));
+    await expect(add()).rejects.toThrow('primary unavailable');
+    expect(keys).toEqual([expect.objectContaining({ expiresAt: null })]);
+  });
 });
