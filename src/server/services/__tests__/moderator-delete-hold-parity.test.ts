@@ -33,7 +33,6 @@ describe("the moderator app's copy of ownerHeldSql", () => {
   });
 });
 
-/** The article delete's comment holds, which the moderator app's article delete applies too. */
 describe("the moderator app's copies of the article delete's comment holds", () => {
   type Copies = {
     accountHoldSqlText: (id: string) => string;

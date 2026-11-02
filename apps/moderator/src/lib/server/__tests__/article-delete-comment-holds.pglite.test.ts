@@ -6,8 +6,6 @@ import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { LEGAL_HOLD_REFUSAL } from '$lib/legal-hold';
 
-/** A moderator's article delete keeps a held author's comments, as the main app's does. */
-
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
 vi.mock('../db', () => ({
@@ -125,6 +123,22 @@ describe("a moderator's article delete", () => {
     expect(
       await rows(`SELECT id, "articleId", metadata -> 'detachedFrom' AS "from" FROM "Thread"`)
     ).toEqual([{ id: 300, articleId: null, from: { articleId: 50 } }]);
+    expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([{ id: 1 }, { id: 2 }]);
+  });
+
+  it('keeps the article’s thread when the held author’s comment is in a reply thread below it', async () => {
+    await db.exec(`
+      INSERT INTO "CommentV2" VALUES (1, ${UNHELD}, 300);
+      INSERT INTO "Thread" (id, "parentThreadId", "rootThreadId", "commentId") VALUES (301, 300, 300, 1);
+      INSERT INTO "CommentV2" VALUES (2, ${HELD}, 301);
+    `);
+
+    expect(await deleteArticle()).toEqual({ ok: true });
+
+    expect(await rows(`SELECT id, "articleId" FROM "Thread" ORDER BY id`)).toEqual([
+      { id: 300, articleId: null },
+      { id: 301, articleId: null },
+    ]);
     expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([{ id: 1 }, { id: 2 }]);
   });
 

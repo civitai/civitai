@@ -86,12 +86,16 @@ export const imageDeleteHoldLegs = (image: string) => ({
 export const imageDeleteHeldSqlText = (image: string) =>
   `(${Object.values(imageDeleteHoldLegs(image)).join('\n  OR ')})`;
 
-/** The main app's `accountHoldSql` with its marker view present. */
+/**
+ * The main app's `accountHoldSql` with its marker view present. Kept identical by
+ * `moderator-delete-hold-parity.test.ts`.
+ */
 export const accountHoldSqlText = accountHold;
 
 /**
  * Whether a held author wrote a comment in the thread `rootId` (an int SQL expression) or any thread
- * below it: the main app's `heldCommentInTreeSql`.
+ * below it: the main app's `heldCommentInTreeSql`, pinned through
+ * `detachHeldArticleThreadsSqlText`.
  */
 export const heldCommentInTreeSqlText = (rootId: string) => `EXISTS (
     WITH RECURSIVE tree AS (

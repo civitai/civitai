@@ -293,6 +293,8 @@ async function restoreArticle(id: number): Promise<void> {
 
 /** Deletes the article and its orphaned images; returns the images a hold kept. */
 async function deleteArticle(id: number): Promise<KeptImage[]> {
+  // The id is written into the comment-hold SQL as text, where a fraction would be cast to another id.
+  if (!Number.isInteger(id)) throw new Error(`Invalid article id ${id}`);
   // Capture the content image ids before the transaction deletes the connections, or they're lost.
   const contentImageIds = (
     await dbWrite
@@ -313,8 +315,8 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
 
-    // The main app's article delete, in its order: CommentV3 is locked before the cascade reaches
-    // CommentV2, and a held author's comments are kept.
+    // Same lock order as the main app's deleteArticleById: CommentV3 before the cascade reaches
+    // CommentV2.
     await sql`SELECT 1 FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}
       FOR UPDATE`.execute(trx);
     const kept = await sql<{ keptByComment: boolean }>`
