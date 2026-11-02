@@ -364,6 +364,29 @@ describe('verified claims cache — the key set is re-checked on every hit', () 
     expect(verifyCalls()).toBe(2); // cached again against the reloaded key
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+
+  it('a key-set reload that times out on a hit answers null with ONE fetch and ONE timeout sample', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
+    const { fetch } = await serveJwks(await signer.publicJwks());
+    const onJwksLeg = vi.fn<(outcome: 'hit' | 'timeout', seconds: number) => void>();
+    const v = verifier({ ...jwksCfg, claimsCache: on, onJwksLeg });
+    const token = await mint(7, 'a');
+    expect((await v.verifyToken(token))?.jti).toBe('a'); // cached (one fetch, one `hit` sample)
+
+    // The next lookup reloads; make that reload time out the way AbortSignal.timeout does.
+    vi.setSystemTime(Date.now() + PAST_JWKS_CACHE_MAX_AGE_MS);
+    fetch.mockImplementation(async () => {
+      throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+    });
+    fetch.mockClear();
+    onJwksLeg.mockClear();
+
+    expect(await v.verifyToken(token)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1); // not re-verified, which would fetch again
+    expect(onJwksLeg.mock.calls.filter(([outcome]) => outcome === 'timeout')).toHaveLength(1);
+    expect(onJwksLeg).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('verified claims cache — a token without a usable exp is never stored', () => {
