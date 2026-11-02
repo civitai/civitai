@@ -7,6 +7,7 @@ import type {
 } from '~/server/schema/announcement.schema';
 import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
+import { announcementWindowOverlapsWhere } from '~/server/services/announcement-window';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
@@ -229,15 +230,16 @@ const liveAuthorIdsMemo = createKeyedTtlMemo<number[]>(
     const rows = await dbRead.announcement.findMany({
       where: {
         profileOnly: false,
-        disabled: false,
         userId: { not: null },
         ...(domainKey !== ANY_DOMAIN
           ? { domain: { hasSome: [DomainColor.all, domainKey as DomainColor] } }
           : {}),
-        OR: [{ startsAt: null }, { startsAt: { lte: new Date(now + LIVE_AUTHORS_LOOKAHEAD_MS) } }],
-        AND: [
-          { OR: [{ endsAt: null }, { endsAt: { gte: new Date(now - LIVE_AUTHORS_LOOKBACK_MS) } }] },
-        ],
+        // The shared "is this announcement showing" window (enabled, open-ended start and end),
+        // widened: one TTL back past `endsAt`, two ahead past `startsAt`.
+        ...announcementWindowOverlapsWhere(
+          new Date(now - LIVE_AUTHORS_LOOKBACK_MS),
+          new Date(now + LIVE_AUTHORS_LOOKAHEAD_MS)
+        ),
       },
       select: { userId: true },
     });

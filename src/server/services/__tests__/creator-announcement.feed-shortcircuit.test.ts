@@ -154,16 +154,19 @@ describe('the live-author short-circuit', () => {
     );
   });
 
-  it('records each decision and the size of the set it built', async () => {
+  it('records the size of the set it built, and no fallback on the narrowed path', async () => {
     liveAuthorRows = [{ userId: AUTHOR }, { userId: OTHER_AUTHOR }, { userId: AUTHOR }];
     follows = [{ targetUserId: AUTHOR }];
 
     await getFollowedAnnouncements({ userId: VIEWER });
 
-    // Deduped: three rows, two authors.
+    // The gauge is how an ON window sees the set's size. Deduped: three rows, two authors.
     expect(creatorFeedLiveAuthorsGauge.set).toHaveBeenCalledWith({ domain: 'any' }, 2);
-    expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'narrowed' });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+    // Negative control for the fallback test: a narrowing that worked logs no fallback.
+    expect(creatorFeedShortcircuitCounter.inc).not.toHaveBeenCalledWith({ outcome: 'fallback' });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-feed-shortcircuit-fallback' })
+    );
   });
 
   it('an author who newly goes live reaches followers at the next refresh, within the TTL', async () => {
@@ -196,16 +199,31 @@ describe('the live-author short-circuit', () => {
 
 describe('the live-author set window', () => {
   const START = Date.parse('2031-03-04T05:06:07.000Z');
-  type Bound = { lte?: Date; gte?: Date };
-  type LiveWhere = {
-    OR: [unknown, { startsAt: Bound }];
-    AND: [{ OR: [unknown, { endsAt: Bound }] }];
-  };
+  /**
+   * The one `field: { op: Date }` bound anywhere in a where tree. Read structurally rather than by
+   * position, so the window can be built by any helper; more or fewer than one match throws, which
+   * is what keeps a bound dropped or duplicated from reading as a pass.
+   */
+  function findBound(where: unknown, field: 'startsAt' | 'endsAt', op: 'lte' | 'gte'): Date {
+    const found: Date[] = [];
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (!node || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node)) {
+        const bound = (value as Record<string, unknown> | null)?.[op];
+        if (key === field && bound instanceof Date) found.push(bound);
+        else walk(value);
+      }
+    };
+    walk(where);
+    if (found.length !== 1) throw new Error(`expected one ${field}.${op}, found ${found.length}`);
+    return found[0];
+  }
   const liveWhere = () =>
     (
       dbMock.dbRead.announcement.findMany.mock.calls.find(
         (c) => (c[0] as { where: Where }).where.user === undefined
-      )?.[0] as { where: LiveWhere }
+      )?.[0] as { where: unknown }
     ).where;
 
   it('looks ahead two TTLs past startsAt and back one TTL past endsAt, from its own clock', async () => {
@@ -216,8 +234,8 @@ describe('the live-author set window', () => {
 
     // Pinned literally: the start lookahead must outlast a set that lives one TTL past a slow
     // read (so 1x is too short), and the end lookback covers the feed's earlier clock reading.
-    expect(liveWhere().OR[1].startsAt.lte).toEqual(new Date(START + 60_000));
-    expect(liveWhere().AND[0].OR[1].endsAt.gte).toEqual(new Date(START - 30_000));
+    expect(findBound(liveWhere(), 'startsAt', 'lte')).toEqual(new Date(START + 60_000));
+    expect(findBound(liveWhere(), 'endsAt', 'gte')).toEqual(new Date(START - 30_000));
   });
 
   it('keeps an author whose only row ends between the feed’s clock reading and the set build', async () => {
@@ -229,7 +247,7 @@ describe('the live-author set window', () => {
     const endsAt = new Date(START + 1);
     dbMock.dbRead.announcement.findMany.mockImplementation((async (args: { where: Where }) => {
       if (args.where.user !== undefined) return [];
-      const gte = (args.where as unknown as LiveWhere).AND[0].OR[1].endsAt.gte as Date;
+      const gte = findBound(args.where, 'endsAt', 'gte');
       return endsAt >= gte ? [{ userId: AUTHOR }] : [];
     }) as never);
     vi.mocked(isFlipt).mockImplementationOnce(async () => {
