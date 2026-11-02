@@ -9,11 +9,7 @@ import {
   selectUndismissedAnnouncements,
   useDismissedCreatorAnnouncements,
 } from '~/components/Announcements/creator-announcement-dismissals';
-import {
-  useBellLazyCreatorFeed,
-  useQueryFollowedAnnouncementIds,
-  useQueryFollowedAnnouncements,
-} from '~/components/Announcements/creator-announcements.utils';
+import { useQueryFollowedAnnouncements } from '~/components/Announcements/creator-announcements.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
@@ -157,26 +153,6 @@ export function formatTabCount(tab: string, counts: Record<string, number>): str
   );
 }
 
-/**
- * Which followed announcements the badge counts. Flag off: the feed the bell fetched. Flag on:
- * the feed if the panel has loaded it (it is newer than, and what the panel shows next to, the
- * ids), else the ids the bell fetched — the same first page.
- */
-export function selectBadgeFollowedSet({
-  lazyFeed,
-  fullFeed,
-  fullFeedLoaded,
-  badgeIds,
-}: {
-  lazyFeed: boolean;
-  fullFeed: { id: number }[];
-  fullFeedLoaded: boolean;
-  badgeIds: number[];
-}): { id: number }[] {
-  if (!lazyFeed || fullFeedLoaded) return fullFeed;
-  return badgeIds.map((id) => ({ id }));
-}
-
 export const useQueryNotificationsCount = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.user.checkNotifications.useQuery(undefined, {
@@ -193,20 +169,7 @@ export const useQueryNotificationsCount = () => {
   // different dismissal store, so the count has to be assembled here rather than server-side.
   // Same input as the panel's own call, so the two share one cache entry instead of fetching
   // twice.
-  //
-  // Under `bellLazyCreatorFeed` the bell does not fetch the feed: it counts the ids of the same
-  // first page, and the panel fetches the feed when it opens. The feed hook still observes the
-  // panel's cache entry (disabled, so it never fetches), and once that entry exists the badge
-  // counts it, so the number matches the list the panel is showing.
-  const lazyFeed = useBellLazyCreatorFeed();
-  const { announcements: fullFeed, hasData: fullFeedLoaded } = useQueryFollowedAnnouncements(
-    !!currentUser && !lazyFeed
-  );
-  const { ids: badgeIds } = useQueryFollowedAnnouncementIds(!!currentUser && lazyFeed);
-  const followedAnnouncements = useMemo(
-    () => selectBadgeFollowedSet({ lazyFeed, fullFeed, fullFeedLoaded, badgeIds }),
-    [lazyFeed, fullFeed, fullFeedLoaded, badgeIds]
-  );
+  const { announcements: followedAnnouncements } = useQueryFollowedAnnouncements(!!currentUser);
   const dismissedCreatorIds = useDismissedCreatorAnnouncements();
 
   // Deliberately NOT gated on the followed query's loading state: this hook drives the header

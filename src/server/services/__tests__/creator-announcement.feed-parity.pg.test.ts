@@ -40,11 +40,7 @@ vi.mock('~/server/services/user.service', () => ({
   getCosmeticsForUsers: vi.fn(async () => ({})),
 }));
 
-import {
-  getFollowedAnnouncementIds,
-  getFollowedAnnouncements,
-  resetLiveAuthorCache,
-} from '../creator-announcement.service';
+import { getFollowedAnnouncements, resetLiveAuthorCache } from '../creator-announcement.service';
 
 const withSchema = (url: string) => {
   const parsed = new URL(url);
@@ -357,10 +353,6 @@ describe.skipIf(!databaseUrl)(
                   cursor = expected.nextCursor;
                 }
               }
-              const firstPage = await originalFeed({ userId, limit, domain });
-              expect(
-                await getFollowedAnnouncementIds({ userId, limit, domain: domain as never })
-              ).toEqual(firstPage.ids);
             }
         // The walk itself is bounded and must have compared pages, not zero of them.
         expect(compared).toBeGreaterThan(VIEWERS.length * DOMAINS.length * 4 * 2);

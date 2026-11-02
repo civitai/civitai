@@ -187,24 +187,20 @@ export async function getCreatorAnnouncements({
  * passes during it, and the feed query re-applies the exact window. Every viewer predicate —
  * mutes, blocks both ways, hides — stays in the feed query, untouched.
  *
- * Where it can differ: a write the set has not seen. A save on THIS pod adds its author to
- * `recentAuthorWrites`, which is unioned in for longer than a TTL plus replica lag, so the author's
- * followers see it as soon as the replica does. A save on ANOTHER pod, or a moderator re-enabling
- * a disabled row through the sitewide announcement tool, reaches this pod's set on its next
- * refresh: up to LIVE_AUTHORS_TTL_MS late. Removals (delete, disable, profileOnly) only shrink the
- * true set, which a superset absorbs. That window is why this sits behind a switch.
+ * Where it can differ: an author who becomes live in a way the lookahead cannot foresee — a new
+ * announcement, an edit that moves a row into the window or the domain, a disabled row re-enabled
+ * — is absent from a set built before that write until the set refreshes, on this pod or any
+ * other: up to LIVE_AUTHORS_TTL_MS (plus replica lag) late for that author's followers. Removals
+ * (delete, disable, profileOnly) only shrink the true set, which a superset absorbs. That bounded
+ * delay is the accepted cost, and why this sits behind a switch.
  */
 const LIVE_AUTHORS_TTL_MS = 30_000;
 // Twice the TTL, so a row whose start falls inside a cached set's lifetime is already in it even
 // when the read that built the set was slow (the memo's expiry is stamped after the read).
 const LIVE_AUTHORS_LOOKAHEAD_MS = 2 * LIVE_AUTHORS_TTL_MS;
-// Comfortably more than a TTL plus replica lag: an author saved here stays in the set until a
-// refresh has certainly read a replica that has the row.
-const RECENT_AUTHOR_WRITE_MS = 10 * 60_000;
 const ANY_DOMAIN = 'any';
 
-/** Exported for tests only. */
-export const liveAuthorIdsMemo = createKeyedTtlMemo<number[]>(
+const liveAuthorIdsMemo = createKeyedTtlMemo<number[]>(
   async (domainKey) => {
     const now = Date.now();
     const rows = await dbRead.announcement.findMany({
@@ -228,20 +224,9 @@ export const liveAuthorIdsMemo = createKeyedTtlMemo<number[]>(
   { freeze: true }
 );
 
-// author id -> until when it is unioned into the live set. Bounded by the save rate over
-// RECENT_AUTHOR_WRITE_MS, and pruned on every read. Module-local: where the server build emits
-// this module more than once, a save through one copy reaches the other copy's readers only on
-// its next set refresh — the same TTL bound as a save on another pod, so no global pin.
-const recentAuthorWrites = new Map<number, number>();
-
-function noteCreatorAnnouncementWrite(authorId: number) {
-  recentAuthorWrites.set(authorId, Date.now() + RECENT_AUTHOR_WRITE_MS);
-}
-
 /** Exported for tests only. */
 export function resetLiveAuthorCache() {
   liveAuthorIdsMemo.clear();
-  recentAuthorWrites.clear();
 }
 
 /**
@@ -259,13 +244,8 @@ async function resolveFollowedLiveAuthors({
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CREATOR_FEED_SHORTCIRCUIT))) return undefined;
 
   try {
-    const now = Date.now();
-    const candidates = new Set(await liveAuthorIdsMemo(domain ?? ANY_DOMAIN));
-    for (const [authorId, until] of recentAuthorWrites) {
-      if (until <= now) recentAuthorWrites.delete(authorId);
-      else candidates.add(authorId);
-    }
-    if (!candidates.size) return [];
+    const candidates = await liveAuthorIdsMemo(domain ?? ANY_DOMAIN);
+    if (!candidates.length) return [];
 
     const follows = await dbRead.userEngagement.findMany({
       where: { userId, type: UserEngagementType.Follow, targetUserId: { in: [...candidates] } },
@@ -370,35 +350,6 @@ export async function getFollowedAnnouncements({
     items,
     nextCursor: announcements.length > limit ? items[items.length - 1]?.id : undefined,
   };
-}
-
-/**
- * The ids of the first page of `getFollowedAnnouncements`, for the bell's badge: the same
- * filter, order and page size, without the cover and author reads, the identity caches or the
- * row bodies. The badge counts the undismissed ids of that first page, so this is everything it
- * needs.
- */
-export async function getFollowedAnnouncementIds({
-  userId,
-  limit = 20,
-  domain,
-}: {
-  userId: number;
-  limit?: number;
-  domain?: DomainColor;
-}) {
-  const now = new Date();
-
-  const authorIds = await resolveFollowedLiveAuthors({ userId, domain });
-  if (authorIds && !authorIds.length) return [];
-
-  const rows = await dbRead.announcement.findMany({
-    where: followedAnnouncementsWhere({ userId, domain, authorIds, now }),
-    select: { id: true },
-    orderBy: followedAnnouncementsOrderBy,
-    take: limit,
-  });
-  return rows.map((x) => x.id);
 }
 
 /**
@@ -613,12 +564,6 @@ export async function upsertCreatorAnnouncement({
     ...(coverId !== undefined ? { coverId } : {}),
   };
 
-  // Into the feed's live-author set before the write, every save rather than only one that makes a
-  // row live: an edit can move the window or the domain. A write that then fails leaves a superset
-  // entry, which the feed query re-filters, so being early costs one follow read at most. The author
-  // is always the caller — `assertOwnedAnnouncement` above is called without the moderator widening.
-  noteCreatorAnnouncementWrite(userId);
-
   if (!spendsAllowance) {
     // The author is set here and never read from input, so this path cannot write a row
     // attributed to anyone else.
@@ -706,8 +651,6 @@ export async function deleteCreatorAnnouncement({
   isModerator?: boolean;
 }) {
   await assertOwnedAnnouncement(id, userId, isModerator);
-  // No live-author note: a delete can only remove an author from the feed's live set, and the
-  // set is a superset the feed query re-filters, so a stale entry costs one cheap follow read.
   return dbWrite.announcement.delete({ where: { id }, select: { id: true } });
 }
 

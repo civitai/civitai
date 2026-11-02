@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as FliptClient from '~/server/flipt/client';
@@ -6,7 +6,8 @@ import type * as FliptClient from '~/server/flipt/client';
 /**
  * The live-author short-circuit's cost claims, which the real-Postgres parity suite next door
  * cannot see: that a viewer with nothing to show costs NO database read once the author set is
- * cached, and that a save on this pod reaches its followers without waiting out the cache.
+ * cached, and that an author who newly goes live is picked up by the next refresh — within the
+ * cache's TTL, the accepted bound — and not before.
  * Which ROWS come back is that suite's job.
  */
 const switchState = vi.hoisted(() => ({ on: true }));
@@ -25,18 +26,8 @@ vi.mock('~/server/services/user.service', () => ({
   getProfilePicturesForUsers: vi.fn(async () => ({})),
   getCosmeticsForUsers: vi.fn(async () => ({})),
 }));
-vi.mock('~/server/services/cover-image.service', () => ({
-  resolveCoverImageId: vi.fn(async () => undefined),
-}));
-vi.mock('~/server/services/util.service', () => ({ isImageOwner: vi.fn(async () => true) }));
-vi.mock('~/server/utils/server-domain', () => ({ getAllServerHosts: () => [] }));
 
-import {
-  getFollowedAnnouncementIds,
-  getFollowedAnnouncements,
-  resetLiveAuthorCache,
-  upsertCreatorAnnouncement,
-} from '../creator-announcement.service';
+import { getFollowedAnnouncements, resetLiveAuthorCache } from '../creator-announcement.service';
 
 const VIEWER = 11;
 const AUTHOR = 23;
@@ -56,8 +47,6 @@ function dbCallCount() {
     dbMock.dbRead.announcement.findFirst,
     dbMock.dbRead.userEngagement.findMany,
     dbMock.dbRead.userAnnouncementMute.findMany,
-    dbMock.dbWrite.announcement.create,
-    dbMock.dbWrite.announcement.update,
   ].reduce((n, fn) => n + fn.mock.calls.length, 0);
 }
 
@@ -73,7 +62,10 @@ beforeEach(() => {
   dbMock.dbRead.announcement.findMany.mockImplementation((async (args: { where: Where }) =>
     args.where.user === undefined ? liveAuthorRows : []) as never);
   dbMock.dbRead.userEngagement.findMany.mockImplementation((async () => follows) as never);
-  dbMock.dbWrite.announcement.create.mockResolvedValue({ id: 1 } as never);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('the live-author short-circuit', () => {
@@ -86,10 +78,8 @@ describe('the live-author short-circuit', () => {
 
     vi.clearAllMocks();
     const page = await getFollowedAnnouncements({ userId: VIEWER });
-    const ids = await getFollowedAnnouncementIds({ userId: VIEWER });
 
     expect(page).toEqual({ items: [], nextCursor: undefined });
-    expect(ids).toEqual([]);
     expect(dbCallCount()).toBe(0);
   });
 
@@ -148,32 +138,29 @@ describe('the live-author short-circuit', () => {
     expect(feedQueries()[0].userId).toEqual({ not: null });
   });
 
-  it('a save on this pod reaches followers without waiting for the cached set to expire', async () => {
+  it('an author who newly goes live reaches followers at the next refresh, within the TTL', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const start = Date.parse('2031-03-04T05:06:07.000Z');
+    vi.setSystemTime(start);
     follows = [{ targetUserId: AUTHOR }];
+
     // Cached empty: nobody is live.
     await getFollowedAnnouncements({ userId: VIEWER });
-    expect(feedQueries()).toHaveLength(0);
+    expect(liveAuthorReads()).toHaveLength(1);
 
-    // The author posts. The replica the set is read from may not have the row yet, so the set
-    // read keeps answering empty — the save itself has to be what puts the author back in.
-    await upsertCreatorAnnouncement({
-      userId: AUTHOR,
-      title: 'Now live',
-      content: 'Fresh',
-      domain: ['all'],
-      profileOnly: true, // spends nothing, so no allowance or transaction is involved
-    } as never);
+    // The author posts. Inside the TTL the cached set still answers, so the follower gets the
+    // empty feed without a read — the accepted bounded delay.
+    liveAuthorRows = [{ userId: AUTHOR }];
     vi.clearAllMocks();
-
+    vi.setSystemTime(start + 29_000);
     await getFollowedAnnouncements({ userId: VIEWER });
+    expect(dbCallCount()).toBe(0);
 
-    expect(liveAuthorReads()).toHaveLength(0); // still the cached set
-    // The cached set is empty, so only the saved author can have caused a follow read at all.
+    // Past the TTL the set is re-read, and the author's followers get the feed query.
+    vi.setSystemTime(start + 31_000);
+    await getFollowedAnnouncements({ userId: VIEWER });
+    expect(liveAuthorReads()).toHaveLength(1);
     expect(dbMock.dbRead.userEngagement.findMany).toHaveBeenCalledTimes(1);
-    const followRead = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0] as {
-      where: { targetUserId: { in: number[] } };
-    };
-    expect(followRead.where.targetUserId.in).toEqual([AUTHOR]);
     expect(feedQueries()).toHaveLength(1);
     expect(feedQueries()[0].userId).toEqual({ in: [AUTHOR] });
   });

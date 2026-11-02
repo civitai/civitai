@@ -48,41 +48,7 @@ export function useQueryFollowedAnnouncements(enabled = true, limit = 20) {
     merge: mergeDismissedCreatorAnnouncements,
   });
 
-  // `hasData` is read by the bell while it is NOT the one fetching: once the panel has loaded
-  // the feed, the badge counts the same rows the panel shows.
-  return { announcements, isLoading: active ? isLoading : false, hasData: data !== undefined };
-}
-
-export function useBellLazyCreatorFeed() {
-  const features = useFeatureFlags();
-  return !!features.bellLazyCreatorFeed;
-}
-
-const NO_IDS: number[] = [];
-
-/**
- * The bell badge's view of the followed feed under `bellLazyCreatorFeed`: the ids of the same
- * first page `useQueryFollowedAnnouncements` would fetch. Runs the account-level dismissal merge
- * itself, against those ids, because the badge counts dismissals and the full feed — whose hook
- * otherwise runs the merge — is not fetched until the panel opens.
- */
-export function useQueryFollowedAnnouncementIds(enabled = true, limit = 20) {
-  const featureEnabled = useCreatorAnnouncementsFeature();
-  const active = enabled && featureEnabled;
-  const { data } = trpc.announcement.getFollowedAnnouncementIds.useQuery(
-    { limit },
-    { enabled: active }
-  );
-  const ids = data ?? NO_IDS;
-
-  const serverDismissedIds = useServerDismissedAnnouncements();
-  useMergeServerDismissals({
-    liveIds: ids,
-    serverDismissedIds,
-    merge: mergeDismissedCreatorAnnouncements,
-  });
-
-  return { ids };
+  return { announcements, isLoading: active ? isLoading : false };
 }
 
 export function useMutedCreators() {
@@ -116,7 +82,6 @@ export function useToggleAnnouncementMute(creatorId: number, creatorName?: strin
         queryUtils.announcement.getMutedCreators.invalidate(),
         queryUtils.announcement.isCreatorMuted.invalidate({ creatorId }),
         queryUtils.announcement.getFollowedAnnouncements.invalidate(),
-        queryUtils.announcement.getFollowedAnnouncementIds.invalidate(),
       ]);
     },
     onError: (error) => {
@@ -145,7 +110,6 @@ export function useDeleteCreatorAnnouncement() {
       await Promise.all([
         queryUtils.announcement.getCreatorAnnouncements.invalidate(),
         queryUtils.announcement.getFollowedAnnouncements.invalidate(),
-        queryUtils.announcement.getFollowedAnnouncementIds.invalidate(),
       ]);
     },
     onError: (error) => {
