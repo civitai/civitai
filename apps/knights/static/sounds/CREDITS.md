@@ -1,24 +1,18 @@
 # Sound credits
 
-The Kenney files come from Kenney (https://kenney.nl), published under Creative Commons Zero (CC0 1.0):
-https://creativecommons.org/publicdomain/zero/1.0/ . Each pack page lists "License: Creative Commons CC0"
-and each pack's License.txt reads "License: (Creative Commons Zero, CC0) ... free to use in personal,
-educational and commercial projects. Crediting is not mandatory."
-Pack pages: https://kenney.nl/assets/impact-sounds , /interface-sounds , /rpg-audio
+Every sound here was generated for Knights of New Order with Civitai's own Sonilo sound-effect generator
+(Civitai → Generate → Sonilo, "Sound effect" mode). They are original outputs made for this game; no
+third-party sound files are included.
 
-Edits for every file: mono downmix, trimmed to length, short fade-out, re-encoded to Vorbis ogg (q3) and mp3 (64k).
+Edits for every file: mono downmix, trimmed to length, short fade-in and fade-out, peak-normalised to
+about -3 dBFS, encoded to Vorbis ogg (q4) and mp3 (96k).
 
-| File | Pack | Original | Extra edit |
-|---|---|---|---|
-| press | Impact Sounds | Audio/impactWood_light_000.ogg | trim 0.10s |
-| trial-correct | Interface Sounds | Audio/pluck_002.ogg | trim 0.16s |
-| trial-wrong | Impact Sounds | Audio/impactSoft_medium_001.ogg | trim 0.15s, lowpass 600 Hz |
-| gold | RPG Audio | Audio/handleCoins2.ogg | trim 0.22s |
-| bell | Impact Sounds | Audio/impactBell_heavy_001.ogg | trim 1.5s |
-
-## Synthesised (original, generated with ffmpeg; no third-party licence)
-
-| File | Method |
-|---|---|
-| rankup | original, generated with ffmpeg: 4 detuned sawtooth partials (110, 110.8, 165, 220.9 Hz), double lowpass 650/900 Hz, 450ms attack swell, 400ms release, 1.4s |
-| knighting-ring | original, generated with ffmpeg: inharmonic decaying sines (1630, 2310, 3470, 4980 Hz, exp decay) mixed with Kenney Impact Sounds impactMetal_light_000.ogg (CC0, https://kenney.nl/assets/impact-sounds) as the strike transient, 1.1s |
+| File | Prompt | Length |
+|---|---|---|
+| press | Single soft tap of a leather-gloved finger on an old wooden table, very short, dry, close, no reverb, subtle | 0.12s |
+| trial-correct | Small bright brass bell ding, single clean strike, warm and pleasant, quick decay, medieval | 0.40s |
+| trial-wrong | Soft low wooden knock, muffled and dull, single hit, short, not harsh | 0.46s |
+| gold | A few gold coins dropping into a leather pouch, satisfying metallic clink, close and crisp | 1.02s |
+| bell | Large cathedral bell, one deep resonant strike with a long warm ring, triumphant, end of a vigil | 2.0s |
+| rankup | Medieval war horn fanfare, short heroic brass swell rising to a proud note, grand hall reverb | 2.45s |
+| knighting-ring | Steel longsword slowly drawn from a scabbard, then a bright ringing metallic shimmer, ceremonial | 1.46s |
