@@ -1863,7 +1863,9 @@ export async function addOwnerChapter(input: {
 
 /**
  * The main path's last chapter, read under the caller's storyline lock (`lockStorylineForAdd` or
- * stronger), so no add, insert or link can move it before the transaction ends.
+ * stronger). Every writer that moves the end takes that lock first (add, insert, link, move,
+ * removal, "Make main path"), so none can move it before the transaction ends. A moderator's
+ * takedown does not, but can only remove the end itself, which the callers refuse.
  */
 async function lockedMainPathEnd(tx: Prisma.TransactionClient, rootId: number) {
   // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
