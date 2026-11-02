@@ -302,7 +302,7 @@ describe('AppAssistantPreview — a failed frame when the dev server comes back 
     m.host!.onFallbackChange!('timeout');
     await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
 
-    screen.rerender(shown(4));
+    await screen.rerender(shown(4));
     await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
     expect(m.fetchFrame).toHaveBeenCalledTimes(2);
     // The fresh host has not failed: the offer goes.
@@ -312,22 +312,22 @@ describe('AppAssistantPreview — a failed frame when the dev server comes back 
   test('🔴 a frame whose entry token failed reloads too', async () => {
     const screen = await renderShown();
     m.tokenError = true;
-    screen.rerender(shown(3));
+    await screen.rerender(shown(3));
     await expect
       .element(page.getByText('The preview couldn’t sign in to your app.', { exact: false }))
       .toBeInTheDocument();
 
     // The host still shows its failure when the dev server comes back up.
-    screen.rerender(shown(4));
+    await screen.rerender(shown(4));
     await vi.waitFor(() => expect(m.fetchFrame).toHaveBeenCalledTimes(2));
     m.tokenError = false;
-    screen.rerender(shown(4));
+    await screen.rerender(shown(4));
     await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
   });
 
   test('NEGATIVE CONTROL: a frame that loads is left alone (a reload resets its saved data)', async () => {
     const screen = await renderShown();
-    screen.rerender(shown(4));
+    await screen.rerender(shown(4));
     await settle();
     expect(m.fetchFrame).toHaveBeenCalledTimes(1);
     expect(frameSrc()).toBe(FRAME.iframeSrc);
@@ -335,7 +335,7 @@ describe('AppAssistantPreview — a failed frame when the dev server comes back 
     // Control: the same frame, once failed, reloads on the next one.
     m.host!.onFallbackChange!('timeout');
     await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
-    screen.rerender(shown(5));
+    await screen.rerender(shown(5));
     await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
   });
 
@@ -343,15 +343,15 @@ describe('AppAssistantPreview — a failed frame when the dev server comes back 
     const screen = await renderShown();
     m.host!.onFallbackChange!('timeout');
     await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
-    screen.rerender(shown(3));
+    await screen.rerender(shown(3));
     // A lower count is no new start either.
-    screen.rerender(shown(2));
+    await screen.rerender(shown(2));
     await settle();
     expect(m.fetchFrame).toHaveBeenCalledTimes(1);
     expect(frameSrc()).toBe(FRAME.iframeSrc);
 
     // Control: a higher count, in the same frame, does reload it.
-    screen.rerender(shown(4));
+    await screen.rerender(shown(4));
     await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
     expect(m.fetchFrame).toHaveBeenCalledTimes(2);
   });
