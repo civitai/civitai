@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerForKey, keyHints } from './keys';
+import { answerForKey, answerForKeyPress, keyHints } from './keys';
 
 const options = [
   { value: '1', label: 'PG' },
@@ -33,5 +33,25 @@ describe('keyHints', () => {
   it('stops at nine, the last single key', () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ value: String(i), label: `L${i}` }));
     expect(keyHints(many)).toHaveLength(9);
+  });
+});
+
+describe('answerForKeyPress', () => {
+  const yesNo = [
+    { value: 'yes', label: 'Yes' },
+    { value: 'no', label: 'No' },
+  ];
+
+  it('answers a yes/no question with 1 and 2 as well as Y and N', () => {
+    expect(answerForKeyPress(yesNo, '1', true)).toBe('yes');
+    expect(answerForKeyPress(yesNo, '2', true)).toBe('no');
+    expect(answerForKeyPress(yesNo, 'Y', true)).toBe('yes');
+    expect(answerForKeyPress(yesNo, 'n', true)).toBe('no');
+    expect(answerForKeyPress(yesNo, '3', true)).toBeNull();
+  });
+
+  it('ignores letters on a rating question', () => {
+    expect(answerForKeyPress(options, 'y', false)).toBeNull();
+    expect(answerForKeyPress(options, '2', false)).toBe('2');
   });
 });

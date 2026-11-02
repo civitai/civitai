@@ -6,7 +6,7 @@
   import DailyPanel from './DailyPanel.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import { recapLines } from './recap-text';
-  import { answerForKey, keyHints } from './keys';
+  import { answerForKeyPress, keyHints } from './keys';
   import StatusBar from '$lib/StatusBar.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import type { ActionData, PageData } from './$types';
@@ -38,7 +38,7 @@
     return { destroy: () => img.removeEventListener('error', onfail) };
   }
 
-  // Y and N answer a yes/no question, the number keys a rating, and Space skips the item, even while an answer button has focus (the browser would
+  // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
   // otherwise press it). Typing in a field or holding a modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
     if (data.mode !== 'queue' || !data.item || submitting) return;
@@ -51,9 +51,7 @@
       return;
     }
     if (imageFailed || !data.question) return;
-    const value = yesNo
-      ? { y: 'yes', n: 'no' }[event.key.toLowerCase()]
-      : answerForKey(data.question.options, event.key);
+    const value = answerForKeyPress(data.question.options, event.key, yesNo);
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
@@ -281,7 +279,7 @@
             title={levelHint.get(option.value)}
             disabled={submitting || imageFailed}
           >
-            {option.label}<kbd>{yesNo ? option.label[0] : index + 1}</kbd>
+            {option.label}<kbd>{index + 1}</kbd>
           </button>
         {/each}
       </div>
@@ -289,8 +287,8 @@
 
     <p class="hint">
       Keys:
-      {#if yesNo}Y yes · N no{:else}{#each keyHints(data.question.options) as hint (hint.key)}{hint.key} {hint.label} ·
-        {/each}{/if}
+      {#each keyHints(data.question.options) as hint (hint.key)}{hint.key} {hint.label} ·
+      {/each}
       Space skips
     </p>
     <form method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm} class="skip">
