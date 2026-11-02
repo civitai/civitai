@@ -33,4 +33,11 @@
     border: 1px solid var(--border);
     background: var(--panel);
   }
+  @media (max-width: 40rem) {
+    img,
+    .gone {
+      width: 72px;
+      height: 72px;
+    }
+  }
 </style>

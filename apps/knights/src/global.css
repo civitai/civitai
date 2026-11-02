@@ -18,6 +18,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 16px/1.6 Georgia, 'Times New Roman', serif;
+  overflow-wrap: break-word;
 }
 
 h1,
@@ -56,4 +57,29 @@ button:hover:not(:disabled) {
 button:disabled {
   opacity: 0.5;
   cursor: wait;
+}
+
+/* Phones: --chrome is the height of the nav and the main padding, which /play subtracts from the viewport to size its image. */
+:root {
+  --chrome: 0px;
+}
+
+@media (max-width: 40rem) {
+  :root {
+    --chrome: 4.25rem;
+  }
+
+  body {
+    font-size: 15px;
+    line-height: 1.45;
+  }
+
+  h1 {
+    font-size: 1.35rem;
+  }
+
+  button {
+    min-height: 2.75rem;
+    padding: 0.4rem 0.9rem;
+  }
 }
