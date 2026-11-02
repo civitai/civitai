@@ -202,7 +202,7 @@ export async function getCreatorAnnouncements({
 const LIVE_AUTHORS_TTL_MS = 30_000;
 // Twice the TTL, so a row whose start falls inside a cached set's lifetime is already in it even
 // when the read that built the set was slow (the memo's expiry is stamped after the read).
-const LIVE_AUTHORS_LOOKAHEAD_MS = 2 * LIVE_AUTHORS_TTL_MS;
+const LIVE_AUTHORS_LOOKAHEAD_MS = 1 * LIVE_AUTHORS_TTL_MS;
 // One TTL back. The feed reads its `now` before it asks for the set, and a cold set is built a
 // little later, by this or another request; a row that ended in that gap is live for the feed
 // query and must not be missing from the set. Requests take far less than a TTL.
