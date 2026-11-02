@@ -19,6 +19,8 @@ import { usersByIds } from '$lib/server/users.service';
 const RECENT_CHANGES = 50;
 // Far above any real team, and it bounds what one save can ask the database to do.
 const MAX_OWNERS_PER_QUEUE = 50;
+// Every queue at once is a few dozen; this bounds what one save can put in a single query.
+const MAX_QUEUES_PER_SAVE = 500;
 
 // `/admin` admits only the admin role; each action checks again, so moving or regranting the page
 // cannot widen who may assign work.
@@ -80,11 +82,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 const ownerList = z.array(int4Id).max(MAX_OWNERS_PER_QUEUE, 'Too many owners on one queue.');
+const ownersByQueue = z
+  .record(z.string(), ownerList)
+  .refine((r) => Object.keys(r).length <= MAX_QUEUES_PER_SAVE, 'Too many queues in one save.');
 const saveSchema = z.object({
-  changes: jsonField(z.record(z.string(), ownerList), 'Could not read the submitted changes.'),
+  changes: jsonField(ownersByQueue, 'Could not read the submitted changes.'),
   // Each changed queue's owners as the page showed them, so a save refuses rather than reverts a change
   // another admin made since.
-  expect: jsonField(z.record(z.string(), ownerList), 'Could not read the submitted changes.'),
+  expect: jsonField(ownersByQueue, 'Could not read the submitted changes.'),
 });
 
 export const actions: Actions = {
@@ -102,13 +107,14 @@ export const actions: Actions = {
     // The live queue set, plus stored paths that are no longer queues — which may only be emptied.
     const queues = new Set(ownableQueues(NAVIGATION).map((q) => q.path));
     for (const { path, owners } of entries) {
-      if (!(path in input.expect))
+      if (!Object.hasOwn(input.expect, path))
         return fail(400, {
           error:
             'This page is out of date, so nothing was saved. Reload it and re-apply your changes.',
         });
-      if (!queues.has(path) && owners.length)
-        return fail(400, { error: `${path} is not a queue, so it cannot be given owners.` });
+      // A retired path may lose owners but never gain them.
+      if (!queues.has(path) && owners.some((id) => !input.expect[path].includes(id)))
+        return fail(400, { error: `${path} is no longer a queue, so it cannot be given owners.` });
     }
 
     // Only owners being ADDED must be live moderators: a former one already on a queue is not

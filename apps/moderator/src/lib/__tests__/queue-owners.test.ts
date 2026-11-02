@@ -3,6 +3,7 @@ import type { NavLink } from '$lib/server/access';
 import {
   initialDashboardView,
   navOwnedBy,
+  ownedInNav,
   ownableQueues,
   retiredQueuePaths,
   unownedQueues,
@@ -44,6 +45,11 @@ describe('ownableQueues', () => {
       { path: '/strikes', label: 'Strikes', section: 'Pages' },
     ]);
   });
+
+  it('lists a queue once even when the tree names it twice without marking a shortcut', () => {
+    const queue = { path: '/strikes', label: 'Strikes', countKey: 'strikes' };
+    expect(ownableQueues([queue, { label: 'Again', children: [queue] }])).toHaveLength(1);
+  });
 });
 
 describe('navOwnedBy', () => {
@@ -68,6 +74,16 @@ describe('navOwnedBy', () => {
   });
 });
 
+describe('ownedInNav', () => {
+  it('keeps only owned queues the viewer can see, so a hidden or renamed one offers no My tasks', () => {
+    const visible: NavLink[] = [{ path: '/strikes', label: 'Strikes', countKey: 'strikes' }];
+    expect(ownedInNav(visible, ['/strikes', '/images/a', '/renamed'])).toEqual(['/strikes']);
+    expect(ownedInNav(visible, ['/images/a'])).toEqual([]);
+    expect(initialDashboardView(ownedInNav(visible, ['/images/a']), 'mine')).toBe('all');
+    expect(ownedInNav(visible, null)).toBeNull();
+  });
+});
+
 describe('unownedQueues / retiredQueuePaths', () => {
   const queues = ownableQueues(NAV);
 
@@ -79,6 +95,13 @@ describe('unownedQueues / retiredQueuePaths', () => {
       '/reports/image',
       '/strikes',
     ]);
+  });
+
+  it('an owner who is no longer a moderator covers nothing', () => {
+    const owners = { '/images/a': [3], '/strikes': [4, 5] };
+    const unowned = unownedQueues(queues, owners, new Set([5])).map((q) => q.path);
+    expect(unowned).toContain('/images/a');
+    expect(unowned).not.toContain('/strikes');
   });
 
   it('owners on a path that is no longer a queue are retired, not counted as coverage', () => {

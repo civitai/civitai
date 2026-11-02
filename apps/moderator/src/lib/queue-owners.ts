@@ -55,11 +55,28 @@ export function navOwnedBy(nav: NavLink[], owned: ReadonlySet<string>): NavLink[
   return out;
 }
 
-/** The queues with nobody covering them. */
+/**
+ * The owned queues this viewer can actually see in `nav`, which arrives pruned to what they may open. A
+ * queue they own but cannot open, or a path that has since been renamed, is not among them: counting it
+ * would open My tasks on an empty list.
+ */
+export function ownedInNav(nav: NavLink[], owned: readonly string[] | null): string[] | null {
+  if (!owned) return null;
+  const leaves = (links: NavLink[]): string[] =>
+    links.flatMap((l) => (l.children ? leaves(l.children) : l.path ? [l.path] : []));
+  return leaves(navOwnedBy(nav, new Set(owned)));
+}
+
+/**
+ * The queues with nobody covering them. With `live` (the current moderator accounts), an owner who is no
+ * longer one covers nothing: a queue whose only owner left moderation is a gap, not coverage.
+ */
 export const unownedQueues = (
   queues: OwnableQueue[],
-  owners: Record<string, readonly number[]>
-): OwnableQueue[] => queues.filter((q) => !owners[q.path]?.length);
+  owners: Record<string, readonly number[]>,
+  live?: ReadonlySet<number>
+): OwnableQueue[] =>
+  queues.filter((q) => !(owners[q.path] ?? []).some((id) => !live || live.has(id)));
 
 /**
  * Stored owner rows for a path that is no longer a queue — renamed or removed from the nav. They cover

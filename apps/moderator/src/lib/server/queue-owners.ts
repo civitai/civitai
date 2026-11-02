@@ -93,7 +93,8 @@ export async function changeQueueOwners(input: {
   actorId: number;
 }): Promise<{ changed: number }> {
   const paths = input.entries.map((e) => e.path);
-  for (const path of paths) if (!(path in input.expect)) throw new QueueOwnerConflictError(path);
+  for (const path of paths)
+    if (!Object.hasOwn(input.expect, path)) throw new QueueOwnerConflictError(path);
   if (!paths.length) return { changed: 0 };
 
   try {

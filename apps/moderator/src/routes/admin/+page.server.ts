@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { NAVIGATION, isEditableGrant, pageAccessState, requireAccess } from '$lib/server/access';
 import { ownableQueues, unownedQueues } from '$lib/queue-owners';
-import { listQueueOwners } from '$lib/server/queue-owners';
+import { listModeratorCandidates, listQueueOwners } from '$lib/server/queue-owners';
 import { moderatorDbStatus } from '$lib/moderator-db-status';
 import {
   GrantConflictError,
@@ -42,7 +42,9 @@ async function recentChanges(): Promise<{
 async function unownedQueueCount(): Promise<{ unowned: number; total: number } | null> {
   try {
     const queues = ownableQueues(NAVIGATION);
-    return { unowned: unownedQueues(queues, await listQueueOwners()).length, total: queues.length };
+    const [owners, moderators] = await Promise.all([listQueueOwners(), listModeratorCandidates()]);
+    const live = new Set(moderators.map((m) => m.id));
+    return { unowned: unownedQueues(queues, owners, live).length, total: queues.length };
   } catch (e) {
     console.error('[admin] queue owners unavailable', e);
     return null;

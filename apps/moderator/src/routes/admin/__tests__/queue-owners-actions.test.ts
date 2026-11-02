@@ -1,14 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as QueueOwners from '$lib/server/queue-owners';
+import type * as UsersService from '$lib/server/users.service';
 import { NAVIGATION } from '$lib/server/access';
 import { ownableQueues } from '$lib/queue-owners';
 
 /** Who may assign queue owners, and what reaches the write. The write itself is covered against a real
  *  database in `queue-owners.pglite.test.ts`. */
 
-const { changeQueueOwners, listModeratorCandidates } = vi.hoisted(() => ({
+const {
+  changeQueueOwners,
+  listModeratorCandidates,
+  listQueueOwners,
+  listQueueOwnerChanges,
+  usersByIds,
+} = vi.hoisted(() => ({
   changeQueueOwners: vi.fn(),
   listModeratorCandidates: vi.fn(),
+  listQueueOwners: vi.fn(),
+  listQueueOwnerChanges: vi.fn(),
+  usersByIds: vi.fn(),
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
@@ -16,6 +26,12 @@ vi.mock('$lib/server/queue-owners', async (importOriginal) => ({
   ...(await importOriginal<typeof QueueOwners>()),
   changeQueueOwners,
   listModeratorCandidates,
+  listQueueOwners,
+  listQueueOwnerChanges,
+}));
+vi.mock('$lib/server/users.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UsersService>()),
+  usersByIds,
 }));
 
 const { actions, load } = await import('../queue-owners/+page.server');
@@ -90,8 +106,43 @@ describe('the queue owners page', () => {
     });
   });
 
+  it('lets a retired path lose one owner of several, but not swap one in', async () => {
+    const path = '/no-longer-a-queue';
+    expect(await save({ [path]: [8] }, { [path]: [7, 8] })).toMatchObject({ success: true });
+    expect(await save({ [path]: [7] }, { [path]: [8] })).toMatchObject({ status: 400 });
+  });
+
+  it('marks an owner who cannot open the queue, and one who is no longer a moderator', async () => {
+    listQueueOwners.mockResolvedValue({ [QUEUE]: [7, 8, 99] });
+    listQueueOwnerChanges.mockResolvedValue([]);
+    listModeratorCandidates.mockResolvedValue([
+      { id: 7, username: 'a', roles: [] },
+      { id: 8, username: 'b', roles: ['moderator:admin'] },
+    ]);
+    usersByIds.mockResolvedValue(new Map([[99, { username: 'gone' }]]));
+    const data = (await load({ locals: { user: ADMIN } } as never)) as {
+      queues: { path: string; owners: unknown[] }[];
+    };
+    expect(data.queues.find((q) => q.path === QUEUE)?.owners).toEqual([
+      { id: 7, username: 'a', former: false, noAccess: true },
+      { id: 8, username: 'b', former: false, noAccess: false },
+      { id: 99, username: 'gone', former: true, noAccess: false },
+    ]);
+  });
+
   it('refuses a change that does not say what it replaces', async () => {
     expect(await save({ [QUEUE]: [7] }, {})).toMatchObject({ status: 400 });
+    expect(changeQueueOwners).not.toHaveBeenCalled();
+  });
+
+  it('refuses a save naming more queues than exist many times over', async () => {
+    const many = Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`/q${i}`, []]));
+    expect(await save(many)).toMatchObject({ status: 400 });
+    expect(changeQueueOwners).not.toHaveBeenCalled();
+  });
+
+  it('does not take an inherited name for a stated expectation', async () => {
+    expect(await save({ constructor: [7] }, {})).toMatchObject({ status: 400 });
     expect(changeQueueOwners).not.toHaveBeenCalled();
   });
 

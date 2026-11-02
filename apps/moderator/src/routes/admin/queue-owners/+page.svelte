@@ -55,14 +55,18 @@
     Object.fromEntries(Object.keys(changes).map((path) => [path, stored(path).map((o) => o.id)]))
   );
 
+  // A former moderator still on a queue covers nothing, so only live moderators count as an owner.
+  const live = $derived(new Set(data.moderators.map((m) => m.id)));
+  const covered = (path: string) => (working[path] ?? []).some((id) => live.has(id));
   // Counted on what is on screen, edits included, so assigning someone takes the queue off the count
   // before the save rather than after.
-  const unownedCount = $derived(data.queues.filter((q) => !working[q.path]?.length).length);
+  const unownedCount = $derived(data.queues.filter((q) => !covered(q.path)).length);
 
   const sections = $derived.by(() => {
     const out: { section: string; queues: typeof data.queues }[] = [];
     for (const queue of data.queues) {
-      if (unownedOnly && working[queue.path]?.length) continue;
+      // On the SAVED owners: filtering on edits would unmount a row the moment it gets its first owner.
+      if (unownedOnly && queue.owners.some((o) => !o.former)) continue;
       let group = out.find((s) => s.section === queue.section);
       if (!group) out.push((group = { section: queue.section, queues: [] }));
       group.queues.push(queue);
@@ -156,7 +160,7 @@
 </div>
 
 {#snippet ownerRow(row: Row, retired: boolean)}
-  {@const owned = !!working[row.path]?.length}
+  {@const owned = covered(row.path)}
   <tr class={['border-t border-dark-4 align-top', !owned && !retired && 'bg-yellow-500/5']}>
     <td class="py-2 pl-4">
       <div class="flex items-center gap-2">

@@ -43,6 +43,7 @@
   import {
     DASHBOARD_VIEW_KEY,
     initialDashboardView,
+    ownedInNav,
     navOwnedBy,
     type DashboardView,
   } from '$lib/queue-owners';
@@ -282,8 +283,10 @@
   // My tasks / Everything. Offered only to an owner of something: without ownership there is no My
   // tasks to show. The choice is remembered per browser; SSR renders the default and the stored one is
   // applied on mount, since the server cannot see it.
-  const ownsQueues = $derived(!!data.ownedQueues?.length);
-  let view = $state<DashboardView>(untrack(() => initialDashboardView(data.ownedQueues, null)));
+  // Only the owned queues this viewer can open: one they cannot, or a renamed path, offers nothing.
+  const visibleOwned = $derived(ownedInNav(data.nav, data.ownedQueues));
+  const ownsQueues = $derived(!!visibleOwned?.length);
+  let view = $state<DashboardView>(untrack(() => initialDashboardView(visibleOwned, null)));
   onMount(() => {
     let stored: string | null = null;
     try {
@@ -291,7 +294,7 @@
     } catch {
       // Storage blocked: the default stands.
     }
-    view = initialDashboardView(data.ownedQueues, stored);
+    view = initialDashboardView(visibleOwned, stored);
   });
   function pickView(next: DashboardView) {
     view = next;
@@ -303,7 +306,7 @@
   }
   const mine = $derived(view === 'mine' && ownsQueues);
   const attentionNav = $derived(
-    mine ? navOwnedBy(data.nav, new Set(data.ownedQueues)) : data.nav
+    mine ? navOwnedBy(data.nav, new Set(visibleOwned)) : data.nav
   );
 
   // Every queue the viewer can open, as one list: a tabs group counts as one queue, as in the sidebar.
