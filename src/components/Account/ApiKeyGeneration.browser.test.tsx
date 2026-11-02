@@ -20,7 +20,15 @@ const keys = [
   {
     id: 2,
     name: 'ai key',
-    tokenScope: 0,
+    tokenScope: TokenScopePresets.AIServices,
+    buzzLimit: null,
+    createdAt: new Date(),
+    lastUsedAt: null,
+  },
+  {
+    id: 3,
+    name: 'legacy key',
+    tokenScope: null,
     buzzLimit: null,
     createdAt: new Date(),
     lastUsedAt: null,
@@ -62,11 +70,11 @@ describe('API key generation hints', () => {
     expect(CREATOR_MASK & TokenScope.AIServicesWrite).toBe(0);
   });
 
-  test('key rows: Creator key can’t generate, AI Services key can', async () => {
-    keys[1].tokenScope = TokenScopePresets.AIServices;
+  test('key rows: Creator can’t generate; AI Services and legacy (null) can', async () => {
     renderWithProviders(<ApiKeysCard />);
     const markers = page.getByTestId('api-key-generation-marker');
     await expect.element(markers.nth(0)).toHaveTextContent(/can.t generate/i);
     await expect.element(markers.nth(1)).toHaveTextContent(/^can generate$/i);
+    await expect.element(markers.nth(2)).toHaveTextContent(/^can generate$/i);
   });
 });
