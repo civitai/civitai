@@ -81,7 +81,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 const CARD_WIDTH = 336;
 const NARROW_CARD_WIDTH = 296;
 
-function imageData(counts: number, poi = false) {
+function imageData(counts: number, poi = false, framed = false) {
   return {
     id: 1,
     url: LOADABLE_IMAGE_DATA_URI,
@@ -93,6 +93,9 @@ function imageData(counts: number, poi = false) {
     height: 900,
     hasMeta: true,
     poi,
+    cosmetic: framed
+      ? { data: { cssFrame: 'linear-gradient(135deg, #f5d36b, #b8860b)' } }
+      : undefined,
     reactions: [],
     user: { id: 2, username: 'someone' },
     stats: {
@@ -176,6 +179,52 @@ describe('ImageCard action row counts', () => {
       await renderCard(123456, width);
       expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
       expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('123.5K')));
+    }
+  );
+});
+
+// Reported 2026-11-02 (hq:image_cards_reaction_58hs): a gold-framed card showed "1K" in a bar
+// spanning the row while the unframed card beside it showed "1,082" in a content-width bar. The
+// frame's padding narrows the footer, and the old per-row container query picked the count form
+// and the bar width from that width. Two cards with the same counts must lay out the same.
+describe('ImageCard cosmetic frame', () => {
+  test.each([NARROW_CARD_WIDTH, 320, CARD_WIDTH, 358, 420])(
+    'framed and unframed cards show the same counts in a content-width bar at %ipx',
+    async (width) => {
+      renderWithProviders(
+        <IntersectionObserverProvider>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width }}>
+            {[false, true].map((framed) => (
+              <div key={String(framed)} data-testid={framed ? 'framed' : 'plain'} style={{ width }}>
+                <ImageCard data={imageData(1082, false, framed)} />
+              </div>
+            ))}
+          </div>
+        </IntersectionObserverProvider>
+      );
+      await vi.waitFor(() => {
+        expect(document.body.querySelectorAll('[aria-label$="reaction"]')).toHaveLength(8);
+      });
+      const measure = (id: string) => {
+        const root = document.querySelector(`[data-testid="${id}"]`)!;
+        const buttons = [...root.querySelectorAll('[aria-label$="reaction"]')];
+        const bar = buttons[0].parentElement!;
+        const natural = buttons.reduce((sum, b) => sum + b.getBoundingClientRect().width, 0);
+        return {
+          labels: buttons.map((b) => (b as HTMLElement).innerText.split('\n').filter(Boolean)[1]),
+          lines: new Set(buttons.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+          // Slack of one 2px gap per button; a bar stretched across the row is far past it.
+          stretch: bar.getBoundingClientRect().width - natural - 2 * buttons.length,
+        };
+      };
+      const plain = measure('plain');
+      const framed = measure('framed');
+      expect(plain.labels).toEqual(Array(4).fill('1.1K'));
+      expect(framed.labels).toEqual(plain.labels);
+      expect(plain.stretch).toBeLessThanOrEqual(0);
+      expect(framed.stretch).toBeLessThanOrEqual(0);
+      // A frame's padding may wrap the bar at the narrowest width, never change its form.
+      expect(framed.lines).toBeGreaterThanOrEqual(plain.lines);
     }
   );
 });
