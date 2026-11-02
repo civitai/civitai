@@ -377,7 +377,8 @@ describe('verified claims cache — the key set is re-checked on every hit', () 
     // The next lookup reloads; make that reload time out the way AbortSignal.timeout does.
     vi.setSystemTime(Date.now() + PAST_JWKS_CACHE_MAX_AGE_MS);
     fetch.mockImplementation(async () => {
-      throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+      const err = new Error('The operation was aborted due to timeout');
+      throw Object.assign(err, { name: 'TimeoutError' });
     });
     fetch.mockClear();
     onJwksLeg.mockClear();
