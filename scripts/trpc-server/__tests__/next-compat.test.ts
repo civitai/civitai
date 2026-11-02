@@ -157,6 +157,29 @@ describe('createPageMatcher', () => {
   });
 });
 
+describe('createPageMatcher with the image-delivery page', () => {
+  const PAGE = '/api/internal/image-delivery/[id]';
+  const match = compat.createPageMatcher(['/api/trpc/[trpc]', PAGE]);
+
+  it('serves one id segment, including an encoded slash', () => {
+    expect(match('/api/internal/image-delivery/0d1e2f3a-4b5c-4d6e-8f70-000000000001')).toEqual({
+      page: PAGE,
+    });
+    expect(match('/api/internal/image-delivery/a%20b%2Fc')).toEqual({ page: PAGE });
+  });
+
+  it('does not serve no id, more segments, a trailing slash or another prefix', () => {
+    expect(match('/api/internal/image-delivery/')).toEqual({ notFound: true });
+    expect(match('/api/internal/image-delivery/a/b')).toEqual({ notFound: true });
+    expect(match('/api/internal/image-delivery/a/')).toEqual({ notFound: true });
+    expect(match('/api/internal/image-deliveryx/a')).toEqual({ notFound: true });
+  });
+
+  it('reports an undecodable % escape', () => {
+    expect(match('/api/internal/image-delivery/%E0%A4%A')).toEqual({ decodeError: true });
+  });
+});
+
 describe('filterInternalHeaders', () => {
   it('deletes the client-sent internal headers Next never honours', () => {
     const headers: Record<string, string> = {

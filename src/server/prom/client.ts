@@ -468,32 +468,6 @@ registerInstrumentationMetric(
     })
 );
 
-// Requests the image entrypoint's direct-route listener saw under a direct page's path, by
-// outcome (`scripts/trpc-server/direct-routes.cjs`): `served` without the Next router, or handed
-// to Next because the switch was off, the path was not an exact match, or the route could not be
-// loaded. The counts live on globalThis because that file is plain CommonJS outside the bundle.
-// No series at all means the process was not started by that entrypoint (plain `server.js`, or
-// the standalone tRPC server). Counter-shaped gauge, monotonic per process: use rate().
-type NextDirectRouteStats = Record<string, number>;
-registerInstrumentationMetric(
-  PROM_PREFIX + 'next_direct_route_requests',
-  () =>
-    new client.Gauge({
-      name: PROM_PREFIX + 'next_direct_route_requests',
-      help: 'Cumulative requests under a direct-served page path, by outcome (per pod); monotonic, use rate()',
-      labelNames: ['outcome'],
-      registers: [instrumentationRegistry],
-      collect() {
-        const stats = (globalThis as { __civitaiNextDirectRoutes?: NextDirectRouteStats })
-          .__civitaiNextDirectRoutes;
-        if (!stats) return;
-        for (const [outcome, value] of Object.entries(stats)) {
-          if (typeof value === 'number' && Number.isFinite(value)) this.set({ outcome }, value);
-        }
-      },
-    })
-);
-
 // 🔴 THE PG POOL GAUGES ARE DELIBERATELY LEFT ON THE UNSCRAPED REGISTRY. DO NOT "FIX" THEM
 // THE WAY THE BULKHEAD GAUGES WERE FIXED — IT WAS TRIED HERE AND IT MAKES THEM WORSE.
 //

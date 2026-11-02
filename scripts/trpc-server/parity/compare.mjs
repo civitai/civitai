@@ -15,19 +15,18 @@
  * Usage:
  *   node compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
  *     --env-file parity.env --redis 127.0.0.1:6379 --report out.json
- *     [--cases trpc|image-delivery] [--direct-metrics]
+ *     [--cases trpc|image-delivery] [--route-counter]
  *     [--expect-red <case-id> [--expect-red-diff '<diff line prefix>']]
  *
- * `--cases` picks the case list (`cases.mjs`): `trpc` (the default) compares the standalone tRPC
- * server; `image-delivery` compares the image entrypoint's direct route. A case with `warm: true`
- * is sent once more to the same server, unmeasured, right before its measured send (after the
- * Redis reset), so the measured request finds what the first one cached.
+ * `--cases` picks the case list (`cases.mjs`): `trpc` (the default) or `image-delivery`. A case
+ * with `warm: true` is sent once more to the same server, unmeasured, right before its measured
+ * send (after the Redis reset), so the measured request finds what the first one cached.
  *
- * `--direct-metrics` (image-delivery): reads `civitai_app_next_direct_route_requests` from both
- * servers' `/api/metrics` before and after the run, and fails unless `--b` served EXACTLY the
- * requests its cases mark `direct: 'served'` and handed over exactly the ones under the direct
- * path marked `direct: 'next'`, and `--a` has no such series (it is plain Next). Without this a
- * direct path that never served would be Next compared with itself, and would pass.
+ * `--route-counter` (image-delivery): reads the route's own counter,
+ * `civitai_app_image_delivery_request_total{status}`, from both servers' `/api/metrics` before
+ * and after the run, and fails unless it moved on EACH server by exactly what the cases' `counted`
+ * labels add up to. On the candidate that proves the route itself answered (not a look-alike
+ * response); on the reference it is the positive control that the counter can be read at all.
  *
  * Exit codes: 0 parity (every case equal to Next, every declared case equal to its pinned
  * answer); 1 a difference; 2 the harness could not
@@ -60,7 +59,7 @@ const { values: args } = parseArgs({
     'expect-red-diff': { type: 'string' },
     'settle-ms': { type: 'string', default: '300' },
     cases: { type: 'string', default: 'trpc' },
-    'direct-metrics': { type: 'boolean', default: false },
+    'route-counter': { type: 'boolean', default: false },
   },
 });
 
@@ -315,30 +314,27 @@ function compareToPin(pin, rb) {
   return parts;
 }
 
-// --- the direct route's own counts (--direct-metrics) ----------------------------------------------
+// --- the route's own counter (--route-counter) ----------------------------------------------------
 
-const DIRECT_METRIC = 'civitai_app_next_direct_route_requests';
-const DIRECT_PREFIX = '/api/internal/image-delivery/';
+const ROUTE_COUNTER = 'civitai_app_image_delivery_request_total';
 
-/** { outcome: value } for DIRECT_METRIC on `base`, or null when the scrape has no such series. */
-async function readDirectCounts(base) {
+/** { status: value } for ROUTE_COUNTER on `base` (an absent label set reads as 0). */
+async function readRouteCounter(base) {
   const r = await send(base, { path: '/api/metrics?token={WEBHOOK_TOKEN}', headers: {} });
   if (r.error || r.status !== 200) {
-    fail2(`GET ${base}/api/metrics answered ${r.error || r.status}; cannot read ${DIRECT_METRIC}`);
+    fail2(`GET ${base}/api/metrics answered ${r.error || r.status}; cannot read ${ROUTE_COUNTER}`);
   }
   const text = r.body.toString('utf8');
   // Positive control on the scrape itself: a metric every app process exports.
   if (!/^civitai_app_/m.test(text)) fail2(`${base}/api/metrics has no civitai_app_ series at all`);
   const counts = {};
-  let seen = false;
   for (const line of text.split('\n')) {
-    if (!line.startsWith(`${DIRECT_METRIC}{`)) continue;
-    seen = true;
-    const outcome = /outcome="([^"]*)"/.exec(line)?.[1];
+    if (!line.startsWith(`${ROUTE_COUNTER}{`)) continue;
+    const status = /status="([^"]*)"/.exec(line)?.[1];
     const value = Number(line.slice(line.lastIndexOf(' ') + 1));
-    if (outcome) counts[outcome] = value;
+    if (status) counts[status] = value;
   }
-  return seen ? counts : null;
+  return counts;
 }
 
 // --- run ----------------------------------------------------------------------------------------------
@@ -352,12 +348,9 @@ const cases = suites[args.cases]();
 const settleMs = Number(args['settle-ms']);
 const results = [];
 
-const directBefore = args['direct-metrics'] ? await readDirectCounts(args.b) : null;
-if (args['direct-metrics']) {
-  if (!directBefore) fail2(`--b ${args.b} exports no ${DIRECT_METRIC}: not the direct entrypoint`);
-  const ref = await readDirectCounts(args.a);
-  if (ref) fail2(`--a ${args.a} exports ${DIRECT_METRIC}: the reference is not plain Next`);
-}
+const counterBefore = args['route-counter']
+  ? { a: await readRouteCounter(args.a), b: await readRouteCounter(args.b) }
+  : null;
 
 for (const c of cases) {
   await flushRedis();
@@ -410,25 +403,28 @@ for (const r of results) {
   }
 }
 
-let directCheck = null;
-if (args['direct-metrics']) {
-  const after = await readDirectCounts(args.b);
-  const delta = (k) => ((after && after[k]) || 0) - (directBefore[k] || 0);
+let counterCheck = null;
+if (args['route-counter']) {
   const sends = (c) => (c.warm ? 2 : 1);
-  const expected = {
-    served: cases.filter((c) => c.direct === 'served').reduce((n, c) => n + sends(c), 0),
-    unmatched: cases
-      .filter((c) => c.direct === 'next' && c.path.startsWith(DIRECT_PREFIX))
-      .reduce((n, c) => n + sends(c), 0),
-  };
-  const measured = { served: delta('served'), unmatched: delta('unmatched') };
-  const ok = expected.served === measured.served && expected.unmatched === measured.unmatched;
-  directCheck = { expected, measured, ok };
-  console.log(
-    `\ndirect route counts on --b: served ${measured.served} (expected ${expected.served}), ` +
-      `handed to Next ${measured.unmatched} (expected ${expected.unmatched})`
-  );
-  if (expected.served === 0) fail2('no case is marked direct: served');
+  const expected = {};
+  for (const c of cases) if (c.counted) expected[c.counted] = (expected[c.counted] || 0) + sends(c);
+  if (Object.keys(expected).length === 0) fail2('no case has a counted label');
+  const after = { a: await readRouteCounter(args.a), b: await readRouteCounter(args.b) };
+  const labels = [
+    ...new Set([...Object.keys(expected), ...Object.keys(after.a), ...Object.keys(after.b)]),
+  ];
+  const measured = { a: {}, b: {} };
+  let ok = true;
+  for (const side of ['a', 'b']) {
+    for (const l of labels) {
+      measured[side][l] = (after[side][l] || 0) - (counterBefore[side][l] || 0);
+      if (measured[side][l] !== (expected[l] || 0)) ok = false;
+    }
+  }
+  counterCheck = { expected, measured, ok };
+  console.log(`\n${ROUTE_COUNTER} moved by (expected ${JSON.stringify(expected)}):`);
+  console.log(`  --a (reference): ${JSON.stringify(measured.a)}`);
+  console.log(`  --b (candidate): ${JSON.stringify(measured.b)}`);
 }
 
 const diffCount = results.filter((r) => r.verdict === 'DIFF').length;
@@ -439,7 +435,7 @@ const summary = {
   same: results.filter((r) => r.verdict === 'SAME').length,
   declared: results.filter((r) => r.verdict === 'DECLARED').length,
   diff: diffCount,
-  directCheck,
+  counterCheck,
   results,
 };
 if (args.report) writeFileSync(args.report, JSON.stringify(summary, null, 2));
@@ -476,9 +472,9 @@ if (args['expect-red']) {
   process.exit(1);
 }
 
-if (directCheck && !directCheck.ok) {
+if (counterCheck && !counterCheck.ok) {
   console.error(
-    '\nFAIL: the direct route did not serve exactly the requests it should have (counts above).'
+    `\nFAIL: ${ROUTE_COUNTER} did not move by exactly the cases' counted labels on both servers.`
   );
   process.exit(1);
 }

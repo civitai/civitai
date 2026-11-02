@@ -198,12 +198,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # The standalone tRPC server (`node -- trpc-server/server.cjs`): plain CommonJS that serves the
 # tRPC, probe and metrics routes from the compiled route modules above, without the Next router.
-# Only the runtime files; their tests and parity harness stay out of the image.
-#   - server.cjs, next-compat.cjs: the standalone server, used where something runs that command.
-#   - next-entry.cjs, direct-routes.cjs: the default CMD below. It boots `server.js` unchanged and
-#     serves a few hot pages-API routes without the Next router while a server switch is on
-#     (direct-routes.cjs). Off, every request goes to Next.
-COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs /app/scripts/trpc-server/next-entry.cjs /app/scripts/trpc-server/direct-routes.cjs ./trpc-server/
+# Only the two runtime files; its tests and parity harness stay out of the image. The default
+# CMD below is unchanged — this is only used where something runs that command instead.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs ./trpc-server/
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
@@ -229,19 +226,15 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /a
 # Exits 2 (not 0) when it cannot observe its input, same rule as the build-output gates above.
 # The script is removed in the same layer chain so it is not part of the served image.
 #
-# The standalone tRPC server's files are checked the same way: they require Next internals
+# The standalone tRPC server's two files are checked the same way: they require Next internals
 # by deep path (`next/dist/server/...`), which nothing else here loads at build time, so a trace
-# that dropped one would otherwise surface as a crash-looping container. `next-entry.cjs` is the
-# CMD; its module-scope require is `direct-routes.cjs`, which is loaded here too.
+# that dropped one would otherwise surface as a crash-looping container.
 COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
-RUN node /tmp/assert-standalone-boot-graph.mjs /app server.js trpc-server/server.cjs trpc-server/next-compat.cjs trpc-server/next-entry.cjs && rm -f /tmp/assert-standalone-boot-graph.mjs
+RUN node /tmp/assert-standalone-boot-graph.mjs /app server.js trpc-server/server.cjs trpc-server/next-compat.cjs && rm -f /tmp/assert-standalone-boot-graph.mjs
 
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# `next-entry.cjs` boots `server.js` as-is, with the direct-route listener in front of Next's
-# (see the COPY above). `node -- server.js` still starts plain Next. A deployment that sets its
-# own `args:` replaces this whole line.
-CMD ["node", "--", "trpc-server/next-entry.cjs", "--", "--expose-gc"]
+CMD ["node", "--", "server.js", "--", "--expose-gc"]
