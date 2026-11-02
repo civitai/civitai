@@ -41,7 +41,7 @@ export function GenerationCostPopover({
   ...popoverProps
 }: Omit<PopoverProps, 'children'> & Props) {
   const totalCost = workflowCost.total ?? 0;
-  const disabled = totalCost > 0 ? popoverProps.disabled : true;
+  const disabled = totalCost > 0 || refund ? popoverProps.disabled : true;
 
   // Use the user-selected buzz type for the cost badge color
   const availableBuzzTypes = useAvailableBuzz(['blue']);
