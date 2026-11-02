@@ -63,11 +63,26 @@ export function memorySkipStore(): SkipStore {
   };
 }
 
-/** A store that is down serves as if nothing was skipped: the player sees an item again, nothing is lost. */
-export async function skippedFor(store: SkipStore, userId: number): Promise<Skipped> {
+/** A Redis client that is offline can queue a command and never settle it, so every call is raced against a clock. */
+export const SKIP_STORE_TIMEOUT_MS = 400;
+
+function within<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clock = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`skip store did not answer in ${ms}ms`)), ms);
+  });
+  return Promise.race([work, clock]).finally(() => clearTimeout(timer));
+}
+
+/** A store that is down or silent serves as if nothing was skipped: the player sees an item again, nothing is lost. */
+export async function skippedFor(
+  store: SkipStore,
+  userId: number,
+  timeoutMs = SKIP_STORE_TIMEOUT_MS
+): Promise<Skipped> {
   const skipped: Skipped = { queue: [], hidden: [], yesno: [] };
   try {
-    for (const ref of await store.list(userId)) skipped[ref.kind].push(ref.id);
+    for (const ref of await within(store.list(userId), timeoutMs)) skipped[ref.kind].push(ref.id);
   } catch (error) {
     console.error('knights: could not read the skipped items', { userId, error });
   }
@@ -79,10 +94,11 @@ export async function recordSkip(
   store: SkipStore,
   userId: number,
   ref: ItemRef,
-  now: Date
+  now: Date,
+  timeoutMs = SKIP_STORE_TIMEOUT_MS
 ): Promise<boolean> {
   try {
-    await store.add(userId, ref, now);
+    await within(store.add(userId, ref, now), timeoutMs);
     return true;
   } catch (error) {
     console.error('knights: could not remember a skipped item', { userId, ref, error });

@@ -29,6 +29,22 @@ describe('skippedFor', () => {
   });
 });
 
+describe('a store that never answers', () => {
+  const silent: SkipStore = {
+    add: () => new Promise<void>(() => undefined),
+    list: () => new Promise(() => undefined),
+  };
+
+  it('is read as nothing skipped, and a skip is moved on from but not recorded', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    log.mockClear();
+
+    expect(await skippedFor(silent, 7, 10)).toEqual({ queue: [], hidden: [], yesno: [] });
+    expect(await recordSkip(silent, 7, { kind: 'queue', id: 1 }, new Date(), 10)).toBe(false);
+    expect(log).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('redisSkipStore', () => {
   it('writes and reads one sorted set per player', async () => {
     const eval_ = vi.fn(async (_script: string, _options: unknown) => ['q:3', 'h:9']);
