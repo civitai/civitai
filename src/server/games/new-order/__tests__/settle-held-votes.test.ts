@@ -43,6 +43,7 @@ vi.mock('~/server/games/new-order/utils', () => ({
   poolCounters: {
     Knight: { a: [knightPool], b: [] },
     Inquisitor: { a: [inquisitorPool], b: [] },
+    Templar: { a: [], b: [] },
   },
   DEFAULT_POOL_QUOTAS: {},
   checkVotingRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
@@ -85,7 +86,12 @@ vi.mock('~/utils/signal-client', () => ({
   },
 }));
 
-import { addImageRating, getImagesQueue } from '~/server/services/games/new-order.service';
+import {
+  addImageRating,
+  getImagesQueue,
+  leaveQueuesAfterModeratorRating,
+} from '~/server/services/games/new-order.service';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -261,5 +267,37 @@ describe('pending votes on images New Order drops for review', () => {
     const served = await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
 
     expect(served.map((i) => i.id)).toEqual([CLEAN]);
+  });
+});
+
+describe('leaving the queues after a moderator rating', () => {
+  it('takes the image out of its queue and drops its vote tally', async () => {
+    knightPool.exists.mockImplementation(async (id: number) => id === CLEAN);
+
+    await leaveQueuesAfterModeratorRating(CLEAN);
+
+    expect(knightPool.reset).toHaveBeenCalledWith({ id: CLEAN });
+    expect(mockClearRatings).toHaveBeenCalledWith([CLEAN]);
+  });
+
+  it('a failed tally clear is logged and does not throw', async () => {
+    knightPool.exists.mockImplementation(async (id: number) => id === CLEAN);
+    mockClearRatings.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(leaveQueuesAfterModeratorRating(CLEAN)).resolves.toBeUndefined();
+    expect(handleLogError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'redis down' }),
+      'new-order-mod-rating-queue-cleanup'
+    );
+  });
+
+  it('control: an image in no queue is left alone', async () => {
+    knightPool.exists.mockResolvedValue(false);
+
+    await leaveQueuesAfterModeratorRating(CLEAN);
+
+    expect(knightPool.reset).not.toHaveBeenCalled();
+    expect(mockClearRatings).not.toHaveBeenCalled();
+    expect(handleLogError).not.toHaveBeenCalled();
   });
 });

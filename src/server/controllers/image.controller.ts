@@ -17,10 +17,9 @@ import {
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import {
-  isImageInQueue,
+  leaveQueuesAfterModeratorRating,
   updatePendingImageRatings,
 } from '~/server/services/games/new-order.service';
-import { clearImageRatings } from '~/server/games/new-order/utils';
 import {
   addBlockedImage,
   bulkRemoveBlockedImages,
@@ -63,7 +62,6 @@ import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
-  handleLogError,
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
@@ -78,7 +76,6 @@ import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
   EntityType,
-  NewOrderRankType,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -1151,17 +1148,7 @@ export async function handleUpdateImageNsfwLevel({
     if (isModerator) {
       // Update knights of new order pending votes and remove it from new order queue
       await updatePendingImageRatings({ imageId: input.id, rating: input.nsfwLevel });
-      const valueInQueue = await isImageInQueue({
-        imageId: input.id,
-        rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
-      });
-      if (valueInQueue) {
-        // The rating is already applied; leaving the queue is cleanup and must not fail it.
-        await Promise.all([
-          valueInQueue.pool.reset({ id: input.id }),
-          clearImageRatings([input.id]),
-        ]).catch((e) => handleLogError(e as Error, 'new-order-mod-rating-queue-cleanup'));
-      }
+      await leaveQueuesAfterModeratorRating(input.id);
     }
 
     return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };

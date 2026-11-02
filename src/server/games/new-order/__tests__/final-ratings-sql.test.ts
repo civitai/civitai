@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 // on the normalised fragment: a settled round must never be rewritten, and neither may a vote cast
 // after the decision was queued.
 
+import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import {
   buildFinalRatingsInsert,
   PENDING_VOTES_CTE,
@@ -63,5 +64,52 @@ describe('final-ratings settle SQL', () => {
     expect(sql.endsWith(`orig.originalLevel ${norm(PENDING_VOTES_JOIN)};`)).toBe(true);
     // The only vote source is the pending CTE: the raw table is read nowhere else.
     expect(sql.split('FROM knights_new_order_image_rating').length).toBe(2);
+  });
+
+  // Evaluates the settle's two CASE expressions for one vote against one decision, so the grading
+  // rule is checked by its outcomes rather than its spelling.
+  const evaluate = (decision: number | null, vote: number) => {
+    const sql = norm(buildFinalRatingsInsert({ updateStart: new Date(0), updateEnd: new Date(1) }));
+    const caseOf = (alias: string) => {
+      const close = sql.indexOf(`END AS ${alias}`);
+      const open = sql.lastIndexOf('CASE ', close);
+      if (close < 0 || open < 0) throw new Error(`no CASE for ${alias}`);
+      return sql.slice(open + 'CASE '.length, close).trim();
+    };
+    const run = (expr: string) => {
+      for (const branch of expr.split(/ (?=WHEN |ELSE )/)) {
+        const when = branch.match(/^WHEN (.+?) THEN (.+)$/);
+        const value = (when ? when[2] : branch.replace(/^ELSE /, '')).replace(/^'|'$/g, '');
+        if (!when) return value;
+        const cond = when[1];
+        if (cond === 'new.rating IS NULL' && decision === null) return value;
+        if (cond === 'new.rating = orig.rating' && decision !== null && decision === vote)
+          return value;
+        if (cond !== 'new.rating IS NULL' && cond !== 'new.rating = orig.rating')
+          throw new Error(`unknown condition ${cond}`);
+      }
+      throw new Error('no branch matched');
+    };
+    return { status: run(caseOf('status')), multiplier: Number(run(caseOf('multiplier'))) };
+  };
+
+  it('grades a vote by the decision: none is Inconclusive, a match Correct, anything else Failed', () => {
+    expect(evaluate(null, 4)).toEqual({
+      status: NewOrderImageRatingStatus.Inconclusive,
+      multiplier: 0,
+    });
+    expect(evaluate(4, 4)).toEqual({ status: NewOrderImageRatingStatus.Correct, multiplier: 1 });
+    expect(evaluate(8, 4)).toEqual({ status: NewOrderImageRatingStatus.Failed, multiplier: 0 });
+  });
+
+  it('the batch window runs from the start (exclusive) to the end (inclusive), in that order', () => {
+    const start = new Date('2026-11-01T00:00:00.000Z');
+    const end = new Date('2026-11-02T00:00:00.000Z');
+    const sql = norm(buildFinalRatingsInsert({ updateStart: start, updateEnd: end }));
+
+    const lower = sql.indexOf(`update_time > parseDateTimeBestEffort('${start.toISOString()}')`);
+    const upper = sql.indexOf(`update_time <= parseDateTimeBestEffort('${end.toISOString()}')`);
+    expect(lower).toBeGreaterThan(-1);
+    expect(upper).toBeGreaterThan(lower);
   });
 });

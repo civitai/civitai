@@ -1971,6 +1971,23 @@ export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
   return raters;
 }
 
+/**
+ * After a moderator rates an image: take it out of the New Order queues and drop its vote tally.
+ * The rating is already applied, so this is cleanup and never throws.
+ */
+export async function leaveQueuesAfterModeratorRating(imageId: number) {
+  try {
+    const valueInQueue = await isImageInQueue({
+      imageId,
+      rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
+    });
+    if (!valueInQueue) return;
+    await Promise.all([valueInQueue.pool.reset({ id: imageId }), clearImageRatings([imageId])]);
+  } catch (e) {
+    handleLogError(e as Error, 'new-order-mod-rating-queue-cleanup');
+  }
+}
+
 export async function isImageInQueue({
   imageId,
   rankType,
