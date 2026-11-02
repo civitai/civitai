@@ -117,6 +117,7 @@ export const removeStorylineChapterSchema = z.object({
 export const linkStorylineChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
   chapterId: z.number().int().positive(),
+  atEnd: z.boolean().optional(),
 });
 
 export const storylineLinkTargetsSchema = z.object({

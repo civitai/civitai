@@ -425,7 +425,11 @@ export function StorylineEndOfChapter({
                         type="button"
                         size="sm"
                         onClick={() =>
-                          openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
+                          openStorylineContinueModal({
+                            parentPostId,
+                            parentChapterId: chapterId,
+                            atEnd: onMain,
+                          })
                         }
                         data-testid="storyline-add-own-chapter"
                       >
@@ -446,6 +450,8 @@ export function StorylineEndOfChapter({
                       parentPostId,
                       parentChapterId: chapterId,
                       mode: 'join',
+                      // Unread ways on are not "no main-path chapter": checked only once known.
+                      atEnd: onMain && children !== undefined && !midStory,
                     })
                   }
                   data-testid="storyline-join-existing-chapter"
