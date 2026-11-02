@@ -232,7 +232,8 @@ export function deliverWait(files: DealFileFacts[], round: number) {
 /**
  * What the seller still has to add before Deliver can work, or null. Mirrors the server's
  * `dealReadyToDeliver`: a Ready preview (unless the offering takes none) and a Ready, scan-passed
- * final in the round in progress. The server stays the authority; this only keeps the button from
+ * final in the round in progress, and no failed file in it (the server refuses a round holding one).
+ * The server stays the authority; this only keeps the button from
  * inviting a click that is certain to be refused.
  */
 export function deliverNeeds(
@@ -245,6 +246,10 @@ export function deliverNeeds(
   const hasFinal = current.some(
     (file) => file.kind === 'Final' && file.status === 'Ready' && file.scanStatus === 'Passed'
   );
+  const hasFailed = current.some(
+    (file) => file.status === 'Failed' || (file.kind === 'Final' && file.scanStatus === 'Failed')
+  );
+  if (hasFailed) return 'Remove or replace the file that failed.';
   const needsPreview = previewKind !== 'None' && !hasPreview;
   if (needsPreview && !hasFinal) return 'Add a preview and your final files to deliver.';
   if (needsPreview) return 'Add a preview to deliver.';

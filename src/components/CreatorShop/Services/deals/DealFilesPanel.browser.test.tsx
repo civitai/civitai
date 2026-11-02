@@ -31,8 +31,9 @@ const deal = (previewKind = 'Image') =>
     previewKind,
   } as unknown as ServiceDealView);
 
+let nextId = 1;
 const file = (kind: 'Preview' | 'Final', over: Record<string, unknown> = {}) => ({
-  id: Math.floor(Math.random() * 1e6),
+  id: nextId++,
   round: 0,
   kind,
   status: 'Ready',
@@ -84,6 +85,27 @@ describe('Deliver on the seller panel', () => {
     renderWithProviders(<DealFilesPanel deal={deal()} />);
     await expect.element(deliver()).toBeEnabled();
     expect(page.getByText(/to deliver\./).elements()).toHaveLength(0);
+  });
+
+  test('is disabled when a failed final sits beside a passed one', async () => {
+    mocks.files = [file('Preview'), file('Final'), file('Final', { status: 'Failed' })];
+    renderWithProviders(<DealFilesPanel deal={deal()} />);
+    await expect.element(deliver()).toBeDisabled();
+    await expect
+      .element(page.getByText('Remove or replace the file that failed.'))
+      .toBeInTheDocument();
+  });
+
+  test('is disabled when a final failed its scan beside a passed one', async () => {
+    mocks.files = [file('Preview'), file('Final'), file('Final', { scanStatus: 'Failed' })];
+    renderWithProviders(<DealFilesPanel deal={deal()} />);
+    await expect.element(deliver()).toBeDisabled();
+  });
+
+  test('ignores files from other rounds', async () => {
+    mocks.files = [file('Preview', { round: 1 }), file('Final', { round: 1 })];
+    renderWithProviders(<DealFilesPanel deal={deal()} />);
+    await expect.element(deliver()).toBeDisabled();
   });
 
   test('an offering with no preview needs only a final', async () => {
