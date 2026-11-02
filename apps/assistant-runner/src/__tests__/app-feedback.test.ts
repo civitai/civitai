@@ -240,6 +240,38 @@ describe('the feedback tools on the runner', () => {
     expect(asked).toEqual(['user:my-app']);
   });
 
+  it('names every status offer of a run uniquely, across the tool sets a reply opens', async () => {
+    // As the cover's: the runner opens the same provider again for the same run (`reopenTools`).
+    fake.add('my-app');
+    const { source } = civitai();
+    const provider = new AppAssistantTools({
+      sandboxUrl: fake.url,
+      tokens: () => async (purpose) => `test-token-${purpose}`,
+      appFeedback: () => source,
+      log: quiet,
+      wakePollMs: 5,
+      wakeTimeoutMs: 5_000,
+    });
+    const ids: string[] = [];
+    for (const status of ['resolved', 'wont_fix']) {
+      const tools = await provider.open({
+        userId: 'u-1',
+        runId: 'run-7',
+        conversationId: 'conv-1',
+        page: { app: 'my-app' },
+        history: chosenApp('my-app'),
+        signal: new AbortController().signal,
+      });
+      opened.push(tools);
+      await call(tools.tools, GET_USER_FEEDBACK);
+      const offer = await call(tools.tools, SET_FEEDBACK_STATUS, { ids: [6631], status });
+      ids.push(String(offer.feedbackStatus));
+    }
+    expect(ids[0]).toMatch(/^run-7-feedback-/);
+    expect(ids[1]).toMatch(/^run-7-feedback-/);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
   it('without civitai’s feedback reads set up, the tools say so', async () => {
     fake.add('my-app');
     const tools = await new AppAssistantTools({

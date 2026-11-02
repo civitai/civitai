@@ -9,4 +9,5 @@ export * from './subagents';
 export * from './preview';
 export * from './sdk-floor';
 export * from './models';
+export * from './cover';
 export * from './app-feedback';

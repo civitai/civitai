@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   APP_FEEDBACK_TOOLS,
   CREATE_APP,
@@ -16,6 +18,8 @@ import {
   chosenAppOf,
   createSandboxClient,
   openApp,
+  GENERATE_APP_COVER,
+  type CoverEstimator,
   unconfiguredFeedbackSource,
   type AppFeedbackSource,
   type Sandbox,
@@ -40,6 +44,7 @@ import type { ToolSet } from 'ai';
 
 import type { Logger, OpenTools, ToolContext, ToolProvider } from '../core/interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
+import { runnerCoverTools, unconfiguredCoverTools, type CoverListings } from './cover';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
 import { RunnerPreview, type AutoPreview } from './preview';
@@ -88,6 +93,15 @@ export function reportOf(result: ChatToolResult): ChatToolResult {
   };
 }
 
+/**
+ * A page card's offer id: unique per offer, not per tool set. The runner opens tools again for the
+ * same run mid-reply (`reopenTools`), and a recovered run opens them in another process, so a
+ * counter would name a later offer as an earlier one and the page would show that one's card.
+ */
+function offerId(runId: string, kind: 'cover' | 'feedback'): string {
+  return `${runId}-${kind}-${randomUUID()}`;
+}
+
 /** Enough of a sandbox result for the page's gate: `exit_code:` and `render:` come first. */
 const REPORTED_OUTPUT_CHARS = 200;
 
@@ -107,6 +121,8 @@ const RUNNER_PAGE_TOOLS = [
   // The open app's moderator review and user feedback, read by civitai as the run's user; and the
   // offer to change a feedback item's status, which the page's card, not the runner, carries out.
   ...APP_FEEDBACK_TOOLS,
+  // Offers a store cover; the page's card makes it.
+  GENERATE_APP_COVER,
 ] as const;
 
 export interface AppAssistantToolsOptions {
@@ -119,6 +135,12 @@ export interface AppAssistantToolsOptions {
    * preview. Unset, `start_preview` says the preview is not set up here.
    */
   devTunnels?(runId: string): DevTunnels;
+  /**
+   * `generate_app_cover` for one run: civitai's listing read with its grant (`CivitaiCovers.forRun`)
+   * and the price on its `chat` token (`runnerCoverEstimator`). Unset, the tool says covers are not
+   * set up.
+   */
+  covers?(runId: string): { listings: CoverListings; estimator: CoverEstimator };
   /**
    * civitai's app-feedback reads with one run's grant (`CivitaiAppFeedback.forRun`). Unset, the
    * feedback tools say they cannot read it here.
@@ -202,7 +224,6 @@ export class AppAssistantTools implements ToolProvider {
 
     let preview: RunnerPreview | undefined;
     let apps: Sandbox[] | undefined;
-    let feedbackOffers = 0;
     try {
       apps = await client.list();
     } catch (error) {
@@ -292,10 +313,20 @@ export class AppAssistantTools implements ToolProvider {
           signal,
         });
       const sdkUpgrade = await upgradeSdk();
+      // The store cover: the page's own tool (`createCoverArt`).
+      const covers = this.#options.covers?.(runId);
+      const coverTools: Record<string, ChatTool> = covers
+        ? runnerCoverTools({
+            currentApp: () => sandbox.active?.app ?? null,
+            ...covers,
+            nextId: () => offerId(runId, 'cover'),
+            signal,
+          })
+        : unconfiguredCoverTools();
       const feedback = createFeedbackTools({
         current: () => sandbox.active?.app ?? null,
         source: this.#options.appFeedback?.(runId, signal) ?? unconfiguredFeedbackSource,
-        nextId: () => `${runId}-feedback-${++feedbackOffers}`,
+        nextId: () => offerId(runId, 'feedback'),
       });
       const pageTools: Record<string, ChatTool> = {
         ...appTools.tools,
@@ -303,6 +334,7 @@ export class AppAssistantTools implements ToolProvider {
         ...core.tools,
         [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], upgradeSdk),
         ...preview.tools(),
+        ...coverTools,
       };
       // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same
       // descriptions and the same failure note. No chat files reach them on the runner.

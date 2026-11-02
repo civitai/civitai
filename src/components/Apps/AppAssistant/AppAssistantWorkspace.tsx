@@ -65,8 +65,7 @@ import {
 } from '~/components/Apps/AppAssistant/assistantToken';
 import {
   chatTokenOrchestration,
-  createBrowserCoverArtDeps,
-  createCoverArt,
+  createBrowserCoverDeps,
 } from '~/components/Apps/AppAssistant/coverArt';
 import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
 import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice';
@@ -391,6 +390,11 @@ export function AppAssistantWorkspace({
       }),
     []
   );
+  // The store cover's listing refresh after a press attaches one. Read through a ref, so a new utils
+  // object never rebuilds the gate (and with it, its state).
+  const utils = trpc.useUtils();
+  const trpcUtils = useRef(utils);
+  trpcUtils.current = utils;
   const gate = useMemo(
     () =>
       createAssistantGate({
@@ -419,36 +423,28 @@ export function AppAssistantWorkspace({
             trpcVanilla.appFeedback.setOwnerStatus.mutate(input)
           ),
         },
+        cover: createBrowserCoverDeps({
+          currentApp: () => {
+            const app = live.current.active?.app;
+            return app && isAppBlockId(app) ? app : null;
+          },
+          api: {
+            getMyListingForApp: (input, opts) =>
+              trpcVanilla.appListings.getMyListingForApp.query(input, opts),
+            ingestAssetFromUrl: (input) => trpcVanilla.appListings.ingestAssetFromUrl.mutate(input),
+            setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
+          },
+          orchestration: chatTokenOrchestration(tokens),
+          onAttached: () => void trpcUtils.current.appListings.getMyListingForApp.invalidate(),
+        }),
       }),
-    [appTools]
+    [appTools, tokens]
   );
   // What was verified belongs to the sandbox it was verified in, and so does a Submit for review offer.
   useEffect(() => {
     gate.reset();
     gate.appChanged(activeName);
   }, [activeName, gate]);
-
-  // The store cover (`generate_app_cover`) is the page's own tool: the server runner does not offer it.
-  const trpcUtils = trpc.useUtils();
-  const coverTools = useMemo(
-    () =>
-      createCoverArt(
-        createBrowserCoverArtDeps({
-          currentApp: () => {
-            const app = live.current.active?.app;
-            return app && isAppBlockId(app) ? app : null;
-          },
-          api: {
-            getMyListingForApp: (input) => trpcVanilla.appListings.getMyListingForApp.query(input),
-            ingestAssetFromUrl: (input) => trpcVanilla.appListings.ingestAssetFromUrl.mutate(input),
-            setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
-          },
-          orchestration: chatTokenOrchestration(tokens),
-          onAttached: () => void trpcUtils.appListings.getMyListingForApp.invalidate(),
-        })
-      ),
-    [tokens, trpcUtils]
-  );
 
   const tools = useMemo(
     () => ({
@@ -467,9 +463,8 @@ export function AppAssistantWorkspace({
       // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
       ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
-      ...(remoteRunner ? {} : coverTools),
     }),
-    [canPreview, gate, appTools, showPreview, remoteRunner, coverTools]
+    [canPreview, gate, appTools, showPreview]
   );
 
   const instructions = useCallback(
