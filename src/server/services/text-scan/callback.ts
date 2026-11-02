@@ -187,6 +187,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       raised.map((label) => [label, merged[label]])
     );
     const outcome = evaluateTextScan(output, subject.declared, raised);
+    const ratingBefore = await adapter?.readRating?.(entityId);
     const recorded = await recordTextScanRaise({
       entityType: emEntityType,
       entityId,
@@ -216,6 +217,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
         subject,
         textHash: metadata.textHash ?? textScanTextHash(subject),
         promptIds: metadata.promptIds,
+        ratingBefore,
       });
     } catch (error) {
       // Left raised, the next callback would find nothing stricter and never act on it.
@@ -280,6 +282,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const subjectMeta = metadata.subjectMeta ?? subject.meta;
   const extra = inputMeta(metadata, flaggedSegments);
   const meta = extra ? { ...subjectMeta, ...extra } : subjectMeta;
+  const ratingBefore = await adapter?.readRating?.(entityId);
   const recorded = await recordTextScanSuccess({
     entityType: emEntityType,
     entityId,
@@ -322,6 +325,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       subject,
       textHash: metadata.textHash ?? textScanTextHash(subject),
       promptIds: metadata.promptIds,
+      ratingBefore,
     });
   } catch (error) {
     // Left Succeeded, the row would never be retried and the verdict would be lost; Failed puts it

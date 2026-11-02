@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Hand-listed: the real module pulls nsfwLevels.service, whose search-index graph builds clients at load.
 vi.mock('~/server/services/text-scan/rated-entities', () => ({
   applyRatingFloor: vi.fn(async () => ({ deferredRatingNotice: null })),
+  readRatedEntity: vi.fn(async () => null),
 }));
 // Hand-listed: the real action reaches rated-entities and bounty.service, whose graphs build clients at load.
 vi.mock('~/server/services/text-scan/actions/bounty-nsfw', () => ({
@@ -15,7 +16,9 @@ vi.mock('~/server/services/text-scan/actions/collection', () => ({
 }));
 
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
-const { applyRatingFloor } = await import('~/server/services/text-scan/rated-entities');
+const { applyRatingFloor, readRatedEntity } = await import(
+  '~/server/services/text-scan/rated-entities'
+);
 const { applyBountyNsfwTextScan } = await import('~/server/services/text-scan/actions/bounty-nsfw');
 const { applyCollectionTextScan } = await import('~/server/services/text-scan/actions/collection');
 
@@ -39,6 +42,14 @@ describe('rated-entity text-scan adapters', () => {
     await getModerationAdapter('Bounty')!.applyTextScan!(args as never);
     expect(applyBountyNsfwTextScan).toHaveBeenCalledWith(args);
   });
+
+  it.each(['Article', 'Post', 'Bounty', 'BountyEntry'])(
+    '%s reads its own rating for the snapshot taken before the verdict write',
+    async (type) => {
+      await getModerationAdapter(type)!.readRating!(3);
+      expect(readRatedEntity).toHaveBeenCalledWith(type, 3);
+    }
+  );
 
   it('Collection is registered and runs the collection action', async () => {
     await getModerationAdapter('Collection')!.applyTextScan!(args as never);
