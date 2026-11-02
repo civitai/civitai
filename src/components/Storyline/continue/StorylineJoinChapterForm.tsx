@@ -16,10 +16,13 @@ const TILE_WIDTH = 140;
 export function StorylineJoinChapterForm({
   parentChapterId,
   parentName,
+  atEnd = false,
   onClose,
 }: {
   parentChapterId: number;
   parentName: string | null;
+  /** `parentChapterId` was read as the main path's end; the server refuses if it no longer is. */
+  atEnd?: boolean;
   onClose: () => void;
 }) {
   const [chapterId, setChapterId] = useState<number | null>(null);
@@ -123,7 +126,7 @@ export function StorylineJoinChapterForm({
         leftSection={<IconGitMerge size={16} />}
         disabled={!chapterId}
         loading={link.isPending}
-        onClick={() => chapterId && link.mutate({ parentChapterId, chapterId })}
+        onClick={() => chapterId && link.mutate({ parentChapterId, chapterId, atEnd })}
         data-testid="storyline-join-submit"
       >
         Join this chapter

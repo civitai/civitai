@@ -1862,6 +1862,52 @@ export async function addOwnerChapter(input: {
 }
 
 /**
+ * The main path's last chapter, read under the caller's storyline lock (`lockStorylineForAdd` or
+ * stronger), so no add, insert or link can move it before the transaction ends.
+ */
+async function lockedMainPathEnd(tx: Prisma.TransactionClient, rootId: number) {
+  // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
+  const findEnd = async () =>
+    (
+      await tx.$queryRaw<{ id: number; removed: boolean }[]>`
+        WITH RECURSIVE main AS (
+          SELECT ${rootId}::int AS id, 1 AS step
+          UNION ALL
+          SELECT e."chapterId", main.step + 1 FROM main
+          JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+          WHERE main.step < 100000
+        )
+        SELECT main.id, c."removedAt" IS NOT NULL AS removed
+        FROM main JOIN "StorylineChapter" c ON c.id = main.id
+        ORDER BY step DESC LIMIT 1
+      `
+    )[0];
+  let end = await findEnd();
+  // Removals keep the route off a tombstone, but an insert or "Make main path" racing one, or a
+  // route from before they did, can still end at one. Nothing continues a tombstone, so the
+  // route is moved back to the last live chapter here, where it would otherwise stay stuck.
+  if (end.removed) {
+    // Locks the parents whose edges the heal rewrites first, the order `setCanonChapter` takes
+    // (a parent's row, then its edges), so the two cannot deadlock.
+    await tx.$queryRaw`
+      WITH RECURSIVE up AS (
+        SELECT ${end.id}::int AS id, 1 AS step
+        UNION ALL
+        SELECT e."parentChapterId", up.step + 1 FROM up
+        JOIN "StorylineChapter" c ON c.id = up.id AND c."removedAt" IS NOT NULL
+        JOIN "StorylineChapterEdge" e ON e."chapterId" = up.id AND e.canon
+        WHERE up.step < 100000
+      )
+      SELECT id FROM "StorylineChapter" WHERE id IN (SELECT id FROM up WHERE step > 1)
+      ORDER BY id FOR NO KEY UPDATE
+    `;
+    await clearTombstoneTips([end.id], tx);
+    end = await findEnd();
+  }
+  return end.id;
+}
+
+/**
  * The owner's post at the end of the main path: chapter 1 of an empty storyline, else the canon
  * child of its last chapter. The end is found here, under the storyline's lock: the client's read
  * is capped and can be stale, and a wrong end makes a side branch.
@@ -1882,46 +1928,8 @@ export async function addOwnerChapterAtEnd({
 
   return dbWrite.$transaction(async (tx) => {
     await lockStorylineForAdd(tx, storylineId);
-    // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
-    const findEnd = async () =>
-      (
-        await tx.$queryRaw<{ id: number; removed: boolean }[]>`
-          WITH RECURSIVE main AS (
-            SELECT ${root.id}::int AS id, 1 AS step
-            UNION ALL
-            SELECT e."chapterId", main.step + 1 FROM main
-            JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
-            WHERE main.step < 100000
-          )
-          SELECT main.id, c."removedAt" IS NOT NULL AS removed
-          FROM main JOIN "StorylineChapter" c ON c.id = main.id
-          ORDER BY step DESC LIMIT 1
-        `
-      )[0];
-    let end = await findEnd();
-    // Removals keep the route off a tombstone, but an insert or "Make main path" racing one, or a
-    // route from before they did, can still end at one. Nothing continues a tombstone, so the
-    // route is moved back to the last live chapter here, where it would otherwise stay stuck.
-    if (end.removed) {
-      // Locks the parents whose edges the heal rewrites first, the order `setCanonChapter` takes
-      // (a parent's row, then its edges), so the two cannot deadlock.
-      await tx.$queryRaw`
-        WITH RECURSIVE up AS (
-          SELECT ${end.id}::int AS id, 1 AS step
-          UNION ALL
-          SELECT e."parentChapterId", up.step + 1 FROM up
-          JOIN "StorylineChapter" c ON c.id = up.id AND c."removedAt" IS NOT NULL
-          JOIN "StorylineChapterEdge" e ON e."chapterId" = up.id AND e.canon
-          WHERE up.step < 100000
-        )
-        SELECT id FROM "StorylineChapter" WHERE id IN (SELECT id FROM up WHERE step > 1)
-        ORDER BY id FOR NO KEY UPDATE
-      `;
-      await clearTombstoneTips([end.id], tx);
-      end = await findEnd();
-    }
     const { chapterId } = await writeOwnerChapter(tx, {
-      parentChapterId: end.id,
+      parentChapterId: await lockedMainPathEnd(tx, root.id),
       postId,
       userId,
     });
@@ -2091,17 +2099,23 @@ async function createChapterJoinable(storyline: {
 /**
  * The owner (or a moderator) offers an existing chapter as a way on from `parentChapterId`, so
  * two branches rejoin at it. The chapter gains a parent and keeps its depth.
+ *
+ * `atEnd`: the join was offered at the end of the main path, so it must extend it. A chapter added
+ * since the client read `parentChapterId` as the end would turn the join into a side branch, so
+ * it is refused instead, rather than moved after a chapter the owner never saw.
  */
 export async function linkStorylineChapter({
   parentChapterId,
   chapterId,
   userId,
   isModerator,
+  atEnd = false,
 }: {
   parentChapterId: number;
   chapterId: number;
   userId: number;
   isModerator?: boolean;
+  atEnd?: boolean;
 }) {
   if (parentChapterId === chapterId) throw throwBadRequestError('A chapter cannot continue itself');
   const parent = await dbWrite.storylineChapter.findUnique({
@@ -2122,6 +2136,15 @@ export async function linkStorylineChapter({
         select: { tosViolation: true, userId: true, maxNsfwLevel: true, minorByScan: true },
       });
       if (storyline?.tosViolation) throw throwBadRequestError('This storyline was taken down');
+      if (atEnd) {
+        const [root] = await tx.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "StorylineChapter" WHERE "storylineId" = ${storylineId} AND depth = 0
+        `;
+        if (!root || (await lockedMainPathEnd(tx, root.id)) !== parentChapterId)
+          throw throwBadRequestError(
+            'The story has a new last chapter since you opened this. Close it and join from there'
+          );
+      }
       // Before the reads below, so what they find stays true until the edge is written.
       const live = await lockLiveChapters(tx, [parentChapterId, chapterId]);
       const chapters = await tx.storylineChapter.findMany({

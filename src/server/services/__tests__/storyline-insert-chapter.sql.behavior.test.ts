@@ -35,6 +35,7 @@ const {
   canonRouteWalk,
   getStorylinePath,
   insertStorylineChapter,
+  linkStorylineChapter,
   setCanonChapter,
 } = await import('~/server/services/storyline.service');
 const { tombstoneChaptersForPlacements } = await import(
@@ -828,6 +829,93 @@ describe('a chapter add whose parent changes after its first read', () => {
         userId: OWNER,
       });
       expect(await edgeOf(stale)).toEqual({ parentChapterId: 60, canon: false });
+    });
+
+    // "Join an existing chapter" from the end-of-chapter card on the main path: the card's end is
+    // checked under the storyline's lock, as the use-a-post add finds it there. The card's side
+    // (sending `atEnd`) is pinned in StorylineEndOfChapter.test.
+    describe('a join offered at the end', () => {
+      let joinable: number;
+      beforeEach(async () => {
+        w.storylineChapter.findMany.mockImplementation((async ({
+          where,
+        }: {
+          where: { id: { in: number[] } };
+        }) =>
+          (
+            await rows<Record<string, unknown> & { postId: number | null }>(
+              `SELECT c.id, c.depth, c."removedAt", c."postId", p."userId", p."nsfwLevel",
+                 p."publishedAt", p."tosViolation"
+               FROM "StorylineChapter" c LEFT JOIN "Post" p ON p.id = c."postId"
+               WHERE c.id = ANY($1::int[]) ORDER BY c.id`,
+              [where.id.in]
+            )
+          ).map(({ id, depth, removedAt, postId, ...post }) => ({
+            id,
+            depth,
+            removedAt,
+            post: postId
+              ? {
+                  ...post,
+                  id: postId,
+                  title: null,
+                  user: { username: 'owner', bannedAt: null, deletedAt: null },
+                }
+              : null,
+          }))) as never);
+        w.storylineChapterEdge.findMany.mockImplementation((async () =>
+          rows(
+            `SELECT "chapterId", "parentChapterId" FROM "StorylineChapterEdge" WHERE "storylineId" = 1`
+          )) as never);
+        // A chapter 8 on branch 40 -> 41, one deeper than the end (60, chapter 7): joinable from it.
+        const { chapterId: under41 } = await addOwnerChapter({
+          parentChapterId: 41,
+          postId: await post(),
+          userId: OWNER,
+        });
+        ({ chapterId: joinable } = await addOwnerChapter({
+          parentChapterId: under41,
+          postId: await post(),
+          userId: OWNER,
+        }));
+      });
+      const joinEdge = async () =>
+        rows<{ canon: boolean }>(
+          `SELECT canon FROM "StorylineChapterEdge" WHERE "chapterId" = $1 AND "parentChapterId" = 60`,
+          [joinable]
+        );
+
+      it('extends the main path when the end is still the one the card read', async () => {
+        await linkStorylineChapter({
+          parentChapterId: 60,
+          chapterId: joinable,
+          userId: OWNER,
+          atEnd: true,
+        });
+        expect(await joinEdge()).toEqual([{ canon: true }]);
+      });
+
+      it('refuses rather than branch when a chapter landed after the end the card read', async () => {
+        await addOwnerChapter({ parentChapterId: 60, postId: await post(), userId: OWNER });
+
+        await expect(
+          linkStorylineChapter({
+            parentChapterId: 60,
+            chapterId: joinable,
+            userId: OWNER,
+            atEnd: true,
+          })
+        ).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message:
+            'The story has a new last chapter since you opened this. Close it and join from there',
+        });
+        expect(await joinEdge()).toEqual([]);
+
+        // What the card's chapter id did before `atEnd`: a side branch off 60, not the main path.
+        await linkStorylineChapter({ parentChapterId: 60, chapterId: joinable, userId: OWNER });
+        expect(await joinEdge()).toEqual([{ canon: false }]);
+      });
     });
 
     it('refuses rather than branch when the end moves while it adds', async () => {

@@ -453,7 +453,8 @@ describe('StorylineEndOfChapter', () => {
   });
 
   // The owner adds a chapter they already made, or joins one that exists, through the picker,
-  // parented on the chapter they are at the end of.
+  // parented on the chapter they are at the end of. On the main path that is its end, which the
+  // server checks again (`atEnd`): a chapter landing since would make either a branch.
   it('offers the owner the picker, parented on this chapter, and nobody else', () => {
     mocks.children = [];
     mocks.terms = { open: true, price: 0, closedReason: null };
@@ -469,8 +470,18 @@ describe('StorylineEndOfChapter', () => {
     act(() => useOwn?.click());
     act(() => rejoin?.click());
     expect(mocks.openContinue.mock.calls).toEqual([
-      [{ parentPostId: 15, parentChapterId: 4 }],
-      [{ parentPostId: 15, parentChapterId: 4, mode: 'join' }],
+      [{ parentPostId: 15, parentChapterId: 4, atEnd: true }],
+      [{ parentPostId: 15, parentChapterId: 4, mode: 'join', atEnd: true }],
+    ]);
+    document.body.innerHTML = '';
+    mocks.openContinue.mockClear();
+    // A branch's end is not the main path's.
+    const onBranch = render({ parentPostId: 15, isOwner: true, onMain: false });
+    act(() => onBranch.querySelector<HTMLButtonElement>(own)?.click());
+    act(() => onBranch.querySelector<HTMLButtonElement>(join)?.click());
+    expect(mocks.openContinue.mock.calls).toEqual([
+      [{ parentPostId: 15, parentChapterId: 4, atEnd: false }],
+      [{ parentPostId: 15, parentChapterId: 4, mode: 'join', atEnd: false }],
     ]);
     document.body.innerHTML = '';
     const reader = render({ parentPostId: 15 });
@@ -493,7 +504,7 @@ describe('StorylineEndOfChapter', () => {
     );
     act(() => rejoin?.click());
     expect(mocks.openContinue.mock.calls).toEqual([
-      [{ parentPostId: 15, parentChapterId: 4, mode: 'join' }],
+      [{ parentPostId: 15, parentChapterId: 4, mode: 'join', atEnd: true }],
     ]);
   });
 
@@ -576,6 +587,15 @@ describe('StorylineEndOfChapter', () => {
       act(() => within(onBranch, 'storyline-add-own-chapter')?.click());
       expect(mocks.openContinue.mock.calls).toEqual([
         [{ parentPostId: 120, parentChapterId: 12, atEnd: false }],
+      ]);
+    });
+
+    // Joining from a chapter that already goes on is a branch by design, so the end is not checked.
+    it('joins from this chapter, not the end, without the end check', () => {
+      const container = render({ parentPostId: 15, isOwner: true });
+      act(() => within(container, 'storyline-join-existing-chapter')?.click());
+      expect(mocks.openContinue.mock.calls).toEqual([
+        [{ parentPostId: 15, parentChapterId: 4, mode: 'join', atEnd: false }],
       ]);
     });
 
