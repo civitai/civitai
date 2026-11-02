@@ -81,6 +81,11 @@ describe('bounty.resolveUnpaidAward', () => {
     });
   });
 
+  it('reports a repeated ruling as not recorded', async () => {
+    mockResolve.mockResolvedValue({ recorded: false });
+    expect((await call(ruling)).json).toMatchObject({ recorded: false });
+  });
+
   it('refuses a caller who is not a moderator', async () => {
     session.user.isModerator = false;
     expect((await call(ruling)).status).toBe(403);

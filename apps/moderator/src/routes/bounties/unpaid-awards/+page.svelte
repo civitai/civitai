@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { goto } from '$app/navigation';
+  import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import type { BountyAwardRuling } from '@civitai/shared/bounty-award';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -8,12 +8,12 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
-  import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { bountyUrl, userLookupUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -40,15 +40,20 @@
   // Held here, not in the form: the row dims on submit and comes back on a refusal.
   const rulings = new SvelteMap<string, BountyAwardRuling>();
   const references = new SvelteMap<string, string>();
+  // A row stays marked until the list stops showing it: a lagging read can still return it.
   $effect(() => {
-    void data.items;
-    done.clear();
+    const open = new Set(data.items.map(keyOf));
+    untrack(() => {
+      for (const map of [done, rulings, references])
+        for (const key of map.keys()) if (!open.has(key)) map.delete(key);
+    });
   });
 
   const refusal = $derived.by(() => {
     if (!form || !('error' in form) || !form.error) return null;
-    const bountyId = 'bountyId' in form ? form.bountyId : undefined;
-    return bountyId ? `Bounty #${bountyId}: ${form.error}` : form.error;
+    if (!('bountyId' in form) || !form.bountyId) return form.error;
+    const supporter = 'userId' in form ? `, supporter #${form.userId}` : '';
+    return `Bounty #${form.bountyId}${supporter}: ${form.error}`;
   });
 
   const submit = (key: string) =>
@@ -71,16 +76,25 @@
   ledger first, then record what you did.
 </p>
 
-<Tabs
-  value={data.tab}
-  onValueChange={(v) => v && goto(v === 'resolved' ? '?tab=resolved' : '?')}
+<LinkTabs
   class="mb-4"
->
-  <TabsList>
-    <TabsTrigger value="open">Open</TabsTrigger>
-    <TabsTrigger value="resolved">Resolved, last {data.RESOLVED_WINDOW_DAYS} days</TabsTrigger>
-  </TabsList>
-</Tabs>
+  active={data.tab}
+  items={[
+    { value: 'open', label: 'Open', href: '?' },
+    {
+      value: 'resolved',
+      label: `Resolved, last ${data.RESOLVED_WINDOW_DAYS} days`,
+      href: '?tab=resolved',
+    },
+  ]}
+/>
+
+{#if !data.migrated}
+  <ErrorAlert
+    class="mb-4"
+    message="Unpaid awards are not recorded on this environment yet: its database is missing the table they live in."
+  />
+{/if}
 
 {#if refusal}
   <ErrorAlert class="mb-4" message={refusal} />
@@ -110,7 +124,7 @@
         <div class="flex flex-wrap items-baseline gap-x-2">
           {#if row.bountyName}
             <a
-              href={`${data.civitaiUrl}/bounties/${row.bountyId}`}
+              href={bountyUrl(data.civitaiUrl, row.bountyId)}
               target="_blank"
               rel="noreferrer"
               class="font-medium {LINK_CLASS}"

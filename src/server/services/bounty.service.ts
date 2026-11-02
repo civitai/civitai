@@ -1892,13 +1892,16 @@ export async function resolveUnpaidBountyAward({
         },
       });
     }
-    if (award.resolvedAt) {
-      if (award.ruling === ruling) return false;
+    // A repeat is a no-op only if it says the same thing; otherwise the audit row would carry a
+    // reference the record does not.
+    const alreadyResolved = (stored: { ruling: string | null; ledgerReference: string | null }) => {
+      if (stored.ruling === ruling && stored.ledgerReference === ledgerReference) return false;
       throw new TRPCError({
         code: 'CONFLICT',
-        message: `That award is already resolved as ${award.ruling}`,
+        message: `That award is already resolved as ${stored.ruling} (ledger reference: ${stored.ledgerReference})`,
       });
-    }
+    };
+    if (award.resolvedAt) return alreadyResolved(award);
     if (ruling === 'paid_winner' && award.winnerUserId == null)
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -1908,8 +1911,12 @@ export async function resolveUnpaidBountyAward({
       where: { bountyId, userId, resolvedAt: null },
       data: { ruling, ledgerReference, resolvedById: moderatorId, resolvedAt: new Date() },
     });
-    if (!count)
+    // Only a bounty that still exists is locked, so two resolves of a deleted bounty's record can race.
+    if (!count) {
+      const stored = await tx.bountyUnpaidAward.findUnique({ where: key });
+      if (stored?.resolvedAt) return alreadyResolved(stored);
       throw new TRPCError({ code: 'CONFLICT', message: 'That award was resolved meanwhile' });
+    }
     await tx.modActivity.create({
       data: {
         userId: moderatorId,

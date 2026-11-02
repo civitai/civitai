@@ -115,6 +115,24 @@ describe('open unpaid awards', () => {
     expect(await countOpenUnpaidAwards()).toBe(1);
   });
 
+  it("takes an activity-log record's winner, owner and charges from its bounty", async () => {
+    await legacyActivity(10, 5);
+    await db.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+                   VALUES (5, 'bountyAwardResolved', 'bounty', 10), (5, 'bountyAwardUnpaid', 'model', 10)`);
+
+    expect((await getUnpaidAwards({ resolved: false, limit: 10 })).items).toEqual([
+      expect.objectContaining({
+        bountyId: 10,
+        winnerUserId: 3,
+        winner: 'winner',
+        ownerId: 2,
+        buzzTransactionIds: ['tx-a', 'tx-b'],
+        unitAmount: 700,
+        legacy: true,
+      }),
+    ]);
+  });
+
   it('leaves out an activity-log record that already has its row, open or resolved', async () => {
     await legacyActivity(10, 5);
     await award(
@@ -124,6 +142,18 @@ describe('open unpaid awards', () => {
     );
 
     expect((await getUnpaidAwards({ resolved: false, limit: 10 })).items).toEqual([]);
+    expect(await countOpenUnpaidAwards()).toBe(0);
+  });
+
+  it('counts only unpaid-award activity on a bounty', async () => {
+    await db.exec(`INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+                   VALUES (5, 'bountyAwardResolved', 'bounty', 11), (5, 'bountyAwardUnpaid', 'model', 11)`);
+    expect(await countOpenUnpaidAwards()).toBe(0);
+  });
+
+  it('counts nothing and does not fail where the table was never created', async () => {
+    await db.exec(`DROP TABLE "BountyUnpaidAward"`);
+    await legacyActivity(11, 5);
     expect(await countOpenUnpaidAwards()).toBe(0);
   });
 
@@ -159,6 +189,7 @@ describe('resolved unpaid awards', () => {
       `(12, 5, 300, NULL, 2, 1, '2026-08-01', 'no_charge_found', 'old', 1, now() - interval '31 days')`
     );
     await award(13, 5);
+    await legacyActivity(11, 5);
 
     const { items } = await getUnpaidAwards({ resolved: true, limit: 10 });
     expect(items).toMatchObject([

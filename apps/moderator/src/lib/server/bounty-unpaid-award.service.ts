@@ -62,6 +62,15 @@ const tableRows = (resolved: boolean) => sql`
       : sql`a."resolvedAt" IS NULL`
   }`;
 
+/** The table comes from a migration applied by hand; an environment without it has nothing to
+ *  resolve either (the main app refuses), so the page says so and the count is zero. */
+export async function unpaidAwardTableExists(): Promise<boolean> {
+  const { rows } = await sql<{ exists: boolean }>`
+    SELECT to_regclass('"BountyUnpaidAward"') IS NOT NULL AS exists
+  `.execute(dbRead);
+  return rows[0]?.exists === true;
+}
+
 export async function getUnpaidAwards({
   resolved,
   limit,
@@ -89,6 +98,7 @@ export async function getUnpaidAwards({
 }
 
 export async function countOpenUnpaidAwards(): Promise<number> {
+  if (!(await unpaidAwardTableExists())) return 0;
   const { rows } = await sql<{ count: number }>`
     SELECT count(*)::int AS count FROM (${tableRows(false)} UNION ALL ${legacyOpen}) r
   `.execute(dbRead);

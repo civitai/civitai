@@ -128,6 +128,9 @@ export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: 
 
 /** A bounty entry on the site. Entries have no page of their own outside their bounty, so `entityUrl`
  *  has no entry for them. */
+export const bountyUrl = (civitaiUrl: string, bountyId: number) =>
+  `${civitaiUrl}/bounties/${bountyId}`;
+
 export const bountyEntryUrl = (civitaiUrl: string, bountyId: number, entryId: number) =>
   `${civitaiUrl}/bounties/${bountyId}/entries/${entryId}`;
 

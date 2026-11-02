@@ -17,7 +17,7 @@ const post = (fields: Record<string, string>) => {
   return { request: new Request('http://x/bounties/unpaid-awards', { method: 'POST', body }) };
 };
 type ActionEvent = Parameters<(typeof actions)['resolve']>[0];
-type Refusal = { status: number; data: { error: string; bountyId?: number } };
+type Refusal = { status: number; data: { error: string; bountyId?: number; userId?: number } };
 const resolve = (fields: Record<string, string>) =>
   actions.resolve(post(fields) as unknown as ActionEvent) as Promise<Record<string, unknown>>;
 
@@ -65,6 +65,7 @@ describe('unpaid bounty award ruling', () => {
     expect(result.data).toEqual({
       error: 'Record ruling: That award is already resolved as paid_winner',
       bountyId: 4,
+      userId: 5,
     });
   });
 });
