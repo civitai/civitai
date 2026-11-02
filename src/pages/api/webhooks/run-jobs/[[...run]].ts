@@ -48,6 +48,8 @@ import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
+import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
+import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
@@ -272,6 +274,8 @@ export const jobs: Job[] = [
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   sweepReviewStorageJob,
+  reapDeletedAppStorageJob,
+  removeDeletedAccountAppDataJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,
