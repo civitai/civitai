@@ -394,9 +394,12 @@ export async function buildAndInsertScanTags({
 async function processTags({
   tags: normalized,
   prompt,
+  promptKeywords = false,
 }: {
   tags: NormalizedTag[];
   prompt?: string;
+  /** Also derive tags from prompt keywords. They feed safety checks only, never the stored tags. */
+  promptKeywords?: boolean;
 }): Promise<ProcessedTag[]> {
   if (prompt) {
     // Strip moderator-whitelisted phrases first, or a whitelisted proper noun is written as a
@@ -417,8 +420,7 @@ async function processTags({
       });
     }
 
-    // Detect tags from prompt
-    const promptTags = getTagsFromPrompt(prompt);
+    const promptTags = promptKeywords && getTagsFromPrompt(prompt);
     if (promptTags)
       normalized.push(
         ...promptTags.map((name) => ({ name, confidence: 70, source: TagSource.Computed }))
@@ -693,6 +695,40 @@ export async function resolveScanOutcome({
   };
 }
 
+type AuditTag = {
+  id: number;
+  name: string;
+  type?: TagType;
+  nsfwLevel: number;
+  confidence: number;
+  source: TagSource;
+};
+
+async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise<AuditTag[]> {
+  if (!prompt) return tags;
+  const derived = await processTags({
+    tags: tags
+      .filter((tag) => tag.source !== TagSource.Computed)
+      .map(({ name, confidence, source }) => ({ name, confidence, source })),
+    prompt,
+    promptKeywords: true,
+  });
+  const present = new Set(tags.map((tag) => tag.id));
+  return [
+    ...tags,
+    ...derived
+      .filter((tag) => !present.has(tag.id))
+      .map(({ id, name, type, nsfwLevel, confidence, source }) => ({
+        id,
+        name,
+        type,
+        nsfwLevel,
+        confidence,
+        source,
+      })),
+  ];
+}
+
 async function auditScanResults(args: {
   imageId: number;
   userId: number;
@@ -707,14 +743,16 @@ async function auditScanResults(args: {
     stripBenignPhrases(normalizeText(args.prompt), BlocklistType.PromptBenignPhrase),
     stripBenignPhrases(normalizeText(args.negativePrompt), BlocklistType.NegativeBenignPhrase),
   ]);
-  const tags = await dbWrite.$queryRaw<
-    { id: number; name: string; type: TagType; nsfwLevel: number; confidence: number }[]
-  >`
-    SELECT t.id, t.name, t."nsfwLevel", toi.confidence
+  const imageTags = await dbWrite.$queryRaw<AuditTag[]>`
+    SELECT t.id, t.name, t."nsfwLevel", toi.confidence, toi.source
     FROM "TagsOnImageDetails" toi
     JOIN "Tag" t ON t.id = toi."tagId"
     WHERE toi."imageId" = ${args.imageId} AND toi.automated AND NOT toi.disabled
   `;
+  const ratingLevel = Math.max(...[...imageTags.map((x) => x.nsfwLevel), 0]);
+  // Prompt keywords no longer rate the image, but every check below still reads them, so no image
+  // is checked less than when they did.
+  const tags = await withPromptKeywordTags(imageTags, args.prompt);
   const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
   const nsfw = nsfwLevel > sfwBrowsingLevelsFlag;
   const minorTags = tags.filter((tag) => tagsNeedingReview.includes(tag.name.toLowerCase()));
@@ -765,7 +803,7 @@ async function auditScanResults(args: {
 
   return {
     tags,
-    nsfwLevel,
+    nsfwLevel: ratingLevel,
     nsfw,
     minorTags,
     poiTags,
