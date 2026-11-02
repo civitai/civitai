@@ -1,8 +1,17 @@
 import { Alert, Button } from '@mantine/core';
+import { ModalsProvider } from '@mantine/modals';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
-import { QuantityPicker } from '~/components/form-graph/generation/MobileFooterParts';
+import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
+import {
+  QuantityPicker,
+  TitleRowReset,
+} from '~/components/form-graph/generation/MobileFooterParts';
+import {
+  MobileGeneratorSlots,
+  RenderTitleActions,
+} from '~/components/ImageGeneration/mobile-generator-slots';
 import { FooterStrips, footerStripsFrame } from '~/components/generation_v2/FooterStrips';
 import type * as MobileGenerator from '~/hooks/useMobileGenerator';
 
@@ -121,5 +130,45 @@ describe('FooterStrips', () => {
     await expect.element(full).toBeInTheDocument();
     const stack = full.element().parentElement as HTMLElement;
     expect(stack.scrollHeight).toBeLessThanOrEqual(stack.clientHeight);
+  });
+});
+
+describe('TitleRowReset', () => {
+  const renderReset = (onReset: () => void) =>
+    renderWithProviders(
+      <ModalsProvider>
+        <MobileGeneratorSlots>
+          <RenderTitleActions />
+          <TitleRowReset onReset={onReset} />
+        </MobileGeneratorSlots>
+      </ModalsProvider>
+    );
+
+  test('asks before resetting, and Cancel keeps the form', async () => {
+    const onReset = vi.fn();
+    renderReset(onReset);
+
+    await page.getByRole('button', { name: 'Reset' }).click();
+    await expect.element(page.getByText('Reset the form?')).toBeVisible();
+    expect(onReset).not.toHaveBeenCalled();
+    // It opens from the phone sheet, so above it (Mantine's `--mb-z-index` on the modal root).
+    const root = page.getByRole('dialog').element().closest<HTMLElement>('[style*="--mb-z-index"]');
+    expect(root).not.toBeNull();
+    expect(Number(root!.style.getPropertyValue('--mb-z-index'))).toBeGreaterThan(
+      mobileMenuSheetZIndex
+    );
+
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect.element(page.getByText('Reset the form?')).not.toBeInTheDocument();
+    expect(onReset).not.toHaveBeenCalled();
+  });
+
+  test('confirming resets', async () => {
+    const onReset = vi.fn();
+    renderReset(onReset);
+
+    await page.getByRole('button', { name: 'Reset' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Reset' }).click();
+    expect(onReset).toHaveBeenCalledTimes(1);
   });
 });
