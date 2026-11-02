@@ -75,15 +75,15 @@ import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 const CLEAN = 1;
 const HELD = 2;
-// Another review key: not held from New Order, so it must still be enqueued and served.
-const OTHER_REVIEW = 3;
+// A second review key, so the guard is not tied to one value.
+const HELD_OTHER = 3;
 const SANITY_CLEAN = 10;
 const SANITY_HELD = 11;
 
 const rows: Record<number, { needsReview: string | null }> = {
   [CLEAN]: { needsReview: null },
   [HELD]: { needsReview: 'csam' },
-  [OTHER_REVIEW]: { needsReview: 'minor' },
+  [HELD_OTHER]: { needsReview: 'minor' },
   [SANITY_CLEAN]: { needsReview: null },
   [SANITY_HELD]: { needsReview: 'csam' },
 };
@@ -125,13 +125,13 @@ beforeEach(() => {
 describe('New Order held-image guard', () => {
   it('(a) addImageToQueue enqueues the clean image and never the held one', async () => {
     await addImageToQueue({
-      imageIds: [CLEAN, HELD, OTHER_REVIEW],
+      imageIds: [CLEAN, HELD, HELD_OTHER],
       rankType: NewOrderRankType.Knight,
       priority: 1,
     });
 
     const enqueued = poolStub.getCount.mock.calls.map(([id]) => id);
-    expect(enqueued).toEqual([CLEAN, OTHER_REVIEW]);
+    expect(enqueued).toEqual([CLEAN]);
   });
 
   it('(a2) addImageToQueue reports nothing added when every image is held', async () => {
@@ -149,15 +149,15 @@ describe('New Order held-image guard', () => {
     poolStub.getAll.mockResolvedValueOnce([
       { value: String(CLEAN), score: 0 },
       { value: String(HELD), score: 0 },
-      { value: String(OTHER_REVIEW), score: 0 },
+      { value: String(HELD_OTHER), score: 0 },
     ]);
 
     const served = await getImagesQueue({ playerId: 5, imageCount: 10 });
 
-    expect(served.map((i) => i.id).sort()).toEqual([CLEAN, OTHER_REVIEW]);
+    expect(served.map((i) => i.id)).toEqual([CLEAN]);
     served.forEach((image) => expect(image).not.toHaveProperty('needsReview'));
     expect(poolStub.reset).toHaveBeenCalledTimes(1);
-    expect(poolStub.reset).toHaveBeenCalledWith({ id: [HELD] });
+    expect(poolStub.reset).toHaveBeenCalledWith({ id: [HELD, HELD_OTHER] });
   });
 
   it('(b2) removing a held image does not skip the pool members after it', async () => {
@@ -224,11 +224,11 @@ describe('New Order held-image guard', () => {
       originalLevel: null,
       lastCreatedAt: new Date('2026-02-01T00:00:00Z'),
     });
-    mockQuery.mockResolvedValue([judgment(CLEAN), judgment(HELD), judgment(OTHER_REVIEW)]);
+    mockQuery.mockResolvedValue([judgment(CLEAN), judgment(HELD), judgment(HELD_OTHER)]);
 
     const { items } = await getPlayerHistory({ playerId: 5, limit: 10 });
 
-    expect(items.map((i) => i.image.id)).toEqual([CLEAN, OTHER_REVIEW]);
+    expect(items.map((i) => i.image.id)).toEqual([CLEAN]);
     expect(items[0].image).not.toHaveProperty('needsReview');
   });
 });

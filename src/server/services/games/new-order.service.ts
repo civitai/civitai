@@ -76,11 +76,9 @@ import { isDefined } from '~/utils/type-guards';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
-// Checked against the row as read, at every enqueue and every read that shows an image to a
-// player, so a hold applied after the image entered a pool still keeps it out.
-const NEW_ORDER_HELD_REVIEW_KEYS = new Set(['csam']);
-function isHeldFromNewOrder(image: { needsReview: string | null }) {
-  return image.needsReview !== null && NEW_ORDER_HELD_REVIEW_KEYS.has(image.needsReview);
+// Judged on the row as read, not on pool membership; matches the scan pipeline's enqueue gate.
+function isHeldForReview(image: { needsReview: string | null }) {
+  return image.needsReview !== null;
 }
 
 // Helper functions for atomic voting
@@ -1226,7 +1224,7 @@ export async function getSanityCheckImage(): Promise<SanityCheck | null> {
       where: { id: imageId },
       select: { url: true, metadata: true, needsReview: true },
     });
-    if (!imageData || isHeldFromNewOrder(imageData)) return null;
+    if (!imageData || isHeldForReview(imageData)) return null;
 
     return {
       imageId,
@@ -1591,7 +1589,7 @@ export async function addImageToQueue({
       where: { id: { in: imageIds } },
       select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
     })
-  ).filter((image) => !isHeldFromNewOrder(image));
+  ).filter((image) => !isHeldForReview(image));
   if (images.length === 0) return false;
 
   // Get active filling slot for this rank
@@ -1731,7 +1729,7 @@ export async function getImagesQueue({
 
       const heldIds: number[] = [];
       const images = fetched.filter((image) => {
-        if (!isHeldFromNewOrder(image)) return true;
+        if (!isHeldForReview(image)) return true;
         heldIds.push(image.id);
         return false;
       });
@@ -1868,7 +1866,7 @@ export async function getImagesQueue({
           select: { id: true, url: true, metadata: true, needsReview: true },
         });
         const sanityImageMap = new Map(
-          sanityImagesData.filter((img) => !isHeldFromNewOrder(img)).map((img) => [img.id, img])
+          sanityImagesData.filter((img) => !isHeldForReview(img)).map((img) => [img.id, img])
         );
 
         for (const entry of selectedChecks) {
@@ -2067,7 +2065,7 @@ export async function getPlayerHistory({
     items: judgments
       .map(({ imageId, ...data }) => {
         const found = images.find((i) => i.id === imageId);
-        if (!found || isHeldFromNewOrder(found)) return null;
+        if (!found || isHeldForReview(found)) return null;
         const { needsReview: _needsReview, ...image } = found;
 
         return {

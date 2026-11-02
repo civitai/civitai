@@ -80,7 +80,11 @@ const mockFindUnique = dbMock.dbRead.image.findUnique;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFindUnique.mockResolvedValue({ url: 'https://example.test/img.jpg', metadata: {} });
+  mockFindUnique.mockResolvedValue({
+    url: 'https://example.test/img.jpg',
+    metadata: {},
+    needsReview: null,
+  });
 });
 
 describe('getSanityCheckImage — BLOB_STRING/Buffer sMembers decoding', () => {
