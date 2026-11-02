@@ -333,7 +333,6 @@ export function AppAssistantWorkspace({
   userIdRef.current = userId;
   const chatOnReady = useRef<string | null>(null);
   const chatCheckFor = useRef<string | null>(null);
-  /** Opens the chat `app` was chosen in, or a new one. */
   const followChat = useCallback((app: string, leavingApp: boolean) => {
     chatOnReady.current = null;
     chatCheckFor.current = null;
@@ -343,7 +342,6 @@ export function AppAssistantWorkspace({
     if (own) chat.conversationId = own;
     else if (leavingApp || appOfChat(userIdRef.current, chat.chatId) !== null) chat.newChat();
   }, []);
-  /** Starts a new chat if the chat that opened belongs to another app. */
   const checkOpenedChat = useCallback((id: string | null) => {
     const app = chatCheckFor.current;
     if (!app || !id) return;
