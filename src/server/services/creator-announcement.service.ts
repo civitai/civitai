@@ -351,7 +351,8 @@ function followedAnnouncementsWhere({
     // superset of this query by construction. An AND member, never spread: the helper carries
     // its own `AND` key, and a spread followed by another `AND` here would silently drop the
     // window. As a literal key, a second `AND` is TS1117 and does not compile.
-    AND: [activeAnnouncementWhere(now)],
+    ...activeAnnouncementWhere(now),
+    ...{ AND: [{ profileOnly: false }] },
   } satisfies Prisma.AnnouncementWhereInput;
 }
 
