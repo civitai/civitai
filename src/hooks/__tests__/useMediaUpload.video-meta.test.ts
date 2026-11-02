@@ -148,6 +148,17 @@ describe('useMediaUpload with an on-site generated video', () => {
     expect(auditMetaData).toHaveBeenCalled();
   });
 
+  it('keeps the embedded meta of a generated image: only videos drop it', async () => {
+    vi.mocked(preprocessFile).mockResolvedValue({
+      ...processedVideo,
+      type: 'image',
+      meta: workerTags,
+    } as never);
+    const { civitaiResources: _omit, ...noResources } = generatorMeta;
+    const onComplete = await dropVideo(noResources, 'workflow-1');
+    expect(onComplete.mock.calls[0][0].meta).toEqual({ ...noResources, ...workerTags });
+  });
+
   it('still reads embedded meta from a video posted without generator meta', async () => {
     const onComplete = await dropVideo();
     expect(onComplete.mock.calls[0][0].meta).toEqual(workerTags);
