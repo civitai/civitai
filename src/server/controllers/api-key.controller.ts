@@ -16,7 +16,9 @@ import {
 } from '~/server/services/api-key.service';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { getBuzzSpendForSubjects, type Subject } from '~/server/http/orchestrator/api-key-spend';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
@@ -63,6 +65,15 @@ export async function addApiKeyHandler({
   input: AddAPIKeyInput;
 }) {
   const { user } = ctx;
+  // The standing carries no deletedAt.
+  await assertAccountNotRestricted(user.id, user);
+  const account = await dbWrite.user.findUnique({
+    where: { id: user.id },
+    select: { deletedAt: true },
+  });
+  if (!account || account.deletedAt)
+    throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+
   const apiKey = await addApiKey({ ...input, userId: user.id });
   await preventReplicationLag('userApiKeys', user.id);
 
