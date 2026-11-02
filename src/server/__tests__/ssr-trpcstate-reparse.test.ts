@@ -15,7 +15,7 @@ import type * as UnionTransformer from '~/shared/utils/trpc-union-transformer';
 
 /**
  * With `ssr-skip-trpcstate-reparse` on, a full page load hands the server render the dehydrated
- * state `trpcState` was serialised from (patches/@trpc__next@11.17.0.patch), instead of having
+ * state `trpcState` was serialised from (patches/@trpc__next@11.22.1.patch), instead of having
  * `withTRPC` parse the string the same request just wrote. Everything here goes through the real
  * `createServerSideProps` and the real `trpc.withTRPC`; only the router, the session layer and the
  * flag are stubbed. Outside production the handed-over state is deep-frozen, so a render that

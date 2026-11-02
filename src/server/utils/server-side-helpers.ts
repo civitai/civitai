@@ -37,7 +37,7 @@ import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
 
 /**
- * The page-props key the patched `withTRPC` (patches/@trpc__next@11.17.0.patch) reads the
+ * The page-props key the patched `withTRPC` (patches/@trpc__next@11.22.1.patch) reads the
  * pre-serialisation dehydrated state from on the server render. A symbol key, so JSON — the
  * page's `__NEXT_DATA__` and `/_next/data` responses — never carries it.
  */

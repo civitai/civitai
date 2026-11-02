@@ -221,10 +221,10 @@
     "@tiptap/starter-kit": "3.16.0",
     "@tiptap/static-renderer": "3.16.0",
     "@tiptap/suggestion": "3.16.0",
-    "@trpc/client": "^11.17.0",
-    "@trpc/next": "^11.17.0",
-    "@trpc/react-query": "^11.17.0",
-    "@trpc/server": "^11.17.0",
+    "@trpc/client": "11.22.1",
+    "@trpc/next": "11.22.1",
+    "@trpc/react-query": "11.22.1",
+    "@trpc/server": "11.22.1",
     "algoliasearch": "^4.23.3",
     "archiver": "^6.0.1",
     "blurhash": "^2.0.4",
@@ -449,7 +449,7 @@
       "@prisma/generator-helper@5.22.0": "patches/@prisma__generator-helper@5.22.0.patch",
       "react-dom@18.3.1": "patches/react-dom@18.3.1.patch",
       "@mantine/core@7.17.8": "patches/@mantine__core@7.17.8.patch",
-      "@trpc/next@11.17.0": "patches/@trpc__next@11.17.0.patch"
+      "@trpc/next@11.22.1": "patches/@trpc__next@11.22.1.patch"
     }
   }
 }

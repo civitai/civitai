@@ -1,8 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 313218d..690f2d6 100644
+index bd33336..0ac7ee1 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -32,10 +32,16 @@ function withTRPC(opts) {
+@@ -52,10 +52,16 @@ function withTRPC(opts) {
  			});
  			const { queryClient, trpcClient, ssrState, ssrContext } = prepassProps;
  			const trpcState = (_props$pageProps = props.pageProps) === null || _props$pageProps === void 0 ? void 0 : _props$pageProps.trpcState;
@@ -17,14 +17,14 @@ index 313218d..690f2d6 100644
  				return transformer.input.deserialize(trpcState);
 -			}, [trpcState]);
 +			}, [trpcState, ssrDehydratedState]);
- 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(trpc.Provider, {
+ 			return /* @__PURE__ */ react.default.createElement(trpc.Provider, {
  				abortOnUnmount: (_abortOnUnmount = prepassProps.abortOnUnmount) !== null && _abortOnUnmount !== void 0 ? _abortOnUnmount : false,
  				client: trpcClient,
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 99d49ad..68e596c 100644
+index 64a0066..8d1958c 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
-@@ -31,10 +31,16 @@ function withTRPC(opts) {
+@@ -28,10 +28,16 @@ function withTRPC(opts) {
  			});
  			const { queryClient, trpcClient, ssrState, ssrContext } = prepassProps;
  			const trpcState = (_props$pageProps = props.pageProps) === null || _props$pageProps === void 0 ? void 0 : _props$pageProps.trpcState;
@@ -39,6 +39,6 @@ index 99d49ad..68e596c 100644
  				return transformer.input.deserialize(trpcState);
 -			}, [trpcState]);
 +			}, [trpcState, ssrDehydratedState]);
- 			return /* @__PURE__ */ jsx(trpc.Provider, {
+ 			return /* @__PURE__ */ React.createElement(trpc.Provider, {
  				abortOnUnmount: (_abortOnUnmount = prepassProps.abortOnUnmount) !== null && _abortOnUnmount !== void 0 ? _abortOnUnmount : false,
  				client: trpcClient,

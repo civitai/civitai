@@ -17,7 +17,7 @@
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/redis": "workspace:*",
-    "@trpc/server": "^11.17.0",
+    "@trpc/server": "11.22.1",
     "fastify": "^5.12.6",
     "prom-client": "^14.2.0",
     "zod": "^4.0.17"
