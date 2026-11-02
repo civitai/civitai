@@ -10,6 +10,22 @@ export type HoldChatMessage = {
   deletedAt: string | null;
 };
 
+/** Someone in the held chat other than its sender: who the sender is talking to. */
+export type HoldChatParticipant = { userId: number; username: string | null };
+
+/**
+ * The chat's members other than the held sender, identity only. In a one-way DM the other person never
+ * wrote back, so no message of theirs names them; this is the only place the hold shows who it was sent to.
+ * Picks fields rather than spreading the row, so nothing beyond an identity can ride along.
+ */
+export const holdParticipants = (
+  members: readonly { userId: number; username: string | null }[],
+  senderId: number | null
+): HoldChatParticipant[] =>
+  members
+    .filter((m) => m.userId !== senderId)
+    .map((m) => ({ userId: m.userId, username: m.username }));
+
 export type HoldChat = {
   chatId: number;
   /** The messages the scan judged; the rest of `messages` is context around them. */
@@ -19,6 +35,8 @@ export type HoldChat = {
   omitted: number;
   /** False when the moderator lacks Chat Audit access: only the sender's judged messages are in `messages`. */
   fullConversation: boolean;
+  /** Everyone in the chat but the sender, shown with or without Chat Audit access: an identity, not text. */
+  participants: HoldChatParticipant[];
   messages: HoldChatMessage[];
 };
 

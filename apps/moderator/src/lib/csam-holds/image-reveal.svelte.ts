@@ -1,5 +1,19 @@
 // Module state: navigations remount the page's components and the choice must outlive them.
+//
+// It also outlives a reload, per browser, but is never READ at module init: on the server this module is
+// shared by every request, and a client that started from storage would hydrate against a server render
+// that was blurred. It starts blurred everywhere and `restore()` applies the stored choice after mount.
 let revealed = $state(false);
+
+export const REVEAL_STORAGE_KEY = 'moderator.csam-holds.reveal-images';
+
+function storage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
 
 export const imageReveal = {
   get on() {
@@ -7,5 +21,18 @@ export const imageReveal = {
   },
   toggle() {
     revealed = !revealed;
+    try {
+      storage()?.setItem(REVEAL_STORAGE_KEY, revealed ? '1' : '0');
+    } catch {
+      // Storage blocked or full: the choice lasts until reload.
+    }
+  },
+  /** Apply this browser's stored choice. Only an explicit reveal reveals; anything else stays blurred. */
+  restore() {
+    try {
+      revealed = storage()?.getItem(REVEAL_STORAGE_KEY) === '1';
+    } catch {
+      revealed = false;
+    }
   },
 };
