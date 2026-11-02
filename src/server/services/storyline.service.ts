@@ -7,6 +7,12 @@ import {
 } from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readHasStorylineChapterViaKysely,
+  storylineChaptersForPostsWhere,
+} from '~/server/services/hot-reads-7.reads';
 import { env } from '~/env/server';
 import { NsfwLevel } from '~/server/common/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -3242,9 +3248,9 @@ export async function getStorylinesForPosts({
   browsingLevel: number;
 }) {
   if (!postIds.length) return {};
-  const [chapters, blockedUserIds] = await Promise.all([
+  const readChapters = () =>
     dbRead.storylineChapter.findMany({
-      where: { postId: { in: postIds } },
+      where: storylineChaptersForPostsWhere(postIds),
       select: {
         id: true,
         postId: true,
@@ -3272,7 +3278,18 @@ export async function getStorylinesForPosts({
           },
         },
       },
-    }),
+    });
+  const [chapters, blockedUserIds] = await Promise.all([
+    (async () => {
+      // ON, a one-row Kysely probe answers a page with no chapter (most pages): that read's result
+      // is then empty, and its nested reads never run.
+      if (
+        (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_7)) &&
+        !(await readHasStorylineChapterViaKysely((await loadKyselyDb()).kyselyRead, postIds))
+      )
+        return [];
+      return readChapters();
+    })(),
     getViewerExcludedIds(viewer),
   ]);
 
