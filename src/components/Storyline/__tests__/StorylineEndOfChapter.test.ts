@@ -528,7 +528,8 @@ describe('StorylineEndOfChapter', () => {
   it('names a hidden chapter by its number in the make-main confirm', () => {
     mocks.children = [
       child(5, 'canon', 'Kept'),
-      { ...child(6, 'community', 'Other'), post: null, tombstone: 'browsingLevel' },
+      // Its own depth is another branch's (9): the card names it by its place after this one.
+      { ...child(6, 'community', 'Other', 9), post: null, tombstone: 'browsingLevel' },
     ];
     const container = render({ parentPostId: 15, isOwner: true });
     const hiddenFork = forks(container).find((f) => f.dataset.chapterId === '6');
@@ -647,7 +648,10 @@ describe('StorylineEndOfChapter', () => {
         'A side path after this chapter. The main path still goes on to Kept.'
       );
       document.body.innerHTML = '';
-      mocks.children = [{ ...child(5, 'canon', 'Kept'), post: null, tombstone: 'browsingLevel' }];
+      // Its own depth is another branch's (9): the card names it by its place after this one.
+      mocks.children = [
+        { ...child(5, 'canon', 'Kept', 9), post: null, tombstone: 'browsingLevel' },
+      ];
       expect(note(render({ parentPostId: 15 }))).toBe(
         'A side path after this chapter. The main path still goes on to Chapter 5.'
       );
