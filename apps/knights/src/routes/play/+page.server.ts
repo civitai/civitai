@@ -11,6 +11,8 @@ import {
 } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
+import { skipStore } from '$lib/server/skip-runtime';
+import { recordSkip, skippedFor } from '$lib/server/skips';
 import { conversionEnabled } from '$lib/server/conversion/runtime';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
@@ -87,8 +89,9 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     queueDeps.voteLimits && !locals.user.isModerator
       ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
       : null;
+  const skipped = lockedUntil ? null : await skippedFor(skipStore, locals.user.id);
   const [feed, daily, recap] = await Promise.all([
-    lockedUntil ? null : getFeed(db, locals.user.id, { limit: 1 }),
+    lockedUntil ? null : getFeed(db, locals.user.id, { limit: 1, exclude: skipped?.queue }),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
@@ -118,6 +121,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       secret,
       questionKey: feed.question.key,
       rate: hiddenSettings().rate,
+      exclude: skipped?.hidden,
     });
     if (hidden) {
       return {
@@ -145,6 +149,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
           share: yesNo.share,
           stretch: yesNo.stretch,
           force: !feed,
+          exclude: skipped?.yesno,
         });
   if (offer) {
     return {
@@ -239,6 +244,21 @@ export const actions: Actions = {
       console.error('knights: vote failed', { itemId, error });
       return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
     }
+  },
+
+  // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them
+  // again. Every kind of item is handled and answered alike, so a skip does not show what the item was.
+  skip: async ({ request, locals }) => {
+    const token = (await request.formData()).get('item');
+    let ref: ReturnType<typeof openItem> = null;
+    try {
+      if (typeof token === 'string') ref = openItem(feedSecret(), locals.user.id, token);
+    } catch (error) {
+      console.error('knights: the feed cannot be served', { error });
+    }
+    if (!ref) return fail(400, { message: 'That one cannot be skipped.' });
+    await recordSkip(skipStore, locals.user.id, ref, queueDeps.now());
+    return { success: true };
   },
 
   dismissRecap: async ({ locals }) => {

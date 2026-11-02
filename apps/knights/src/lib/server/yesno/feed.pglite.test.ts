@@ -43,7 +43,7 @@ async function seed(rows: YesNoRow[]) {
 }
 const pick = (
   userId: number,
-  o: { rank?: string; share?: number; stretch?: number; force?: boolean } = {}
+  o: { rank?: string; share?: number; stretch?: number; force?: boolean; exclude?: number[] } = {}
 ) =>
   pickYesNo(db, {
     userId,
@@ -52,6 +52,7 @@ const pick = (
     share: o.share ?? 1,
     stretch: o.stretch ?? 8,
     force: o.force,
+    exclude: o.exclude,
   });
 const answer = async (userId: number, itemId: number, value = 'yes') => {
   clock = new Date(clock.getTime() + 1000);
@@ -111,6 +112,17 @@ describe('what a player is offered', () => {
     expect(await pick(1)).toMatchObject({ prompt: 'Question ok?' });
     expect(await pick(2, { rank: 'Acolyte' })).toBeNull();
     expect(await pick(3, { rank: 'Inquisitor' })).toBeNull();
+  });
+
+  it('does not offer a question the player skipped', async () => {
+    const ids = await seed([row('a', 10), row('b', 11)]);
+    await seedPlayer(pg, 1);
+
+    const first = (await pick(1))?.itemId as number;
+    const next = await pick(1, { exclude: [first] });
+
+    expect(next?.itemId).toBe(Object.values(ids).find((id) => id !== first));
+    expect(await pick(1, { exclude: Object.values(ids) })).toBeNull();
   });
 
   it('never repeats a question for a player, nor the same words about the same image under another id', async () => {

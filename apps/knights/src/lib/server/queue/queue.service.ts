@@ -96,7 +96,7 @@ export function servableItems(db: Executor) {
 export async function getFeed(
   db: Executor,
   userId: number,
-  { limit = FEED_STRETCH_SIZE }: { limit?: number } = {}
+  { limit = FEED_STRETCH_SIZE, exclude = [] }: { limit?: number; exclude?: number[] } = {}
 ): Promise<Feed | null> {
   const player = await db
     .selectFrom('NewOrderPlayer')
@@ -109,6 +109,7 @@ export async function getFeed(
   const candidates = () =>
     servableItems(db)
       .where('i.minRank', 'in', stages)
+      .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(
           eb.exists(

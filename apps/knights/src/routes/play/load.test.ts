@@ -16,6 +16,7 @@ const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
   voteLimits: undefined as unknown,
 }));
+const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
@@ -28,6 +29,7 @@ vi.mock('$lib/server/smites/smites.service', () => ({
   hasUnseenReset,
   dismissResetNotice: vi.fn(),
 }));
+vi.mock('$lib/server/skip-runtime', () => ({ skipStore: skipList }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
   pickHiddenCheck,
@@ -53,6 +55,8 @@ beforeEach(() => {
   getTrial.mockReset();
   getFeed.mockReset();
   getFeed.mockResolvedValue(null);
+  skipList.list.mockReset();
+  skipList.list.mockResolvedValue([]);
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ votes: 3 });
   getRecap.mockReset();
@@ -208,6 +212,32 @@ describe('play load feed', () => {
     expect(typeof check.item.id).toBe('string');
     expect(check.item.id).toHaveLength(queued.item.id.length);
     expect(JSON.stringify(check)).not.toMatch(/hidden|referenceId|pool|answer/i);
+  });
+
+  it('leaves out what the player skipped when it picks the next item of every kind', async () => {
+    skipList.list.mockResolvedValue([
+      { kind: 'queue', id: 3 },
+      { kind: 'hidden', id: 5 },
+      { kind: 'yesno', id: 8 },
+    ]);
+    yesNoSettings.share = 1;
+    pickYesNo.mockResolvedValue(null);
+
+    try {
+      await run();
+    } finally {
+      yesNoSettings.share = 0.7;
+    }
+
+    expect(getFeed).toHaveBeenCalledWith(expect.anything(), 7, { limit: 1, exclude: [3] });
+    expect(pickHiddenCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ exclude: [5] })
+    );
+    expect(pickYesNo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ exclude: [8] })
+    );
   });
 
   it('serves no hidden check when the queue is empty', async () => {

@@ -1,28 +1,74 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { dev } from '$app/environment';
-  import { invalidate } from '$app/navigation';
+  import { invalidate, invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import DailyPanel from './DailyPanel.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import { recapLines } from './recap-text';
+  import { answerForKey, keyHints } from './keys';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let submitting = $state(false);
-  let dismissed = $state.raw<unknown>(null);
-  let showReveal = $derived(form?.reveal !== undefined && form !== dismissed);
+  type Reveal = NonNullable<Extract<NonNullable<ActionData>, { reveal: unknown }>['reveal']>;
+  // Held here, not read back from `form`: answering the last Trial promotes the player and reloads the page as a Knight's,
+  // and the result of that answer must still be shown first.
+  let reveal = $state.raw<Reveal | null>(null);
+  let showReveal = $derived(reveal !== null);
   let answers = $state<HTMLFormElement>();
+  let skipForm = $state<HTMLFormElement>();
   let yesNo = $derived(data.mode === 'queue' && data.question?.kind === 'bool');
+  let failedItem = $state<string | null>(null);
+  let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
 
-  // Y and N answer a yes/no question; typing in a field or holding a modifier is left alone.
+  // The load event can fire before this page is interactive, so a frame that already failed is checked once on mount.
+  function watchImage(img: HTMLImageElement, onfail: () => void) {
+    if (img.complete && img.naturalWidth === 0) onfail();
+    img.addEventListener('error', onfail);
+    return { destroy: () => img.removeEventListener('error', onfail) };
+  }
+
+  // Y and N answer a yes/no question, the number keys a rating, and Space skips the item; typing in a field, a focused button or link, or holding a
+  // modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
-    if (!yesNo || submitting || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (data.mode !== 'queue' || !data.item || submitting) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable]')) return;
-    const value = { y: 'yes', n: 'no' }[event.key.toLowerCase()];
+    if (event.key === ' ') {
+      if (target?.closest('button, a')) return;
+      event.preventDefault();
+      skipForm?.requestSubmit();
+      return;
+    }
+    if (imageFailed || !data.question) return;
+    const value = yesNo
+      ? { y: 'yes', n: 'no' }[event.key.toLowerCase()]
+      : answerForKey(data.question.options, event.key);
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
+  }
+
+  const submitTrial: SubmitFunction = () => {
+    submitting = true;
+    return async ({ result, update }) => {
+      try {
+        if (result.type === 'success' && result.data?.reveal) {
+          reveal = result.data.reveal as Reveal;
+        } else {
+          await update();
+          if (result.type === 'failure') await invalidate('app:play');
+        }
+      } finally {
+        submitting = false;
+      }
+    };
+  };
+
+  async function continueFromReveal() {
+    reveal = null;
+    await invalidateAll();
   }
 
   const submit: SubmitFunction = () => {
@@ -110,24 +156,29 @@
   <DailyPanel daily={data.daily} />
 {/if}
 
-{#if showReveal && form?.reveal}
-  <div class="reveal" role="status" class:right={form.reveal.correct}>
-    <img src={form.reveal.src} alt="The subject you just judged" />
-    <p class="verdict">{form.reveal.correct ? 'Rightly judged.' : 'Not quite.'}</p>
-    <p>The answer: {form.reveal.correctLabel}</p>
-    {#if form.reveal.explanation}
-      <p class="explanation">{form.reveal.explanation}</p>
+{#if reveal}
+  <div class="reveal" role="status" class:right={reveal.correct}>
+    <img src={reveal.src} alt="The subject you just judged" />
+    <p class="verdict">{reveal.correct ? 'Rightly judged.' : 'Not quite.'}</p>
+    <p>The answer: {reveal.correctLabel}</p>
+    {#if reveal.explanation}
+      <p class="explanation">{reveal.explanation}</p>
     {/if}
-    {#if form.reveal.finished?.result === 'passed'}
-      <p class="verdict">You are now a Knight of New Order.</p>
-    {:else if form.reveal.finished?.result === 'failed'}
+    {#if reveal.finished?.result === 'passed'}
+      <section class="promotion" aria-label="Trials passed">
+        <p class="verdict">You have passed the Trials.</p>
+        <p>You are now a Knight of New Order. Continue to begin judging.</p>
+      </section>
+    {:else if reveal.finished?.result === 'failed'}
       <p class="verdict">Your trial is over, and it was not enough. You may try again later.</p>
-    {:else if form.reveal.finished}
+    {:else if reveal.finished}
       <p class="verdict">
         Some images of this trial were withdrawn, so it could not be judged. A new trial awaits.
       </p>
     {/if}
-    <button type="button" onclick={() => (dismissed = form)}>Continue</button>
+    <button type="button" onclick={continueFromReveal}>
+      {reveal.finished?.result === 'passed' ? 'Enter the Order' : 'Continue'}
+    </button>
   </div>
 {:else if data.mode === 'trials'}
   {#if data.trial.kind === 'question'}
@@ -141,7 +192,7 @@
       />
     {/key}
 
-    <form method="POST" action="?/trial" use:enhance={submit}>
+    <form method="POST" action="?/trial" use:enhance={submitTrial}>
       <input type="hidden" name="questionKey" value={data.trial.questionKey} />
       <input type="hidden" name="referenceId" value={data.trial.item.referenceId} />
       <div class="options">
@@ -174,24 +225,44 @@
   {/if}
   <p class="prompt">{data.question.prompt}</p>
   {#key data.item.id}
+    {@const itemId = data.item.id}
     <img
       src={data.item.src}
       width={data.item.width ?? undefined}
       height={data.item.height ?? undefined}
       alt="The subject of this judgment"
+      use:watchImage={() => (failedItem = itemId)}
     />
   {/key}
+  {#if imageFailed}
+    <p class="notice" role="alert">This image could not be loaded. Skip it to see the next one.</p>
+  {/if}
 
   <form method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
     <input type="hidden" name="item" value={data.item.id} />
     <div class="options">
-      {#each data.question.options as option (option.value)}
-        <button type="submit" name="answer" value={option.value} disabled={submitting}>
-          {option.label}{#if yesNo}
-            <kbd>{option.label[0]}</kbd>{/if}
+      {#each data.question.options as option, index (option.value)}
+        <button
+          type="submit"
+          name="answer"
+          value={option.value}
+          disabled={submitting || imageFailed}
+        >
+          {option.label}<kbd>{yesNo ? option.label[0] : index + 1}</kbd>
         </button>
       {/each}
     </div>
+  </form>
+
+  <p class="hint">
+    Keys:
+    {#if yesNo}Y yes · N no{:else}{#each keyHints(data.question.options) as hint (hint.key)}{hint.key} {hint.label} ·
+      {/each}{/if}
+    Space skips
+  </p>
+  <form method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm} class="skip">
+    <input type="hidden" name="item" value={data.item.id} />
+    <button type="submit" disabled={submitting}>Skip <kbd>Space</kbd></button>
   </form>
 
   {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
@@ -245,6 +316,14 @@
     margin: 1rem 0;
     border: 1px solid var(--border);
   }
+  .hint {
+    margin: 0.5rem 0 0;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .skip {
+    margin-top: 0.5rem;
+  }
   .options {
     display: flex;
     flex-wrap: wrap;
@@ -259,6 +338,11 @@
   }
   .verdict {
     color: var(--gold);
+  }
+  .promotion {
+    margin: 1rem 0;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--gold);
   }
   .explanation {
     color: var(--muted);

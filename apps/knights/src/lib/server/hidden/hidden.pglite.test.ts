@@ -47,8 +47,8 @@ async function reference(imageId: number, answer = '4', pool = 'hiddenCheck', qu
   return row.rows[0].id;
 }
 
-const pick = (userId: number, rank = 'Knight', rate = 1, questionKey = Q) =>
-  pickHiddenCheck(db, { userId, rank, secret: SECRET, questionKey, rate });
+const pick = (userId: number, rank = 'Knight', rate = 1, questionKey = Q, exclude: number[] = []) =>
+  pickHiddenCheck(db, { userId, rank, secret: SECRET, questionKey, rate, exclude });
 const answer = (userId: number, referenceId: number, value: string, now = NOW) =>
   answerHiddenCheck(db, { userId, referenceId, answer: value }, deps(now));
 
@@ -60,6 +60,16 @@ describe('serving a hidden check', () => {
     const offer = await pick(1);
     expect(offer).toMatchObject({ imageKey: 'key-10', question: { key: Q } });
     expect(JSON.stringify(offer)).not.toMatch(/hiddenCheck|answer|pool/);
+  });
+
+  it('offers another check, not none, once the player skipped the one it chose', async () => {
+    await seedPlayer(pg, 1);
+    const ids = [await reference(10), await reference(11)];
+    const first = (await pick(1))?.referenceId as number;
+    const next = await pick(1, 'Knight', 1, Q, [first]);
+
+    expect(next?.referenceId).toBe(ids.find((id) => id !== first));
+    expect(await pick(1, 'Knight', 1, Q, ids)).toBeNull();
   });
 
   it('only offers a check for the question the feed is showing', async () => {

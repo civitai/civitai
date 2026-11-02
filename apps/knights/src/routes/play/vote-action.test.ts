@@ -4,6 +4,7 @@ const castVote = vi.hoisted(() => vi.fn());
 const feedSecretMock = vi.hoisted(() => vi.fn(() => 'secret'));
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/skip-runtime', () => ({ skipStore: { add: vi.fn(), list: vi.fn(async () => []) } }));
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({
