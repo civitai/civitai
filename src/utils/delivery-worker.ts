@@ -357,6 +357,8 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   return result as DownloadInfo;
 }
 
+const MOVED_ATTACHMENT_TIMEOUT_MS = 10_000;
+
 /**
  * Signed URL for an attachment key the storage resolver has registered on its
  * secondary storage tier, or `null` when it has none. Never throws: a resolver
@@ -367,8 +369,6 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
  * Sends the file URL exactly as stored (or the bare key a caller passed); the
  * resolver normalises it to a key and matches both its raw and decoded forms.
  */
-const MOVED_ATTACHMENT_TIMEOUT_MS = 10_000;
-
 async function getMovedAttachmentUrl(
   fileUrl: string,
   fileName: string | undefined

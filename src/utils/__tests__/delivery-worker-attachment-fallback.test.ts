@@ -116,6 +116,8 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
     expect(calls).toHaveLength(1);
     const init = calls[0][1] as RequestInit;
     expect(init.method).toBe('POST');
+    // Bounded: these callers never waited on the resolver before.
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer internal-tok');
     // ...the resolver gets the file URL exactly as stored (it normalises it itself),
     // and the decoded download name the delivery worker also gets.
@@ -157,6 +159,12 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
     ['500', { status: 500 }],
     ['401', { status: 401 }],
     ['a transport reject', new TypeError('fetch failed')],
+    [
+      'a timeout',
+      Object.assign(new Error('The operation was aborted due to timeout'), {
+        name: 'TimeoutError',
+      }),
+    ],
     ['200 without a url', { status: 200, body: { backend: 'secondary' } }],
   ])(
     'throws the original delivery-worker 404 when the resolver answers %s',
