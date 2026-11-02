@@ -88,7 +88,7 @@ describe('resolveModelFileName', () => {
       expect(prunedName).toBe('realisticVision_v51HyperVAE_pruned_fp16.safetensors');
     });
 
-    it('leaves a lone file unsuffixed, so existing downloads keep their name', () => {
+    it('leaves a lone generic file unsuffixed', () => {
       expect(
         resolveModelFileName({
           model: checkpoint,
@@ -121,6 +121,13 @@ describe('resolveModelFileName', () => {
       expect(b).toContain('_8.');
     });
 
+    it('keeps a distinctive uploaded name when the caller cannot see the siblings', () => {
+      const file = { id: 3, name: 'my_checkpoint_v2.safetensors', type: 'Model' };
+      expect(resolveModelFileName({ model: checkpoint, modelVersion: version, file })).toBe(
+        'my_checkpoint_v2.safetensors'
+      );
+    });
+
     it('returns the bare name when the caller cannot see the siblings', () => {
       expect(resolveModelFileName({ model: checkpoint, modelVersion: version, file: full })).toBe(
         'realisticVision_v51HyperVAE.safetensors'
@@ -145,6 +152,134 @@ describe('resolveModelFileName', () => {
 
     it('leaves the sibling that does not collide alone', () => {
       expect(nameOf(other)).toBe('distinct_name.safetensors');
+    });
+
+    it('does not hand a colliding file a name a sibling holds in another case', () => {
+      // The sibling keeps its upload; its own scheme name would be `_txt`, so only its kept name
+      // can collide with the Model twin's scheme name.
+      const sibling = { id: 4, name: 'RealisticVision_V1.safetensors', type: 'Text Encoder' };
+      const twinA = { id: 5, name: 'shared.safetensors', type: 'Model', metadata: {} };
+      const twinB = { id: 6, name: 'shared.safetensors', type: 'VAE', metadata: {} };
+      const files = [sibling, twinA, twinB];
+      const names = files.map((file) =>
+        resolveModelFileName({
+          model: checkpoint,
+          modelVersion: version,
+          file,
+          versionFiles: files,
+        })
+      );
+
+      expect(names).toEqual([
+        'RealisticVision_V1.safetensors',
+        'realisticVision_v1_5.safetensors',
+        'shared.safetensors',
+      ]);
+    });
+
+    it('separates a file from a sibling whose creator-set name equals its upload', () => {
+      const uploaded = { id: 4, name: 'custom.safetensors', type: 'Model', metadata: {} };
+      const renamed = {
+        id: 5,
+        name: 'other.safetensors',
+        overrideName: 'custom.safetensors',
+        type: 'Model',
+        metadata: {},
+      };
+      const files = [uploaded, renamed];
+      const names = files.map((file) =>
+        resolveModelFileName({
+          model: checkpoint,
+          modelVersion: version,
+          file,
+          versionFiles: files,
+        })
+      );
+
+      expect(names).toEqual(['realisticVision_v1.safetensors', 'custom.safetensors']);
+    });
+
+    it('keeps two collision groups apart when both fall back to the scheme', () => {
+      const files = [
+        { id: 1, name: 'a.safetensors', type: 'Model', metadata: {} },
+        { id: 2, name: 'a.safetensors', type: 'VAE', metadata: {} },
+        { id: 3, name: 'b.safetensors', type: 'Model', metadata: {} },
+        { id: 4, name: 'b.safetensors', type: 'VAE', metadata: {} },
+      ];
+      const names = files.map((file) =>
+        resolveModelFileName({
+          model: checkpoint,
+          modelVersion: version,
+          file,
+          versionFiles: files,
+        })
+      );
+
+      expect(names).toEqual([
+        'realisticVision_v1_1.safetensors',
+        'a.safetensors',
+        'realisticVision_v1_3.safetensors',
+        'b.safetensors',
+      ]);
+    });
+
+    it('does not hand out an id-suffixed name another file was uploaded under', () => {
+      const files = [
+        { id: 1, name: 'cool.safetensors', type: 'Model', metadata: {} },
+        { id: 2, name: 'cool.safetensors', type: 'Model', metadata: {} },
+        { id: 3, name: 'realisticVision_v1_1.safetensors', type: 'Model', metadata: {} },
+      ];
+      const names = files.map((file) =>
+        resolveModelFileName({
+          model: checkpoint,
+          modelVersion: version,
+          file,
+          versionFiles: files,
+        })
+      );
+
+      expect(new Set(names.map((name) => name.toLowerCase())).size).toBe(3);
+      expect(names[2]).toBe('realisticVision_v1_1.safetensors');
+    });
+
+    it('recognises a copy of a file that has no id yet', () => {
+      const fp16 = { name: 'model.safetensors', type: 'Model', metadata: { fp: 'fp16' } };
+      const fp32 = { name: 'model.safetensors', type: 'Model', metadata: { fp: 'fp32' } };
+      const versionFiles = [fp16, fp32];
+
+      expect(
+        resolveModelFileName({
+          model: checkpoint,
+          modelVersion: version,
+          file: { ...fp16 },
+          versionFiles,
+        })
+      ).toBe('realisticVision_v1_fp16.safetensors');
+    });
+
+    it('separates variants that have no id yet', () => {
+      const fp16 = { name: 'model.safetensors', type: 'Model', metadata: { fp: 'fp16' } };
+      const fp8 = { name: 'model.safetensors', type: 'Model', metadata: { fp: 'fp8' } };
+      const files = [fp16, fp8];
+      const names = files.map((file) =>
+        resolveModelFileName({
+          model: checkpoint,
+          modelVersion: version,
+          file,
+          versionFiles: files,
+        })
+      );
+
+      expect(names).toEqual([
+        'realisticVision_v1_fp16.safetensors',
+        'realisticVision_v1_fp8.safetensors',
+      ]);
+    });
+
+    it('recognises the file when the caller passes a copy of its sibling entry', () => {
+      // The API handlers destructure each file before naming it, so `file` is never the same object
+      // as its entry in `versionFiles`.
+      expect(nameOf({ ...a })).toBe('realisticVision_v1_fp16.safetensors');
     });
 
     it('does not hand a colliding file the scheme name a generic sibling already has', () => {
@@ -181,7 +316,10 @@ describe('resolveModelFileName', () => {
     // is named after the model instead.
     it.each([
       ['word', 'diffusion_pytorch_model.safetensors'],
-      ['word with a precision tag', 'diffusion_pytorch_model.fp16.safetensors'],
+      ['word with an fp16 tag', 'diffusion_pytorch_model.fp16.safetensors'],
+      ['word with an fp32 tag', 'model.fp32.safetensors'],
+      ['word with a bf16 tag', 'transformer.bf16.safetensors'],
+      ['word with an fp8 tag', 'unet.fp8.safetensors'],
       ['shard', 'model-00001-of-00003.safetensors'],
       ['ULID (training job id)', jobIdName],
       ['UUID', '3f2b8c1e-9a4d-4e6f-8b2a-1c3d5e7f9a0b.safetensors'],
@@ -294,6 +432,20 @@ describe('resolveModelFileName', () => {
       expect(
         resolveModelFileName({ model: lora, modelVersion: version, file, versionFiles: [file] })
       ).toBe('pytorch_lora_weights.safetensors');
+    });
+
+    it('separates LoRA files whose names differ only in case', () => {
+      // A deliberate change from before: these overwrite each other on Windows and macOS.
+      const upper = { id: 1, name: 'B.safetensors', type: 'Model', metadata: {} };
+      const lower = { id: 2, name: 'b.safetensors', type: 'Model', metadata: {} };
+      const versionFiles = [upper, lower];
+
+      expect(
+        resolveModelFileName({ model: lora, modelVersion: version, file: upper, versionFiles })
+      ).toBe('B_1.safetensors');
+      expect(
+        resolveModelFileName({ model: lora, modelVersion: version, file: lower, versionFiles })
+      ).toBe('b_2.safetensors');
     });
 
     it('still separates two files on one LoRA version', () => {

@@ -128,9 +128,9 @@ function preferredFileName(args: Parameters<typeof computeFileName>[0]) {
   return isGenericFileName(file.name) ? computeFileName(args) : file.name;
 }
 
-function sameFileName(a: string, b: string) {
-  // Windows and macOS file systems ignore case, so these would overwrite each other on disk.
-  return a.toLowerCase() === b.toLowerCase();
+/** Windows and macOS file systems ignore case, so names equal in any case overwrite each other. */
+function fileNameKey(fileName: string) {
+  return fileName.toLowerCase();
 }
 
 function insertBeforeExtension(fileName: string, suffix: string) {
@@ -145,6 +145,73 @@ function variantSuffix(file: NameableFile) {
     .filter((part): part is string => typeof part === 'string' && part.length > 0)
     .map((part) => filenamize(part))
     .join('_');
+}
+
+/**
+ * Names every file on a version at once, so no two share a name. A file keeps its preferred name
+ * unless another file's preferred name equals it; the colliding files then try the scheme name,
+ * then the scheme with the variant suffix, then with the file id, each accepted only if no other
+ * file holds or is trying the same name.
+ */
+function nameVersionFiles(
+  model: NameableModel,
+  modelVersion: NameableVersion,
+  files: NameableFile[]
+): string[] {
+  const names = files.map(
+    (file) => file.overrideName || preferredFileName({ model, modelVersion, file })
+  );
+  const counts = new Map<string, number>();
+  for (const name of names) counts.set(fileNameKey(name), (counts.get(fileNameKey(name)) ?? 0) + 1);
+
+  const taken = new Set<string>();
+  let moving: number[] = [];
+  files.forEach((file, i) => {
+    if (file.overrideName || counts.get(fileNameKey(names[i])) === 1)
+      taken.add(fileNameKey(names[i]));
+    else moving.push(i);
+  });
+
+  const schemeOf = (file: NameableFile) => computeFileName({ model, modelVersion, file });
+  const stages: Array<(file: NameableFile) => string | undefined> = [
+    schemeOf,
+    (file) => {
+      const suffix = variantSuffix(file);
+      return suffix ? insertBeforeExtension(schemeOf(file), suffix) : undefined;
+    },
+    (file) =>
+      file.id != null ? insertBeforeExtension(schemeOf(file), String(file.id)) : undefined,
+  ];
+  for (const stage of stages) {
+    const candidates = moving.map((i) => stage(files[i]));
+    const tried = new Map<string, number>();
+    for (const candidate of candidates) {
+      if (candidate)
+        tried.set(fileNameKey(candidate), (tried.get(fileNameKey(candidate)) ?? 0) + 1);
+    }
+    moving = moving.filter((i, j) => {
+      const candidate = candidates[j];
+      if (!candidate) return true;
+      const key = fileNameKey(candidate);
+      if (taken.has(key) || tried.get(key) !== 1) return true;
+      names[i] = candidate;
+      taken.add(key);
+      return false;
+    });
+  }
+
+  // Nothing above told these apart: no id, or `<scheme>_<id>` is another file's uploaded name.
+  for (const i of moving) {
+    const base = files[i].id != null ? `${files[i].id}_` : '';
+    let attempt = 1;
+    let candidate: string;
+    do {
+      candidate = insertBeforeExtension(schemeOf(files[i]), `${base}${attempt++}`);
+    } while (taken.has(fileNameKey(candidate)));
+    names[i] = candidate;
+    taken.add(fileNameKey(candidate));
+  }
+  return names;
 }
 
 /**
@@ -164,43 +231,20 @@ export function resolveModelFileName({
   versionFiles?: NameableFile[];
 }): string {
   if (file.overrideName) return file.overrideName;
+  if (!versionFiles?.length) return preferredFileName({ model, modelVersion, file });
 
-  const preferred = preferredFileName({ model, modelVersion, file });
-  if (!versionFiles?.length) return preferred;
-
-  const preferredOf = (candidate: NameableFile) =>
-    candidate.overrideName || preferredFileName({ model, modelVersion, file: candidate });
-  const twins = versionFiles.filter((candidate) => sameFileName(preferredOf(candidate), preferred));
-  if (twins.length < 2) return preferred;
-
-  // A shared uploaded name cannot tell the files apart, so they fall back to the scheme.
-  const schemeOf = (candidate: NameableFile) =>
-    candidate.overrideName || computeFileName({ model, modelVersion, file: candidate });
-  const isSelf = (candidate: NameableFile) =>
-    candidate === file || (candidate.id != null && candidate.id === file.id);
-  // Free of the twins at the same step, and of every other file's own name: a scheme name can
-  // equal the one a generic sibling already got.
-  const isFree = (name: string, twinName: (twin: NameableFile) => string) =>
-    versionFiles.every(
-      (candidate) =>
-        isSelf(candidate) ||
-        !sameFileName(
-          twins.includes(candidate) ? twinName(candidate) : preferredOf(candidate),
-          name
-        )
+  // API callers pass a destructured copy of the file, so find it by id, or by content without one.
+  let index = versionFiles.indexOf(file);
+  if (index < 0 && file.id != null) index = versionFiles.findIndex((c) => c.id === file.id);
+  if (index < 0 && file.id == null) {
+    index = versionFiles.findIndex(
+      (c) =>
+        c.id == null &&
+        c.name === file.name &&
+        c.type === file.type &&
+        JSON.stringify(c.metadata) === JSON.stringify(file.metadata)
     );
-
-  const fileName = schemeOf(file);
-  if (isFree(fileName, schemeOf)) return fileName;
-
-  const suffix = variantSuffix(file);
-  if (suffix) {
-    const candidate = insertBeforeExtension(fileName, suffix);
-    if (isFree(candidate, (twin) => insertBeforeExtension(schemeOf(twin), variantSuffix(twin))))
-      return candidate;
   }
-
-  // Nothing about the file itself tells it apart from its twin, so fall back to the one thing that
-  // is guaranteed distinct.
-  return file.id != null ? insertBeforeExtension(fileName, String(file.id)) : fileName;
+  const files = index < 0 ? [file, ...versionFiles] : versionFiles;
+  return nameVersionFiles(model, modelVersion, files)[index < 0 ? 0 : index];
 }
