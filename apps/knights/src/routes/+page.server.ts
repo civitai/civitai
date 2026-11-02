@@ -1,6 +1,9 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { restartCareer } from '$lib/server/career/restart.service';
+import { forgetLegacyCounters } from '$lib/server/career/runtime';
 import { db } from '$lib/server/db';
 import { joinOrder } from '$lib/server/join.service';
+import { queueDeps } from '$lib/server/queue/runtime';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -16,7 +19,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   };
 };
 
-export const actions: Actions = {
+export const actions = {
   join: async ({ request, locals }) => {
     const form = await request.formData();
     if (form.get('accepted') !== 'yes') {
@@ -31,4 +34,31 @@ export const actions: Actions = {
     }
     redirect(303, '/play');
   },
-};
+  restart: async ({ request, locals }) => {
+    const form = await request.formData();
+    if (form.get('confirmed') !== 'yes') {
+      return fail(400, {
+        message: 'Confirm that you want to restart your career.',
+        restartFailed: true,
+      });
+    }
+
+    let outcome: { reset: boolean };
+    try {
+      outcome = await restartCareer(db, locals.user.id, queueDeps.now());
+    } catch (error) {
+      console.error('knights: career restart failed', { error });
+      return fail(500, {
+        message: 'Your career could not be restarted. Try again in a moment.',
+        restartFailed: true,
+      });
+    }
+    if (!outcome.reset) redirect(303, '/');
+
+    // The career is already reset; the original game's counters are caches it rebuilds on a miss.
+    await forgetLegacyCounters(locals.user.id).catch((error) =>
+      console.error('knights: could not clear the original game counters', { error })
+    );
+    redirect(303, '/play');
+  },
+} satisfies Actions;
