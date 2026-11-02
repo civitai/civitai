@@ -300,7 +300,12 @@ export async function resolveDownloadUrl(
 
 /**
  * Get download URL via the delivery worker (legacy path).
- * Used when storage resolver is not configured.
+ * Used when storage resolver is not configured, as the fallback of
+ * `resolveDownloadUrl`, and directly for `File` attachments.
+ *
+ * When the delivery worker answers 404 and the storage resolver is configured
+ * with its internal token, it is asked once for a moved attachment
+ * (`getMovedAttachmentUrl`); its URL is returned if it has one.
  */
 export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   const { key } = parseKey(fileUrl);
@@ -334,8 +339,52 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   }
 
   if (!response.ok) {
+    // A 404 can mean the object was moved to the secondary storage tier, which
+    // the delivery worker cannot sign for. Ask the storage resolver for it.
+    // Only a 404: every other status, and any failure of the fallback itself,
+    // keeps the delivery worker's error exactly as before.
+    if (response.status === 404) {
+      const moved = await getMovedAttachmentUrl(key, fileName);
+      if (moved) return moved;
+    }
     throw new DeliveryWorkerError(response.status, response.statusText);
   }
   const result = await response.json();
   return result as DownloadInfo;
+}
+
+/**
+ * Signed URL for an attachment key the storage resolver has registered on its
+ * secondary storage tier, or `null` when it has none. Never throws: a resolver
+ * that is unconfigured, unreachable, or answers non-OK (including 404 for a key
+ * it does not know, which is every model-file key) yields `null`, so the caller
+ * throws its original delivery-worker error unchanged.
+ *
+ * Sends the key as the delivery worker received it (the raw stored form); the
+ * resolver matches it and its decoded form itself.
+ */
+async function getMovedAttachmentUrl(
+  key: string,
+  fileName: string | undefined
+): Promise<DownloadInfo | null> {
+  if (!storageResolverEndpoint || !storageResolverInternalToken) return null;
+  try {
+    const response = await fetch(`${storageResolverEndpoint}/resolve-attachment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${storageResolverInternalToken}`,
+      },
+      body: JSON.stringify({
+        path: key,
+        fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
+      }),
+    });
+    if (!response.ok) return null;
+    const result = await response.json();
+    if (typeof result?.url !== 'string' || !result.url) return null;
+    return { url: result.url, urlExpiryDate: new Date(result.urlExpiryDate) };
+  } catch {
+    return null;
+  }
 }
