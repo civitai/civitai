@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as Ledger from '~/server/services/scam-case-ledger';
 import type * as ModeratorService from '~/server/services/moderator.service';
+import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const m = vi.hoisted(() => ({
@@ -9,6 +10,7 @@ const m = vi.hoisted(() => ({
   restoreScamCases: vi.fn(async () => undefined),
   trackModActivity: vi.fn(async () => undefined),
   invalidateSession: vi.fn(async () => undefined),
+  revokeCivitaiUserTokens: vi.fn(async (_: { userId: number | string }) => true),
 }));
 
 vi.mock('~/server/services/scam-case-ledger', async (importOriginal) => ({
@@ -19,6 +21,10 @@ vi.mock('~/server/services/scam-case-ledger', async (importOriginal) => ({
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
   trackModActivity: m.trackModActivity,
+}));
+vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorCivitai>()),
+  revokeCivitaiUserTokens: m.revokeCivitaiUserTokens,
 }));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),
@@ -197,5 +203,18 @@ describe('setUserMuted', () => {
       { entityType: 'user', entityId: USER, activity: 'unmute' },
       dbMock.dbWrite
     );
+  });
+});
+
+describe('a change of standing reaches the orchestrator', () => {
+  it("an unmute revokes the account's cached orchestrator tokens", async () => {
+    await releaseUserMute({ userId: USER, actorId: MOD, updateSource: 't' });
+    expect(m.revokeCivitaiUserTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER });
+  });
+
+  it('a moderator mute revokes them too', async () => {
+    dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: true });
+    await setUserMuted({ userId: USER, muted: true });
+    expect(m.revokeCivitaiUserTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER });
   });
 });

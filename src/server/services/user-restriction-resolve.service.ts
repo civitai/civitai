@@ -148,6 +148,10 @@ export async function resolveUserRestriction({
       data: { muted: true, mutedAt: new Date(), muteExpiresAt: null },
       updateSource: effects.upheldSource,
     });
+    const { afterAccountStandingChanged } = await import(
+      '~/server/services/account-standing.service'
+    );
+    await afterAccountStandingChanged(restriction.userId);
     // Cancel at period end (reversible) rather than waiting for the daily
     // confirm-mutes safety-net job.
     await cancelSubscription({ userId: restriction.userId, atPeriodEnd: true }).catch((error) =>
@@ -179,6 +183,10 @@ export async function resolveUserRestriction({
       return false;
     });
     if (!stillHeld) {
+      const { afterAccountStandingChanged } = await import(
+        '~/server/services/account-standing.service'
+      );
+      await afterAccountStandingChanged(restriction.userId);
       userUpdateCounter?.inc({
         location: `user.service:updateUserById:${effects.overturnedSource}`,
       });

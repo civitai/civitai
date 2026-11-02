@@ -504,6 +504,10 @@ export async function setUserMuted(
     },
     updateSource: 'retool:mute',
   });
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  await afterAccountStandingChanged(args.userId);
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
   await invalidateSession(args.userId, 'moderation');
   return user;

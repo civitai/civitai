@@ -8,6 +8,7 @@ import type * as PromClient from '~/server/prom/client';
 import type * as EmailTemplates from '~/server/email/templates';
 import type * as PromptAuditing from '~/server/services/orchestrator/promptAuditing';
 import type * as ScamCleanup from '~/server/services/scam-cleanup.service';
+import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
 type UserRow = {
   id: number;
@@ -189,6 +190,13 @@ const {
   };
 });
 
+const { revokeTokens } = vi.hoisted(() => ({
+  revokeTokens: vi.fn(async (_: { userId: number | string }) => true),
+}));
+vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorCivitai>()),
+  revokeCivitaiUserTokens: revokeTokens,
+}));
 vi.mock('~/server/db/client', () => ({ dbRead: dbWrite, dbWrite, dbKV: dbWrite }));
 vi.mock('~/server/services/stripe.service', () => ({ cancelSubscription, reinstateSubscription }));
 vi.mock('~/server/services/paddle.service', () => ({ cancelSubscriptionPlan }));
@@ -357,6 +365,7 @@ describe('pending-review mute', () => {
 
     const dataArgs = dbWrite.user.update.mock.calls.map(([arg]) => arg.data);
     expect(dataArgs).toEqual([{ muted: true }]);
+    expect(revokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER_ID });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
   });
 
@@ -786,6 +795,7 @@ describe('resolveUserRestriction — ruling scope', () => {
     expect(result).toEqual({ userId: USER_ID });
     expect(store.restrictions[0]).toMatchObject({ status: 'Overturned', resolvedBy: MOD_ID });
     expect(reinstateSubscription).toHaveBeenCalledWith({ userId: USER_ID });
+    expect(revokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER_ID });
     expect(resetProhibitedRequestCount).toHaveBeenCalledWith(USER_ID);
     expect(createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'generation-restriction-overturned' })
@@ -803,6 +813,7 @@ describe('resolveUserRestriction — ruling scope', () => {
 
     expect(store.restrictions[0]).toMatchObject({ status: 'Upheld' });
     expect(store.users.get(USER_ID)?.mutedAt).toBeInstanceOf(Date);
+    expect(revokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER_ID });
     expect(cancelSubscription).toHaveBeenCalledWith({ userId: USER_ID, atPeriodEnd: true });
     expect(createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'generation-restriction-upheld' })
@@ -1273,6 +1284,7 @@ describe('resolveUserRestriction — scam rulings', () => {
       expect(store.restrictions.find((r) => r.id === id)?.status).toBe('Overturned');
       expect(store.users.get(USER_ID)?.muted).toBe(true);
       expect(reinstateSubscription).not.toHaveBeenCalled();
+      expect(revokeTokens).not.toHaveBeenCalled();
       expect(restoreScamCase).toHaveBeenCalledWith(id);
     });
 

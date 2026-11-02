@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
 const {
@@ -12,6 +13,7 @@ const {
   mockSetUserSetting,
   mockGetStaticContent,
   mockTrackModActivity,
+  mockRevokeTokens,
 } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockUpdateUserById: vi.fn().mockResolvedValue(undefined),
@@ -21,6 +23,7 @@ const {
   mockSetUserSetting: vi.fn().mockResolvedValue(undefined),
   mockGetStaticContent: vi.fn(),
   mockTrackModActivity: vi.fn().mockResolvedValue(undefined),
+  mockRevokeTokens: vi.fn(),
 }));
 
 // The db and logging clients come from the canonical shared mocks. Property
@@ -61,6 +64,10 @@ vi.mock('~/server/services/content.service', () => ({
   resolveTosHash: (h: string) => h,
 }));
 
+vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorCivitai>()),
+  revokeCivitaiUserTokens: mockRevokeTokens,
+}));
 vi.mock('~/server/auth/session-invalidation', () => ({
   invalidateSession: mockInvalidateSession,
   refreshSession: mockRefreshSession,
@@ -168,6 +175,7 @@ describe('strike.service', () => {
     // served to the next test. It also wipes factory-declared implementations, so re-arm them.
     vi.resetAllMocks();
     mockGetStaticContent.mockResolvedValue({ hash: 'deadbeef' });
+    mockRevokeTokens.mockResolvedValue(true);
   });
 
   // ==========================================================================
@@ -571,6 +579,7 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 3, action: 'muted-and-flagged' });
+      expect(mockRevokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: 1 });
       expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 1 },
@@ -775,6 +784,7 @@ describe('strike.service', () => {
       const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
       expect(result).toEqual({ totalPoints: 1, action: 'unmuted' });
+      expect(mockRevokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: 1 });
       expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 1 },
@@ -1397,6 +1407,7 @@ describe('strike.service', () => {
       const result = await acceptTosAfterMute({ userId: 1 });
 
       expect(result).toEqual({ unmuted: true });
+      expect(mockRevokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: 1 });
       // The modal's own settings write is not awaited, so this call owns the acceptance record.
       expect(mockSetUserSetting).toHaveBeenCalledWith(
         1,
@@ -1524,6 +1535,7 @@ describe('strike.service', () => {
       mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
 
       const result = await processTimedUnmutes();
+      expect(mockRevokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: 100 });
 
       expect(result).toEqual({ unmutedCount: 1 });
       expect(userUpdate).toHaveBeenCalledWith(

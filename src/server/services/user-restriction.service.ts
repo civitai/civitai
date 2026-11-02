@@ -223,6 +223,10 @@ export async function announcePendingReviewMute({
   // needs to hear about; the case's notice already went out when it was filed.
   if (claim.deduped && claim.wasMuted) return;
 
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  await afterAccountStandingChanged(userId);
   await bestEffort('pending-review-mute-refresh-session-failed', userId, () =>
     refreshSession(userId, { caller: 'moderation' })
   );

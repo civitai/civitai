@@ -82,6 +82,10 @@ export async function afterMuteReleased({
   updateSource: string;
 }) {
   userUpdateCounter?.inc({ location: `user.service:${updateSource}` });
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  await afterAccountStandingChanged(userId);
   await restoreScamCases(userId, closedCaseIds);
   try {
     await invalidateSession(userId, 'moderation');
