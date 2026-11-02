@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
+import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
 import { insertModActivityBatch, recordModActivity } from './mod-activity';
 import { syncSearchIndex } from './search-index';
 import { upsertTagsOnImageNew } from './tags-on-image.service';
@@ -32,19 +33,6 @@ import type { DB } from '@civitai/db-schema/kysely';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
-
-/**
- * Mirrors the main app's `dropBlockedImageDeleteQueue`: a surviving row keeps the first block's time,
- * so this un-block's `review` activity would read as a takedown of the next block.
- */
-async function dropBlockedImageDeleteQueue(imageId: number) {
-  await dbWrite
-    .deleteFrom('JobQueue')
-    .where('type', '=', 'BlockedImageDelete')
-    .where('entityType', '=', 'Image')
-    .where('entityId', '=', imageId)
-    .execute();
-}
 
 /**
  * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
