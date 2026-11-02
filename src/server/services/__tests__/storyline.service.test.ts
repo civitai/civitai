@@ -1375,12 +1375,15 @@ describe('a storyline whose chapter 1 keeps it from the public', () => {
   ] as const;
 
   beforeEach(() => {
-    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
-      Promise.resolve(
-        strings.join('?').includes('"StorylineCollaborator" sc') && values[0] === PARTICIPANT
+    // The participants read, as Postgres receives it (`storylineParticipantSql` nests the lookup).
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+      const query = Prisma.sql(strings, ...values);
+      return Promise.resolve(
+        query.sql.includes('"StorylineCollaborator"') && query.values.includes(PARTICIPANT)
           ? [{ storylineId: 10 }]
           : []
-      )) as never);
+      );
+    }) as never);
   });
 
   describe('its page', () => {

@@ -205,7 +205,7 @@ const participantChapterSql = (alias: string) =>
       alias
     )}."postId" AND pp."tosViolation" = false
   )`;
-const participantChapterWhere = {
+export const participantChapterWhere = {
   removedAt: null,
   post: { is: { tosViolation: false } },
 } satisfies Prisma.StorylineChapterWhereInput;
@@ -319,13 +319,8 @@ async function getParticipatingStorylineIds(
   ];
   if (!ids.length) return new Set();
   const rows = await dbRead.$queryRaw<{ storylineId: number }[]>`
-    SELECT sc."storylineId" FROM "StorylineCollaborator" sc
-    WHERE sc."userId" = ${viewer.id} AND sc."storylineId" = ANY(${ids}::int[])
-      AND ${acceptedCollaboratorSql('sc')}
-    UNION
-    SELECT c."storylineId" FROM "StorylineChapter" c
-    WHERE c."userId" = ${viewer.id} AND c."storylineId" = ANY(${ids}::int[])
-      AND ${participantChapterSql('c')}
+    SELECT t.id AS "storylineId" FROM unnest(${ids}::int[]) AS t(id)
+    WHERE ${storylineParticipantSql(Prisma.sql`${viewer.id}`, Prisma.sql`t.id`)}
   `;
   return new Set(rows.map((row) => row.storylineId));
 }
@@ -725,8 +720,9 @@ export const storylineRootWaitingSql = Prisma.sql`(rp.id IS NOT NULL AND rc."rem
   AND (rp."publishedAt" IS NULL OR rp."publishedAt" >= now() OR rp."nsfwLevel" = 0))`;
 
 /**
- * `userId` takes part in storyline `storylineId` (both SQL expressions), as
- * `getParticipatingStorylineIds` reads it: an accepted collaborator or a live chapter's author.
+ * `userId` takes part in storyline `storylineId` (both SQL expressions): an accepted collaborator
+ * or a live chapter's author. The one SQL form of it; `assertCanContinueStoryline` reads the same
+ * through Prisma (`participantChapterWhere`).
  */
 export const storylineParticipantSql = (userId: Prisma.Sql, storylineId: Prisma.Sql) =>
   Prisma.sql`(EXISTS (
@@ -4075,18 +4071,7 @@ export async function getStorylinesInfinite({
     // `getParticipatingStorylineIds` reads them.
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
       AND (${storylineRootVisibleSql}
-        OR EXISTS (
-          SELECT 1 FROM "StorylineCollaborator" pc
-          WHERE pc."storylineId" = st.id AND pc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
-      'pc'
-    )}
-        )
-        OR EXISTS (
-          SELECT 1 FROM "StorylineChapter" pch
-          WHERE pch."storylineId" = st.id AND pch."userId" = ${viewerId} AND ${participantChapterSql(
-      'pch'
-    )}
-        ))))`,
+        OR ${storylineParticipantSql(Prisma.sql`${viewerId}`, Prisma.sql`st.id`)})))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];
   // One array parameter, not one bind per id: the list can run to tens of thousands.
