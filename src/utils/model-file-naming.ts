@@ -73,6 +73,66 @@ function computeFileName({
   return fileName;
 }
 
+/** Basenames that say nothing about the model they belong to: framework and trainer defaults. */
+export const GENERIC_FILE_BASENAMES = [
+  'model',
+  'diffusion_pytorch_model',
+  'pytorch_model',
+  'pytorch_lora_weights',
+  'adapter_model',
+  'text_encoder',
+  'text_encoder_2',
+  'unet',
+  'transformer',
+  'vae',
+  'ae',
+  'clip',
+  'checkpoint',
+  'weights',
+  'output',
+  'final',
+  'last',
+  'untitled',
+  'file',
+  'download',
+] as const;
+
+const genericBasenames = new Set<string>(GENERIC_FILE_BASENAMES);
+const genericNamePatterns = [
+  /-\d+-of-\d+$/, // shard: model-00001-of-00003
+  /^[0-9a-hjkmnp-tv-z]{26}$/, // ULID: a training job id
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, // UUID
+  /^[0-9a-f]{16,}$/, // hash
+  /^\d+$/,
+];
+
+export function isGenericFileName(fileName: string) {
+  const dot = fileName.lastIndexOf('.');
+  const basename = (dot > 0 ? fileName.slice(0, dot) : fileName)
+    .toLowerCase()
+    .replace(/\.(fp16|fp32|bf16|fp8)$/, '');
+  if (!basename || genericBasenames.has(basename)) return true;
+  return genericNamePatterns.some((pattern) => pattern.test(basename));
+}
+
+/**
+ * The name before siblings are considered: the uploaded name, which is what the model page lists
+ * and what workflows look files up by, unless it is generic.
+ */
+function preferredFileName(args: Parameters<typeof computeFileName>[0]) {
+  const { model, file } = args;
+  // A Textual Inversion's filename is its prompt token in A1111, and training data is loaded by no
+  // workflow tool, so both keep the scheme.
+  if (model.type === ModelType.TextualInversion || file.type === 'Training Data')
+    return computeFileName(args);
+  return isGenericFileName(file.name) ? computeFileName(args) : file.name;
+}
+
+function sameFileName(a: string, b: string) {
+  // Windows and macOS file systems ignore case, so these would overwrite each other on disk.
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 function insertBeforeExtension(fileName: string, suffix: string) {
   const dot = fileName.lastIndexOf('.');
   if (dot <= 0) return `${fileName}_${suffix}`;
@@ -105,23 +165,39 @@ export function resolveModelFileName({
 }): string {
   if (file.overrideName) return file.overrideName;
 
-  const fileName = computeFileName({ model, modelVersion, file });
-  if (!versionFiles?.length) return fileName;
+  const preferred = preferredFileName({ model, modelVersion, file });
+  if (!versionFiles?.length) return preferred;
 
-  const nameOf = (candidate: NameableFile) =>
+  const preferredOf = (candidate: NameableFile) =>
+    candidate.overrideName || preferredFileName({ model, modelVersion, file: candidate });
+  const twins = versionFiles.filter((candidate) => sameFileName(preferredOf(candidate), preferred));
+  if (twins.length < 2) return preferred;
+
+  // A shared uploaded name cannot tell the files apart, so they fall back to the scheme.
+  const schemeOf = (candidate: NameableFile) =>
     candidate.overrideName || computeFileName({ model, modelVersion, file: candidate });
-  const twins = versionFiles.filter((candidate) => nameOf(candidate) === fileName);
-  if (twins.length < 2) return fileName;
+  const isSelf = (candidate: NameableFile) =>
+    candidate === file || (candidate.id != null && candidate.id === file.id);
+  // Free of the twins at the same step, and of every other file's own name: a scheme name can
+  // equal the one a generic sibling already got.
+  const isFree = (name: string, twinName: (twin: NameableFile) => string) =>
+    versionFiles.every(
+      (candidate) =>
+        isSelf(candidate) ||
+        !sameFileName(
+          twins.includes(candidate) ? twinName(candidate) : preferredOf(candidate),
+          name
+        )
+    );
+
+  const fileName = schemeOf(file);
+  if (isFree(fileName, schemeOf)) return fileName;
 
   const suffix = variantSuffix(file);
   if (suffix) {
     const candidate = insertBeforeExtension(fileName, suffix);
-    const stillShared = twins.some(
-      (twin) =>
-        twin.id !== file.id &&
-        insertBeforeExtension(nameOf(twin), variantSuffix(twin)) === candidate
-    );
-    if (!stillShared) return candidate;
+    if (isFree(candidate, (twin) => insertBeforeExtension(schemeOf(twin), variantSuffix(twin))))
+      return candidate;
   }
 
   // Nothing about the file itself tells it apart from its twin, so fall back to the one thing that
