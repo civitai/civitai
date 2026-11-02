@@ -858,8 +858,8 @@ async function removeImageFromQueue({
 
 /**
  * Settles every vote still Pending on these images as Inconclusive, the same way the daily
- * rating-slot purge does. Never throws: callers are mid-request and the vote rows can still be
- * settled by a later run.
+ * rating-slot purge does. Never throws: callers are mid-request. A failed void is only logged;
+ * nothing retries it.
  */
 async function voidPendingRatings(imageIds: number[]) {
   if (imageIds.length === 0) return;
