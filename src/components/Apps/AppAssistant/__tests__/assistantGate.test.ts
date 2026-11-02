@@ -64,16 +64,16 @@ const readyDecision = (gate: ReturnType<typeof createAssistantGate>) =>
 
 const STOP_AT_LIMIT = {
   refuse:
-    'This reply made 150 tool calls, the most one reply may make, so it ended before this call ran.',
+    'This reply made 300 tool calls, the most one reply may make, so it ended before this call ran.',
   stop: true,
   message:
-    'App Assistant stopped this reply after 150 tool calls, the most one reply may make. Press Continue to let it carry on.',
+    'App Assistant stopped this reply after 300 tool calls, the most one reply may make. Press Continue to let it carry on.',
 };
 
 describe('per-reply tool-call limit', () => {
-  it('allows 150 calls in a reply, then ends the reply on the next', () => {
+  it('allows 300 calls in a reply, then ends the reply on the next', () => {
     const gate = createAssistantGate();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual({ allow: true });
     expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual(STOP_AT_LIMIT);
     // Any tool, including the page's own.
@@ -82,27 +82,27 @@ describe('per-reply tool-call limit', () => {
 
   it('counts refused report_ready calls toward the limit', () => {
     const gate = createAssistantGate();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(gate.beforeToolCall(REPORT_READY, {}, ctx)).toHaveProperty('refuse');
     expect(gate.beforeToolCall(REPORT_READY, {}, ctx)).toEqual(STOP_AT_LIMIT);
   });
 
   it('starts a fresh count for each reply the chat numbers, as Continue and Retry are', () => {
     const gate = createAssistantGate();
-    for (let i = 0; i < 150; i++) gate.beforeToolCall('sandbox__read_file', {}, ctx);
+    for (let i = 0; i < 300; i++) gate.beforeToolCall('sandbox__read_file', {}, ctx);
     expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual(STOP_AT_LIMIT);
 
     const next = { ...ctx, reply: 2 };
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(gate.beforeToolCall('sandbox__read_file', {}, next)).toEqual({ allow: true });
     expect(gate.beforeToolCall('sandbox__read_file', {}, next)).toEqual(STOP_AT_LIMIT);
   });
 
-  it('gives a new reply all 150 calls, whatever the last one used', () => {
+  it('gives a new reply all 300 calls, whatever the last one used', () => {
     const gate = createAssistantGate();
     for (let i = 0; i < 100; i++) gate.beforeToolCall('sandbox__read_file', {}, ctx);
     gate.beforeToolCall('sandbox__read_file', {}, { ...ctx, reply: 2 });
-    for (let i = 0; i < 149; i++)
+    for (let i = 0; i < 299; i++)
       expect(gate.beforeToolCall('sandbox__read_file', {}, { ...ctx, reply: 2 })).toEqual({
         allow: true,
       });
@@ -112,7 +112,7 @@ describe('per-reply tool-call limit', () => {
   });
 
   it('is well below the 1,000-step ceiling and says so in both texts', () => {
-    expect(APP_ASSISTANT_TURN_TOOL_CALL_LIMIT).toBe(150);
+    expect(APP_ASSISTANT_TURN_TOOL_CALL_LIMIT).toBe(300);
     expect(TURN_LIMIT_REFUSAL).toBe(STOP_AT_LIMIT.refuse);
     expect(TURN_LIMIT_MESSAGE).toBe(STOP_AT_LIMIT.message);
   });
@@ -597,19 +597,19 @@ describe('subagent calls and the per-reply limit', () => {
   // The id of the dispatch_agent call that started the subagent, as the chat passes it.
   const child = { ...ctx, subagent: 'call-dispatch-1' };
 
-  it('leaves a subagent’s calls out of the count, so parent and subagent calls past 150 run', () => {
+  it('leaves a subagent’s calls out of the count, so parent and subagent calls past 300 run', () => {
     const gate = createAssistantGate();
-    // 97 parent + 113 subagent = 210 calls, interleaved; the parent alone stays under 150.
-    for (let i = 0; i < 113; i++) {
-      if (i < 97)
+    // 297 parent + 313 subagent = 610 calls, interleaved; the parent alone stays under 300.
+    for (let i = 0; i < 313; i++) {
+      if (i < 297)
         expect(gate.beforeToolCall('sandbox__read_file', {}, ctx)).toEqual({ allow: true });
       expect(gate.beforeToolCall('sandbox__read_file', {}, child)).toEqual({ allow: true });
     }
   });
 
-  it('still ends the reply on the parent’s 151st call, however many subagent calls ran', () => {
+  it('still ends the reply on the parent’s 301st call, however many subagent calls ran', () => {
     const gate = createAssistantGate();
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 300; i++) {
       expect(gate.beforeToolCall('sandbox__list_dir', {}, ctx)).toEqual({ allow: true });
       expect(gate.beforeToolCall('sandbox__list_dir', {}, child)).toEqual({ allow: true });
     }
@@ -620,7 +620,7 @@ describe('subagent calls and the per-reply limit', () => {
 
   it('counts the dispatch_agent call itself, which is the parent’s', () => {
     const gate = createAssistantGate();
-    for (let i = 0; i < 149; i++) gate.beforeToolCall('sandbox__read_file', {}, ctx);
+    for (let i = 0; i < 299; i++) gate.beforeToolCall('sandbox__read_file', {}, ctx);
     expect(gate.beforeToolCall('dispatch_agent', {}, ctx)).toEqual({ allow: true });
     expect(gate.beforeToolCall('dispatch_agent', {}, ctx)).toEqual(STOP_AT_LIMIT);
   });
