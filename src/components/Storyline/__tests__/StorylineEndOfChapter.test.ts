@@ -523,6 +523,31 @@ describe('StorylineEndOfChapter', () => {
     ]);
   });
 
+  // The owner can make a path main though its chapter is hidden from them: named by its number,
+  // not by its tombstone reason, which is a sentence of its own.
+  it('names a hidden chapter by its number in the make-main confirm', () => {
+    mocks.children = [
+      child(5, 'canon', 'Kept'),
+      { ...child(6, 'community', 'Other'), post: null, tombstone: 'browsingLevel' },
+    ];
+    const container = render({ parentPostId: 15, isOwner: true });
+    const hiddenFork = forks(container).find((f) => f.dataset.chapterId === '6');
+    if (!hiddenFork) throw new Error('no fork for chapter 6');
+    act(() => within(hiddenFork, 'storyline-make-main')?.click());
+    const body = document.createElement('div');
+    document.body.appendChild(body);
+    act(() =>
+      createRoot(body).render(
+        createElement(
+          MantineProvider,
+          { forceColorScheme: 'light' },
+          mocks.confirm.mock.calls[0][0].children
+        )
+      )
+    );
+    expect(body.textContent).toContain('Make Chapter 5 the main path after chapter 4?');
+  });
+
   it('puts writing below every path, outside the cards', () => {
     mocks.children = [
       child(5, 'canon', 'A'),
@@ -612,6 +637,20 @@ describe('StorylineEndOfChapter', () => {
       expect(mocks.openContinue.mock.calls).toEqual([
         [{ parentPostId: 15, parentChapterId: 4, mode: 'join', atEnd: false }],
       ]);
+    });
+
+    // A main-path chapter hidden from this reader is named by its number: its tombstone reason is a
+    // sentence of its own ("This chapter is hidden by your browsing level").
+    it("names the main path's next chapter in the branch note, by number when it is hidden", () => {
+      const note = (c: HTMLElement) => within(c, 'storyline-start-branch-note')?.textContent;
+      expect(note(render({ parentPostId: 15 }))).toBe(
+        'A side path after this chapter. The main path still goes on to Kept.'
+      );
+      document.body.innerHTML = '';
+      mocks.children = [{ ...child(5, 'canon', 'Kept'), post: null, tombstone: 'browsingLevel' }];
+      expect(note(render({ parentPostId: 15 }))).toBe(
+        'A side path after this chapter. The main path still goes on to Chapter 5.'
+      );
     });
 
     it('says "this path" on a branch', () => {
