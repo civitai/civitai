@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import dayjs from '~/shared/utils/dayjs';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
@@ -43,6 +44,8 @@ const SETTLED = 45; // whose removal was reversed on appeal before the last run,
 const EXEMPT_OWNER = 46;
 const REMOVED_AT = 1_700_000_000;
 const LAST_RUN = REMOVED_AT + 86_400;
+const DAY = 86_400;
+const NOW = new Date((REMOVED_AT + 30 * DAY) * 1000); // the removals above are a month old
 const at = (seconds: number) =>
   new Date(seconds * 1000).toISOString().slice(0, 23).replace('T', ' ');
 
@@ -196,7 +199,11 @@ describe('the removed-images list', () => {
 const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 // The ClickHouse SQL as it must read; the fake answers only these, so a changed query fails.
 const REMOVALS_SQL = (owners: string) =>
-  flat(`SELECT ownerId, imageId, toUnixTimestamp(maxIf(time, type = 'DeleteTOS')) AS removedAt
+  flat(`SELECT ownerId, imageId, toUnixTimestamp(maxIf(time, type = 'DeleteTOS')) AS removedAt,
+    coalesce(
+      nullIf(argMaxIf(violationType, time, type = 'DeleteTOS'), ''),
+      argMaxIf(tosReason, time, type = 'DeleteTOS')
+    ) AS reason
     FROM images WHERE type IN ('DeleteTOS', 'Restore') AND ownerId IN (${owners})
     GROUP BY ownerId, imageId
     HAVING maxIf(time, type = 'DeleteTOS') > maxIf(time, type = 'Restore')`);
@@ -213,7 +220,12 @@ const OWNERS_OF_SQL = (ids: string) =>
  * Stands in for ClickHouse, which this suite cannot run: OWNER has a removal since the last run and
  * RESTORED_OWNER a restore event, whose removal the real query then drops (so `removals` has none).
  */
-function fakeClickhouse() {
+function fakeClickhouse(
+  ownerRemovals: (Omit<(typeof removals)[number], 'ownerId'> & {
+    ownerId: number;
+    reason?: string | null;
+  })[] = removals
+) {
   const $query = vi.fn(async (query: TemplateStringsArray | string, ...values: unknown[]) => {
     // Interpolates as the real client does, with each date checked and shown as `?`.
     const text =
@@ -228,7 +240,7 @@ function fakeClickhouse() {
     const sql = flat(text);
     const owners = sql.match(/ownerId IN \(([\d,]+)\)/)?.[1];
     if (owners && sql === REMOVALS_SQL(owners))
-      return removals.filter((r) => owners.split(',').map(Number).includes(r.ownerId));
+      return ownerRemovals.filter((r) => owners.split(',').map(Number).includes(r.ownerId));
     const ids = sql.match(/imageId IN \(([\d,]+)\)/)?.[1];
     if (ids && sql === OWNERS_OF_SQL(ids)) {
       const asked = ids.split(',').map(Number);
@@ -242,11 +254,12 @@ function fakeClickhouse() {
   return { $query };
 }
 
-async function scoreRun() {
+async function scoreRun(ch: unknown = fakeClickhouse(), now = NOW) {
   const scores = new Map<number, number>();
   await getReportAgainstScore({
-    ch: fakeClickhouse() as never,
+    ch: ch as never,
     lastUpdate: new Date(LAST_RUN * 1000),
+    now,
     scoreMultipliers: { reportsAgainst: -1000 } as never,
     setScore: (id, category, score) => {
       expect(category).toBe('reportsAgainst');
@@ -326,6 +339,47 @@ describe('a removal score exemption', () => {
 });
 
 describe('the Removed content score', () => {
+  const sixMonthsAfter = (seconds: number) =>
+    new Date(
+      dayjs(seconds * 1000)
+        .add(6, 'month')
+        .valueOf()
+    );
+
+  it('stops counting a removal six months after it was made', async () => {
+    const justInside = new Date(sixMonthsAfter(REMOVED_AT).getTime() - 1000);
+    expect((await scoreRun(fakeClickhouse(), justInside)).get(OWNER)).toBe(-3000);
+
+    // The three removals made at REMOVED_AT age out; the one made two hours later still counts.
+    const afterFirstThree = new Date(sixMonthsAfter(REMOVED_AT).getTime() + 1000);
+    expect((await scoreRun(fakeClickhouse(), afterFirstThree)).get(OWNER)).toBe(-1000);
+
+    const afterAll = new Date(sixMonthsAfter(REMOVED_AT + 7200).getTime() + 1000);
+    expect((await scoreRun(fakeClickhouse(), afterAll)).get(OWNER)).toBe(0);
+  });
+
+  it('weighs each removal by the reason of its latest removal', async () => {
+    const reasons = ['realPerson', 'fecalMatter', 'other', 'manual', null, 'spam'];
+    const own = reasons.map((reason, i) => ({
+      ownerId: OWNER,
+      imageId: 200 + i,
+      removedAt: REMOVED_AT,
+      reason,
+    }));
+    const ch = fakeClickhouse(own);
+
+    // 1 + 0.5 + 0 + 1 + 1 + 0.5
+    expect((await scoreRun(ch)).get(OWNER)).toBe(-4000);
+  });
+
+  it('weighs a single half-weight removal at half the penalty', async () => {
+    const ch = fakeClickhouse([
+      { ownerId: OWNER, imageId: 300, removedAt: REMOVED_AT, reason: 'diaper' },
+    ]);
+
+    expect((await scoreRun(ch)).get(OWNER)).toBe(-500);
+  });
+
   it('counts every removal but the one an approved appeal reversed', async () => {
     // Still removed, appeal rejected, and removed again after an approval: three of the four.
     expect((await scoreRun()).get(OWNER)).toBe(-3000);

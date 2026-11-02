@@ -555,7 +555,7 @@ async function getReportedActionedScore(ctx: Context) {
 
 // Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts.
 export async function getReportAgainstScore(
-  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'>
+  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'> & { now?: Date }
 ) {
   const removed = await ctx.ch.$query<{ ownerId: number }>`
     SELECT DISTINCT ownerId
@@ -570,7 +570,7 @@ export async function getReportAgainstScore(
     ]),
   ];
 
-  const violations = await countRemovalsByOwner(ctx.ch, owners);
+  const violations = await countRemovalsByOwner(ctx.ch, owners, ctx.now);
   for (const id of owners) {
     const score = reportsAgainstScore(violations.get(id), ctx.scoreMultipliers.reportsAgainst);
     ctx.setScore(id, 'reportsAgainst', score);

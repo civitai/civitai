@@ -3,22 +3,35 @@ import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   REMOVAL_RESTORED_EVENT,
+  REMOVAL_SCORE_WINDOW_MONTHS,
   REPORTS_AGAINST_EVENT,
 } from '~/shared/constants/creator-journey.constants';
+import { removalWeight } from '~/shared/utils/creator-removal-weights';
+import dayjs from '~/shared/utils/dayjs';
 
 /**
  * The one definition of a counted removal: an image's latest removal, unless a restore event, an
  * approved image appeal or a score exemption came after it. The score job and the removed-images
  * list both read it.
  */
-export type CreatorRemoval = { ownerId: number; imageId: number; removedAt: number };
+export type CreatorRemoval = {
+  ownerId: number;
+  imageId: number;
+  removedAt: number;
+  /** The latest removal's `violationType`, else its `tosReason`; null when it recorded neither. */
+  reason?: string | null;
+};
 
 /**
  * ClickHouse half: one row per image of the owners `ownerFilter` selects, with its latest removal in
  * unix seconds. A removal a later restore event reversed is dropped here.
  */
 export const removalsQuery = (ownerFilter: string) => `
-  SELECT ownerId, imageId, toUnixTimestamp(maxIf(time, type = '${REPORTS_AGAINST_EVENT}')) AS removedAt
+  SELECT ownerId, imageId, toUnixTimestamp(maxIf(time, type = '${REPORTS_AGAINST_EVENT}')) AS removedAt,
+    coalesce(
+      nullIf(argMaxIf(violationType, time, type = '${REPORTS_AGAINST_EVENT}'), ''),
+      argMaxIf(tosReason, time, type = '${REPORTS_AGAINST_EVENT}')
+    ) AS reason
   FROM images
   WHERE type IN ('${REPORTS_AGAINST_EVENT}', '${REMOVAL_RESTORED_EVENT}') AND ${ownerFilter}
   GROUP BY ownerId, imageId
@@ -54,16 +67,27 @@ export async function withoutReversed<T extends CreatorRemoval>(
   return removals.filter((r) => !reversed.has(Number(r.imageId)));
 }
 
+/** Removals made before this no longer count towards the score. */
+export const removalWindowStart = (now: Date) =>
+  dayjs(now).subtract(REMOVAL_SCORE_WINDOW_MONTHS, 'month').toDate();
+
 /**
- * Counted removals per owner; an owner with none is absent. Checks appeals on the primary, like
+ * Each owner's removal count within the last `REMOVAL_SCORE_WINDOW_MONTHS`, every removal weighed by
+ * its reason; an owner with none is absent. Checks appeals on the primary, like
  * `getOwnersWithReversalsSince`, so an owner re-scored for a new approval is scored with it.
  */
-export async function countRemovalsByOwner(ch: CustomClickHouseClient, ownerIds: number[]) {
+export async function countRemovalsByOwner(
+  ch: CustomClickHouseClient,
+  ownerIds: number[],
+  now = new Date()
+) {
+  const windowStart = removalWindowStart(now).getTime();
   const counts = new Map<number, number>();
   for (const owners of chunk(ownerIds, 1000)) {
     const rows = await ch.$query<CreatorRemoval>(removalsQuery(`ownerId IN (${owners.join(',')})`));
-    for (const { ownerId } of await withoutReversed(rows, dbWrite))
-      counts.set(Number(ownerId), (counts.get(Number(ownerId)) ?? 0) + 1);
+    const inWindow = rows.filter((r) => Number(r.removedAt) * 1000 > windowStart);
+    for (const { ownerId, reason } of await withoutReversed(inWindow, dbWrite))
+      counts.set(Number(ownerId), (counts.get(Number(ownerId)) ?? 0) + removalWeight(reason));
   }
   return counts;
 }
