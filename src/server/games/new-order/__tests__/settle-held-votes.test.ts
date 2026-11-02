@@ -207,6 +207,21 @@ describe('pending votes on images New Order drops for review', () => {
     await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
 
     expect(voidedIds()).toEqual([HELD]);
+    // processFinalRatings ran (its first step counts the request).
+    expect(redisMock.sysRedis.incr).toHaveBeenCalledTimes(1);
+  });
+
+  it('(b) a held image whose pool removal failed is left for the daily purge, not voided', async () => {
+    knightPool.reset.mockRejectedValue(new Error('redis down'));
+    knightPool.getAll.mockResolvedValueOnce([
+      { value: String(CLEAN), score: 0 },
+      { value: String(HELD), score: 0 },
+    ]);
+
+    const served = await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
+
+    expect(served.map((i) => i.id)).toEqual([CLEAN]);
+    expect(voidedIds()).toEqual([]);
   });
 
   it('(b) control: a queue read with nothing held voids nothing', async () => {
@@ -215,6 +230,7 @@ describe('pending votes on images New Order drops for review', () => {
     await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
 
     expect(voidedIds()).toEqual([]);
+    expect(redisMock.sysRedis.incr).not.toHaveBeenCalled();
   });
 
   it('(c) a failed void does not fail the queue read', async () => {

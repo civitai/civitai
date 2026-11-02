@@ -1775,15 +1775,18 @@ export async function getImagesQueue({
       });
       if (heldIds.length > 0) {
         // Removal is cleanup only: the filter above is what keeps them out.
+        let removed = false;
         try {
           await pool.reset({ id: heldIds });
+          removed = true;
           // The removed members shifted the rest of the pool down.
           poolOffsets[poolIdx] -= heldIds.length;
         } catch (e) {
           handleLogError(e as Error, 'new-order-held-image-pool-removal');
         }
-        // Out of the pool, so the daily purge can no longer settle their votes.
-        await voidPendingRatings(heldIds);
+        // Out of the pool, so the daily purge can no longer settle their votes. Still in it, the
+        // purge will.
+        if (removed) await voidPendingRatings(heldIds);
       }
 
       // Don't overshoot the target — pass 2 redistribution relies on
