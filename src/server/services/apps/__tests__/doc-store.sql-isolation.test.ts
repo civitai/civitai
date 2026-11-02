@@ -247,15 +247,18 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     ]);
   });
 
-  it('every account-wipe-shaped statement is SQL_ACCOUNT_NAMESPACES', () => {
+  it('every account-wipe-shaped statement is SQL_ACCOUNT_NAMESPACES or the viewer-data listing', () => {
     const wipe = collect((n) => {
       const t = literalText(n);
       return t !== null && /appdata\./.test(t) && isAccountWipeStatement(t);
     });
-    expect(wipe.map((n) => owner(n, 'variable'))).toEqual(['SQL_ACCOUNT_NAMESPACES']);
+    expect(wipe.map((n) => owner(n, 'variable'))).toEqual([
+      'SQL_ACCOUNT_NAMESPACES',
+      'SQL_VIEWER_PROD_USAGE',
+    ]);
   });
 
-  it('the account-wipe setting is set in exactly one place, `accountWipeTx`, which only the enumeration calls', () => {
+  it('the account-wipe setting is set in exactly one place, `accountWipeTx`, which only the enumeration and the viewer-data listing call', () => {
     const nearestFn = (n: ts.Node) => {
       for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
         if ((ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name)
@@ -271,7 +274,7 @@ describe('review maintenance and account-wipe enumeration are confined to their 
         ts.isIdentifier(n.expression) &&
         n.expression.text === 'accountWipeTx'
     );
-    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces']);
+    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces', 'listViewerUsage']);
   });
 
   it('no other server code mentions the account-wipe setting (only the store, the migration and tests)', () => {

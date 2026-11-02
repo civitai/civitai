@@ -20,7 +20,8 @@
 // `accountWipeTx`, whose transaction-local `appdata.account_wipe_uid` setting the
 // migration's wipe policy admits for that ONE user's rows of those two tables, read only.
 // It returns (app, ns) pairs; the wipe of each runs in an ordinary `withTx`, keyed and
-// scoped like any viewer call.
+// scoped like any viewer call. The viewer-data listing (`listViewerUsage`) is a second SELECT
+// of that shape, on `usage_user` alone, in the same transaction kind.
 //
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
@@ -1019,6 +1020,32 @@ export function createDocStoreLookup(deps: DocStoreDeps) {
 }
 export type DocStoreLookup = ReturnType<typeof createDocStoreLookup>;
 
+/**
+ * VIEWER DATA — a signed-in user's own production data across apps, for their account settings:
+ * the apps they hold documents in (`listViewerUsage`) and emptying one of them
+ * (`emptyViewerData`). A separate object because the listing reads one user's usage rows in
+ * every app (the account-wipe enumeration's setting), which nothing holding the block-token
+ * routes' store may reach. The caller passes the SESSION user's id, never request input. Only
+ * `doc-store-viewer-data.instance.ts` builds one in production; its importers are pinned by
+ * `__tests__/doc-store-viewer-data.ledger.test.ts`.
+ */
+export function createDocStoreViewerData(deps: DocStoreDeps) {
+  return buildDocStore(deps).viewerData;
+}
+export type DocStoreViewerData = ReturnType<typeof createDocStoreViewerData>;
+
+/** One app's stored production usage for one user (`listViewerUsage`). */
+export type ViewerAppUsage = { appId: string; bytes: number; docs: number };
+
+/** What `emptyViewerData` deleted. */
+export type ViewerDataEmptyResult = {
+  privateDocs: number;
+  privateBytes: number;
+  /** Zero unless the shared documents were asked for. */
+  sharedDocs: number;
+  sharedBytes: number;
+};
+
 /** The production namespace: published data, never a developer's dev or a moderator's review namespace. */
 export const PUBLISHED_NS = 'prod';
 
@@ -1107,8 +1134,8 @@ function buildDocStore(deps: DocStoreDeps) {
    * An ACCOUNT-WIPE ENUMERATION transaction: no app or namespace bound, and
    * `appdata.account_wipe_uid` set to one validated user id — which the migration's wipe policy
    * admits for that user's `usage_user` and `doc_mark` rows only, read only. Transaction-local like
-   * every other setting. 🔴 Called by `listAccountNamespaces` ONLY (pinned by
-   * `doc-store.sql-isolation.test.ts`).
+   * every other setting. 🔴 Called by `listAccountNamespaces` and `listViewerUsage` ONLY (pinned
+   * by `doc-store.sql-isolation.test.ts`).
    */
   async function accountWipeTx<T>(
     userId: number,
@@ -1890,6 +1917,39 @@ function buildDocStore(deps: DocStoreDeps) {
     return result;
   }
 
+  /**
+   * The apps in which `userId` holds production documents, with their stored usage — the same
+   * figure the per-viewer ceiling (`userBytes` / `userDocs`) is checked against: their private
+   * documents, the shared documents they authored and the counter documents their increment
+   * created. One indexed read per page, never a read per app.
+   */
+  async function listViewerUsage(userId: number): Promise<ViewerAppUsage[]> {
+    assertWipeUserId(userId);
+    return []; // STUB: tests-first commit
+  }
+
+  /**
+   * Empty what one viewer holds in one app's PRODUCTION namespace, in ONE scoped transaction:
+   *   - always: their private documents (index rows with them), each refunded to their own usage
+   *     (the app's never carried them, `appDelta`) and tombstoned, as `remove` does;
+   *   - with `shared`: also the VISIBLE shared documents they authored, deleted exactly as an
+   *     author or moderator delete does (`deleteLockedSharedDocs`: index rows, tallies, every
+   *     viewer's marks, app and author refunds, tombstones). A hidden one stays for moderation.
+   * Counter documents their increment created, and their marks on other documents, stay.
+   * Idempotent: a re-run finds nothing and writes nothing.
+   */
+  async function emptyViewerData(
+    userId: number,
+    appId: string,
+    opts: { shared: boolean }
+  ): Promise<ViewerDataEmptyResult> {
+    assertWipeUserId(userId);
+    void appId;
+    void opts;
+    // STUB: tests-first commit
+    return { privateDocs: 0, privateBytes: 0, sharedDocs: 0, sharedBytes: 0 };
+  }
+
   const store = {
     get,
     getMany,
@@ -1933,6 +1993,7 @@ function buildDocStore(deps: DocStoreDeps) {
     lookup: { findSharedByKey },
     moderation: createModeration({ withTx, charge }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount },
+    viewerData: { listViewerUsage, emptyViewerData, limits },
   };
 }
 
