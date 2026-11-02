@@ -262,15 +262,18 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     ]);
   });
 
-  it('every account-wipe-shaped statement is SQL_ACCOUNT_NAMESPACES', () => {
+  it('every account-wipe-shaped statement is SQL_ACCOUNT_NAMESPACES or the viewer-data listing', () => {
     const wipe = collect((n) => {
       const t = literalText(n);
       return t !== null && /appdata\./.test(t) && isAccountWipeStatement(t);
     });
-    expect(wipe.map((n) => owner(n, 'variable'))).toEqual(['SQL_ACCOUNT_NAMESPACES']);
+    expect(wipe.map((n) => owner(n, 'variable'))).toEqual([
+      'SQL_ACCOUNT_NAMESPACES',
+      'SQL_VIEWER_PROD_USAGE',
+    ]);
   });
 
-  it('the account-wipe setting is set in exactly one place, `accountWipeTx`, which only the enumeration calls', () => {
+  it('the account-wipe setting is set in exactly one place, `accountWipeTx`, which only the enumeration and the viewer-data listing call', () => {
     const nearestFn = (n: ts.Node) => {
       for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
         if ((ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name)
@@ -286,7 +289,7 @@ describe('review maintenance and account-wipe enumeration are confined to their 
         ts.isIdentifier(n.expression) &&
         n.expression.text === 'accountWipeTx'
     );
-    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces']);
+    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces', 'listViewerUsage']);
   });
 
   it('every app-purge-shaped statement is SQL_APP_NAMESPACES', () => {
@@ -371,6 +374,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/jobs/__tests__/remove-deleted-account-app-data.test.ts',
     // The owner-usage router suite seeds usage_app rows with known byte and doc counts.
     'server/routers/__tests__/app-listings.router.doc-store-usage.test.ts',
+    // The user-storage router suite resets the tables and reads back what an empty removed.
+    'server/routers/__tests__/app-storage.router.test.ts',
     // The moderator router suite resets the tables and pins report times between cases.
     'server/routers/__tests__/apps-mod-doc-store.router.test.ts',
     // The account-wipe seam: reads the wiped account's and a bystander's rows back.
@@ -396,6 +401,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     // The app-purge up migration names its tables through `format('appdata.%I')`, so only the
     // rollback spells a table out.
     'server/services/apps/migrations/20261102120000_appdata_app_purge.down.sql',
+    // The per-user index on usage_user (DDL only).
+    'server/services/apps/migrations/20261102120000_appdata_usage_user_by_user.sql',
   ];
   const PATTERN =
     /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
