@@ -15,7 +15,7 @@ export function announcementWindowOverlapsWhere(
     disabled: false,
     AND: [
       {
-        OR: [{ startsAt: { lte: to } }, { startsAt: { equals: null } }],
+        OR: [{ startsAt: { lte: to } }],
       },
       {
         OR: [{ endsAt: { gte: from } }, { endsAt: { equals: null } }],
