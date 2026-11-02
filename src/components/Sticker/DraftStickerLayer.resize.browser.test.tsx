@@ -6,6 +6,10 @@ import type * as Trpc from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+import {
+  STICKER_PLACEMENT_DEFAULT_SCALE,
+  STICKER_PLACEMENT_MIN_SCALE,
+} from '~/shared/utils/sticker-placement';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
 /**
@@ -60,7 +64,7 @@ const pointer = (type: string, init: { x: number; y: number }, target: EventTarg
     })
   );
 
-const dragHandleFar = async (width: number) => {
+const dragHandle = async (width: number, toward: 'far' | 'anchor') => {
   const height = Math.round(width * 0.75);
   renderWithProviders(
     <div
@@ -77,15 +81,21 @@ const dragHandleFar = async (width: number) => {
   begin(COSMETIC_ID, { x: 0.3, y: 0.3 }, CAP);
 
   const handle = await vi.waitFor(() => {
-    const el = document.querySelector<HTMLElement>('span.cursor-nwse-resize.-bottom-1\\.5');
+    const el = document.querySelector<HTMLElement>(
+      'span.cursor-nwse-resize.-bottom-1\\.5.-right-1\\.5'
+    );
     if (!el) throw new Error('no handle yet');
     return el;
   });
   const surface = document.querySelector('[data-testid="surface"]')!.getBoundingClientRect();
   const start = handle.getBoundingClientRect();
   pointer('pointerdown', { x: start.x + 6, y: start.y + 6 }, handle);
-  pointer('pointermove', { x: surface.right + 500, y: surface.bottom + 500 }, window);
-  pointer('pointerup', { x: surface.right + 500, y: surface.bottom + 500 }, window);
+  const end =
+    toward === 'far'
+      ? { x: surface.right + 500, y: surface.bottom + 500 }
+      : { x: surface.left + (0.3 - STICKER_PLACEMENT_DEFAULT_SCALE / 2) * width, y: start.y + 6 };
+  pointer('pointermove', end, window);
+  pointer('pointerup', end, window);
 
   return useStickerPlacementDraftStore.getState().drafts[0];
 };
@@ -101,9 +111,18 @@ beforeEach(() => {
 describe('resizing a draft to the creator limit', () => {
   // 111, 114 and 148 are widths where (0.22 * w) / w is above 0.22 in floating point.
   test.each([111, 114, 148])('stops exactly at the limit on a %ipx-wide image', async (width) => {
-    const resized = await dragHandleFar(width);
+    const resized = await dragHandle(width, 'far');
 
     expect(resized.scale).toBeLessThanOrEqual(CAP);
     expect(resized.scale).toBeCloseTo(CAP, 10);
+  });
+});
+
+describe('resizing a draft to the floor', () => {
+  // (0.05 * w) / w is below 0.05 at these widths, and the schema refuses a scale under the floor.
+  test.each([162, 167, 172])('stops at or above the floor on a %ipx-wide image', async (width) => {
+    const resized = await dragHandle(width, 'anchor');
+
+    expect(resized.scale).toBeGreaterThanOrEqual(STICKER_PLACEMENT_MIN_SCALE);
   });
 });
