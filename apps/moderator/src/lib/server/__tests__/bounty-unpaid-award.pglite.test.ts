@@ -16,7 +16,6 @@ vi.mock('$lib/server/db', () => ({
 
 const { countOpenUnpaidAwards, getUnpaidAwards } = await import('../bounty-unpaid-award.service');
 
-// The columns the queries read.
 const SCHEMA = `
 CREATE TABLE "User" (id INTEGER PRIMARY KEY, username TEXT);
 CREATE TABLE "Bounty" (

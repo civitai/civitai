@@ -30,14 +30,14 @@
 
   type Row = PageData['items'][number];
   const keyOf = (row: Row) => `${row.bountyId}:${row.userId}`;
-  // Without a winner there is nobody to have paid; the main app refuses it too.
+  // A supporter refund has no winner to have paid.
   const rulingsFor = (row: Row) =>
     row.winnerUserId == null ? RULINGS.filter((r) => r.value !== 'paid_winner') : RULINGS;
   const rulingLabel = (value: string | null) =>
     RULINGS.find((r) => r.value === value)?.label ?? value ?? '';
 
   const done = new SvelteMap<string, true>();
-  // Held here, not in the form: the row dims on submit and comes back on a refusal.
+  // Held above the form so a refused submit keeps what was typed.
   const rulings = new SvelteMap<string, BountyAwardRuling>();
   const references = new SvelteMap<string, string>();
   // A row stays marked until the list stops showing it: a lagging read can still return it.

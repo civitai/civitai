@@ -188,7 +188,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(() => countEvidenceHoldsEnding(dbRead)),
     // Bounded so a slow Redis read cannot hold up the sidebar; these keys are not in `maybe`, so a timeout shows no badge rather than `unavailable`.
     bounded(() => peekTicketCounts(() => ticketSnapshot.peek())),
-    // Bounded: the legacy half reads ModActivity, which has no index on `activity`.
+    // Bounded: the legacy half filters ModActivity on `activity`, which no index covers.
     bounded(countOpenUnpaidAwards),
   ]);
   // Null where a bounded count did not answer.

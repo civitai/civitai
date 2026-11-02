@@ -28,8 +28,7 @@ export type UnpaidAwardRow = {
 const ACTIVITY_UNPAID = 'bountyAwardUnpaid';
 export const RESOLVED_WINDOW_DAYS = 30;
 
-/** Mirrors `resolveUnpaidBountyAward`'s fallback: a ModActivity record whose bounty and supporter row
- *  still exist and that has no table row yet. */
+/** Keep in step with `resolveUnpaidBountyAward`'s legacy fallback: a record it cannot resolve must not be listed. */
 const legacyOpen = sql`
   SELECT * FROM (
   SELECT DISTINCT ON (m."entityId", m."userId")

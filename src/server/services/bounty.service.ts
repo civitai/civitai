@@ -1830,7 +1830,7 @@ export async function releaseUnconfirmedBountyRefund(
 
 /**
  * Records the ruling on an award recorded as unpaid by `releaseStuckBountyAward` or
- * `releaseUnconfirmedBountyRefund` (a supporter refund, with no winner). Moves no Buzz: the
+ * `releaseUnconfirmedBountyRefund` (winner payout or supporter refund). Moves no Buzz: the
  * ruling is settled in the ledger first, and this only lets the bounty be deleted again.
  */
 export async function resolveUnpaidBountyAward({
@@ -1892,8 +1892,8 @@ export async function resolveUnpaidBountyAward({
         },
       });
     }
-    // A repeat is a no-op only if it says the same thing; otherwise the audit row would carry a
-    // reference the record does not.
+    // A repeat with a different ruling or reference is a conflict, not a no-op: the caller would
+    // believe its reference was recorded.
     const alreadyResolved = (stored: { ruling: string | null; ledgerReference: string | null }) => {
       if (stored.ruling === ruling && stored.ledgerReference === ledgerReference) return false;
       throw new TRPCError({
@@ -1911,7 +1911,7 @@ export async function resolveUnpaidBountyAward({
       where: { bountyId, userId, resolvedAt: null },
       data: { ruling, ledgerReference, resolvedById: moderatorId, resolvedAt: new Date() },
     });
-    // Only a bounty that still exists is locked, so two resolves of a deleted bounty's record can race.
+    // A deleted bounty's record is unlocked, so a concurrent resolve can win; a zero count is not an error.
     if (!count) {
       const stored = await tx.bountyUnpaidAward.findUnique({ where: key });
       if (stored?.resolvedAt) return alreadyResolved(stored);

@@ -44,8 +44,7 @@ export const actions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
-    // The main app owns the lock, the legacy backfill and the audit; this records a ruling and
-    // moves no Buzz.
+    // Lock, legacy backfill and audit live in the main app.
     const result = await callModEndpoint('bounty-unpaid-award/resolve', input, 'Record ruling');
     if (!result.ok)
       return fail(400, { error: result.error, bountyId: input.bountyId, userId: input.userId });

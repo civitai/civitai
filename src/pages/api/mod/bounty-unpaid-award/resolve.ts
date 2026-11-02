@@ -8,7 +8,7 @@ export default defineModeratorEndpoint('bounty.resolveUnpaidAward', {
   notes: [
     'Records the ruling only: it moves no Buzz.',
     '`paid_winner` is refused on a record with no winner (an unconfirmed supporter refund).',
-    'Repeating the ruling a record already has returns `recorded: false`; a different ruling on a resolved record is refused with 409.',
+    'Repeating the exact ruling and ledger reference a record already has returns `recorded: false`; a different ruling or a different ledger reference on a resolved record is refused with 409.',
   ],
   rateLimit: { max: 60, windowSeconds: 60 },
   input: resolveUnpaidBountyAwardInputSchema,
