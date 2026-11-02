@@ -14,6 +14,15 @@ const RATING_GUIDE_LEVELS = [
   NsfwLevel.Blocked,
 ] as const;
 
+/** What each rating level means, as shown on the rules page, the first-visit guide and the answer buttons. */
+export function ratingGuide() {
+  return RATING_GUIDE_LEVELS.map((level) => ({
+    level,
+    label: browsingLevelLabels[level],
+    description: browsingLevelDescriptions[level],
+  }));
+}
+
 /** Numbers the rules page quotes, read from the game's config. */
 export function rulesFacts(yesNoJudges: number) {
   return {
@@ -41,10 +50,6 @@ export function rulesFacts(yesNoJudges: number) {
     },
     yesNo: { judgesNeeded: yesNoJudges },
     hearts: SMITES.max,
-    ratingGuide: RATING_GUIDE_LEVELS.map((level) => ({
-      level,
-      label: browsingLevelLabels[level],
-      description: browsingLevelDescriptions[level],
-    })),
+    ratingGuide: ratingGuide(),
   };
 }

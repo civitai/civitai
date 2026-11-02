@@ -11,6 +11,9 @@ import {
 } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
+import { ratingGuide } from '$lib/server/rules';
+import { dismissGuide, dismissProgress, readNotices } from '$lib/server/seen';
+import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
 import { conversionEnabled } from '$lib/server/conversion/runtime';
@@ -50,11 +53,19 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   const status = await requireMember(db, locals.user.id);
   const now = queueDeps.now();
   // Shown on whichever page the player lands on: a reset player lands on the Trials.
-  const [resetNotice, notices] = await Promise.all([
+  const [resetNotice, notices, seen] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
     readHiddenNotices(db, locals.user.id),
+    readNotices(seenStore, locals.user.id, status),
   ]);
-  const common = { status, resetNotice, notices };
+  const common = {
+    status,
+    resetNotice,
+    notices,
+    showGuide: seen.guide,
+    progress: seen.progress,
+    ratingGuide: ratingGuide(),
+  };
 
   if (status.rank === 'Acolyte') {
     const trial = await getTrial(db, locals.user.id, trialDeps);
@@ -287,6 +298,23 @@ export const actions: Actions = {
       return fail(500, {
         message: 'Could not dismiss the notice. Try again.',
         resetNoticeFailed: true,
+      });
+    }
+  },
+
+  dismissGuide: async ({ locals }) => {
+    const status = await requireMember(db, locals.user.id);
+    if (!(await dismissGuide(seenStore, locals.user.id, status))) {
+      return fail(500, { message: 'Could not dismiss the guide. Try again.', guideFailed: true });
+    }
+  },
+
+  dismissProgress: async ({ locals }) => {
+    const status = await requireMember(db, locals.user.id);
+    if (!(await dismissProgress(seenStore, locals.user.id, status))) {
+      return fail(500, {
+        message: 'Could not dismiss the notice. Try again.',
+        progressFailed: true,
       });
     }
   },
