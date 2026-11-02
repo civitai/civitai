@@ -124,5 +124,6 @@ describe('resizing a draft to the floor', () => {
     const resized = await dragHandle(width, 'anchor');
 
     expect(resized.scale).toBeGreaterThanOrEqual(STICKER_PLACEMENT_MIN_SCALE);
+    expect(resized.scale).toBeCloseTo(STICKER_PLACEMENT_MIN_SCALE, 10);
   });
 });
