@@ -18,14 +18,16 @@ import { trpc } from '~/utils/trpc';
  *
  * Renders nothing while loading, on error, and for the overwhelmingly common
  * `null` — the credit is decoration and must never shift or break the sidebar.
- * The row is indented to the creator card's inner padding so the credit lines up
- * under the card's content rather than floating at the panel edge.
+ * 🔴 NO horizontal padding here, and no negative margin: the credit is a card now, and a card
+ * is exactly as wide as the cards beside it (the sidebar column's `gap-3` spaces them).
+ * `ImagePublishedWithApp.geometry.test.tsx` measures it; the old `px-4` indent, from when
+ * this was a one-line text credit, made it 32px narrower than its neighbours.
  */
 export function ImagePublishedWithApp({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getPublishedWithApp.useQuery({ id: imageId });
   if (!data) return null;
   return (
-    <div className="-mt-1 px-4" data-testid="image-published-with-app">
+    <div data-testid="image-published-with-app">
       <PostPublishedWithApp app={data} />
     </div>
   );

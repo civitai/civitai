@@ -241,6 +241,9 @@ export interface AppListingCardProps {
 /** How far an embedded card drops its title and Open below the icon-centred line. */
 const EMBEDDED_HEADER_NUDGE_PX = 8;
 
+/** An embedded card's CTA keeps its glyph 4px from the label (Mantine's default is 10). */
+const EMBEDDED_CTA_STYLES = { section: { marginInlineStart: 4 } };
+
 export function AppListingCard({
   card,
   canOpenPage = false,
@@ -444,6 +447,7 @@ export function AppListingCard({
                 }px)`,
               }}
               rightSection={<CtaGlyph size={14} />}
+              styles={embedded ? EMBEDDED_CTA_STYLES : undefined}
               // "Opened" = actually opened. An OFF-SITE app is opened the moment this Visit CTA is
               // followed — there is no on-platform route afterwards that could record it (the
               // on-site path is recorded by `/apps/run/<slug>` itself). Recording on a detail
@@ -468,7 +472,10 @@ export function AppListingCard({
                   LISTING_CARD_CTA_HEIGHT_PX / 2
                 }px)`,
               }}
-              leftSection={<CtaGlyph size={14} />}
+              // Embedded (a sidebar panel, Open on the right edge): the glyph trails the label, close to it.
+              leftSection={embedded ? undefined : <CtaGlyph size={14} />}
+              rightSection={embedded ? <CtaGlyph size={14} /> : undefined}
+              styles={embedded ? EMBEDDED_CTA_STYLES : undefined}
             >
               {cta.label}
             </Button>
