@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { DocStore, DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
@@ -33,7 +33,7 @@ vi.mock('../job', () => ({
   createJob: (name: string, cron: string, fn: (ctx: unknown) => unknown) => ({ name, cron, fn }),
 }));
 
-const { removeDeletedAccountAppData } = await import(
+const { removeDeletedAccountAppData, removeDeletedAccountAppDataJob } = await import(
   '~/server/jobs/remove-deleted-account-app-data'
 );
 
@@ -381,4 +381,63 @@ describe('removeDeletedAccountAppData', () => {
       expect(await markerOf(OPTED_IN)).toBe(change === 'held' ? 'requested' : null);
     });
   }
+
+  it('never writes an account that is live again: a restore after the last check keeps the job off its row', async () => {
+    // The wipe is done and passed its last check; the account comes back before the marker is
+    // cleared, through a restore that left the marker in place.
+    const base = dbMock.dbWrite.$executeRaw.getMockImplementation();
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (/- 'appDataRemoval'/.test(toSql(strings))) {
+          await writeUser(primary, OPTED_IN, { deletedAt: null, meta: { ...REQUESTED } });
+        }
+        return base?.(strings, ...values);
+      }
+    );
+
+    await removeDeletedAccountAppData({ store: maint, now: NOW });
+
+    expect(await docsOf(OPTED_IN)).toBe(0);
+    expect(await markerOf(OPTED_IN)).toBe('requested');
+  });
+});
+
+describe('the job before its worklist index is applied', () => {
+  const INDEX_DDL = `CREATE INDEX "User_appDataRemoval_deletedAt_id_idx" ON "User" ("deletedAt", id)
+    WHERE meta->>'appDataRemoval' = 'requested'`;
+  const runJob = () =>
+    (removeDeletedAccountAppDataJob as unknown as { fn: (c: unknown) => Promise<unknown> }).fn({
+      checkIfCanceled: () => undefined,
+    });
+  /** Worklist reads on the replica so far. */
+  const worklistReads = () =>
+    dbMock.dbRead.$queryRaw.mock.calls.filter(([strings]) =>
+      /FROM "User" u/.test(toSql(strings as TemplateStringsArray))
+    ).length;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    dbMock.dbRead.$queryRaw.mockClear();
+  });
+  afterEach(async () => {
+    vi.useRealTimers();
+    await replica.exec('DROP INDEX IF EXISTS "User_appDataRemoval_deletedAt_id_idx"');
+  });
+
+  // Absent first: a present answer is kept for the life of the process.
+  it('does nothing without the index on the replica: no worklist read, nothing wiped', async () => {
+    expect(await runJob()).toEqual({ indexMissing: 'User_appDataRemoval_deletedAt_id_idx' });
+    expect(worklistReads()).toBe(0);
+    expect(await docsOf(OPTED_IN)).toBe(4);
+    expect(await markerOf(OPTED_IN)).toBe('requested');
+  });
+
+  it('runs once the index is there', async () => {
+    await replica.exec(INDEX_DDL);
+
+    expect(await runJob()).toMatchObject({ scanned: 2, wiped: 1, held: 1 });
+    expect(worklistReads()).toBeGreaterThan(0);
+    expect(await docsOf(OPTED_IN)).toBe(0);
+  });
 });

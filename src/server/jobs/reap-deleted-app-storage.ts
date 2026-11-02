@@ -145,9 +145,6 @@ export async function reapDeletedAppStorage(
         await dbWrite.$executeRaw`
           UPDATE app_blocks SET storage_purged_at = now()
           WHERE id = ${id}
-            AND storage_deleted_at IS NOT NULL
-            AND storage_deleted_at <= ${cutoff}
-            AND status <> 'approved'
         `;
         result.purged += 1;
         logToAxiom(

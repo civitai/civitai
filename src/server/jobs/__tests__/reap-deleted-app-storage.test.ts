@@ -54,6 +54,18 @@ let store: DocStore;
 let maint: DocStoreMaintenance;
 let main: PGlite;
 
+/**
+ * What a restore through Prisma writes when it forgets `storage_deleted_at`: the status, and
+ * `updated_at` (Prisma's `@updatedAt`).
+ */
+async function restoreTo(id: string, status: string) {
+  await main.query(`UPDATE app_blocks SET status = $2, updated_at = $3 WHERE id = $1`, [
+    id,
+    status,
+    NOW,
+  ]);
+}
+
 /** A Prisma tagged-template call as positional SQL. */
 const toSql = (strings: TemplateStringsArray) =>
   strings.reduce((sql, part, i) => sql + (i === 0 ? '' : `$${i}`) + part, '');
@@ -69,10 +81,13 @@ async function rowsOf(appId: string, harness: Harness = h): Promise<number> {
   return n;
 }
 
-/** An app with data from two users in prod and a developer's dev namespace. */
+/**
+ * An app with data from two users in prod and a developer's dev namespace. The block was last
+ * written (`updated_at`) 60 days ago unless given, before every deletion the cases make.
+ */
 async function app(
   tag: string,
-  block: { status: string; deletedAt: Date | null; purgedAt?: Date | null }
+  block: { status: string; deletedAt: Date | null; purgedAt?: Date | null; updatedAt?: Date }
 ): Promise<string> {
   const id = freshApp(tag);
   for (const uid of USERS) {
@@ -83,8 +98,9 @@ async function app(
   }
   await store.put(ctx(id, `dev:${USERS[0]}`, USERS[0]), PREFS, 'dev', { a: 1 });
   await main.query(
-    `INSERT INTO app_blocks (id, status, storage_deleted_at, storage_purged_at) VALUES ($1, $2, $3, $4)`,
-    [id, block.status, block.deletedAt, block.purgedAt ?? null]
+    `INSERT INTO app_blocks (id, status, storage_deleted_at, storage_purged_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [id, block.status, block.deletedAt, block.purgedAt ?? null, block.updatedAt ?? ago(60 * DAY)]
   );
   return id;
 }
@@ -109,7 +125,8 @@ beforeAll(async () => {
     id text PRIMARY KEY,
     status text NOT NULL,
     storage_deleted_at timestamptz,
-    storage_purged_at timestamptz)`);
+    storage_purged_at timestamptz,
+    updated_at timestamptz NOT NULL)`);
 });
 
 afterAll(async () => {
@@ -223,6 +240,71 @@ describe('reapDeletedAppStorage', () => {
     expect(await reapDeletedAppStorage({ store: maint, now: NOW })).toMatchObject({ purged: 1 });
     expect(await rowsOf(id)).toBe(0);
   });
+
+  // A restore that returns the block to draft or pending leaves `storage_deleted_at` set unless
+  // the restore path clears it; the block was written after its deletion, so it is not deleted.
+  for (const status of ['draft', 'pending'] as const) {
+    it(`never purges a block restored to ${status} after its deletion, however old the deletion`, async () => {
+      const id = await app(`RESTORED${status.toUpperCase()}`, {
+        status,
+        deletedAt: ago(40 * DAY),
+        updatedAt: ago(35 * DAY),
+      });
+      const before = await rowsOf(id);
+
+      const out = await reapDeletedAppStorage({ store: maint, now: NOW });
+
+      expect(out.scanned).toBe(0);
+      expect(await rowsOf(id)).toBe(before);
+      expect(await purgedAt(id)).toBeNull();
+    });
+
+    it(`stops within one batch when the block is restored to ${status} mid-purge`, async () => {
+      const id = await app(`MID${status.toUpperCase()}`, {
+        status: 'suspended',
+        deletedAt: ago(PERIOD + DAY),
+      });
+      const before = await rowsOf(id);
+      let checks = 0;
+      const base = dbMock.dbWrite.$queryRaw.getMockImplementation();
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          if (/AS eligible/.test(toSql(strings)) && (checks += 1) === 2)
+            await restoreTo(id, status);
+          return base?.(strings, ...values);
+        }
+      );
+
+      const out = await reapDeletedAppStorage({ store: maint, now: NOW, batchRows: 1 });
+
+      expect(out).toMatchObject({ scanned: 1, stopped: 1, purged: 0, rows: 1 });
+      expect(await rowsOf(id)).toBe(before - 1);
+      expect(await purgedAt(id)).toBeNull();
+    });
+  }
+
+  // The last `proceed` check passed and the data is gone; the restore lands before the stamp.
+  for (const status of ['approved', 'pending'] as const) {
+    it(`doesn't stamp a purge when the block is restored to ${status} after the last batch`, async () => {
+      const id = await app(`STAMP${status.toUpperCase()}`, {
+        status: 'suspended',
+        deletedAt: ago(PERIOD + DAY),
+      });
+      const base = dbMock.dbWrite.$executeRaw.getMockImplementation();
+      dbMock.dbWrite.$executeRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          if (/SET storage_purged_at/.test(toSql(strings))) await restoreTo(id, status);
+          return base?.(strings, ...values);
+        }
+      );
+
+      const out = await reapDeletedAppStorage({ store: maint, now: NOW });
+
+      expect(await rowsOf(id)).toBe(0);
+      expect(out.stopped).toBe(0);
+      expect(await purgedAt(id)).toBeNull();
+    });
+  }
 });
 
 describe('the reaper before its migrations are applied', () => {
@@ -254,7 +336,7 @@ describe('the reaper before its migrations are applied', () => {
     live.store = maint;
   });
 
-  it('a missing app-purge policy is logged once a day, not once per app per run, and deletes nothing', async () => {
+  it('a missing migration stops the run with nothing deleted, and is logged once a day per migration', async () => {
     const s = createDocStore({ db: noPolicy.db });
     live.store = createDocStoreMaintenance({ db: noPolicy.db });
     const ids: string[] = [];
@@ -262,34 +344,32 @@ describe('the reaper before its migrations are applied', () => {
       const id = freshApp(tag);
       await s.put(ctx(id, NS_PROD, USERS[0]), PREFS, 'p', { a: 1 });
       await main.query(
-        `INSERT INTO app_blocks (id, status, storage_deleted_at) VALUES ($1, 'suspended', $2)`,
-        [id, ago(PERIOD + DAY)]
+        `INSERT INTO app_blocks (id, status, storage_deleted_at, updated_at) VALUES ($1, 'suspended', $2, $3)`,
+        [id, ago(PERIOD + DAY), ago(PERIOD + DAY + HOUR)]
       );
       ids.push(id);
     }
     const before = await Promise.all(ids.map((id) => rowsOf(id, noPolicy)));
     expect(before.every((n) => n > 0)).toBe(true);
+    const policy = { migrationPending: '20261102120000_appdata_app_purge.sql' };
 
+    // The datastore's app-purge policy: one log for two apps, none an hour later, one a day and
+    // an hour after the first.
     vi.setSystemTime(NOW);
-    await runJob();
+    expect(await runJob()).toEqual(policy);
     expect(errorLogs()).toBe(1);
-
     vi.setSystemTime(at(HOUR));
-    await runJob();
+    expect(await runJob()).toEqual(policy);
     expect(errorLogs()).toBe(1);
-
-    // A day and an hour after the first log: logged again.
     vi.setSystemTime(at(25 * HOUR));
-    await runJob();
+    expect(await runJob()).toEqual(policy);
     expect(errorLogs()).toBe(2);
-
-    // Nothing deleted, nothing stamped.
     expect(await Promise.all(ids.map((id) => rowsOf(id, noPolicy)))).toEqual(before);
     for (const id of ids) expect(await purgedAt(id)).toBeNull();
-  });
 
-  it('missing main-database columns are logged once a day too', async () => {
-    // What Prisma raises for a raw query naming a column the table does not have yet.
+    // The main database's columns, as Prisma raises a raw query naming a column the table does
+    // not have yet: a different migration, so its first failure is logged although the policy's
+    // was an hour ago.
     dbMock.dbWrite.$queryRaw.mockImplementation(async () => {
       throw Object.assign(
         new Error(
@@ -298,29 +378,24 @@ describe('the reaper before its migrations are applied', () => {
         { code: 'P2010', meta: { code: '42703' } }
       );
     });
-
-    vi.setSystemTime(NOW);
-    await runJob();
-    expect(errorLogs()).toBe(1);
-
-    vi.setSystemTime(at(HOUR));
-    await runJob();
-    expect(errorLogs()).toBe(1);
-
-    vi.setSystemTime(at(25 * HOUR));
-    await runJob();
-    expect(errorLogs()).toBe(2);
+    const columns = { migrationPending: '20261218120000_app_block_storage_deleted_at' };
+    vi.setSystemTime(at(26 * HOUR));
+    expect(await runJob()).toEqual(columns);
+    expect(errorLogs()).toBe(3);
+    vi.setSystemTime(at(27 * HOUR));
+    expect(await runJob()).toEqual(columns);
+    expect(errorLogs()).toBe(3);
   });
 
-  it('any other failure is still logged on every run', async () => {
+  it('control: any other failure is an error, logged on every run', async () => {
     dbMock.dbWrite.$queryRaw.mockImplementation(async () => {
       throw new Error('connection reset');
     });
 
     vi.setSystemTime(NOW);
-    await runJob();
+    expect(await runJob()).toEqual({ error: true });
     vi.setSystemTime(at(HOUR));
-    await runJob();
+    expect(await runJob()).toEqual({ error: true });
     expect(errorLogs()).toBe(2);
   });
 });

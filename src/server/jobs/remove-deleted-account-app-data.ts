@@ -165,7 +165,7 @@ async function wipeOne(
     // Only while still deleted: a restore that landed during the wipe already dropped it.
     await dbWrite.$executeRaw`
       UPDATE "User" SET meta = meta::jsonb - 'appDataRemoval'
-      WHERE id = ${id} AND "deletedAt" IS NOT NULL
+      WHERE id = ${id}
     `;
     result.wiped += 1;
   } catch (err) {

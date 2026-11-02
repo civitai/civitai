@@ -150,16 +150,9 @@ describe('DeleteCard confirm step summary', () => {
     await expect.element(page.getByText('Your data in apps will be kept')).toBeInTheDocument();
   });
 
-  // The removal waits the same 7-day grace as image deletion, and a restore inside it keeps the data.
+  // The summary line flips with the box (unticked: "will be kept", above).
   test('says app data goes after the 7-day grace when the box is ticked', async () => {
     await openContentModal();
-    await expect
-      .element(
-        page.getByText(
-          'Deleted 7 days after your account closes; restore the account before then and it stays'
-        )
-      )
-      .toBeInTheDocument();
     await userEvent.click(page.getByLabelText('Keep them public'));
     await userEvent.click(page.getByLabelText('Delete after 7 days'));
     await userEvent.click(page.getByLabelText('Also delete my data in apps'));

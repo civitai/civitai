@@ -1419,7 +1419,6 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   const {
     imageRemoval: _removalChoice,
     gdprStripeScrub: _scrubState,
-    appDataRemoval: _appDataRemoval,
     ...meta
   } = (user.meta ?? {}) as UserMeta;
 
