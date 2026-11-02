@@ -13,8 +13,5 @@ export function useCurrentDomainHref() {
   const serverDomains = context?.serverDomains;
   const ownHosts = useMemo(() => getOwnHosts(serverDomains), [serverDomains]);
 
-  return useCallback(
-    (href: string) => toCurrentDomainHref(href, host, ownHosts),
-    [host, ownHosts]
-  );
+  return useCallback((href: string) => toCurrentDomainHref(href, host, ownHosts), [host, ownHosts]);
 }
