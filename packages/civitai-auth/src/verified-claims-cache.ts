@@ -35,7 +35,6 @@ export interface VerifiedClaimsCache {
   /** Record a payload that just passed verification. A payload without a numeric `exp` is not stored. */
   set(token: string, payload: JWTPayload): void;
   clear(): void;
-  readonly size: number;
 }
 
 // The key is a digest of the WHOLE token string (header, payload and signature), never a claim such as `jti`
@@ -85,9 +84,6 @@ export function createVerifiedClaimsCache(opts: {
     },
     clear() {
       map.clear();
-    },
-    get size() {
-      return map.size;
     },
   };
 }
