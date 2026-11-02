@@ -58,7 +58,7 @@ describe('CommentForm formatting strip', () => {
         </CommentsCtx.Provider>
       </RootThreadCtx.Provider>
     );
-    await settle(1500);
+    await vi.waitFor(() => expect(document.querySelector('.ProseMirror')).not.toBeNull());
 
     const editor = document.querySelector('.ProseMirror') as HTMLElement;
     editor.focus();
@@ -70,6 +70,9 @@ describe('CommentForm formatting strip', () => {
     selection.removeAllRanges();
     selection.addRange(range);
     document.dispatchEvent(new Event('selectionchange'));
+    await vi.waitFor(() =>
+      expect(document.querySelector('button[aria-label="Link"]')).not.toBeNull()
+    );
     await settle(800);
 
     const link = document.querySelector('button[aria-label="Link"]');
