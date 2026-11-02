@@ -104,6 +104,7 @@ const DERIVED_BASES: Record<string, string> = {
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
+  orchestratorOwnWorkProcedure: 'protectedProcedure',
   orchestratorProcedure: 'protectedProcedure',
   postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',

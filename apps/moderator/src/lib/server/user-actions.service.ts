@@ -652,9 +652,35 @@ export async function setMuted(input: {
     // Imported here: the orchestrator client does not load under the unit suites that import this
     // file for its other actions.
     const { revokeOrchestratorUserTokens } = await import('./orchestrator');
+    // Best-effort, like the revoke: the main app also refuses a muted account new generation tokens.
+    // The cookie is read now because the repeat below runs after this request has ended.
+    let cookie: string | undefined;
+    try {
+      cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
+    } catch {
+      cookie = undefined;
+    }
+    const expireGenerationCredentials = async () => {
+      const result = await postJson({
+        path: '/api/mod/user/expire-generation-credentials',
+        body: { userId: input.userId },
+        label: 'Expire generation credentials',
+        auth: 'session',
+        timeoutMs: 5_000,
+        cookie,
+      });
+      if (!result.ok)
+        void logAxiomError(new Error(result.error), {
+          name: 'mute.expire-generation-credentials-failed',
+          userId: input.userId,
+        });
+    };
+    await expireGenerationCredentials();
     await revokeOrchestratorUserTokens(input.userId);
     setTimeout(() => {
-      void bustStanding().finally(() => revokeOrchestratorUserTokens(input.userId));
+      void bustStanding()
+        .then(expireGenerationCredentials)
+        .finally(() => revokeOrchestratorUserTokens(input.userId));
     }, ACCOUNT_STANDING_REBUST_MS).unref?.();
   }
   await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);

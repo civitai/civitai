@@ -45,6 +45,8 @@ beforeEach(() => {
   ] as never);
   dbMock.dbWrite.apiKey.updateMany.mockResolvedValue({ count: 1 } as never);
   getTemporaryUserApiKey.mockResolvedValue('fresh-token');
+  // In good standing again: these tests are about the cache, not the standing check.
+  dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: false, bannedAt: null } as never);
   hSetWithTTL.mockImplementation(
     async (_client: unknown, _key: string, field: string, value: string) => {
       hash.set(field, value);
