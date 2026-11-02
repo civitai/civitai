@@ -21,11 +21,22 @@ export function AdaptiveFiltersDropdown({
   count,
   className,
   dropdownProps,
+  opened: controlledOpened,
+  onOpenedChange,
   ...buttonProps
 }: Props) {
   const mobile = useIsMobile();
   const isClient = useIsClient();
-  const [opened, setOpened] = useState(false);
+  const [uncontrolledOpened, setUncontrolledOpened] = useState(false);
+  // Controlled when the caller passes `opened` (a staged-filters dropdown closes itself on Apply);
+  // otherwise it manages its own state, as every other caller does.
+  const controlled = controlledOpened !== undefined;
+  const opened = controlled ? controlledOpened : uncontrolledOpened;
+  const setOpened = (next: boolean | ((o: boolean) => boolean)) => {
+    const value = typeof next === 'function' ? next(opened) : next;
+    if (!controlled) setUncontrolledOpened(value);
+    onOpenedChange?.(value);
+  };
   const colorScheme = useComputedColorScheme('dark');
 
   const target = (
@@ -86,6 +97,7 @@ export function AdaptiveFiltersDropdown({
 
   return (
     <Popover
+      opened={controlled ? opened : undefined}
       zIndex={200}
       position="bottom-end"
       shadow="md"
@@ -113,4 +125,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   children: React.ReactElement;
   count?: number;
   dropdownProps?: { className?: string };
+  /** Controls the open state from outside; omit it and the dropdown manages its own. */
+  opened?: boolean;
+  onOpenedChange?: (opened: boolean) => void;
 };
