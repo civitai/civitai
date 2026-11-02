@@ -931,11 +931,13 @@ describe('a chapter add whose parent changes after its first read', () => {
           [side]
         );
         const findCanon = w.storylineChapterEdge.findFirst.getMockImplementation()!;
+        let landed = false;
         w.storylineChapterEdge.findFirst.mockImplementationOnce((async (args: never) => {
           await db.pg.query(
             `UPDATE "StorylineChapterEdge" SET canon = true WHERE "chapterId" = $1`,
             [side]
           );
+          landed = true;
           return findCanon(args);
         }) as never);
 
@@ -946,8 +948,73 @@ describe('a chapter add whose parent changes after its first read', () => {
             userId: OWNER,
             atEnd: true,
           })
-        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        ).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message:
+            'The story has a new last chapter since you opened this. Close it and join from there',
+        });
+        // It landed where takesCanonSlot reads, after the end check (rolled back with the refusal).
+        expect(landed).toBe(true);
         expect(await joinEdge()).toEqual([]);
+      });
+
+      // The one case the canon check at the write cannot see: the card's end has no canon child but
+      // is no longer on the main path ("Make main path" moved it elsewhere), so the join would be
+      // canon on a branch.
+      it('refuses a join from a chapter that is no longer the main path end, though nothing follows it', async () => {
+        // 51 ends the branch 30 -> 50 -> 51; the main path ends at 60.
+        const [{ chapterId: under41 }] = await rows<{ chapterId: number }>(
+          `SELECT "chapterId" FROM "StorylineChapterEdge" WHERE "parentChapterId" = 41`
+        );
+        await expect(
+          linkStorylineChapter({
+            parentChapterId: 51,
+            chapterId: under41,
+            userId: OWNER,
+            atEnd: true,
+          })
+        ).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message:
+            'The story has a new last chapter since you opened this. Close it and join from there',
+        });
+        expect(
+          await rows(`SELECT 1 FROM "StorylineChapterEdge" WHERE "parentChapterId" = 51`)
+        ).toEqual([]);
+      });
+
+      // "Make main path" on a chapter ABOVE the end moves the end without touching it, so only the
+      // storyline lock keeps it out of an at-end join or add. This database has one connection, so
+      // the wait itself cannot be played; pinned as the order the locks are asked for instead.
+      // Removing the storyline lock reopens civitai/civitai#7417's race.
+      it('"Make main path" locks the storyline before the parent, as the at-end join relies on', async () => {
+        const locks: string[] = [];
+        const query = w.$queryRaw.getMockImplementation()!;
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
+          const sql = strings.join('?');
+          if (sql.includes('FOR NO KEY UPDATE')) locks.push(sql.replace(/\s+/g, ' ').trim());
+          return query(strings, ...values);
+        }) as never);
+        w.storylineChapterEdge.findMany.mockResolvedValueOnce([
+          {
+            parentChapterId: 40,
+            storylineId: STORY,
+            chapter: {
+              removedAt: null,
+              post: { tosViolation: false, user: { bannedAt: null, deletedAt: null } },
+            },
+          },
+        ] as never);
+        // Its two writes, clearing the old main way and setting the new one.
+        w.storylineChapterEdge.updateMany
+          .mockResolvedValueOnce({ count: 1 } as never)
+          .mockResolvedValueOnce({ count: 1 } as never);
+
+        await setCanonChapter({ chapterId: 41, parentChapterId: 40, userId: OWNER });
+        expect(locks).toEqual([
+          'SELECT id FROM "Storyline" WHERE id = ? FOR NO KEY UPDATE',
+          'SELECT id FROM "StorylineChapter" WHERE id = ? FOR NO KEY UPDATE',
+        ]);
       });
 
       // The card reads past tombstones, so 5 is the end it shows: the check heals the route first,

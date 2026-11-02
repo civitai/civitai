@@ -2027,6 +2027,9 @@ export async function setCanonChapter({
     throw throwBadRequestError('A removed chapter cannot be the main route');
 
   await dbWrite.$transaction(async (tx) => {
+    // The whole storyline, before the parent, as the other route writers take it: this moves the
+    // main path's end, which an at-end add or join reads under that lock and relies on.
+    await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${edge.storylineId} FOR NO KEY UPDATE`;
     await lockParentChapter(tx, edge.parentChapterId);
     await tx.storylineChapterEdge.updateMany({
       where: { parentChapterId: edge.parentChapterId, canon: true },
@@ -2169,8 +2172,8 @@ export async function linkStorylineChapter({
       if (refusal) throw throwBadRequestError(STORYLINE_LINK_REFUSALS[refusal]);
 
       const canon = await takesCanonSlot(tx, parentChapterId);
-      // "Make main path" locks only the parent, not the storyline, so it can still have given the
-      // end a canon child since the check above.
+      // Under the storyline lock nothing can have given the end a canon child since the check; kept
+      // so a route writer that ever skips that lock refuses here instead of writing a branch.
       if (atEnd && !canon) throw throwBadRequestError(STORYLINE_END_MOVED);
       await tx.storylineChapterEdge.create({
         data: { storylineId, chapterId, parentChapterId, canon },
