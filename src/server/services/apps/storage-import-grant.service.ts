@@ -1,16 +1,22 @@
 // The per-source consent ledger for cross-app storage imports (`storage.imports` in a manifest).
 //
 // A consumer app reaches the viewer's data in a SOURCE app only while the viewer holds a grant
-// for that (viewer, consumer, source) triple. Two records make that grant:
+// for that (viewer, consumer, source) triple that COVERS the consumer's current import of that
+// source. Two records make that grant:
 //   - `apps:storage:import` in the viewer's `app_user_scope_grants` row for the consumer — the
 //     ordinary consent ledger, so the scope is withheld from block tokens, prompted for and
 //     revoked exactly like `apps:storage:publish`;
-//   - one row here per SOURCE app that consent covered, written by the prompted consent only
-//     (`blocks.grantScopes`) and deleted by the viewer's per-source revoke.
-// The mint signs the scope only while every declared source the consumer can reach has a row
-// (`isImportScopeCovered`), so a later version that adds a source is prompted again; the storage
-// route reads the row on every import call (`hasStorageImportGrant`, primary), so a per-source
-// revoke takes effect on the next request, not the next mint.
+//   - one row here per SOURCE app that consent covered, holding the collections and access the
+//     prompt showed for it. Written by the prompted consent only (`blocks.grantScopes`, which
+//     refuses unless what the modal showed equals the approved manifest's imports) and deleted by
+//     the viewer's per-source revoke, by a re-consent that no longer names the source, and by the
+//     mint once the consumer no longer imports from it.
+// A row covers a declared import when it names every collection the import names and grants at
+// least its access (`readwrite` covers `read`), so a narrower version needs no prompt and a wider
+// one does (`importGrantCovers`). The mint signs the scope only while every declared source the
+// consumer can reach is covered (`isImportScopeCovered`); the storage route reads the row on
+// every import call (`getStorageImportGrant`, primary), so a revoke — or a version that widens
+// the import — takes effect on the next request, not the next mint.
 //
 // RAW SQL ONLY: the table is no-type in the Prisma schema and its migration is applied by hand,
 // so a database without it reads as "nobody granted anything" (fail-closed) and a grant write
@@ -61,72 +67,145 @@ type RawClient = {
   $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
 };
 
-/** The source app ids the viewer has granted the consumer, or an empty set (fail-closed). */
-export async function listStorageImportGrantSources(opts: {
+/** What one grant row covers: the collections and access the consent prompt showed. */
+export type StorageImportGrant = { collections: string[]; access: AppStorageImportAccess };
+
+/**
+ * Whether a grant covers a declared import: every collection it names was granted, and the
+ * grant's access is at least the import's (`readwrite` covers `read`). The ONE statement of the
+ * rule; the mint and the storage route both read it.
+ */
+export function importGrantCovers(
+  grant: StorageImportGrant | null | undefined,
+  declared: { collections: Iterable<string>; access: AppStorageImportAccess }
+): boolean {
+  if (!grant) return false;
+  if (declared.access === 'readwrite' && grant.access !== 'readwrite') return false;
+  const granted = new Set(grant.collections);
+  for (const c of declared.collections) if (!granted.has(c)) return false;
+  return true;
+}
+
+type GrantRow = { sourceAppBlockId: string; collections: string[]; access: string };
+const toGrant = (r: GrantRow): StorageImportGrant => ({
+  collections: [...r.collections],
+  // The column's CHECK admits these two only.
+  access: r.access === 'readwrite' ? 'readwrite' : 'read',
+});
+
+/** The viewer's grants for the consumer, by source app id, or an empty map (fail-closed). */
+export async function listStorageImportGrants(opts: {
   userId: number;
   consumerAppBlockId: string;
   db?: 'read' | 'write';
-}): Promise<Set<string>> {
+}): Promise<Map<string, StorageImportGrant>> {
   const client = (opts.db === 'read' ? dbRead : dbWrite) as unknown as RawClient;
   try {
     const rows = (await client.$queryRaw`
-      SELECT "source_app_block_id" AS "sourceAppBlockId"
+      SELECT "source_app_block_id" AS "sourceAppBlockId", "collections", "access"
       FROM "app_storage_import_grants"
       WHERE "user_id" = ${opts.userId} AND "consumer_app_block_id" = ${opts.consumerAppBlockId}
-    `) as Array<{ sourceAppBlockId: string }>;
-    return new Set(rows.map((r) => r.sourceAppBlockId));
+    `) as GrantRow[];
+    return new Map(rows.map((r) => [r.sourceAppBlockId, toGrant(r)]));
   } catch (err) {
     if (!isMissingTableError(err)) throw err;
     noteMissingTable('list');
-    return new Set();
+    return new Map();
   }
 }
 
-/** Whether the viewer has granted the consumer their data in the source. Reads the primary. */
-export async function hasStorageImportGrant(opts: {
+/** The viewer's grant for (consumer, source), or null. Reads the primary. */
+export async function getStorageImportGrant(opts: {
   userId: number;
   consumerAppBlockId: string;
   sourceAppBlockId: string;
-}): Promise<boolean> {
+}): Promise<StorageImportGrant | null> {
   const client = dbWrite as unknown as RawClient;
   try {
     const rows = (await client.$queryRaw`
-      SELECT 1 AS "one"
+      SELECT "source_app_block_id" AS "sourceAppBlockId", "collections", "access"
       FROM "app_storage_import_grants"
       WHERE "user_id" = ${opts.userId}
         AND "consumer_app_block_id" = ${opts.consumerAppBlockId}
         AND "source_app_block_id" = ${opts.sourceAppBlockId}
       LIMIT 1
-    `) as unknown[];
-    return rows.length > 0;
+    `) as GrantRow[];
+    return rows.length > 0 ? toGrant(rows[0]) : null;
   } catch (err) {
     if (!isMissingTableError(err)) throw err;
-    noteMissingTable('has');
-    return false;
+    noteMissingTable('get');
+    return null;
   }
 }
 
-/** Record (or refresh) one grant per source. PROMPTED CONSENT ONLY: `blocks.grantScopes`. */
+/**
+ * Delete the viewer's grants for the consumer from every source NOT in `keep`. Returns how many
+ * went. A source the consumer no longer imports from loses its grant here, so declaring it again
+ * later prompts again.
+ */
+async function pruneStorageImportGrants(opts: {
+  userId: number;
+  consumerAppBlockId: string;
+  keep: readonly string[];
+}): Promise<number> {
+  const client = dbWrite as unknown as RawClient;
+  const rows = (await client.$queryRaw`
+    DELETE FROM "app_storage_import_grants"
+    WHERE "user_id" = ${opts.userId}
+      AND "consumer_app_block_id" = ${opts.consumerAppBlockId}
+      AND NOT ("source_app_block_id" = ANY(${[...opts.keep]}::text[]))
+    RETURNING 1
+  `) as unknown[];
+  return rows.length;
+}
+
+/**
+ * Record the viewer's consent for the consumer: one row per source, holding exactly the
+ * collections and access the prompt showed (a re-consent replaces them), and no row for a source
+ * the prompt did not name. PROMPTED CONSENT ONLY: `blocks.grantScopes`.
+ */
 export async function recordStorageImportGrants(opts: {
   userId: number;
   consumerAppBlockId: string;
-  sourceAppBlockIds: readonly string[];
+  grants: ReadonlyArray<{ sourceAppBlockId: string } & StorageImportGrant>;
 }): Promise<void> {
-  const sources = [...new Set(opts.sourceAppBlockIds)].filter(
-    (id) => id !== opts.consumerAppBlockId
-  );
-  if (sources.length === 0) return;
+  const bySource = new Map<string, StorageImportGrant>();
+  for (const g of opts.grants) {
+    if (g.sourceAppBlockId === opts.consumerAppBlockId) continue;
+    bySource.set(g.sourceAppBlockId, { collections: [...g.collections], access: g.access });
+  }
+  const sources = [...bySource.keys()];
+  // Collection names cannot hold a comma (`APP_STORAGE_COLLECTION_NAME_RE`), so each source's
+  // list travels as one joined string in a parallel array.
+  const collections = sources.map((s) => bySource.get(s)!.collections.join(','));
+  const access = sources.map((s) => bySource.get(s)!.access);
   const client = dbWrite as unknown as RawClient;
   try {
-    await client.$queryRaw`
-      INSERT INTO "app_storage_import_grants"
-        ("user_id", "consumer_app_block_id", "source_app_block_id")
-      SELECT ${opts.userId}, ${opts.consumerAppBlockId}, s
-      FROM unnest(${sources}::text[]) AS s
-      ON CONFLICT ("user_id", "consumer_app_block_id", "source_app_block_id")
-      DO UPDATE SET "granted_at" = CURRENT_TIMESTAMP
-      RETURNING 1
-    `;
+    if (sources.length > 0) {
+      await client.$queryRaw`
+        INSERT INTO "app_storage_import_grants"
+          ("user_id", "consumer_app_block_id", "source_app_block_id", "collections", "access")
+        SELECT
+          ${opts.userId}::integer,
+          ${opts.consumerAppBlockId}::text,
+          g.source,
+          string_to_array(g.collections, ','),
+          g.access
+        FROM unnest(${sources}::text[], ${collections}::text[], ${access}::text[])
+          AS g(source, collections, access)
+        ON CONFLICT ("user_id", "consumer_app_block_id", "source_app_block_id")
+        DO UPDATE SET
+          "collections" = EXCLUDED."collections",
+          "access" = EXCLUDED."access",
+          "granted_at" = CURRENT_TIMESTAMP
+        RETURNING 1
+      `;
+    }
+    await pruneStorageImportGrants({
+      userId: opts.userId,
+      consumerAppBlockId: opts.consumerAppBlockId,
+      keep: sources,
+    });
   } catch (err) {
     if (!isMissingTableError(err)) throw err;
     noteMissingTable('record');
@@ -205,25 +284,60 @@ export async function resolveDeclaredImports(manifest: unknown): Promise<Resolve
 
 /**
  * Whether the viewer's per-source grants cover every source the consumer can reach today (every
- * declared import whose blockId an approved app holds). The mint signs `apps:storage:import` only
- * when this holds, so a source added by a later version is prompted for. A declared source no
- * approved app holds needs no grant: nothing can be reached through it, and no grant could be
- * written for it.
+ * declared import whose blockId an approved app holds), each by `importGrantCovers`. The mint
+ * signs `apps:storage:import` only when this holds, so a source added by a later version, or an
+ * import a later version widens, is prompted for. A declared source no approved app holds needs
+ * no grant: nothing can be reached through it, and no grant could be written for it.
+ *
+ * It also drops the viewer's grants for sources the consumer no longer reaches (no longer
+ * declared, or no longer approved), so a source declared again later is prompted again rather
+ * than covered by a grant the viewer gave an earlier version. ⚠️ LAZY: that happens only when
+ * this viewer mints a token while the source is absent. A viewer who never opens the app during
+ * that window keeps the old row, which then still covers a re-added import exactly as wide as
+ * what they were shown (never a wider one).
  */
 export async function isImportScopeCovered(opts: {
   userId: number;
   consumerAppBlockId: string;
   manifest: unknown;
 }): Promise<boolean> {
+  // A manifest whose storage does not parse covers nothing, and prunes nothing: it says nothing
+  // about which sources the app still imports from.
+  if (parseManifestStorage(opts.manifest, ALL_FEATURES).errors.length > 0) return false;
   const imports = await resolveDeclaredImports(opts.manifest);
-  const needed = imports.flatMap((i) => (i.source ? [i.source.appBlockId] : []));
-  if (needed.length === 0) return true;
-  const granted = await listStorageImportGrantSources({
+  const granted = await listStorageImportGrants({
     userId: opts.userId,
     consumerAppBlockId: opts.consumerAppBlockId,
     db: 'write',
   });
-  return needed.every((id) => granted.has(id));
+  const reachable = imports.filter((i) => i.source !== null);
+  const keep = reachable.map((i) => i.source!.appBlockId);
+  if ([...granted.keys()].some((id) => !keep.includes(id))) {
+    await pruneStorageImportGrants({
+      userId: opts.userId,
+      consumerAppBlockId: opts.consumerAppBlockId,
+      keep,
+    });
+  }
+  return reachable.every((i) => importGrantCovers(granted.get(i.source!.appBlockId), i));
+}
+
+/**
+ * The comparable form of an import list: one entry per source, sorted, each with its collections
+ * sorted. Two lists are the same declaration exactly when these are equal.
+ */
+export function canonicalImports(
+  imports: ReadonlyArray<{
+    from: string;
+    collections: Iterable<string>;
+    access: AppStorageImportAccess;
+  }>
+): string {
+  return JSON.stringify(
+    [...imports]
+      .map((i) => ({ from: i.from, collections: [...i.collections].sort(), access: i.access }))
+      .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0))
+  );
 }
 
 /**

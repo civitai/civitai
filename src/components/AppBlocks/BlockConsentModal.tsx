@@ -239,6 +239,17 @@ export default function BlockConsentModal({
                 ...(grantsSpend && limitEnabled && budgetValid
                   ? { buzzBudgetPerDay: parsedBudget }
                   : {}),
+                // Exactly what the list above showed: the server records these and refuses the
+                // grant if the app's approved imports are no longer the same.
+                ...(grantsImport && imports.data
+                  ? {
+                      storageImports: imports.data.imports.map((i) => ({
+                        from: i.from,
+                        collections: i.collections,
+                        access: i.access,
+                      })),
+                    }
+                  : {}),
               })
             }
           >
@@ -281,8 +292,12 @@ export function StorageImportConsentDetail({
         <List.Item key={i.from}>
           <strong>{consumerName}</strong> {i.access === 'readwrite' ? 'reads and changes' : 'reads'}{' '}
           your {i.collections.join(', ')} in <strong>{i.sourceName ?? i.from}</strong>
+          {/* An import is not publish consent in the source: adding to its shared lists asks
+              for `apps:storage:publish` there, separately. */}
           {i.access === 'readwrite'
-            ? ' — as you, so entries it adds to shared lists there appear under your account'
+            ? ` — as you. Adding to lists other people see there needs your separate permission in ${
+                i.sourceName ?? i.from
+              }.`
             : ''}
         </List.Item>
       ))}

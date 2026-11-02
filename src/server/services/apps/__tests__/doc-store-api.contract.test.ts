@@ -2542,9 +2542,7 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       userId: uid,
       consumerAppBlockId: C.id,
       grants: [{ sourceAppBlockId: S.id, ...shown }],
-      // TESTS-FIRST SHIM, removed with the fix: the pre-fix ledger takes source ids only.
-      sourceAppBlockIds: [S.id],
-    } as never);
+    });
   }
   /** The viewer's own `apps:storage:publish` consent in the SOURCE app. */
   const grantPublishInSource = (uid: number, S: AppRow) => publishGrants.add(`${uid}|${S.id}`);

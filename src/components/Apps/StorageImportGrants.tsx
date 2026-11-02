@@ -6,6 +6,10 @@ import { trpc } from '~/utils/trpc';
  * through its declared imports, with a Remove for each source the viewer granted. Rendered under
  * the app's permissions (`ScopeConsentList`) when the app declares the scope.
  *
+ * "Not allowed" also covers a grant a later version widened past (another collection, or read
+ * turned into readwrite): the app is refused there until the viewer is asked again, and Remove
+ * still deletes the old grant.
+ *
  * Removing a source deletes the viewer's grant for (this app, that source). The storage route
  * reads it on every import call, so the app loses that source on its next request; the scope row
  * above stays as it is, and the next token the app gets withholds the scope until the viewer
@@ -39,7 +43,7 @@ export function StorageImportGrants({
             {i.collections.join(', ')} in <strong>{i.sourceName ?? i.from}</strong>
             {i.granted ? '' : ' — not allowed'}
           </Text>
-          {i.granted && i.sourceAppBlockId ? (
+          {i.hasGrant && i.sourceAppBlockId ? (
             <Button
               size="compact-xs"
               variant="subtle"

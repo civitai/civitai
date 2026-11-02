@@ -22,8 +22,9 @@
 //
 // IMPORTS. Every collection route takes an optional `?from=<source blockId>`: the call then runs
 // in that SOURCE app, as the same viewer, through an import the caller's manifest declares
-// (`resolveImportAccess` in `doc-store-access.ts`). Everything below — gates, budgets, rate
-// limits, moderation, ceilings — then reads the source's access, so it applies as the source.
+// (`resolveImportAccess` in `doc-store-access.ts`). The call is first charged to the CONSUMER's
+// read bucket for the viewer, before it is resolved. Everything after that — gates, budgets, rate
+// limits, moderation, ceilings — reads the source's access, so it applies as the source.
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
@@ -531,7 +532,11 @@ function requireViewer(access: StorageAccess): number {
   return access.ctx.viewerUid;
 }
 
-/** Creating, editing or deleting a document other viewers read needs the consent-gated scope. */
+/**
+ * Creating, editing or deleting a document other viewers read needs the consent-gated scope.
+ * Through an import it is the viewer's grant in the SOURCE app (`resolveImportAccess`), and the
+ * refusal names the source (`from`), so the host can ask for it there.
+ */
 function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
   if (!collectionNeedsPublishScope(coll.config)) return;
   if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
@@ -540,9 +545,16 @@ function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
       retryAfter: 1,
     });
   }
-  throw new DocStoreError('consent_required', `${APP_STORAGE_PUBLISH_SCOPE} has not been granted`, {
-    scope: APP_STORAGE_PUBLISH_SCOPE,
-  });
+  throw new DocStoreError(
+    'consent_required',
+    access.importedFrom === undefined
+      ? `${APP_STORAGE_PUBLISH_SCOPE} has not been granted`
+      : `${APP_STORAGE_PUBLISH_SCOPE} has not been granted in ${access.importedFrom}`,
+    {
+      scope: APP_STORAGE_PUBLISH_SCOPE,
+      ...(access.importedFrom === undefined ? {} : { from: access.importedFrom }),
+    }
+  );
 }
 
 /** The min-trust gate, on every viewer write into a shared collection. Returns the subject. */
@@ -961,6 +973,10 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       });
       const route = match.route;
       const from = route.op === 'info' ? null : importSourceOf(req);
+      // Every import call is charged to the CONSUMER's read bucket for this viewer first, so
+      // resolving one (and every refusal it can end in) is rate limited like any other read;
+      // the operation itself is then charged to the source's buckets in `run`.
+      if (from !== null) await charge('read', own, req);
       const access =
         from === null || route.op === 'info'
           ? own

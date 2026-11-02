@@ -37,6 +37,7 @@ import {
 } from '~/server/services/block-token.service';
 import {
   ANON_SUBJECT,
+  HUB_TOKEN_JTI_PREFIX,
   isValidSubject,
   subjectForUserId,
   USER_SUB_RE,
@@ -1461,7 +1462,7 @@ async function resolveDevTunnelHubClaims(args: {
     sub: subjectForUserId(userId),
     iat,
     exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
-    jti: `hub_${apiKeyId}`,
+    jti: `${HUB_TOKEN_JTI_PREFIX}${apiKeyId}`,
     blockId,
     appId: clientId,
     appBlockId,
@@ -1532,7 +1533,7 @@ async function resolveHubTokenClaims(
     sub: subjectForUserId(userId),
     iat,
     exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
-    jti: `hub_${session.apiKeyId}`,
+    jti: `${HUB_TOKEN_JTI_PREFIX}${session.apiKeyId}`,
     blockId: block.blockId,
     appId: clientId,
     appBlockId: block.id,

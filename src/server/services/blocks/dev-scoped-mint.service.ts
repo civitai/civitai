@@ -104,10 +104,9 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // publishes under is the developer's own, into their own namespace.
   'apps:storage',
   'apps:storage:publish',
-  // An import from a dev token reaches the SOURCE app's `dev:<uid>` namespace of the same
-  // developer, never its production data (`resolveImportAccess`), and still needs the
-  // developer's own per-source grant.
-  'apps:storage:import',
+  // `apps:storage:import` is EXCLUDED (operator decision D1, 2026-11-02): a development token
+  // reaches no other app's data, and the storage route refuses `?from=` on any dev or hub token
+  // (`resolveImportAccess`, `not_eligible` / `import_dev_token`).
   // collections:* — INCLUDED in the dev allowlists (both this bearer path and the
   // tunnel path below). Unlike apps:storage:shared:* (deliberately withheld pre-
   // approval because a pre-approval app's storage NAMESPACE is synthetic and could

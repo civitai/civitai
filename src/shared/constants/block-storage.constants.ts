@@ -34,7 +34,10 @@ export const APP_STORAGE_PUBLISH_SCOPE = 'apps:storage:publish';
  * The scope that lets an app read (and, with `access: "readwrite"`, write) the viewer's data in
  * ANOTHER app, as that viewer, through the imports it declares in `storage.imports`. Sensitive
  * (needs a `scopeJustifications` entry) and consent-gated; the grant is recorded per (viewer,
- * consumer app, source app) — see `storage-import-grant.service.ts`.
+ * consumer app, source app) with the collections and access the prompt showed — see
+ * `storage-import-grant.service.ts`. It is not publish consent in the source: a write to one of
+ * the source's shared collections also needs the viewer's own {@link APP_STORAGE_PUBLISH_SCOPE}
+ * there.
  */
 export const APP_STORAGE_IMPORT_SCOPE = 'apps:storage:import';
 
@@ -869,7 +872,7 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
     .filter(([, c]) => collectionNeedsPublishScope(c))
     .map(([name]) => name);
 
-  if (sources.length > 0 && !declared.has(APP_STORAGE_BASE_SCOPE)) { // MUTATION (tests-first): D2 clause removed
+  if (names.length === 0 && sources.length > 0 && !declared.has(APP_STORAGE_BASE_SCOPE)) {
     errors.push(
       `storage imports from ${sources.join(
         ', '
@@ -902,7 +905,7 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
       )} lets viewers write documents other users read, which requires the ${APP_STORAGE_PUBLISH_SCOPE} scope — add it to scopes with a scopeJustifications entry`
     );
   }
-  if (names.length === 0 && declared.has(APP_STORAGE_BASE_SCOPE)) { // MUTATION (tests-first): D2 clause removed
+  if (names.length === 0 && sources.length === 0 && declared.has(APP_STORAGE_BASE_SCOPE)) {
     errors.push(
       `scopes includes ${APP_STORAGE_BASE_SCOPE} but storage declares no collections — declare them under storage.collections, or remove the scope`
     );

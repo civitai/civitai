@@ -22,9 +22,9 @@
 // the collection declaration, visibility, write policy, indexes, ceilings, rate limits and
 // moderation mode — is the source's, for the same viewer. It refuses unless the consumer's
 // approved manifest declares the import (`import_not_declared`), the source collection is
-// exportable (`not_exportable`) and the viewer granted it (`consent_required`). The namespace
-// boundary is kept: a production consumer reaches the source's production data, a dev token
-// only the same developer's `dev:<uid>` namespace in the source, and a review token nothing.
+// exportable (`not_exportable`) and the viewer granted it (`consent_required`). Only an ordinary
+// production token imports: a review, dev or hub token reaches no other app (`not_eligible`),
+// so a consumer reaches the source's production data and nothing else.
 //
 // The review branch is reached by the run-for-real review mint
 // (`REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`). Its namespace is per MODERATOR as well as per
@@ -41,6 +41,7 @@ import {
   parseSubjectUserId,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
+import { isHubTokenClaims } from '~/server/services/block-token-subject';
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
@@ -52,7 +53,11 @@ import {
   DocStoreError,
 } from '~/server/services/apps/doc-store.types';
 import type { SessionUser } from '~/types/session';
-import { hasStorageImportGrant } from '~/server/services/apps/storage-import-grant.service';
+import {
+  getStorageImportGrant,
+  importGrantCovers,
+} from '~/server/services/apps/storage-import-grant.service';
+import { getGrantedScopes } from '~/server/services/blocks/scope-grant.service';
 import {
   APP_STORAGE_BASE_SCOPE,
   APP_STORAGE_ENABLED_FEATURES,
@@ -75,6 +80,13 @@ export type StorageAccess = {
   collections: DeclaredStorageCollections;
   /** The imports this app's reviewed manifest declares (source blockId → import). */
   imports: DeclaredStorageImports;
+  /**
+   * Which kind of token this is: only an ordinary `app` token may import (`resolveImportAccess`).
+   * `hub` is a hub-issued OAuth bearer of an approved app; `dev` any token carrying `dev: true`
+   * (the dev-token route, the tunnels — including a tunnel's hub bearer); `review` the
+   * run-for-real review mint.
+   */
+  tokenKind: 'app' | 'dev' | 'hub' | 'review';
   /** Set when this access was resolved through an import: the source app's blockId. */
   importedFrom?: string;
   /** With `importedFrom`: the import's access. A `read` import refuses every write. */
@@ -179,6 +191,7 @@ export async function resolveStorageAccess(
     }
     return {
       ...base,
+      tokenKind: 'review',
       ctx: {
         appId: publishRequestId,
         ns: reviewNamespace(publishRequestId, viewerUid),
@@ -208,6 +221,7 @@ export async function resolveStorageAccess(
   );
   return {
     ...base,
+    tokenKind: claims.dev === true ? 'dev' : isHubTokenClaims(claims) ? 'hub' : 'app',
     ctx: { appId: approval.appBlockId, ns, viewerUid },
     ...declaredStorage(approval.appBlockId, row?.manifest),
   };
@@ -221,18 +235,24 @@ export type ImportOp = 'read' | 'write';
  * refusal. `consumer` is the caller's own resolved access; `from` the source blockId from the
  * request. Checked in this order, each before any read the next one needs:
  *
- *   1. a review token reaches no other app (`not_eligible`, `import_in_review`);
+ *   1. only an ordinary production token reaches another app: a review, dev or hub token is
+ *      refused (`not_eligible`, `import_in_review` / `import_dev_token` / `import_hub_token`);
  *   2. the consumer's approved manifest declares an import from `from` naming `collection`
  *      (`import_not_declared`); writes through a `read` import are refused (`write_policy`);
  *   3. a signed-in viewer (`sign_in_required`: a grant is per viewer);
  *   4. the source is an approved app (`not_eligible`, `source_not_approved`), declares the
  *      collection (`collection_not_declared`) and has not opted it out (`not_exportable`);
- *   5. the token carries `apps:storage:import` and the viewer holds a grant for (consumer,
- *      source) (`consent_required`, naming the scope and the source).
+ *   5. the token carries `apps:storage:import` and the viewer's grant for (consumer, source)
+ *      covers the consumer's CURRENT import of the source — every collection it names, at its
+ *      access (`importGrantCovers`); otherwise `consent_required`, naming the scope and the
+ *      source, so a version that widens the import is prompted for before it reaches anything.
  *
- * The returned access carries the source's collections only, `apps:storage` and — for a
- * `readwrite` import — `apps:storage:publish`: the import consent the viewer gave is what lets the
- * consumer write as them in the source, so the consumer's own publish grant is never consulted.
+ * The returned access carries the source's collections only and `apps:storage`. It carries
+ * `apps:storage:publish` only for a write through a `readwrite` import by a viewer who granted
+ * that scope to the SOURCE app themselves: an import consent is not publish consent there, so a
+ * write to one of the source's shared collections without it is refused by the route's publish
+ * check (`consent_required` naming `apps:storage:publish` and the source). A private source
+ * collection needs only the import grant. The consumer's own publish grant is never consulted.
  */
 export async function resolveImportAccess(
   consumer: StorageAccess,
@@ -242,8 +262,14 @@ export async function resolveImportAccess(
   if (!APP_STORAGE_IMPORT_FROM_RE.test(from)) {
     throw new DocStoreError('invalid_request', 'from must be an app blockId', { from });
   }
-  if (consumer.ctx.ns.startsWith('rev:')) {
+  if (consumer.tokenKind === 'review') {
     throw notEligible('import_in_review', 'a review preview cannot reach another app');
+  }
+  if (consumer.tokenKind === 'dev') {
+    throw notEligible('import_dev_token', 'a development token cannot reach another app');
+  }
+  if (consumer.tokenKind === 'hub') {
+    throw notEligible('import_hub_token', 'a hub token cannot reach another app');
   }
   const declared = consumer.imports.get(from);
   if (!declared || !declared.collections.has(collection)) {
@@ -311,31 +337,36 @@ export async function resolveImportAccess(
     }
     throw consentRequired();
   }
-  const granted = await dependency(
-    hasStorageImportGrant({
+  const grant = await dependency(
+    getStorageImportGrant({
       userId: viewerUid,
       consumerAppBlockId: consumer.ctx.appId,
       sourceAppBlockId: source.id,
     })
   );
-  if (!granted) throw consentRequired();
+  if (!importGrantCovers(grant, declared)) throw consentRequired();
 
-  // The namespace boundary: production → production, a developer's dev namespace → the same
-  // developer's dev namespace in the source. Never across.
-  const ns = consumer.ctx.ns === PUBLISHED_NS ? PUBLISHED_NS : `dev:${viewerUid}`;
-  if (consumer.ctx.ns !== PUBLISHED_NS && consumer.ctx.ns !== ns) {
+  // Production data only: every other namespace was refused with its token above.
+  if (consumer.ctx.ns !== PUBLISHED_NS) {
     throw notEligible('import_namespace', 'this token cannot reach another app');
   }
+  // The viewer's own publish consent in the SOURCE, read only for a write that could use it.
+  const publishes =
+    op === 'write' &&
+    declared.access === 'readwrite' &&
+    (
+      await dependency(getGrantedScopes({ userId: viewerUid, appBlockId: source.id, db: 'write' }))
+    ).has(APP_STORAGE_PUBLISH_SCOPE);
   return {
-    ctx: { appId: source.id, ns, viewerUid },
-    scopes:
-      declared.access === 'readwrite'
-        ? [APP_STORAGE_BASE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]
-        : [APP_STORAGE_BASE_SCOPE],
+    ctx: { appId: source.id, ns: PUBLISHED_NS, viewerUid },
+    scopes: publishes
+      ? [APP_STORAGE_BASE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]
+      : [APP_STORAGE_BASE_SCOPE],
     consentUnavailable: false,
     collections: sourceStorage.collections,
     // An import is one hop: a source's own imports are never followed.
     imports: new Map(),
+    tokenKind: consumer.tokenKind,
     importedFrom: from,
     importAccess: declared.access,
   };
