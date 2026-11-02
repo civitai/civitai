@@ -205,7 +205,7 @@ const participantChapterSql = (alias: string) =>
       alias
     )}."postId" AND pp."tosViolation" = false
   )`;
-const participantChapterWhere = {
+export const participantChapterWhere = {
   removedAt: null,
   post: { is: { tosViolation: false } },
 } satisfies Prisma.StorylineChapterWhereInput;
@@ -319,13 +319,8 @@ async function getParticipatingStorylineIds(
   ];
   if (!ids.length) return new Set();
   const rows = await dbRead.$queryRaw<{ storylineId: number }[]>`
-    SELECT sc."storylineId" FROM "StorylineCollaborator" sc
-    WHERE sc."userId" = ${viewer.id} AND sc."storylineId" = ANY(${ids}::int[])
-      AND ${acceptedCollaboratorSql('sc')}
-    UNION
-    SELECT c."storylineId" FROM "StorylineChapter" c
-    WHERE c."userId" = ${viewer.id} AND c."storylineId" = ANY(${ids}::int[])
-      AND ${participantChapterSql('c')}
+    SELECT t.id AS "storylineId" FROM unnest(${ids}::int[]) AS t(id)
+    WHERE ${storylineParticipantSql(Prisma.sql`${viewer.id}`, Prisma.sql`t.id`)}
   `;
   return new Set(rows.map((row) => row.storylineId));
 }
@@ -725,8 +720,9 @@ export const storylineRootWaitingSql = Prisma.sql`(rp.id IS NOT NULL AND rc."rem
   AND (rp."publishedAt" IS NULL OR rp."publishedAt" >= now() OR rp."nsfwLevel" = 0))`;
 
 /**
- * `userId` takes part in storyline `storylineId` (both SQL expressions), as
- * `getParticipatingStorylineIds` reads it: an accepted collaborator or a live chapter's author.
+ * `userId` takes part in storyline `storylineId` (both SQL expressions): an accepted collaborator
+ * or a live chapter's author. The one SQL form of it; `assertCanContinueStoryline` reads the same
+ * through Prisma (`participantChapterWhere`).
  */
 export const storylineParticipantSql = (userId: Prisma.Sql, storylineId: Prisma.Sql) =>
   Prisma.sql`(EXISTS (
@@ -1889,6 +1885,54 @@ export async function addOwnerChapter(input: {
 }
 
 /**
+ * The main path's last chapter, read under the caller's storyline lock (`lockStorylineForAdd` or
+ * stronger). Every writer that moves the end takes that lock first (add, insert, link, move,
+ * removal, "Make main path"), so none can move it before the transaction ends. A moderator's
+ * takedown does not, but can only remove the end itself, which the callers refuse.
+ */
+async function lockedMainPathEnd(tx: Prisma.TransactionClient, rootId: number) {
+  // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
+  const findEnd = async () =>
+    (
+      await tx.$queryRaw<{ id: number; removed: boolean }[]>`
+        WITH RECURSIVE main AS (
+          SELECT ${rootId}::int AS id, 1 AS step
+          UNION ALL
+          SELECT e."chapterId", main.step + 1 FROM main
+          JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+          WHERE main.step < 100000
+        )
+        SELECT main.id, c."removedAt" IS NOT NULL AS removed
+        FROM main JOIN "StorylineChapter" c ON c.id = main.id
+        ORDER BY step DESC LIMIT 1
+      `
+    )[0];
+  let end = await findEnd();
+  // Removals keep the route off a tombstone, but an insert or "Make main path" racing one, or a
+  // route from before they did, can still end at one. Nothing continues a tombstone, so the
+  // route is moved back to the last live chapter here, where it would otherwise stay stuck.
+  if (end.removed) {
+    // Locks the parents whose edges the heal rewrites first, the order `setCanonChapter` takes
+    // (a parent's row, then its edges), so the two cannot deadlock.
+    await tx.$queryRaw`
+      WITH RECURSIVE up AS (
+        SELECT ${end.id}::int AS id, 1 AS step
+        UNION ALL
+        SELECT e."parentChapterId", up.step + 1 FROM up
+        JOIN "StorylineChapter" c ON c.id = up.id AND c."removedAt" IS NOT NULL
+        JOIN "StorylineChapterEdge" e ON e."chapterId" = up.id AND e.canon
+        WHERE up.step < 100000
+      )
+      SELECT id FROM "StorylineChapter" WHERE id IN (SELECT id FROM up WHERE step > 1)
+      ORDER BY id FOR NO KEY UPDATE
+    `;
+    await clearTombstoneTips([end.id], tx);
+    end = await findEnd();
+  }
+  return end.id;
+}
+
+/**
  * The owner's post at the end of the main path: chapter 1 of an empty storyline, else the canon
  * child of its last chapter. The end is found here, under the storyline's lock: the client's read
  * is capped and can be stale, and a wrong end makes a side branch.
@@ -1909,46 +1953,8 @@ export async function addOwnerChapterAtEnd({
 
   return dbWrite.$transaction(async (tx) => {
     await lockStorylineForAdd(tx, storylineId);
-    // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
-    const findEnd = async () =>
-      (
-        await tx.$queryRaw<{ id: number; removed: boolean }[]>`
-          WITH RECURSIVE main AS (
-            SELECT ${root.id}::int AS id, 1 AS step
-            UNION ALL
-            SELECT e."chapterId", main.step + 1 FROM main
-            JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
-            WHERE main.step < 100000
-          )
-          SELECT main.id, c."removedAt" IS NOT NULL AS removed
-          FROM main JOIN "StorylineChapter" c ON c.id = main.id
-          ORDER BY step DESC LIMIT 1
-        `
-      )[0];
-    let end = await findEnd();
-    // Removals keep the route off a tombstone, but an insert or "Make main path" racing one, or a
-    // route from before they did, can still end at one. Nothing continues a tombstone, so the
-    // route is moved back to the last live chapter here, where it would otherwise stay stuck.
-    if (end.removed) {
-      // Locks the parents whose edges the heal rewrites first, the order `setCanonChapter` takes
-      // (a parent's row, then its edges), so the two cannot deadlock.
-      await tx.$queryRaw`
-        WITH RECURSIVE up AS (
-          SELECT ${end.id}::int AS id, 1 AS step
-          UNION ALL
-          SELECT e."parentChapterId", up.step + 1 FROM up
-          JOIN "StorylineChapter" c ON c.id = up.id AND c."removedAt" IS NOT NULL
-          JOIN "StorylineChapterEdge" e ON e."chapterId" = up.id AND e.canon
-          WHERE up.step < 100000
-        )
-        SELECT id FROM "StorylineChapter" WHERE id IN (SELECT id FROM up WHERE step > 1)
-        ORDER BY id FOR NO KEY UPDATE
-      `;
-      await clearTombstoneTips([end.id], tx);
-      end = await findEnd();
-    }
     const { chapterId } = await writeOwnerChapter(tx, {
-      parentChapterId: end.id,
+      parentChapterId: await lockedMainPathEnd(tx, root.id),
       postId,
       userId,
     });
@@ -2046,6 +2052,9 @@ export async function setCanonChapter({
     throw throwBadRequestError('A removed chapter cannot be the main route');
 
   await dbWrite.$transaction(async (tx) => {
+    // The whole storyline, before the parent, as the other route writers take it: this moves the
+    // main path's end, which an at-end add or join reads under that lock and relies on.
+    await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${edge.storylineId} FOR NO KEY UPDATE`;
     await lockParentChapter(tx, edge.parentChapterId);
     await tx.storylineChapterEdge.updateMany({
       where: { parentChapterId: edge.parentChapterId, canon: true },
@@ -2115,20 +2124,29 @@ async function createChapterJoinable(storyline: {
     }) === null;
 }
 
+const STORYLINE_END_MOVED =
+  'The story has a new last chapter since you opened this. Close it and join from there';
+
 /**
  * The owner (or a moderator) offers an existing chapter as a way on from `parentChapterId`, so
  * two branches rejoin at it. The chapter gains a parent and keeps its depth.
+ *
+ * `atEnd`: the join was offered at the end of the main path, so it must extend it. A chapter added
+ * since the client read `parentChapterId` as the end would turn the join into a side branch, so
+ * it is refused instead, rather than moved after a chapter the owner never saw.
  */
 export async function linkStorylineChapter({
   parentChapterId,
   chapterId,
   userId,
   isModerator,
+  atEnd = false,
 }: {
   parentChapterId: number;
   chapterId: number;
   userId: number;
   isModerator?: boolean;
+  atEnd?: boolean;
 }) {
   if (parentChapterId === chapterId) throw throwBadRequestError('A chapter cannot continue itself');
   const parent = await dbWrite.storylineChapter.findUnique({
@@ -2149,6 +2167,13 @@ export async function linkStorylineChapter({
         select: { tosViolation: true, userId: true, maxNsfwLevel: true, minorByScan: true },
       });
       if (storyline?.tosViolation) throw throwBadRequestError('This storyline was taken down');
+      if (atEnd) {
+        const [root] = await tx.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "StorylineChapter" WHERE "storylineId" = ${storylineId} AND depth = 0
+        `;
+        if (!root || (await lockedMainPathEnd(tx, root.id)) !== parentChapterId)
+          throw throwBadRequestError(STORYLINE_END_MOVED);
+      }
       // Before the reads below, so what they find stays true until the edge is written.
       const live = await lockLiveChapters(tx, [parentChapterId, chapterId]);
       const chapters = await tx.storylineChapter.findMany({
@@ -2171,13 +2196,12 @@ export async function linkStorylineChapter({
       const refusal = judge(chapterId);
       if (refusal) throw throwBadRequestError(STORYLINE_LINK_REFUSALS[refusal]);
 
+      const canon = await takesCanonSlot(tx, parentChapterId);
+      // Under the storyline lock nothing can have given the end a canon child since the check; kept
+      // so a route writer that ever skips that lock refuses here instead of writing a branch.
+      if (atEnd && !canon) throw throwBadRequestError(STORYLINE_END_MOVED);
       await tx.storylineChapterEdge.create({
-        data: {
-          storylineId,
-          chapterId,
-          parentChapterId,
-          canon: await takesCanonSlot(tx, parentChapterId),
-        },
+        data: { storylineId, chapterId, parentChapterId, canon },
       });
     });
   } catch (error) {
@@ -4047,18 +4071,7 @@ export async function getStorylinesInfinite({
     // `getParticipatingStorylineIds` reads them.
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
       AND (${storylineRootVisibleSql}
-        OR EXISTS (
-          SELECT 1 FROM "StorylineCollaborator" pc
-          WHERE pc."storylineId" = st.id AND pc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
-      'pc'
-    )}
-        )
-        OR EXISTS (
-          SELECT 1 FROM "StorylineChapter" pch
-          WHERE pch."storylineId" = st.id AND pch."userId" = ${viewerId} AND ${participantChapterSql(
-      'pch'
-    )}
-        ))))`,
+        OR ${storylineParticipantSql(Prisma.sql`${viewerId}`, Prisma.sql`st.id`)})))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];
   // One array parameter, not one bind per id: the list can run to tens of thousands.

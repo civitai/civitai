@@ -32,6 +32,7 @@ import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { DurationIcon } from '~/components/ImageGeneration/DurationIcon';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
   matchesMarkerTags,
@@ -313,24 +314,20 @@ export function QueueItem({
               <Text size="xs" c="dimmed">
                 {formatDateMin(request.createdAt)}
               </Text>
-              {!!request.cost?.total && (
+              {(!!request.cost?.total || !!refund) && (
                 <GenerationCostPopover
                   workflowCost={request.cost}
                   transactions={request.transactions}
+                  refund={refund}
                   readOnly
                   variant="badge"
                 />
-              )}
-              {refund && (
-                <Badge color="green" variant="light" radius="sm" data-testid="refund-badge">
-                  {refund.text}
-                </Badge>
               )}
               {request.transactions.length > 0 && (
                 <TransactionsPopover data={request.transactions} />
               )}
               {!!request.duration && currentUser?.isModerator && (
-                <Badge color="yellow">Duration: {request.duration}</Badge>
+                <DurationIcon seconds={request.duration} />
               )}
               {workflowDefinition && (
                 <Badge

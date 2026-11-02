@@ -220,7 +220,7 @@ export function useRemoveStorylineChapter({ onSuccess }: { onSuccess?: () => voi
 export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;
-  mutate: (input: { parentChapterId: number; chapterId: number }) => void;
+  mutate: (input: { parentChapterId: number; chapterId: number; atEnd?: boolean }) => void;
 } {
   const utils = trpc.useUtils();
   const mutation = trpc.storyline.linkChapter.useMutation();
@@ -233,6 +233,8 @@ export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }
           void utils.storyline.invalidate();
           onSuccess();
         },
+        // A refused at-end join means the card read an old end: refetch so it shows the new one.
+        onError: () => void utils.storyline.invalidate(),
       }),
   };
 }

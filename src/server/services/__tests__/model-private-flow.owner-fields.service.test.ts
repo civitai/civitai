@@ -850,3 +850,18 @@ describe('publishPrivateModel', () => {
     await expect(publish(false)).resolves.toEqual({ versionIds: [1], held: false });
   });
 });
+
+describe('privateModelFromTraining — name length cap', () => {
+  it('refuses renaming the model to over 100 characters', async () => {
+    await expect(privateFromTraining({ user: owner, name: 'n'.repeat(101) })).rejects.toThrow(
+      'Model name must be 100 characters or fewer.'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('saves a model whose over-limit stored name is re-sent unchanged', async () => {
+    mockStored({ name: 'n'.repeat(150) });
+    await privateFromTraining({ user: owner, name: 'n'.repeat(150) });
+    expect(updateData().name).toBe('n'.repeat(150));
+  });
+});

@@ -38,8 +38,8 @@ export type StorylineContinueModalProps = {
   /** The parent already has a main-path chapter: this starts a branch, and says so. */
   branch?: boolean;
   /**
-   * The owner's post goes at the end of the main path, found when it is added: a chapter added
-   * since `parentChapterId` was read as the end would otherwise make this a branch.
+   * `parentChapterId` was read as the main path's end. The owner's post goes at the end found when
+   * it is added; a join is refused if the end has moved. Either would otherwise make a branch.
    */
   atEnd?: boolean;
 };
@@ -156,6 +156,7 @@ export default function StorylineContinueModal({
             <StorylineJoinChapterForm
               parentChapterId={parentChapterId}
               parentName={parentName}
+              atEnd={atEnd}
               onClose={dialog.onClose}
             />
           ) : (

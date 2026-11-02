@@ -100,7 +100,7 @@ beforeAll(async () => {
   // The feed's own statement and the participants read run in Postgres; image reads find nothing.
   r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
-    return sql.includes('FROM "Storyline" st') || sql.includes('FROM "StorylineCollaborator" sc')
+    return sql.includes('FROM "Storyline" st') || sql.includes('FROM unnest(')
       ? raw.queryRaw(strings, ...values)
       : Promise.resolve([]);
   }) as never);

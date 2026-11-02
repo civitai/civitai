@@ -1,9 +1,10 @@
 import type { TransactionInfo, WorkflowCost } from '@civitai/orchestration-client';
 import type { PopoverProps } from '@mantine/core';
-import { Anchor, Group, Loader, NumberInput, Popover, Text } from '@mantine/core';
+import { Anchor, Group, Loader, NumberInput, Popover, Text, Tooltip } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
+import type { RefundSummary } from '~/components/ImageGeneration/refund-summary';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -36,10 +37,11 @@ export function GenerationCostPopover({
   hideCivitaiTip,
   variant = 'info-circle',
   transactions,
+  refund,
   ...popoverProps
 }: Omit<PopoverProps, 'children'> & Props) {
   const totalCost = workflowCost.total ?? 0;
-  const disabled = totalCost > 0 ? popoverProps.disabled : true;
+  const disabled = totalCost > 0 || refund ? popoverProps.disabled : true;
 
   // Use the user-selected buzz type for the cost badge color
   const availableBuzzTypes = useAvailableBuzz(['blue']);
@@ -68,13 +70,15 @@ export function GenerationCostPopover({
             </Text>
           </div>
         ) : (
-          <CurrencyBadge
-            unitAmount={totalCost}
-            currency={Currency.BUZZ}
-            size="xs"
-            className="cursor-pointer"
-            type={mainBuzzAccountType as BuzzSpendType}
-          />
+          <Tooltip label={refund?.text} disabled={!refund} withinPortal>
+            <CurrencyBadge
+              unitAmount={refund ? refund.net : totalCost}
+              currency={Currency.BUZZ}
+              size="xs"
+              className="cursor-pointer"
+              type={mainBuzzAccountType as BuzzSpendType}
+            />
+          </Tooltip>
         )}
       </Popover.Target>
       <Popover.Dropdown p={0}>
@@ -85,6 +89,7 @@ export function GenerationCostPopover({
           hideCreatorTip={hideCreatorTip}
           hideCivitaiTip={hideCivitaiTip}
           buzzAccountType={mainBuzzAccountType as BuzzSpendType}
+          refund={refund}
         />
       </Popover.Dropdown>
     </Popover>
@@ -208,6 +213,7 @@ function GenerationCostPopoverDetail({
   hideCreatorTip,
   hideCivitaiTip,
   buzzAccountType,
+  refund,
 }: Props) {
   const { creatorTip, civitaiTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
@@ -372,6 +378,19 @@ function GenerationCostPopoverDetail({
         label="Total"
         value={<BuzzValue amount={grandTotal} type={buzzAccountType} />}
       />
+      {refund && (
+        <>
+          <CostRow
+            label="Refunded"
+            value={<BuzzValue amount={refund.amount} type={buzzAccountType} />}
+          />
+          <CostRow
+            variant="total"
+            label="Charged"
+            value={<BuzzValue amount={refund.net} type={buzzAccountType} />}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -522,4 +541,6 @@ type Props = {
   variant?: 'info-circle' | 'badge';
   buzzAccountType?: BuzzSpendType;
   transactions?: TransactionInfo[];
+  /** Failed workflow that was refunded: the badge shows `refund.net` and the popover itemises it. */
+  refund?: RefundSummary | null;
 };
