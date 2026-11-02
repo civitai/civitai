@@ -14,13 +14,32 @@
   let dismissed = $state.raw<unknown>(null);
   let showReveal = $derived(form?.reveal !== undefined && form !== dismissed);
   let answers = $state<HTMLFormElement>();
+  let skipForm = $state<HTMLFormElement>();
   let yesNo = $derived(data.mode === 'queue' && data.question?.kind === 'bool');
+  let failedItem = $state<string | null>(null);
+  let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
 
-  // Y and N answer a yes/no question; typing in a field or holding a modifier is left alone.
+  // The load event can fire before this page is interactive, so a frame that already failed is checked once on mount.
+  function watchImage(img: HTMLImageElement, onfail: () => void) {
+    if (img.complete && img.naturalWidth === 0) onfail();
+    img.addEventListener('error', onfail);
+    return { destroy: () => img.removeEventListener('error', onfail) };
+  }
+
+  // Y and N answer a yes/no question and Space skips the item; typing in a field, a focused button or link, or holding a
+  // modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
-    if (!yesNo || submitting || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (data.mode !== 'queue' || !data.item || submitting) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable]')) return;
+    if (event.key === ' ') {
+      if (target?.closest('button, a')) return;
+      event.preventDefault();
+      skipForm?.requestSubmit();
+      return;
+    }
+    if (!yesNo || imageFailed) return;
     const value = { y: 'yes', n: 'no' }[event.key.toLowerCase()];
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
@@ -174,24 +193,39 @@
   {/if}
   <p class="prompt">{data.question.prompt}</p>
   {#key data.item.id}
+    {@const itemId = data.item.id}
     <img
       src={data.item.src}
       width={data.item.width ?? undefined}
       height={data.item.height ?? undefined}
       alt="The subject of this judgment"
+      use:watchImage={() => (failedItem = itemId)}
     />
   {/key}
+  {#if imageFailed}
+    <p class="notice" role="alert">This image could not be loaded. Skip it to see the next one.</p>
+  {/if}
 
   <form method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
     <input type="hidden" name="item" value={data.item.id} />
     <div class="options">
       {#each data.question.options as option (option.value)}
-        <button type="submit" name="answer" value={option.value} disabled={submitting}>
+        <button
+          type="submit"
+          name="answer"
+          value={option.value}
+          disabled={submitting || imageFailed}
+        >
           {option.label}{#if yesNo}
             <kbd>{option.label[0]}</kbd>{/if}
         </button>
       {/each}
     </div>
+  </form>
+
+  <form method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm} class="skip">
+    <input type="hidden" name="item" value={data.item.id} />
+    <button type="submit" disabled={submitting}>Skip <kbd>Space</kbd></button>
   </form>
 
   {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
@@ -244,6 +278,9 @@
     object-fit: contain;
     margin: 1rem 0;
     border: 1px solid var(--border);
+  }
+  .skip {
+    margin-top: 0.5rem;
   }
   .options {
     display: flex;

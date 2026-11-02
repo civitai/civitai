@@ -20,11 +20,18 @@ export type YesNoOffer = {
   banner: { heading: string } | null;
 };
 
-function unanswered(db: Executor, userId: number, axis: string, stages: string[]) {
+function unanswered(
+  db: Executor,
+  userId: number,
+  axis: string,
+  stages: string[],
+  exclude: number[]
+) {
   return (
     playableItems(db)
       .where('i.questionKey', '=', axis)
       .where('i.minRank', 'in', stages)
+      .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(
           eb.exists(
@@ -90,6 +97,8 @@ export async function pickYesNo(
     share: number;
     stretch: number;
     force?: boolean;
+    /** Question ids the player has skipped. */
+    exclude?: number[];
   }
 ): Promise<YesNoOffer | null> {
   if (!isRank(input.rank)) return null;
@@ -126,7 +135,7 @@ export async function pickYesNo(
   ];
 
   for (const axis of order) {
-    const found = await unanswered(db, input.userId, axis, stages).executeTakeFirst();
+    const found = await unanswered(db, input.userId, axis, stages, input.exclude ?? []).executeTakeFirst();
     if (!found) continue;
     return {
       itemId: found.id,

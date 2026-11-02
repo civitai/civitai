@@ -158,6 +158,18 @@ describe('getFeed', () => {
     expect(await getFeed(db, 2)).toBeNull();
   });
 
+  it('leaves out the items a player skipped, and only for that player', async () => {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    for (const id of [10, 11]) await image(id);
+    const first = await item(10, { priority: 1 });
+    const second = await item(11, { priority: 2 });
+
+    expect((await getFeed(db, 1, { exclude: [first] }))?.items.map((i) => i.id)).toEqual([second]);
+    expect((await getFeed(db, 1, { exclude: [first, second] }))).toBeNull();
+    expect((await getFeed(db, 2))?.items.map((i) => i.id)).toEqual([first, second]);
+  });
+
   it('serves only as many items as asked for', async () => {
     await player(1, 'Knight');
     for (const id of [10, 11, 12]) await image(id);

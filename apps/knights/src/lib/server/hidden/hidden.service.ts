@@ -46,11 +46,17 @@ export async function slotOf(db: Executor, userId: number): Promise<number> {
 
 export const unit = (digest: Buffer, at: number) => digest.readUInt32BE(at) / 2 ** 32;
 
-function eligibleReferences(db: Executor, userId: number, questionKey: string) {
+function eligibleReferences(
+  db: Executor,
+  userId: number,
+  questionKey: string,
+  exclude: number[] = []
+) {
   return servableReferences(db, REFERENCE_POOL.hiddenCheck)
     .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
+    .$if(exclude.length > 0, (qb) => qb.where('r.id', 'not in', exclude))
     .where((eb) =>
       eb.not(
         eb.exists(
@@ -75,17 +81,25 @@ function eligibleReferences(db: Executor, userId: number, questionKey: string) {
  */
 export async function pickHiddenCheck(
   db: Executor,
-  input: { userId: number; rank: string; secret: string; questionKey: string; rate: number }
+  input: {
+    userId: number;
+    rank: string;
+    secret: string;
+    questionKey: string;
+    rate: number;
+    /** Reference ids the player has skipped. */
+    exclude?: number[];
+  }
 ): Promise<HiddenCheckOffer | null> {
   if (!isRank(input.rank) || !canVote(input.rank, 'Knight')) return null;
   const digest = createHash('sha256')
     .update(`${input.secret}:hidden:${input.userId}:${await slotOf(db, input.userId)}`)
     .digest();
 
-  const { n } = await eligibleReferences(db, input.userId, input.questionKey)
+  const { n } = await eligibleReferences(db, input.userId, input.questionKey, input.exclude)
     .select((eb) => eb.fn.countAll<string>().as('n'))
     .executeTakeFirstOrThrow();
-  const row = await eligibleReferences(db, input.userId, input.questionKey)
+  const row = await eligibleReferences(db, input.userId, input.questionKey, input.exclude)
     .select([
       'r.id',
       'q.key',
