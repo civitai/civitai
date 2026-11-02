@@ -1,4 +1,5 @@
 import type {
+  Fibo2AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
@@ -21,6 +22,7 @@ import { isDefined } from '~/utils/type-guards';
 export const studioModelFlagFeatures = {
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
+  'fibo2-training': 'fibo2Training',
   'yue2-training': 'yue2Training',
   'flux3-klein-training': 'flux3KleinTraining',
   'moss-image-training': 'mossImageTraining',
@@ -74,6 +76,7 @@ export const trainingBaseModelTypesImage = [
   'qwen21',
   'mossimage',
   'flux3klein',
+  'fibo2',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -113,6 +116,7 @@ export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
   baseType === 'boogu' ||
   baseType === 'ming' ||
   baseType === 'qwen21' ||
+  baseType === 'fibo2' ||
   baseType === 'yue2' ||
   baseType === 'minimaxh3'
     ? 3000
@@ -580,6 +584,17 @@ export const trainingModelInfo: {
     isNew: true,
     aiToolkit: { ecosystem: 'qwen21' satisfies Qwen21AiToolkitTrainingInput['ecosystem'] },
   },
+  fibo2: {
+    label: 'Dev',
+    pretty: 'Fibo 2.0 Dev',
+    type: 'fibo2',
+    description: 'Train image styles and subjects with Bria Fibo 2.0 Dev.',
+    // No civitai checkpoint yet: the orchestrator's own Dev checkpoint. Keep it identical in the Studio catalog.
+    air: 'urn:air:fibo2:diffusion_model:huggingface:Comfy-Org/Fibo-2.0@main/diffusion_models/fibo2_dev_int8_convrot.safetensors',
+    baseModel: 'Fibo 2.0',
+    isNew: true,
+    aiToolkit: { ecosystem: 'fibo2' satisfies Fibo2AiToolkitTrainingInput['ecosystem'] },
+  },
   yue2: {
     label: 'Base',
     pretty: 'YuE2',
@@ -725,6 +740,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   ideogram4: 'ideogram4',
   ming: 'ming',
   qwen21: 'qwen21',
+  fibo2: 'fibo2',
   yue2: 'yue2',
   acestep15: 'ace_step_15',
   acestep15xl: 'ace_step_15_xl',
@@ -850,6 +866,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'ideogram4',
     'ming',
     'qwen21',
+    'fibo2',
     'acestep15',
     'acestep15xl',
     'yue2',
@@ -876,6 +893,7 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'ideogram4',
     'ming',
     'qwen21',
+    'fibo2',
     'acestep15',
     'acestep15xl',
     'yue2',
@@ -895,7 +913,8 @@ export const getDefaultEngine = (
   features?: Record<string, boolean>,
   opts?: { ignoreDefaultPreference?: boolean }
 ): EngineTypes => {
-  if (baseType === 'ming' || baseType === 'qwen21' || baseType === 'yue2') return 'ai-toolkit';
+  if (baseType === 'ming' || baseType === 'qwen21' || baseType === 'fibo2' || baseType === 'yue2')
+    return 'ai-toolkit';
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
   if (baseType === 'ernie') return 'ai-toolkit'; // Ernie requires AI Toolkit

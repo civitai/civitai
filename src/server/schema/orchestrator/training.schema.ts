@@ -153,6 +153,11 @@ export const aiToolkitTrainingParamsSchema = z
       batchSize: z.literal(1).optional(),
     }),
     aiToolkitBaseParams.extend({
+      ecosystem: z.literal('fibo2'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
+    aiToolkitBaseParams.extend({
       ecosystem: z.literal('ming'),
       modelVariant: z.undefined().optional(),
       batchSize: z.literal(1).optional(),

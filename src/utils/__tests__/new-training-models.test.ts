@@ -29,6 +29,7 @@ import {
 
 const models = [
   ['qwen21', BM.Qwen21, 'image'],
+  ['fibo2', BM.Fibo2, 'image'],
   ['ming', BM.Ming, 'image'],
   ['yue2', BM.YuE2, 'audio'],
 ] as const;

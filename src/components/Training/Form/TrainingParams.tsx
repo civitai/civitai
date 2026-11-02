@@ -164,6 +164,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 'ai-toolkit' } },
       ming: { all: { default: 'ai-toolkit' } },
       qwen21: { all: { default: 'ai-toolkit' } },
+      fibo2: { all: { default: 'ai-toolkit' } },
       krea2: { all: { default: 'ai-toolkit' } },
       mageflow: { all: { default: 'ai-toolkit' } },
       ideogram4: { all: { default: 'ai-toolkit' } },
@@ -303,6 +304,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       qwen21: {
         all: { default: 1, min: 1, max: 1 },
       },
+      fibo2: {
+        all: { default: 1, min: 1, max: 1 },
+      },
       // Krea 2 batch size is fixed at 1 for this ecosystem (per @civitai/orchestration-client).
       krea2: {
         all: { default: 1, min: 1, max: 1 },
@@ -364,6 +368,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 3000 } },
       ming: { all: { default: 3000 } },
       qwen21: { all: { default: 3000 } },
+      fibo2: { all: { default: 3000 } },
     },
   },
   {
@@ -395,6 +400,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 300 } },
       ming: { all: { default: 300 } },
       qwen21: { all: { default: 300 } },
+      fibo2: { all: { default: 300 } },
     },
   },
   {
@@ -423,6 +429,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 1024 } },
       ming: { all: { default: 1024 } },
       qwen21: { all: { default: 1024 } },
+      fibo2: { all: { default: 1024 } },
       krea2: { all: { default: 1024 } },
       mageflow: { all: { default: 1024 } },
       ideogram4: { all: { default: 1024 } },
@@ -484,6 +491,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { disabled: true } },
       ming: { all: { disabled: true } },
       qwen21: { all: { disabled: true } },
+      fibo2: { all: { disabled: true } },
       krea2: { all: { disabled: true } },
       mageflow: { all: { disabled: true } },
       ideogram4: { all: { disabled: true } },
@@ -535,6 +543,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { disabled: true } },
       ming: { all: { disabled: true } },
       qwen21: { all: { disabled: true } },
+      fibo2: { all: { disabled: true } },
       krea2: { all: { disabled: true } },
       mageflow: { all: { disabled: true } },
       ideogram4: { all: { disabled: true } },
@@ -619,6 +628,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 1e-4 } },
       ming: { all: { default: 1e-4 } },
       qwen21: { all: { default: 1e-4 } },
+      fibo2: { all: { default: 1e-4 } },
       krea2: { all: { default: 1e-4 } },
       mageflow: { all: { default: 1e-4 } },
       ideogram4: { all: { default: 1e-4 } },
@@ -663,6 +673,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { disabled: true, default: 0, max: 0 } },
       ming: { all: { disabled: true, default: 0, max: 0 } },
       qwen21: { all: { disabled: true, default: 0, max: 0 } },
+      fibo2: { all: { disabled: true, default: 0, max: 0 } },
       krea2: { all: { disabled: true, default: 0, max: 0 } },
       mageflow: { all: { disabled: true, default: 0, max: 0 } },
       ideogram4: { all: { disabled: true, default: 0, max: 0 } },
@@ -704,6 +715,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 'constant' } },
       ming: { all: { default: 'constant' } },
       qwen21: { all: { default: 'constant' } },
+      fibo2: { all: { default: 'constant' } },
       krea2: { all: { default: 'constant' } },
       mageflow: { all: { default: 'constant' } },
       ideogram4: { all: { default: 'constant' } },
@@ -775,6 +787,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { disabled: true, default: 0, max: 0 } },
       ming: { all: { disabled: true, default: 0, max: 0 } },
       qwen21: { all: { disabled: true, default: 0, max: 0 } },
+      fibo2: { all: { disabled: true, default: 0, max: 0 } },
       krea2: { all: { disabled: true, default: 0, max: 0 } },
       mageflow: { all: { disabled: true, default: 0, max: 0 } },
       ideogram4: { all: { disabled: true, default: 0, max: 0 } },
@@ -810,6 +823,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 32 } },
       ming: { all: { default: 32 } },
       qwen21: { all: { default: 32 } },
+      fibo2: { all: { default: 32 } },
       krea2: { all: { default: 32 } },
       mageflow: { all: { default: 32 } },
       ideogram4: { all: { default: 32 } },
@@ -864,6 +878,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 32 } },
       ming: { all: { default: 32 } },
       qwen21: { all: { default: 32 } },
+      fibo2: { all: { default: 32 } },
       krea2: { all: { default: 32 } },
       mageflow: { all: { default: 32 } },
       ideogram4: { all: { default: 32 } },
@@ -901,6 +916,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 0 } },
       ming: { all: { default: 0 } },
       qwen21: { all: { default: 0 } },
+      fibo2: { all: { default: 0 } },
       krea2: { all: { default: 0 } },
       mageflow: { all: { default: 0 } },
       ideogram4: { all: { default: 0 } },
@@ -988,6 +1004,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       qwen21: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      fibo2: {
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       krea2: {
