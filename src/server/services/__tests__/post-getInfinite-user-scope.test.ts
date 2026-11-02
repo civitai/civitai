@@ -92,7 +92,7 @@ describe('getPostsInfinite user scope', () => {
     expect(issued).toHaveLength(1);
     expect(issued[0]).toContain(`p."userId" = ?`);
     expect(issued[0]).not.toContain(`p."availability" != 'Private'`);
-    expect(issued[0]).toContain(`p."publishedAt" IS NULL`);
+    expect(issued[0]).toContain(`AND p."publishedAt" IS NULL`);
   });
 
   it("searches the owner's own posts by title", async () => {
@@ -111,5 +111,43 @@ describe('getPostsInfinite user scope', () => {
     expect(issued).toHaveLength(1);
     expect(issued[0]).not.toContain(`p."userId" = ?`);
     expect(issued[0]).toContain(`p."availability" != 'Private'`);
+  });
+
+  // A profile names its account by id: older usernames such as 'foo-bar' slugify to 'foobar',
+  // which is no account, so a username lookup returns an empty profile.
+  describe('a profile scoped by account id', () => {
+    const legacyOwner = { id: 42, username: 'foo-bar', isModerator: false } as SessionUser;
+
+    it('scopes to that account without a username lookup', async () => {
+      await run({ userId: 42, username: 'foobar' });
+
+      expect(findFirst).not.toHaveBeenCalled();
+      expect(issued).toHaveLength(1);
+      expect(issued[0]).toContain(`p."userId" = ?`);
+      expect(bound[0]).toContain(42);
+      expect(issued[0]).toContain(`p."availability" != 'Private'`);
+    });
+
+    it('serves the owner their own drafts when the id is theirs', async () => {
+      await run({ userId: 42, user: legacyOwner, draftOnly: true });
+
+      expect(issued).toHaveLength(1);
+      expect(bound[0]).toContain(42);
+      expect(issued[0]).not.toContain(`p."availability" != 'Private'`);
+      // With the ` AND ` prefix: the draft sort's CASE also says `p."publishedAt" IS NULL`.
+      expect(issued[0]).toContain(`AND p."publishedAt" IS NULL`);
+    });
+
+    it('does not make a viewer whose name has the same slug the owner', async () => {
+      const lookalike = { id: 7, username: 'foobar', isModerator: false } as SessionUser;
+
+      await run({ userId: 42, user: lookalike, draftOnly: true });
+
+      expect(issued).toHaveLength(1);
+      expect(bound[0]).toContain(42);
+      expect(issued[0]).toContain(`p."availability" != 'Private'`);
+      expect(issued[0]).toContain(`AND p."publishedAt" <= NOW()`);
+      expect(issued[0]).not.toContain(`AND p."publishedAt" IS NULL`);
+    });
   });
 });
