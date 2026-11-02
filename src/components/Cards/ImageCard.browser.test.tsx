@@ -212,7 +212,8 @@ describe('ImageCard cosmetic frame', () => {
         const natural = buttons.reduce((sum, b) => sum + b.getBoundingClientRect().width, 0);
         return {
           labels: buttons.map((b) => (b as HTMLElement).innerText.split('\n').filter(Boolean)[1]),
-          lines: new Set(buttons.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+          // How far the frame pushes the footer in from the card's edge.
+          inset: buttons[0].getBoundingClientRect().left - root.getBoundingClientRect().left,
           // Slack of one 2px gap per button; a bar stretched across the row is far past it.
           stretch: bar.getBoundingClientRect().width - natural - 2 * buttons.length,
         };
@@ -223,8 +224,8 @@ describe('ImageCard cosmetic frame', () => {
       expect(framed.labels).toEqual(plain.labels);
       expect(plain.stretch).toBeLessThanOrEqual(0);
       expect(framed.stretch).toBeLessThanOrEqual(0);
-      // A frame's padding may wrap the bar at the narrowest width, never change its form.
-      expect(framed.lines).toBeGreaterThanOrEqual(plain.lines);
+      // Control: the frame really narrows the footer here, so the equal results above are earned.
+      expect(framed.inset).toBeGreaterThan(plain.inset);
     }
   );
 });
