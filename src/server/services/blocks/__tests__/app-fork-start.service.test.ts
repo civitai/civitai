@@ -84,6 +84,7 @@ import type { SessionUser } from '~/types/session';
 const {
   FORK_SESSION_TTL_SECONDS,
   applyForkSessionToFirstPublishRequest,
+  buildForkSeedZip,
   forkSeedExclusionReason,
   forkSlugFor,
   getForkSessionForUser,
@@ -605,6 +606,132 @@ describe('fork slugs', () => {
     expect(forkSeedExclusionReason('docs/build/guide.md')).toBeNull();
     expect(forkSeedExclusionReason('src/.envrc')).toBe('env');
     expect(forkSeedExclusionReason('build/out.js')).toBe('build-output');
+  });
+});
+
+// The ONE thing from an env file a seed carries: the root `.env.development`'s allowed frame
+// origins, so an older-pattern fork's first dev preview can receive its host's BLOCK_INIT.
+// Values are the CLI scaffold's two shapes with made-up origins and ports, pairwise distinct and
+// distinct from the scaffold's own (5186, civitai.*), so a hard-coded value cannot pass.
+describe('buildForkSeedZip — the allowed frame origins carve-out', () => {
+  const FORK = 'atelier-fork-7c1d';
+  const KEY = 'VITE_BLOCK_ALLOWED_PARENT_ORIGINS';
+  const OLD_SHAPE = 'http://localhost:5297,https://atelier.example-host.net';
+  const NEW_SHAPE =
+    'http://localhost:5319,https://studio.example-host.org,https://gallery.example-host.io,https://frames.example-host.dev';
+  const IPV4_SHAPE = 'http://127.0.0.1:5402,https://canvas.example-host.app:8443';
+  const SECRET = 'tok_fixture_9f3e1a';
+
+  const manifest = JSON.stringify({ blockId: 'atelier', name: 'Atelier', version: '0.3.0' });
+
+  async function seed(files: Record<string, string>) {
+    const entries = Object.entries({ 'block.manifest.json': manifest, ...files }).map(
+      ([path, content]) => ({ path, content: Buffer.from(content, 'utf8') })
+    );
+    const built = await buildForkSeedZip(entries, FORK);
+    const zip = await JSZip.loadAsync(built.buffer);
+    const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir);
+    const all = (await Promise.all(names.map((n) => zip.file(n)!.async('string')))).join('\n');
+    const envDev = zip.file('.env.development');
+    return {
+      built,
+      names,
+      all,
+      envDev: envDev ? await envDev.async('string') : null,
+    };
+  }
+
+  it('carries the old scaffold shape (loopback + one https origin) as exactly one line', async () => {
+    const out = await seed({ '.env.development': `${KEY}=${OLD_SHAPE}\n` });
+    expect(out.envDev).toBe(
+      'VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5297,https://atelier.example-host.net\n'
+    );
+  });
+
+  it('carries the new 4-origin shape and NOTHING else from the file', async () => {
+    const out = await seed({
+      '.env.development': [
+        '# Loaded by vite dev. DEV-ONLY.',
+        `${KEY}=${NEW_SHAPE}`,
+        '',
+        'VITE_HARNESS_MODE=mock',
+        `SECRET_TOKEN=${SECRET}`,
+        '',
+      ].join('\n'),
+    });
+    expect(out.envDev).toBe(
+      'VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5319,https://studio.example-host.org,https://gallery.example-host.io,https://frames.example-host.dev\n'
+    );
+    expect(out.all).not.toContain(SECRET);
+    expect(out.all).not.toContain('VITE_HARNESS_MODE');
+    expect(out.all).not.toContain('DEV-ONLY');
+    // The parent's file is still reported as left out; the seed's file is the platform's own.
+    expect(out.built.excluded).toEqual(['.env.development']);
+    expect(out.built.files).toEqual(['.env.development', 'block.manifest.json']);
+  });
+
+  it('carries a 127.0.0.1 loopback origin and an https origin with a port', async () => {
+    const out = await seed({ '.env.development': `${KEY}=${IPV4_SHAPE}\r\n` });
+    expect(out.envDev).toBe(
+      'VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://127.0.0.1:5402,https://canvas.example-host.app:8443\n'
+    );
+  });
+
+  it.each([
+    ['http to a non-loopback host', `${KEY}=http://atelier.example-host.net`],
+    [
+      'one bad entry among good ones',
+      `${KEY}=http://localhost:5297,http://atelier.example-host.net`,
+    ],
+    ['a wildcard', `${KEY}=http://localhost:5297,https://*.example-host.net`],
+    ['a path', `${KEY}=https://atelier.example-host.net/app`],
+    ['a query', `${KEY}=https://atelier.example-host.net?x=1`],
+    ['credentials', `${KEY}=https://user:pw@atelier.example-host.net`],
+    [
+      'a second assignment on the line',
+      `${KEY}=https://atelier.example-host.net SECRET_TOKEN=${SECRET}`,
+    ],
+    [
+      'a quoted value spanning a newline',
+      `${KEY}="https://atelier.example-host.net\nSECRET_TOKEN=${SECRET}"`,
+    ],
+    ['a single-quoted value', `${KEY}='https://atelier.example-host.net'`],
+    ['an interpolation', `${KEY}=https://atelier.example-host.net,\${SECRET_TOKEN}`],
+    ['leading whitespace in the value', `${KEY}= https://atelier.example-host.net`],
+    ['a trailing empty entry', `${KEY}=https://atelier.example-host.net,`],
+    ['an empty value', `${KEY}=`],
+    ['the key twice', `${KEY}=${OLD_SHAPE}\n${KEY}=https://studio.example-host.org`],
+    ['an export prefix', `export ${KEY}=${OLD_SHAPE}`],
+    ['a loopback origin with no port', `${KEY}=http://localhost`],
+  ])('carries nothing for %s', async (_label, file) => {
+    const out = await seed({ '.env.development': `${file}\nSECRET_TOKEN=${SECRET}\n` });
+    expect(out.envDev).toBeNull();
+    expect(out.names).toEqual(['block.manifest.json']);
+    expect(out.all).not.toContain(SECRET);
+    expect(out.all).not.toContain('example-host');
+  });
+
+  it('a NESTED .env.development is never read', async () => {
+    const out = await seed({ 'app/.env.development': `${KEY}=${OLD_SHAPE}\n` });
+    expect(out.envDev).toBeNull();
+    expect(out.names).toEqual(['block.manifest.json']);
+    expect(out.built.excluded).toEqual(['app/.env.development']);
+  });
+
+  it.each([['.env'], ['.env.local'], ['.env.production'], ['.env.development.local']])(
+    '%s is never read, even holding a valid value',
+    async (name) => {
+      const out = await seed({ [name]: `${KEY}=${OLD_SHAPE}\n` });
+      expect(out.envDev).toBeNull();
+      expect(out.names).toEqual(['block.manifest.json']);
+    }
+  );
+
+  it('a parent with no env file gets no .env.development', async () => {
+    const out = await seed({ 'src/main.ts': 'export {};' });
+    expect(out.envDev).toBeNull();
+    expect(out.names).toEqual(['block.manifest.json', 'src/main.ts']);
+    expect(out.built.excluded).toEqual([]);
   });
 });
 
