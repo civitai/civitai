@@ -190,8 +190,9 @@ export async function pollEditImage(
   return { done, options };
 }
 
-// Must carry its provider prefix: the orchestrator prices nothing it can't resolve.
-const SUGGEST_MODEL = 'openai/gpt-4o-mini';
+// Must take image input (the step sends both images) and carry its provider prefix: the
+// orchestrator prices nothing it can't resolve.
+const SUGGEST_MODEL = 'deepseek/deepseek-v4.1-flash';
 const SUGGEST_SYSTEM = [
   'You write the instruction for one example in an image-editing dataset.',
   'You are shown the image before the edit, then the image after it.',
