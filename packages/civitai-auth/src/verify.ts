@@ -8,6 +8,7 @@
 //
 // Factory mirrors the createXClients(config) injection convention.
 import { createRemoteJWKSet, decodeProtectedHeader, importSPKI, jwtVerify } from 'jose';
+import type { JWTPayload, JWSHeaderParameters } from 'jose';
 import { sessionCookieName } from './cookies';
 import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
@@ -67,11 +68,13 @@ export interface AuthVerifierConfig {
   onJwksLeg?: (outcome: 'hit' | 'timeout', durationSeconds: number) => void;
   /**
    * Optional per-process cache of ES256 signature verifications, behind a switch read on every call (see
-   * verified-claims-cache.ts). A hit skips ONLY `jwtVerify` — the signature, issuer and audience check, a pure
-   * function of the token bytes. Expiry is enforced on a hit too (an entry never outlives the token's `exp`),
-   * and the `purpose`, lineage and `isRevoked` checks below run on every call exactly as without the cache. A
-   * token that fails verification is never stored. Omitted, or switched off, verify behaves as before.
-   * Legacy JWE cookies are never cached.
+   * verified-claims-cache.ts). A hit skips the signature maths of `jwtVerify` but not the key lookup: the
+   * signing key is re-resolved through the same getter on every hit, and the hit is accepted only if it is the
+   * very key object that verified the signature, so a key removed from the key set stops a cached token as soon
+   * as jose stops resolving it. Expiry is enforced on a hit too (an entry never outlives the token's `exp`), and
+   * the `purpose`, lineage and `isRevoked` checks below run on every call exactly as without the cache. A token
+   * that fails verification is never stored. Omitted, or switched off, verify behaves as before. Legacy JWE
+   * cookies are never cached.
    */
   claimsCache?: VerifiedClaimsCacheOptions;
 }
@@ -132,7 +135,11 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     // must NOT be inferred from the verification key (alg-confusion guard) — jose only ever accepts
     // an ES256 signature here, never anything the header asks for.
     const opts = { issuer: cfg.issuer, audience: cfg.audience, algorithms: [ALG] };
-    if (cfg.publicKeyPem) return jwtVerify(token, await localKey(), opts);
+    if (cfg.publicKeyPem) {
+      const signingKey = await localKey();
+      const res = await jwtVerify(token, signingKey, opts);
+      return { payload: res.payload, protectedHeader: res.protectedHeader, signingKey };
+    }
     // JWKS path (spoke): time it so a stalled key-refetch is VISIBLE to the calling app. Emit `timeout` on the
     // bounded JWKS-refetch abort, `hit` on success; a plain bad-token failure re-throws WITHOUT emitting (not a
     // JWKS-leg event). Instrumentation must never mask the verify result → we always re-throw on failure.
@@ -141,11 +148,33 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
       const res = await jwtVerify(token, jwks!, opts);
       // safeInvoke: a throwing metric callback must NOT turn a valid verify into a re-thrown fail-closed logout.
       safeInvoke(cfg.onJwksLeg, 'hit', elapsed(start));
-      return res;
+      return { payload: res.payload, protectedHeader: res.protectedHeader, signingKey: res.key as unknown };
     } catch (err) {
       if (isTimeoutError(err)) safeInvoke(cfg.onJwksLeg, 'timeout', elapsed(start));
       throw err;
     }
+  }
+
+  // The key `jwtVerify` would use for this header RIGHT NOW, resolved through the same getter it calls: the
+  // memoized local key (hub), or the remote JWKS set's getter (spoke), called with the arguments jose's
+  // flattenedVerify passes it (the parsed protected header and the flattened JWS). Used on a cache hit.
+  //
+  // Cost, from jose 6.0.12 (jwks/remote.js, jwks/local.js): while the fetched key set is fresh (younger than
+  // cacheMaxAge, 10 min by default) the getter is an in-memory filter of the set's keys by kty/kid/alg/use/crv
+  // plus `importWithAlgCache`, which returns the CryptoKey it already imported for that JWK (a WeakMap). No
+  // signature maths and no fetch. It fetches only where `jwtVerify` itself would on the same request: when
+  // the set is stale (one reload, shared by concurrent callers through `#pendingFetch`), or when no key matches
+  // and the set is not cooling down (cooldownDuration, 30 s by default, after the last fetch). So a hit adds
+  // no fetch beyond what the uncached path does — at most the same one.
+  //
+  // After any reload jose builds a new local set (structuredClone of the fetched JSON) with a new import cache,
+  // so even an unchanged key resolves to a NEW CryptoKey object. A hit is accepted only on object identity with
+  // the key that verified the signature; anything else (removed kid, rotated material under a reused kid, or
+  // just a reload) drops the entry and re-verifies in full.
+  async function currentKey(protectedHeader: JWSHeaderParameters, token: string) {
+    if (cfg.publicKeyPem) return localKey();
+    const [protectedB64, payload, signature] = token.split('.');
+    return jwks!(protectedHeader, { protected: protectedB64, payload, signature });
   }
 
   // The claims cache is consulted only while its switch reads exactly `true`. Off, unreadable or throwing →
@@ -187,17 +216,37 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
           `[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for ${ALG} verification`
         );
       const cache = await activeClaimsCache();
-      let payload = cache?.get(token);
-      if (!payload) {
+      let payload: JWTPayload | undefined;
+      const hit = cache?.get(token);
+      if (hit) {
+        // Re-resolve the signing key on EVERY hit (see currentKey): the key set can change under a cached token.
+        const start = now();
+        let key: unknown;
         try {
-          payload = (await verifyAsymmetric(token)).payload;
+          key = await currentKey(hit.protectedHeader, token);
+        } catch (err) {
+          // The getter threw — exactly what `jwtVerify` would hit on this request (same getter, same header), so
+          // answer as the uncached path does: null. Not re-verified, which would call the getter, and so any
+          // fetch it attempts, a second time on this request.
+          cache!.delete(token);
+          if (jwks && isTimeoutError(err)) safeInvoke(cfg.onJwksLeg, 'timeout', elapsed(start));
+          return null;
+        }
+        if (key === hit.signingKey) payload = hit.payload;
+        else cache!.delete(token); // a different key object: re-verify in full below
+      }
+      if (!payload) {
+        let verified: Awaited<ReturnType<typeof verifyAsymmetric>>;
+        try {
+          verified = await verifyAsymmetric(token);
         } catch {
           return null; // bad signature / expired / wrong issuer — never cached
         }
+        payload = verified.payload;
         // Session tokens carry no `aud`; without a configured audience, tokens with one are not sessions.
         // Checked BEFORE the cache write, so a token this rejects is never stored (a hit skips this check).
         if (!cfg.audience && payload.aud !== undefined) return null;
-        cache?.set(token, payload);
+        cache?.set(token, verified);
       }
       claims = payload as SessionClaims;
     } else if (cfg.legacyEnabled && cfg.legacySecret) {

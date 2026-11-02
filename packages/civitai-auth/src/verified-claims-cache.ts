@@ -1,11 +1,18 @@
 import { createHash } from 'crypto';
-import type { JWTPayload } from 'jose';
+import type { JWTPayload, JWSHeaderParameters } from 'jose';
 
-// A per-process cache of ES256 signature verifications, so a token presented on many requests pays for
-// `jwtVerify` once. It stores ONLY the outcome of the signature + issuer + audience check, which is a pure
-// function of the token bytes and the verifier's fixed config. Everything that can change while a token is
-// alive — expiry against the clock, the lineage limits and the revocation read — is still evaluated on every
-// call by verify.ts, hit or miss. See `claimsCache` in AuthVerifierConfig.
+// A per-process cache of ES256 signature verifications, so a token presented on many requests pays for the
+// signature maths once. An entry records three things about a token that passed `jwtVerify` (signature,
+// issuer, audience): its payload, its protected header, and the exact key object that verified it.
+//
+// What a cached outcome depends on, and how each part is re-checked on a hit (verify.ts):
+//  - the token bytes: the entry is keyed by a digest of the whole token, so it only ever answers for those bytes;
+//  - the verifier's issuer/audience config: fixed for the verifier's life;
+//  - the clock: `exp` is enforced here on every hit (an entry never outlives exp * 1000);
+//  - the key set, which CAN change (rotation, a removed kid, a reload): on every hit verify.ts re-resolves the key
+//    for the stored header through the same getter `jwtVerify` uses, and accepts the hit only if that returns the
+//    SAME key object that verified the signature. Otherwise the entry is dropped.
+// The lineage limits and the revocation read are not cached at all — verify.ts runs them on every call.
 
 export interface VerifiedClaimsCacheOptions {
   /**
@@ -23,17 +30,25 @@ export interface VerifiedClaimsCacheOptions {
 export const DEFAULT_CLAIMS_CACHE_MAX_ENTRIES = 10_000;
 export const DEFAULT_CLAIMS_CACHE_TTL_MS = 60_000;
 
-interface Entry {
+export interface VerifiedClaimsHit {
+  /** A copy — callers may mutate it. */
   payload: JWTPayload;
+  protectedHeader: JWSHeaderParameters;
+  /** The key object that verified the signature, compared by identity on a hit. */
+  signingKey: unknown;
+}
+
+interface Entry extends VerifiedClaimsHit {
   /** Epoch ms after which the entry must not be served: min(insert + ttl, exp * 1000). */
   expiresAt: number;
 }
 
 export interface VerifiedClaimsCache {
-  /** The verified payload for exactly this token, or undefined. A copy — callers may mutate it. */
-  get(token: string): JWTPayload | undefined;
-  /** Record a payload that just passed verification. A payload without a numeric `exp` is not stored. */
-  set(token: string, payload: JWTPayload): void;
+  /** The entry for exactly this token, unexpired, or undefined. */
+  get(token: string): VerifiedClaimsHit | undefined;
+  /** Record a token that just passed verification. A payload without a usable `exp` is not stored. */
+  set(token: string, entry: VerifiedClaimsHit): void;
+  delete(token: string): void;
   clear(): void;
 }
 
@@ -64,23 +79,35 @@ export function createVerifiedClaimsCache(opts: {
       }
       map.delete(key); // move to most-recent
       map.set(key, entry);
-      return structuredClone(entry.payload);
+      return {
+        payload: structuredClone(entry.payload),
+        protectedHeader: entry.protectedHeader,
+        signingKey: entry.signingKey,
+      };
     },
-    set(token, payload) {
-      // A token with no `exp` is never cached: its lifetime would then be bounded by the TTL alone.
-      if (typeof payload.exp !== 'number') return;
+    set(token, { payload, protectedHeader, signingKey }) {
       const t = opts.clock();
-      const expiresAt = Math.min(t + ttlMs, payload.exp * 1000);
-      // Written as a negation so a NaN `exp` (which would otherwise make an entry that never expires) is refused.
+      // ONE guard for every unusable `exp`: a missing one (undefined → NaN here) and a NaN one both make
+      // expiresAt NaN, and `NaN > t` is false. Without it a missing `exp` would leave the TTL as the only bound,
+      // and a NaN one would make an entry that never expires. (jose rejects a non-numeric `exp` itself.)
+      const expiresAt = Math.min(t + ttlMs, (payload.exp ?? NaN) * 1000);
       if (!(expiresAt > t)) return;
       const key = keyOf(token);
       map.delete(key);
-      map.set(key, { payload: structuredClone(payload), expiresAt });
+      map.set(key, {
+        payload: structuredClone(payload),
+        protectedHeader: structuredClone(protectedHeader),
+        signingKey,
+        expiresAt,
+      });
       while (map.size > maxEntries) {
         const oldest = map.keys().next().value;
         if (oldest === undefined) break;
         map.delete(oldest);
       }
+    },
+    delete(token) {
+      map.delete(keyOf(token));
     },
     clear() {
       map.clear();

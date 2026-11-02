@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createSessionSigner } from '../sign';
 import { createAuthVerifier, type AuthVerifierConfig } from '../verify';
 import { createSessionClient } from '../session-client';
+import { createVerifiedClaimsCache } from '../verified-claims-cache';
+import { SignJWT, importPKCS8 } from 'jose';
+import { generateKeyPairSync } from 'crypto';
 import type { SessionClaims } from '../types';
 
 // The switched verification cache (verified-claims-cache.ts) over the REAL verifier and REAL jose. Only the
@@ -73,6 +76,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('verified claims cache — hit and miss', () => {
@@ -288,5 +292,107 @@ describe('verified claims cache — the switch', () => {
       expect((await v.verifyToken(token))?.jti).toBe('a');
       expect(verifyCalls()).toBe(2);
     }
+  });
+});
+
+describe('verified claims cache — the key set is re-checked on every hit', () => {
+  // A second, unrelated key pair: the key set the hub would publish after removing k1.
+  const other = generateKeyPairSync('ec', {
+    namedCurve: 'P-256',
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+  const otherSigner = createSessionSigner({
+    privateKeyPem: other.privateKey,
+    publicKeyPem: other.publicKey,
+    kid: 'k2',
+    issuer: ISSUER,
+    maxAge: 3600,
+  });
+  // Spoke-style verifiers: keys come from a remote JWKS (the env's local key is overridden with '').
+  const jwksCfg = { publicKeyPem: '', jwksUri: 'https://auth.test/jwks' };
+  // jose's remote set reloads on the first lookup after cacheMaxAge (600 000 ms by default).
+  const PAST_JWKS_CACHE_MAX_AGE_MS = 10 * 60 * 1000 + 1000;
+
+  async function serveJwks(initial: { keys: Record<string, unknown>[] }) {
+    const state = { served: initial };
+    const fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify(state.served), {
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    vi.stubGlobal('fetch', fetch);
+    return { state, fetch };
+  }
+
+  it('a kid removed from the key set refuses the cached token at the next reload, as the uncached path does', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
+    const { state, fetch } = await serveJwks(await signer.publicJwks());
+    const cached = verifier({ ...jwksCfg, claimsCache: on });
+    const uncached = verifier(jwksCfg);
+    const token = await mint(7, 'a');
+
+    expect((await cached.verifyToken(token))?.jti).toBe('a');
+    expect((await uncached.verifyToken(token))?.jti).toBe('a');
+    expect((await cached.verifyToken(token))?.jti).toBe('a'); // a hit
+    expect(verifyCalls()).toBe(2);
+
+    state.served = await otherSigner.publicJwks(); // k1 is gone
+    vi.setSystemTime(Date.now() + PAST_JWKS_CACHE_MAX_AGE_MS);
+    expect(await uncached.verifyToken(token)).toBeNull();
+    expect(await cached.verifyToken(token)).toBeNull();
+    // One initial fetch and one reload per verifier: the hit path fetched no more than the uncached one.
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('a reload that keeps the key re-verifies the cached token in full, and keeps it signed in', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
+    const { fetch } = await serveJwks(await signer.publicJwks());
+    const v = verifier({ ...jwksCfg, claimsCache: on });
+    const token = await mint(7, 'a');
+    await v.verifyToken(token);
+    await v.verifyToken(token);
+    expect(verifyCalls()).toBe(1);
+
+    vi.setSystemTime(Date.now() + PAST_JWKS_CACHE_MAX_AGE_MS);
+    expect((await v.verifyToken(token))?.jti).toBe('a');
+    expect(verifyCalls()).toBe(2); // a new key object after the reload: not served from the cache
+    expect((await v.verifyToken(token))?.jti).toBe('a');
+    expect(verifyCalls()).toBe(2); // cached again against the reloaded key
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('verified claims cache — a token without a usable exp is never stored', () => {
+  it('through the verifier: a validly signed token with no exp is checked on every presentation', async () => {
+    const privateKey = await importPKCS8(keys.privateKey, 'ES256');
+    const token = await new SignJWT({ sub: '7', user: { id: 7 } })
+      .setProtectedHeader({ alg: 'ES256', kid: 'k1', typ: 'JWT' })
+      .setIssuer(ISSUER)
+      .setIssuedAt()
+      .setJti('no-exp')
+      .sign(privateKey);
+    const v = verifier({ claimsCache: on });
+    expect((await v.verifyToken(token))?.jti).toBe('no-exp');
+    expect((await v.verifyToken(token))?.jti).toBe('no-exp');
+    expect(verifyCalls()).toBe(2);
+  });
+
+  it('directly: a missing or NaN exp is refused, a future exp is kept (control)', () => {
+    const c = createVerifiedClaimsCache({ clock: () => 1_000, ttlMs: 60_000 });
+    const entry = (exp: number | undefined) => ({
+      payload: exp === undefined ? { sub: '7' } : { sub: '7', exp },
+      protectedHeader: { alg: 'ES256' },
+      signingKey: {},
+    });
+    c.set('missing', entry(undefined));
+    c.set('nan', entry(NaN));
+    c.set('future', entry(30)); // 30 s = 30 000 ms > the clock's 1 000 ms
+    expect(c.get('missing')).toBeUndefined();
+    expect(c.get('nan')).toBeUndefined();
+    expect(c.get('future')?.payload.exp).toBe(30);
   });
 });
