@@ -660,15 +660,21 @@ export async function setMuted(input: {
     } catch {
       cookie = undefined;
     }
-    const expireGenerationCredentials = () =>
-      postJson({
+    const expireGenerationCredentials = async () => {
+      const result = await postJson({
         path: '/api/mod/user/expire-generation-credentials',
         body: { userId: input.userId },
         label: 'Expire generation credentials',
         auth: 'session',
-        timeoutMs: 30_000,
+        timeoutMs: 5_000,
         cookie,
-      }).catch(() => undefined);
+      });
+      if (!result.ok)
+        void logAxiomError(new Error(result.error), {
+          name: 'mute.expire-generation-credentials-failed',
+          userId: input.userId,
+        });
+    };
     await expireGenerationCredentials();
     await revokeOrchestratorUserTokens(input.userId);
     setTimeout(() => {

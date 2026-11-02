@@ -49,8 +49,8 @@ type GetOrchestratorTokenOptions = {
   bypassCache?: boolean;
   /**
    * Issue the token even when the account is restricted. Only for server-side calls that never hand
-   * the token to a client and only read, delete or cancel the account's own work (or a moderator's
-   * read of it). Every call site is listed in get-orchestrator-token.allow-restricted.test.ts.
+   * the token to a client and never submit work: reading, deleting or cancelling the account's own
+   * workflows, or a moderator acting on them (which may stamp workflow metadata). Every call site is listed in get-orchestrator-token.allow-restricted.test.ts.
    */
   allowRestricted?: boolean;
 };

@@ -3,7 +3,8 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 // Every call that issues a generation token to a restricted account. Each one must keep the token on
-// the server and only read, delete or cancel the account's own work, or be a moderator's read of it.
+// the server and never submit work: it reads, deletes or cancels the account's own workflows, or is a
+// moderator acting on them (publishing stamps workflow metadata).
 // Adding one here is a review decision, not a test fix: check both before you add it.
 const ALLOWED = {
   'src/server/routers/orchestrator.router.ts': {

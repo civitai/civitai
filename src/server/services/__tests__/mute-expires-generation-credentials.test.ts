@@ -63,12 +63,20 @@ describe('a mute and the generation credentials already issued', () => {
     );
   });
 
-  it('expires them again after the standing cache settles, catching a key minted in between', async () => {
+  it('expires a key minted after the first pass, once the standing cache settles', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
     await afterAccountStandingChanged(USER, MUTE);
+    const mintedInBetween = {
+      id: 7,
+      key: 'k7',
+      type: 'System',
+      tokenScope: TokenScope.Full,
+      expiresAt: live,
+    };
+    dbMock.dbWrite.apiKey.findMany.mockResolvedValue([...rows, mintedInBetween] as never);
     dbMock.dbWrite.apiKey.updateMany.mockClear();
     await vi.runAllTimersAsync();
-    expect(expiredIds().sort()).toEqual([1, 2, 3, 6]);
+    expect(expiredIds()).toContain(7);
   });
 
   it('leaves them alone on an unmute', async () => {

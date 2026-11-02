@@ -409,6 +409,15 @@ describe('writes that evict the bearer cache', () => {
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
   });
 
+  it('expireGenerationCredentials retries the eviction of a key an earlier pass expired', async () => {
+    await warm('orchestrator');
+    // An earlier pass expired the row but its cache eviction failed.
+    rows[1].expiresAt = new Date(T0.getTime() - 1000);
+    expect((await getSessionFromBearerToken('orchestrator'))?.apiKeyId).toBe(52); // control
+    await expireGenerationCredentials(501);
+    expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
+  });
+
   it('expireUserApiKeys retries the eviction of a key an earlier pass expired', async () => {
     await warm('personal');
     // An earlier pass expired the row but its cache eviction failed.

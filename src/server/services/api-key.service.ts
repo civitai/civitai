@@ -273,22 +273,23 @@ export async function expireGenerationCredentials(userId: number) {
     where: { userId, type: { in: ['System', 'Access', 'Refresh'] } },
     select: { id: true, key: true, type: true, tokenScope: true, expiresAt: true },
   });
-  const targets = rows.filter(
+  const matched = rows.filter(
     (row) =>
-      (row.type === 'System' ||
-        ((row.type === 'Access' || row.type === 'Refresh') &&
-          (row.tokenScope & AI_SERVICES_SCOPES) !== 0)) &&
-      (!row.expiresAt || row.expiresAt > now)
+      row.type === 'System' ||
+      ((row.type === 'Access' || row.type === 'Refresh') &&
+        (row.tokenScope & AI_SERVICES_SCOPES) !== 0)
   );
-  if (targets.length) {
+  const live = matched.filter((row) => !row.expiresAt || row.expiresAt > now);
+  if (live.length) {
     await dbWrite.apiKey.updateMany({
-      where: { id: { in: targets.map((row) => row.id) } },
+      where: { id: { in: live.map((row) => row.id) } },
       data: { expiresAt: now },
     });
-    await evictCachedApiKeys(targets.map((row) => row.key));
   }
+  // Every matched key, not only the live ones: a repeat call retries an eviction an earlier one missed.
+  if (matched.length) await evictCachedApiKeys(matched.map((row) => row.key));
   await forgetGenerationToken(userId);
-  return { expired: targets.length };
+  return { expired: live.length };
 }
 
 export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {
