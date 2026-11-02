@@ -47,7 +47,7 @@ const RENT_CLAUSE = '<b>Generation Services:';
 const RENT_CIVIT_CLAUSE = '<b>Civitai Generation Services:';
 const CHANGING_PERMISSIONS_CLAUSE = '<b>Changing Permissions:';
 const CHANGING_PERMISSIONS =
-  'Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.';
+  'Changing Permissions: You may modify or eliminate any of the Permissions in this Attachment B when sharing or making available a Merge. This does not change the terms of the License itself, which continue to apply to the Merge.';
 const CREATOR_CREDIT_CLAUSE = '<b>Creator Credit:';
 const FORBIDS_MODEL_SALE = 'Do not sell or license the Model';
 const FORBIDS_MERGE_SALE = 'Do not sell or license a Merge';
@@ -250,6 +250,23 @@ describe('sell / sell-merge split in the generated licence', () => {
       CHANGING_PERMISSIONS
     );
     expect(buildLicense(OTHERS, true, false)).not.toContain(CHANGING_PERMISSIONS);
+  });
+
+  /**
+   * Legal approved this clause as a grant placed AFTER every restriction, so "the Permissions in
+   * this Attachment B" reads against a list that is already complete. Moving it back into the list,
+   * or appending a restriction after it, puts a restriction outside what the grant follows.
+   * OTHERS withholds both sale permissions and credit is required, so restrictions are emitted on
+   * both sides of where the clause used to sit.
+   */
+  it('Changing Permissions is the last clause of Attachment B', () => {
+    const license = buildLicense(OTHERS, true, true, false);
+    expect(license).toContain(CREATOR_CREDIT_CLAUSE);
+    expect(license).toContain(MODEL_CLAUSE);
+    expect(license).toContain(MERGE_CLAUSE);
+
+    const fromClause = license.slice(license.indexOf(CHANGING_PERMISSIONS_CLAUSE));
+    expect(fromClause.trim()).toBe(`<b>${CHANGING_PERMISSIONS}</b>`);
   });
 
   /**
