@@ -108,6 +108,9 @@ import {
 import Model3DLightbox from '~/components/ImageGeneration/Model3DLightbox';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { workflowConfigs } from '~/shared/generation/config/workflows';
+import { polygenVersionOptions } from '~/shared/form-graph/generation/model3d/polygen.graph';
+import { tripoVersionOptions } from '~/shared/form-graph/generation/model3d/tripo.graph';
+import { migrateModel3dParams } from '~/shared/form-graph/generation/model3d/model3d-params';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -115,6 +118,10 @@ const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
 ];
 
 /** 3D ecosystem key → user-facing model name shown on the queue card. */
+const POLYGEN_VERSION_LABELS = new Map<string, string>(
+  [...polygenVersionOptions, ...tripoVersionOptions].map((o) => [o.value, o.label])
+);
+
 const POLYGEN_ECOSYSTEM_MODEL_LABELS: Record<string, string> = {
   PolyGen: 'Meshy',
   Tripo: 'Tripo',
@@ -283,8 +290,16 @@ export function QueueItem({
   // The model (Meshy/Tripo/Hunyuan3D) that generated the mesh. Derived from the
   // ecosystem carried in the params snapshot; legacy items predate the model
   // selector, so any 3D item without an ecosystem is Meshy (PolyGen).
+  const polyGenModelVersion = isPolyGen
+    ? (migrateModel3dParams(params as Record<string, unknown>).version as string | undefined)
+    : undefined;
   const polyGenModelLabel = isPolyGen
-    ? POLYGEN_ECOSYSTEM_MODEL_LABELS[params.ecosystem as string] ?? 'Meshy'
+    ? [
+        POLYGEN_ECOSYSTEM_MODEL_LABELS[params.ecosystem as string] ?? 'Meshy',
+        POLYGEN_VERSION_LABELS.get(polyGenModelVersion ?? ''),
+      ]
+        .filter(Boolean)
+        .join(' ')
     : null;
 
   const engine = params.engine as string | undefined;
