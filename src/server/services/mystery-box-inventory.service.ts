@@ -1,11 +1,13 @@
 import { dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readHeldItemCountsViaKysely,
+  readHeldItemCountsViaPrisma,
+} from '~/server/services/hot-reads-7.reads';
 import { BOX_OPENING_REWARD_STATUS } from '@civitai/shared/mystery-box';
 import { getEventBoxViewer, isEventShopItemData } from '~/server/events/event-shop-item';
-import {
-  countHeldItemsByDefinition,
-  ITEM_TYPE,
-  listHeldItems,
-} from '~/server/services/item.service';
+import { ITEM_TYPE, listHeldItems } from '~/server/services/item.service';
 import type { MysteryBoxView } from '~/server/services/mystery-box.service';
 import {
   BOX_DEFINITION_SELECT,
@@ -34,10 +36,10 @@ async function readVisibleHeldKinds({
   countryCode,
 }: Viewer) {
   if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
-  const counts = await countHeldItemsByDefinition(dbRead, {
-    userId,
-    definition: { type: ITEM_TYPE.box, status: { in: SHOWN_BOX_STATUSES } },
-  });
+  const heldInput = { userId, type: ITEM_TYPE.box, statuses: SHOWN_BOX_STATUSES };
+  const counts = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_7))
+    ? await readHeldItemCountsViaKysely((await loadKyselyDb()).kyselyRead, heldInput)
+    : await readHeldItemCountsViaPrisma(dbRead, heldInput);
   if (!counts.size) return [];
 
   const boxes = await dbRead.itemDefinition.findMany({
