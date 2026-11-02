@@ -245,10 +245,14 @@ export function isDefiniteNotFound(err: unknown): boolean {
         ABSENCE_STATUSES.has(err.resolverError.statusCode)
       );
     }
-    // Reached when the resolver was not CONSULTED at all — the disabled path, or
-    // a direct `getDownloadUrl` caller. (It cannot mean "the resolver succeeded":
+    // Reached when the resolver's /resolve was not CONSULTED — the disabled path,
+    // or a direct `getDownloadUrl` caller. (It cannot mean "the resolver succeeded":
     // `resolveDownloadUrl` returns on success rather than reaching the fallback.)
-    // The delivery worker was then the only authority, and it said not-there.
+    // The delivery worker was then the authority, and it said not-there.
+    // ⚠ A direct caller's 404 may also follow a FAILED moved-attachment lookup
+    // (`getMovedAttachmentUrl` swallows its errors), so for an attachment key this
+    // `true` is "the delivery worker said not-there", not proof the bytes are gone.
+    // Nothing calls this on a direct `getDownloadUrl` error today.
     return true;
   }
 
@@ -363,6 +367,8 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
  * Sends the key as the delivery worker received it (the raw stored form); the
  * resolver matches it and its decoded form itself.
  */
+const MOVED_ATTACHMENT_TIMEOUT_MS = 10_000;
+
 async function getMovedAttachmentUrl(
   key: string,
   fileName: string | undefined
@@ -371,6 +377,10 @@ async function getMovedAttachmentUrl(
   try {
     const response = await fetch(`${storageResolverEndpoint}/resolve-attachment`, {
       method: 'POST',
+      // Bounded: these callers never waited on the resolver before, so a hung
+      // resolver must not turn a fast 404 into a held connection. A timeout
+      // lands in the catch below and keeps the original error.
+      signal: AbortSignal.timeout(MOVED_ATTACHMENT_TIMEOUT_MS),
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${storageResolverInternalToken}`,
