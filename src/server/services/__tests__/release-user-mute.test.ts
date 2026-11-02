@@ -198,7 +198,7 @@ describe('releaseUserMute', () => {
   });
 
   it('does not throw once the unmute has committed', async () => {
-    m.invalidateSession.mockRejectedValueOnce(new Error('redis down'));
+    m.invalidateSession.mockRejectedValue(new Error('redis down'));
     await expect(
       releaseUserMute({ userId: USER, actorId: MOD, updateSource: 't' })
     ).resolves.toMatchObject({ released: true });
@@ -219,14 +219,17 @@ describe('setUserMuted', () => {
 describe('a change of standing reaches the orchestrator', () => {
   it("an unmute revokes the account's cached orchestrator tokens", async () => {
     await releaseUserMute({ userId: USER, actorId: MOD, updateSource: 't' });
+    expect(m.invalidateSession).toHaveBeenCalledTimes(1);
     expect(m.revokeCivitaiUserTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER });
   });
 
-  it('a moderator mute whose sessions cannot be ended fails, so the caller can retry', async () => {
+  it('a moderator mute whose sessions cannot be ended reports it, without throwing', async () => {
     dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: true });
-    m.invalidateSession.mockRejectedValueOnce(new Error('session store down'));
-    await expect(setUserMuted({ userId: USER, muted: true })).rejects.toThrow();
-    expect(m.revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: USER });
+    m.invalidateSession.mockRejectedValue(new Error('session store down'));
+    await expect(setUserMuted({ userId: USER, muted: true })).resolves.toMatchObject({
+      sessionInvalidated: false,
+    });
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledOnce();
   });
 
   it('a moderator mute revokes them too', async () => {

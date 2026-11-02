@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -44,6 +44,13 @@ beforeEach(() => {
   refreshSession.mockResolvedValue(undefined);
   invalidateSession.mockResolvedValue(undefined);
   installFakeCacheRedis();
+  // The follow-up repeat is a real timer otherwise; one test's must not fire inside another's.
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+});
+
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
 });
 
 describe('isAccountMuted', () => {
