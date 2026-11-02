@@ -9,6 +9,10 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
  * reveal. A phishing comment a moderator had removed stayed on the image, article or post.
  */
 
+// The image-thread Kysely read, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/hot-reads', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).hotReadsOverDbMock()
+);
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   amIBlockedByUser: vi.fn(async () => false),
