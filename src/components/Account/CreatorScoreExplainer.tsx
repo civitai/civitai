@@ -29,8 +29,9 @@ export function CreatorScoreExplainer() {
         {creatorScorePenalty} If people unfollow you or remove a reaction, those points go too.
       </Text>
       <Text size="xs" c="dimmed">
-        Your score updates once a day, so today&apos;s activity shows up tomorrow. It never resets
-        or expires.
+        Your score updates once a day, so today&apos;s activity shows up tomorrow. A removed image
+        stops counting against you after six months, and the rest of your score never resets or
+        expires.
       </Text>
     </Stack>
   );
