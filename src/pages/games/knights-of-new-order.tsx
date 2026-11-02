@@ -53,7 +53,6 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-// Full-size view: the image now spans the play area, so the shared 450px default would upscale blurry.
 const KNIGHTS_IMAGE_WIDTH = 1200;
 
 export default Page(
