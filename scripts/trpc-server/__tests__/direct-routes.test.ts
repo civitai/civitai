@@ -219,6 +219,7 @@ describe('serve', () => {
       authorization: 'Bearer t',
       'x-nextjs-data': '1',
       'x-matched-path': '/api/trpc/[trpc]',
+      'x-middleware-override-headers': 'x-civitai-verified-bot',
       'x-middleware-request-x-civitai-verified-bot': 'googlebot',
     });
     const res = fakeRes();
@@ -239,7 +240,10 @@ describe('serve', () => {
     // client-sent internal headers dropped, the caller's own kept
     expect(req.headers).not.toHaveProperty('x-nextjs-data');
     expect(req.headers).not.toHaveProperty('x-matched-path');
-    expect(req.headers).not.toHaveProperty('x-middleware-request-x-civitai-verified-bot');
+    expect(req.headers).not.toHaveProperty('x-middleware-override-headers');
+    // Next's list (server-ipc/utils INTERNAL_HEADERS) does not include x-middleware-request-*;
+    // without the override header nothing applies it, so it stays, as under Next.
+    expect(req.headers['x-middleware-request-x-civitai-verified-bot']).toBe('googlebot');
     expect(req.headers.authorization).toBe('Bearer t');
     // x-forwarded-* filled as base-server fills them
     expect(req.headers['x-forwarded-for']).toBe('203.0.113.9');
