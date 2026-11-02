@@ -4,19 +4,18 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads from '@civitai/db-queries/hot-reads';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 
-// The Kysely/Prisma switch. FLIPT_FEATURE_FLAGS stays real, so the key asserted below is the one
-// production evaluates.
+// Mocked so the model page read can be shown to ask no flag.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
-// Every hot-read query stubbed: their rows against Prisma's are compared in
+// Every hot-read query stubbed: their rows, against a real database, are pinned in
 // hot-reads-2.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/hot-reads', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
 });
-// The lag decision, so a test can make it pick the primary and see both paths follow it.
+// The lag decision, so a test can make it pick the primary and see the read follow it.
 const { getDbWithoutLag, getKyselyWithoutLag } = vi.hoisted(() => ({
   getDbWithoutLag: vi.fn(),
   getKyselyWithoutLag: vi.fn(),
@@ -48,7 +47,8 @@ const RECOMMENDATION = 8606;
 const UPDATED = new Date('2026-10-01T10:11:12.345Z');
 const SCANNED = new Date('2026-10-02T01:02:03.456Z');
 
-const prismaModel = {
+/** The model page payload in the Prisma `modelWithDetailsSelect` shape. */
+const expectedModel = {
   id: MODEL,
   name: 'model',
   status: 'Published',
@@ -95,9 +95,8 @@ const prismaModel = {
   metrics: [{ downloadCount: 21, commentCount: 22 }],
 };
 
-/** The same facts as Kysely rows, so a difference in the answer is the port's. */
-function givenBothPaths() {
-  dbMock.dbRead.model.findFirst.mockResolvedValue(prismaModel);
+/** The same facts as Kysely rows. */
+function givenRows() {
   q.getModelWithDetailsRow.mockResolvedValue({
     id: MODEL,
     name: 'model',
@@ -180,47 +179,29 @@ describe('getModel with modelWithDetailsSelect (the model page)', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('evaluates kysely-hot-reads-2 by key, with no entity or context', async () => {
-    givenBothPaths();
-    await modelPage();
-    expect(flag.mock.calls).toEqual([['kysely-hot-reads-2']]);
-  });
-
-  it('OFF: reads through Prisma only, on the client the lag decision picked', async () => {
-    givenBothPaths();
-    await expect(modelPage()).resolves.toBe(prismaModel);
-    expect(getDbWithoutLag).toHaveBeenCalledWith('model', MODEL);
-    expect(dbMock.dbRead.model.findFirst).toHaveBeenCalledWith({
-      where: { id: MODEL },
-      select: modelWithDetailsSelect,
-    });
-    expect(getKyselyWithoutLag).not.toHaveBeenCalled();
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
-  });
-
-  it('ON: reads the same model through Kysely only, in the Prisma shape', async () => {
-    givenBothPaths();
-    flag.mockResolvedValue(true);
+  it('reads the model through Kysely only, in the Prisma shape, asking no flag', async () => {
+    givenRows();
     const model = await modelPage();
-    expect(model).toEqual(prismaModel);
+    expect(model).toEqual(expectedModel);
+    expect(flag).not.toHaveBeenCalled();
     expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
+    expect(getKyselyWithoutLag).toHaveBeenCalledWith('model', MODEL);
     // Every statement on the read client's ONE connection, taken once per model page.
     expect(readConnection).toHaveBeenCalledTimes(1);
     expect(writeConnection).not.toHaveBeenCalled();
     expect(q.getModelWithDetailsRow.mock.calls).toEqual([[pinnedRead, MODEL]]);
     expect(q.listModelWithDetailsVersions.mock.calls).toEqual([[pinnedRead, MODEL]]);
     expect(q.listModelGenerationCoverage.mock.calls).toEqual([[pinnedRead, MODEL]]);
-    // Files by the version ids the versions statement returned, as the Prisma relation read does.
+    // Files by the version ids the versions statement returned, as the Prisma relation read did.
     expect(q.listModelWithDetailsFiles.mock.calls).toEqual([[pinnedRead, [VERSION]]]);
     for (const read of STATEMENTS()) expect(read.mock.calls[0][0]).toBe(pinnedRead);
-    // A Decimal, as Prisma returns it, not the text the query reads it as.
+    // A Decimal, as Prisma returned it, not the text the query reads it as.
     expect(model?.modelVersions[0].licensingFee).toBeInstanceOf(Prisma.Decimal);
   });
 
-  it('ON: follows the lag decision to the primary, as the Prisma read does', async () => {
-    givenBothPaths();
-    flag.mockResolvedValue(true);
+  it('follows the lag decision to the primary, as the Prisma read did', async () => {
+    givenRows();
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     await modelPage();
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('model', MODEL);
@@ -229,9 +210,8 @@ describe('getModel with modelWithDetailsSelect (the model page)', () => {
     for (const read of STATEMENTS()) expect(read.mock.calls[0][0]).toBe(pinnedWrite);
   });
 
-  it('ON: a missing model is null, as findFirst returns', async () => {
-    givenBothPaths();
-    flag.mockResolvedValue(true);
+  it('a missing model is null, as findFirst returned', async () => {
+    givenRows();
     q.getModelWithDetailsRow.mockResolvedValue(undefined);
     await expect(modelPage()).resolves.toBeNull();
     // Nothing after the first statement.
@@ -241,14 +221,14 @@ describe('getModel with modelWithDetailsSelect (the model page)', () => {
 });
 
 describe('getModel with any other select', () => {
-  it('stays on Prisma with the flag on, and does not evaluate it', async () => {
-    flag.mockResolvedValue(true);
+  it('stays on Prisma, on the client the lag decision picked, and asks no flag', async () => {
     dbMock.dbRead.model.findFirst.mockResolvedValue({ id: MODEL });
     await expect(getModel({ id: MODEL, select: { id: true } })).resolves.toEqual({ id: MODEL });
     expect(dbMock.dbRead.model.findFirst).toHaveBeenCalledWith({
       where: { id: MODEL },
       select: { id: true },
     });
+    expect(getDbWithoutLag).toHaveBeenCalledWith('model', MODEL);
     expect(flag).not.toHaveBeenCalled();
     for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
   });

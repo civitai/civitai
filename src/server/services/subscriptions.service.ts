@@ -348,8 +348,8 @@ export const getHighestPaidTierSubscription = async (userId: number) =>
 export const getCapTier = async (
   userId: number,
   /**
-   * The placement read path's already-evaluated `kysely-placement-reads`. Only that chain passes
-   * it: every other caller reads through Prisma whatever the flag says.
+   * Set only by the placement read path (`placementPriceRange`), which reads through Kysely. Every
+   * other caller reads through Prisma.
    */
   { useKysely = false }: { useKysely?: boolean } = {}
 ): Promise<string | null> => {

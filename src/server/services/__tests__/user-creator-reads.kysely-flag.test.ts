@@ -2,13 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads from '@civitai/db-queries/hot-reads';
 
-// The Kysely/Prisma switch. FLIPT_FEATURE_FLAGS stays real, so the key asserted below is the one
-// production evaluates.
+// Mocked so the creator card read can be shown to ask no flag.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
-// Every hot-read query stubbed: their rows against Prisma's are compared in
+// Every hot-read query stubbed: their rows, against a real database, are pinned in
 // hot-reads-2.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/hot-reads', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads>();
@@ -31,7 +30,8 @@ const COSMETIC = 9303;
 const MODELS = 17;
 const CREATED = new Date('2025-02-03T04:05:06.789Z');
 
-const prismaUser = {
+/** The user in the Prisma `userCreatorSelect` shape. */
+const expectedUser = {
   id: USER,
   image: 'avatar.png',
   username: 'creator',
@@ -85,52 +85,52 @@ const prismaUser = {
   },
 };
 
-/** The same facts on both paths, so a difference in the answer is the port's. */
-function givenBothPaths() {
-  dbMock.dbRead.user.findFirst.mockResolvedValue(prismaUser);
-  dbMock.dbRead.model.count.mockResolvedValue(MODELS);
-  q.getUserCreatorRow.mockResolvedValue({
-    id: USER,
-    image: 'avatar.png',
-    username: 'creator',
-    muted: false,
-    bannedAt: null,
-    deletedAt: null,
-    createdAt: CREATED,
-    publicSettings: { a: 1 },
-    settings: { creatorShop: { enabled: true } },
-    excludeFromLeaderboards: true,
-    links: [{ url: 'https://example.com', type: 'Social' }],
-    rankUserId: USER,
-    leaderboardRank: 4,
-    leaderboardId: 'lb',
-    leaderboardTitle: 'Top',
-    leaderboardCosmetic: null,
-    cosmetics: [
-      {
-        data: { lights: 2 },
-        cosmeticId: COSMETIC,
-        cosmeticName: 'Badge',
-        cosmeticDescription: null,
-        cosmeticType: 'Badge',
-        cosmeticSource: 'Event',
-        cosmeticData: { url: 'x' },
-      },
-    ],
-    profilePictureId: PICTURE,
-    profilePictureName: null,
-    profilePictureUrl: 'pic.png',
-    profilePictureNsfwLevel: 1,
-    profilePictureHash: 'h',
-    profilePictureUserId: USER,
-    profilePictureIngestion: 'Scanned',
-    profilePictureType: 'image',
-    profilePictureWidth: 64,
-    profilePictureHeight: 48,
-    profilePictureMetadata: { size: 1 },
-    modelCount: MODELS,
-  } as never);
-  q.getUserStatRow.mockResolvedValue({ ...prismaUser.stats } as never);
+/** The same facts as the Kysely row. */
+const creatorRow = {
+  id: USER,
+  image: 'avatar.png',
+  username: 'creator',
+  muted: false,
+  bannedAt: null,
+  deletedAt: null,
+  createdAt: CREATED,
+  publicSettings: { a: 1 },
+  settings: { creatorShop: { enabled: true } },
+  excludeFromLeaderboards: true,
+  links: [{ url: 'https://example.com', type: 'Social' }],
+  rankUserId: USER,
+  leaderboardRank: 4,
+  leaderboardId: 'lb',
+  leaderboardTitle: 'Top',
+  leaderboardCosmetic: null,
+  cosmetics: [
+    {
+      data: { lights: 2 },
+      cosmeticId: COSMETIC,
+      cosmeticName: 'Badge',
+      cosmeticDescription: null,
+      cosmeticType: 'Badge',
+      cosmeticSource: 'Event',
+      cosmeticData: { url: 'x' },
+    },
+  ],
+  profilePictureId: PICTURE,
+  profilePictureName: null,
+  profilePictureUrl: 'pic.png',
+  profilePictureNsfwLevel: 1,
+  profilePictureHash: 'h',
+  profilePictureUserId: USER,
+  profilePictureIngestion: 'Scanned',
+  profilePictureType: 'image',
+  profilePictureWidth: 64,
+  profilePictureHeight: 48,
+  profilePictureMetadata: { size: 1 },
+  modelCount: MODELS,
+};
+
+function givenRows() {
+  q.getUserCreatorRow.mockResolvedValue(creatorRow as never);
+  q.getUserStatRow.mockResolvedValue({ ...expectedUser.stats } as never);
 }
 
 const kyselyReads = () => Object.values(q).filter((fn) => vi.isMockFunction(fn));
@@ -155,30 +155,16 @@ describe('fetchUserCreator (the creator card)', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('evaluates kysely-hot-reads-2 by key, with no entity or context', async () => {
-    givenBothPaths();
-    await fetchUserCreator({ id: USER });
-    expect(flag.mock.calls).toEqual([['kysely-hot-reads-2']]);
-  });
+  it('reads the card through Kysely only, on the replica, asking no flag', async () => {
+    givenRows();
+    const { settings: _settings, ...shown } = expectedUser;
 
-  it('OFF: reads the user and the model count through Prisma only', async () => {
-    givenBothPaths();
-    const card = await fetchUserCreator({ id: USER });
-    expect(card).toMatchObject({ id: USER, creatorShopEnabled: true, _count: { models: MODELS } });
-    expect(dbMock.dbRead.user.findFirst).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.model.count).toHaveBeenCalledWith({
-      where: { userId: USER, status: 'Published' },
+    await expect(fetchUserCreator({ id: USER })).resolves.toStrictEqual({
+      ...shown,
+      creatorShopEnabled: true,
+      _count: { models: MODELS },
     });
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
-  });
-
-  it('ON: the same card through Kysely only, on the replica', async () => {
-    givenBothPaths();
-    const off = await fetchUserCreator({ id: USER });
-    vi.clearAllMocks();
-    flag.mockResolvedValue(true);
-
-    await expect(fetchUserCreator({ id: USER })).resolves.toStrictEqual(off);
+    expect(flag).not.toHaveBeenCalled();
     expect(dbMock.dbRead.user.findFirst).not.toHaveBeenCalled();
     expect(dbMock.dbRead.model.count).not.toHaveBeenCalled();
     expect(q.getUserCreatorRow).toHaveBeenCalledTimes(1);
@@ -195,8 +181,15 @@ describe('fetchUserCreator (the creator card)', () => {
     });
   });
 
-  it('ON: a missing user is null, as on Prisma', async () => {
-    flag.mockResolvedValue(true);
+  it('a shop that is not enabled reads false, so the case above is not the mapping hardcoding true', async () => {
+    givenRows();
+    q.getUserCreatorRow.mockResolvedValue({ ...creatorRow, settings: {} } as never);
+    await expect(fetchUserCreator({ id: USER })).resolves.toMatchObject({
+      creatorShopEnabled: false,
+    });
+  });
+
+  it('a missing user is null, as findFirst returned', async () => {
     q.getUserCreatorRow.mockResolvedValue(undefined);
     await expect(fetchUserCreator({ username: 'nobody' })).resolves.toBeNull();
     expect(q.getUserStatRow).not.toHaveBeenCalled();

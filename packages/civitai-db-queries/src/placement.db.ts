@@ -1,13 +1,13 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
-// The placement / sticker read family, ported from the Prisma reads in placement-space.service.ts,
-// placement.service.ts, subscriptions.service.ts (getCapTier), free-placement.service.ts and
-// sticker-placement.service.ts. Every function returns what the Prisma read returned after the
-// caller's own mapping: counts as JS numbers, timestamps as UTC Dates (the pg parsers registered by
-// @civitai/db/kysely), enums and JSON exactly as pg decodes them. Row parity against a real
-// database is written in <civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts,
-// which is opt-in (KYSELY_PARITY_DATABASE_URL) and does NOT run in CI.
+// The placement / sticker read family, ported from (and now replacing) the Prisma reads in
+// placement-space.service.ts, placement.service.ts, subscriptions.service.ts (getCapTier),
+// free-placement.service.ts and sticker-placement.service.ts. Every function returns what the Prisma
+// read returned after the caller's own mapping: counts as JS numbers, timestamps as UTC Dates (the pg
+// parsers registered by @civitai/db/kysely), enums and JSON exactly as pg decodes them. Those values,
+// captured from the Prisma reads against a real database, are pinned in
+// <civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts, which runs in CI.
 //
 // None of these may run inside the free-placement claim transaction: those counts decide under an
 // advisory lock and stay on the Prisma `tx`.
