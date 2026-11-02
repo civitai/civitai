@@ -860,8 +860,8 @@ describe('privateModelFromTraining — name length cap', () => {
   });
 
   it('saves a model whose over-limit stored name is re-sent unchanged', async () => {
-    mockStored({ name: 'n'.repeat(150) });
-    await privateFromTraining({ user: owner, name: 'n'.repeat(150) });
-    expect(updateData().name).toBe('n'.repeat(150));
+    mockStored({ name: 'n'.repeat(200) });
+    await privateFromTraining({ user: owner, name: 'n'.repeat(200) });
+    expect(updateData().name).toBe('n'.repeat(200));
   });
 });

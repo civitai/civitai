@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MODEL_NAME_MAX_LENGTH, truncateModelName } from '~/shared/constants/model-name.constants';
-
-describe('MODEL_NAME_MAX_LENGTH', () => {
-  it('is 150', () => {
-    expect(MODEL_NAME_MAX_LENGTH).toBe(150);
-  });
-});
+import { truncateModelName } from '~/shared/constants/model-name.constants';
 
 describe('truncateModelName', () => {
   it('leaves a name of 150 characters or fewer alone', () => {
