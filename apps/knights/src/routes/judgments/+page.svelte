@@ -42,7 +42,7 @@
 {#each data.judgments as judgment (`${judgment.kind}:${judgment.itemId}:${judgment.at}`)}
   <article class="judgment">
     <Thumbnail src={judgment.src} />
-    <div>
+    <div class="body">
       <p class="muted">{judgment.prompt}</p>
       <p>Your answer: {judgment.answerLabel}</p>
       {#if judgment.verdictLabel}
@@ -101,5 +101,25 @@
     display: flex;
     gap: 1rem;
     margin: 1rem 0;
+  }
+  .body {
+    min-width: 0;
+  }
+  @media (max-width: 40rem) {
+    .judgment {
+      gap: 0.75rem;
+    }
+    .filters {
+      gap: 0.25rem 0.5rem;
+    }
+    .filters a,
+    .pager a {
+      display: inline-block;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid var(--border);
+    }
+    .filters a.active {
+      border-color: var(--gold);
+    }
   }
 </style>

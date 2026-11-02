@@ -142,6 +142,7 @@
   table {
     border-collapse: collapse;
     margin: 1rem 0;
+    max-width: 100%;
   }
   th,
   td {
@@ -159,5 +160,14 @@
   }
   dd {
     margin: 0;
+  }
+  @media (max-width: 40rem) {
+    dl {
+      grid-template-columns: 1fr;
+      gap: 0.1rem;
+    }
+    dd {
+      margin-bottom: 0.6rem;
+    }
   }
 </style>

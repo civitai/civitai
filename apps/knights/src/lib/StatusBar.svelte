@@ -78,4 +78,14 @@
     height: 100%;
     background: var(--gold);
   }
+  @media (max-width: 40rem) {
+    .status {
+      margin: 0;
+      font-size: 0.8rem;
+      line-height: 1.35;
+    }
+    .bar {
+      margin: 0.25rem 0 0.5rem;
+    }
+  }
 </style>

@@ -32,4 +32,17 @@
     margin: 0 auto;
     padding: 1.5rem 1.5rem 3rem;
   }
+  @media (max-width: 40rem) {
+    nav {
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0 1rem;
+    }
+    nav a {
+      padding: 0.6rem 0;
+    }
+    main {
+      padding: 0 1rem 1rem;
+    }
+  }
 </style>

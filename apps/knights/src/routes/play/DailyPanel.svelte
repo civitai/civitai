@@ -54,4 +54,17 @@
   .cap {
     color: var(--gold);
   }
+  @media (max-width: 40rem) {
+    .daily {
+      margin-bottom: 0.5rem;
+    }
+    .line {
+      margin: 0;
+      font-size: 0.8rem;
+      line-height: 1.35;
+    }
+    progress {
+      width: 5rem;
+    }
+  }
 </style>
