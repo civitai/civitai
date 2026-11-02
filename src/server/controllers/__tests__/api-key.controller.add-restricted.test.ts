@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TosReacceptance from '~/server/services/tos-reacceptance.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
@@ -32,6 +32,10 @@ beforeEach(() => {
   dbMock.dbWrite.apiKey.create.mockReset();
   dbMock.dbWrite.apiKey.create.mockResolvedValue({} as never);
   installFakeCacheRedis();
+  vi.stubEnv('NEXTAUTH_SECRET', 'test-secret');
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('apiKey.add refuses a restricted account', () => {
