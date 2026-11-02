@@ -1,13 +1,9 @@
 /**
  * The image detail sidebar's "Made with" card is exactly as wide as the cards beside it.
  *
- * It was `px-4` (16px a side) narrower than its neighbours on the image page, reported three times
- * because each check measured the POST page's sidebar, which has no such wrapper. Width is a
- * stylesheet property, so this runs in the geometry tier (real cascade), not the component tier
- * (which loads none, where `px-4` is inert and the card would always measure equal).
- *
- * The column is the sidebar's own (`flex flex-col gap-3`, ImageDetail2) at the sidebar's 450px
- * minus its `p-3`; the neighbour is a plain block, as wide as the creator card is.
+ * Width comes from the stylesheet, so this is a geometry test: the component tier loads none, and
+ * a wrapper's padding would be inert there. The column mirrors the sidebar's (`flex flex-col
+ * gap-3` at 450px minus its `p-3`); the neighbour is a plain block as wide as the creator card.
  */
 import { describe, expect, test, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
