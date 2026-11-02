@@ -35,10 +35,11 @@ const routesManifest = {
 const nextConfig = { i18n: { locales: ['en'], defaultLocale: 'en' } };
 
 function fakeReq(url: string, headers: Record<string, string> = {}) {
+  const all: Record<string, string | undefined> = { host: 'localhost:3000', ...headers };
   return Object.assign(new EventEmitter(), {
     url,
     method: 'GET',
-    headers: { host: 'localhost:3000', ...headers },
+    headers: all,
     socket: { remoteAddress: '203.0.113.9' },
   });
 }
