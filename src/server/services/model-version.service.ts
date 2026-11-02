@@ -2603,7 +2603,7 @@ const commercialUsePermissionContent: Record<CommercialUse, string> = {
 <b>Civitai Generation Services: Do not run the Model on the Civitai platform for generation (available at [${env.NEXTAUTH_URL}/generate](/generate)).</b>
 `,
   [CommercialUse.Sell]: `
-<b>Sale of the Model: Do not sell or license the Model in exchange for a for a fee or something else of value. This restriction does not apply to a Merge.</b>
+<b>Sale of the Model: Do not sell or license the Model in exchange for a fee or something else of value. This restriction does not apply to a Merge.</b>
 `,
   [CommercialUse.SellMerge]: `
 <b>Sale of Merges: Do not sell or license a Merge in exchange for a fee or something else of value.</b>
