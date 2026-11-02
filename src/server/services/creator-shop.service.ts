@@ -31,6 +31,7 @@ import {
   type OwedBoxRefund,
 } from '~/server/services/mystery-box-takedown.service';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
+import { detectEmptyLoopSeam } from '~/server/utils/animation-loop-seam';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
@@ -125,6 +126,8 @@ import {
   MAX_ANIMATION_FPS,
   MAX_ANIMATION_FRAMES,
   MIN_ANIMATION_FRAME_DELAY_MS,
+  LOOP_SEAM_CHECK_LABEL,
+  LOOP_SEAM_FIX_HINT,
   PRICE_REVIEW_THRESHOLD,
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
@@ -385,6 +388,7 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   let imageHash = '';
   let frames = 1;
   let minFrameDelay = Infinity;
+  let buffer: Buffer | undefined;
   try {
     // `normalizeImageScanUrl` is a no-op on a relative key (it only re-emits the parsed href
     // of a passthrough url, and the guard above rejected every one of those). It is kept so
@@ -437,7 +441,7 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     if (Number.isFinite(declaredLength) && declaredLength > ARTWORK_MAX_BYTES) {
       throw new Error(`artwork too large: ${declaredLength} bytes`);
     }
-    const buffer = await readBounded(res, ARTWORK_MAX_BYTES);
+    buffer = await readBounded(res, ARTWORK_MAX_BYTES);
     imageHash = createHash('sha256').update(buffer).digest('hex');
     const meta = await sharp(buffer).metadata();
     width = meta.width ?? 0;
@@ -483,6 +487,17 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
         ? `~${Math.round(1000 / Math.max(1, minFrameDelay))} fps peak`
         : undefined,
     });
+    if (buffer && hasTransparency && checks.every((c) => c.passed)) {
+      // A decode failure or timeout skips this check rather than rejecting otherwise valid art.
+      const emptyLoopSeam = await detectEmptyLoopSeam(buffer, frames).catch(() => null);
+      if (emptyLoopSeam !== null)
+        checks.push({
+          key: 'loopSeam',
+          label: LOOP_SEAM_CHECK_LABEL,
+          passed: !emptyLoopSeam,
+          detail: emptyLoopSeam ? LOOP_SEAM_FIX_HINT : undefined,
+        });
+    }
   }
 
   const imageMeta: CosmeticImageMeta = { width, height, hasTransparency };
