@@ -19,7 +19,7 @@ export async function hasStorylineChapterForPosts(db: Kysely<DB>, postIds: numbe
     .where('StorylineChapter.postId', 'in', postIds)
     .limit(1)
     .executeTakeFirst();
-  return row !== undefined;
+  return row === undefined; // MUTANT 1
 }
 
 /** The `.com` title of each of these models that has one, unordered. */
@@ -28,7 +28,7 @@ export function listModelSfwNames(db: Kysely<DB>, modelIds: number[]) {
     .selectFrom('Model')
     .select(['Model.id', 'Model.sfwName'])
     .where('Model.id', 'in', modelIds)
-    .where('Model.sfwName', 'is not', null)
+    // MUTANT 2: sfwName filter dropped
     .execute();
 }
 
@@ -37,7 +37,7 @@ export function listPostModelVersionIds(db: Kysely<DB>, postIds: number[]) {
   return db
     .selectFrom('Post')
     .select(['Post.id', 'Post.modelVersionId'])
-    .where('Post.id', 'in', postIds)
+    .where('Post.id', 'not in', postIds) // MUTANT 3
     .execute();
 }
 
@@ -58,7 +58,7 @@ export function countHeldItemsByDefinitionId(
   return db
     .selectFrom('Item')
     .innerJoin('ItemDefinition', 'ItemDefinition.id', 'Item.itemDefinitionId')
-    .select(['Item.itemDefinitionId', sql<number>`count(*)::int`.as('count')])
+    .select(['Item.itemDefinitionId', sql<number>`sum("Item"."quantity")::int`.as('count') /* MUTANT 4 */])
     .where('Item.holderType', '=', holderType)
     .where('Item.holderId', '=', holderId)
     .where('ItemDefinition.type', '=', type)

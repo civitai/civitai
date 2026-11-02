@@ -28,7 +28,7 @@ export async function getSfwModelNames(modelIds: number[], showSfwFace: boolean)
   const ids = [...new Set(modelIds)];
   if (!showSfwFace || !ids.length) return new Map<number, string>();
   if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_7))
-    return readSfwModelNamesViaKysely((await loadKyselyDb()).kyselyRead, ids);
+    return readSfwModelNamesViaKysely((await loadKyselyDb()).kyselyWrite, ids) /* MUTANT 5 */;
   return readSfwModelNamesViaPrisma(dbRead, ids);
 }
 
