@@ -44,7 +44,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const reason = exemptionReason(rule, label);
 
   const removals = await findPolicyChangeRemovals(clickhouse, pgDbReadLong, rule);
-  // Only a removal inside the score window costs points, so only it gives any back.
   const now = new Date();
   const byOwner = new Map<number, number>();
   let weightedRemovals = 0;

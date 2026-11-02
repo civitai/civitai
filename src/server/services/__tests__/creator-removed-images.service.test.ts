@@ -23,7 +23,7 @@ import { REMOVAL_SCORE_WINDOW_DAYS } from '~/shared/constants/creator-journey.co
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const USER = 42;
-// Fixtures remove images at tiny epoch times, or around 1.7e9 seconds; `now` keeps each inside the window.
+// EARLY / RECENT: removal times in the fixtures; each is inside the window of its own `now`.
 const EARLY = new Date(10_000);
 const RECENT = new Date(1_700_000_400_000);
 

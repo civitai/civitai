@@ -32,9 +32,8 @@ export type RemovedImage = {
 const sqlString = (value: string) => `'${value.replace(/['\\]/g, '\\$&')}'`;
 
 /**
- * The owner's removals that cost points, in ClickHouse so the limit applies to those alone: made
- * after `windowStart` (unix seconds) and of a reason that weighs something. A removal with no
- * reason weighs the full amount.
+ * Filtered in ClickHouse so `LIMIT` applies only to removals that cost points: made after
+ * `windowStart` and of a reason that weighs something. A removal with no reason weighs in full.
  */
 export const REMOVALS_QUERY = `${removalsQuery('ownerId = {userId:Int32}')}
     AND removedAt > {windowStart:Int64}${
@@ -102,8 +101,8 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
 }
 
 /**
- * The member's own removed images that currently cost points, newest first, up to the limit (see
- * `REMOVALS_QUERY` for what costs points). Removals the appeal flow excludes are left out too, and `total` counts only what is listed.
+ * The member's own removed images that currently cost points, newest first, up to the limit.
+ * Removals the appeal flow excludes are left out too, and `total` counts only what is listed.
  */
 export async function getMyRemovedImages(userId: number, now = new Date()) {
   const fetched = await getRemovalEvents(userId, now);

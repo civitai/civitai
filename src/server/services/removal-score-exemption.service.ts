@@ -57,7 +57,7 @@ export type RemovalHistory = {
   firstNsfw: string;
   firstReason: string;
   lastReason: string;
-  /** The reason the score weighs the removal by (`REMOVAL_REASON_SQL`), unlike `lastReason`. */
+  /** Unlike `lastReason`: `REMOVAL_REASON_SQL` (violationType first), the reason the score weighs by. */
   scoreReason?: string | null;
   resourceIds: number[];
   minorRemovals: number;

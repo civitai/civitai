@@ -554,8 +554,7 @@ async function getReportedActionedScore(ctx: Context) {
   `;
 }
 
-// Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts. Owners
-// whose removals left the window since the last run are re-scored too.
+// Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts.
 export async function getReportAgainstScore(
   ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'> & { now?: Date }
 ) {

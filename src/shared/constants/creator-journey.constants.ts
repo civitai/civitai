@@ -153,7 +153,7 @@ export function parseMilestoneShareId(raw: string) {
 export const REPORTS_AGAINST_EVENT = 'DeleteTOS';
 /** The ClickHouse image event a moderator restore records. */
 export const REMOVAL_RESTORED_EVENT = 'Restore';
-/** How long a removal costs "Reports against" points before it stops counting: about six months. */
+/** How long a removal costs "Reports against" points before it stops counting. */
 export const REMOVAL_SCORE_WINDOW_DAYS = 182;
 /** `REMOVAL_SCORE_WINDOW_DAYS` as copy reads it; spelled out because score copy states no digits. */
 export const REMOVAL_SCORE_WINDOW_LABEL = 'six months';

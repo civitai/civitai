@@ -17,7 +17,6 @@ export type CreatorRemoval = {
   ownerId: number;
   imageId: number;
   removedAt: number;
-  /** The latest removal's `violationType`, else its `tosReason`; null when it recorded neither. */
   reason?: string | null;
 };
 
@@ -75,19 +74,16 @@ const DAY_MS = 86_400_000;
 export const removalWindowStart = (now: Date) =>
   new Date(now.getTime() - REMOVAL_SCORE_WINDOW_DAYS * DAY_MS);
 
-/** Whether a removal made at `removedAt` (unix seconds) is still inside the window. */
 export const isWithinRemovalWindow = (removedAt: number | string, now: Date) =>
   Number(removedAt) * 1000 > removalWindowStart(now).getTime();
 
-/** Whether a removal currently costs points: inside the window, and of a reason that weighs. */
 export const costsPoints = (removal: CreatorRemoval, now: Date) =>
   isWithinRemovalWindow(removal.removedAt, now) && removalWeight(removal.reason) > 0;
 
 /**
- * Each owner's total removal weight within the last `REMOVAL_SCORE_WINDOW_DAYS`, every removal
- * weighed by its reason (1 per fully weighted removal); an owner with none is absent. Checks
- * appeals on the primary, like `getOwnersWithReversalsSince`, so an owner re-scored for a new
- * approval is scored with it.
+ * Each owner's removal weight within `REMOVAL_SCORE_WINDOW_DAYS`; an owner with none is absent.
+ * Checks appeals on the primary, like `getOwnersWithReversalsSince`, so an owner re-scored for a
+ * new approval is scored with it.
  */
 export async function removalPenaltyWeightsByOwner(
   ch: CustomClickHouseClient,
@@ -139,12 +135,10 @@ export async function getOwnersWithReversalsSince(ch: CustomClickHouseClient, si
 }
 
 /**
- * Owners with a counted removal that left the window between `since` and `now`: made after
- * `since` minus the window and up to `now` minus it. The nightly job re-scores them, as nothing new
- * happened to them since its last run.
+ * Owners with a counted removal made after `since` minus the window, up to `now` minus it.
+ * Consecutive ranges must overlap rather than skip, which holds only while the job's checkpoint is
+ * taken before this run's `now`.
  */
-// Relies on the job's checkpoint being taken before this run's `now`, so consecutive ranges
-// overlap rather than skip.
 export async function getOwnersWithRemovalsAgedOutSince(
   ch: CustomClickHouseClient,
   since: Date,

@@ -20,12 +20,11 @@ import { booleanString } from '~/utils/zod-helpers';
  * a reason weighting would otherwise leave the stored score as it was.
  *
  * `scope=reversed` (default) takes owners with a removal later reversed (approved image appeal,
- * restore event or score exemption), a small set. `scope=all` takes every owner with any removal,
+ * restore event or score exemption). `scope=all` takes every owner with any removal,
  * which is what applying the window and reason weights retroactively needs.
  *
  * Owners are processed `limit` at a time in owner-id order, after `cursor` (exclusive). The response
- * carries `nextCursor`, null once the last page is done. Writes are absolute, so re-running a page
- * is safe.
+ * carries `nextCursor`, null once the last page is done. Safe to re-run.
  *
  * Runbook: loop the pages dry (feed each `nextCursor` back as `cursor` until it is null) and read
  * the counts, loop them again with `dryRun=false`, then run the tier backfill. Grants nothing itself.
