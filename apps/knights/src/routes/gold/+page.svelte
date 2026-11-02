@@ -10,6 +10,15 @@
   const canConvert = $derived(data.conversionOpen && balance.buzzOnConvert > 0);
   let converting = $state(false);
 
+  const dayFormat = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const STATUS = {
+    pending: { label: 'On its way', tone: 'open' },
+    paid: { label: 'Paid', tone: 'paid' },
+    failed: { label: 'Failed', tone: 'failed' },
+  } as const;
+  const statusOf = (status: string) =>
+    status in STATUS ? STATUS[status as keyof typeof STATUS] : { label: status, tone: '' };
+
   type Row = { icon: ComponentProps<typeof Icon>['name']; title: string; note: string; value: number; tone: string };
   const rows = $derived.by(() => {
     const list: Row[] = [
@@ -112,6 +121,24 @@
       {/if}
     {/if}
   </aside>
+
+  <section class="recent" aria-labelledby="recent-title">
+    <h2 id="recent-title" class="eyebrow muted-eyebrow">Recent conversions</h2>
+    {#if data.recent.length === 0}
+      <p class="muted empty">No conversions yet. Your first one will show here.</p>
+    {:else}
+      <ul class="recent-list">
+        {#each data.recent as c (c.id)}
+          {@const s = statusOf(c.status)}
+          <li class="recent-row">
+            <time class="when" datetime={c.at}>{c.today ? 'Today' : dayFormat.format(new Date(c.at))}</time>
+            <span class="what">{gold(c.gold)} gold → {gold(c.buzz)} Buzz</span>
+            <span class="state {s.tone}">{s.label}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -121,8 +148,67 @@
   .gold {
     display: grid;
     grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
-    gap: 3rem;
+    grid-template-areas:
+      'ledger side'
+      'ledger recent';
+    grid-template-rows: auto 1fr;
+    column-gap: 3rem;
+    row-gap: 2rem;
     align-items: start;
+  }
+  .ledger {
+    grid-area: ledger;
+  }
+  .side {
+    grid-area: side;
+  }
+  .recent {
+    grid-area: recent;
+  }
+  .muted-eyebrow {
+    margin: 0 0 0.5rem;
+    color: var(--io-parchment-muted);
+  }
+  .recent-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .recent-row {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--io-gold-muted);
+  }
+  .when {
+    flex: 0 0 4.5rem;
+    color: var(--io-parchment-muted);
+    font: 400 0.9rem/1.3 var(--io-font-ui);
+  }
+  .what {
+    flex: 1;
+    min-width: 0;
+    color: var(--io-parchment);
+    font: 400 1.2rem/1.3 var(--io-font-body);
+  }
+  .state {
+    flex: none;
+    white-space: nowrap;
+    font: 600 0.85rem/1.3 var(--io-font-ui);
+    color: var(--io-parchment-muted);
+  }
+  .state.open {
+    color: var(--io-gold);
+  }
+  .state.paid {
+    color: var(--io-verdigris);
+  }
+  .state.failed {
+    color: var(--io-crimson-text);
+  }
+  .empty {
+    font: 400 0.95rem/1.45 var(--io-font-ui);
   }
   .row {
     display: flex;
@@ -209,10 +295,9 @@
   @media (max-width: 47.99rem) {
     .gold {
       grid-template-columns: minmax(0, 1fr);
-      gap: 1.5rem;
-    }
-    .side {
-      order: -1;
+      grid-template-areas: 'side' 'ledger' 'recent';
+      grid-template-rows: auto;
+      row-gap: 1.5rem;
     }
     .amount {
       font-size: 3rem;

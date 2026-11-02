@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getGoldBalance = vi.hoisted(() => vi.fn());
+const listRecentConversions = vi.hoisted(() => vi.fn());
 const convertGold = vi.hoisted(() => vi.fn());
 const getPlayerStatusOrNew = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
 vi.mock('$lib/server/conversion/balance', () => ({ getGoldBalance }));
+vi.mock('$lib/server/conversion/recent', () => ({ listRecentConversions }));
 vi.mock('$lib/server/conversion/convert', () => ({ convertGold }));
 const buzzConfigured = vi.hoisted(() => vi.fn());
 const conversionEnabled = vi.hoisted(() => vi.fn());
@@ -22,6 +24,8 @@ const locals = { user: { id: 7 } };
 
 beforeEach(() => {
   getGoldBalance.mockReset();
+  listRecentConversions.mockReset();
+  listRecentConversions.mockResolvedValue([]);
   convertGold.mockReset();
   buzzConfigured.mockReset();
   buzzConfigured.mockReturnValue(true);
@@ -40,8 +44,28 @@ describe('gold page', () => {
       status: { rank: 'Knight' },
       balance: { convertible: 5000, frozen: 0 },
       conversionOpen: true,
+      recent: [],
     });
     expect(getGoldBalance).toHaveBeenCalledWith({}, 7);
+    expect(listRecentConversions).toHaveBeenCalledWith({}, 7);
+  });
+
+  it('serialises recent conversions and marks the ones from today', async () => {
+    getPlayerStatusOrNew.mockResolvedValue({});
+    getGoldBalance.mockResolvedValue({});
+    const now = new Date();
+    const old = new Date('2020-01-02T10:00:00Z');
+    listRecentConversions.mockResolvedValue([
+      { id: 2, gold: 500, buzz: 5, status: 'pending', at: now },
+      { id: 1, gold: 2000, buzz: 20, status: 'paid', at: old },
+    ]);
+
+    const { recent } = (await load({ locals } as never)) as { recent: unknown[] };
+
+    expect(recent).toEqual([
+      { id: 2, gold: 500, buzz: 5, status: 'pending', at: now.toISOString(), today: true },
+      { id: 1, gold: 2000, buzz: 20, status: 'paid', at: old.toISOString(), today: false },
+    ]);
   });
 
   it('refuses Convert while conversion is switched off, reserving nothing', async () => {

@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { getGoldBalance } from '$lib/server/conversion/balance';
 import { convertGold, type ConvertResult } from '$lib/server/conversion/convert';
+import { listRecentConversions } from '$lib/server/conversion/recent';
 import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
 import { logToAxiom } from '$lib/server/axiom';
 import { db } from '$lib/server/db';
@@ -16,11 +17,22 @@ const REFUSAL_TEXT = {
 } as const;
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const [status, balance] = await Promise.all([
+  const [status, balance, recent] = await Promise.all([
     getPlayerStatusOrNew(db, locals.user.id),
     getGoldBalance(db, locals.user.id),
+    listRecentConversions(db, locals.user.id),
   ]);
-  return { status, balance, conversionOpen: conversionEnabled() };
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    status,
+    balance,
+    conversionOpen: conversionEnabled(),
+    recent: recent.map(({ at, ...row }) => ({
+      ...row,
+      at: at.toISOString(),
+      today: at.toISOString().slice(0, 10) === today,
+    })),
+  };
 };
 
 let warnedNoEndpoint = false;
