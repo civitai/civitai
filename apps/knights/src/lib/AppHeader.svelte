@@ -1,22 +1,28 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/state';
   import { afterNavigate } from '$app/navigation';
   import Icon from './Icon.svelte';
   import { count } from './format';
   import { rankPill } from './chrome';
+  import { tween } from './motion';
+  import { rewardDeltas } from './rewards';
+  import { sound } from './sound';
   import type { PlayerBadge } from './player-badge';
   import type { PlayerStatus } from './server/player-status';
 
   type Streak = { streak: number; shields: number; maxShields: number };
   let {
     player,
+    userId = null,
     civitaiUrl,
     conversionOpen,
     status,
     streak,
   }: {
     player: PlayerBadge | null;
+    /** Keys this player's sound setting in the browser. */
+    userId?: number | null;
     civitaiUrl: string;
     conversionOpen: boolean;
     status?: PlayerStatus;
@@ -64,6 +70,46 @@
   }
 
   afterNavigate(() => close());
+
+  // Sound stays silent until the first click or key press, and the choice to mute is remembered per player.
+  let muted = $state(false);
+  onMount(() => {
+    sound.attach(window);
+    sound.setPlayer(userId);
+    muted = sound.muted;
+  });
+  function toggleSound() {
+    muted = !muted;
+    sound.setMuted(muted);
+  }
+
+  // What a vote just earned floats up from its chip and the gold counter ticks to its new value. Ambient only: nothing
+  // here waits on, or blocks, the next answer.
+  let shownGold = $state(untrack(() => status?.goldEarned ?? 0));
+  let floater = $state<{ id: number; xp: number; gold: number } | null>(null);
+  let previous: PlayerStatus | null = null;
+  let cancelTick: (() => void) | undefined;
+  let floatTimer: ReturnType<typeof setTimeout> | undefined;
+  let floatId = 0;
+
+  $effect(() => {
+    const next = status;
+    if (!next) return;
+    const deltas = rewardDeltas(previous, next);
+    previous = next;
+    if (deltas.goldEarned > 0) sound.play('gold');
+    cancelTick?.();
+    cancelTick = tween(untrack(() => shownGold), next.goldEarned, 360, (value) => (shownGold = Math.round(value)));
+    if (deltas.xp > 0 || deltas.gold > 0) {
+      floater = { id: ++floatId, xp: deltas.xp, gold: deltas.gold };
+      clearTimeout(floatTimer);
+      floatTimer = setTimeout(() => (floater = null), 500);
+    }
+  });
+  $effect(() => () => {
+    cancelTick?.();
+    clearTimeout(floatTimer);
+  });
 </script>
 
 <svelte:window {onkeydown} />
@@ -92,11 +138,17 @@
         title="Gold earned: {count(status.goldEarned)}, pending: {count(status.goldPending)}"
       >
         <Icon name="coins" />
-        {count(status.goldEarned)}
+        {count(shownGold)}
+        {#if floater && floater.gold > 0}
+          {#key floater.id}<span class="floater" aria-hidden="true">+{count(floater.gold)} gold</span>{/key}
+        {/if}
       </li>
       <li class="pill" title="Level {status.level}: {status.xpIntoLevel}/{status.xpForNextLevel} XP">
         <Icon name="swords" />
         {rankPill(status)}
+        {#if floater && floater.xp > 0}
+          {#key floater.id}<span class="floater" aria-hidden="true">+{count(floater.xp)} XP</span>{/key}
+        {/if}
       </li>
     </ul>
   {/if}
@@ -145,7 +197,17 @@
               <Icon name={link.icon} size={18} />{link.label}
             </a>
           {/each}
-          <!-- UI-5: the Sound row goes here. -->
+          <button
+            type="button"
+            class="sound"
+            role="switch"
+            aria-checked={!muted}
+            aria-label="Sound"
+            onclick={toggleSound}
+          >
+            <Icon name={muted ? 'volume-x' : 'volume-2'} size={18} />Sound
+            <span class="state">{muted ? 'Off' : 'On'}</span>
+          </button>
           <hr />
           <a href={civitaiUrl}><Icon name="arrow-left" size={18} />Back to Civitai</a>
           <a class="out" href="/logout" data-sveltekit-reload>
@@ -197,6 +259,7 @@
     list-style: none;
   }
   .pill {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -210,6 +273,17 @@
   }
   .pill :global(svg) {
     color: var(--io-gold);
+  }
+  .floater {
+    --rise: -14px;
+    position: absolute;
+    bottom: 70%;
+    left: 50%;
+    translate: -50% 0;
+    color: var(--io-gold);
+    font: 700 12px/1 var(--io-font-ui);
+    pointer-events: none;
+    animation: mo-float 480ms var(--ease-out-quart) both;
   }
   .pill .flame :global(svg) {
     color: var(--io-crimson-text);
@@ -298,7 +372,34 @@
     font: 600 15px/1.2 var(--io-font-ui);
     text-decoration: none;
   }
-  nav a :global(svg) {
+  nav a :global(svg),
+  nav .sound :global(svg) {
+    color: var(--io-gold);
+  }
+  nav .sound {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--io-parchment);
+    font: 600 15px/1.2 var(--io-font-ui);
+    text-align: left;
+  }
+  nav .sound:hover:not(:disabled) {
+    background: var(--io-bg);
+  }
+  nav .sound .state {
+    margin-left: auto;
+    color: var(--io-parchment-muted);
+    font-size: 12px;
+    font-weight: 400;
+  }
+  nav .sound[aria-checked='true'] .state {
     color: var(--io-gold);
   }
   nav a:hover,

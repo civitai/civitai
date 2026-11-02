@@ -2,7 +2,8 @@
   import Icon from './Icon.svelte';
 
   type Status = 'pending' | 'correct' | 'wrong' | 'inconclusive' | 'forfeited';
-  let { status, label }: { status: Status; label: string } = $props();
+  // `stamp` presses the seal in (the design's M2); a list staggers its seals with `delay`. Pending and forfeited never stamp.
+  let { status, label, stamp = false, delay = 0 }: { status: Status; label: string; stamp?: boolean; delay?: number } = $props();
 
   const ICONS = {
     correct: 'check',
@@ -14,7 +15,12 @@
 </script>
 
 <span class="verdict {status}">
-  <span class="seal" aria-hidden="true"><Icon name={ICONS[status]} size={status === 'forfeited' ? 22 : 18} /></span>
+  <span
+    class="seal"
+    class:stamp={stamp && (status === 'correct' || status === 'wrong')}
+    style:--seal-delay="{delay}ms"
+    aria-hidden="true"
+  ><Icon name={ICONS[status]} size={status === 'forfeited' ? 22 : 18} /></span>
   <span class="label">{label}</span>
 </span>
 
@@ -35,6 +41,9 @@
     border-radius: 50%;
     color: var(--io-parchment);
     box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--io-bg) 55%, transparent);
+  }
+  .seal.stamp {
+    animation: mo-stamp var(--motion-milestone-min) var(--ease-out-quart) var(--seal-delay) both;
   }
   .correct .seal {
     background: var(--io-verdigris);

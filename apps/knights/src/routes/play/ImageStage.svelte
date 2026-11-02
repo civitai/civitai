@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { fade } from 'svelte/transition';
   import OverlayIcon from '$lib/OverlayIcon.svelte';
+  import { reducedMotion } from '$lib/motion';
 
   let {
     src,
@@ -18,19 +20,34 @@
   } = $props();
 
   // The load event can fire before this page is interactive, so a frame that already failed is checked once on mount.
+  // The picture fades in once it has loaded, so a slow image never pops in; the previous stage fades out under it.
+  let loaded = $state(false);
   function watchImage(img: HTMLImageElement, fail: (() => void) | undefined) {
-    if (img.complete && img.naturalWidth === 0) fail?.();
-    const handler = () => fail?.();
-    img.addEventListener('error', handler);
-    return { destroy: () => img.removeEventListener('error', handler) };
+    if (img.complete) {
+      if (img.naturalWidth === 0) fail?.();
+      else loaded = true;
+    }
+    const onError = () => fail?.();
+    const onLoad = () => (loaded = true);
+    img.addEventListener('error', onError);
+    img.addEventListener('load', onLoad);
+    return {
+      destroy: () => {
+        img.removeEventListener('error', onError);
+        img.removeEventListener('load', onLoad);
+      },
+    };
   }
+
+  // The design's motion-crossfade (160ms); a reduced-motion player gets the 150ms cap.
+  const crossfade = () => ({ duration: reducedMotion() ? 150 : 160 });
 
   let ratio = $derived(width && height ? width / height : null);
 </script>
 
 <!-- The stage never resizes to its picture: the picture is fitted inside it and the bands the fit leaves are filled
      by a blurred copy of the same image. -->
-<div class="stage" class:failed>
+<div class="stage" class:failed in:fade|global={crossfade()} out:fade|global={crossfade()}>
   {#if failed}
     <div class="failure" role="alert">
       <span class="glyph"><OverlayIcon name="image-off" size={40} /></span>
@@ -43,6 +60,7 @@
     <img
       class="picture"
       class:fitted={ratio !== null}
+      class:loaded
       style:--ar={ratio}
       {src}
       {width}
@@ -54,8 +72,10 @@
 </div>
 
 <style>
+  /* Both stages share one grid cell while the old one fades out, so nothing shifts. */
   .stage {
     position: relative;
+    grid-area: 1 / 1;
     display: flex;
     flex: 1 1 0;
     align-items: center;
@@ -87,7 +107,11 @@
     max-height: 100%;
     border: 1px solid var(--io-gold-muted);
     border-radius: 6px;
-    animation: arrive var(--motion-crossfade) var(--ease-out-quart);
+    opacity: 0;
+    transition: opacity var(--motion-crossfade) var(--ease-out-quart);
+  }
+  .picture.loaded {
+    opacity: 1;
   }
   /* A known ratio lets the picture grow to the stage, so its box (and its hairline) is exactly the picture. */
   .picture.fitted {
@@ -124,11 +148,6 @@
   .hint {
     color: var(--io-parchment-muted);
     font: 400 20px/1.3 var(--io-font-body);
-  }
-  @keyframes arrive {
-    from {
-      opacity: 0;
-    }
   }
   @media (max-width: 40rem) {
     .stage {

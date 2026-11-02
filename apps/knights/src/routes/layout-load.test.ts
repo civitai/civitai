@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { load } from './+layout.server';
 
-const event = (user?: { username: string }) => ({ locals: { user } }) as never;
+const event = (user?: { username: string; id?: number }) => ({ locals: { user } } as never);
 
 afterEach(() => {
   delete process.env.CIVITAI_APP_URL;
@@ -20,6 +20,11 @@ describe('layout load', () => {
 
   it('hands the menu the signed-in player', () => {
     expect(load(event({ username: 'Sir' }))).toMatchObject({ player: { username: 'Sir' } });
+  });
+
+  it('hands the page the player id that keys their sound setting', () => {
+    expect(load(event({ username: 'Sir', id: 4 }))).toMatchObject({ userId: 4 });
+    expect(load(event())).toMatchObject({ userId: null });
   });
 
   it('offers "Convert gold" only while conversion is on', () => {

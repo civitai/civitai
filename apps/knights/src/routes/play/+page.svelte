@@ -12,6 +12,7 @@
   import TrialSummary from './TrialSummary.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
+  import { sound } from '$lib/sound';
   import WatchProgress from '$lib/WatchProgress.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
   import { recapLines } from './recap-text';
@@ -55,15 +56,16 @@
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
-  // The hook for the answer sounds: called with whether the pick was right, before the next item loads. The page itself
-  // shows no verdict mid-run; the summary at the end does.
+  // The sound is the Trials' only per-answer cue: called with whether the pick was right, before the next item loads.
+  // The page itself shows no verdict mid-run; the summary at the end does.
   function onTrialAnswer(correct: boolean) {
-    void correct;
+    sound.play(correct ? 'trial-correct' : 'trial-wrong');
   }
 
   const submitTrial: SubmitFunction = ({ submitter }) => {
     submitting = true;
     picked = answerOf(submitter);
+    if (picked) sound.play('press');
     return async ({ result, update }) => {
       try {
         if (result.type === 'success' && typeof result.data?.correct === 'boolean') {
@@ -96,6 +98,7 @@
   const submit: SubmitFunction = ({ submitter }) => {
     submitting = true;
     picked = answerOf(submitter);
+    if (picked) sound.play('press');
     return async ({ result, update }) => {
       try {
         await update();
@@ -393,7 +396,8 @@
   /* The stage and whatever floats over it (the level-up toast). */
   .stagewrap {
     position: relative;
-    display: flex;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     flex: 1 1 0;
     min-height: 0;
   }
@@ -506,7 +510,35 @@
     transition:
       border-color var(--motion-fast) var(--ease-out-quart),
       background-color var(--motion-fast) var(--ease-out-quart),
-      color var(--motion-fast) var(--ease-out-quart);
+      color var(--motion-fast) var(--ease-out-quart),
+      box-shadow var(--motion-fast) var(--ease-out-quart),
+      transform var(--motion-base) var(--ease-out-quart);
+  }
+  /* The design's M1: the answer presses in (0.97) and holds a gold ring until the next image replaces it. The answer is
+     already submitted at the press; nothing here waits for the release. */
+  .pill:active:not(:disabled),
+  .pill.picked,
+  .pill.picked:disabled {
+    transform: scale(0.97);
+    box-shadow:
+      0 0 0 2px var(--io-gold),
+      0 0 14px rgb(201 162 74 / 0.4);
+    transition-duration: var(--motion-fast);
+  }
+  .pill.blocked.picked,
+  .pill.blocked:active:not(:disabled) {
+    box-shadow:
+      0 0 0 2px var(--io-crimson-text),
+      0 0 14px rgb(224 138 130 / 0.35);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pill,
+    .pill:active:not(:disabled),
+    .pill.picked,
+    .pill.picked:disabled {
+      transform: none;
+      transition-duration: 120ms;
+    }
   }
   .controls.yesno .pill {
     padding: 0 16px;
