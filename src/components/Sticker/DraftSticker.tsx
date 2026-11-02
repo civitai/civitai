@@ -42,8 +42,8 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   STICKER_COMMENT_MAX_LENGTH,
   STICKER_PLACEMENT_MIN_OPACITY,
+  snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
-import { snapScaleOvershoot } from '~/shared/utils/sticker-placement';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -148,7 +148,7 @@ export function DraftSticker({
   selected,
   dressed,
   price,
-  maxScale,
+  creatorMaxScale,
   freeOffer,
   ownerShare,
   ownerUsername,
@@ -162,8 +162,7 @@ export function DraftSticker({
   selected: boolean;
   dressed: StickerTreatment;
   price: number;
-  /** The creator's size limit, used only to snap a rounding overshoot on submit. */
-  maxScale?: number;
+  creatorMaxScale: number;
   /**
    * The free option, when this creator has a slot open and the placer still has
    * their day. `null` means paid is the only offer — including while the
@@ -567,9 +566,7 @@ export function DraftSticker({
       cosmeticId: draft.cosmeticId,
       x: draft.x,
       y: draft.y,
-      // Only float noise past the limit is snapped; a real over-limit draft is
-      // sent as-is so the server's refusal shows the size being bought.
-      scale: maxScale == null ? draft.scale : snapScaleOvershoot(draft.scale, maxScale),
+      scale: snapScaleOvershoot(draft.scale, creatorMaxScale),
       rotation: draft.rotation,
       flip: draft.flip,
       opacity: draft.opacity,

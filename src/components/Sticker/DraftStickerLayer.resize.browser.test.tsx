@@ -60,7 +60,6 @@ const pointer = (type: string, init: { x: number; y: number }, target: EventTarg
     })
   );
 
-/** Mounts the layer over an image `width` wide and drags the bottom-right handle far past the limit. */
 const dragHandleFar = async (width: number) => {
   const height = Math.round(width * 0.75);
   renderWithProviders(
@@ -85,7 +84,6 @@ const dragHandleFar = async (width: number) => {
   const surface = document.querySelector('[data-testid="surface"]')!.getBoundingClientRect();
   const start = handle.getBoundingClientRect();
   pointer('pointerdown', { x: start.x + 6, y: start.y + 6 }, handle);
-  // Far beyond the image: the width is held to the limit, not the pointer.
   pointer('pointermove', { x: surface.right + 500, y: surface.bottom + 500 }, window);
   pointer('pointerup', { x: surface.right + 500, y: surface.bottom + 500 }, window);
 

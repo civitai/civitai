@@ -142,7 +142,7 @@ const renderDraft = async (
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
         price={PRICE}
-        maxScale={maxScale}
+        creatorMaxScale={maxScale ?? 0.25}
         freeOffer={freeOffer}
         ownerShare={ownerShare}
         ownerUsername="creator"

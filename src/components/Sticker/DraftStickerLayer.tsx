@@ -20,7 +20,7 @@ import { trpc } from '~/utils/trpc';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
 import {
-  scaleFromWidth,
+  capScaleFromWidth,
   STICKER_PLACEMENT_MIN_SCALE,
   stickerMaxScale,
 } from '~/shared/utils/sticker-placement';
@@ -186,7 +186,7 @@ export function DraftStickerLayer() {
       );
 
       move(active.draftId, {
-        scale: scaleFromWidth(width, bounds.width, maxScaleRef.current),
+        scale: capScaleFromWidth(width, bounds.width, maxScaleRef.current),
         x: (active.anchorX + centre.x) / bounds.width,
         y: (active.anchorY + centre.y) / bounds.height,
       });
@@ -281,7 +281,7 @@ export function DraftStickerLayer() {
             selected={draft.id === selectedDraftId}
             dressed={dressed}
             price={space?.price ?? 0}
-            maxScale={maxScale}
+            creatorMaxScale={maxScale}
             ownerShare={space?.ownerShare}
             ownerUsername={space?.ownerUsername}
             onGesture={onGesture}
