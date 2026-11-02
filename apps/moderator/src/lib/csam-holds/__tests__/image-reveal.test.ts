@@ -29,3 +29,95 @@ describe('imageReveal', () => {
     expect(second.on).toBe(true);
   });
 });
+
+describe('imageReveal across reloads', () => {
+  const memoryStorage = (initial: Record<string, string> = {}) => {
+    const data = new Map(Object.entries(initial));
+    return {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      data,
+    };
+  };
+  // A reload is a fresh module over the same browser storage.
+  const reload = async (storage: unknown) => {
+    vi.resetModules();
+    vi.stubGlobal('localStorage', storage);
+    return load();
+  };
+
+  it('a reveal survives a reload once restored', async () => {
+    const storage = memoryStorage();
+    const before = await reload(storage);
+    before.toggle();
+    const after = await reload(storage);
+    expect(after.on).toBe(false); // blurred until mount, as the server rendered it
+    after.restore();
+    expect(after.on).toBe(true);
+  });
+
+  it('stores the choice under its key', async () => {
+    const storage = memoryStorage();
+    (await reload(storage)).toggle();
+    expect(storage.data.get('moderator.csam-holds.reveal-images')).toBe('1');
+  });
+
+  it('coming back to the page keeps the choice made since, whatever storage says', async () => {
+    const broken = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    const reveal = await reload(broken);
+    reveal.restore();
+    reveal.toggle();
+    reveal.restore(); // the page remounted after a client navigation
+    expect(reveal.on).toBe(true);
+
+    // A write that failed must not let an older stored reveal come back.
+    const stale = memoryStorage({ 'moderator.csam-holds.reveal-images': '1' });
+    const again = await reload({ getItem: stale.getItem, setItem: broken.setItem });
+    again.restore();
+    again.toggle();
+    again.restore();
+    expect(again.on).toBe(false);
+  });
+
+  it('switching back to blurred survives a reload too', async () => {
+    const storage = memoryStorage();
+    const first = await reload(storage);
+    first.toggle();
+    first.toggle();
+    const after = await reload(storage);
+    after.restore();
+    expect(after.on).toBe(false);
+  });
+
+  it.each([
+    ['never chosen', memoryStorage()],
+    ['an unreadable value', memoryStorage({ 'moderator.csam-holds.reveal-images': 'true' })],
+  ])('stays blurred for %s', async (_label, storage) => {
+    const reveal = await reload(storage);
+    reveal.restore();
+    expect(reveal.on).toBe(false);
+  });
+
+  it('stays blurred, and still toggles, when storage throws', async () => {
+    const broken = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    const reveal = await reload(broken);
+    reveal.restore();
+    expect(reveal.on).toBe(false);
+    reveal.toggle();
+    expect(reveal.on).toBe(true);
+  });
+});

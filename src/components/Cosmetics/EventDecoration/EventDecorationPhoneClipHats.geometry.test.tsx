@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 
-// A feed's first-column card sits at the page scroller's left edge on a phone, so a hat hung off
-// its corner is cut by that scroller. Browser mode only: needs a real layout.
+// A feed's first-column card sits at the page scroller's left edge on a phone, so a hat hung off its
+// corner overhangs that scroller. The hat keeps its place on the corner (the same as on a desktop
+// card with room) and the scroller cuts what overhangs. Needs a real layout.
 
 const HAT_URL =
   'data:image/svg+xml,' +
@@ -18,8 +19,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ className }: any) => <img src={HAT_URL} className={className} alt="" />,
 }));
 
-import '~/styles/globals.css';
-import { renderWithProviders } from '../../../../test/component-setup';
+import { PHONE_VIEWPORT, renderAtViewport } from '../../../../test/geometry-setup';
 import { HatLayerHost } from '~/components/Cosmetics/EventDecoration/HatLayer';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 
@@ -28,6 +28,7 @@ const rect = (el: Element | null | undefined) => el!.getBoundingClientRect();
 const hats = () => [
   ...document.querySelectorAll<HTMLButtonElement>('button[data-event-decoration="hat"]'),
 ];
+const cards = () => [...document.querySelectorAll('[data-testid="card"]')];
 
 function Card({ i }: { i: number }) {
   return (
@@ -42,27 +43,35 @@ function Card({ i }: { i: number }) {
 
 // Like the page: a scroller that clips at the viewport's left, its first column flush against it.
 async function phoneFeed(body: React.ReactNode) {
-  await page.viewport(390, 700);
-  renderWithProviders(
+  const { observed } = await renderAtViewport(
     <div
       data-testid="scroller"
       style={{ width: 390, overflow: 'hidden auto', paddingTop: 60, position: 'relative' }}
     >
       {body}
-    </div>
+    </div>,
+    PHONE_VIEWPORT
   );
+  expect(observed).toEqual({ width: 390, height: 844 });
   await vi.waitFor(() => expect(hats().length).toBeGreaterThan(0));
-  // Past the settle after the hat measures its place.
+  // Past any settle after the hat mounts.
   await new Promise((r) => setTimeout(r, 150));
 }
 
-// Bounding rects ignore a clipping ancestor, so a hat whose left edge is past the scroller's is cut.
-function expectWhole(hatEl: Element, scroller: Element) {
-  expect(rect(hatEl).left).toBeGreaterThanOrEqual(rect(scroller).left);
+// Where the hat sits against its own card's top-left corner.
+const offsetFromCard = (hatEl: Element, cardEl: Element) => ({
+  x: rect(cardEl).left - rect(hatEl).left,
+  y: rect(cardEl).top - rect(hatEl).top,
+});
+
+// Layout rects carry sub-pixel noise between two cards.
+function expectSameOffset(a: { x: number; y: number }, b: { x: number; y: number }) {
+  expect(a.x).toBeCloseTo(b.x, 1);
+  expect(a.y).toBeCloseTo(b.y, 1);
 }
 
 describe('the hat on a first-column card at phone width', () => {
-  test('stays whole inside the scroller, and the card does not move', async () => {
+  test('keeps the corner position it has on a card with room, and the scroller cuts the overhang', async () => {
     await phoneFeed(
       <div className="grid grid-cols-2 gap-2">
         <Card i={1} />
@@ -70,12 +79,30 @@ describe('the hat on a first-column card at phone width', () => {
       </div>
     );
     const scroller = document.querySelector('[data-testid="scroller"]')!;
-    expect(rect(document.querySelector('[data-testid="card"]')).left).toBe(rect(scroller).left);
-    const first = hats().reduce((a, b) => (rect(b).left < rect(a).left ? b : a));
-    expectWhole(first, scroller);
-    expect(
-      rect(document.querySelector('[data-testid="card"]')).top - rect(first).top
-    ).toBeGreaterThan(30);
+    const [card] = cards();
+    expect(rect(card).left).toBe(rect(scroller).left);
+    const flush = hats().reduce((a, b) => (rect(b).left < rect(a).left ? b : a));
+    // The hat hangs past the scroller's edge: it was not moved in, and the card did not move either.
+    expect(rect(flush).left).toBeLessThan(rect(scroller).left);
+    expect(flush.style.translate).toBe('');
+    expect(offsetFromCard(flush, card).y).toBeGreaterThan(30);
+  });
+
+  test('sits the same way against its card as one with room to its left', async () => {
+    await phoneFeed(
+      <div>
+        <div className="grid grid-cols-2 gap-2">
+          <Card i={1} />
+        </div>
+        <div style={{ paddingLeft: 60 }}>
+          <Card i={2} />
+        </div>
+      </div>
+    );
+    const [flushCard, roomyCard] = cards();
+    const [flushHat, roomyHat] = hats();
+    expect(rect(roomyCard).left - rect(flushCard).left).toBeGreaterThan(50);
+    expectSameOffset(offsetFromCard(flushHat, flushCard), offsetFromCard(roomyHat, roomyCard));
   });
 
   test('also when drawn in an ancestor hat layer', async () => {
@@ -91,21 +118,11 @@ describe('the hat on a first-column card at phone width', () => {
     );
     const scroller = document.querySelector('[data-testid="scroller"]')!;
     const first = hats().reduce((a, b) => (rect(b).left < rect(a).left ? b : a));
-    expectWhole(first, scroller);
+    expect(rect(first).left).toBeLessThan(rect(scroller).left);
+    expect(first.style.translate).toBe('');
   });
 
-  test('a card with room to its left keeps the hat where it was', async () => {
-    await phoneFeed(
-      <div style={{ paddingLeft: 60 }}>
-        <Card i={1} />
-      </div>
-    );
-    const [h] = hats();
-    const card = document.querySelector('[data-testid="card"]')!;
-    expect(rect(card).left - rect(h).left).toBeGreaterThan(15);
-  });
-
-  test('a card scrolled out to the left takes its hat with it, not across the rail', async () => {
+  test('a card scrolled out to the left takes its hat with it, still on its corner', async () => {
     function Rail() {
       const [, tick] = useState(0);
       return (
@@ -125,14 +142,29 @@ describe('the hat on a first-column card at phone width', () => {
     }
     await phoneFeed(<Rail />);
     const [first] = hats();
-    // Control: flush against the rail's edge, the hat does move in.
-    expect(first.style.translate).not.toBe('');
+    const before = offsetFromCard(first, cards()[0]);
     document.querySelector('[data-testid="rail"]')!.scrollLeft = 150;
     await userEvent.click(page.getByTestId('tick'));
     await new Promise((r) => setTimeout(r, 150));
-    const [card1, card2] = [...document.querySelectorAll('[data-testid="card"]')];
+    const [card1, card2] = cards();
     expect(rect(card1).left).toBeLessThan(0);
     expect(first.style.translate).toBe('');
+    expectSameOffset(offsetFromCard(first, card1), before);
     expect(rect(first).left).toBeLessThan(rect(card2).left);
+  });
+
+  test('a tap on the hat still bursts', async () => {
+    await phoneFeed(
+      <div className="grid grid-cols-2 gap-2">
+        <Card i={1} />
+        <Card i={2} />
+      </div>
+    );
+    const [first] = hats();
+    expect(document.querySelector('[class*="burst"]')).toBeNull();
+    const box = rect(first);
+    // The visible part of the flush hat: right of the scroller's edge, centre of the hit shape.
+    await userEvent.click(first, { position: { x: box.width * 0.75, y: box.height * 0.75 } });
+    await vi.waitFor(() => expect(document.querySelector('[class*="burst"]')).not.toBeNull());
   });
 });
