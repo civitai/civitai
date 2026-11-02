@@ -68,7 +68,7 @@ describe('bounty.resolveUnpaidAward', () => {
   it('records the ruling as the acting moderator, with the reference trimmed', async () => {
     const { status, json } = await call(ruling);
     expect(status).toBe(200);
-    expect(mockResolve).toHaveBeenCalledWith({
+    expect(mockResolve).toHaveBeenCalledExactlyOnceWith({
       bountyId: 4,
       userId: 5,
       ruling: 'refunded_supporter',

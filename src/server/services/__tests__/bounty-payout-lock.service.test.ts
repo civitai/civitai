@@ -2162,6 +2162,24 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
       expect(modActivityRows.filter((r) => r.activity === 'bountyAwardResolved')).toHaveLength(1);
     });
 
+    it('refuses the losing reference when two differ, sent at once on a deleted bounty', async () => {
+      bounty = null;
+      const results = await Promise.allSettled([
+        resolve(),
+        resolveUnpaidBountyAward({
+          bountyId: 4,
+          userId: 5,
+          ruling: 'paid_winner',
+          ledgerReference: 'another reference',
+          moderatorId: 98,
+        }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      const refused = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      expect(refused.reason).toMatchObject({ code: 'CONFLICT' });
+      expect(modActivityRows.filter((r) => r.activity === 'bountyAwardResolved')).toHaveLength(1);
+    });
+
     it('refuses an award recorded only before the table existed, once its bounty is gone', async () => {
       unpaidAwards.clear();
       bounty = null;
