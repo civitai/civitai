@@ -13,6 +13,11 @@ import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
 import { now, elapsed, isTimeoutError, safeInvoke } from './timing';
 import { SESSION_LINEAGE_MAX_AGE_MS } from './family';
+import {
+  createVerifiedClaimsCache,
+  type VerifiedClaimsCache,
+  type VerifiedClaimsCacheOptions,
+} from './verified-claims-cache';
 import type { SessionClaims } from './types';
 
 const ALG = 'ES256'; // matches the signer (sign.ts) — EC P-256 keys, smaller signatures than RS256
@@ -60,6 +65,15 @@ export interface AuthVerifierConfig {
    * local-public-key (hub) path.
    */
   onJwksLeg?: (outcome: 'hit' | 'timeout', durationSeconds: number) => void;
+  /**
+   * Optional per-process cache of ES256 signature verifications, behind a switch read on every call (see
+   * verified-claims-cache.ts). A hit skips ONLY `jwtVerify` — the signature, issuer and audience check, a pure
+   * function of the token bytes. Expiry is enforced on a hit too (an entry never outlives the token's `exp`),
+   * and the `purpose`, lineage and `isRevoked` checks below run on every call exactly as without the cache. A
+   * token that fails verification is never stored. Omitted, or switched off, verify behaves as before.
+   * Legacy JWE cookies are never cached.
+   */
+  claimsCache?: VerifiedClaimsCacheOptions;
 }
 
 export interface AuthVerifier {
@@ -134,6 +148,29 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     }
   }
 
+  // The claims cache is consulted only while its switch reads exactly `true`. Off, unreadable or throwing →
+  // undefined, the entries held are dropped, and verifyToken runs the uncached path unchanged.
+  let _claimsCache: VerifiedClaimsCache | undefined;
+  async function activeClaimsCache(): Promise<VerifiedClaimsCache | undefined> {
+    const opts = config.claimsCache;
+    if (!opts) return undefined;
+    let on = false;
+    try {
+      on = (await opts.enabled()) === true;
+    } catch {
+      on = false;
+    }
+    if (!on) {
+      _claimsCache?.clear();
+      return undefined;
+    }
+    return (_claimsCache ??= createVerifiedClaimsCache({
+      clock: cfg.clock,
+      maxEntries: opts.maxEntries,
+      ttlMs: opts.ttlMs,
+    }));
+  }
+
   async function verifyToken(token: string): Promise<SessionClaims | null> {
     let claims: SessionClaims | null = null;
 
@@ -149,14 +186,20 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
         throw new Error(
           `[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for ${ALG} verification`
         );
-      try {
-        const { payload } = await verifyAsymmetric(token);
+      const cache = await activeClaimsCache();
+      let payload = cache?.get(token);
+      if (!payload) {
+        try {
+          payload = (await verifyAsymmetric(token)).payload;
+        } catch {
+          return null; // bad signature / expired / wrong issuer — never cached
+        }
         // Session tokens carry no `aud`; without a configured audience, tokens with one are not sessions.
+        // Checked BEFORE the cache write, so a token this rejects is never stored (a hit skips this check).
         if (!cfg.audience && payload.aud !== undefined) return null;
-        claims = payload as SessionClaims;
-      } catch {
-        return null; // bad signature / expired / wrong issuer
+        cache?.set(token, payload);
       }
+      claims = payload as SessionClaims;
     } else if (cfg.legacyEnabled && cfg.legacySecret) {
       // Legacy next-auth JWE (encrypted, hkdf from NEXTAUTH_SECRET) — decoded with jose, no next-auth dep
       // (legacy-cookie.ts). Gated behind the explicit `legacyEnabled` switch (a second, symmetric trust

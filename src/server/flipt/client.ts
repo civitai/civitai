@@ -421,6 +421,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag state (enabled: false is fine) before this code serves traffic, for the reason given at
   // KYSELY_IMAGE_REACTIONS.
   CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
+
+  // On: the hub-session read path (`sessionClient.getSessionUser`) keeps a per-process cache of ES256
+  // signature verifications, keyed by a SHA-256 of the whole token, so a token seen again skips `jwtVerify`
+  // (packages/civitai-auth/src/verified-claims-cache.ts). Expiry is still enforced on a hit, and the
+  // revocation read (`isRevoked`) runs on every call, hit or miss, exactly as when off. Off (and unknown or
+  // unreachable): every call verifies the signature, as before, and the cache is emptied.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every session read. The key must exist in flag
+  // state (enabled: false is fine) before this code serves traffic, for the reason given at
+  // KYSELY_IMAGE_REACTIONS.
+  AUTH_VERIFIED_CLAIMS_CACHE = 'auth-verified-claims-cache',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
