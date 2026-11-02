@@ -60,6 +60,7 @@ import {
 import type {
   StorylineChapterPost,
   StorylineChapterRank,
+  StorylineRootHiddenReason,
   StorylineTombstoneReason,
 } from '~/shared/utils/storyline';
 import {
@@ -673,6 +674,7 @@ export async function assertCanContinueStoryline(
 
   const ownerId = parent.storyline.userId;
   const isOwner = placerId === ownerId;
+  const hiddenReason = isOwner ? null : rootHiddenReason(parent.storyline.chapters[0]);
   const [ownerBlocked, authorBlocked, collaborator, liveChapter] = await Promise.all([
     isBlockedPair(db, ownerId, placerId),
     isBlockedPair(db, parent.userId, placerId),
@@ -680,7 +682,7 @@ export async function assertCanContinueStoryline(
       where: { storylineId_userId: { storylineId: parent.storylineId, userId: placerId } },
       select: { acceptedAt: true },
     }),
-    !isOwner && rootHiddenReason(parent.storyline.chapters[0])
+    hiddenReason
       ? db.storylineChapter.findFirst({
           where: { storylineId: parent.storylineId, userId: placerId, ...participantChapterWhere },
           select: { id: true },
@@ -691,8 +693,8 @@ export async function assertCanContinueStoryline(
   // Hidden by its chapter 1, the storyline is as absent to a non-participant here as on its page
   // (`isStorylineHidden`): the same refusal as a post that is no chapter, so neither the price
   // nor the submit tells them it exists.
-  if (!isOwner && rootHiddenReason(parent.storyline.chapters[0]) && !isCollaborator && !liveChapter)
-    throw new StorylineHiddenRefusal();
+  if (hiddenReason && !isCollaborator && !liveChapter)
+    throw new StorylineHiddenRefusal(hiddenReason);
   if (ownerBlocked || authorBlocked)
     throw throwBadRequestError('Continuations are not available on this chapter');
   if (parent.storyline.whoCanContinue === 'Collaborators' && !isOwner && !isCollaborator)
@@ -703,14 +705,39 @@ export async function assertCanContinueStoryline(
 
 /**
  * `assertCanContinueStoryline`'s refusal of a storyline its chapter 1 hides from the placer. Worded
- * and coded as `notAChapter`, so the placer learns nothing; a distinct class so a caller can tell
- * it apart from a refusal that waiting cannot lift: chapter 1 may yet be published or rated.
+ * and coded as `notAChapter`, so the placer learns nothing; a distinct class, with the reason, so
+ * a caller can tell 'unpublished' and 'pendingRating', which may lift by waiting, from 'removed'.
+ * The reason stays server-side: the error formatter sends only the code and message.
  */
 export class StorylineHiddenRefusal extends TRPCError {
-  constructor() {
+  constructor(readonly reason: StorylineRootHiddenReason) {
     super({ code: 'BAD_REQUEST', message: STORYLINE_REFUSALS.notAChapter });
   }
 }
+
+/**
+ * Chapter 1 (`rc`, its post `rp`, that post's author `ru`) hides its storyline only until it is
+ * published or rated: `getStorylineRootHiddenReason` is 'unpublished' or 'pendingRating'.
+ */
+export const storylineRootWaitingSql = Prisma.sql`(rp.id IS NOT NULL AND rc."removedAt" IS NULL
+  AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
+  AND rp."nsfwLevel" <> ${NsfwLevel.Blocked}
+  AND (rp."publishedAt" IS NULL OR rp."publishedAt" >= now() OR rp."nsfwLevel" = 0))`;
+
+/**
+ * `userId` takes part in storyline `storylineId` (both SQL expressions), as
+ * `getParticipatingStorylineIds` reads it: an accepted collaborator or a live chapter's author.
+ */
+export const storylineParticipantSql = (userId: Prisma.Sql, storylineId: Prisma.Sql) =>
+  Prisma.sql`(EXISTS (
+    SELECT 1 FROM "StorylineCollaborator" psc
+    WHERE psc."storylineId" = ${storylineId} AND psc."userId" = ${userId}
+      AND ${acceptedCollaboratorSql('psc')}
+  ) OR EXISTS (
+    SELECT 1 FROM "StorylineChapter" psch
+    WHERE psch."storylineId" = ${storylineId} AND psch."userId" = ${userId}
+      AND ${participantChapterSql('psch')}
+  ))`;
 
 /** `assertCanContinueStoryline` as a yes/no, for callers that only need to hide an affordance. */
 export async function isOpenStorylineChapter(postId: number, placerId: number) {
