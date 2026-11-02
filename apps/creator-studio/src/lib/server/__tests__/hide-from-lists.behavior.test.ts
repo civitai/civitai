@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -77,6 +77,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int, ingestion text, "nsfwLevel" int, url text, "blockedFor" text
     );
     CREATE TABLE "ImageReaction" ("imageId" int, "userId" int, reaction text, "createdAt" timestamp DEFAULT now());
+    CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int);
+    CREATE TABLE "ArticleReaction" ("articleId" int, "userId" int, reaction text, "createdAt" timestamp);
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
     CREATE TABLE "Collection" (
       id int PRIMARY KEY, "userId" int, read text, availability text, mode text
@@ -122,8 +124,6 @@ describe('Creator Studio "Who reacted" and reactions from before the lists launc
 
   beforeAll(async () => {
     await holder.db.exec(`
-      CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int);
-      CREATE TABLE "ArticleReaction" ("articleId" int, "userId" int, reaction text, "createdAt" timestamp);
       INSERT INTO "User" (id, username, settings) VALUES
         (${QUIET}, 'quiet', '{}'),
         (${OPTED_IN}, 'optin', '{"showPreLaunchReactions": true}'),
@@ -267,7 +267,7 @@ describe('Creator Studio "Who reacted" leaves out reactors the reaction totals d
     `);
   });
 
-  afterEach(() => {
+  beforeEach(() => {
     notCounted.ids = [];
     notCounted.reads = 0;
   });
@@ -299,7 +299,7 @@ describe('Creator Studio "Who reacted" leaves out reactors the reaction totals d
     expect(p?.next).toBeNull();
   });
 
-  it('lists and counts everyone when the set is empty or unavailable', async () => {
+  it('lists and counts everyone when the set is empty', async () => {
     const p = await page('image', NC_IMAGE);
     expect(p?.reactors.map((r) => r.userId)).toEqual([NOT_COUNTED, COUNTED]);
     expect(p?.counts.Like).toBe(2);

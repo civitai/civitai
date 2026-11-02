@@ -12,17 +12,33 @@ const excludedUsers = createCache({
     const rows = await getClickhouse().$query<{ userId: number | string }>(
       `SELECT userId FROM metricExcludedUsers FINAL WHERE active = 1`
     );
-    // `Number(null)` is 0, which would otherwise enter the list as a user id.
-    return rows.map((r) => Number(r.userId)).filter((id) => Number.isFinite(id) && id > 0);
+    // Postgres ids only: `Number(null)` is 0, and an id outside int4 would fail the `::int[]` cast in the query that
+    // uses this list, outside this function's fail-open.
+    return rows
+      .map((r) => Number(r.userId))
+      .filter((id) => Number.isInteger(id) && id > 0 && id <= INT4_MAX);
   },
 });
+
+const INT4_MAX = 2_147_483_647;
+// The page this gates read only Postgres before; a stalled ClickHouse must not hold it for the client's own timeout.
+const READ_TIMEOUT_MS = 2000;
 
 let outageReported = false;
 
 /** Fails open: [] when the set cannot be read, so callers list and count everyone, as before. */
 export async function getMetricExcludedUserIds(): Promise<number[]> {
   try {
-    const ids = await excludedUsers.get({});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ids = await Promise.race([
+      excludedUsers.get({}),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('exclusion list read timed out')),
+          READ_TIMEOUT_MS
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
     if (!Array.isArray(ids)) throw new Error('cached exclusion list was not an array');
     outageReported = false;
     return ids;
