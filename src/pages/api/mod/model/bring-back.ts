@@ -1,5 +1,4 @@
 import * as z from 'zod';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import { getModel, updateModelById } from '~/server/services/model.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -19,19 +18,21 @@ export default defineModeratorEndpoint('model.bringBack', {
     modelId: z.coerce.number().int().positive().describe('The model to bring back.'),
   }),
   async handler(input) {
-    const model = await getModel({
-      id: input.modelId,
-      select: { id: true, meta: true, mode: true },
-    });
+    const model = await getModel({ id: input.modelId, select: { id: true, mode: true } });
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
-    if (model.mode !== ModelModifier.TakenDown)
-      throw throwBadRequestError('Model is not taken down');
+    const assertDown = (mode: ModelModifier | null | undefined) => {
+      if (mode !== ModelModifier.TakenDown) throw throwBadRequestError('Model is not taken down');
+    };
+    assertDown(model.mode);
 
-    const { archivedAt, archivedBy, takenDownAt, takenDownBy, ...restMeta } =
-      (model.meta as ModelMeta | null) || {};
     const updated = await updateModelById({
       id: input.modelId,
-      data: { mode: null, meta: { ...restMeta } },
+      data: { mode: null },
+      meta: (stored, row) => {
+        assertDown(row?.mode);
+        const { archivedAt, archivedBy, takenDownAt, takenDownBy, ...restMeta } = stored || {};
+        return restMeta;
+      },
     });
 
     return { modelId: updated.id, mode: updated.mode, affected: { modelIds: [updated.id] } };

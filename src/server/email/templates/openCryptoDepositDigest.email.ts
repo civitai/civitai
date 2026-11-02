@@ -13,9 +13,38 @@ export type OpenDepositDigestItem = {
   held: boolean;
 };
 
+/** Where the watch left a payment id support listed for it (nowpayments:watch-payment-ids). */
+export type ListedPaymentState =
+  | 'no_row' // NowPayments still has it waiting; no row yet
+  | 'awaiting_ok' // finished or partially_paid, not on the credit-ok list: not credited
+  | 'in_flight' // confirming/confirmed/sending, not on the credit-ok list: no row written
+  | 'recorded' // processed this run: it now has a row
+  | 'has_row' // has a row the watch already follows
+  | 'held' // held for review; left alone
+  | 'lookup_failed'; // NowPayments could not be read
+
+export type ListedPaymentDigestItem = {
+  paymentId: string;
+  state: ListedPaymentState;
+  /** NowPayments' status when it was read this run, else the row's. */
+  status: string | null;
+};
+
+const LISTED_STATE_LABEL: Record<ListedPaymentState, string> = {
+  no_row: 'no row yet, waiting at NowPayments',
+  awaiting_ok: 'paid, awaiting credit confirmation (not credited)',
+  in_flight: 'in flight at NowPayments, not tracked until confirmed for credit',
+  recorded: 'now has a row',
+  has_row: 'has a row',
+  held: 'held for review',
+  lookup_failed: 'NowPayments lookup failed',
+};
+
 export type OpenCryptoDepositDigestData = {
   to: string;
   items: OpenDepositDigestItem[];
+  /** Listed payment ids and where each stands; empty when none are listed. */
+  listed?: ListedPaymentDigestItem[];
   counts: { open: number; oldestOpenDays: number; held: number; finishedUncredited: number };
 };
 
@@ -27,11 +56,14 @@ const received = (i: OpenDepositDigestItem) =>
 const summary = ({ counts }: OpenCryptoDepositDigestData) =>
   `Open: ${counts.open}, oldest ${counts.oldestOpenDays} days. Held for review: ${counts.held}. Finished but uncredited: ${counts.finishedUncredited}.`;
 
+const listedLine = (i: ListedPaymentDigestItem) =>
+  `Payment ${i.paymentId}: ${LISTED_STATE_LABEL[i.state]}${i.status ? ` (${i.status})` : ''}`;
+
 export const openCryptoDepositDigestEmail = createEmail({
-  header: ({ to, items }: OpenCryptoDepositDigestData) => ({
+  header: ({ to, items, listed }: OpenCryptoDepositDigestData) => ({
     subject: `NP open-payment digest: ${items.length} crypto deposit${
       items.length === 1 ? '' : 's'
-    } still open`,
+    } still open${listed?.length ? `, ${listed.length} listed` : ''}`,
     to,
     from: 'Civitai Support <hello@civitai.com>',
   }),
@@ -56,7 +88,13 @@ export const openCryptoDepositDigestEmail = createEmail({
         finished, so no Buzz has been credited. They are checked again every day and credited
         automatically if they finish.
       </p>
-      <p>${summary(data)}</p>
+      <p>${summary(data)}</p>${
+        data.listed?.length
+          ? `
+      <p>Listed payment ids (no IPN row):</p>
+      <ul>${data.listed.map((i) => `<li>${listedLine(i)}</li>`).join('')}</ul>`
+          : ''
+      }
       <div style="overflow-x:auto;">
         <table cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:13px; min-width:520px;">
           <thead>
@@ -84,6 +122,9 @@ export const openCryptoDepositDigestEmail = createEmail({
       `${data.items.length} crypto deposit(s) received money at NowPayments but have not finished after ${OPEN_DEPOSIT_DIGEST_AFTER_DAYS}+ days, so no Buzz has been credited. They are checked daily and credited automatically if they finish.`,
       summary(data),
       ...lines,
+      ...(data.listed?.length
+        ? ['Listed payment ids (no IPN row):', ...data.listed.map((i) => `- ${listedLine(i)}`)]
+        : []),
     ].join('\n');
   },
   testData: async () => ({

@@ -1,8 +1,8 @@
 import { json, error } from '@sveltejs/kit';
-import { randomUUID } from 'crypto';
 import { dev } from '$app/environment';
+import type { SessionUser } from '@civitai/auth';
 import type { RequestHandler } from './$types';
-import { getSigner } from '$lib/server/auth/session';
+import { mintUserSession, refuseModerationAccount } from '$lib/server/auth/session';
 import { isInternalRequest } from '$lib/server/auth/internal';
 
 // DEV-ONLY auth bypass: mint a session token for a given userId so integration tests (the identity smoke
@@ -19,13 +19,8 @@ export const POST: RequestHandler = async ({ request }) => {
   }
   const userId = Number(body.userId);
   if (!Number.isFinite(userId)) return json({ error: 'bad_request' }, { status: 400 });
+  refuseModerationAccount({ id: userId }, 'dev-login');
 
-  // Mint a thin session token { sub, id (jti), signedAt } signed with the hub key — verifiable by the
-  // same hub verifier that GET /api/auth/identity uses.
-  const tokenId = randomUUID();
-  const token = await getSigner().mintSessionToken(
-    { sub: String(userId), signedAt: Date.now() },
-    { jti: tokenId }
-  );
+  const token = await mintUserSession({ id: userId } as SessionUser);
   return json({ token, userId });
 };

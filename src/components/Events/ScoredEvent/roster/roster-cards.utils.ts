@@ -37,12 +37,17 @@ export function rosterRanks(items: Rankable[], sort: RosterSort) {
   return ranks;
 }
 
-export function isNewMember(joinedAt: Date, now: Date) {
-  return now.getTime() - joinedAt.getTime() < ROSTER_NEW_MS;
+/** Members who joined before the event opened count from its start. */
+const countedFrom = (joinedAt: Date, startDate?: Date) =>
+  startDate && startDate > joinedAt ? startDate : joinedAt;
+
+export function isNewMember(joinedAt: Date, now: Date, startDate?: Date) {
+  return now.getTime() - countedFrom(joinedAt, startDate).getTime() < ROSTER_NEW_MS;
 }
 
-export function daysOnTeam(joinedAt: Date, now: Date) {
-  return Math.max(0, Math.floor((now.getTime() - joinedAt.getTime()) / DAY_MS));
+export function daysOnTeam(joinedAt: Date, now: Date, startDate?: Date) {
+  const from = countedFrom(joinedAt, startDate);
+  return Math.max(0, Math.floor((now.getTime() - from.getTime()) / DAY_MS));
 }
 
 /**

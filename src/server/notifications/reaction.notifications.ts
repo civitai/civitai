@@ -5,6 +5,7 @@ import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 import { isV1Shaped, legacyId } from '~/server/notifications/comment.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { humanizeList } from '~/utils/humanizer';
+import { withDefiniteArticle } from '~/utils/string-helpers';
 
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
 export const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
@@ -86,9 +87,11 @@ export const reactionNotifications = createNotificationProcessor({
           details.reactionCount
         } reactions`;
       } else {
-        message = `Your ${details.reviewId ? 'review image' : 'example image'} on the ${
-          details.modelName
-        } model has received ${details.reactionCount} reactions`;
+        message = `Your ${
+          details.reviewId ? 'review image' : 'example image'
+        } on ${withDefiniteArticle(details.modelName)} model has received ${
+          details.reactionCount
+        } reactions`;
       }
 
       // `postId` is null for images that are not in a post (an article cover, for one:

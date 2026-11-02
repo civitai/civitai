@@ -1303,7 +1303,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
   // MOSS Image - open weights, checkpoint and LoRA
-  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: [...checkpointAndLora, ModelType.LoCon] },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 

@@ -1,0 +1,205 @@
+import type { PGlite } from '@electric-sql/pglite';
+import { Kysely } from 'kysely';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HeldMediaModule from '../held-media';
+import { freshPglite } from '../../../test/pglite';
+import { pgliteDialect } from './abuse-detection-pglite.harness';
+
+/**
+ * `POST /api/held-media/[imageId]/opened`: the full view's row for an image it put on screen. The row
+ * goes through the real `recordModActivity` into a Postgres stand-in, so who and when are what the
+ * database recorded.
+ */
+
+const { dbHandle, getHeldMedia, grants } = vi.hoisted(() => ({
+  dbHandle: { current: null as unknown },
+  getHeldMedia: vi.fn(),
+  grants: { paths: new Set<string>(['/images/csam']) },
+}));
+
+vi.mock('$lib/server/db', () => ({
+  get dbRead() {
+    return dbHandle.current;
+  },
+  get dbWrite() {
+    return dbHandle.current;
+  },
+}));
+vi.mock('$lib/server/access', async () => {
+  const { error } = await import('@sveltejs/kit');
+  const canAccess = (_user: unknown, path: string) => grants.paths.has(path);
+  return {
+    canAccess,
+    requireAccess: (user: unknown, path: string) => {
+      if (!canAccess(user, path)) error(403, 'no');
+    },
+  };
+});
+vi.mock('$lib/server/held-media', async (importOriginal) => ({
+  ...(await importOriginal<typeof HeldMediaModule>()),
+  getHeldMedia,
+}));
+
+const { POST } = await import('../../../routes/api/held-media/[imageId]/opened/+server');
+
+let db: PGlite;
+
+const rows = async () =>
+  (
+    await db.query<{
+      userId: number;
+      activity: string;
+      entityType: string;
+      entityId: number;
+      createdAt: Date;
+    }>(
+      `SELECT "userId", activity, "entityType", "entityId", "createdAt" FROM "ModActivity"
+       WHERE activity LIKE 'reportMedia:%'`
+    )
+  ).rows;
+
+/** The held route's row for bytes it served, `ago` before now. */
+const served = (
+  imageId: number,
+  { userId = 42, ago = '1 minute', activity = 'heldMedia:view', entityType = 'image' } = {}
+) =>
+  db.query(
+    `INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId", "createdAt")
+     VALUES ($1, $5, $4, $2, LOCALTIMESTAMP - $3::interval)`,
+    [userId, imageId, ago, activity, entityType]
+  );
+
+async function post(imageId: string, body?: string, origin: string | null = 'http://mod.test') {
+  const url = new URL(`http://mod.test/api/held-media/${imageId}/opened`);
+  try {
+    const res = await POST({
+      params: { imageId },
+      url,
+      request: new Request(url, { method: 'POST', body, headers: origin ? { origin } : {} }),
+      locals: { user: { id: 42, roles: ['moderator:staff'] }, grants: {} },
+    } as never);
+    return res.status;
+  } catch (e) {
+    return (e as { status?: number }).status ?? 500;
+  }
+}
+
+beforeAll(async () => {
+  db = await freshPglite();
+  await db.exec(`
+    CREATE TABLE "ModActivity" (
+      "id" SERIAL PRIMARY KEY,
+      "userId" INTEGER,
+      "activity" TEXT NOT NULL,
+      "entityType" TEXT,
+      "entityId" INTEGER,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+});
+
+beforeEach(async () => {
+  await db.exec(`DELETE FROM "ModActivity"`);
+  grants.paths = new Set(['/images/csam']);
+  getHeldMedia.mockReset().mockResolvedValue({ url: 'key', type: 'image', mimeType: null });
+});
+
+describe('POST /api/held-media/[imageId]/opened', () => {
+  it('records the open against the session moderator, at database time', async () => {
+    await served(7, { ago: '29 minutes' });
+    const [{ now: before }] = (await db.query<{ now: Date }>(`SELECT LOCALTIMESTAMP AS now`)).rows;
+
+    expect(await post('7')).toBe(204);
+
+    const [{ now: after }] = (await db.query<{ now: Date }>(`SELECT LOCALTIMESTAMP AS now`)).rows;
+    const [row, ...rest] = await rows();
+    expect(rest).toHaveLength(0);
+    expect(row).toMatchObject({
+      userId: 42,
+      activity: 'reportMedia:open:original',
+      entityType: 'image',
+      entityId: 7,
+    });
+    expect(row.createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(row.createdAt.getTime()).toBeLessThanOrEqual(after.getTime());
+  });
+
+  it('refuses a moderator without the CSAM page, and writes nothing', async () => {
+    grants.paths = new Set();
+    expect(await post('7')).toBe(403);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('refuses an image the full view cannot show, and writes nothing', async () => {
+    getHeldMedia.mockResolvedValue(null);
+    expect(await post('7')).toBe(404);
+    expect(getHeldMedia).toHaveBeenCalledWith(7);
+    expect(await rows()).toEqual([]);
+  });
+
+  it.each([
+    ['a moderator', JSON.stringify({ userId: 7 })],
+    ['a time', JSON.stringify({ createdAt: '2020-01-01T00:00:00Z' })],
+    ['anything', 'x'],
+  ])('refuses a body naming %s, and writes nothing', async (_, body) => {
+    expect(await post('7', body)).toBe(400);
+    expect(await rows()).toEqual([]);
+  });
+
+  it.each([
+    ['another site', 'https://other.example'],
+    ['no origin', null],
+  ])('refuses a request from %s, and writes nothing', async (_, origin) => {
+    expect(await post('7', undefined, origin)).toBe(403);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('answers a write that did not land with an error, not success', async () => {
+    await db.exec(`ALTER TABLE "ModActivity" RENAME TO "ModActivityAway"`);
+    try {
+      expect(await post('7')).toBe(500);
+    } finally {
+      await db.exec(`ALTER TABLE "ModActivityAway" RENAME TO "ModActivity"`);
+    }
+  });
+
+  it.each([
+    ['no serve', null],
+    ['a serve 31 minutes ago', { ago: '31 minutes' }],
+    ["another moderator's serve", { userId: 43 }],
+    ['a serve of another image', { imageId: 8 }],
+    ['a grid view only', { activity: 'heldMedia:grid' }],
+    ['a serve of another kind of entity', { entityType: 'modelVersion' }],
+  ] as const)('refuses an open after %s, and writes nothing', async (_, serve) => {
+    if (serve) {
+      const { imageId = 7, ...rest } = serve as {
+        imageId?: number;
+        ago?: string;
+        userId?: number;
+        activity?: string;
+        entityType?: string;
+      };
+      await served(imageId, rest);
+    }
+
+    expect(await post('7')).toBe(403);
+    expect(await rows()).toEqual([]);
+  });
+
+  it.each([
+    ['2 hours 59 minutes', 204, 1],
+    ['3 hours 1 minute', 403, 0],
+  ] as const)('a held video served %s ago answers %s', async (ago, status, written) => {
+    getHeldMedia.mockResolvedValue({ url: 'key', type: 'video', mimeType: 'video/mp4' });
+    await served(7, { ago });
+
+    expect(await post('7')).toBe(status);
+    expect(await rows()).toHaveLength(written);
+  });
+
+  it('refuses a bad image id, and writes nothing', async () => {
+    expect(await post('x')).toBe(400);
+    expect(await rows()).toEqual([]);
+  });
+});

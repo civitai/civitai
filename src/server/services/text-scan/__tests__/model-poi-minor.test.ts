@@ -12,6 +12,9 @@ const { mockSetModelMinor, mockSideEffects, mockCreateNotification, entityChange
     mockCreateNotification: vi.fn(),
     entityChangesMock: vi.fn(),
   }));
+const { mockRestoreOwnerFlagOverride } = vi.hoisted(() => ({
+  mockRestoreOwnerFlagOverride: vi.fn(),
+}));
 
 // Label capture runs on real Postgres in label-capture.rulings.behavior.test.ts; here the flag
 // writer runs on the plain client so its own statement can be read.
@@ -29,6 +32,7 @@ vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   applyModelFlagSideEffects: mockSideEffects,
   clearPoiHashMeta: mockClearPoiHashMeta,
+  restoreOwnerFlagOverride: mockRestoreOwnerFlagOverride,
 }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
@@ -480,6 +484,17 @@ describe('grantModelTextScanPoi', () => {
     mockClearPoiHashMeta.mockClear();
     await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
     expect(mockClearPoiHashMeta).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  // An owner's override predates the text-scan flag, so the ruling it replaced goes back on top.
+  it("fans out the ruling an owner's override put back", async () => {
+    const restored = { nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] };
+    mockRestoreOwnerFlagOverride.mockResolvedValueOnce(restored);
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
+    expect(mockRestoreOwnerFlagOverride).toHaveBeenCalledWith(MODEL_ID, { revertedFlag: 'poi' });
+    expect(mockSideEffects).toHaveBeenCalledWith(
+      expect.objectContaining({ after: expect.objectContaining({ poi: false, ...restored }) })
+    );
   });
 
   it('marks nothing when nothing was lifted', async () => {

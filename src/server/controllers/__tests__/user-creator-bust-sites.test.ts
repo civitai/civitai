@@ -24,6 +24,10 @@ const { purgeCache, mocks } = vi.hoisted(() => ({
     updateUserById: vi.fn(),
   },
 }));
+// The creator card's Kysely read, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('~/server/services/user-creator.reads', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).userCreatorReadsOverDbMock()
+);
 vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
   ...(await importOriginal<typeof Cloudflare>()),
   purgeCache,

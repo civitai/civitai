@@ -553,7 +553,7 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
   delete, CHECK'd to require a parent) — replaces the earlier "keep an @mention in the content".
 - **Deletion is structural.** `deletedAt` tombstones a comment that has replies or that a
   clamped reply answers (`replyToId`); `parentId ON DELETE RESTRICT` makes a hard-delete that
-  races a new reply _fail_ on the `parentId` edge instead of orphaning. Tombstones stay in indexes and pages — they render as "[deleted]"
+  races a new reply _fail_ on the `parentId` edge instead of orphaning. Tombstones stay in indexes and pages — they render as "This comment was deleted"
   placeholders, which is the point.
 - **`CommentTopic` is a required parent** (FK with CASCADE): the service upserts the topic on
   first comment (replacing lazy Thread creation 1:1) with `ON CONFLICT ("entityId", "entityType")`,
@@ -757,7 +757,7 @@ topic alone — the entity still exists.
 -- Top-level pages, three sort modes (Oldest scans the newest index backward). Deliberately NOT
 -- filtered on hidden: hidden rows are rare, a residual filter is cheap, and the same index then
 -- serves the moderator hidden-comments view (which would otherwise have no index at all).
--- Tombstoned rows stay in — they render as "[deleted]" placeholders.
+-- Tombstoned rows stay in — they render as "This comment was deleted" placeholders.
 -- Newest/Oldest lead with createdAt, not id: once v1 rows take new ids from the shared sequence,
 -- id order is no longer creation order (ID strategy below). id is the keyset tiebreak.
 CREATE INDEX commentv3_top_newest    ON "CommentV3" ("entityType", "entityId", "createdAt" DESC, "id" DESC)     WHERE "parentId" IS NULL;
@@ -825,7 +825,7 @@ cascades a delete through the whole subtree (destroying other users' replies), w
 the child thread and quietly orphans them. Neither survives into the new model. Instead:
 
 - A deleted comment with replies gets `deletedAt` set; content is blanked and the author hidden at
-  read time; the row keeps rendering as a "[deleted]" placeholder so its replies stay in place.
+  read time; the row keeps rendering as a "This comment was deleted" placeholder so its replies stay in place.
 - A childless comment hard-deletes. `parentId ON DELETE RESTRICT` makes this race-proof on the
   `parentId` edge: a hard-delete that loses a race against a new reply **fails** (and the service
   retries as a tombstone) rather than orphaning the reply. `replyToId` is `SET NULL`, so a
@@ -924,7 +924,7 @@ parentId = id`) → per-comment `locked` is now **subtree-scoped**: the write pa
 ## ID strategy — the part that keeps history working
 
 Old ids are load-bearing in three places: notification `details` rows carry a `version`
-discriminator (`comment.detail-fetcher.ts` splits on it), permalinks (`/comments/v2/<id>`,
+discriminator (`comment.detail-fetcher.ts` splits on it), permalinks (`/comments/<id>`, alias `/comments/v2/<id>`,
 `?dialog=commentThread&highlight=<id>`), and ClickHouse `commentEvents.commentId` (which already
 mixes both id spaces with no discriminator — pre-existing corruption we can stop, not fix).
 
@@ -1400,8 +1400,9 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
 - Entity-label/URL maps: `src/utils/string-helpers.ts` (`commentV2`/`CommentV2` → 'Comment'
   entries), `src/pages/moderator/strikes.tsx` entity→URL map, and
   `src/server/utils/moderator-endpoint-catalog.generated.ts` (regenerate). The
-  `src/pages/comments/v2/[id].tsx` permalink redirect keeps working because v2 ids are preserved —
-  just re-point its query; moderator tooling and strike links depend on that route.
+  permalink redirect is now `src/pages/comments/[id].tsx` (`/comments/v2/[id].tsx` re-exports it
+  as an alias); it keeps working because v2 ids are preserved. Strike links to `CommentV2` and
+  `CommentV3` point at `/comments/<id>`, and `strikes.tsx` no longer links v1 `Comment` ids.
 - Moderator app extras beyond the section above: `queue-thresholds.ts` (`commentV2` threshold key
   and `report:commentV2` mapping — renaming the key silently zeroes thresholds),
   `src/lib/reports.ts` label maps. The moderator **database** (tracked schema

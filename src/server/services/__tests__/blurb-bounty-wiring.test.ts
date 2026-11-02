@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import type * as BlocklistService from '~/server/services/blocklist.service';
@@ -81,8 +82,12 @@ const CLIENT_HTML = '<div data-type="blurb" data-id="7">ATTACKER SUPPLIED</div>'
 const EXPANDED_HTML = '<div data-type="blurb" data-id="7">REAL</div>';
 const USES = [{ blurbId: 7, contentHash: 'h7' }];
 
-const upsert = (input: Record<string, unknown> = {}) =>
-  upsertBounty({
+const upsert = (input: Record<string, unknown> = {}) => {
+  // The fixture image's upload key was issued to whoever saves.
+  const saver = String(input.userId ?? OWNER_ID);
+  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+    keys.map(() => saver)) as never);
+  return upsertBounty({
     id: BOUNTY_ID,
     userId: OWNER_ID,
     isModerator: false,
@@ -110,6 +115,7 @@ const upsert = (input: Record<string, unknown> = {}) =>
     ],
     ...input,
   } as never);
+};
 
 /** The `$executeRaw` templates that write the description column, joined into readable SQL. */
 function descriptionSql() {

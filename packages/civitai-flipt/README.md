@@ -81,6 +81,9 @@ app that gates on them (the monolith's list is `FLIPT_FEATURE_FLAGS` in
   monolith exports these as `civitai_app_flipt_eval_cache_*` (see
   `src/server/metrics/flipt-eval-cache.metrics.ts`); `misses - expiredMisses` is an upper bound on
   cold traffic, not a measurement of it.
+- **`buildFliptContext` returns a frozen object, and the client relies on that.** For a frozen
+  context the context part of the eval-cache key is built once and reused for every flag evaluated
+  with that same object; any other context builds it per call. Extend a built context by spreading it.
 - **`FLIPT_EVAL_CACHE_TTL_MS` is parsed with `parseInt`**: `"0.5"` → `0` (cache off) and `"1e4"` → `1`.
   The resolved value is logged through the factory's `log` on startup — read it if behavior surprises you.
 - After an init failure the client stays `null` for `failureCooldownMs` (30s) and every read returns

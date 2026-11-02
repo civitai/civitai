@@ -26,14 +26,23 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
+import { fetchSandboxAppBuilt } from '~/components/Apps/AppAssistant/sandboxAppBuilt';
 import {
   AppExportError,
   EXPORT_FAILED,
+  EXPORT_GONE,
   EXPORT_NOTE,
   exportAppZip,
   exportFileName,
   saveBlob,
 } from '~/components/Apps/AppAssistant/appExport';
+import type { PreparedSubmit } from '~/components/Apps/AppAssistant/assistantSubmit';
+import {
+  sendForReview,
+  submitBundleFromExport,
+} from '~/components/Apps/AppAssistant/assistantSubmit';
+import { setFeedbackStatusVia } from '~/components/Apps/AppAssistant/assistantFeedback';
+import { createAppFeedbackSource } from '@civitai/app-assistant';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
 import {
@@ -43,22 +52,20 @@ import {
   isKeepLimitResult,
 } from '~/components/Apps/AppAssistant/appTools';
 import {
-  BUILD_IT_MESSAGE,
   SANDBOX_SERVER_ID,
   SET_CHECKLIST,
   createAssistantGate,
 } from '~/components/Apps/AppAssistant/assistantGate';
+import { useFillScrollParent } from '~/components/Apps/AppAssistant/useFillScrollParent';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
 import { APP_ASSISTANT_SUBAGENTS } from '~/components/Apps/AppAssistant/assistantSubagents';
 import {
   AssistantTokenError,
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
-import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import {
   chatTokenOrchestration,
-  createBrowserCoverArtDeps,
-  createCoverArt,
+  createBrowserCoverDeps,
 } from '~/components/Apps/AppAssistant/coverArt';
 import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
 import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice';
@@ -69,6 +76,7 @@ import {
 } from '~/components/Apps/AppAssistant/previewTools';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
 import { pingSandbox, usePreviewKeepAlive } from '~/components/Apps/AppAssistant/previewKeepAlive';
+import { fetchSandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
 import {
   RESTART_PREVIEW_FAILED,
   appAssistantRemoteRunnerFor,
@@ -168,25 +176,6 @@ export const APP_START_TIMEOUT_MS = 5 * 60_000;
 
 /** How long the page waits for its app list when the chat asks for a failed reply by itself. */
 export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
-
-/**
- * Sends `text` as the user's. A copy the chat keeps back in a box that was empty (while it holds, or
- * on a refused grant) is hidden while the user dictates, and their words would be joined to it: such a
- * copy is taken back out, so the caller can give the message back instead. components-chat 0.30.0
- * no longer keeps such a copy while the user dictates, so there it takes nothing out; kept for a
- * chat that does.
- */
-export async function sendNotJoined(
-  chat: Pick<CivitaiChat, 'send' | 'compose'>,
-  text: string,
-  box: () => string,
-  dictating: () => boolean,
-  went: () => boolean
-): Promise<void> {
-  const empty = !box();
-  await chat.send(text);
-  if (empty && !went() && dictating() && box() === text) await chat.compose('');
-}
 
 type RetryChat = Pick<
   CivitaiChat,
@@ -296,8 +285,6 @@ export function AppAssistantWorkspace({
   // stops running or its tools go, or the user leaves the page. (Another chat: the chat itself gives
   // it back.) Calling back one that already went does nothing.
   const released = useRef<QueuedMessage | null>(null);
-  const boxText = useCallback(() => messageBoxText(chatRef.current), []);
-  const dictating = useCallback(() => isDictating(chatRef.current), []);
   const [chatId, setChatId] = useState<string | null>(null);
   const chatIdRef = useRef(chatId);
   const previewShown = useRef(false);
@@ -353,6 +340,10 @@ export function AppAssistantWorkspace({
   // the page looks for a live one itself (`probedApp`) and, finding none, offers the runner's Restart
   // preview in the pane (`noLivePreview`); `restart` is that restart's progress for the open app.
   const [noLivePreview, setNoLivePreview] = useState(false);
+  // Whether the open app has had a preview to restart: one was shown, or its project is built (the
+  // sandbox has its `block.manifest.json`, `fetchSandboxAppBuilt`). A brand-new app has neither, so
+  // its pane shows the placeholder rather than "isn't running" with Restart preview.
+  const [previewable, setPreviewable] = useState(false);
   const [restart, setRestart] = useState<{ pending: boolean; error: string | null }>(IDLE_RESTART);
   // The app (its key) whose restart is in flight: one at a time per app, so another app's is not held up.
   const restarting = useRef<string | null>(null);
@@ -369,7 +360,10 @@ export function AppAssistantWorkspace({
   const showPreview = useCallback((next: PreviewSession | null) => {
     live.current.session = next;
     setSession(next);
-    if (next) setNoLivePreview(false);
+    if (next) {
+      setNoLivePreview(false);
+      setPreviewable(true);
+    }
     // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
     if (next && !previewShown.current) {
       previewShown.current = true;
@@ -384,6 +378,8 @@ export function AppAssistantWorkspace({
       createAppTools({
         apps: () => live.current.apps,
         current: () => live.current.active,
+        // A new app's tools reach this reply once it runs and the chat has them (`reopenTools`).
+        toolsReady: (app) => toolsReadyRef.current(app),
         open: async (app) => {
           const opened = await openRef.current(app);
           // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
@@ -394,6 +390,11 @@ export function AppAssistantWorkspace({
       }),
     []
   );
+  // The store cover's listing refresh after a press attaches one. Read through a ref, so a new utils
+  // object never rebuilds the gate (and with it, its state).
+  const utils = trpc.useUtils();
+  const trpcUtils = useRef(utils);
+  trpcUtils.current = utils;
   const gate = useMemo(
     () =>
       createAssistantGate({
@@ -401,38 +402,49 @@ export function AppAssistantWorkspace({
           // Features are planned for an app, so not before one exists.
           name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
-        onBuild: () => void buildRef.current(),
         currentApp: () => live.current.active?.name ?? null,
-      }),
-    [appTools]
-  );
-  // What was verified belongs to the sandbox it was verified in, and so does a checklist's Build it.
-  useEffect(() => {
-    gate.reset();
-    gate.appChanged(activeName);
-  }, [activeName, gate]);
-
-  // The store cover (`generate_app_cover`) is the page's own tool: the server runner does not offer it.
-  const trpcUtils = trpc.useUtils();
-  const coverTools = useMemo(
-    () =>
-      createCoverArt(
-        createBrowserCoverArtDeps({
+        // Submit for review: the user's press sends the app's export to the review queue as them.
+        submit: {
+          prepare: (name) => prepareSubmitRef.current(name),
+          send: (prepared) => sendForReview(prepared),
+        },
+        // A chat changes only the app it made or chose: a new chat never builds over the open one.
+        openApp: () => live.current.active?.app ?? null,
+        // The open app's review and user feedback, through My apps' own reads as the user; a status
+        // changes only when the user presses its card. (On the server runner the runner reads it.)
+        feedback: {
+          source: createAppFeedbackSource({
+            listMine: () => trpcVanilla.appListings.listMine.query(),
+            listingHistory: (appListingId) =>
+              trpcVanilla.appListings.listingHistory.query({ appListingId }),
+            listFeedback: (input) => trpcVanilla.appFeedback.listForListing.query(input),
+          }),
+          setStatus: setFeedbackStatusVia((input) =>
+            trpcVanilla.appFeedback.setOwnerStatus.mutate(input)
+          ),
+        },
+        cover: createBrowserCoverDeps({
           currentApp: () => {
             const app = live.current.active?.app;
             return app && isAppBlockId(app) ? app : null;
           },
           api: {
-            getMyListingForApp: (input) => trpcVanilla.appListings.getMyListingForApp.query(input),
+            getMyListingForApp: (input, opts) =>
+              trpcVanilla.appListings.getMyListingForApp.query(input, opts),
             ingestAssetFromUrl: (input) => trpcVanilla.appListings.ingestAssetFromUrl.mutate(input),
             setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
           },
           orchestration: chatTokenOrchestration(tokens),
-          onAttached: () => void trpcUtils.appListings.getMyListingForApp.invalidate(),
-        })
-      ),
-    [tokens, trpcUtils]
+          onAttached: () => void trpcUtils.current.appListings.getMyListingForApp.invalidate(),
+        }),
+      }),
+    [appTools, tokens]
   );
+  // What was verified belongs to the sandbox it was verified in, and so does a Submit for review offer.
+  useEffect(() => {
+    gate.reset();
+    gate.appChanged(activeName);
+  }, [activeName, gate]);
 
   const tools = useMemo(
     () => ({
@@ -448,11 +460,11 @@ export function AppAssistantWorkspace({
         getSession: () => live.current.session,
         setSession: showPreview,
       }),
-      ...appTools.tools,
+      // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
+      ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
-      ...(remoteRunner ? {} : coverTools),
     }),
-    [canPreview, gate, appTools, showPreview, remoteRunner, coverTools]
+    [canPreview, gate, appTools, showPreview]
   );
 
   const instructions = useCallback(
@@ -536,6 +548,28 @@ export function AppAssistantWorkspace({
     [mcpUrl, tokens]
   );
   usePreviewKeepAlive(previewPane, keepAwake);
+  // The open app's sandbox says whether the app is built (server runner): read by the look for a preview.
+  const appBuiltRef = useRef<((app: string) => Promise<boolean | null>) | null>(null);
+  appBuiltRef.current =
+    mcpUrl && remoteRunner
+      ? (app) =>
+          fetchSandboxAppBuilt(
+            mcpUrl,
+            (opts) => tokens.getToken({ ...opts, purpose: 'sandbox' }),
+            app
+          )
+      : null;
+  // The pane asks the open app's sandbox whether the preview's tunnel is still up (server runner).
+  const tunnelStatus = useMemo(
+    () =>
+      mcpUrl && remoteRunner
+        ? () =>
+            fetchSandboxTunnelStatus(mcpUrl, (opts) =>
+              tokens.getToken({ ...opts, purpose: 'sandbox' })
+            )
+        : undefined,
+    [mcpUrl, remoteRunner, tokens]
+  );
 
   // A failed reply the chat asks for again (Retry, or by itself as the page wakes) fires no before-send,
   // so a paused app would not be woken and the reply would go on without its tools. The ask is held
@@ -719,6 +753,7 @@ export function AppAssistantWorkspace({
   // The Restart preview offer and its progress belong to the open app; a paused app has no preview.
   useEffect(() => {
     setNoLivePreview(false);
+    setPreviewable(false);
     setRestart(IDLE_RESTART);
   }, [activeName]);
   useEffect(() => {
@@ -751,6 +786,11 @@ export function AppAssistantWorkspace({
           sessionId: null,
           view: ++runnerViews.current,
         });
+      // None live: Restart preview only for an app built far enough to have had one. No clear
+      // answer (`null`) offers it, as before this check.
+      const built = await (appBuiltRef.current?.(app) ?? Promise.resolve(null)).catch(() => null);
+      if (live.current.active?.name !== name || live.current.session) return;
+      if (built !== false) setPreviewable(true);
       setNoLivePreview(true);
     })();
   }, [runningApp, showPreview]);
@@ -780,12 +820,14 @@ export function AppAssistantWorkspace({
   }, [runnerCredentials, showPreview]);
   const previewRestart = useMemo(
     () =>
-      remoteRunner && canPreview
+      remoteRunner && canPreview && previewable
         ? { onRestart: () => void restartPreview(), pending: restart.pending, error: restart.error }
         : undefined,
-    [remoteRunner, canPreview, restartPreview, restart]
+    [remoteRunner, canPreview, previewable, restartPreview, restart]
   );
-  // Beside the chat on a wide screen; a phone's Chat/Preview switch still waits for a preview.
+  // Beside the chat on a wide screen; a phone's Chat/Preview switch still waits for a preview. With
+  // no live preview it shows only to offer Restart preview, for an app that had one: an app never
+  // built has no pane, and the chat takes the full width.
   const paneShown = !!session || (!!previewRestart && noLivePreview);
   // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
   // Not on a visit for a fork: the fork opens its own app, and this effect, running in the same
@@ -803,19 +845,9 @@ export function AppAssistantWorkspace({
   resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
   heldRef.current = held;
-  // Build it: a send the chat could not take now (a reply still ending, or a hold) comes back to the
-  // user to send instead, so it is never pressed twice. The chat puts it in an empty box, or offers it
-  // back beside what the user has there.
-  const buildWent = useRef(false);
-  const buildRef = useRef(async () => {
-    buildWent.current = false;
-    const chat = chatRef.current;
-    if (!chat) return;
-    await sendNotJoined(chat, BUILD_IT_MESSAGE, boxText, dictating, () => buildWent.current);
-    if (buildWent.current) return;
-    chat.giveBack(BUILD_IT_MESSAGE);
-    gate.answered();
-  });
+  const prepareSubmitRef = useRef<(name: string) => Promise<PreparedSubmit>>(() =>
+    Promise.reject(new AppExportError(EXPORT_FAILED, 'failed'))
+  );
   // The held message comes back to the user (the chat puts it back in the box, or offers it back).
   const giveBackHeld = useCallback(() => {
     const message = heldRef.current;
@@ -826,7 +858,6 @@ export function AppAssistantWorkspace({
   const onBeforeSend = useCallback(
     (text: string, queue: BeforeSendDetail['queue']) => {
       gate.answered();
-      if (text === BUILD_IT_MESSAGE) buildWent.current = true;
       const app = live.current.active;
       if (app?.state !== 'suspended') return;
       // The chat shows the message at once, waiting, and holds while the app resumes (so no other
@@ -887,6 +918,34 @@ export function AppAssistantWorkspace({
   // Paused (or its tools gone) after the release but before the chat sent it: it would go without the
   // app's tools, and nothing would wake the app. It comes back to the user instead.
   const runningWithTools = active?.state === 'running' && mcpServers.length > 0;
+  // create_app's `toolsReady`: a new app's tools reach the reply that made it once the app runs and
+  // its tools are handed to the chat (the chat reads them as it builds the reply's tools again), or
+  // not at all after APP_START_TIMEOUT_MS. One wait per app; the latest call wins.
+  const toolsWaiters = useRef(new Map<string, (ready: boolean) => void>());
+  const [toolsAsked, setToolsAsked] = useState(0);
+  const toolsReadyRef = useRef(
+    (app: string) =>
+      new Promise<boolean>((resolve) => {
+        toolsWaiters.current.get(app)?.(false);
+        const timer = setTimeout(() => settle(false), APP_START_TIMEOUT_MS);
+        const settle = (ready: boolean) => {
+          clearTimeout(timer);
+          if (toolsWaiters.current.get(app) === settle) toolsWaiters.current.delete(app);
+          resolve(ready);
+        };
+        toolsWaiters.current.set(app, settle);
+        setToolsAsked((n) => n + 1);
+      })
+  );
+  useEffect(() => {
+    if (!active) return;
+    for (const [app, settle] of [...toolsWaiters.current]) {
+      // Another app opened, or this one runs with its tools handed to the chat.
+      if (app !== active.app) settle(false);
+      else if (runningWithTools) settle(true);
+    }
+  }, [active, runningWithTools, toolsAsked]);
+  useEffect(() => () => toolsWaiters.current.forEach((settle) => settle(false)), []);
   // Set up: one fixed message, as the user's, once (the card goes as it is pressed).
   const forkSetUp = () => {
     const chat = chatRef.current;
@@ -1017,6 +1076,9 @@ export function AppAssistantWorkspace({
     [sandboxClient, startApp]
   );
   const onRemoved = (name: string) => {
+    // A new app deleted while its reply waits for its tools: they will not come.
+    const app = live.current.apps?.find((s) => s.name === name)?.app;
+    if (app) toolsWaiters.current.get(app)?.(false);
     appTools.forget(name);
     if (name === activeName) setActiveName(null);
   };
@@ -1024,7 +1086,23 @@ export function AppAssistantWorkspace({
   removeRef.current = sandboxes.remove.mutateAsync;
   const onRemovedRef = useRef(onRemoved);
   onRemovedRef.current = onRemoved;
-  /** The free-a-slot card's delete, once confirmed: then the message that hit the limit goes again. */
+  // The bundle a Submit for review press sends: the app's export (started first if it is paused).
+  prepareSubmitRef.current = async (name: string) => {
+    const target = live.current.apps?.find((s) => s.name === name);
+    if (!sandboxClient || !target) throw new AppExportError(EXPORT_GONE, 'gone');
+    const blob = await exportAppZip({
+      client: sandboxClient,
+      sandbox: target,
+      start: startApp,
+      discard: (gone) => removeRef.current(gone).then(() => onRemovedRef.current(gone)),
+    });
+    return submitBundleFromExport(blob, target.app);
+  };
+  /**
+   * The free-a-slot card's delete, once confirmed: then the request that hit the limit carries on by
+   * itself. The chat asks its latest message again (`askAgain`), replacing the refusal with a fresh
+   * reply, so the message is never shown twice.
+   */
   const freeSlot = (target: Sandbox) =>
     confirmDeleteApp(target.app, async () => {
       setSlot((shown) => shown && { ...shown, deleting: true, error: null });
@@ -1040,9 +1118,8 @@ export function AppAssistantWorkspace({
       const chat = chatRef.current;
       setSlot(null);
       if (!message || !chat) return;
-      // Sent as the user's, once; a chat that cannot send now gives it back to them instead.
-      if (chat.canSend) await chat.send(message);
-      else chat.giveBack(message);
+      // A chat that cannot ask it again now gives it back to the user to send instead.
+      if (!(chat.canSend && (await chat.askAgain()))) chat.giveBack(message);
     });
   // A failed start is told on its app's notice, until another app is opened.
   useEffect(() => setStartError(null), [activeName]);
@@ -1106,6 +1183,8 @@ export function AppAssistantWorkspace({
     setSwitcherOpen(false);
   };
 
+  const fillRef = useFillScrollParent<HTMLDivElement>();
+
   if (!sandboxUrl)
     return (
       <Alert color="yellow" variant="light">
@@ -1151,7 +1230,7 @@ export function AppAssistantWorkspace({
     );
 
   return (
-    <div className={clsx('flex flex-col gap-3', classes.workspace)}>
+    <div ref={fillRef} className={clsx('flex flex-col gap-3', classes.workspace)}>
       {(active || apps.length > 0) && (
         <Popover
           opened={switcherOpen}
@@ -1272,7 +1351,6 @@ export function AppAssistantWorkspace({
               slot ? (
                 <FreeUpSlotCard
                   apps={apps}
-                  openName={activeName}
                   deleting={slot.deleting}
                   error={slot.error}
                   exporting={exporting}
@@ -1299,6 +1377,7 @@ export function AppAssistantWorkspace({
               canPreview={canPreview}
               session={session}
               restart={previewRestart}
+              tunnelStatus={tunnelStatus}
             />
           </Paper>
         )}

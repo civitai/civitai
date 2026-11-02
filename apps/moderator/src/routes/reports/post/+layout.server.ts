@@ -1,6 +1,7 @@
 import type { LayoutServerLoad } from './$types';
 import { postsByIds } from '$lib/server/image-lookup.service';
 import { loadReportQueue } from '$lib/server/report-queue-load';
+import { getUnpublishedSourceCounts } from '$lib/server/reports.service';
 import { ReportEntity } from '$lib/reports';
 
 // The QUEUE, as a layout, so it keeps its data while the moderator moves between posts — the post is
@@ -10,12 +11,16 @@ import { ReportEntity } from '$lib/reports';
 // reading `url.pathname`/`params` here makes it rerun on every click again, and nothing would look
 // broken except the speed. See `docs/moderator-app/report-queue-pattern.md`.
 export const load: LayoutServerLoad = async ({ url }) => {
-  const queue = await loadReportQueue(ReportEntity.Post, url, {
-    statusCounts: true,
-    canonicalize: false,
-    dates: true,
-    limit: 50,
-  });
+  const [queue, unpublishedCounts] = await Promise.all([
+    loadReportQueue(ReportEntity.Post, url, {
+      statusCounts: true,
+      canonicalize: false,
+      dates: true,
+      unpublished: true,
+      limit: 50,
+    }),
+    getUnpublishedSourceCounts(),
+  ]);
 
   // The report row carries a post id and nothing else: the owner and how much of the post is already
   // gone come from the post.
@@ -24,6 +29,7 @@ export const load: LayoutServerLoad = async ({ url }) => {
   return {
     ...queue,
     items: queue.items.map((r) => ({ ...r, post: posts.get(r.entityId ?? 0) ?? null })),
+    unpublishedCounts,
     fullBleed: true,
     headerInline: true,
   };

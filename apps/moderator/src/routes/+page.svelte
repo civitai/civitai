@@ -287,7 +287,7 @@
     });
     return data.nav.flatMap((link) =>
       link.children
-        ? link.children.filter((c) => c.path && !c.external).map((c) => toItem(c, link.label))
+        ? link.children.filter((c) => c.path && !c.external && !c.shortcut).map((c) => toItem(c, link.label))
         : link.path && link.path !== '/'
           ? [toItem(link, 'Pages')]
           : []

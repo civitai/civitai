@@ -114,7 +114,12 @@ describe('getOrchestratorToken — sysRedis read soft-dependency', () => {
     expect(token).not.toContain('someone-elses-token');
     // The re-mint must be for the CALLER, not the owner the poisoned value named — the last
     // remaining way this function could hand back a stranger's identity.
-    expect(mockGetOrMint).toHaveBeenCalledWith(1001, expect.any(Function));
+    // A healthy read found the poisoned value, so the per-pod cache is not consulted either.
+    expect(mockGetOrMint).toHaveBeenCalledWith(
+      1001,
+      expect.any(Function),
+      expect.objectContaining({ readCache: false })
+    );
     expect(mockObserveMismatch).toHaveBeenCalledTimes(1);
     expect(mockObserveMismatch).toHaveBeenCalledWith('redis');
     expect(mockLogToAxiom).toHaveBeenCalledWith(

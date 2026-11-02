@@ -9,7 +9,8 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 // else. These pin the two halves of that: nothing renders before the viewer's blocks are known,
 // and once they are, a blocked seller's item is dropped and the row is filled from behind.
 
-const { prefs, homeBlock } = vi.hoisted(() => ({
+const { prefs, homeBlock, header } = vi.hoisted(() => ({
+  header: { metadata: undefined as { link?: string; linkText?: string } | undefined },
   prefs: { blockRelations: new Map<number, boolean>(), hiddenLoading: false },
   homeBlock: { data: undefined as unknown },
 }));
@@ -28,7 +29,10 @@ vi.mock('~/components/Shop/ShopItem', () => ({
     createElement('div', { 'data-shop-item': item.id }),
 }));
 vi.mock('~/components/HomeBlocks/components/HomeBlockHeaderMeta', () => ({
-  HomeBlockHeaderMeta: () => null,
+  HomeBlockHeaderMeta: ({ metadata }: { metadata: { link?: string; linkText?: string } }) => {
+    header.metadata = metadata;
+    return null;
+  },
 }));
 vi.mock('~/components/HomeBlocks/HomeBlockWrapper', () => ({
   HomeBlockWrapper: ({ children }: { children: unknown }) => children,
@@ -47,7 +51,7 @@ const item = (id: number, creatorId: number) => ({
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 
-function render() {
+function render(metadata: Record<string, unknown> = {}) {
   homeBlock.data = {
     cosmeticShopSection: {
       title: 'Halloween',
@@ -60,7 +64,7 @@ function render() {
     root.render(
       createElement(CosmeticShopSectionHomeBlock, {
         homeBlockId: 40,
-        metadata: { cosmeticShopSection: { id: 9, maxItems: 2 } },
+        metadata: { cosmeticShopSection: { id: 9, maxItems: 2 }, ...metadata },
       })
     );
   });
@@ -84,5 +88,19 @@ describe('CosmeticShopSectionHomeBlock', () => {
     prefs.hiddenLoading = false;
 
     expect(render()).toEqual([2, 3]);
+  });
+
+  it('gives the header a link to its section on /shop when the block has none', () => {
+    prefs.hiddenLoading = false;
+    render();
+
+    expect(header.metadata).toMatchObject({ link: '/shop#shop-section-9', linkText: 'View Shop' });
+  });
+
+  it('keeps an explicit link and label from the block', () => {
+    prefs.hiddenLoading = false;
+    render({ link: '/shop?x=1', linkText: 'Browse' });
+
+    expect(header.metadata).toMatchObject({ link: '/shop?x=1', linkText: 'Browse' });
   });
 });

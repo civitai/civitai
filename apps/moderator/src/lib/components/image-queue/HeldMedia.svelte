@@ -6,6 +6,7 @@
   let {
     item,
     class: className,
+    controls = false,
   }: {
     item: {
       id: number;
@@ -15,6 +16,7 @@
       duration?: string | null;
     };
     class?: string;
+    controls?: boolean;
   } = $props();
 
   let failed = $state(false);
@@ -44,6 +46,7 @@
     class={className}
     muted
     playsinline
+    {controls}
     preload="metadata"
     onerror={() => (failed = true)}
   ></video>

@@ -11,6 +11,7 @@ import {
 } from '~/server/services/text-scan/notify';
 import type { RatingFloorResult } from '~/server/services/text-scan/rated-entities';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export async function applySystemModelNsfwFlag({
@@ -44,10 +45,15 @@ export async function applySystemModelNsfwFlag({
   // Guarded in the WHERE, not by the caller's read: a moderator ruling that lands between
   // the read and this write would otherwise be overwritten. `array_append` in the database
   // for the same reason — writing back the array we read would drop a concurrent lock.
+  // The marker rides the same guarded write as the lock, merged in jsonb so no other meta key is
+  // rewritten from a stale read.
   const flipped = await dbWrite.$executeRaw`
     UPDATE "Model" m
     SET nsfw = TRUE,
-        "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')
+        "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw'),
+        meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+          'systemNsfwLock', jsonb_build_object('source', ${source}::text, 'at', now())
+        )
     WHERE m.id = ${model.id}
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
   `;

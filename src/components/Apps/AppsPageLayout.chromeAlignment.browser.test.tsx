@@ -81,9 +81,10 @@
  * WAS FALSE. Verified 2026-10-03 against the GitHub API: `civitai/civitai` `main` carries
  * `required_status_checks: null` — there is NO required check on this branch, so NO
  * project in this repo can block a merge, `unit` included. `.github/workflows/lint.yml`'s
- * `geometry:` job says the same thing in its own comment. "Non-blocking" therefore
- * describes every tier here: `Component tests` goes red on a PR, `geometry` and `unit`
- * report as a green job with a red step, and none is a required check.
+ * `Geometry tests` step says the same thing in its own comment. "Non-blocking" therefore
+ * describes every tier here: `Component tests` goes red on a PR, `unit` reports as a red
+ * job in a green run, `geometry` as a green job with an error annotation, and none is a
+ * required check.
  *
  * The `unit`-project siblings are still where the STRUCTURAL half lives and are still
  * worth having — `__tests__/appsPageLayoutRender.test.ts` (the measure box, on the

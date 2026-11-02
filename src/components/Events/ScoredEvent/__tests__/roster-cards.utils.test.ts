@@ -77,6 +77,31 @@ describe('daysOnTeam', () => {
   });
 });
 
+// A member who joined before the event opened (a preview tester) reads as joining at its start.
+describe('counting from the event start', () => {
+  const start = at(10 * ROSTER_NEW_MS);
+  const earlier = at(0);
+
+  it('shows a pre-launch joiner as new, 0 days, on launch day', () => {
+    const launchDay = at(10 * ROSTER_NEW_MS + 5);
+    expect(isNewMember(earlier, launchDay, start)).toBe(true);
+    expect(daysOnTeam(earlier, launchDay, start)).toBe(0);
+  });
+
+  it('counts a pre-launch joiner from the start afterwards', () => {
+    const later = at(13 * ROSTER_NEW_MS + 5);
+    expect(daysOnTeam(earlier, later, start)).toBe(3);
+    expect(isNewMember(earlier, later, start)).toBe(false);
+  });
+
+  it('leaves a member who joined after the start counted from their own join time', () => {
+    const joined = at(11 * ROSTER_NEW_MS);
+    const now = at(14 * ROSTER_NEW_MS + 5);
+    expect(daysOnTeam(joined, now, start)).toBe(3);
+    expect(isNewMember(joined, at(11 * ROSTER_NEW_MS + 5), start)).toBe(true);
+  });
+});
+
 describe('hatTier', () => {
   const prices = rosterPricePoints([
     [{ price: 3000 }, { price: null }],

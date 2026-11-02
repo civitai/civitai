@@ -38,5 +38,6 @@ export async function assertBountyVisible(
             select: { bounty: { select: { availability: true, userId: true } } },
           })
         )?.bounty;
-  if (bounty && !canViewBounty(bounty, viewer)) throw throwNotFoundError();
+  // A missing bounty 404s as a hidden one does, so neither tells the other apart.
+  if (!bounty || !canViewBounty(bounty, viewer)) throw throwNotFoundError();
 }

@@ -25,6 +25,11 @@ const state = vi.hoisted(() => ({
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
   subListingCount: 0,
   flaggedCount: 0,
+  // The Access requests tab: the badge's count proc, and the queue's `list` (useInfiniteQuery).
+  accessPendingCount: 0,
+  accessPending: [] as unknown[],
+  // Every plain `list.useQuery` call. The badge must not make one: it reads the count proc.
+  accessListQueryInputs: [] as unknown[],
 }));
 
 // Page's getServerSideProps calls createServerSideProps at module top — stub so
@@ -159,6 +164,25 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         useQuery: () => ({ data: { count: state.subListingCount } }),
       },
       'appFeedback.modCountFlagged': { useQuery: () => ({ data: state.flaggedCount }) },
+      // The Access requests tab label's pending count has its own count proc…
+      'appAccessRequest.countPending': {
+        useQuery: () => ({ data: state.accessPendingCount }),
+      },
+      'appAccessRequest.list': {
+        useQuery: (input: unknown) => {
+          state.accessListQueryInputs.push(input);
+          return { data: { items: state.accessPending, nextCursor: null } };
+        },
+        // …and the tab's panel is the real `AppAccessRequestsQueue`, which pages `list`.
+        useInfiniteQuery: () => ({
+          data: { pages: [{ items: state.accessPending, nextCursor: null }] },
+          isLoading: false,
+          hasNextPage: false,
+        }),
+      },
+      'appAccessRequest.decide': {
+        useMutation: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+      },
     },
     {
       useUtils: () => ({
@@ -194,6 +218,9 @@ beforeEach(() => {
   state.flags = { appBlocks: true, appReviewPage: true };
   state.subListingCount = 0;
   state.flaggedCount = 0;
+  state.accessPendingCount = 0;
+  state.accessPending = [];
+  state.accessListQueryInputs = [];
   routerState().query = {};
   routerPush().mockClear();
 });
@@ -219,6 +246,66 @@ describe('ReviewQueuePage — App feedback tab', () => {
       .element(page.getByRole('tab', { name: /App feedback/ }))
       .toHaveAttribute('aria-selected', 'true');
     await expect.element(page.getByTestId('app-feedback-mod-queue')).toBeInTheDocument();
+  });
+});
+
+const accessRequest = (id: number) => ({
+  id,
+  userId: 9000 + id,
+  username: `builder_${id}`,
+  whatToBuild: `Idea ${id}: a palette board.`,
+  status: 'pending' as const,
+  createdAt: new Date('2026-10-20T09:00:00Z'),
+  reviewedAt: null,
+  reviewedById: null,
+  reviewedByUsername: null,
+});
+
+describe('ReviewQueuePage — Access requests tab', () => {
+  test('?tab=access-requests selects the tab and mounts the access-request queue', async () => {
+    state.accessPending = [accessRequest(41)];
+    routerState().query = { tab: 'access-requests' };
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByRole('tab', { name: /Access requests/ }))
+      .toHaveAttribute('aria-selected', 'true');
+    // The REAL queue, rendering this fixture's row with its decision controls.
+    const row = page.getByTestId('app-access-request-41');
+    await expect.element(row).toBeInTheDocument();
+    await expect.element(row.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  });
+
+  test('the queue is not mounted while another tab is active', async () => {
+    state.accessPending = [accessRequest(41)];
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Access requests/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-access-request-41').elements()).toHaveLength(0);
+  });
+
+  test('the tab label shows the pending count from the count proc, exactly', async () => {
+    // 137: past the list proc's 100-row page, so only the count proc can produce it.
+    state.accessPendingCount = 137;
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByTestId('app-access-request-pending-count'))
+      .toHaveTextContent(/^137$/);
+  });
+
+  test('the badge fetches no request rows: it never reads the list proc', async () => {
+    // The queue is not mounted on the default tab, so any `list.useQuery` call here is the badge's.
+    state.accessPendingCount = 2;
+    state.accessPending = [accessRequest(1), accessRequest(2)];
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByTestId('app-access-request-pending-count'))
+      .toHaveTextContent(/^2$/);
+    expect(state.accessListQueryInputs).toEqual([]);
+  });
+
+  test('no badge when nothing is pending', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Access requests/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-access-request-pending-count').elements()).toHaveLength(0);
   });
 });
 

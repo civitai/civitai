@@ -28,6 +28,8 @@ vi.mock('~/components/Crucible/CrucibleUserLink', () => ({
   }) => createElement('a', { href: `/user/${user.username}` }, children),
 }));
 
+vi.mock('~/components/Crucible/CrucibleReportButton', () => ({ CrucibleReportButton: () => null }));
+
 const { CrucibleEntryGrid } = await import('~/components/Crucible/CrucibleEntryGrid');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -125,7 +127,7 @@ const viewerShows = () => {
   if (!open) return null;
   return {
     media: open.querySelector('img')?.getAttribute('alt'),
-    position: open.querySelector('p')?.textContent,
+    position: document.querySelector('[data-testid="crucible-entry-position"]')?.textContent,
   };
 };
 const press = (label: string) => {

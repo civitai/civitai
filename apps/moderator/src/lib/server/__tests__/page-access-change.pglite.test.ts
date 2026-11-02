@@ -42,6 +42,7 @@ const { changePageRoles, GrantConflictError, GrantHistoryUnavailableError } = aw
   '../page-access'
 );
 const { actions } = await import('../../../routes/admin/+page.server');
+const { POST } = await import('../../../routes/api/admin/page-access/+server');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string) => readFileSync(join(HERE, rel), 'utf8');
@@ -199,6 +200,26 @@ describe('changePageRoles', () => {
     expect(await historyRows()).toEqual([]);
   });
 
+  // Without `manages` the caller states every role, as the API does: nothing is carried, so a revoke
+  // removes exactly the role it names.
+  it('without `manages`, writes the entry as given and records nothing carried or dropped', async () => {
+    await main.exec(
+      `UPDATE "AppPageAccess" SET roles = ARRAY['${HIGH}', 'system:dispute-agent'] WHERE path = '/blocklists'`
+    );
+    await changePageRoles({
+      entries: [{ path: '/blocklists', roles: [HIGH] }],
+      userId: 42,
+      via: 'api',
+      gateRef: 'g',
+      expect: { '/blocklists': [HIGH, 'system:dispute-agent'] },
+    });
+    expect(await stored()).toEqual([HIGH]);
+    const rows = await history.query<{ roles_carried: string[]; roles_dropped: string[] }>(
+      'SELECT roles_carried, roles_dropped FROM page_access_change'
+    );
+    expect(rows.rows).toEqual([{ roles_carried: [], roles_dropped: [] }]);
+  });
+
   it('treats a path with no row as granting nobody', async () => {
     await changePageRoles({
       entries: [{ path: '/decisions', roles: [CM] }],
@@ -287,6 +308,114 @@ describe('/admin save', () => {
     const result = await save({ '/blocklists': [] }, { '/blocklists': [HIGH] });
     expect(result).toEqual({ success: true, count: 1 });
     expect(await stored()).toEqual([]);
+  });
+
+  // A role outside the app's prefix (a service account's) is never a column on /admin, so the page
+  // cannot send it back: the save has to keep it from the stored row.
+  const SYSTEM = 'system:dispute-agent';
+  const DISPUTE = 'grant:creatorServices.reviewDispute';
+
+  it('keeps a role from outside the catalogue when the row is saved', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}', '${SYSTEM}'])`
+    );
+    const result = await save({ [DISPUTE]: [HIGH, CM] }, { [DISPUTE]: [HIGH] });
+    expect(result).toEqual({ success: true, count: 1 });
+    expect(new Set(await stored(DISPUTE))).toEqual(new Set([HIGH, CM, SYSTEM]));
+  });
+
+  it('keeps it when every role the page shows is unticked', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}', '${SYSTEM}'])`
+    );
+    const result = await save({ [DISPUTE]: [] }, { [DISPUTE]: [HIGH] });
+    expect(result).toEqual({ success: true, count: 1 });
+    expect(await stored(DISPUTE)).toEqual([SYSTEM]);
+  });
+
+  it('refuses, rather than reverts, a role outside the catalogue that moved mid-save', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}'])`
+    );
+    race.next = () =>
+      main.exec(
+        `UPDATE "AppPageAccess" SET roles = ARRAY['${HIGH}', '${SYSTEM}'] WHERE path = '${DISPUTE}'`
+      );
+    const result = await save({ [DISPUTE]: [HIGH, CM] }, { [DISPUTE]: [HIGH] });
+    expect(result).toMatchObject({ status: 409 });
+    expect(await stored(DISPUTE)).toEqual([HIGH, SYSTEM]);
+    expect(await historyRows()).toMatchObject([{ path: DISPUTE, outcome: 'refused' }]);
+  });
+
+  it('records what it kept and what it dropped apart from what the operator changed', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}', '${SYSTEM}', 'moderator:retired'])`
+    );
+    await save({ [DISPUTE]: [CM] }, { [DISPUTE]: [HIGH] });
+    expect(new Set(await stored(DISPUTE))).toEqual(new Set([CM, SYSTEM]));
+    const rows = await history.query<{ roles_carried: string[]; roles_dropped: string[] }>(
+      'SELECT roles_carried, roles_dropped FROM page_access_change'
+    );
+    expect(rows.rows).toEqual([{ roles_carried: [SYSTEM], roles_dropped: ['moderator:retired'] }]);
+  });
+
+  it('records a repeated stored role once', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}', '${SYSTEM}', '${SYSTEM}'])`
+    );
+    await save({ [DISPUTE]: [] }, { [DISPUTE]: [HIGH] });
+    expect(await stored(DISPUTE)).toEqual([SYSTEM]);
+    const rows = await history.query<{ roles_carried: string[] }>(
+      'SELECT roles_carried FROM page_access_change'
+    );
+    expect(rows.rows).toEqual([{ roles_carried: [SYSTEM] }]);
+  });
+
+  it('still refuses a role outside the catalogue sent by the page', async () => {
+    const result = await save({ [DISPUTE]: [SYSTEM] }, { [DISPUTE]: [] });
+    expect(result).toMatchObject({ status: 400 });
+    expect(await stored(DISPUTE)).toBeNull();
+  });
+});
+
+describe('POST /api/admin/page-access', () => {
+  const SYSTEM = 'system:dispute-agent';
+  const ORIGIN = 'https://moderator.example.test';
+  const post = (body: Record<string, unknown>) => {
+    const url = new URL('/api/admin/page-access', ORIGIN);
+    const request = new Request(url, {
+      method: 'POST',
+      headers: { origin: ORIGIN, 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '/blocklists', gateRef: 'hub:request:test', ...body }),
+    });
+    return POST({
+      request,
+      url,
+      locals: { user: { id: 9, roles: ['moderator:admin'] }, grants: {} },
+      params: {},
+    } as never);
+  };
+
+  beforeEach(async () => {
+    await main.exec(
+      `UPDATE "AppPageAccess" SET roles = ARRAY['${HIGH}', '${SYSTEM}'] WHERE path = '/blocklists'`
+    );
+  });
+
+  it('revokes a stored role from outside the catalogue, and records it', async () => {
+    const res = await post({ role: SYSTEM, op: 'revoke', expect: [HIGH, SYSTEM] });
+    expect(res.status).toBe(200);
+    expect(await stored()).toEqual([HIGH]);
+    expect(await historyRows()).toMatchObject([
+      { via: 'api', roles_before: [HIGH, SYSTEM], roles_after: [HIGH], outcome: 'applied' },
+    ]);
+  });
+
+  it('refuses a revoke from a stale read with 409, and records nothing', async () => {
+    const res = await post({ role: SYSTEM, op: 'revoke', expect: [SYSTEM] });
+    expect(res.status).toBe(409);
+    expect(await stored()).toEqual([HIGH, SYSTEM]);
+    expect(await historyRows()).toEqual([]);
   });
 });
 

@@ -14,12 +14,16 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const findUnique = dbMock.dbRead.keyValue.findUnique;
 const queryRaw = dbMock.dbRead.$queryRaw;
 
-const getCapTier = vi.fn();
+const getCapTierViaKysely = vi.fn();
 const getCapTiers = vi.fn();
 
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
-  getCapTier,
+  getCapTierViaKysely,
   getCapTiers,
 }));
 
@@ -37,7 +41,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   findUnique.mockResolvedValue(null);
   queryRaw.mockResolvedValue([{ score: 0 }]);
-  getCapTier.mockResolvedValue(null);
+  getCapTierViaKysely.mockResolvedValue(null);
 });
 
 describe('getPlacementConfig', () => {
@@ -150,21 +154,21 @@ describe('getPlacementConfig', () => {
 
 describe('placementPriceRange', () => {
   // A subscription mid-failed-payment must not buy a higher cap than the UI
-  // shows. `getCapTier` is the helper that excludes bad-state subs; using
+  // shows. `getCapTierViaKysely` is the helper that excludes bad-state subs; using
   // `getHighestTierSubscription` here would hand a lapsed gold member gold caps.
   it('resolves the tier through the cap helper, not the raw subscription', async () => {
-    getCapTier.mockResolvedValue(null);
+    getCapTierViaKysely.mockResolvedValue(null);
     queryRaw.mockResolvedValue([{ score: 100_000 }]);
 
     const range = await placementPriceRange(1, 'sticker');
 
-    expect(getCapTier).toHaveBeenCalledWith(1, { useKysely: false });
+    expect(getCapTierViaKysely).toHaveBeenCalledWith(1);
     expect(range.tier).toBe('free');
     expect(range.max).toBe(1_000);
   });
 
   it('caps by score band and tier together', async () => {
-    getCapTier.mockResolvedValue('gold');
+    getCapTierViaKysely.mockResolvedValue('gold');
     queryRaw.mockResolvedValue([{ score: 100_000 }]);
 
     await expect(placementPriceRange(1, 'sticker')).resolves.toMatchObject({
@@ -174,7 +178,7 @@ describe('placementPriceRange', () => {
   });
 
   it('treats an unknown tier string as free rather than guessing upward', async () => {
-    getCapTier.mockResolvedValue('platinum');
+    getCapTierViaKysely.mockResolvedValue('platinum');
     const range = await placementPriceRange(1, 'sticker');
     expect(range.tier).toBe('free');
   });
@@ -205,7 +209,7 @@ describe('placementPriceRanges', () => {
 
     for (const { id, score, tier } of creators) {
       queryRaw.mockResolvedValue([{ score }]);
-      getCapTier.mockResolvedValue(tier);
+      getCapTierViaKysely.mockResolvedValue(tier);
       expect(ranges.get(id)).toEqual(await placementPriceRange(id, 'storyline'));
     }
     expect([...ranges.values()].map((range) => range.max)).toEqual([100, 500, 5_000]);
@@ -240,7 +244,7 @@ describe('placementPriceRanges', () => {
     const ranges = await placementPriceRanges([1], 'sticker', config);
     expect(findUnique).not.toHaveBeenCalled();
     queryRaw.mockResolvedValue([{ score: 0 }]);
-    getCapTier.mockResolvedValue(null);
+    getCapTierViaKysely.mockResolvedValue(null);
     expect(ranges.get(1)).toEqual(await placementPriceRange(1, 'sticker'));
     expect(ranges.get(1)?.min).toBe(PLACEMENT_SURFACES.sticker.serverMinPrice);
   });

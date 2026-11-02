@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -91,11 +92,11 @@ beforeAll(async () => {
     try {
       await beforeTx?.();
       const logged =
-        (run: (s: TemplateStringsArray, ...v: unknown[]) => Promise<unknown>) =>
-        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        (run: (s: TemplateStringsArray | Prisma.Sql, ...v: unknown[]) => Promise<unknown>) =>
+        async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
           const result = await run(strings, ...values);
           txLog.push({
-            sql: strings.join('?'),
+            sql: (Array.isArray(strings) ? strings : (strings as Prisma.Sql).strings).join('?'),
             rows: Array.isArray(result) ? (result as Record<string, unknown>[]) : [],
           });
           return result;
@@ -183,9 +184,10 @@ describe('processScheduledPublishing :: a version still waiting on its files', (
     await scheduled({ withFile: false });
     const raw = pgliteRaw(pg.db);
     dbMock.dbWrite.$queryRaw.mockImplementation((async (...args: unknown[]) => {
-      const [strings] = args as [TemplateStringsArray];
+      const [sql] = args as [TemplateStringsArray | Prisma.Sql];
       const rows = await raw.queryRaw(...(args as [TemplateStringsArray]));
-      if (strings.join('').includes("'hasEarlyAccess'")) await addFile();
+      const text = Array.isArray(sql) ? sql.join('') : (sql as Prisma.Sql).text;
+      if (text.includes("'hasEarlyAccess'")) await addFile();
       return rows;
     }) as never);
     try {

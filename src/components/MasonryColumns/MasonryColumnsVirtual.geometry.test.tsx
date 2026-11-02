@@ -293,7 +293,8 @@ describe('MasonryColumnsVirtual with worn hats', () => {
   // A border is drawn outside the picture and the hat is placed from inside it, so a bordered
   // card's hat sits that much further from the crop, never closer. Nothing needs to count it.
   test("a card's border moves its hat away from the crop, by the border's width", async () => {
-    await renderAtViewport(<Gallery />, VIEWPORT);
+    // Room left of the first column, or its hat is moved inward off the scroller's clip edge.
+    await renderAtViewport(<Gallery style={{ paddingLeft: 60, width: 760 }} />, VIEWPORT);
     await vi.waitFor(() => expect(hatOf(2)).toBeTruthy());
     const fromEdge = (id: number) => {
       const wrapper = card(id).closest('[data-event-decoration]')!.getBoundingClientRect();

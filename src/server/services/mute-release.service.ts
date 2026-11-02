@@ -1,7 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { invalidateSession } from '~/server/auth/session-invalidation';
 import { dbWrite } from '~/server/db/client';
-import { logToAxiom } from '~/server/logging/client';
 import { userUpdateCounter } from '~/server/prom/client';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
@@ -22,7 +20,11 @@ export type MuteReleaseArgs = {
 };
 
 export type MuteRelease =
-  | { released: true; closedCaseIds: number[]; user: Prisma.UserGetPayload<object> }
+  | {
+      released: true;
+      closedCaseIds: number[];
+      user: Prisma.UserGetPayload<{ omit: { subscriptionId: true } }>;
+    }
   | { released: false; reason: 'not-found' | 'not-timed' | 'scam-case'; closedCaseIds: [] };
 
 /**
@@ -59,6 +61,8 @@ export async function releaseMuteInTransaction(
         ? { meta: { ...(cleared.meta as object), ...metaPatch } as Prisma.InputJsonValue }
         : {}),
     },
+    // The row goes back to the moderator who unmuted; the legacy billing pointer stays server-side.
+    omit: { subscriptionId: true },
   });
   await trackModActivity(actorId, { entityType: 'user', entityId: userId, activity }, tx);
   const closedCaseIds = byModerator ? await closeScamCasesOpenedBefore(userId, new Date(), tx) : [];
@@ -76,17 +80,11 @@ export async function afterMuteReleased({
   updateSource: string;
 }) {
   userUpdateCounter?.inc({ location: `user.service:${updateSource}` });
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  await afterAccountStandingChanged(userId, { kind: 'invalidate', caller: 'moderation' });
   await restoreScamCases(userId, closedCaseIds);
-  try {
-    await invalidateSession(userId, 'moderation');
-  } catch (error) {
-    await logToAxiom({
-      name: 'unmute-session-invalidate-failed',
-      type: 'error',
-      message: (error as Error).message,
-      details: { userId },
-    }).catch(() => undefined);
-  }
 }
 
 /** Every unmute goes through here, or through `releaseMuteInTransaction` + `afterMuteReleased`. */

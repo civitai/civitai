@@ -40,7 +40,8 @@
  * `name`. This chip is rendered on an anon-capable public read, so a careless
  * projection is a credential leak. Both halves are pinned: the SELECT names only
  * allowlisted columns ({@link postAppChipQuery}) and the PROJECTOR emits only the
- * three fields of {@link PostAppChip} ({@link projectPostAppChip}). Same posture
+ * three app fields of {@link PostAppChip} ({@link projectPostAppChip}); the optional
+ * `item` is built from its own allowlisted read ({@link postAppChipItemQuery}). Same posture
  * as `public-owner.ts`: adding a field in either place is a deliberate act.
  *
  * 🔴 THE EXPECTED KEY LIST IS NOT EXPORTED FROM HERE, DELIBERATELY. It is written
@@ -133,7 +134,10 @@
  * BEFORE that is viable. Say so wherever the chip's reuse is next proposed.
  */
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
-import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
+import {
+  BLOCK_POST_APP_ID_META_KEY,
+  BLOCK_POST_SUB_LISTING_ID_META_KEY,
+} from '~/server/services/blocks/block-post.logic';
 import {
   gatedListingIconUrl,
   isModerationFlagSet,
@@ -142,6 +146,11 @@ import {
   type ListingMediaImage,
 } from '~/server/services/blocks/listing-media-audience';
 import { isRedCapableHost, ratingAllowedOnHost } from '~/server/utils/server-domain';
+import {
+  effectiveSubListingRating,
+  subListingExternalHref,
+  subListingRunHref,
+} from '~/shared/constants/app-sub-listing.constants';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import { scopeAdmitsListingKind } from '~/shared/utils/store-visibility-scope';
 
@@ -157,6 +166,15 @@ export type PostAppChip = {
   slug: string | null;
   name: string;
   iconUrl: string | null;
+  /** The app's sub-listing the post was shared from; absent when none resolves. */
+  item?: PostAppChipItem;
+};
+
+/** `href` is null when the item has no valid link; the UI then renders the name unlinked. */
+export type PostAppChipItem = {
+  name: string;
+  href: string | null;
+  external: boolean;
 };
 
 /**
@@ -225,6 +243,10 @@ export function readBlockPublishedAppId(metadata: unknown): string | null {
   // 🔴 The key comes from the WRITER's own constant, never a re-spelled literal —
   // see its declaration in `block-post.logic.ts`.
   return readAppIdMarker(metadata, BLOCK_POST_APP_ID_META_KEY);
+}
+
+export function readBlockPublishedSubListingId(metadata: unknown): string | null {
+  return readAppIdMarker(metadata, BLOCK_POST_SUB_LISTING_ID_META_KEY);
 }
 
 /**
@@ -336,6 +358,7 @@ function chipCandidateBlocks(row: PostAppChipRow | null | undefined): unknown[] 
 }
 
 type ListingCandidate = {
+  id: string | null;
   slug: string;
   name: string;
   iconUrl: string | null;
@@ -431,6 +454,7 @@ function readListingCandidate(
     host
   );
   return {
+    id: typeof l.id === 'string' ? l.id : null,
     slug,
     // Publisher-controlled — sanitized at the projection, see projectPostAppChip.
     name: typeof l.name === 'string' ? sanitizeAppChromeName(l.name) ?? '' : '',
@@ -559,7 +583,7 @@ export function listingIdsInChipRow(row: PostAppChipRow | null): string[] {
   return [...new Set(ids)];
 }
 
-export function projectPostAppChip(
+function projectChipAndListing(
   row: PostAppChipRow | null | undefined,
   /**
    * The REQUEST's host, for the maturity term. Required — it is the only input
@@ -576,7 +600,7 @@ export function projectPostAppChip(
      */
     viewerBrowsingLevel?: number | null;
   }
-): PostAppChip | null {
+): { chip: PostAppChip; viewableListingIds: string[] } | null {
   if (!row) return null;
   const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
   const candidates = chipCandidateBlocks(row)
@@ -609,10 +633,88 @@ export function projectPostAppChip(
   if (!name) return null;
 
   return {
-    slug: chosen?.viewable ? chosen.slug : null,
-    name,
-    iconUrl: chosen?.viewable ? chosen.iconUrl : null,
+    chip: {
+      slug: chosen?.viewable ? chosen.slug : null,
+      name,
+      iconUrl: chosen?.viewable ? chosen.iconUrl : null,
+    },
+    // Every viewable listing of the app, not only the chosen one: the item may sit under any.
+    viewableListingIds: chosen?.viewable
+      ? candidates.filter((c) => c.viewable && c.id).map((c) => c.id as string)
+      : [],
   };
+}
+
+/** The chip for the app alone; {@link resolveAppChip} adds the sub-listing. */
+export function projectPostAppChip(
+  row: PostAppChipRow | null | undefined,
+  opts: Parameters<typeof projectChipAndListing>[1]
+): PostAppChip | null {
+  return projectChipAndListing(row, opts)?.chip ?? null;
+}
+
+/**
+ * The sub-listing read for {@link projectPostAppChipItem}: approved now, under one of the app's
+ * own viewable listings, by an author still in good standing. Matching the parent here is what
+ * keeps a marker naming another app's item from rendering.
+ */
+export function postAppChipItemQuery(subListingId: string, parentListingIds: string[]) {
+  return {
+    where: {
+      id: subListingId,
+      parentListingId: { in: parentListingIds },
+      status: APPROVED_STATUS,
+      author: { bannedAt: null, deletedAt: null },
+      parentListing: { subListingParent: { is: { enabled: true } } },
+    },
+    select: {
+      id: true,
+      title: true,
+      subPath: true,
+      contentRating: true,
+      parentListing: {
+        select: {
+          slug: true,
+          kind: true,
+          contentRating: true,
+          subListingParent: { select: { linkTemplate: true } },
+        },
+      },
+    },
+  };
+}
+
+export type PostAppChipItemRow = {
+  id: string;
+  title: string;
+  subPath: string;
+  contentRating: string | null;
+  parentListing: {
+    slug: string;
+    kind: string;
+    contentRating: string | null;
+    subListingParent: { linkTemplate: string | null } | null;
+  };
+};
+
+/** Links where the store card for the same item links; null when this host hides its rating. */
+export function projectPostAppChipItem(
+  row: PostAppChipItemRow | null | undefined,
+  host: string
+): PostAppChipItem | null {
+  if (!row) return null;
+  const parent = row.parentListing;
+  if (
+    !ratingAllowedOnHost(effectiveSubListingRating(parent.contentRating, row.contentRating), host)
+  )
+    return null;
+  const name = sanitizeAppChromeName(row.title);
+  if (!name) return null;
+  if (parent.kind === 'offsite') {
+    const href = subListingExternalHref(parent.subListingParent?.linkTemplate, row.subPath);
+    return { name, href, external: href !== null };
+  }
+  return { name, href: subListingRunHref(parent.slug, row.subPath, row.id), external: false };
 }
 
 /**
@@ -739,6 +841,11 @@ export async function resolveAppChip(args: {
   readApp: (appId: string) => Promise<PostAppChipRow | null | undefined>;
   /** See {@link resolvePostAppChip}. */
   readHiddenListingIds: (listingIds: string[]) => Promise<ReadonlySet<string>>;
+  /**
+   * The marked sub-listing under one of the app's viewable listings (build with
+   * {@link postAppChipItemQuery}), or null. Absent on a surface with no sub-listing marker.
+   */
+  readItem?: (viewableListingIds: string[]) => Promise<PostAppChipItemRow | null | undefined>;
 }): Promise<PostAppChipResolution> {
   // 🔒 GATE FIRST — before the marker is read, before anything is queried.
   if (!scopeAdmitsListingKind(args.storeScope, 'onsite')) {
@@ -759,10 +866,18 @@ export async function resolveAppChip(args: {
   const hiddenListingIds = listingIds.length
     ? await args.readHiddenListingIds(listingIds)
     : EMPTY_HIDDEN;
-  const chip = projectPostAppChip(row ?? null, {
+  const projected = projectChipAndListing(row ?? null, {
     host: args.host,
     hiddenListingIds,
     viewerBrowsingLevel: args.viewerBrowsingLevel,
   });
-  return { chip, outcome: chip ? 'chip' : 'unresolved' };
+  if (!projected) return { chip: null, outcome: 'unresolved' };
+  const { chip, viewableListingIds } = projected;
+  if (viewableListingIds.length && args.readItem) {
+    // A failed item read keeps the app's own chip rather than dropping the credit.
+    const itemRow = await args.readItem(viewableListingIds).catch(() => null);
+    const item = projectPostAppChipItem(itemRow, args.host);
+    if (item) chip.item = item;
+  }
+  return { chip, outcome: 'chip' };
 }

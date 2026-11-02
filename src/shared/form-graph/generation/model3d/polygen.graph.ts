@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineGraph } from 'form-graph';
+import { cachedFactory, defineGraph } from 'form-graph';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import {
   truncateCoerce,
@@ -15,7 +15,7 @@ import { familyScope, type FamilyExt } from '../shared';
 
 /**
  * PolyGen (Meshy via Fal). Every Meshy version
- * behind one ecosystem — `polygenVersion` is a control, flag-gated (v7 needs
+ * behind one ecosystem — `version` is a control, flag-gated (v7 needs
  * `meshyV7Generator`, v7.1 `meshyV71Generator`) and workflow-clamped (v7 has
  * no text-to-3D, so v7-on-text clamps back to v6). Flat field set gated per
  * version/workflow, conditional on the same fields.
@@ -33,6 +33,8 @@ export const polygenVersionOptions = [
   {
     label: 'v7',
     value: 'v7' as const,
+    // the form switches a text-to-3D user to image-to-3D on picking it
+    imageOnly: true,
     description:
       'Higher-fidelity geometry from 1-4 images. No text-to-3D — choosing it switches you to Image to 3D.',
   },
@@ -126,21 +128,35 @@ export function isPolygenVersionRunnable(version: PolygenVersion, workflow: stri
   return version !== 'v7' || !workflow.startsWith('txt');
 }
 
+const polygenVersionDef = cachedFactory((workflow: string, meshyV7: boolean, meshyV71: boolean) => {
+  // options render flag-gated; the transforms validate flag- AND
+  // workflow-gated, clamping anything unrunnable to v6 rather than erroring
+  const options = getPolygenVersionOptions({
+    meshyV7Generator: meshyV7,
+    meshyV71Generator: meshyV71,
+  });
+  const offered = new Set(options.map((o) => o.value));
+  const clamp = (v?: PolygenVersion) =>
+    v && offered.has(v) && isPolygenVersionRunnable(v, workflow) ? v : ('v6' as const);
+  return {
+    input: z.enum(polygenVersions).optional().transform(clamp),
+    output: z.enum(polygenVersions).transform(clamp),
+    default: 'v6' as const,
+    meta: {
+      options,
+      info: 'v7 produces higher-fidelity geometry and accepts up to four views of the same object, but has no text-to-3D mode. v7.1 adds text-to-3D, smart topology and up to 4K geometry resolution.',
+    },
+  };
+});
+
 export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
-  .field('polygenVersion', ({ _ext }) => {
-    // options render flag-gated; the transforms validate flag- AND
-    // workflow-gated, clamping anything unrunnable to v6 rather than erroring
-    const options = getPolygenVersionOptions(_ext.flags);
-    const offered = new Set(options.map((o) => o.value));
-    const clamp = (v?: PolygenVersion) =>
-      v && offered.has(v) && isPolygenVersionRunnable(v, _ext.workflow) ? v : ('v6' as const);
-    return {
-      input: z.enum(polygenVersions).optional().transform(clamp),
-      output: z.enum(polygenVersions).transform(clamp),
-      default: 'v6' as const,
-      meta: { options },
-    };
-  })
+  .field('version', ({ _ext }) =>
+    polygenVersionDef(
+      _ext.workflow,
+      _ext.flags?.meshyV7Generator === true,
+      _ext.flags?.meshyV71Generator === true
+    )
+  )
   // --- text-to-3D fields (v6 only; v7 has no text branch) ---
   .field('prompt', ({ _ext }) => {
     if (!_ext.workflow.startsWith('txt')) return null;
@@ -148,21 +164,34 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
       ...textDef('prompt', POLYGEN_MAX_PROMPT_LENGTH),
       refine: (output: z.ZodString) =>
         output.refine((v) => v.trim().length > 0, { message: 'Prompt is required' }),
-      meta: { required: true, targetKey: 'prompt', snippets: undefined, triggerWords: [] },
+      meta: {
+        required: true,
+        targetKey: 'prompt',
+        snippets: undefined,
+        triggerWords: [],
+        info: 'Describe the 3D model you want to generate.',
+        placeholder: 'A low-poly fantasy treasure chest…',
+      },
     };
   })
-  .field('polygenMode', ({ _ext }) =>
+  .field('mode', ({ _ext }) =>
     _ext.workflow.startsWith('txt')
-      ? enumDef({ options: polygenTextModeOptions, default: 'full' })
+      ? {
+          ...enumDef({ options: polygenTextModeOptions, default: 'full' }),
+          meta: {
+            options: polygenTextModeOptions,
+            info: 'Preview is faster and cheaper. Full produces a higher-quality mesh.',
+          },
+        }
       : null
   )
   .field('enablePromptExpansion', ({ _ext }) =>
     _ext.workflow.startsWith('txt') ? boolDef(false) : null
   )
   // --- image-to-3D fields ---
-  .field('images', ({ polygenVersion, _ext }) => {
+  .field('images', ({ version, _ext }) => {
     if (_ext.workflow.startsWith('txt')) return null;
-    const max = isV7Line(polygenVersion) ? POLYGEN_V7_MAX_IMAGES : 1;
+    const max = isV7Line(version) ? POLYGEN_V7_MAX_IMAGES : 1;
     return {
       ...imagesDef({ min: 1, max }),
       // v7's multi-image staging truncates on a v6 switch instead of failing
@@ -206,31 +235,30 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
   .field('enableRigging', boolDef(false))
   .field('enableAnimation', boolDef(false))
   // --- v7-only controls ---
-  .field('poseMode', ({ polygenVersion }) =>
-    isV7Line(polygenVersion) ? enumDef({ options: polygenPoseModeOptions, default: 'none' }) : null
+  .field('poseMode', ({ version }) =>
+    isV7Line(version) ? enumDef({ options: polygenPoseModeOptions, default: 'none' }) : null
   )
   // ultra fidelity and the low-poly preset are single-image only
-  .field('ultraMode', ({ polygenVersion, images }) =>
-    polygenVersion === 'v7' && (images?.length ?? 0) <= 1 ? boolDef(false) : null
+  .field('ultraMode', ({ version, images }) =>
+    version === 'v7' && (images?.length ?? 0) <= 1 ? boolDef(false) : null
   )
-  .field('modelType', ({ polygenVersion, images }) => {
+  .field('modelType', ({ version, images }) => {
     if ((images?.length ?? 0) > 1) return null;
-    if (polygenVersion === 'v7')
-      return enumDef({ options: polygenModelTypeOptions, default: 'standard' });
-    if (polygenVersion === 'v7.1')
+    if (version === 'v7') return enumDef({ options: polygenModelTypeOptions, default: 'standard' });
+    if (version === 'v7.1')
       return enumDef({ options: polygenV71ModelTypeOptions, default: 'standard' });
     return null;
   })
   // v7.1 only. 2K/4K need the standard model type; multi-image tops out at 2K.
-  .field('geometryResolution', ({ polygenVersion, images, modelType }) => {
-    if (polygenVersion !== 'v7.1') return null;
+  .field('geometryResolution', ({ version, images, modelType }) => {
+    if (version !== 'v7.1') return null;
     if ((images?.length ?? 0) > 1)
       return enumDef({ options: polygenMultiImageGeometryResolutionOptions, default: 'standard' });
     if (modelType === 'smart-topology') return null;
     return enumDef({ options: polygenGeometryResolutionOptions, default: 'standard' });
   })
-  .field('riggingHeightMeters', ({ polygenVersion, enableAnimation }) =>
-    isV7Line(polygenVersion) && enableAnimation === true
+  .field('riggingHeightMeters', ({ version, enableAnimation }) =>
+    isV7Line(version) && enableAnimation === true
       ? sliderDef({
           min: POLYGEN_MIN_RIGGING_HEIGHT,
           max: POLYGEN_MAX_RIGGING_HEIGHT,
@@ -239,8 +267,8 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
         })
       : null
   )
-  .field('animationActionId', ({ polygenVersion, enableAnimation }) =>
-    isV7Line(polygenVersion) && enableAnimation === true
+  .field('animationActionId', ({ version, enableAnimation }) =>
+    isV7Line(version) && enableAnimation === true
       ? {
           input: z.coerce
             .number()
@@ -269,10 +297,8 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
       : null
   )
   // v6 takes a seed on both operations, v7.1 only on text-to-3D, v7 never
-  .field('seed', ({ polygenVersion, _ext }) =>
-    polygenVersion === 'v6' || (polygenVersion === 'v7.1' && _ext.workflow.startsWith('txt'))
-      ? SEED
-      : null
+  .field('seed', ({ version, _ext }) =>
+    version === 'v6' || (version === 'v7.1' && _ext.workflow.startsWith('txt')) ? SEED : null
   );
 
 export {

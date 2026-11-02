@@ -324,7 +324,9 @@ export async function createRatingReview({
   assertOwner(subject.ownerId, userId);
 
   if (subject.disputeRestriction) throw throwBadRequestError(subject.disputeRestriction);
-  if (entityType !== 'Article' && !scan?.raised && !lastResolved)
+  // Before eligibility: a clean re-scan after filing would otherwise answer with the wrong reason.
+  if (existingPending) throw throwBadRequestError(PENDING_MESSAGE);
+  if (entityType !== 'Article' && !scan?.raised && !lastResolved && !subject.systemNsfwLock)
     throw throwBadRequestError('Only a rating raised by our text scan can be disputed.');
   if (entityType !== 'Article' && !subject.currentLevel)
     throw throwBadRequestError('This has no rating to dispute yet.');
@@ -334,7 +336,6 @@ export async function createRatingReview({
     );
   if (!ratingReviewOwnerLevels(entityType, subject.currentLevel).includes(suggestedLevel))
     throw throwBadRequestError('Choose one of the offered ratings.');
-  if (existingPending) throw throwBadRequestError(PENDING_MESSAGE);
   if (
     lastResolved &&
     !textChangedSinceResolution(lastResolved, subject.updatedAt, scan?.textHash ?? null)
@@ -453,7 +454,8 @@ export async function getRatingReviewForOwner({
     review: latest ? (review as Omit<NonNullable<typeof latest>, 'resolvedTextHash'>) : null,
     canResubmit,
     canDispute:
-      !subject.disputeRestriction && (entityType === 'Article' || !!scan?.raised || !!latest),
+      !subject.disputeRestriction &&
+      (entityType === 'Article' || !!scan?.raised || !!latest || !!subject.systemNsfwLock),
     currentLevel: subject.currentLevel,
     scanReason: scan?.reason ?? null,
     scanLevel: scan?.level ?? null,

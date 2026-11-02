@@ -326,7 +326,7 @@ const SURFACES = [
     name: 'activity page',
     element: () => (
       <ModalsProvider>
-        <ScopeGrantsPanel />
+        <ScopeGrantsPanel defaultOpened />
       </ModalsProvider>
     ),
   },

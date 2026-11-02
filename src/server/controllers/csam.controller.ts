@@ -1,5 +1,6 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
+import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { reviewConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -8,6 +9,7 @@ import type {
   CreateExternalCsamReportSchema,
 } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
+import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
@@ -28,10 +30,11 @@ export async function createCsamReportHandler({
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
 export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
-  const { userId, imageIds = [], details, type, reportedById } = input;
+  const { userId, imageIds = [], details, type, reportedById, supplementalOf } = input;
   let denyFailed = false;
   let denyBookkeepingFailed = false;
-  await createCsamReport(input);
+  if (supplementalOf) await createSupplementalCsamReport({ ...input, supplementalOf });
+  else await createCsamReport(input);
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
@@ -102,7 +105,10 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
   }
 
-  if (userId !== -1) {
+  // A supplemental report follows one that removed the account for this; one restored or banned for
+  // something else since is removed again.
+  const removed = !!supplementalOf && (await removedForCsam(userId));
+  if (userId !== -1 && !removed) {
     await softDeleteUser({ id: userId, userId: reportedById });
   }
 
@@ -124,4 +130,14 @@ export async function createExternalCsamReportHandler({
   // banned, and there is no on-Civitai content to remove. The report row is
   // picked up and sent to NCMEC by the hourly send-csam-reports job.
   await createExternalCsamReport({ ...input, reportedById: ctx.user.id });
+}
+
+async function removedForCsam(userId: number) {
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, meta: true },
+  });
+  const reasonCode = (user?.meta as { banDetails?: { reasonCode?: string } } | null)?.banDetails
+    ?.reasonCode;
+  return !!user?.bannedAt && reasonCode === BanReasonCode.SexualMinor;
 }

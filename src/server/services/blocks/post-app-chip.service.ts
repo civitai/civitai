@@ -34,11 +34,17 @@ import {
   type StoreScopeEntrypoint,
 } from '~/server/prom/store-scope.metrics';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
-import type { PostAppChip, PostAppChipRow } from '~/server/services/blocks/post-app-chip.logic';
+import type {
+  PostAppChip,
+  PostAppChipItemRow,
+  PostAppChipRow,
+} from '~/server/services/blocks/post-app-chip.logic';
 import {
+  postAppChipItemQuery,
   postAppChipQuery,
   postAppMarkerQuery,
   readBlockPublishedAppId,
+  readBlockPublishedSubListingId,
   resolveAppChip,
 } from '~/server/services/blocks/post-app-chip.logic';
 import type { SessionUser } from '~/types/session';
@@ -48,11 +54,13 @@ import type { SessionUser } from '~/types/session';
  * an unhandled rejection from a fail-open path would defeat the point of failing
  * open.
  */
-function noteDegradedChipRead(err: unknown, surface: AppChipSurface): void {
+function noteDegradedChipRead(err: unknown, surface: AppChipSurface, read?: 'item'): void {
   logToAxiom({
     name: 'post-app-chip-read-degraded',
     type: 'error',
     surface,
+    // Tells a failed item read, which still served the app's chip, from a whole-chip failure.
+    ...(read && { read }),
     message: err instanceof Error ? err.message : String(err),
     code: (err as { code?: unknown })?.code ?? null,
   }).catch(() => null);
@@ -93,6 +101,7 @@ export async function readPostAppChip({
    */
   viewerBrowsingLevel?: number | null;
 }): Promise<PostAppChip | null> {
+  let subListingId: string | null = null;
   return readAppChip({
     surface: 'post',
     entrypoint: 'post-detail',
@@ -118,7 +127,19 @@ export async function readPostAppChip({
       // above.
       const db = await getDbWithoutLag('post', postId);
       const row = await db.post.findUnique(postAppMarkerQuery(postId));
+      subListingId = readBlockPublishedSubListingId(row?.metadata ?? null);
       return readBlockPublishedAppId(row?.metadata ?? null);
+    },
+    readItem: async (listingIds) => {
+      if (!subListingId) return null;
+      try {
+        return (await dbRead.appSubListing.findFirst(
+          postAppChipItemQuery(subListingId, listingIds)
+        )) as PostAppChipItemRow | null;
+      } catch (err) {
+        noteDegradedChipRead(err, 'post', 'item');
+        return null;
+      }
     },
   });
 }
@@ -142,6 +163,7 @@ export async function readAppChip({
   host,
   viewerBrowsingLevel,
   readMarker,
+  readItem,
 }: {
   surface: AppChipSurface;
   entrypoint: StoreScopeEntrypoint;
@@ -149,6 +171,8 @@ export async function readAppChip({
   host: string;
   viewerBrowsingLevel?: number | null;
   readMarker: () => Promise<string | null>;
+  /** See `resolveAppChip`. */
+  readItem?: (viewableListingIds: string[]) => Promise<PostAppChipItemRow | null>;
 }): Promise<PostAppChip | null> {
   try {
     // SERVER-resolved, never re-derived from the client `features` object — see
@@ -183,6 +207,7 @@ export async function readAppChip({
       host,
       viewerBrowsingLevel,
       readMarker,
+      readItem,
       // The plain replica, deliberately: unlike the marker, this row is not
       // written inside the entity's own transaction — an
       // `OauthClient`/`AppBlock`/`AppListing` is approved long before anything is

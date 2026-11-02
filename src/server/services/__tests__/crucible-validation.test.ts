@@ -1622,6 +1622,18 @@ describe('submitEntry — who and what may enter', () => {
 
     await expect(submit()).resolves.toMatchObject({ id: 5 });
   });
+
+  it('refuses a user on the contest-ban list', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValueOnce({
+      meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
+    });
+
+    await expect(submit()).rejects.toThrow('You are banned from participating in contests');
+    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 42 } })
+    );
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('checkCrucibleEntryEligibility', () => {
@@ -1699,6 +1711,20 @@ describe('checkCrucibleEntryEligibility', () => {
         where: { id: { in: [1] }, userId: 42 },
         select: expect.objectContaining({ nsfwLevel: true }),
       })
+    );
+  });
+
+  it('marks every image ineligible for a contest-banned user', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValueOnce({
+      meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
+    });
+
+    await expect(check([1, 2])).resolves.toEqual([
+      { imageId: 1, eligible: false, reasons: ['contest-banned'] },
+      { imageId: 2, eligible: false, reasons: ['contest-banned', 'created-before-start'] },
+    ]);
+    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 42 } })
     );
   });
 

@@ -13,6 +13,7 @@ import {
   isAuditedServe,
   NOT_HELD,
   NOT_HELD_HEADER,
+  SERVED_ACTIVITY,
 } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -104,11 +105,12 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       upstream: upstream.headers,
     })
   ).catch(() => null);
+  // Awaited, so the row is there before the page that loads these bytes reports them shown.
   if (isAuditedServe(upstream))
-    void trackModActivity(user.id, {
+    await trackModActivity(user.id, {
       entityType: 'image',
       entityId: imageId,
-      activity: 'heldMedia:view',
+      activity: SERVED_ACTIVITY,
     }).catch((e) => console.error('[held-media] audit row failed', e));
 
   res.writeHead(upstream.status, heldMediaHeaders(contentType, upstream.headers));

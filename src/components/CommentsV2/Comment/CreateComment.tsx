@@ -113,7 +113,13 @@ export function CreateComment({
  * one comment. Only rendered on the top-level composer: on a reply box the enclosing comment's own
  * menu is the right place, and two mute controls a few pixels apart would mean different things.
  */
-function useSectionMute({ target, enabled }: { target?: SectionMuteInput; enabled: boolean }) {
+export function useSectionMute({
+  target,
+  enabled,
+}: {
+  target?: SectionMuteInput;
+  enabled: boolean;
+}) {
   const queryUtils = trpc.useUtils();
   const [opened, setOpened] = useState(false);
 

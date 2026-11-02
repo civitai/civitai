@@ -37,5 +37,7 @@ export function buildFliptContext(
   }
   const deploymentId = process.env.FLIPT_DEPLOYMENT_ID;
   if (deploymentId) ctx.deploymentId = deploymentId;
-  return extra ? { ...ctx, ...extra } : ctx;
+  // Frozen so the client may build this context's eval-cache key once and reuse it for every flag
+  // evaluated with it (it does that only for frozen contexts). Callers spread it to extend it.
+  return Object.freeze(extra ? { ...ctx, ...extra } : ctx);
 }

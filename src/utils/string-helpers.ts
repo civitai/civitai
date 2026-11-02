@@ -395,6 +395,12 @@ export function capitalize(str: string) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+/** "the Flux model", but "The Weirdies model" rather than "the The Weirdies model". */
+export function withDefiniteArticle(name: string, article: 'the' | 'The' = 'the') {
+  if (!/^the\s/i.test(name)) return `${article} ${name}`;
+  return article === 'The' ? capitalize(name) : name;
+}
+
 export function toKebabCase(str: string) {
   return str
     .split('')

@@ -5,6 +5,10 @@ import type * as FeedPrimary from '~/server/services/feed-primary.service';
 import type * as UserHubService from '~/server/services/user-hub.service';
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
 
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
+
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
   return { ...actual, registerCounter: () => ({ inc: vi.fn() }) };
@@ -244,6 +248,12 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       expect(q.get('excludedTagGroups')).toBe('66');
     });
 
+    it('asks only for the held level of a held model the hub serves', async () => {
+      resolveHubSources.mockResolvedValue(hubSources({ userIds: [7], heldBrowsingLevel: 1 }));
+      await getAllImagesIndex({ ...hub(), browsingLevel: 31 });
+      expect(sentQuery().get('levels')).toBe('1');
+    });
+
     it('asks only for the levels the hub allows', async () => {
       resolveHubSources.mockResolvedValue(hubSources({ userIds: [7], forcedBrowsingLevel: 3 }));
       await getAllImagesIndex({ ...hub(), browsingLevel: 31 });
@@ -258,6 +268,10 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       [
         'caps below everything the viewer browses',
         hubSources({ userIds: [7], forcedBrowsingLevel: 16 }),
+      ],
+      [
+        'holds models that allow no level in common',
+        hubSources({ userIds: [7], heldBrowsingLevel: 0 }),
       ],
     ])('serves a hub that %s as an empty feed, never the open one', async (_, sources) => {
       resolveHubSources.mockResolvedValue(sources);

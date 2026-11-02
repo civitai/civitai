@@ -121,7 +121,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   // NEW_URL is a checkpoint copied to the file's own version in an upload bucket.
   envMock.set({ S3_UPLOAD_B2_BUCKET: 'model-bucket' });
-  dbMock.dbWrite.modelFile.deleteMany.mockResolvedValue({ count: 1 });
+  // The guarded raw delete of the old record.
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
   dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: NEW_ID });
   dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 });
 });
@@ -292,7 +293,10 @@ describe('the url a client sends through modelFile.upsert', () => {
       code: 'BAD_REQUEST',
       message: expect.stringMatching(/upload the file again/i),
     });
-    expect(dbMock.dbWrite.modelFile.deleteMany).not.toHaveBeenCalled();
+    const deletes = dbMock.dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
+      (strings as TemplateStringsArray).join('?').includes('DELETE FROM "ModelFile"')
+    );
+    expect(deletes).toHaveLength(0);
     expect(dbMock.dbWrite.modelFile.create).not.toHaveBeenCalled();
     expect(mockRegister).not.toHaveBeenCalled();
   });

@@ -2193,6 +2193,11 @@ export const REDIS_SYS_KEYS = {
     // Single-use marker for redeemed cross-domain swap tokens — `swap:used:${jti}` (TTL = swap max age).
     USED: 'swap:used',
   },
+  IMAGE_UPLOAD: {
+    // Chunked upload-relay session — hash `system:image-upload:relay-session:${sessionId}` holding
+    // the owning userId, the server-minted key, the multipart uploadId and one ETag per part.
+    RELAY_SESSION: 'system:image-upload:relay-session',
+  },
   FEEDBACK: {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
@@ -2546,6 +2551,11 @@ export const REDIS_SYS_KEYS = {
       the reversal is unrecoverable.
      */
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days).
+    UPLOAD_KEY_OWNER: 'system:upload-key-owner',
+    // `<prefix>:<YYYY-MM-DD>:<caller>:<host bucket>` = a HyperLogLog of the users who sent a
+    // generation input url on that external host bucket that UTC day (TTL 2 days).
+    GENERATION_INPUT_EXTERNAL_HOST_USERS: 'system:generation-input-external-host-users',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
@@ -2611,7 +2621,16 @@ export const REDIS_SYS_KEYS = {
     FAMILY_STATE: 'session:family-state',
     // `session:user-cut:${userId}` → epoch ms; tokens of that user signed before it are revoked.
     USER_CUT: 'session:user-cut',
+    // Hash `familyId → last seen (epoch ms)`, a 30-day sliding window per field.
+    FAMILY_LIVE: 'session:family-live',
+    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
+    DEVICE_FAMILIES: 'session:device-families',
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
+    // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
+    // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
+    HUB_UPGRADE: 'session:hub-upgrade',
+    // `session:hub-upgrade-lock:${sha256(jti)}` → held (SET NX, short TTL) by the one request minting that session.
+    HUB_UPGRADE_LOCK: 'session:hub-upgrade-lock',
     // Single-use identity for an in-flight authorization whose spoke is OUTSIDE the hub's cookie scope
     // (e.g. civitai.red) — `session:pending-authz:${id}` → { userId, domain }, short TTL, deleted once
     // spent. Carries the just-authenticated user from the login callback to /api/auth/oauth/authorize
@@ -2653,8 +2672,20 @@ export const REDIS_SYS_KEYS = {
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
     // and only new volume after that is filed again. No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
+    // String. How many other users the review follows Buzz through before it reaches the creator
+    // again; the review clamps it to what it supports (`runCounterpartyReview`).
+    COUNTERPARTY_REVIEW_MAX_HOPS: 'creator-program:counterparty-review-max-hops',
+    // Hash: field = creator userId, value = JSON { [path joined by '>']: amount when last filed }.
+    // Indirect transfers already filed, so only new paths or new volume are filed again. No TTL.
+    COUNTERPARTY_REVIEW_INDIRECT: 'creator-program:counterparty-review-indirect',
     // JSON `PrepayoutLimits`. Ops-owned; deliberately no default in code.
     PREPAYOUT_LIMITS: 'creator-program:prepayout-limits',
+  },
+  LINKED_ACCOUNT_REVIEW: {
+    // JSON `LinkedAccountReviewConfig`. Ops-owned; deliberately no default in code.
+    CONFIG: 'linked-account-review:config',
+    // Hash: field = group signature, value = ISO time it was last filed.
+    FILED: 'linked-account-review:filed',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
@@ -2841,6 +2872,10 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  MESSAGE_AS_CIVITAI: {
+    IDEMPOTENCY: 'message-as-civitai:idempotency',
+    SEND_LOCK: 'message-as-civitai:send-lock',
+  },
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
@@ -2978,6 +3013,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
+    // `<prefix>:<userId>` — whether the account is muted. See account-standing.service.ts.
+    ACCOUNT_STANDING: 'packed:caches:account-standing',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
@@ -3292,3 +3329,9 @@ export const REDIS_SUB_KEYS = {
     MERGING: 'merging', // sys
   },
 } as const;
+
+/**
+ * How long after a mute or unmute the account-standing cache is busted again: past the 10 s refill
+ * lock, so a refill that read the row before the change cannot leave the old standing behind.
+ */
+export const ACCOUNT_STANDING_REBUST_MS = 11_000;

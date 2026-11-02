@@ -98,6 +98,11 @@ const write = {
   deleteModels: async (batch: number[]): Promise<{ id: number }[]> => batch.map((id) => ({ id })),
   stillThere: (ids: number[]): { id: number }[] => ids.map((id) => ({ id })),
 };
+/** A tagged-template call, or one built elsewhere and passed as a single `Prisma.Sql`. */
+const asCall = (first: unknown, values: unknown[]) =>
+  Array.isArray(first)
+    ? { strings: first as string[], values }
+    : (first as { strings: string[]; values: unknown[] });
 const isModelDelete = (strings: readonly string[]) =>
   strings.join('?').includes('DELETE FROM "Model"');
 const isLeftLookup = (strings: readonly string[]) =>
@@ -106,8 +111,9 @@ const isLeftLookup = (strings: readonly string[]) =>
 /** Model ids handed to a given `DELETE FROM "Model"` call. */
 function deleteBatches() {
   return mockDbWrite.$queryRaw.mock.calls
-    .filter((c) => isModelDelete(c[0] as string[]))
-    .map((c) => c[1] as number[]);
+    .map((c) => asCall(c[0], c.slice(1)))
+    .filter((c) => isModelDelete(c.strings))
+    .map((c) => c.values[0] as number[]);
 }
 
 function axiomEvents(message: string) {
@@ -122,12 +128,14 @@ beforeEach(() => {
   write.versions = () => [];
   write.deleteModels = async (batch) => batch.map((id) => ({ id }));
   write.stillThere = (ids) => ids.map((id) => ({ id }));
-  mockDbWrite.$queryRaw.mockImplementation((async (strings: string[], ...values: unknown[]) =>
-    isModelDelete(strings)
+  mockDbWrite.$queryRaw.mockImplementation((async (first: unknown, ...rest: unknown[]) => {
+    const { strings, values } = asCall(first, rest);
+    return isModelDelete(strings)
       ? write.deleteModels(values[0] as number[])
       : isLeftLookup(strings)
       ? write.stillThere(values[0] as number[])
-      : write.versions(values[0] as number[])) as never);
+      : write.versions(values[0] as number[]);
+  }) as never);
 });
 
 describe('removeOldDrafts', () => {
@@ -543,8 +551,9 @@ describe('removeOldDrafts', () => {
 
       // The version SELECT is scoped to exactly one batch of model ids per call.
       const selectBatches = mockDbWrite.$queryRaw.mock.calls
-        .filter((c) => !isModelDelete(c[0] as string[]))
-        .map((c) => c[1] as number[]);
+        .map((c) => asCall(c[0], c.slice(1)))
+        .filter((c) => !isModelDelete(c.strings))
+        .map((c) => c.values[0] as number[]);
       expect(selectBatches).toEqual([Array.from({ length: 10 }, (_, i) => i + 1), [11]]);
 
       // Deregister runs once per batch, each with only that batch's version ids —

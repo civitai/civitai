@@ -24,6 +24,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const { default: media } = await import('~/pages/api/mod/held-media/[imageId]');
 const { default: gridView } = await import('~/pages/api/mod/held-media/grid-view');
+const { default: shown } = await import('~/pages/api/mod/held-media/shown');
 
 function fakeRes() {
   const res = Object.assign(new EventEmitter(), {
@@ -64,10 +65,13 @@ describe('held-media routes are moderator-only', () => {
     ['no session', null],
     ['a member', { user: { id: 5, isModerator: false } }],
     ['a banned moderator', { user: { id: 5, isModerator: true, bannedAt: new Date() } }],
-  ])('refuses %s on both routes, before reading anything', async (_name, value) => {
+  ])('refuses %s on every route, before reading anything', async (_name, value) => {
     session.value = value;
     expect(await send(media, 'GET')).toBe(401);
     expect(await send(gridView, 'POST', { count: 1, userId: 9 })).toBe(401);
+    expect(
+      await send(shown, 'POST', { imageId: 7, userId: 9, action: 'select', rendition: 'original' })
+    ).toBe(401);
     expect(getHeldMedia).not.toHaveBeenCalled();
   });
 

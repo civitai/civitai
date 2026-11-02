@@ -55,6 +55,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 }));
 
 import {
+  getListingCard,
   getListingDetail,
   listAvailableListings,
   listingPublicVisibilityFilter,
@@ -269,6 +270,31 @@ describe('listAvailableListings — STORE-SCOPE kind gate in the keyset WHERE', 
     expect(sql).toMatch(/IS NULL OR al\.kind =/i);
     // Net effect at the DB: contradictory WHERE → no onsite listing is returned.
     expect(result).toEqual({ items: [], nextCursor: undefined });
+  });
+});
+
+describe('getListingCard — same STORE-SCOPE kind gate as the detail read', () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+  });
+
+  it('public-external → HIDES (null) an ONSITE listing', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    expect(await getListingCard({ slug: 'cool-app' }, { scope: 'public-external' })).toBeNull();
+  });
+
+  it('public-external → SHOWS an OFFSITE listing as a card', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...offsiteExternalRow(),
+      status: 'approved',
+    });
+    const card = await getListingCard({ slug: 'ext-app' }, { scope: 'public-external' });
+    expect(card?.id).toBe('apl_2');
+  });
+
+  it('none → null', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    expect(await getListingCard({ slug: 'cool-app' }, { scope: 'none' })).toBeNull();
   });
 });
 

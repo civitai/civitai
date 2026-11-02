@@ -1,13 +1,17 @@
 import { useHotkeys } from '@mantine/hooks';
 import produce from 'immer';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, Fragment, useContext, useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCollection } from '~/components/Collections/collection.utils';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
-import { parseImageQueryParams, useQueryImages } from '~/components/Image/image.utils';
+import {
+  hasImageDetailQueryFilters,
+  parseImageQueryParams,
+  useQueryImages,
+} from '~/components/Image/image.utils';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -84,7 +88,8 @@ export function ImageDetailProvider({
   const { modelId, modelVersionId, username, userId, reactions, postId: filterPostId } = filters;
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
-  const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
+  // Shared with the page-data endpoint, which withholds the main-image preload on the same rule.
+  const shouldFetchMany = !initialImages?.length && hasImageDetailQueryFilters(filters, postId);
   const browsingLevel = useBrowsingLevelDebounced();
   const {
     images: queryImages = [],
@@ -195,7 +200,20 @@ export function ImageDetailProvider({
   // #endregion
 
   // #region [navigation]
+  // The carousel keeps its own position and only writes the URL back. When the image changes from
+  // anywhere else (a remix card opening its source over this detail), it would keep showing the old
+  // one and, on its next settle, write that back over the new URL — so start the detail over.
+  const lastNavigatedIdRef = useRef(imageId);
+  const [seenImageId, setSeenImageId] = useState(imageId);
+  const [externalMoves, setExternalMoves] = useState(0);
+  if (!Object.is(seenImageId, imageId)) {
+    setSeenImageId(imageId);
+    if (!Object.is(lastNavigatedIdRef.current, imageId)) setExternalMoves(externalMoves + 1);
+    lastNavigatedIdRef.current = imageId;
+  }
+
   const navigate = (id: number) => {
+    lastNavigatedIdRef.current = id;
     const query = browserRouter.query;
     const [, queryString] = browserRouter.asPath.split('?');
     browserRouter.replace(
@@ -254,7 +272,7 @@ export function ImageDetailProvider({
         hideReactions,
       }}
     >
-      {children}
+      <Fragment key={externalMoves}>{children}</Fragment>
     </ImageDetailContext.Provider>
   );
 }

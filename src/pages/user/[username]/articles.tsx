@@ -20,7 +20,7 @@ import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFil
 import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -34,7 +34,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
     if (user?.bannedAt)
       return {
         redirect: { destination: `/user/${username}`, permanent: true },

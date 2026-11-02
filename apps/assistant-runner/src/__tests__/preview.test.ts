@@ -17,6 +17,7 @@ import {
   autoPreviewFailed,
 } from '../app-assistant/provider';
 import type { OpenTools } from '../core/interfaces';
+import { chosenApp } from '../test-support/chosen-app';
 import { FAKE_TUNNEL_PUBLIC_KEY, FakeSandboxService } from '../test-support/fake-sandbox';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
@@ -25,11 +26,15 @@ const SESSION = 'bki_TEST_ONLY_session_7f3e9a';
 const HOST = 'dev-0123456789abcdef.civit.ai';
 const HOST_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlySishHostKey';
 const KEEPALIVE_MS = 1_000;
+/** What a run asks civitai to keep alive once the sandbox is connected to civitai's tunnel. */
+const CONNECTED = { host: HOST };
+/** Another host, as the page's Restart preview (no run) may have connected the sandbox to. */
+const RESTARTED_HOST = 'dev-fedcba9876543210.civit.ai';
 
 /** civitai's dev-tunnel endpoints as one run sees them, recording what it was asked. */
 class FakeTunnels implements DevTunnels {
   readonly started: DevTunnelStartInput[] = [];
-  readonly kept: string[] = [];
+  readonly kept: { host: string }[] = [];
   readonly stopped: string[] = [];
   startError: unknown = null;
   keepaliveError: unknown = null;
@@ -42,8 +47,8 @@ class FakeTunnels implements DevTunnels {
     return { sessionId, host: HOST, sshHostPublicKey: HOST_KEY };
   }
 
-  async keepalive(sessionId: string) {
-    this.kept.push(sessionId);
+  async keepalive(target: { host: string }) {
+    this.kept.push(target);
     if (this.keepaliveError) throw this.keepaliveError;
   }
 
@@ -84,6 +89,8 @@ async function open() {
     runId: 'run-1',
     conversationId: 'conv-1',
     page: { app: 'my-app' },
+    // A chat that chose the open app: its dev server starts are not refused.
+    history: chosenApp('my-app'),
     signal: new AbortController().signal,
     report: (result) => reported.push(result),
   });
@@ -100,7 +107,32 @@ function call(tools: ToolSet, name: string, input: Record<string, unknown> = {})
   ) as Promise<Record<string, unknown>>;
 }
 
-const tunnelCalls = () => fake.calls.filter((c) => c.tool.startsWith('tunnel_')).map((c) => c.tool);
+/** The tunnel steps taken (`tunnel_status` is only a read, made on every keep-alive tick). */
+const tunnelCalls = () =>
+  fake.calls
+    .filter((c) => c.tool.startsWith('tunnel_') && c.tool !== 'tunnel_status')
+    .map((c) => c.tool);
+/** The sandbox the fake made for `app`. */
+const sandboxOf = (app: string) => fake.sandboxes.find((s) => s.app === app)!.name;
+
+/**
+ * Runs `n` keep-alive ticks, each to the point where it has asked the sandbox (`tunnel_status`,
+ * over real HTTP, which fake timers do not advance). A tick still in flight makes the next one
+ * skip, so each is driven until its own ask is seen; a later tick's ask therefore also means every
+ * earlier tick finished. What a tick then keeps is awaited with `vi.waitFor` by the caller.
+ */
+async function ticks(n = 1) {
+  for (let i = 0; i < n; i++) {
+    const before = fake.callsTo('tunnel_status');
+    for (let tries = 0; fake.callsTo('tunnel_status') === before; tries++) {
+      if (tries > 200) throw new Error('no keep-alive tick asked the sandbox');
+      await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+      if (fake.callsTo('tunnel_status') === before) await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+}
+/** Waits for exactly `expected` to have been kept (ticks finish over real HTTP). */
+const keptToBe = (expected: unknown[]) => vi.waitFor(() => expect(tunnels.kept).toEqual(expected));
 
 describe('start_preview on the runner', () => {
   it('is offered with stop_preview, and the raw tunnel tools are not', async () => {
@@ -219,9 +251,9 @@ describe('start_preview on the runner', () => {
     opened.push(tools);
     await call(tools.tools, 'start_preview');
     tunnels.keepaliveError = new DevTunnelError('later', 503, 'unavailable');
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+    await ticks(1);
     // Control: the failure was logged.
-    expect(logged).toContain('keeping a preview alive failed');
+    await vi.waitFor(() => expect(logged).toContain('keeping a preview alive failed'));
     expect(JSON.stringify(logged)).not.toContain(SESSION);
   });
 
@@ -267,9 +299,9 @@ describe('keeping the preview alive', () => {
     await call(tools.tools, 'start_preview');
     expect(tunnels.kept).toEqual([]);
 
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
-    // The control: alive while the run lives.
-    expect(tunnels.kept).toEqual([SESSION, SESSION, SESSION]);
+    await ticks(3);
+    // The control: alive while the run lives, named by the host the sandbox is connected to.
+    await keptToBe([CONNECTED, CONNECTED, CONNECTED]);
 
     // The run ends: the runner closes its tools.
     await tools.close();
@@ -279,25 +311,99 @@ describe('keeping the preview alive', () => {
     expect(tunnels.stopped).toEqual([]);
   });
 
-  it('keeps no preview alive before one is started', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    fake.add('my-app');
-    await open();
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
-    expect(tunnels.kept).toEqual([]);
-  });
-
-  it('gives up on a tunnel civitai no longer has, and asks again after `unavailable`', async () => {
+  it('asks again after `unavailable` and after NOT_FOUND (one may open later), and stops once refused', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     fake.add('my-app');
     const { tools } = await open();
     await call(tools.tools, 'start_preview');
     tunnels.keepaliveError = new DevTunnelError('later', 503, 'unavailable');
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
-    expect(tunnels.kept).toHaveLength(2);
+    await ticks(2);
+    await keptToBe([CONNECTED, CONNECTED]);
     tunnels.keepaliveError = new DevTunnelError('gone', 404, 'NOT_FOUND');
+    await ticks(2);
+    await keptToBe([CONNECTED, CONNECTED, CONNECTED, CONNECTED]);
+    // The run's own tunnel went: a start of the same preview opens a new one, not the old answer.
+    await call(tools.tools, 'start_preview');
+    expect(tunnels.started).toHaveLength(2);
+    tunnels.keepaliveError = new DevTunnelError('no', 403, 'FORBIDDEN');
+    await ticks(1);
+    await vi.waitFor(() => expect(tunnels.kept).toHaveLength(5));
+    // Refused: no tick asks again.
+    const asked = fake.callsTo('tunnel_status');
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
-    expect(tunnels.kept).toHaveLength(3);
+    expect(fake.callsTo('tunnel_status')).toBe(asked);
+    expect(tunnels.kept).toHaveLength(5);
+  });
+
+  // A preview opened outside the run (the page's Restart preview, or an earlier reply) has no id
+  // here, and a hidden tab sends its tunnel nothing: the run must keep it up all the same.
+  it('keeps alive the preview the app’s sandbox is connected to though this run did not open it', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
+    const { tools } = await open();
+    await ticks(2);
+    // Nothing was opened by this run, and the tunnel its sandbox serves was kept all the same.
+    await keptToBe([{ host: RESTARTED_HOST }, { host: RESTARTED_HOST }]);
+    expect(tunnels.started).toEqual([]);
+    await tools.close();
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
+    expect(tunnels.kept).toHaveLength(2);
+  });
+
+  it('keeps nothing alive while the app’s sandbox has no tunnel running (paused, disconnected)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    await open();
+    await ticks(3);
+    // Control: once the sandbox is connected, the next tick keeps it — and only it, so none of
+    // the three before (each finished before it asked) kept anything.
+    fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
+    await ticks(1);
+    await keptToBe([{ host: RESTARTED_HOST }]);
+  });
+
+  it('never keeps another app’s preview alive: once the run opens another app, only that one’s', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const { tools } = await open();
+    await call(tools.tools, 'start_preview');
+    // Control: the first app's preview is kept while it is the open one.
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+      expect(tunnels.kept).toContainEqual(CONNECTED);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const keptBefore = tunnels.kept.length;
+    expect(await call(tools.tools, 'create_app', { name: 'Tip calculator' })).toMatchObject({
+      app: 'tip-calculator',
+    });
+    // The first app's tunnel is no longer the open app's: it is left to idle out. (The new app's
+    // sandbox answers this run nothing — its tools come with the next reply — so nothing is kept.)
+    fake.tunnelHosts.set(sandboxOf('tip-calculator'), RESTARTED_HOST);
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(tunnels.kept).toHaveLength(keptBefore);
+    expect(tunnels.kept.every((kept) => kept.host === HOST)).toBe(true);
+  });
+
+  it('keeps nothing alive after stop_preview, until the next start', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
+    const { tools } = await open();
+    await call(tools.tools, 'stop_preview');
+    // Even were the sandbox's side still up (its disconnect failed): the user asked for it to go.
+    fake.tunnelHosts.set(sandboxOf('my-app'), RESTARTED_HOST);
+    const asked = fake.callsTo('tunnel_status');
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 3);
+    expect(fake.callsTo('tunnel_status')).toBe(asked);
+    expect(tunnels.kept).toEqual([]);
+    await call(tools.tools, 'start_preview');
+    await ticks(1);
+    await keptToBe([CONNECTED]);
   });
 
   it('is every 5 minutes, well inside civitai’s 30-minute idle window', () => {
@@ -383,7 +489,7 @@ describe('CivitaiDevTunnels', () => {
       host: HOST,
       sshHostPublicKey: HOST_KEY,
     });
-    await run.keepalive(SESSION);
+    await run.keepalive({ host: HOST });
     await run.stop(SESSION);
     expect(grants).toBe(3);
     expect(sent.map((s) => s.url)).toEqual(
@@ -392,8 +498,13 @@ describe('CivitaiDevTunnels', () => {
     for (const { init } of sent)
       expect(new Headers(init.headers).get('authorization')).toBe(`Bearer ${SECRET}`);
     expect(sent.map((s) => JSON.parse(String(s.init.body)))).toEqual([
-      { grant: GRANT, blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY },
-      { grant: GRANT, sessionId: SESSION },
+      {
+        grant: GRANT,
+        blockId: 'my-app',
+        sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY,
+        clientKey: expect.any(String),
+      },
+      { grant: GRANT, host: HOST },
       { grant: GRANT, sessionId: SESSION },
     ]);
   });
@@ -404,18 +515,277 @@ describe('CivitaiDevTunnels', () => {
     );
     const error = await tunnels
       .forRun(async () => GRANT)
-      .keepalive(SESSION)
+      .keepalive({ host: HOST })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DevTunnelError);
     expect(error).toMatchObject({ status: 404, code: 'NOT_FOUND' });
   });
 
+  describe('a start the runner gives up on is closed at civitai by its own key', () => {
+    /** civitai holds every start until the call is aborted, and answers a stop. */
+    function holding() {
+      return client((url, init) =>
+        url.endsWith('/start')
+          ? new Promise<Response>((_, reject) => {
+              const signal = init.signal as AbortSignal;
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            })
+          : Response.json({ stopped: false })
+      );
+    }
+    const bodies = (sent: { init: RequestInit }[]) =>
+      sent.map((s) => JSON.parse(String(s.init.body)) as Record<string, unknown>);
+
+    it('the caller cancels (a Stop, the reply ending): a stop by the start’s key, with its grant', async () => {
+      const { sent, tunnels } = holding();
+      // The reply's grant is deleted as it ends: the cleanup still carries the start's own.
+      let grant: string | null = GRANT;
+      const run = tunnels.forRun(async () => grant);
+      const caller = new AbortController();
+      const start = run
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY }, caller.signal)
+        .catch((error: unknown) => error);
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      grant = null;
+      caller.abort();
+      // The caller's own abort, as before: the cleanup does not change what the caller hears.
+      expect(await start).toBe(caller.signal.reason);
+      await vi.waitFor(() => expect(sent).toHaveLength(2));
+      const [started, stopped] = bodies(sent);
+      expect(sent[1]!.url).toBe(`https://civitai.example/${DEV_TUNNEL_PATH}/stop`);
+      expect(typeof started!.clientKey).toBe('string');
+      expect(started!.clientKey).not.toBe('');
+      expect(stopped).toEqual({ grant: GRANT, clientKey: started!.clientKey });
+    });
+
+    it('civitai failed the start (5xx, or out of reach): stopped by its key; a refusal is not', async () => {
+      for (const [answer, stops] of [
+        [() => Response.json({ error: 'later', code: 'unavailable' }, { status: 503 }), 1],
+        [
+          () => {
+            throw new TypeError('fetch failed');
+          },
+          1,
+        ],
+        [() => Response.json({ error: 'No such app', code: 'NOT_FOUND' }, { status: 404 }), 0],
+        [() => Response.json({ error: 'Too many', code: 'TOO_MANY_REQUESTS' }, { status: 429 }), 0],
+      ] as const) {
+        const { sent, tunnels } = client((url) =>
+          url.endsWith('/start') ? answer() : Response.json({ stopped: false })
+        );
+        const run = tunnels.forRun(async () => GRANT);
+        await run
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        // A call made after the start failed: a cleanup the start began is already on its way
+        // ahead of it, so what reached civitai before this marker is all the start sent.
+        await run.keepalive({ host: HOST });
+        expect(
+          sent.map((s) => s.url.split('/').pop()),
+          String(answer)
+        ).toEqual(stops ? ['start', 'stop', 'keepalive'] : ['start', 'keepalive']);
+        const stopsSent = sent.filter((s) => s.url.endsWith('/stop'));
+        if (stops)
+          expect(JSON.parse(String(stopsSent[0]!.init.body))).toEqual({
+            grant: GRANT,
+            clientKey: JSON.parse(String(sent[0]!.init.body)).clientKey,
+          });
+      }
+    });
+
+    it('a start that succeeded is not stopped, and each start has its own key', async () => {
+      const { sent, tunnels } = client(() =>
+        Response.json({ sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY })
+      );
+      const run = tunnels.forRun(async () => GRANT);
+      await run.start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY });
+      await run.start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY });
+      // The marker, as above: no stop went ahead of it.
+      await run.keepalive({ host: HOST });
+      expect(sent.map((s) => s.url.split('/').pop())).toEqual(['start', 'start', 'keepalive']);
+      const [a, b] = bodies(sent);
+      expect(a!.clientKey).not.toBe(b!.clientKey);
+    });
+  });
+
   it('a run with no live grant asks civitai nothing', async () => {
     const { sent, tunnels } = client(() => Response.json({}));
-    await expect(tunnels.forRun(async () => null).keepalive(SESSION)).rejects.toMatchObject({
+    await expect(tunnels.forRun(async () => null).keepalive({ host: HOST })).rejects.toMatchObject({
       code: 'invalid_grant',
     });
     expect(sent).toEqual([]);
+  });
+
+  describe('how long a call waits for civitai', () => {
+    // `AbortSignal.timeout` runs on Node's own timers, which fake timers do not reach: each one
+    // is swapped for an abort on the faked `setTimeout`, so the virtual clock drives the deadline.
+    let deadlines: number[];
+    beforeEach(() => {
+      vi.useFakeTimers();
+      deadlines = [];
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
+        deadlines.push(ms);
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), ms);
+        return controller.signal;
+      });
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    });
+
+    /** civitai answers each call after `ms`, or never; an aborted call fails as fetch does. */
+    function answeringAfter(ms: number | null, answer: () => Response) {
+      return client(
+        (_url, init) =>
+          new Promise<Response>((resolve, reject) => {
+            const signal = init.signal as AbortSignal;
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            if (ms !== null) setTimeout(() => resolve(answer()), ms);
+          })
+      );
+    }
+    const started = () =>
+      Response.json({ sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY });
+
+    it('a start civitai answers 185 s in (its route takes up to 180 s) is still the start', async () => {
+      // civitai's start waits for the tunnel's route to be applied (up to 180 s) before it answers,
+      // and keeps the tunnel it opened. A runner that gives up sooner never connects the sandbox to
+      // a tunnel civitai then lists as live: the page shows it, and it can only fail to load.
+      const { tunnels } = answeringAfter(185_000, started);
+      const start = tunnels
+        .forRun(async () => GRANT)
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+        .then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error })
+        );
+      await vi.advanceTimersByTimeAsync(185_000);
+      expect(await start).toEqual({
+        value: { sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY },
+      });
+      // The control: the call did run on a deadline this test drives.
+      expect(deadlines).toHaveLength(1);
+    });
+
+    it('a start civitai never answers still fails, as `unavailable`', async () => {
+      const { tunnels } = answeringAfter(null, started);
+      const start = tunnels
+        .forRun(async () => GRANT)
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(await start).toMatchObject({ status: 503, code: 'unavailable' });
+    });
+
+    it('a start that timed out at 200 s (civitai answers by 185 s) is stopped by its key', async () => {
+      const { sent, tunnels } = answeringAfter(null, started);
+      const start = tunnels
+        .forRun(async () => GRANT)
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(199_000);
+      expect(sent).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await start).toMatchObject({ status: 503, code: 'unavailable' });
+      await vi.waitFor(() => expect(sent).toHaveLength(2));
+      expect(sent.map((s) => s.url.split('/').pop())).toEqual(['start', 'stop']);
+      expect(JSON.parse(String(sent[1]!.init.body))).toEqual({
+        grant: GRANT,
+        clientKey: JSON.parse(String(sent[0]!.init.body)).clientKey,
+      });
+      // The stop waits on a stop's own 15 s, not on the start's 200 s.
+      expect(deadlines).toEqual([200_000, 15_000]);
+    });
+
+    describe('the stop by key, when civitai says to ask again', () => {
+      /** The start fails on civitai's side; each stop answers the next of `stops`, in turn. */
+      function failingStart(stops: (() => Response)[]) {
+        let next = 0;
+        return client((url) =>
+          url.endsWith('/start')
+            ? Response.json({ error: 'later', code: 'unavailable' }, { status: 503 })
+            : (stops[Math.min(next++, stops.length - 1)] ?? (() => Response.json({})))()
+        );
+      }
+      const unavailable = () =>
+        Response.json({ error: 'later', code: 'unavailable' }, { status: 503 });
+      const stopped = () => Response.json({ stopped: true });
+      async function startAndWait(tunnels: CivitaiDevTunnels) {
+        await tunnels
+          .forRun(async () => GRANT)
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        // Long past any retry the runner makes: what was sent by then is all it sends.
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+      }
+      const stopsOf = (sent: { url: string; init: RequestInit }[]) =>
+        sent.filter((s) => s.url.endsWith('/stop'));
+
+      it('a stop civitai answers `unavailable` is asked again, with the same key, until it is done', async () => {
+        const { sent, tunnels } = failingStart([unavailable, unavailable, stopped]);
+        await startAndWait(tunnels);
+        const stops = stopsOf(sent);
+        expect(stops).toHaveLength(3);
+        const key = JSON.parse(String(sent[0]!.init.body)).clientKey;
+        for (const stop of stops)
+          expect(JSON.parse(String(stop.init.body))).toEqual({ grant: GRANT, clientKey: key });
+      });
+
+      it('a stop civitai keeps answering `unavailable` is asked a bounded number of times', async () => {
+        const { sent, tunnels } = failingStart([unavailable]);
+        await startAndWait(tunnels);
+        expect(stopsOf(sent)).toHaveLength(3);
+      });
+
+      it('asks again 5 s after a stop civitai answered `unavailable`, not sooner', async () => {
+        const { sent, tunnels } = failingStart([unavailable, stopped]);
+        await tunnels
+          .forRun(async () => GRANT)
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stopsOf(sent)).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(stopsOf(sent)).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(stopsOf(sent)).toHaveLength(2);
+      });
+
+      it('a stop that could not reach civitai at all is asked again too', async () => {
+        const { sent, tunnels } = failingStart([
+          () => {
+            throw new TypeError('fetch failed');
+          },
+          stopped,
+        ]);
+        await startAndWait(tunnels);
+        expect(stopsOf(sent)).toHaveLength(2);
+      });
+
+      it('a stop civitai refuses (4xx), or answers, is not asked again', async () => {
+        for (const answer of [
+          stopped,
+          () => Response.json({ error: 'no', code: 'invalid_grant' }, { status: 401 }),
+          () => Response.json({ error: 'bad' }, { status: 400 }),
+        ]) {
+          const { sent, tunnels } = failingStart([answer]);
+          await startAndWait(tunnels);
+          expect(stopsOf(sent), String(answer)).toHaveLength(1);
+        }
+      });
+    });
+
+    it('a keep-alive or stop civitai does not answer fails within 16 s', async () => {
+      const { tunnels } = answeringAfter(null, () => Response.json({}));
+      const run = tunnels.forRun(async () => GRANT);
+      const keepalive = run.keepalive({ host: HOST }).catch((error: unknown) => error);
+      const stop = run.stop(SESSION).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(await keepalive).toMatchObject({ status: 503, code: 'unavailable' });
+      expect(await stop).toMatchObject({ status: 503, code: 'unavailable' });
+    });
   });
 
   it('civitai out of reach, or answering a start oddly, is `unavailable`', async () => {
@@ -623,8 +993,8 @@ describe('the preview opens by itself once the dev server starts', () => {
     fake.add('my-app');
     const { tools } = await open();
     await startDevServer(tools.tools);
-    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
-    expect(tunnels.kept).toEqual([SESSION, SESSION]);
+    await ticks(2);
+    await keptToBe([CONNECTED, CONNECTED]);
     await tools.close();
     await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
     expect(tunnels.kept).toHaveLength(2);
@@ -641,6 +1011,7 @@ describe('the preview opens by itself once the dev server starts', () => {
       runId: 'run-1',
       conversationId: 'conv-1',
       page: { app: 'my-app' },
+      history: chosenApp('my-app'),
       signal: new AbortController().signal,
     });
     opened.push(tools);

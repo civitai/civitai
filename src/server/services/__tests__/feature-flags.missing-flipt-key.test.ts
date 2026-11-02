@@ -42,7 +42,7 @@ describe('a flag whose Flipt key does not exist falls back to static availabilit
     // `isEnabledSync` returns null for BOTH "flag not found" and "client not initialized", so a
     // present key answering with a boolean is what makes the two nulls below attributable.
     expect(isFliptSync('app-blocks-enabled', 'anonymous', anon)).toBe(false);
-    expect(isFliptSync('image-search', 'anonymous', anon)).toBe(null);
+    expect(isFliptSync('trpc-unified-batch-window', 'anonymous', anon)).toBe(null);
     expect(isFliptSync('hi-dpi-previews', 'anonymous', anon)).toBe(null);
   });
 
@@ -50,7 +50,7 @@ describe('a flag whose Flipt key does not exist falls back to static availabilit
     const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
     const features = await getFeatureFlagsAsync({});
 
-    expect(features.imageSearch).toBeFalsy();
+    expect(features.trpcUnifiedBatchWindow).toBeFalsy();
   });
 
   it('`availability: ["public"]` stays ON on the server path', async () => {

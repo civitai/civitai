@@ -5,6 +5,7 @@ import { db } from '$lib/server/db/db';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } from '$lib/server/oauth/block-guard';
 import { SYSTEM_USER_ID } from '$lib/server/oauth/constants';
+import { isSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
 
 // System OAuth apps: registered apps owned by the civitai system account (User id -1), the first-party
 // convention Civitai Link already uses. Staff manage them on /admin/access; only they may skip the
@@ -111,20 +112,24 @@ export async function createSystemClient(
  * - a confidential app gets a new secret (returned once), so the old one stops working;
  * - the `client_credentials` grant is dropped, since through it the app would act as the system account.
  * App-Block clients are provisioned and owned by their block, so they never move. Returns null when there
- * is nothing to move.
+ * is nothing to move, and `refusedRedirectUri` when the app skips consent but has a redirect URI a
+ * skip-consent app may not have.
  */
 export async function moveClientToSystem(
   clientId: string,
   actorUserId: number
-): Promise<{ clientSecret: string | null } | null> {
+): Promise<{ clientSecret: string | null } | { refusedRedirectUri: string } | null> {
   if (clientId.startsWith(APP_BLOCK_OAUTH_CLIENT_ID_PREFIX)) return null;
   const client = await db
     .selectFrom('OauthClient')
-    .select(['isConfidential', 'grants'])
+    .select(['isConfidential', 'grants', 'skipConsent', 'redirectUris'])
     .where('id', '=', clientId)
     .where('userId', '!=', SYSTEM_USER_ID)
     .executeTakeFirst();
   if (!client) return null;
+  const refusedRedirectUri =
+    client.skipConsent && client.redirectUris.find((uri) => !isSkipConsentRedirectUri(uri));
+  if (refusedRedirectUri) return { refusedRedirectUri };
 
   const clientSecret = client.isConfidential ? generateKey(48) : null;
   const moved = await db

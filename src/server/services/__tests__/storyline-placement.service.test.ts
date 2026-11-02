@@ -14,6 +14,10 @@ const holdPlacementEscrow = vi.fn();
 const settlePlacement = vi.fn();
 const assertCanContinueStoryline = vi.fn();
 
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   resolvePlacementSpaceFor: resolveSpace,
@@ -89,6 +93,13 @@ const tx = {
   $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     txLog.push(`raw ${strings.join('?')} [${values.join(',')}]`);
     return 0;
+  }),
+  // Only the storyline lock: the storyline of the chapter on the parent post.
+  $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!/FOR SHARE OF st\s*$/.test(strings.join('?')))
+      throw new Error('fake: unexpected raw query in the submit transaction');
+    txLog.push(`lock storyline of post ${values.join(',')}`);
+    return [{ id: 1 }];
   }),
   placement: {
     count: vi.fn(async ({ where }: { where: Where }) => {
@@ -371,12 +382,20 @@ describe('createStorylinePlacement — the pending cap', () => {
       `raw SELECT pg_advisory_xact_lock(?::int, ?::int) [${PLACER_LOCK_CLASS},${PLACER}]`,
       'count',
       'findFirst',
+      `lock storyline of post ${CHAPTER}`,
       'create',
     ]);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.placement.count).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+  });
+  // The storyline lock is what makes a delete wait for this submit, or this submit see the
+  // delete: a storyline deleted between the terms check and the insert is refused, not escrowed.
+  it('refuses, taking no Buzz, when the storyline is gone by the time it locks', async () => {
+    tx.$queryRaw.mockResolvedValueOnce([] as never);
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+    expect(tx.placement.create).not.toHaveBeenCalled();
   });
 });
 
@@ -608,6 +627,7 @@ describe('createStorylinePlacement — who may continue', () => {
 });
 
 describe('createStorylinePlacement — the continuation post', () => {
+  // One message for every verdict on purpose: saying which one would let anyone probe the scans.
   it.each([
     ['taken down', { tosViolation: true }],
     ['with a taken-down image', { images: [{ ...SCANNED, tosViolation: true }] }],
@@ -628,7 +648,17 @@ describe('createStorylinePlacement — the continuation post', () => {
   it('refuses a post rated above the storyline', async () => {
     givenAccess({ maxNsfwLevel: 1 });
     givenPost({ nsfwLevel: 4 });
-    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.aboveRating);
+    await expect(submit()).rejects.toThrow(
+      `${STORYLINE_REFUSALS.aboveRating}. This storyline allows up to PG; this post is R`
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  // Blocked is a moderation verdict, not a rating: it is refused like the other verdicts.
+  it('refuses a post at the Blocked level without naming it', async () => {
+    givenAccess({ maxNsfwLevel: 1 });
+    givenPost({ nsfwLevel: 4 | 32 });
+    await expect(submit()).rejects.toThrow(new RegExp(`^${STORYLINE_REFUSALS.cannotSubmit}$`));
     expect(rows).toHaveLength(0);
   });
 

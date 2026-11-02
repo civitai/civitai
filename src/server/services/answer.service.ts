@@ -1,3 +1,7 @@
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { keepHeldAnswersCte } from '~/server/services/held-review.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   GetAnswersInput,
@@ -6,7 +10,7 @@ import type {
 } from './../schema/answer.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 export const getAnswers = async <TSelect extends Prisma.AnswerSelect>({
   questionId,
@@ -39,7 +43,14 @@ export const upsertAnswer = async ({ userId, ...data }: UpsertAnswerInput & { us
 };
 
 export const deleteAnswer = async ({ id }: GetByIdInput) => {
-  await dbWrite.answer.delete({ where: { id } });
+  const markerView = await holdMarkerViewExists();
+  const answer = Prisma.sql`SELECT ${id}::int`;
+  const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
+    WITH ${detachHeldThreadsCte({ answerId: answer }, markerView)},
+    ${keepHeldAnswersCte(answer, markerView)}
+    DELETE FROM "Answer" WHERE id IN (${answer})
+    RETURNING id`;
+  if (!deleted.length) throw throwNotFoundError(`No answer with id ${id}`);
 };
 
 export const setAnswerVote = async ({

@@ -11,6 +11,8 @@ import {
 import { isOptInNotification } from '~/server/notifications/utils.notifications';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getUserNotificationsInfiniteHandler = async ({
   input,
@@ -27,6 +29,7 @@ export const getUserNotificationsInfiniteHandler = async ({
       ...input,
       limit: limit + 1,
       userId,
+      showSfwFace: showsSfwFace(getRequestBrowsingLevel(ctx)),
     });
 
     let nextCursor: Date | undefined;

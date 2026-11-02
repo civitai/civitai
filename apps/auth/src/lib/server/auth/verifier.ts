@@ -15,3 +15,6 @@ export const verifier = createAuthVerifier({
     }
   },
 });
+
+/** Signature and expiry only: whose session this was, even after it was signed out. Never grants access. */
+export const signatureVerifier = createAuthVerifier();

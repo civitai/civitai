@@ -1,5 +1,4 @@
 import * as z from 'zod';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import { getModel, updateModelById } from '~/server/services/model.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -20,22 +19,22 @@ export default defineModeratorEndpoint('model.takeDown', {
     modelId: z.coerce.number().int().positive().describe('The model to take down.'),
   }),
   async handler(input, ctx) {
-    const model = await getModel({
-      id: input.modelId,
-      select: { id: true, meta: true, mode: true },
-    });
+    const model = await getModel({ id: input.modelId, select: { id: true, mode: true } });
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
-    if (model.mode === ModelModifier.TakenDown)
-      throw throwBadRequestError('Model is already taken down');
+    const assertUp = (mode: ModelModifier | null | undefined) => {
+      if (mode === ModelModifier.TakenDown)
+        throw throwBadRequestError('Model is already taken down');
+    };
+    assertUp(model.mode);
 
-    // Archive stamps are dropped, as `changeModelModifierHandler` does: a model is one or the other.
-    const { archivedAt, archivedBy, takenDownAt, takenDownBy, ...restMeta } =
-      (model.meta as ModelMeta | null) || {};
     const updated = await updateModelById({
       id: input.modelId,
-      data: {
-        mode: ModelModifier.TakenDown,
-        meta: { ...restMeta, takenDownAt: new Date().toISOString(), takenDownBy: ctx.actor.id },
+      data: { mode: ModelModifier.TakenDown },
+      meta: (stored, row) => {
+        assertUp(row?.mode);
+        // Archive stamps are dropped, as `changeModelModifierHandler` does: a model is one or the other.
+        const { archivedAt, archivedBy, takenDownAt, takenDownBy, ...restMeta } = stored || {};
+        return { ...restMeta, takenDownAt: new Date().toISOString(), takenDownBy: ctx.actor.id };
       },
     });
     await ctx.tracker.modelEvent({ type: 'Takedown', modelId: updated.id, nsfw: true });

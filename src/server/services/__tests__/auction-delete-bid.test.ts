@@ -2,9 +2,16 @@ import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { refundTransaction, getTransactionByExternalId } = vi.hoisted(() => ({
+const {
+  refundTransaction,
+  getTransactionByExternalId,
+  refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
+} = vi.hoisted(() => ({
   refundTransaction: vi.fn(),
   getTransactionByExternalId: vi.fn(),
+  refundMultiAccountTransaction: vi.fn(),
+  getMultiAccountTransactionsByPrefix: vi.fn(),
 }));
 
 // image.service's real import graph is heavy; only the cache the entity hydration reads is needed.
@@ -20,8 +27,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId,
   createBuzzTransaction: vi.fn(),
   createMultiAccountBuzzTransaction: vi.fn(),
-  refundMultiAccountTransaction: vi.fn(),
-  getMultiAccountTransactionsByPrefix: vi.fn(),
+  refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
 }));
 
 import { deleteBid } from '~/server/services/auction.service';
@@ -42,6 +49,8 @@ const markedDeleted = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   refundTransaction.mockReset();
+  refundMultiAccountTransaction.mockReset();
+  getMultiAccountTransactionsByPrefix.mockReset().mockResolvedValue([]);
   getTransactionByExternalId.mockReset().mockResolvedValue(null);
   dbMock.dbWrite.bid.findFirst.mockResolvedValue({
     userId: 1,
@@ -88,6 +97,119 @@ describe('deleteBid — a bid whose refund already went through', () => {
     refundTransaction.mockRejectedValue(conflict());
 
     await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow('conflict');
+
+    expect(markedDeleted()).toBe(false);
+  });
+});
+
+describe('deleteBid — a bid paid across accounts (auction prefix)', () => {
+  const PREFIX = 'auction-5-1-77';
+  const legs = ['leg-a', 'leg-b'].map((transactionId) => ({
+    transactionId,
+    externalTransactionId: `${PREFIX}-${transactionId}`,
+    accountType: 'yellow',
+    accountId: 1,
+    amount: 50,
+  }));
+
+  beforeEach(() => {
+    dbMock.dbWrite.bid.findFirst.mockResolvedValue({
+      userId: 1,
+      transactionIds: [PREFIX],
+      auction: {
+        id: 5,
+        startAt: new Date(Date.now() - day),
+        endAt: new Date(Date.now() + day),
+        auctionBase: { slug: 'sd1' },
+      },
+    } as never);
+  });
+
+  it('deletes the bid when a retry finds every leg already refunded', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(conflict());
+    getMultiAccountTransactionsByPrefix.mockResolvedValue(legs);
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id.startsWith('refund-') ? { externalTransactionId: id } : null
+    );
+
+    await deleteBid({ userId: 1, bidId: 77 });
+
+    expect(refundTransaction).not.toHaveBeenCalled();
+    expect(markedDeleted()).toBe(true);
+  });
+
+  it('refunds the bid’s own prefix and deletes the bid', async () => {
+    refundMultiAccountTransaction.mockResolvedValue({
+      refundedTransactions: [{ amount: 50 }, { amount: 50 }],
+    });
+
+    await deleteBid({ userId: 1, bidId: 77 });
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: PREFIX })
+    );
+    expect(markedDeleted()).toBe(true);
+  });
+
+  it('keeps the bid and throws when the refund answers with no transactions', async () => {
+    refundMultiAccountTransaction.mockResolvedValue({ refundedTransactions: [] });
+
+    await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow(/No transactions/);
+
+    expect(markedDeleted()).toBe(false);
+  });
+
+  it('refunds no leg again when a second delete finds the first one refunded it', async () => {
+    refundMultiAccountTransaction
+      .mockResolvedValueOnce({ refundedTransactions: [{ amount: 50 }, { amount: 50 }] })
+      .mockRejectedValueOnce(conflict());
+    getMultiAccountTransactionsByPrefix.mockResolvedValue(legs);
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id.startsWith('refund-') ? { externalTransactionId: id } : null
+    );
+
+    await Promise.all([deleteBid({ userId: 1, bidId: 77 }), deleteBid({ userId: 1, bidId: 77 })]);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    expect(refundTransaction).not.toHaveBeenCalled();
+    expect(markedDeleted()).toBe(true);
+  });
+
+  it('keeps a bid whose second charge fails to refund, and a retry refunds only that one', async () => {
+    dbMock.dbWrite.bid.findFirst.mockResolvedValue({
+      userId: 1,
+      transactionIds: [PREFIX, TX],
+      auction: {
+        id: 5,
+        startAt: new Date(Date.now() - day),
+        endAt: new Date(Date.now() + day),
+        auctionBase: { slug: 'sd1' },
+      },
+    } as never);
+    refundMultiAccountTransaction
+      .mockResolvedValueOnce({ refundedTransactions: [{ amount: 50 }, { amount: 50 }] })
+      .mockRejectedValue(conflict());
+    getMultiAccountTransactionsByPrefix.mockResolvedValue(legs);
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id.startsWith('refund-leg-') ? { externalTransactionId: id } : null
+    );
+    refundTransaction.mockRejectedValue(new BuzzApiError(500, 'Internal Server Error'));
+
+    await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow(/500/);
+    expect(markedDeleted()).toBe(false);
+
+    refundTransaction.mockReset().mockResolvedValue({ transactionId: TX });
+    await deleteBid({ userId: 1, bidId: 77 });
+
+    expect(markedDeleted()).toBe(true);
+    // The prefix refund went through once; the retry found its legs refunded and paid none again.
+    expect(refundTransaction.mock.calls.map(([id]) => id)).toEqual([TX]);
+  });
+
+  it('keeps the bid and throws when the prefix lists no transactions', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(404, 'Not Found'));
+
+    await expect(deleteBid({ userId: 1, bidId: 77 })).rejects.toThrow(/No transactions/);
 
     expect(markedDeleted()).toBe(false);
   });

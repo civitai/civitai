@@ -25,32 +25,64 @@ describe('createTripoInput', () => {
     expect(await stepTypes({ quad: false })).toEqual(['polyGen', 'model3DPreview']);
   });
 
-  it('sends v2.5 with its version for the default Tripo version', async () => {
-    const [step] = await createTripoInput(data as any, ctx);
-    expect((step as any).input).toMatchObject({
-      version: 'v2.5',
-      imageUrl: 'https://x/source.png',
-    });
-  });
-
   // Quad output is FBX-only, which the preview renderer can't load.
   it('submits a quad generation without the preview step', async () => {
     expect(await stepTypes({ quad: true })).toEqual(['polyGen']);
   });
+});
 
-  it('sends H3.1 multiview when the H3.1 version has several images', async () => {
-    const [step] = await createTripoInput(
-      {
-        ...data,
-        tripoVersion: 'h3.1',
-        images: [...data.images, { url: 'https://x/side.png', width: 1024, height: 1024 }],
-      } as any,
-      ctx
-    );
-    expect((step as any).input).toMatchObject({ version: 'h3.1', operation: 'multiviewTo3D' });
+async function polyGenInput(extra: Record<string, unknown>) {
+  const [step] = await createTripoInput({ ...data, ...extra } as any, ctx);
+  return (step as { input: Record<string, unknown> }).input;
+}
+
+describe('createTripoInput — H3.1', () => {
+  it('sends one image as imageTo3D and several as multiviewTo3D, in order', async () => {
+    expect(await polyGenInput({ version: 'h3.1' })).toMatchObject({
+      version: 'h3.1',
+      operation: 'imageTo3D',
+      imageUrl: 'https://x/source.png',
+    });
+
+    const views = ['front', 'left', 'back'].map((v) => ({ url: `https://x/${v}.png` }));
+    expect(await polyGenInput({ version: 'h3.1', images: views })).toMatchObject({
+      operation: 'multiviewTo3D',
+      imageUrls: ['https://x/front.png', 'https://x/left.png', 'https://x/back.png'],
+    });
   });
 
-  it('submits an H3.1 quad generation without the preview step', async () => {
-    expect(await stepTypes({ tripoVersion: 'h3.1', quad: true })).toEqual(['polyGen']);
+  it('sends a prompt for text-to-3D, with no image fields', async () => {
+    const input = await polyGenInput({
+      version: 'h3.1',
+      workflow: 'txt2model3d',
+      images: undefined,
+      prompt: 'a treasure chest',
+      seed: 42,
+    });
+    expect(input).toMatchObject({
+      operation: 'textTo3D',
+      prompt: 'a treasure chest',
+      seed: 42,
+      imageSeed: 42,
+    });
+    expect(input.textureAlignment).toBeUndefined();
+  });
+
+  it('maps the texture tiers onto the texture toggle and quality', async () => {
+    expect(await polyGenInput({ version: 'h3.1', texture: 'no' })).toMatchObject({
+      texture: false,
+    });
+    expect(await polyGenInput({ version: 'h3.1', texture: 'HD' })).toMatchObject({
+      texture: true,
+      textureQuality: 'detailed',
+    });
+  });
+
+  it('keeps v2.5 on its own input', async () => {
+    expect(await polyGenInput({ version: 'v2.5', texture: 'HD' })).toMatchObject({
+      version: 'v2.5',
+      imageUrl: 'https://x/source.png',
+      texture: 'HD',
+    });
   });
 });

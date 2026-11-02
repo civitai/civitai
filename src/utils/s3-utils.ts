@@ -208,12 +208,64 @@ export async function uploadImageBufferToStore(
       ...(opts?.contentType ? { ContentType: opts.contentType } : {}),
     })
   );
-  // Mirror the upload endpoint: register the uuid→backend mapping so the
-  // storage-resolver / edge (and thus the scanner) can locate the object. Awaited
-  // (unlike the endpoint's fire-and-forget) to close the register-vs-scan race —
-  // `registerMediaLocation` swallows its own errors, so this can't throw.
-  await registerMediaLocation(key, backend, bytes.byteLength);
+  await registerStoredImage(key, backend, bytes.byteLength);
   return { key, backend };
+}
+
+/**
+ * The step every server-side image store write ends with, whether the bytes arrived in one PUT
+ * or as a multipart upload: register the uuid→backend mapping so the storage-resolver / edge
+ * (and thus the scanner) can locate the object. Awaited (unlike the upload endpoint's
+ * fire-and-forget) to close the register-vs-scan race — `registerMediaLocation` swallows its own
+ * errors, so this can't throw.
+ */
+async function registerStoredImage(key: string, backend: ImageUploadBackend, bytes: number) {
+  await registerMediaLocation(key, backend, bytes);
+}
+
+/**
+ * Server-side multipart counterpart of {@link uploadImageBufferToStore}, for a caller that
+ * receives the bytes in pieces (the chunked upload relay). Same backend, and the key is minted
+ * HERE, never taken from the caller, for the same overwrite reason.
+ */
+export async function startImageMultipartToStore(opts?: { contentType?: string }) {
+  const { s3, bucket } = await getImageUploadBackend();
+  const key = randomUUID();
+  const uploadId = await createMultipartUpload({ s3, bucket, key, mimeType: opts?.contentType });
+  return { key, uploadId };
+}
+
+/** Upload one part of a {@link startImageMultipartToStore} session. Returns the part's ETag. */
+export async function uploadImagePartToStore(args: {
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  body: Uint8Array;
+}) {
+  const { s3, bucket } = await getImageUploadBackend();
+  return uploadPart({ ...args, bucket, s3 });
+}
+
+/**
+ * Finish a {@link startImageMultipartToStore} session and register it exactly as
+ * {@link uploadImageBufferToStore} registers a single PUT, so the object is servable the same way.
+ * `totalBytes` is the caller's verified sum of the part sizes, which is what the registry records.
+ */
+export async function completeImageMultipartToStore(args: {
+  key: string;
+  uploadId: string;
+  parts: { ETag: string; PartNumber: number }[];
+  totalBytes: number;
+}): Promise<{ key: string; backend: ImageUploadBackend }> {
+  const { s3, bucket, backend } = await getImageUploadBackend();
+  await completeMultipartUpload(bucket, args.key, args.uploadId, args.parts, s3);
+  await registerStoredImage(args.key, backend, args.totalBytes);
+  return { key: args.key, backend };
+}
+
+export async function abortImageMultipartToStore(args: { key: string; uploadId: string }) {
+  const { s3, bucket } = await getImageUploadBackend();
+  await abortMultipartUpload(bucket, args.key, args.uploadId, s3);
 }
 
 /**

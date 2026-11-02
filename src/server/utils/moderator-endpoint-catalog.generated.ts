@@ -2,8 +2,6 @@
 // Re-run 'pnpm run generate:moderator-endpoints' after adding or removing a moderator endpoint.
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
-  '/api/admin/temp/creator-shop-label-backfill': () =>
-    import('~/pages/api/admin/temp/creator-shop-label-backfill'),
   '/api/admin/temp/text-scan-clavata-cutover': () =>
     import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
   '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
@@ -13,6 +11,9 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/bounty-entry-file/reblock-check': () =>
     import('~/pages/api/mod/bounty-entry-file/reblock-check'),
   '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
+  '/api/mod/bounty-unpaid-award/resolve': () =>
+    import('~/pages/api/mod/bounty-unpaid-award/resolve'),
+  '/api/mod/collection/set-item-tag': () => import('~/pages/api/mod/collection/set-item-tag'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),
   '/api/mod/comment/restore-from-tos': () => import('~/pages/api/mod/comment/restore-from-tos'),
@@ -45,6 +46,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/membership-gift/refund-unfulfilled'),
   '/api/mod/membership-gift/revoke-unpaid': () =>
     import('~/pages/api/mod/membership-gift/revoke-unpaid'),
+  '/api/mod/messages/claim': () => import('~/pages/api/mod/messages/claim'),
+  '/api/mod/messages/inbox': () => import('~/pages/api/mod/messages/inbox'),
+  '/api/mod/messages/release': () => import('~/pages/api/mod/messages/release'),
+  '/api/mod/messages/thread': () => import('~/pages/api/mod/messages/thread'),
   '/api/mod/minor-flag/confirm': () => import('~/pages/api/mod/minor-flag/confirm'),
   '/api/mod/minor-flag/dismiss': () => import('~/pages/api/mod/minor-flag/dismiss'),
   '/api/mod/minor-flag/resolve-appeal': () => import('~/pages/api/mod/minor-flag/resolve-appeal'),
@@ -62,6 +67,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/model/unpublish': () => import('~/pages/api/mod/model/unpublish'),
   '/api/mod/poi-flag/confirm': () => import('~/pages/api/mod/poi-flag/confirm'),
   '/api/mod/poi-flag/dismiss': () => import('~/pages/api/mod/poi-flag/dismiss'),
+  '/api/mod/poi-flag/flag-match': () => import('~/pages/api/mod/poi-flag/flag-match'),
   '/api/mod/poi-flag/revert': () => import('~/pages/api/mod/poi-flag/revert'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
@@ -91,6 +97,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),
   '/api/mod/user/membership-code-revoke': () =>
     import('~/pages/api/mod/user/membership-code-revoke'),
+  '/api/mod/user/message-as-civitai': () => import('~/pages/api/mod/user/message-as-civitai'),
   '/api/mod/user/mute': () => import('~/pages/api/mod/user/mute'),
   '/api/mod/user/reactions': () => import('~/pages/api/mod/user/reactions'),
   '/api/mod/user/remove-reactions': () => import('~/pages/api/mod/user/remove-reactions'),

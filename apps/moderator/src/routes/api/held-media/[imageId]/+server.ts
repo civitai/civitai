@@ -78,7 +78,10 @@ export const GET: RequestHandler = async ({ params, locals, request }) => {
       upstream: upstream.headers,
     })
   );
-  if (isAuditedServe(upstream)) recordHeldView(locals.user.id, imageId);
+  // Awaited, so the row is there before the page that loads these bytes reports them shown. A HEAD
+  // (answered by this handler) delivers no bytes.
+  if (request.method !== 'HEAD' && isAuditedServe(upstream))
+    await recordHeldView(locals.user.id, imageId);
 
   return new Response(upstream.body, {
     status: upstream.status,

@@ -125,6 +125,12 @@ import {
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelPoiAndOwnerViaKysely,
+  readModelPoiAndOwnerViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** 404s a lookup of a model the viewer may not see. `pick` reads the model id from the input. */
@@ -132,10 +138,9 @@ const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
   middleware(async ({ ctx, next, input }) => {
     const id = pick(input ?? {});
     if (id && !ctx.user?.isModerator) {
-      const model = await dbRead.model.findUnique({
-        where: { id },
-        select: { poi: true, userId: true },
-      });
+      const model = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+        ? await readModelPoiAndOwnerViaKysely((await loadKyselyDb()).kyselyRead, id)
+        : await readModelPoiAndOwnerViaPrisma(dbRead, id);
       if (model && !canViewPoiModel(model.poi, model.userId, ctx.user)) throw throwNotFoundError();
     }
     return next();

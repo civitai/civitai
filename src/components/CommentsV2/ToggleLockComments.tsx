@@ -37,6 +37,8 @@ export function ToggleLockComments({
     },
     onSuccess: () => {
       queryUtils.commentv2.getThreadDetails.invalidate({ entityId, entityType });
+      // A surface on the v3 comment suite reads its lock from there.
+      void queryUtils.commentv3.invalidate();
       onSuccess?.();
     },
     onError: () => {

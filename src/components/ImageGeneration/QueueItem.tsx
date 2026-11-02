@@ -32,6 +32,7 @@ import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { DurationIcon } from '~/components/ImageGeneration/DurationIcon';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
   matchesMarkerTags,
@@ -69,9 +70,11 @@ import {
   type OutputAction,
 } from '~/components/ImageGeneration/workflow-display';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { getRefundSummary } from '~/components/ImageGeneration/refund-summary';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import {
@@ -104,6 +107,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { workflowConfigs } from '~/shared/generation/config/workflows';
 import { polygenVersionOptions } from '~/shared/form-graph/generation/model3d/polygen.graph';
 import { tripoVersionOptions } from '~/shared/form-graph/generation/model3d/tripo.graph';
+import { migrateModel3dParams } from '~/shared/form-graph/generation/model3d/model3d-params';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -170,6 +174,7 @@ export function QueueItem({
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
   const canceled = status === 'canceled';
+  const refund = getRefundSummary(status, request.transactions);
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(request.status);
 
@@ -281,7 +286,9 @@ export function QueueItem({
   // The model (Meshy/Tripo/Hunyuan3D) that generated the mesh. Derived from the
   // ecosystem carried in the params snapshot; legacy items predate the model
   // selector, so any 3D item without an ecosystem is Meshy (PolyGen).
-  const polyGenModelVersion = (params.polygenVersion ?? params.tripoVersion) as string | undefined;
+  const polyGenModelVersion = isPolyGen
+    ? (migrateModel3dParams(params as Record<string, unknown>).version as string | undefined)
+    : undefined;
   const polyGenModelLabel = isPolyGen
     ? [
         POLYGEN_ECOSYSTEM_MODEL_LABELS[params.ecosystem as string] ?? 'Meshy',
@@ -322,10 +329,11 @@ export function QueueItem({
               <Text size="xs" c="dimmed">
                 {formatDateMin(request.createdAt)}
               </Text>
-              {!!request.cost?.total && (
+              {(!!request.cost?.total || !!refund) && (
                 <GenerationCostPopover
                   workflowCost={request.cost}
                   transactions={request.transactions}
+                  refund={refund}
                   readOnly
                   variant="badge"
                 />
@@ -334,7 +342,7 @@ export function QueueItem({
                 <TransactionsPopover data={request.transactions} />
               )}
               {!!request.duration && currentUser?.isModerator && (
-                <Badge color="yellow">Duration: {request.duration}</Badge>
+                <DurationIcon seconds={request.duration} />
               )}
               {workflowDefinition && (
                 <Badge
@@ -861,8 +869,7 @@ const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> =
   NsfwLevel: 'Mature content restriction.',
   NSFWLevel:
     'One or more resources used in this generation cannot be used to generate mature content',
-  NSFWLevelSourceImageRestricted:
-    'If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs only.',
+  NSFWLevelSourceImageRestricted: UNMARKED_SOURCE_IMAGE_MESSAGE,
   // the following keys are managed in generationRequestHooks.ts
   privateGen: 'Private Generation is limited to PG and PG-13 content.',
   [NSFW_CAPPED]:
@@ -1223,6 +1230,7 @@ function Model3DQueueCardOutputs({
       ? 'Generation canceled'
       : 'Generation failed';
   const isComplete = !pending && !processing && !isFailed;
+  const refund = getRefundSummary(status, request.transactions);
 
   // Open the model full-screen. Local (non-routed) dialog, same pattern as
   // the image lightbox; the heavy three.js viewer lives inside the dialog
@@ -1349,9 +1357,11 @@ function Model3DQueueCardOutputs({
               <Text size="sm" fw={600} c="red.4">
                 {failureLabel}
               </Text>
-              <Text size="xs" c="dimmed">
-                Your Buzz has been refunded.
-              </Text>
+              {refund && (
+                <Text size="xs" c="dimmed">
+                  {refund.text}
+                </Text>
+              )}
             </div>
           ) : (
             <Text c="dimmed" size="xs" align="center">

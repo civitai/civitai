@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { awardBountyEntry } from '~/server/services/bountyEntry.service';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { awardBountyEntry, upsertBountyEntry } from '~/server/services/bountyEntry.service';
 import { upsertBountyEntryHandler } from '~/server/controllers/bountyEntry.controller';
 import type { ProtectedContext } from '~/server/createContext';
 
@@ -122,4 +123,40 @@ describe('upsertBountyEntryHandler', () => {
       expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
     });
   });
+});
+
+describe('upsertBountyEntry images', () => {
+  const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e35';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    redisMock.sysRedis.mGet.mockResolvedValue([String(ENTRANT_ID)] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    dbMock.dbWrite.bountyEntry.update.mockResolvedValue({ id: ENTRY_ID, userId: ENTRANT_ID });
+    dbMock.dbWrite.bountyEntry.create.mockResolvedValue({ id: ENTRY_ID, userId: ENTRANT_ID });
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+  });
+
+  it.each([
+    ['an update', ENTRY_ID],
+    ['a new entry', undefined],
+  ])(
+    'reads the key issue records of new images before opening the transaction: %s',
+    async (_, id) => {
+      await upsertBountyEntry({
+        id,
+        bountyId: BOUNTY_ID,
+        images: [{ url: KEY, type: 'image' }],
+        userId: ENTRANT_ID,
+      } as never);
+
+      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+      expect(redisMock.sysRedis.mGet.mock.invocationCallOrder[0]).toBeLessThan(
+        dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]
+      );
+      expect(dbMock.dbWrite.image.createMany).toHaveBeenCalledTimes(1);
+    }
+  );
 });

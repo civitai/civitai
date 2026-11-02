@@ -70,7 +70,7 @@ describe('the tools a subagent gets', () => {
       });
     }
     await expect(
-      Promise.resolve(gate.tools[REPORT_READY].execute({}, toolCtx))
+      Promise.resolve(gate.tools[REPORT_READY].execute({ data: 'civitai' }, toolCtx))
     ).resolves.toMatchObject({ ready: true });
   });
 });

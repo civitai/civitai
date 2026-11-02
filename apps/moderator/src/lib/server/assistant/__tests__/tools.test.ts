@@ -71,6 +71,13 @@ vi.mock('$lib/server/dossier.service', () => ({
 
 const getBuzzFlows = vi.fn(async () => ({ days: 90, accounts: [], flows: [], truncated: false }));
 vi.mock('$lib/server/buzz-flows.service', () => ({ getBuzzFlows, MAX_BUZZ_DAYS: 365 }));
+const getPlacementFlows = vi.fn(async () => ({
+  days: 90,
+  accounts: [],
+  pairs: [],
+  truncated: false,
+}));
+vi.mock('$lib/server/placement-flows.service', () => ({ getPlacementFlows }));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
 const getRegistrationEmails = vi.fn(
@@ -146,9 +153,14 @@ describe('toolsFor', () => {
       'accounts_on_address',
       'search_accounts',
       'buzz_flows',
+      'placement_flows',
       'abuse_findings',
     ])
       expect(offered).not.toContain(lookupOnly);
+  });
+
+  it('offers placement_flows to a User Lookup holder', () => {
+    expect(names(['/retool/user-lookup'])).toContain('placement_flows');
   });
 
   it('offers detector findings only with the /abuse page', () => {
@@ -189,6 +201,32 @@ describe('what the tools hand the model', () => {
     expect(without.sources).not.toContainEqual(expect.objectContaining({ ref: 'run:4' }));
     const withAbuse = await run('get_user_dossier', { userId: 5 }, ['/reports/user', '/abuse']);
     expect(withAbuse.sources).toContainEqual(expect.objectContaining({ ref: 'run:4' }));
+  });
+});
+
+describe('placement_flows', () => {
+  it('takes 1 to 100 accounts and at most a year, like buzz_flows', () => {
+    const input = TOOLS.find((t) => t.name === 'placement_flows')!.input;
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    expect(input.safeParse({ userIds: ids(100), days: 365 }).success).toBe(true);
+    expect(input.safeParse({ userIds: ids(101) }).success).toBe(false);
+    expect(input.safeParse({ userIds: [] }).success).toBe(false);
+    expect(input.safeParse({ userIds: [1], days: 366 }).success).toBe(false);
+  });
+
+  it('cites both ends of every pair it returns, and passes the cap on', async () => {
+    getPlacementFlows.mockResolvedValueOnce({
+      days: 30,
+      accounts: [{ userId: 5, username: 'five', placed: {}, received: {} }],
+      pairs: [{ placerId: 5, placerName: 'five', ownerId: 9, ownerName: 'nine' }],
+      truncated: true,
+    } as never);
+    const out = (await run('placement_flows', { userIds: [5], days: 30 }, [
+      '/retool/user-lookup',
+    ])) as unknown as { truncated: boolean; sources: unknown[] };
+    expect(getPlacementFlows).toHaveBeenLastCalledWith([5], 30);
+    expect(out.truncated).toBe(true);
+    expect(out.sources).toContainEqual(expect.objectContaining({ ref: 'user:9' }));
   });
 });
 

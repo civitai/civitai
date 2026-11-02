@@ -15,6 +15,7 @@ export function ShopSection({
   imageUrl,
   hideTitle,
   className,
+  id,
   children,
 }: Props) {
   const backgroundImageUrl = imageUrl
@@ -22,7 +23,7 @@ export function ShopSection({
     : undefined;
 
   return (
-    <section className={clsx('m-3 flex flex-col gap-4', classes.section, className)}>
+    <section id={id} className={clsx('m-3 flex flex-col gap-4', classes.section, className)}>
       <div
         className={clsx(
           classes.sectionHeaderContainer,
@@ -81,4 +82,5 @@ type Props = {
   imageUrl?: string | null;
   hideTitle?: boolean;
   className?: string;
+  id?: string;
 };

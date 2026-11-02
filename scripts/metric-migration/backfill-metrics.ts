@@ -2,10 +2,10 @@
  * Backfill metrics from PostgreSQL to ClickHouse
  *
  * Usage:
- *   npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric
- *   npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric --date 2025-01-21
- *   npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric --dry-run
- *   npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric --batch-size 500
+ *   npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric
+ *   npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric --date 2025-01-21
+ *   npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric --dry-run
+ *   npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric --batch-size 500
  */
 
 import { clickhouse } from '~/server/clickhouse/client';
@@ -132,7 +132,7 @@ function printHelp(): void {
 Backfill metrics from PostgreSQL to ClickHouse
 
 Usage:
-  npx ts-node scripts/metric-migration/backfill-metrics.ts --table <table> [options]
+  npx tsx scripts/metric-migration/backfill-metrics.ts --table <table> [options]
 
 Options:
   --table, -t <name>       PostgreSQL metric table to backfill (required)
@@ -148,9 +148,9 @@ Available tables:
   ${availableTables.join('\n  ')}
 
 Examples:
-  npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric
-  npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric --dry-run
-  npx ts-node scripts/metric-migration/backfill-metrics.ts --table ImageMetric --batch-size 500
+  npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric
+  npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric --dry-run
+  npx tsx scripts/metric-migration/backfill-metrics.ts --table ImageMetric --batch-size 500
   `);
 }
 

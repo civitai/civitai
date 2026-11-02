@@ -19,6 +19,14 @@ export function directDatasetUrl(air: string): string | null {
     : null;
 }
 
+/** A blob-backed item's bytes as a local object URL for its preview; '' when they can't be read. */
+export function blobPreviewUrl(air: string, workflowId: string): Promise<string> {
+  return backend()
+    .datasetBlob(air, workflowId)
+    .then((blob) => URL.createObjectURL(blob))
+    .catch(() => '');
+}
+
 export function toReuseItems(
   dataset: { air: string; caption: string }[],
   workflowId: string

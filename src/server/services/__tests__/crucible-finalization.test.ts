@@ -213,7 +213,7 @@ describe('finalizeCrucible — positions', () => {
     await finalizeCrucible(1);
 
     const { where } = findMany.mock.calls[0][0];
-    expect(where).toEqual({
+    expect(where).toMatchObject({
       crucibleId: 1,
       user: { bannedAt: null },
       image: {
@@ -225,6 +225,43 @@ describe('finalizeCrucible — positions', () => {
       },
     });
     expect(where.image.nsfwLevel.in).not.toContain(2);
+  });
+
+  describe('contest-banned entrants', () => {
+    // The predicate is a nested Prisma.Sql value, so flatten the call the way Prisma would.
+    const sqlOf = (strings: TemplateStringsArray, values: unknown[]) =>
+      Prisma.sql(strings, ...values).sql;
+    const banQuery = (client: typeof dbMock.dbWrite.$queryRaw) =>
+      client.mock.calls.filter(([strings, ...values]) =>
+        sqlOf(strings as TemplateStringsArray, values).includes('contestBanDetails')
+      );
+
+    it("leaves their entries out of the ranking, asking the primary once for this crucible's entrants", async () => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) =>
+          sqlOf(strings, values).includes('contestBanDetails') ? [{ userId: 7 }, { userId: 9 }] : []
+      );
+      pageEntries([[dbEntry(1, 7, 1000)], [dbEntry(2, 8, 2000)]]);
+
+      await finalizeCrucible(1);
+
+      const rankingWheres = findMany.mock.calls
+        .map(([args]) => args.where)
+        .filter((where) => !where.position);
+      expect(rankingWheres.length).toBeGreaterThan(1);
+      for (const where of rankingWheres) expect(where.userId).toEqual({ notIn: [7, 9] });
+
+      const queries = banQuery(dbMock.dbWrite.$queryRaw);
+      expect(queries).toHaveLength(1);
+      const [strings, ...values] = queries[0];
+      const sql = sqlOf(strings as TemplateStringsArray, values);
+      expect(sql).toMatch(/FROM "CrucibleEntry" ce\s+JOIN "User" u ON u\.id = ce\."userId"/);
+      expect(sql).toMatch(
+        /ce\."crucibleId" = \?\s+AND u\.meta ->> 'contestBanDetails' IS NOT NULL/
+      );
+      expect(Prisma.sql(strings as TemplateStringsArray, ...values).values).toEqual([1]);
+      expect(banQuery(dbMock.dbRead.$queryRaw)).toHaveLength(0);
+    });
   });
 
   it('holds the money for review, loudly, when every entry is disqualified', async () => {
@@ -490,11 +527,12 @@ describe('finalizeCrucible — completion', () => {
     await finalizeCrucible(1);
 
     expect(entryWrites()).toHaveLength(1);
-    const [lock] = dbMock.dbWrite.$queryRaw.mock.calls.map(([strings]) =>
+    const calls = dbMock.dbWrite.$queryRaw.mock.calls.map(([strings]) =>
       (strings as TemplateStringsArray).join('?').replace(/\s+/g, ' ')
     );
-    expect(lock).toBe('SELECT id FROM "Crucible" WHERE id = ? FOR UPDATE');
-    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+    const lockIndex = calls.findIndex((sql) => sql.includes('FOR UPDATE'));
+    expect(calls[lockIndex]).toBe('SELECT id FROM "Crucible" WHERE id = ? FOR UPDATE');
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[lockIndex]).toBeLessThan(
       executeRaw.mock.invocationCallOrder.at(-1)!
     );
   });

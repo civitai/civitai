@@ -57,6 +57,33 @@ describe('minimax H3 Max and HeyGen variants', () => {
     expect(min(minimaxVersionIds.max)).toBe(4);
   });
 
+  it('the API build offers only the resolutions each tier supports', () => {
+    const store = storeOn('txt2vid', minimaxVersionIds['v1.0']);
+    const resolutions = () =>
+      (store.getField('resolution')?.meta as { options: { value: string }[] }).options.map(
+        (o) => o.value
+      );
+
+    expect(store.getField('mode')?.value).toBe('standard');
+    expect(store.getField('resolution')?.value).toBe('2K');
+    expect(resolutions()).toEqual(['768P', '2K']);
+
+    store.set({ mode: 'lite' });
+    expect(resolutions()).toEqual(['480P', '768P']);
+    expect(store.getField('resolution')?.value).toBe('768P');
+
+    store.set({ mode: 'highspeed' });
+    expect(resolutions()).toEqual(['768P']);
+  });
+
+  it('HeyGen offers 2K', () => {
+    const options = storeOn('txt2vid', minimaxVersionIds.heygen).getField('resolution')?.meta as {
+      options: { value: string }[];
+    };
+
+    expect(options.options.map((o) => o.value)).toContain('2K');
+  });
+
   it('a 4s duration picked on comfy does not reach HeyGen', () => {
     const store = storeOn('txt2vid', minimaxVersionIds.comfy);
     store.set({ duration: 4 });

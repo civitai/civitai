@@ -2,7 +2,10 @@ import { Badge, Group, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
-import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
+import {
+  SCOPE_DESCRIPTIONS,
+  SCOPE_PLAIN_TITLES,
+} from '~/server/services/blocks/scope-descriptions.constants';
 
 /**
  * The OPT-IN consent layer — supplied by the two permissions surfaces only.
@@ -155,6 +158,11 @@ export function BlockScopeList({
             {/* `align="center"` rather than the pre-change `flex-start`: once the id can wrap to
                 two lines, the "Sensitive" marker reads as belonging to the pill as a whole rather
                 than to its first line. Cosmetic, and nothing asserts it. */}
+            {consent && SCOPE_PLAIN_TITLES[scope] ? (
+              <Text size="sm" fw={500} data-testid="block-scope-title">
+                {SCOPE_PLAIN_TITLES[scope]}
+              </Text>
+            ) : null}
             <Group gap="xs" wrap="nowrap" align="center">
               <Badge
                 size="sm"

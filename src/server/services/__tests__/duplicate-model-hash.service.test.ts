@@ -57,7 +57,6 @@ const scan = (overrides: Partial<Parameters<typeof checkDuplicateHashOnScan>[0]>
     modelId: MODEL_ID,
     ownerId: OWNER_ID,
     modelStatus: 'Draft',
-    modelMeta: { showcaseCollectionId: 3 } as never,
     ...overrides,
   });
 
@@ -77,7 +76,6 @@ describe('checkDuplicateHashOnScan', () => {
       id: MODEL_ID,
       reason: 'duplicate',
       customMessage: expect.stringContaining('/models/1000?modelVersionId=2000'),
-      meta: { showcaseCollectionId: 3 },
       userId: constants.system.user.id,
       isModerator: true,
     });

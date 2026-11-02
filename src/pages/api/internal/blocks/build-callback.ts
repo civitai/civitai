@@ -6,7 +6,10 @@ import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import {
+  isAppBlocksPerAppObjectsEnabled,
+  isAppBlocksPipelineEnabled,
+} from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
 import { autogenerateScreenshotIfMissing } from '~/server/services/blocks/autogenerate-screenshot.service';
@@ -26,8 +29,11 @@ import { DEPLOY_FAILURE_DETAIL } from '~/shared/constants/app-block-deploy.const
  * Tekton PipelineRun finally task → civitai-web. Notified once the build
  * has either succeeded (image pushed to ghcr.io) or failed. We:
  *   1. Verify HMAC signature (BLOCK_BUILD_CALLBACK_SECRET).
- *   2. On success → create the apply Job in civitai-apps ns to roll the
- *      new image, update app_blocks.current_version_deployed_at.
+ *   2. On success → create the apply Job in civitai-apps ns, which smoke-tests
+ *      the image and publishes it to the shared static server (and, only while
+ *      the `app-blocks-per-app-objects` rollback flag is on, also rolls the
+ *      per-app Deployment); update app_blocks.current_version_deployed_at once
+ *      that Job succeeds.
  *   3. On failure → write commit status failure to Forgejo so the
  *      developer sees the result in the repo view — skipped when a newer
  *      recorded run has superseded the sender (stale-run guard).
@@ -195,7 +201,7 @@ export function expectedImageRef(slug: string, sha: string): string {
 //
 // TTL must outlast the WHOLE first attempt, not just the apply: the mark is set
 // before `triggerApply` (two k8s calls, ~60s of 30s-timeouts each) and
-// `waitForApplyJob` then runs a 6m budget — worst case ~7m. We use 10m so the
+// `waitForApplyJob` then runs APPLY_WATCH_TIMEOUT_MS (8m) — worst case ~9m. We use 10m so the
 // key can't expire mid-apply and let a late duplicate re-trigger (which would
 // delete + restart the in-flight Job). The longer TTL does NOT suppress
 // legitimate retries because every failure path frees the slot explicitly: the
@@ -205,7 +211,18 @@ export function expectedImageRef(slug: string, sha: string): string {
 // watcher-crash / pod-restart). Cross-window replay protection is the signed-`ts`
 // freshness check above, which, unlike this dedup, does not depend on Redis (but
 // allows a callback with no `ts`).
-const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 6m apply)
+const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 8m apply)
+
+// How long the watcher waits for the apply Job. ONE attempt's slowest normal path is the smoke
+// test (~85s) plus a required publish, which may take up to its own 240s deadline plus 15s of
+// polling: ~5m40s, too close to the old 6m for a slow publish not to read as a timeout. A timeout
+// tells the author the deploy failed while the Job may still finish and serve it.
+// This budget covers one attempt, not the Job's retries: the Job retries a failed attempt
+// (backoffLimit 2), so a slow first attempt followed by a successful second one can still end
+// past it and be reported as timed out while its publish serves the new version. With the
+// per-app rollback flag on, the per-app rollout adds up to 180s to an attempt as well.
+// Must stay below APPLY_DEDUP_TTL_SECONDS minus the trigger time.
+const APPLY_WATCH_TIMEOUT_MS = 8 * 60 * 1000;
 function applyDedupKey(appBlockId: string, sha: string): string {
   // Reuse the block rate-limit key family (same convention as workflow-completed).
   return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:apply:${appBlockId}:${sha}`;
@@ -440,6 +457,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       sha: body.sha,
       appBlockId: body.appBlockId,
       imageRef: body.imageRef,
+      perAppObjects: await isAppBlocksPerAppObjectsEnabled(),
     });
   } catch (e) {
     // Job creation failed — no watcher will run to clear the dedup mark, so
@@ -466,9 +484,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   // gotcha #39 fix (2026-05-30): defer the
   // `app_blocks.current_version_deployed_at` write until the apply Job
-  // actually succeeds. The previous shape wrote it the moment the Job
-  // was created — which meant a failed apply (smoke step / network
-  // policy / image perms) left the column saying "deployed at <now>"
+  // actually succeeds. The Job succeeds only once the smoke test passed and
+  // the build is published to the shared static server (its current pointer
+  // flipped), which is what serves the app, so `live` below means served.
+  // The previous shape wrote it the moment the Job was created — which
+  // meant a failed apply (smoke step / network policy / image perms) left
+  // the column saying "deployed at <now>"
   // while the live Deployment was still on the previous image. Now the
   // column reflects "what's actually serving" rather than "what built."
   //
@@ -501,7 +522,7 @@ async function watchApplyJobAndRecord(args: {
   jobName: string;
 }): Promise<void> {
   try {
-    const outcome = await waitForApplyJob(args.jobName);
+    const outcome = await waitForApplyJob(args.jobName, { timeoutMs: APPLY_WATCH_TIMEOUT_MS });
     if (outcome === 'succeeded') {
       await dbWrite.appBlock.update({
         where: { id: args.appBlockId },

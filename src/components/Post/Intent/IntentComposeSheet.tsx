@@ -24,6 +24,7 @@ export type IntentComposeSheetProps = {
   values: IntentComposeValues;
   onChange: (values: IntentComposeValues) => void;
   appName?: string;
+  itemName?: string;
   sourceLink?: string;
   primaryLabel: string;
   onPrimary: () => void;
@@ -37,6 +38,7 @@ export function IntentComposeSheet({
   values,
   onChange,
   appName,
+  itemName,
   sourceLink,
   primaryLabel,
   onPrimary,
@@ -55,7 +57,13 @@ export function IntentComposeSheet({
             <Group gap={6} wrap="nowrap">
               <IconApps size={16} className="shrink-0" />
               <Text size="sm" c="dimmed" className="truncate">
-                Shared from <strong>{appName}</strong>
+                Shared from{' '}
+                {itemName && (
+                  <>
+                    <strong>{itemName}</strong> on{' '}
+                  </>
+                )}
+                <strong>{appName}</strong>
               </Text>
             </Group>
           )}

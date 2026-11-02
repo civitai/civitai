@@ -2214,6 +2214,33 @@ export const appListingsRouter = router({
       return detail;
     }),
 
+  getAppCard: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppListingDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
+      if (scope === 'none') {
+        throw throwNotFoundError('Listing not found');
+      }
+      const { getListingCard } = await import('~/server/services/blocks/app-listing.service');
+      const card = await getListingCard(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewer: listingViewerFromCtx(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
+      if (!card) throw throwNotFoundError('Listing not found');
+      return card;
+    }),
+
   // -------------------------------------------------------------------------
   // REVIEW (thumbs/recommend) WRITE + READ — the write half of AppListingReview
   // (the model + the "N% recommend (M)" DISPLAY already existed; only the write

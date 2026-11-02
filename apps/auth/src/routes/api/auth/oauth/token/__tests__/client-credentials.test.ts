@@ -177,3 +177,23 @@ describe('client_credentials grant', () => {
     expect(h.inserts).toHaveLength(0);
   });
 });
+
+describe('client_credentials grant — scope in a JSON body', () => {
+  it.each([[['AppStoreCatalogWrite']], [5]])('answers 400 invalid_scope for %j', async (scope) => {
+    const res = await POST({
+      request: new Request('https://auth.civitai.com/api/auth/oauth/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'client_credentials',
+          client_id: 'game-frame',
+          client_secret: SECRET,
+          scope,
+        }),
+      }),
+    } as never);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
+  });
+});

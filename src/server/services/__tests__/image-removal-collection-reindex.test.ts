@@ -107,14 +107,12 @@ beforeEach(() => {
 });
 
 describe('deleteImageById', () => {
+  const deleted = { url: 'some-url', postId: POST_ID, nsfwLevel: 1, userId: OWNER_ID };
+  const isImageDelete = (strings: TemplateStringsArray) =>
+    Array.from(strings).join('?').includes('DELETE FROM "Image"');
   beforeEach(() => {
-    mockDbWrite.image.delete.mockResolvedValue({
-      url: 'some-url',
-      postId: POST_ID,
-      nsfwLevel: 1,
-      userId: OWNER_ID,
-    });
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (isImageDelete(strings)) return [deleted];
       if (isCoverIndexGate(strings)) return [{ present: true }];
       return isCollectionLookup(strings)
         ? [{ collectionId: COLLECTION_A }, { collectionId: COLLECTION_B }]
@@ -133,13 +131,13 @@ describe('deleteImageById', () => {
   it('resolves the collections BEFORE the delete, since CollectionItem cascades away', async () => {
     const order: string[] = [];
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (isImageDelete(strings)) {
+        order.push('delete');
+        return [deleted];
+      }
       if (!isCollectionLookup(strings)) return [];
       order.push('resolve');
       return [{ collectionId: COLLECTION_A }];
-    });
-    mockDbWrite.image.delete.mockImplementation(async () => {
-      order.push('delete');
-      return { url: 'some-url', postId: POST_ID, nsfwLevel: 1, userId: OWNER_ID };
     });
 
     await deleteImageById({ id: IMAGE_ID, updatePost: false });
@@ -162,11 +160,15 @@ describe('deleteImageById', () => {
   });
 
   it('still deletes the image when the collections lookup fails', async () => {
-    mockDbWrite.$queryRaw.mockRejectedValue(new Error('connection reset'));
+    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (isImageDelete(strings)) return [deleted];
+      if (isCollectionLookup(strings)) throw new Error('connection reset');
+      return [];
+    });
 
     await deleteImageById({ id: IMAGE_ID, updatePost: false });
 
-    expect(mockDbWrite.image.delete).toHaveBeenCalled();
+    expect(mockDbWrite.$queryRaw.mock.calls.some(([strings]) => isImageDelete(strings))).toBe(true);
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
   });
 });

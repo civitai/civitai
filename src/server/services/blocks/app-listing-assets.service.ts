@@ -17,6 +17,7 @@ import {
   type ListingRedSlot,
 } from '~/server/services/blocks/listing-media-split.service';
 import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
+import { checkListingMeetsFloor as checkFloor } from '~/shared/utils/listing-publish-floor';
 import { listingRatingAssetLabel } from '~/shared/utils/listing-rating-display';
 import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
@@ -142,27 +143,17 @@ export function assertListingAssetsComplete(listing: ListingAssetCompleteness): 
 // the previous full-completeness gate — nothing gets stricter.
 // ---------------------------------------------------------------------------
 
-/** The assets a listing MUST have before it can be published. Screenshots are
- * deliberately excluded — they are advisory/optional. */
-export const FLOOR_ASSETS = ['icon', 'cover'] as const;
-
-export type FloorAsset = (typeof FLOOR_ASSETS)[number];
-
-export type ListingFloorResult = { ok: true } | { ok: false; missing: FloorAsset[] };
-
-/**
- * Pure floor check: a listing meets the publish floor when it has an icon AND a
- * cover. Screenshots are ignored (optional). Returns the structured set of
- * missing FLOOR assets (never throws) so a caller can build a precise error.
- * Distinct from {@link checkListingAssetsComplete}, which additionally requires
- * ≥1 screenshot for FULL completeness (advisory).
- */
-export function checkListingMeetsFloor(listing: ListingAssetCompleteness): ListingFloorResult {
-  const missing: FloorAsset[] = [];
-  if (listing.iconId == null) missing.push('icon');
-  if (listing.coverId == null) missing.push('cover');
-  return missing.length === 0 ? { ok: true } : { ok: false, missing };
-}
+// The pure floor predicate (`FLOOR_ASSETS` / `checkListingMeetsFloor`) lives in
+// `~/shared/utils/listing-publish-floor` so the on-site approve, the moderator review UI and
+// the submit readiness all ask the SAME predicate; re-exported here for the existing
+// importers. It is distinct from {@link checkListingAssetsComplete}, which additionally
+// requires ≥1 screenshot for FULL completeness (advisory).
+export {
+  FLOOR_ASSETS,
+  checkListingMeetsFloor,
+  type FloorAsset,
+  type ListingFloorResult,
+} from '~/shared/utils/listing-publish-floor';
 
 /**
  * Throwing wrapper around {@link checkListingMeetsFloor}. This is the LIVE gate at
@@ -170,7 +161,7 @@ export function checkListingMeetsFloor(listing: ListingAssetCompleteness): Listi
  * a listing with icon+cover but ZERO screenshots passes (screenshots optional).
  */
 export function assertListingMeetsFloor(listing: ListingAssetCompleteness): void {
-  const result = checkListingMeetsFloor(listing);
+  const result = checkFloor(listing);
   if (!result.ok) {
     throw new TRPCError({
       code: 'BAD_REQUEST',

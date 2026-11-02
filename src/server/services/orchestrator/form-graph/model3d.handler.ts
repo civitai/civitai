@@ -1,11 +1,10 @@
 /**
  * The 3D families' handlers for the form-graph lane. Each converts parsed
  * data into a `PolyGenStepTemplate` via the shared schema builders, then
- * chains the `model3DPreview` step. PolyGen branches on `polygenVersion`
- * (v6 text/image, v7 image/multi-image, v7.1 all three) and Tripo on
- * `tripoVersion` (v2.5 image, H3.1 image/multiview); Hunyuan3D maps its
- * `hunyuan*`-prefixed fields back to schema names; the trellis-pipeline pair
- * (Pixal3D / Trellis.2) and Tripo v2.5 map `images[0]` → `sourceImage`.
+ * chains the `model3DPreview` step. PolyGen branches on `version` (v6
+ * text/image, v7 image/multi-image, v7.1 all three); the trellis-pipeline pair
+ * (Pixal3D / Trellis.2) and Tripo v2.5 map `images[0]` → `sourceImage`;
+ * Tripo H3.1 branches on text, one image, or 2–4 views (multiview).
  */
 
 import type {
@@ -17,6 +16,9 @@ import type {
   PolyGenStepTemplate,
   Trellis2ImageTo3dComfyPolyGenInput,
   TripoFalPolyGenInput,
+  TripoH31ImageTo3dFalPolyGenInput,
+  TripoH31MultiviewTo3dFalPolyGenInput,
+  TripoH31TextTo3dFalPolyGenInput,
 } from '@civitai/orchestration-client';
 import {
   toMeshyPolyGenInput,
@@ -32,10 +34,8 @@ import {
   type PolyGenV71GenerationData,
 } from '~/server/orchestrator/polygen/polygen-v71.schema';
 import {
-  toTripoH31PolyGenInput,
   toTripoPolyGenInput,
   type TripoGenerationSchema,
-  type TripoH31GenerationData,
 } from '~/server/orchestrator/tripo/tripo.schema';
 import {
   toHunyuan3dPolyGenInput,
@@ -49,6 +49,7 @@ import {
   toTrellis2PolyGenInput,
   type Trellis2GenerationSchema,
 } from '~/server/orchestrator/trellis2/trellis2.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../handlers/handler-factory';
 import { buildModel3DPreviewStep } from '../handlers/model3d-preview';
 import type { StepInput } from '../handlers';
@@ -62,7 +63,7 @@ const withPreview = (step: PolyGenStepTemplate, baseStepIndex: number): StepInpu
 
 export const createPolyGenInput = defineHandler<EcosystemData<'PolyGen'>, StepInput[]>(
   (data, ctx) => {
-    const { polygenMode, ...rest } = data;
+    const { mode, ...rest } = data;
     const images = data.images ?? [];
     const process = data.workflow?.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
 
@@ -73,14 +74,14 @@ export const createPolyGenInput = defineHandler<EcosystemData<'PolyGen'>, StepIn
       | MeshyV7MultiImageTo3dFalPolyGenInput
       | MeshyV71PolyGenInput;
 
-    if (data.polygenVersion === 'v7.1') {
+    if (data.version === 'v7.1') {
       input = toMeshyV71PolyGenInput({
         ...rest,
         process,
-        ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
+        ...(mode !== undefined ? { mode } : {}),
         sourceImages: process === 'imageTo3D' ? images : [],
       } as unknown as PolyGenV71GenerationData);
-    } else if (data.polygenVersion === 'v7') {
+    } else if (data.version === 'v7') {
       input = toMeshyV7PolyGenInput({
         ...rest,
         sourceImages: images,
@@ -90,7 +91,7 @@ export const createPolyGenInput = defineHandler<EcosystemData<'PolyGen'>, StepIn
       input = toMeshyPolyGenInput({
         ...rest,
         process,
-        ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
+        ...(mode !== undefined ? { mode } : {}),
         ...(sourceImage ? { sourceImage } : {}),
       } as unknown as Model3DGenerationSchema);
     }
@@ -100,43 +101,83 @@ export const createPolyGenInput = defineHandler<EcosystemData<'PolyGen'>, StepIn
 );
 
 export const createTripoInput = defineHandler<EcosystemData<'Tripo'>, StepInput[]>((data, ctx) => {
-  const input =
-    data.tripoVersion === 'h3.1'
-      ? toTripoH31PolyGenInput({
-          ...data,
-          sourceImages: data.images ?? [],
-        } as unknown as TripoH31GenerationData)
-      : (toTripoPolyGenInput({
-          ...data,
-          ...(data.images?.[0] ? { sourceImage: data.images[0] } : {}),
-        } as unknown as TripoGenerationSchema) as TripoFalPolyGenInput);
-  const step: PolyGenStepTemplate = { $type: 'polyGen', input };
+  const input = data.version === 'h3.1' ? toTripoH31Input(data) : toTripoV25Input(data);
   // Quad topology is FBX-only: there is no GLB for the preview renderer to load.
-  if (input.quad) return [step] as unknown as StepInput[];
-  return withPreview(step, ctx.baseStepIndex);
+  if (input.quad) return [{ $type: 'polyGen', input }] as unknown as StepInput[];
+  return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
 });
+
+type TripoData = EcosystemData<'Tripo'>;
+type TripoH31Input =
+  | TripoH31TextTo3dFalPolyGenInput
+  | TripoH31ImageTo3dFalPolyGenInput
+  | TripoH31MultiviewTo3dFalPolyGenInput;
+
+function toTripoV25Input(data: TripoData): TripoFalPolyGenInput {
+  const sourceImage = data.images?.[0];
+  return toTripoPolyGenInput({
+    ...data,
+    pbr: data.enablePbr,
+    ...(sourceImage ? { sourceImage } : {}),
+  } as unknown as TripoGenerationSchema);
+}
+
+function toTripoH31Input(data: TripoData): TripoH31Input {
+  const shared = {
+    engine: 'fal' as const,
+    model: 'tripo' as const,
+    version: 'h3.1' as const,
+    texture: data.texture !== 'no',
+    textureQuality: data.texture === 'HD' ? ('detailed' as const) : ('standard' as const),
+    geometryQuality: data.geometryQuality,
+    pbr: data.enablePbr,
+    quad: data.quad,
+    autoSize: data.autoSize,
+    faceLimit: data.faceLimit,
+    seed: data.seed,
+    textureSeed: data.textureSeed,
+  };
+
+  if (data.workflow.startsWith('txt')) {
+    return removeEmpty<TripoH31TextTo3dFalPolyGenInput>({
+      ...shared,
+      operation: 'textTo3D',
+      prompt: data.prompt ?? '',
+      // text-to-3D renders an image first; one seed control pins both stages
+      imageSeed: shared.seed,
+    });
+  }
+
+  const imageUrls = (data.images ?? []).map((image) => image.url);
+  const imageShared = {
+    ...shared,
+    textureAlignment: data.textureAlignment,
+    orientation: data.orientation,
+  };
+  if (imageUrls.length > 1) {
+    return removeEmpty<TripoH31MultiviewTo3dFalPolyGenInput>({
+      ...imageShared,
+      operation: 'multiviewTo3D',
+      imageUrls,
+    });
+  }
+  return removeEmpty<TripoH31ImageTo3dFalPolyGenInput>({
+    ...imageShared,
+    operation: 'imageTo3D',
+    imageUrl: imageUrls[0],
+  });
+}
 
 export const createHunyuan3dInput = defineHandler<EcosystemData<'Hunyuan3D'>, StepInput[]>(
   (data, ctx) => {
-    const {
-      images,
-      hunyuanPrompt,
-      hunyuanModelVersion,
-      hunyuanSteps,
-      hunyuanCfgScale,
-      hunyuanOctreeResolution,
-      ...rest
-    } = data;
+    const { images, prompt, version, ...rest } = data;
 
     const input = toHunyuan3dPolyGenInput({
       ...rest,
       ...(images?.[0] ? { sourceImage: images[0] } : {}),
       // empty prompt ⇒ omit (Hunyuan3D treats the prompt as an optional hint)
-      prompt: hunyuanPrompt ? hunyuanPrompt : undefined,
-      modelVersion: hunyuanModelVersion,
-      steps: hunyuanSteps,
-      cfgScale: hunyuanCfgScale,
-      octreeResolution: hunyuanOctreeResolution,
+      prompt: prompt ? prompt : undefined,
+      modelVersion: version,
     } as unknown as Hunyuan3dGenerationSchema) as Hunyuan3dImageTo3dComfyPolyGenInput;
 
     return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);

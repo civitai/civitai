@@ -3,6 +3,10 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
+import {
+  CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH,
+  crucibleOwnerRemovalReasonKeys,
+} from '~/utils/crucible-helpers';
 import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
 import { baseModelByName } from '~/shared/constants/basemodel.constants';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -29,6 +33,7 @@ import {
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+  CRUCIBLE_TAKEDOWN_REASON_LENGTH,
   getMaxCrucibleStartAt,
   getPrizeDistributionTotal,
 } from '~/shared/constants/crucible.constants';
@@ -419,6 +424,17 @@ export const cancelCrucibleSchema = z.object({
   id: z.number(),
 });
 
+export type TakeDownCrucibleSchema = z.infer<typeof takeDownCrucibleSchema>;
+export const takeDownCrucibleSchema = z.object({
+  id: z.number(),
+  reason: z
+    .string()
+    .trim()
+    .min(CRUCIBLE_TAKEDOWN_REASON_LENGTH.min)
+    .max(CRUCIBLE_TAKEDOWN_REASON_LENGTH.max),
+  releaseCreatorFunds: z.boolean().optional(),
+});
+
 export type RemoveCrucibleEntrySchema = z.infer<typeof removeCrucibleEntrySchema>;
 export const removeCrucibleEntrySchema = z.object({
   entryId: z.number(),
@@ -426,6 +442,18 @@ export const removeCrucibleEntrySchema = z.object({
 
 export type WithdrawCrucibleEntrySchema = z.infer<typeof withdrawCrucibleEntrySchema>;
 export const withdrawCrucibleEntrySchema = removeCrucibleEntrySchema;
+
+export type OwnerRemoveCrucibleEntrySchema = z.infer<typeof ownerRemoveCrucibleEntrySchema>;
+export const ownerRemoveCrucibleEntrySchema = z
+  .object({
+    entryId: z.number(),
+    reason: z.enum(crucibleOwnerRemovalReasonKeys),
+    note: z.string().trim().max(CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH).optional(),
+  })
+  .refine((input) => input.reason !== 'other' || !!input.note, {
+    message: 'Say why you are removing this entry',
+    path: ['note'],
+  });
 
 // Schema for user crucible stats (no input needed - uses authenticated user)
 export type GetUserCrucibleStatsSchema = z.infer<typeof getUserCrucibleStatsSchema>;

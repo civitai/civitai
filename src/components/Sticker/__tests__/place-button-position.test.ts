@@ -4,6 +4,7 @@ import {
   candidateDistance,
   chromeClearance,
   placeButtonBoxes,
+  placeButtonPosition,
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
 
@@ -350,6 +351,7 @@ describe('the candidate boxes survive coming from a DOMRect', () => {
         ...placeButtonBoxes({ current, flipped, distance: DISTANCE }),
         tray: MEASURED_TRAY,
         clip: MEASURED_CLIP,
+        flipped,
       });
 
     // Same sticker, same frame, one measurement from each side. The second was
@@ -357,5 +359,144 @@ describe('the candidate boxes survive coming from a DOMRect', () => {
     // answers is what the loop was made of.
     expect(decide(rectLike(969, 1096, 322, 454), false)).toBe(true);
     expect(decide(rectLike(651, 778, 322, 454), true)).toBe(true);
+  });
+});
+
+/**
+ * 🔴 ONE CANDIDATE IS MEASURED AND THE OTHER IS MODELLED, AND THEY CAN DISAGREE
+ * by a fraction of a pixel. The decision must come out the same from either
+ * side even then, or a cluster edge in that sliver flips on every re-measure.
+ * The numbers are from a real capture: a modelled jump 0.078px shorter than
+ * the real one, with the cluster's edge inside that gap at the tray.
+ */
+describe('a modelled side that is a fraction of a pixel off', () => {
+  const CLUSTER_HEIGHT = 126.594;
+  const MODELLED = 272.22;
+  const REAL = 272.298;
+  const MEASURED_TRAY: Box = { top: 684, bottom: 844, left: 0, right: 390 };
+  const cluster = (top: number): Box => ({
+    top,
+    bottom: top + CLUSTER_HEIGHT,
+    left: 127,
+    right: 263,
+  });
+
+  const decide = (current: Box, flipped: boolean) =>
+    shouldFlipPlaceButton({
+      ...placeButtonBoxes({ current, flipped, distance: MODELLED }),
+      tray: MEASURED_TRAY,
+      clip: null,
+      flipped,
+    });
+
+  it('decides the same thing from either side', () => {
+    // The cluster's bottom 0.05px into the tray: inside the 0.078px gap.
+    const below = cluster(MEASURED_TRAY.top + 0.05 - CLUSTER_HEIGHT);
+    const above = cluster(below.top - REAL);
+
+    expect(decide(below, false)).toBe(true);
+    expect(decide(above, true)).toBe(true);
+  });
+
+  it('still leaves a cluster that clearly fits where it is', () => {
+    const below = cluster(MEASURED_TRAY.top - 10 - CLUSTER_HEIGHT);
+    expect(decide(below, false)).toBe(false);
+  });
+
+  it('does not flip onto a side that only just fits', () => {
+    // Below is under the tray; above clears the clip by 1px — inside the margin,
+    // so the cluster stays rather than moving onto a side the model may have
+    // placed a pixel wrong.
+    const clip: Box = { top: 400, bottom: 844, left: 0, right: 380 };
+    const above = cluster(clip.top + 1);
+    const below = cluster(above.top + MODELLED);
+    expect(below.bottom).toBeGreaterThan(MEASURED_TRAY.top);
+    expect(shouldFlipPlaceButton({ below, above, tray: MEASURED_TRAY, clip })).toBe(false);
+  });
+});
+
+/**
+ * The same capture driven through `placeButtonPosition` from element-shaped
+ * fakes, re-deciding after each flip the way the layout effect does. Each fake
+ * also carries an `offsetHeight` that disagrees with its rect; the decision
+ * must use the rect.
+ */
+describe('placeButtonPosition settles where the capture looped', () => {
+  const STICKER = { width: 76, height: 101.484 };
+  const CLUSTER_HEIGHT = 126.594;
+  const SNAP = 0.5;
+  const TRAY_BAND: Box = { top: 684, bottom: 844, left: 0, right: 390 };
+  const STANDOFF = { rotation: 0, knobOffset: 0.22, outset: 6, gap: 8 };
+  const { below, above } = chromeClearance({ ...STICKER, ...STANDOFF });
+
+  const element = (top: number, height: number, width: number) => ({
+    getBoundingClientRect: () => ({
+      top,
+      bottom: top + height,
+      left: 157,
+      right: 157 + width,
+      width,
+      height,
+    }),
+    // Deliberately further off than any rounding, so a decision that read it
+    // instead of the rect would land on the wrong side.
+    offsetHeight: Math.round(height) - 3,
+  });
+
+  // Where the cluster really lands on each side of a sticker whose top is
+  // `stickerTop`: its edge nearest the sticker, standing off by the clearance.
+  const settle = (stickerTop: number) => {
+    const sticker = element(stickerTop, STICKER.height, STICKER.width);
+    // Layout snaps to device pixels, so where the cluster lands can differ from
+    // the model by a fraction of a pixel even with every height read exactly.
+    const clusterTop = (flipped: boolean) =>
+      flipped ? stickerTop - above - CLUSTER_HEIGHT - SNAP : stickerTop + STICKER.height + below;
+
+    let flipped = false;
+    let flips = 0;
+    for (let pass = 0; pass < 6; pass++) {
+      const next = placeButtonPosition({
+        sticker,
+        cluster: element(clusterTop(flipped), CLUSTER_HEIGHT, 136),
+        tray: TRAY_BAND,
+        clip: null,
+        flipped,
+        ...STANDOFF,
+      });
+      if (!next || next.flipped === flipped) break;
+      flipped = next.flipped;
+      flips++;
+    }
+    return { flipped, flips };
+  };
+
+  it('flips once and stays when the cluster edge is a sliver into the tray', () => {
+    const stickerTop = TRAY_BAND.top + 0.05 - CLUSTER_HEIGHT - below - STICKER.height;
+    expect(settle(stickerTop)).toEqual({ flipped: true, flips: 1 });
+  });
+
+  it('decides nothing before the sticker has a size', () => {
+    const next = placeButtonPosition({
+      sticker: element(300, 0, 76),
+      cluster: element(400, CLUSTER_HEIGHT, 136),
+      tray: TRAY_BAND,
+      clip: null,
+      flipped: false,
+      ...STANDOFF,
+    });
+    expect(next).toBeNull();
+  });
+});
+
+describe('the side the cluster is already on', () => {
+  it('is kept even when it only just fits', () => {
+    // Flipped, with above 1px inside the clip and below under the tray. The
+    // margin is for the side it would move to; holding the current side to it
+    // too would send the cluster back under the tray.
+    const clip: Box = { top: 400, bottom: 844, left: 0, right: 380 };
+    const tray: Box = { top: 684, bottom: 844, left: 0, right: 390 };
+    const above: Box = { top: clip.top + 1, bottom: clip.top + 127, left: 127, right: 263 };
+    const below: Box = { top: 680, bottom: 806, left: 127, right: 263 };
+    expect(shouldFlipPlaceButton({ below, above, tray, clip, flipped: true })).toBe(true);
   });
 });

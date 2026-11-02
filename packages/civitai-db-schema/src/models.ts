@@ -164,6 +164,8 @@ export type BountyEngagementType = "Favorite" | "Track";
 
 export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage" | "ExternalLink";
 
+export type CsamQueueSetAsideOutcome = "AfterReport" | "Dismissed";
+
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
 export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
@@ -548,6 +550,7 @@ export interface User {
   rewardsEligibility: RewardsEligibility;
   eligibilityChangedAt: Date | null;
   customerId: string | null;
+  subscriptionId: string | null;
   paddleCustomerId: string | null;
   profile?: UserProfile | null;
   profilePictureId: number | null;
@@ -1030,6 +1033,15 @@ export interface Model {
   permissionSnapshots?: ModelPermissionSnapshot[];
 }
 
+export interface ModelOwnership {
+  id: number;
+  modelId: number;
+  userId: number;
+  reason: string;
+  actorId: number | null;
+  createdAt: Date;
+}
+
 export interface ModelPermissionSnapshot {
   id: number;
   modelId: number;
@@ -1362,6 +1374,13 @@ export interface ModActivity {
   host: string | null;
 }
 
+export interface ModThreadClaim {
+  chatId: number;
+  moderatorId: number;
+  claimedAt: Date;
+  expiresAt: Date;
+}
+
 export interface Report {
   id: number;
   userId: number;
@@ -1490,6 +1509,35 @@ export interface ComicProjectReport {
   comicProject?: ComicProject;
   reportId: number;
   report?: Report;
+}
+
+export interface HeldResourceReview {
+  id: number;
+  modelId: number;
+  modelVersionId: number;
+  userId: number;
+  rating: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  nsfw: boolean;
+  tosViolation: boolean;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  heldAt: Date;
+  holdReasons: string[];
+}
+
+export interface HeldAnswer {
+  id: number;
+  questionId: number;
+  userId: number;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+  heldAt: Date;
+  holdReasons: string[];
 }
 
 export interface ResourceReview {
@@ -1734,6 +1782,7 @@ export interface Image {
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
 }
 
@@ -2931,6 +2980,7 @@ export interface Comment {
   locked: boolean | null;
   hidden: boolean | null;
   pinnedAt: Date | null;
+  removedByAuthor: boolean;
   comments?: Comment[];
   reactions?: CommentReaction[];
   reports?: CommentReport[];
@@ -3764,6 +3814,18 @@ export interface Article {
   collectionItems?: CollectionItem[];
   rewardsBonusEvents?: RewardsBonusEvent[];
   ratingReviews?: ArticleRatingReview[];
+  contentLinkHold?: ArticleContentLinkHold | null;
+}
+
+export interface ArticleContentLinkHold {
+  articleId: number;
+  article?: Article;
+  deferred: string[];
+  refused: string[];
+  editorId: number;
+  deferredSince: Date | null;
+  reportedAt: Date | null;
+  checkedAt: Date;
 }
 
 export interface PressMention {
@@ -4058,6 +4120,21 @@ export interface BountyBenefactor {
   buzzTransactionId: string[];
 }
 
+export interface BountyUnpaidAward {
+  bountyId: number;
+  userId: number;
+  unitAmount: number;
+  buzzTransactionIds: string[];
+  winnerUserId: number | null;
+  ownerId: number | null;
+  recordedById: number | null;
+  recordedAt: Date;
+  ruling: string | null;
+  ledgerReference: string | null;
+  resolvedById: number | null;
+  resolvedAt: Date | null;
+}
+
 export interface BountyEngagement {
   userId: number;
   user?: User;
@@ -4115,6 +4192,15 @@ export interface CsamReport {
   type: CsamReportType;
   sendClaimId: string | null;
   sendClaimedAt: Date | null;
+}
+
+export interface CsamQueueSetAside {
+  imageId: number;
+  userId: number;
+  outcome: CsamQueueSetAsideOutcome;
+  csamReportId: number | null;
+  moderatorId: number;
+  createdAt: Date;
 }
 
 export interface CsamReportAudit {
@@ -4540,6 +4626,20 @@ export interface ImageCdnModeratorDelete {
   userId: number | null;
   csamReview: boolean;
   deletedAt: Date;
+}
+
+export interface ShopArtworkKeyOwner {
+  key: string;
+  userId: number;
+  recordedAt: Date;
+}
+
+export interface ImageCdnShopTakedown {
+  id: number;
+  url: string;
+  shopItemId: number;
+  userId: number | null;
+  takenDownAt: Date;
 }
 
 export interface ImageCdnAccessClaim {
@@ -6601,6 +6701,7 @@ export interface Storyline {
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];
+  coverUploads?: StorylineCoverUpload[];
   thread?: Thread | null;
 }
 
@@ -6644,6 +6745,23 @@ export interface StorylineChapterEdge {
   createdAt: Date;
 }
 
+export interface StorylineChapterRemovalHold {
+  id: number;
+  storylineId: number;
+  storylineTitle: string;
+  chapterId: number;
+  postId: number | null;
+  chapterUserId: number;
+  depth: number;
+  placementId: number | null;
+  parentChapterIds: number[];
+  chapterCreatedAt: Date;
+  removedById: number;
+  removedByRole: string;
+  reportIds: number[];
+  createdAt: Date;
+}
+
 export interface ImageCaption {
   imageId: number;
   image?: Image;
@@ -6661,6 +6779,7 @@ export interface StorylineCollaborator {
   userId: number;
   user?: User;
   createdAt: Date;
+  acceptedAt: Date | null;
 }
 
 export interface StorylineBranchChoice {
@@ -6686,6 +6805,14 @@ export interface StorylineEarlyAccessSignup {
   userId: number;
   user?: User;
   storylineId: number | null;
+  createdAt: Date;
+}
+
+export interface StorylineCoverUpload {
+  storylineId: number;
+  storyline?: Storyline;
+  imageId: number;
+  image?: Image;
   createdAt: Date;
 }
 
@@ -6947,6 +7074,7 @@ export interface Crucible {
   seededPrizePool: number;
   prizePool: number;
   entryLimit: number;
+  ownerRemovalCount: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
   entryWarningPercent: number;
@@ -6969,6 +7097,10 @@ export interface Crucible {
   textNsfw: boolean;
   timeAdjustedPlacement: boolean;
   eventTags: string[];
+  takenDownAt: Date | null;
+  takenDownById: number | null;
+  takedownReason: string | null;
+  takedownRefundsCreator: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

@@ -50,7 +50,7 @@ export type AppsBuildPageProps = { mode: 'build' } | AssistantProps;
  *   assistant — the App Assistant workspace, for a signed-in viewer `canAccessAppAssistant`
  *               admits. An author also gets a "My apps" switch to the states below.
  *   A · pitch     (not an author)                   — recruit, and request access
- *   B · first-app (author, nothing yet)             — agent card, manual setup collapsed, create
+ *   B · first-app (author, nothing yet)             — agent card, create
  *   C · workbench (author, has apps or submissions) — the app list + `New app`
  *
  * 🔴 THE GATE IS `resolveAppsBuildPageMode`, WHICH THE RAIL'S Build ROW ALSO CALLS. That sharing

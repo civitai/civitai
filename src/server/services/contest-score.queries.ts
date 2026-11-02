@@ -20,6 +20,7 @@ import pLimit from 'p-limit';
 import { CacheTTL } from '~/server/common/constants';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
+import { contestBannedSql } from '~/server/services/contest-ban';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -237,7 +238,7 @@ export async function loadBaseGates(ageCutoff: Date) {
       'contest-score.contest-banned',
       () =>
         dbRead.$queryRaw<{ id: number }[]>`
-        SELECT u.id FROM "User" u WHERE u.meta ->> 'contestBanDetails' IS NOT NULL
+        SELECT u.id FROM "User" u WHERE ${contestBannedSql}
       `
     ),
   ]);

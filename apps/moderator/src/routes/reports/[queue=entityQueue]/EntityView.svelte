@@ -274,6 +274,7 @@
           {#if ownerId != null}
             <OwnerActions
               userId={ownerId}
+              reportId={reports[0]?.id}
               heading={ev.kind === 'chat' ? 'Act on the reported member' : undefined}
             />
           {:else if ev.kind === 'chat' && chat && reports.length && !header.gone}

@@ -49,6 +49,10 @@ const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn();
 const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ settled: true }));
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
   settlePlacement,

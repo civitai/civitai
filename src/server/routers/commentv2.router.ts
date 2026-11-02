@@ -54,8 +54,11 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   const userId = ctx.user.id;
   const isModerator = ctx?.user?.isModerator;
   if (!isModerator && !!id) {
-    const ownerId = (await dbRead.commentV2.findUnique({ where: { id } }))?.userId ?? 0;
-    if (ownerId !== userId) throw throwAuthorizationError();
+    const row = await dbRead.commentV2.findUnique({
+      where: { id },
+      select: { userId: true, tosViolation: true },
+    });
+    if (!row || row.tosViolation || row.userId !== userId) throw throwAuthorizationError();
   }
 
   return next({

@@ -1,10 +1,11 @@
 import * as z from 'zod';
+import { isModerationAccountRow } from '~/server/auth/moderation-account';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { deleteUser } from '~/server/services/user.service';
-import { LEGAL_HOLD_REFUSAL, LegalHoldError } from '~/server/services/legal-hold.service';
+import { LegalHoldError, legalHoldMessage } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
@@ -87,6 +88,8 @@ export default defineModeratorEndpoint('user.delete', {
     // correctly deleted. Pinned by the retry case in `delete.test.ts`.
     if (target.deletedAt)
       throw throwBadRequestError(`User ${input.userId} is already deleted; nothing to delete.`);
+    if (isModerationAccountRow(target))
+      throw throwBadRequestError('The shared moderation account cannot be deleted.');
     // 🔴 REQUIRED WHERE IT IS CHECKABLE, NOT MERELY ACCEPTED. A mistyped id that lands on another
     // LIVE account is the one mistake nothing downstream catches — not the unknown-id refusal above,
     // not the already-deleted one — so confirmation cannot be something a caller may quietly omit.
@@ -127,7 +130,7 @@ export default defineModeratorEndpoint('user.delete', {
     } catch (e) {
       // No moderator override: a hold is released by Legal, not here.
       if (e instanceof LegalHoldError)
-        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+        throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
       throw e;
     }
 

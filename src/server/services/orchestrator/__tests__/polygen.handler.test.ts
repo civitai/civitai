@@ -20,9 +20,9 @@ describe('createPolyGenInput — Meshy v7.1', () => {
   it('sends text-to-3D with the form mode', async () => {
     const input = await polyGenInput({
       workflow: 'txt2model3d',
-      polygenVersion: 'v7.1',
+      version: 'v7.1',
       prompt: 'a chest',
-      polygenMode: 'preview',
+      mode: 'preview',
     });
     expect(input).toMatchObject({ version: 'v7.1', operation: 'textTo3D', mode: 'preview' });
   });
@@ -30,7 +30,7 @@ describe('createPolyGenInput — Meshy v7.1', () => {
   it('sends multi-image for several starting images', async () => {
     const input = await polyGenInput({
       workflow: 'img2model3d',
-      polygenVersion: 'v7.1',
+      version: 'v7.1',
       images: [image(1), image(2)],
     });
     expect(input).toMatchObject({

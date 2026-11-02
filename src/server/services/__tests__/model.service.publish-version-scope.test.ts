@@ -7,9 +7,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {
-    model: { update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+    model: {
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      findUnique: vi.fn(async () => ({ status: 'Draft', availability: 'Public', meta: null })),
+    },
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
   },
 }));
 
@@ -206,9 +212,11 @@ describe('publishModelById meta', () => {
     await publishModelById({
       id: MODEL_ID,
       versionIds: [OWN_VERSION_ID],
-      meta: { cannotPromote: true },
+      meta: { showcaseCollectionId: 3 },
     });
 
-    expect(mockTx.model.update.mock.calls[0][0].data.meta).toStrictEqual({ cannotPromote: true });
+    expect(mockTx.model.update.mock.calls[0][0].data.meta).toStrictEqual({
+      showcaseCollectionId: 3,
+    });
   });
 });

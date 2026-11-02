@@ -14,8 +14,16 @@ import {
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
-import { retryUnsettledBountyPayouts, settleBountyPayout } from '~/server/services/bounty.service';
-import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import {
+  deleteSettledKeptBounties,
+  retryUnsettledBountyPayouts,
+  settleBountyPayout,
+} from '~/server/services/bounty.service';
+import {
+  isPayoutPending,
+  lockBountyForPayout,
+  NEXT_PAYOUT_RECORDED_AT_SQL,
+} from '~/server/services/bounty-payout-lock';
 import {
   checkPendingBountyEntryFiles,
   getBountyEntryFileStates,
@@ -231,6 +239,8 @@ async function settleExpiredBounty({
   const claim = await dbWrite.$transaction(async (tx) => {
     const locked = await lockBountyForPayout(tx, id);
     if (!locked || locked.complete || locked.refunded) return null;
+    // An award still being paid is settled by its own path or the retry job first.
+    if (isPayoutPending(locked)) return { kind: 'awardPending' as const };
 
     const [mainBenefactor] = await tx.$queryRaw<{ currency: Currency }[]>`
         SELECT currency FROM "BountyBenefactor" bf WHERE bf."bountyId" = ${id} AND bf."userId" = ${userId} LIMIT 1;
@@ -238,9 +248,19 @@ async function settleExpiredBounty({
     if (!mainBenefactor) return null;
     const { currency } = mainBenefactor;
 
+    // Every supporter has awarded, and those awards were paid before the pending check above.
+    const unawarded = await tx.$queryRaw<unknown[]>`
+        SELECT 1 FROM "BountyBenefactor" bf
+        WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL AND bf."awardedAt" IS NULL LIMIT 1;
+      `;
+    if (!unawarded.length) {
+      await tx.$executeRawUnsafe(`UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};`);
+      return { kind: 'complete' as const };
+    }
+
     if (isTextScanPoiHidden(locked)) {
       await tx.$executeRawUnsafe(`
-          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${id};
+          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL} WHERE b.id = ${id};
         `);
       return { kind: 'refund' as const, currency, poiHidden: true };
     }
@@ -274,23 +294,33 @@ async function settleExpiredBounty({
 
     if (!winnerEntry) {
       await tx.$executeRawUnsafe(`
-          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${id};
+          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL} WHERE b.id = ${id};
         `);
       return { kind: 'refund' as const, currency, poiHidden: false };
     }
 
     // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
+    // A supporter who already awarded keeps that award, even after its entry was deleted.
     await tx.$executeRawUnsafe(`
-        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = NOW() WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
+        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = (SELECT ${NEXT_PAYOUT_RECORDED_AT_SQL} FROM "Bounty" b WHERE b.id = ${id}) WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL AND bf."awardedAt" IS NULL;
       `);
     await tx.$executeRawUnsafe(`
-        UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = NOW(), "payoutWinnerUserId" = ${winnerEntry.userId} WHERE b.id = ${id};
+        UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL}, "payoutWinnerUserId" = ${winnerEntry.userId} WHERE b.id = ${id};
       `);
     return { kind: 'award' as const, currency, winnerEntry };
   });
 
   if (!claim) {
     log(` Bounty ${id} was already claimed; skipped`);
+    return;
+  }
+  if (claim.kind === 'complete') {
+    log(` Bounty ${id} was fully awarded; marked complete`);
+    await bountiesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    return;
+  }
+  if (claim.kind === 'awardPending') {
+    log(` Bounty ${id} has an award still being paid; postponed`);
     return;
   }
   if (claim.kind === 'postponed') {
@@ -378,9 +408,10 @@ async function settleExpiredBounty({
   log(`Finished bounty ${id}`);
 }
 
-const bountyPayoutRetry = createJob('bounty-payout-retry', '41 * * * *', async () =>
-  retryUnsettledBountyPayouts()
-);
+const bountyPayoutRetry = createJob('bounty-payout-retry', '41 * * * *', async () => {
+  const { settled } = await retryUnsettledBountyPayouts();
+  return { settled, deletedKept: await deleteSettledKeptBounties() };
+});
 
 const bountyEntryFileCheck = createJob(
   'bounty-entry-file-check',

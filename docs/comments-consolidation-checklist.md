@@ -487,8 +487,8 @@ flip — these MUST land before the first Phase 4 write flip):
 - [x] `collection.service.ts` judged check; `challenge.service.ts`'s four comment counts and
       `resourceReview`'s two count top-level live comments on CommentV3. Not
       `CommentTopic.commentCount`: that counts replies and tombstones, so the numbers shown would jump
-- [x] `/comments/v2/[id].tsx` resolves from the CommentV3 row (`comment-permalink.ts`); a tombstone
-      404s
+- [x] `/comments/[id].tsx` (canonical; `/comments/v2/[id].tsx` is an alias of it) resolves from the
+      CommentV3 row (`comment-permalink.ts`); a tombstone 404s
 - [x] **(review)** `events/points/hooks.ts` counts the actor's remaining comments on CommentV3
       (its thread lookup is the v2 write path's input and goes with it);
       `creator-score-self-activity.service.ts` and `bot-account-detection/cohort.ts` read
@@ -517,17 +517,18 @@ flip or the v2 write path); the `CommentV3."createdAt"` and `CommentV3Reaction."
 (`20261125120000_comment_v3_created_at_indexes`, applied by hand) are on prod before the re-point
 deploys; reverse-copy proven on a prod sample.
 
-## Phase 4 — Per-surface flips (behind Flipt)
+## Phase 4 — Per-surface flips (no flags: reads in one deploy, writes in a later one)
 
 Repeat this block per surface, in the Phase 0 order (model **last**):
 
 - [ ] Notification deep links switch `commentParentId` from `replyToId` to `parentId` with the read
-      flip: under v3 reads a clamped reply hangs off its parent
-- [ ] Read flip on → soak → verify (comments render, counts match, hidden/blocked exclusions hold,
+      flip: under v3 reads a clamped reply hangs off its parent (article: built, awaiting stage A
+      deploy; see `docs/plans/comments-v3-article-flip.md`)
+- [ ] Read flip deployed → soak → verify (comments render, counts match, hidden/blocked exclusions hold,
       pinned order, deep-links/`targetCommentId`, reply pagination, mute menu state matches whether
       notifications actually arrive)
 - [ ] Reactions read from `CommentV3Reaction`
-- [ ] Write flip on → soak → old write path removed for this surface; the v3 write path applies
+- [ ] Write flip deployed → soak → old write path removed for this surface; the v3 write path applies
       the D6 tombstone collapse the mirror applies today. Once a surface writes `CommentV3`
       directly its deletes must go through the v3 service too: the mirror's delete is safe
       against replies only because every reply in flight also holds an old `Thread` row or old

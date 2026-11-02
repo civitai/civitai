@@ -196,6 +196,11 @@ COPY --from=builder /app/bundle-budget.json ./bundle-budget.json
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# The standalone tRPC server (`node -- trpc-server/server.cjs`): plain CommonJS that serves the
+# tRPC, probe and metrics routes from the compiled route modules above, without the Next router.
+# Only the two runtime files; its tests and parity harness stay out of the image. The default
+# CMD below is unchanged — this is only used where something runs that command instead.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs ./trpc-server/
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
@@ -220,8 +225,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 #
 # Exits 2 (not 0) when it cannot observe its input, same rule as the build-output gates above.
 # The script is removed in the same layer chain so it is not part of the served image.
+#
+# The standalone tRPC server's two files are checked the same way: they require Next internals
+# by deep path (`next/dist/server/...`), which nothing else here loads at build time, so a trace
+# that dropped one would otherwise surface as a crash-looping container.
 COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
-RUN node /tmp/assert-standalone-boot-graph.mjs /app && rm -f /tmp/assert-standalone-boot-graph.mjs
+RUN node /tmp/assert-standalone-boot-graph.mjs /app server.js trpc-server/server.cjs trpc-server/next-compat.cjs && rm -f /tmp/assert-standalone-boot-graph.mjs
 
 USER nextjs
 EXPOSE 3000

@@ -1,3 +1,4 @@
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DuplicateHash from '~/server/services/duplicate-model-hash.service';
@@ -28,6 +29,7 @@ vi.mock('~/server/services/duplicate-model-hash.service', async (importOriginal)
 }));
 
 const { publishModelHandler } = await import('../model.controller');
+const { KEPT_MODEL_STATUS } = await import('~/server/utils/legal-hold');
 
 const MODEL = 1;
 // Version 10 is live; 11 a moderator took down; 12 is deleted.
@@ -86,5 +88,72 @@ describe('publishModelHandler with a taken-down version in the list', () => {
   it('still publishes the owner live versions', async () => {
     await publish([10]);
     expect(publishModelById).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('publishModelHandler on a model a content wipe kept', () => {
+  it('refuses the owner', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: KEPT_MODEL_STATUS,
+      meta: { removedWithOwner: true },
+      nsfw: false,
+      userId: 5,
+    } as never);
+    await expect(publish([10])).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(publishModelById).not.toHaveBeenCalled();
+  });
+
+  it('still lets the owner republish a model unpublished the ordinary way (control)', async () => {
+    await publish([10]);
+    expect(publishModelById).toHaveBeenCalledTimes(1);
+  });
+
+  // The read above is the replica's: a wipe that keeps the model after it is refused under the
+  // publish's lock, which only the owner's publish asks for.
+  it.each([
+    ['the owner', false, true],
+    ['a moderator', true, false],
+  ])(
+    'has the publish re-check the record under its lock for %s',
+    async (_, isModerator, refuse) => {
+      await publish([10], isModerator);
+      expect(publishModelById).toHaveBeenCalledWith(
+        expect.objectContaining({ refuseRemovedWithOwner: refuse })
+      );
+    }
+  );
+});
+
+describe('an owner publishing a draft model a content wipe kept', () => {
+  it('is refused, though the draft status itself is publishable', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Draft',
+      meta: { removedWithOwner: true, statusBeforeRemoval: 'Draft' },
+      nsfw: false,
+      userId: 5,
+    } as never);
+    await expect(publish([10])).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(publishModelById).not.toHaveBeenCalled();
+  });
+});
+
+describe('a moderator publishing a model a content wipe kept', () => {
+  it('drops the removal marker from its meta', async () => {
+    const stored = {
+      note: 1,
+      removedWithOwner: true,
+      statusBeforeRemoval: 'Published',
+      versionsUnpublishedByRemoval: [{ id: 10, status: 'Published' }],
+    };
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: KEPT_MODEL_STATUS,
+      meta: stored,
+      nsfw: false,
+      userId: 5,
+    } as never);
+    await publish([10], true);
+    // The publish builds its meta from the row it locks; here, the row as read.
+    const { meta } = vi.mocked(publishModelById).mock.calls[0][0];
+    expect(typeof meta === 'function' && meta(stored as ModelMeta)).toEqual({ note: 1 });
   });
 });

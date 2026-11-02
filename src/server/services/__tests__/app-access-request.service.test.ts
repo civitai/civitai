@@ -15,6 +15,7 @@ vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
 const {
   APP_ACCESS_ALREADY_APPROVED,
   APP_ACCESS_ALREADY_PENDING,
+  countPendingAppAccessRequests,
   decideAppAccessRequest,
   getMyAppAccessRequest,
   listAppAccessRequests,
@@ -250,6 +251,28 @@ describe('listAppAccessRequests', () => {
     const page2 = await listAppAccessRequests({ limit: 1, cursor: page1.nextCursor! });
     expect(page2.items.map((i) => i.id)).toEqual([a.id]);
     expect(page2.nextCursor).toBeNull();
+  });
+});
+
+describe('countPendingAppAccessRequests', () => {
+  it('is 0 with no requests', async () => {
+    expect(await countPendingAppAccessRequests()).toBe(0);
+  });
+
+  it('counts only PENDING rows, across people, as a plain number', async () => {
+    const a = await submit(mira, MIRA_IDEA);
+    await submit(tomasz, TOMASZ_IDEA);
+    expect(await countPendingAppAccessRequests()).toBe(2);
+
+    await decide(a.id, 'declined');
+    expect(await countPendingAppAccessRequests()).toBe(1);
+
+    // A declined row stays; the new request is the one that counts.
+    await submit(mira, MIRA_IDEA_AGAIN);
+    const third = await seedUser('third_builder');
+    const c = await submit(third, TOMASZ_IDEA);
+    await decide(c.id, 'approved');
+    expect(await countPendingAppAccessRequests()).toBe(2);
   });
 });
 

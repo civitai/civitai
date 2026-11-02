@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { isLinkedAndFresh, rollDeviceCookie, touchAccount } from '$lib/server/auth/device';
+import { canSwitch, rollDeviceCookie, touchAccount } from '$lib/server/auth/device';
 import { mintUserSession, setSessionCookie } from '$lib/server/auth/session';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { readUserId } from '$lib/server/auth/request';
@@ -18,15 +18,13 @@ export const POST: RequestHandler = async ({ request, cookies, locals }) => {
 
   const userId = await readUserId(request);
 
-  // Both the active account and the target must be linked to THIS device and not idle-expired.
-  if (!(await isLinkedAndFresh(deviceId, locals.user.id)))
-    error(403, 'account not linked or expired');
-  if (!(await isLinkedAndFresh(deviceId, userId))) error(403, 'account not linked or expired');
+  const principal = locals.impersonatedBy ?? locals.user.id;
+  if (!(await canSwitch(deviceId, principal, userId))) error(403, 'account not linked or expired');
 
   const user = await getOrProduceSessionUser(userId);
   if (!user) error(404, 'no such user');
 
-  const token = await mintUserSession(user);
+  const token = await mintUserSession(user, { parent: locals.session, clearImpersonation: true });
   await touchAccount(deviceId, userId); // slide the 30-day idle clock
   setSessionCookie(cookies, token); // direct browser-client path: hub lands the cookie itself
   rollDeviceCookie(cookies, deviceId); // keep the device cookie alive in lockstep with its redis set

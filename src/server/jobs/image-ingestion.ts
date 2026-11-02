@@ -583,6 +583,13 @@ export const accountHeldBlockedImagesSql = Prisma.sql`
     AND i."userId" = ANY (ARRAY(SELECT "userId" FROM owners))
 `;
 
+/** Blocked images a pending review or a CSAM block keeps out of the purge. Read on dbWrite. */
+export const reviewHeldBlockedImagesSql = Prisma.sql`
+  SELECT id, "needsReview", "blockedFor" FROM "Image"
+  WHERE ("needsReview" IN ('appeal', 'csam') OR "blockedFor" = 'CSAM')
+    AND ingestion = 'Blocked'::"ImageIngestionStatus"
+`;
+
 /**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
@@ -594,6 +601,7 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
     -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
+    AND "Image"."blockedFor" IS DISTINCT FROM 'CSAM'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
     AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
     ${
@@ -601,6 +609,33 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
         ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
         : Prisma.empty
     }
+  `;
+}
+
+// The held sets below have no size bound, so each is bound as ONE array parameter: Prisma's `in`
+// binds a variable per id and fails past the driver's limit. Joined through unnest rather than
+// `= ANY`/`<> ALL`: under a generic plan those scan the array once per row, while the join hashes it.
+
+/** Queued blocked-image deletes among `ids` whose retention ran out by `cutoff`. */
+export function blockedQueueExpiredAmongSql(ids: number[], cutoff: Date) {
+  return Prisma.sql`
+    SELECT j."entityId" FROM "JobQueue" j
+    WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND j."entityType" = ${EntityType.Image}::"EntityType"
+      AND EXISTS (SELECT 1 FROM unnest(${ids}::int[]) h(id) WHERE h.id = j."entityId")
+      AND j."createdAt" <= ${cutoff}
+  `;
+}
+
+/** The oldest queued blocked-image deletes, leaving out `excluded`; an empty set leaves out none. */
+export function blockedQueueBatchSql(excluded: number[], take: number) {
+  return Prisma.sql`
+    SELECT j."entityId", j."createdAt" FROM "JobQueue" j
+    WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND j."entityType" = ${EntityType.Image}::"EntityType"
+      AND NOT EXISTS (SELECT 1 FROM unnest(${excluded}::int[]) h(id) WHERE h.id = j."entityId")
+    ORDER BY j."createdAt" ASC
+    LIMIT ${take}
   `;
 }
 
@@ -645,16 +680,10 @@ export const removeBlockedImages = createJob(
       ).map((x) => x.id);
 
       // The held images that are past retention, i.e. the ones this run would otherwise delete.
-      // One array parameter, not Prisma's `in`: that binds a variable per id, and the held set
-      // outgrows Postgres's 32767-variable cap.
       const wouldSkip = heldActive.length
-        ? await dbRead.$queryRaw<{ entityId: number }[]>`
-            SELECT "entityId" FROM "JobQueue"
-            WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
-              AND "entityType" = ${EntityType.Image}::"EntityType"
-              AND "entityId" = ANY(${heldActive}::int[])
-              AND "createdAt" <= ${cutoff}
-          `
+        ? await dbRead.$queryRaw<{ entityId: number }[]>(
+            blockedQueueExpiredAmongSql(heldActive, cutoff)
+          )
         : [];
       if (wouldSkip.length) {
         logToAxiom({
@@ -705,13 +734,12 @@ export const removeBlockedImages = createJob(
     // For an appeal, rejection clears needsReview and the next run deletes it; purging it first
     // strands the Appeal as Pending forever.
     // dbWrite for the same replica-lag reason as the CSAM lookup above.
-    const reviewHeldRows = await dbWrite.$queryRaw<{ id: number; needsReview: string }[]>`
-      SELECT id, "needsReview" FROM "Image"
-      WHERE "needsReview" IN ('appeal', 'csam')
-        AND ingestion = 'Blocked'::"ImageIngestionStatus"
-    `;
+    const reviewHeldRows = await dbWrite.$queryRaw<
+      { id: number; needsReview: string | null; blockedFor: string | null }[]
+    >(reviewHeldBlockedImagesSql);
     const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
     const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
+    const csamBlockHeld = reviewHeldRows.filter((x) => x.blockedFor === 'CSAM').map((x) => x.id);
 
     // An owner under a hold marker keeps every image whatever its review flag says. dbWrite for the
     // same replica-lag reason as above. Two statements, not a join: through the view's aggregate the
@@ -740,25 +768,21 @@ export const removeBlockedImages = createJob(
         ...heldActive,
         ...appealHeld,
         ...csamReviewHeld,
+        ...csamBlockHeld,
         ...evidenceHeld,
         ...accountHeld,
       ]),
     ];
-    // One array parameter for the same reason as the would-skip lookup. No held ids, no filter.
-    const jobQueue = await dbRead.$queryRaw<{ entityId: number; createdAt: Date }[]>`
-      SELECT "entityId", "createdAt" FROM "JobQueue"
-      WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
-        AND "entityType" = ${EntityType.Image}::"EntityType"
-        ${held.length ? Prisma.sql`AND "entityId" <> ALL(${held}::int[])` : Prisma.empty}
-      ORDER BY "createdAt" ASC
-      LIMIT 15000
-    `;
+    const jobQueue = await dbRead.$queryRaw<{ entityId: number; createdAt: Date }[]>(
+      blockedQueueBatchSql(held, 15000)
+    );
 
     if (!jobQueue.length) {
       console.log('No blocked images in queue', {
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        csamBlockHeld: csamBlockHeld.length,
         evidenceHeld: evidenceHeld.length,
         accountHeld: accountHeld.length,
       });
@@ -767,6 +791,7 @@ export const removeBlockedImages = createJob(
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        csamBlockHeld: csamBlockHeld.length,
         evidenceHeld: evidenceHeld.length,
         accountHeld: accountHeld.length,
       });
@@ -819,6 +844,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      csamBlockHeld: csamBlockHeld.length,
       evidenceHeld: evidenceHeld.length,
       staleIds: staleIds.length,
     });
@@ -1073,6 +1099,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      csamBlockHeld: csamBlockHeld.length,
       evidenceHeld: evidenceHeld.length,
       accountHeld: accountHeld.length,
     });

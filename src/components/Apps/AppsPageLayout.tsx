@@ -95,7 +95,7 @@ export function AppsPageLayout({
    * ⚠️ A BAND'S RAMP NOW RESOLVES AGAINST THE BODY COLUMN, NOT THE CONTAINER, AND THAT
    * NARROWS THE MEASURED ROUTES ON A WIDE SCREEN. The middle term of
    * `appsMeasureCss`'s `clamp()` is a PERCENTAGE, and a percentage `max-width` resolves
-   * against the containing block — which the rail has just made 276px narrower. So
+   * against the containing block — which the rail has just made 292px narrower. So
    * `/apps/submit` at a 2560 viewport lands at ~1238px instead of its 1368 ceiling.
    * Nothing moves at 1440 or 1920, where both bands are pinned to their `min` floor
    * anyway. This is the correct direction (the page really does have less room) and it
@@ -178,7 +178,7 @@ export function AppsPageLayout({
    * RESTATED FOR A RAIL: no rail, and the body takes the FULL container.
    *
    * A single-entry "navigation" can only link to the page you are already on. As a tab
-   * strip that cost a row's height; as a rail it would cost 276px of every apps page's
+   * strip that cost a row's height; as a rail it would cost 292px of every apps page's
    * width, which is strictly worse. It still fires for the same live cohort: a
    * store-visible non-author with no installs and no `appBlocksGetStarted` qualifies for
    * Marketplace alone.
@@ -188,7 +188,7 @@ export function AppsPageLayout({
    * for the incident that requires it), so a store-visible NON-AUTHOR WITH INSTALLS —
    * anyone who has ever installed an app — renders `[Marketplace]` alone on the server and
    * the first client paint, falls BELOW this floor, and gets no rail. After mount
-   * `Activity` appears, the count reaches two, and the rail mounts: the body moves 276px
+   * `Activity` appears, the count reaches two, and the rail mounts: the body moves 292px
    * right and the container-queried store grid beneath it re-ladders.
    *
    * Server and first paint still agree exactly — this is not a hydration mismatch, and the
@@ -199,7 +199,7 @@ export function AppsPageLayout({
    * 🔴 THE ALTERNATIVE IS NOT FREE, WHICH IS WHY THIS IS LEFT AS IT IS AND FLAGGED RATHER
    * THAN QUIETLY CHANGED. Reserving the rail from the first paint for any logged-in store
    * viewer whose summary query will run uses only SSR-safe inputs and would remove the
-   * shift — but it hands the genuinely-one-section cohort 276px of permanent chrome around
+   * shift — but it hands the genuinely-one-section cohort 292px of permanent chrome around
    * a single link, which is the exact waste this floor exists to prevent. Deferring, as
    * now, charges that cohort nothing and charges the common one a one-time shift.
    * A product call, not an engineering one; raised on the PR. The current behaviour is
@@ -288,11 +288,10 @@ export function AppsPageLayout({
               {/* ⚠️ THE TOGGLE SITS INSIDE THE RAIL, NOT IN THE GUTTER — a deliberate
                   deviation from `CollectionsLayout`, which absolutely-positions its
                   toggle at `right: -32px`. That works there because the gutter it
-                  overhangs is 8px of a card's margin; here the gap is 16px and the
-                  button is 28px, so a gutter toggle would overlap the page body on every
-                  route and would need `overflow: visible` maintained up the whole
-                  ancestor chain (a hazard that file documents at length). An in-rail
-                  toggle cannot be clipped out of existence.
+                  overhangs is 8px of a card's margin; a gutter toggle here
+                  would need `overflow: visible` maintained up the whole ancestor chain (a
+                  hazard that file documents at length). An in-rail toggle cannot be
+                  clipped out of existence.
 
                   🔴 AND IT COSTS NO ROW OF ITS OWN ANY MORE. It used to render in a
                   `<Group mb={4}>` here, ABOVE the nav, while `AppsRailNavView` drew the

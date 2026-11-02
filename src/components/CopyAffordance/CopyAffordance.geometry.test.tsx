@@ -101,7 +101,7 @@ import {
  * INERT in the `component` tier (that tier injects `:root` custom properties only). Without
  * it the control is statically positioned, lands after the body in flow, and can never
  * overlap anything — so the assertion below would pass unconditionally, against a layout
- * production never renders. See `test/geometry-setup.tsx`. The `geometry` job in
+ * production never renders. See `test/geometry-setup.tsx`. The `Geometry tests` step in
  * `.github/workflows/lint.yml` reports on a PR and blocks on a push to `main`.
  */
 

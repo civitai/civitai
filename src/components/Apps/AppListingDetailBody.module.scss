@@ -33,3 +33,28 @@
     grid-column: 1 / -1;
   }
 }
+
+/**
+ * The right rail is the SAME width as the model version page's sidebar: a fixed 450px from the
+ * `md` container step up, instead of a third of whatever the apps content measure is (369px at a
+ * 1400px viewport beside the app nav, growing without limit on a wide screen). Below `md` the
+ * spans in the body (5/12 at `sm`, stacked at `base`) still apply.
+ *
+ * The doubled class outranks `ContainerCol`'s own span rules, which live in the same container
+ * query at one class of specificity.
+ */
+.railCol.railCol {
+  @container mantine-grid (min-width: 1024px) {
+    flex: 0 0 450px;
+    width: 450px;
+    max-width: 450px;
+  }
+}
+
+.mainCol.mainCol {
+  @container mantine-grid (min-width: 1024px) {
+    flex: 1 1 0;
+    width: auto;
+    max-width: calc(100% - 450px);
+  }
+}

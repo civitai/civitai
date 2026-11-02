@@ -25,7 +25,7 @@ import { renderWithProviders } from '../../../test/component-setup';
  *     the exported `appsSections` (`apps-sections.ts`), so the visibility predicates can
  *     be driven directly here instead of through a presentational component's props;
  *   • the `< 2 sections ⇒ render nothing` COLLAPSE moved from the view into
- *     `AppsPageLayout`, because the layout also has to stop reserving the rail's 276px of
+ *     `AppsPageLayout`, because the layout also has to stop reserving the rail's 292px of
  *     horizontal chrome. So this file renders the REAL `AppsPageLayout` with the data
  *     hook stubbed, rather than a presentational view in isolation — which exercises the
  *     collapse where it now lives instead of re-implementing it in a fixture;
@@ -502,7 +502,7 @@ describe('Marketplace is gated on canSeeStore', () => {
  *   (⇒ `canBuild: false`) · empty summary  ⇒  Marketplace ALONE ⇒ no rail.
  *
  * 🔴 IT IS ASSERTED HERE AGAINST THE REAL `AppsPageLayout`, WHICH IS WHERE THE RULE NOW
- * LIVES. As a tab strip the collapse saved a row's height; as a rail it saves 276px of
+ * LIVES. As a tab strip the collapse saved a row's height; as a rail it saves 292px of
  * every apps page's WIDTH, which is a bigger claim and a worse regression to miss.
  *
  * ⚠️ THE SHAPE IS REAL; THE COHORT THIS USED TO NAME IS NOT. An earlier version said
