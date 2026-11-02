@@ -419,6 +419,22 @@ describe('rederivePromptTags', () => {
     expect((await row()).needsReview).toBe('modRule');
   });
 
+  it('applies an edit whose own new tag flags the image for review', async () => {
+    seedTags(machine('still life'));
+    await seedImage('bravo', { nsfwLevel: 1 });
+    vi.mocked(insertTagsOnImageNew).mockImplementationOnce(async (rows) => {
+      for (const r of rows)
+        holder.tags.set(r.tagId, {
+          ...fromPrompt(byId(r.tagId).name),
+          source: r.source as string,
+        });
+      await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'tag' WHERE id = ${ID}`);
+    });
+    expect(await rederivePromptTags(ID)).toMatchObject({ status: 'applied', added: 1 });
+    expect(tagNames()).toEqual(['safety tag', 'still life']);
+    expect((await row()).needsReview).toBe('tag');
+  });
+
   it('backs off when a moderator acts on the image during the re-derivation', async () => {
     seedTags(machine('still life'), fromPrompt('level tag'));
     await seedImage('a clean prompt');
@@ -434,10 +450,33 @@ describe('rederivePromptTags', () => {
     expect((await row()).nsfwLevel).toBe(8);
   });
 
+  it('sends no auto-block notice for a block that a moderator action stopped', async () => {
+    holder.ruleAction = 'Block';
+    seedTags(machine('still life'));
+    await seedImage('bravo', { nsfwLevel: 1 });
+    vi.mocked(dbMock.dbWrite.appeal.findMany).mockImplementationOnce((async () => {
+      await holder.db.exec(`UPDATE "Image" SET "nsfwLevelLocked" = true WHERE id = ${ID}`);
+      return [];
+    }) as never);
+    expect(await rederivePromptTags(ID)).toMatchObject({ reason: 'changed-during-rederive' });
+    expect(vi.mocked(createNotification).mock.calls.map(([n]) => n.type)).toEqual([]);
+  });
+
+  it('leaves a lock another run now holds', async () => {
+    seedTags(machine('still life'), fromPrompt('level tag'));
+    await seedImage('a clean prompt');
+    vi.mocked(redisMock.sysRedis.get).mockResolvedValue('another-run' as never);
+    await rederivePromptTags(ID);
+    expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+  });
+
   it('waits for a concurrent re-derivation of the same image', async () => {
     seedTags(machine('still life'), fromPrompt('level tag'));
     await seedImage('a clean prompt');
     vi.mocked(redisMock.sysRedis.set).mockResolvedValueOnce(null as never);
+    vi.mocked(redisMock.sysRedis.get).mockImplementation(
+      async () => vi.mocked(redisMock.sysRedis.set).mock.calls.at(-1)?.[1] as never
+    );
     expect(await rederivePromptTags(ID)).toMatchObject({ status: 'applied' });
     expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(2);
     expect(redisMock.sysRedis.del).toHaveBeenCalled();
@@ -468,13 +507,20 @@ describe('resolveScanOutcome monotone', () => {
     expect(after.scannedAt.getTime()).toBe(before.scannedAt.getTime());
   });
 
-  it('writes nothing over an image that went into review', async () => {
+  it('keeps a review flag set on the image before its write', async () => {
     seedTags(machine('still life'));
     await seedImage('a clean prompt', { ...flagged, needsReview: 'tag' });
+    await resolveScanOutcome({ image: await image(), workflowId: 'wf-1', monotone: true });
+    expect(await row()).toMatchObject({ needsReview: 'tag', nsfwLevel: 1 });
+  });
+
+  it('writes nothing over an image a moderator locked', async () => {
+    seedTags(machine('still life'));
+    await seedImage('a clean prompt', { ...flagged, nsfwLevelLocked: true });
     await expect(
       resolveScanOutcome({ image: await image(), workflowId: 'wf-1', monotone: true })
     ).rejects.toThrow();
-    expect(await row()).toMatchObject({ needsReview: 'tag', nsfwLevel: 8 });
+    expect((await row()).nsfwLevel).toBe(8);
   });
 
   it('without the option, writes the audit as a scan always has', async () => {

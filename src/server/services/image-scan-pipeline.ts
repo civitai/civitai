@@ -590,8 +590,8 @@ export async function resolveScanOutcome({
   negativePrompt?: string;
   log?: ScanLog;
   /**
-   * For a re-derivation outside a scan: keep pHash and scannedAt, never clear the minor or poi flag,
-   * and write only while the image is still Scanned, unlocked, unblocked and out of review (else
+   * For a re-derivation outside a scan: keep pHash and scannedAt, never clear the minor, poi or a
+   * review flag, and write only while no moderator has locked, blocked or ruled on the image (else
    * throws). The level still follows the image's current automated tags.
    */
   monotone?: boolean;
@@ -666,15 +666,6 @@ export async function resolveScanOutcome({
       toUpdate.needsReview = modRule.needsReview;
       if (typeof modRule.needsReview === 'string') reviewKey = modRule.needsReview;
     }
-    // Notify the user only when a rule auto-blocked the image (not on Hold).
-    if (modRule.ingestion === ImageIngestionStatus.Blocked) {
-      await notifyImageAutoBlocked({
-        imageId: image.id,
-        userId: image.userId,
-        reason: modRule.ruleReason,
-        log,
-      });
-    }
   }
 
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
@@ -728,7 +719,11 @@ export async function resolveScanOutcome({
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
       "nsfwLevel" = ${toUpdate.nsfwLevel as number},
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
-        ELSE ${(toUpdate.needsReview as string) ?? null} END,
+        ELSE ${
+          monotone
+            ? Prisma.sql`COALESCE(${(toUpdate.needsReview as string) ?? null}, "needsReview")`
+            : (toUpdate.needsReview as string) ?? null
+        } END,
       "minor" = ${(toUpdate.minor as boolean) ?? false}${
     monotone ? Prisma.sql` OR "minor"` : Prisma.empty
   },
@@ -748,13 +743,22 @@ export async function resolveScanOutcome({
       AND ingestion = 'Scanned'::"ImageIngestionStatus"
       AND NOT "nsfwLevelLocked"
       AND "blockedFor" IS NULL
-      AND "needsReview" IS NULL
       AND NOT "acceptableMinor"`
       : Prisma.empty
   }
   `;
   // A moderator acted on the image after a re-derivation found it eligible.
   if (monotone && !written) throw new RederiveConflictError();
+
+  // Notify the user only when a rule auto-blocked the image (not on Hold).
+  if (modRule?.ingestion === ImageIngestionStatus.Blocked) {
+    await notifyImageAutoBlocked({
+      imageId: image.id,
+      userId: image.userId,
+      reason: modRule.ruleReason,
+      log,
+    });
+  }
 
   await notifyPromptRatingRaised({
     image,
@@ -1243,12 +1247,13 @@ async function rederiveSkipReason(image: ScanImage) {
  */
 export async function rederivePromptTags(imageId: number): Promise<RederivePromptTagsResult> {
   const key = rederiveLockKey(imageId);
+  const token = `${process.pid}-${Date.now()}-${Math.random()}`;
   // Each run re-reads the stored prompt, so waiting out a concurrent one is enough to end on the
   // latest save.
   for (let attempt = 0; ; attempt++) {
     // Fails open: the write itself re-checks that no moderator acted meanwhile.
     const locked = await sysRedis
-      .set(key, '1', { NX: true, EX: REDERIVE_LOCK_SECONDS })
+      .set(key, token, { NX: true, EX: REDERIVE_LOCK_SECONDS })
       .catch(() => 'OK');
     if (locked) break;
     if (attempt >= 20) return { status: 'skipped', reason: 'busy' };
@@ -1257,7 +1262,9 @@ export async function rederivePromptTags(imageId: number): Promise<RederivePromp
   try {
     return await rederiveLocked(imageId);
   } finally {
-    await sysRedis.del(key).catch(() => null);
+    // A run that outlived the lock must not release the next run's.
+    if ((await sysRedis.get(key).catch(() => null)) === token)
+      await sysRedis.del(key).catch(() => null);
   }
 }
 
