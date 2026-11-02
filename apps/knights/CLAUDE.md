@@ -16,7 +16,7 @@ Flipt flag `knights-of-new-order-app` (`KNIGHTS_APP_FLAG` in `src/lib/server/acc
 through `@civitai/flipt`; the `testers` segment is configured in Flipt, not here. `src/hooks.server.ts` runs the
 `@civitai/auth` spoke guard, then `accessFor` -> `decideAccess` (`src/lib/access.ts`, pure and unit-tested):
 
-- anonymous: redirected to the auth hub sign-in
+- anonymous: a page load is redirected to `/welcome?next=<path>` (`lib/welcome.ts`, public in the hook); its "Sign in with Civitai" is the guard's own login URL with the sanitised `next` as return-to, and a signed-in visitor to `/welcome` goes to `/`. API and non-page requests keep the hub redirect
 - moderator: always allowed
 - anyone else: allowed iff the flag is on for them; flag missing or Flipt down fails closed
 - denied: a plain "not yet open" page (403)

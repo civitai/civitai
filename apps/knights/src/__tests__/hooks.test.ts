@@ -11,11 +11,13 @@ vi.mock('$lib/server/access', () => ({ accessFor }));
 
 const { handle } = await import('../hooks.server');
 
+const page = (url: URL) => new Request(url, { headers: { 'sec-fetch-mode': 'navigate' } });
+
 async function run(path = '/') {
   const url = new URL(`https://knights.civitai.com${path}`);
   const resolve = vi.fn(async () => new Response('game', { status: 200 }));
   const response = await (handle as unknown as (arg: unknown) => Promise<Response>)({
-    event: { url, request: new Request(url), locals: {}, route: { id: null } },
+    event: { url, request: page(url), locals: {}, route: { id: null } },
     resolve,
   });
   return { response, resolve };
@@ -29,11 +31,11 @@ beforeEach(() => {
 });
 
 describe('knights access gate', () => {
-  it('sends an anonymous visitor to the auth hub sign-in', async () => {
+  it('sends an anonymous visitor to the welcome screen', async () => {
     guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.civitai.com/login' });
     const { response, resolve } = await run();
     expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe('https://auth.civitai.com/login');
+    expect(response.headers.get('location')).toBe('/welcome');
     expect(resolve).not.toHaveBeenCalled();
   });
 
@@ -77,5 +79,55 @@ describe('knights access gate', () => {
     const { resolve } = await run('/api/auth/callback');
     expect(resolve).toHaveBeenCalled();
     expect(guardCheck).not.toHaveBeenCalled();
+  });
+});
+
+describe('welcome screen', () => {
+  const login = { status: 'login', redirect: 'https://auth.civitai.com/login?returnUrl=x' };
+
+  it('sends a signed-out page load to /welcome with the page it wanted', async () => {
+    guardCheck.mockResolvedValue(login);
+    const { response, resolve } = await run('/play');
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('/welcome?next=%2Fplay');
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('keeps an API request on the hub redirect', async () => {
+    guardCheck.mockResolvedValue(login);
+    const { response } = await run('/api/anything');
+    expect(response.headers.get('location')).toBe(login.redirect);
+  });
+
+  it('renders /welcome for a signed-out visitor, with the sign-in URL for the page they wanted', async () => {
+    guardCheck.mockResolvedValue(login);
+    const url = new URL('https://knights.civitai.com/welcome?next=%2F%2Fevil.com');
+    const locals: Record<string, unknown> = {};
+    const resolve = vi.fn(async () => new Response('welcome'));
+    await (handle as unknown as (arg: unknown) => Promise<Response>)({
+      event: { url, request: page(url), locals, route: { id: null } },
+      resolve,
+    });
+    expect(resolve).toHaveBeenCalled();
+    expect(locals.signInUrl).toBe(login.redirect);
+    expect(guardCheck.mock.calls[0][1]).toBe('https://knights.civitai.com/');
+  });
+
+  it('asks the hub to return to the sanitised next page', async () => {
+    guardCheck.mockResolvedValue(login);
+    const url = new URL('https://knights.civitai.com/welcome?next=%2Fplay%3Fa%3D1');
+    await (handle as unknown as (arg: unknown) => Promise<Response>)({
+      event: { url, request: page(url), locals: {}, route: { id: null } },
+      resolve: vi.fn(async () => new Response('')),
+    });
+    expect(guardCheck.mock.calls[0][1]).toBe('https://knights.civitai.com/play?a=1');
+  });
+
+  it('sends a signed-in user from /welcome to /', async () => {
+    guardCheck.mockResolvedValue(signedIn({ id: 1 }));
+    const { response, resolve } = await run('/welcome');
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('/');
+    expect(resolve).not.toHaveBeenCalled();
   });
 });
