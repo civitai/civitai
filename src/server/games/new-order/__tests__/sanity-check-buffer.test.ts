@@ -99,10 +99,7 @@ describe('getSanityCheckImage — BLOB_STRING/Buffer sMembers decoding', () => {
     // The failure was swallowed by try/catch → the symptom was a silent null +
     // an error log, never a thrown error. Assert we did NOT hit that path.
     expect(mockHandleLogError).not.toHaveBeenCalled();
-    expect(mockFindUnique).toHaveBeenCalledWith({
-      where: { id: 12345 },
-      select: { url: true, metadata: true },
-    });
+    expect(mockFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 12345 } }));
   });
 
   it('parses a plain string member unchanged (single-node/dev behavior)', async () => {

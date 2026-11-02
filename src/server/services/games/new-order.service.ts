@@ -76,6 +76,13 @@ import { isDefined } from '~/utils/type-guards';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
+// Checked against the row as read, at every enqueue and every read that shows an image to a
+// player, so a hold applied after the image entered a pool still keeps it out.
+const NEW_ORDER_HELD_REVIEW_KEYS = new Set(['csam']);
+function isHeldFromNewOrder(image: { needsReview: string | null }) {
+  return image.needsReview !== null && NEW_ORDER_HELD_REVIEW_KEYS.has(image.needsReview);
+}
+
 // Helper functions for atomic voting
 function getVoteLimitForRank(rank: NewOrderHighRankType): number {
   switch (rank) {
@@ -1217,9 +1224,9 @@ export async function getSanityCheckImage(): Promise<SanityCheck | null> {
     // Fetch image data from database (url, metadata)
     const imageData = await dbRead.image.findUnique({
       where: { id: imageId },
-      select: { url: true, metadata: true },
+      select: { url: true, metadata: true, needsReview: true },
     });
-    if (!imageData) return null;
+    if (!imageData || isHeldFromNewOrder(imageData)) return null;
 
     return {
       imageId,
@@ -1579,10 +1586,12 @@ export async function addImageToQueue({
   imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
   if (imageIds.length === 0) return false;
 
-  const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
-    select: { id: true, url: true, nsfwLevel: true, metadata: true },
-  });
+  const images = (
+    await dbRead.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
+    })
+  ).filter((image) => !isHeldFromNewOrder(image));
   if (images.length === 0) return false;
 
   // Get active filling slot for this rank
@@ -1708,7 +1717,7 @@ export async function getImagesQueue({
       const unratedImageIds = await filterUnratedImages(ratedKey, unseenImageIds);
       if (unratedImageIds.length === 0) continue;
 
-      const images = await dbRead.image.findMany({
+      const fetched = await dbRead.image.findMany({
         where: {
           id: { in: unratedImageIds },
           type: MediaType.image,
@@ -1717,8 +1726,16 @@ export async function getImagesQueue({
             publishedAt: { not: null, lt: new Date() },
           },
         },
-        select: { id: true, url: true, nsfwLevel: true, metadata: true },
+        select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
       });
+
+      const heldIds: number[] = [];
+      const images = fetched.filter((image) => {
+        if (!isHeldFromNewOrder(image)) return true;
+        heldIds.push(image.id);
+        return false;
+      });
+      if (heldIds.length > 0) await pool.reset({ id: heldIds });
 
       // Don't overshoot the target — pass 2 redistribution relies on
       // per-pool quotas being respected during pass 1. We mark `seenImageIds`
@@ -1731,7 +1748,7 @@ export async function getImagesQueue({
       sliced.forEach((image) => seenImageIds.add(image.id));
 
       validatedImages.push(
-        ...sliced.map(({ nsfwLevel, ...image }) => ({
+        ...sliced.map(({ nsfwLevel, needsReview: _needsReview, ...image }) => ({
           ...image,
           nsfwLevel:
             effectiveRankType === NewOrderRankType.Acolyte || isModerator ? nsfwLevel : undefined,
@@ -1839,9 +1856,11 @@ export async function getImagesQueue({
         const sanityImageIds = selectedChecks.map((entry) => Number(entry.split(':')[0]));
         const sanityImagesData = await dbRead.image.findMany({
           where: { id: { in: sanityImageIds } },
-          select: { id: true, url: true, metadata: true },
+          select: { id: true, url: true, metadata: true, needsReview: true },
         });
-        const sanityImageMap = new Map(sanityImagesData.map((img) => [img.id, img]));
+        const sanityImageMap = new Map(
+          sanityImagesData.filter((img) => !isHeldFromNewOrder(img)).map((img) => [img.id, img])
+        );
 
         for (const entry of selectedChecks) {
           const [imageIdStr] = entry.split(':');
@@ -2032,14 +2051,15 @@ export async function getPlayerHistory({
         publishedAt: { not: null, lt: new Date() },
       },
     },
-    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+    select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
   });
 
   return {
     items: judgments
       .map(({ imageId, ...data }) => {
-        const image = images.find((i) => i.id === imageId);
-        if (!image) return null;
+        const found = images.find((i) => i.id === imageId);
+        if (!found || isHeldFromNewOrder(found)) return null;
+        const { needsReview: _needsReview, ...image } = found;
 
         return {
           ...data,
