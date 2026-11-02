@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { DocStore, DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
+import { purgeViewerDocuments } from '~/server/services/apps/doc-store-purge';
 import {
   createPgliteHarness,
   MIGRATION_APP_PURGE_DOWN,
@@ -13,14 +14,21 @@ import { APPDATA_TABLES } from './doc-store.sql-scan';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+// Every call here passes its own store; reaching the production instance is a test bug.
+vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
+  getDocStoreMaintenance: () => {
+    throw new Error('test must pass its own store');
+  },
+}));
+
 /**
  * Bulk deletes through the maintenance object, on the embedded Postgres as `appdata_rw` with
  * row-level security ON (the policy the app-purge migration adds is what lets the enumeration
  * see an app's namespaces at all) and OFF (the module's own predicates alone: a purge statement
  * that lost its app key would reach the bystander app's rows):
  *   - `purgeApp`: every row of one app, every namespace, in batches; nothing of any other app;
- *   - `wipeAccount(uid, { appId })`: one user in one app; the user's data in other apps and
- *     other users' data in that app stay.
+ *   - `wipeAccount(uid, { proceed })`: the account wipe stops between namespaces when told to;
+ *   - `purgeViewerDocuments`: the server's one entry point to the account wipe takes no app scope.
  * Expected values are literals, never read back from the store under test.
  */
 
@@ -153,30 +161,77 @@ for (const rls of [true, false]) {
         });
         expect(await rowsOf(h, app)).toBe(before);
       });
+
+      it('re-lists the namespaces before reporting done: a namespace written mid-purge is not left behind', async () => {
+        const app = freshApp('RELIST');
+        await seed(store, app);
+        let calls = 0;
+        // A write lands in a namespace the purge's first listing could not have seen.
+        const out = await maint.purgeApp(app, {
+          proceed: async () => {
+            calls += 1;
+            if (calls === 1) await store.put(ctx(app, 'dev:7303', 7_303), PREFS, 'late', { a: 1 });
+            return true;
+          },
+        });
+
+        expect(out.done).toBe(false);
+        expect(await rowsOf(h, app, 'dev:7303')).toBeGreaterThan(0);
+        // The next call finds it and finishes.
+        expect(await maint.purgeApp(app)).toMatchObject({ done: true, stopped: false });
+        expect(await rowsOf(h, app)).toBe(0);
+      });
     });
 
-    describe('wipeAccount with an app', () => {
-      it("removes that user's data in that app only", async () => {
-        const app = freshApp('ONEAPP');
-        const other = freshApp('OTHERAPP');
+    describe('wipeAccount with proceed', () => {
+      it('stops before the next namespace when `proceed` says no; a re-run finishes', async () => {
+        const app = freshApp('WIPESTOP');
+        const other = freshApp('WIPESTOP2');
         await seed(store, app);
         await seed(store, other);
+        // Alice has rows in four namespaces: prod and her dev namespace, in each app.
+        const perNs = async () =>
+          Promise.all([app, other].flatMap((a) => [NS_PROD, DEV_NS].map((ns) => rowsOf(h, a, ns))));
         expect(await docsOf(h, app, ALICE)).toBe(7);
-        expect(await docsOf(h, app, BOB)).toBe(6);
-
-        const out = await maint.wipeAccount(ALICE, { appId: app });
-
-        expect(out.failures).toEqual([]);
-        expect(out.namespaces.map((n) => [n.appId, n.ns]).sort()).toEqual([
-          [app, DEV_NS],
-          [app, NS_PROD],
-        ]);
-        expect(await docsOf(h, app, ALICE)).toBe(0);
-        expect(await rowsOf(h, app, DEV_NS)).toBe(0);
-        // Bob's own docs stay in that app; Alice's data in the other app stays whole.
-        expect(await docsOf(h, app, BOB)).toBe(6);
         expect(await docsOf(h, other, ALICE)).toBe(7);
+        const before = await perNs();
+
+        let calls = 0;
+        const out = await maint.wipeAccount(ALICE, { proceed: async () => (calls += 1) <= 1 });
+
+        // One namespace was wiped, then the second `proceed` stopped it; the other three are
+        // untouched.
+        expect(calls).toBe(2);
+        expect(out).toMatchObject({ stopped: true, failures: [] });
+        expect(out.namespaces).toHaveLength(1);
+        const after = await perNs();
+        expect(after.filter((n, i) => n !== before[i])).toHaveLength(1);
+
+        const rest = await maint.wipeAccount(ALICE);
+        expect(rest).toMatchObject({ stopped: false, failures: [] });
+        expect(await docsOf(h, app, ALICE)).toBe(0);
+        expect(await docsOf(h, other, ALICE)).toBe(0);
+        // Bob's own documents stay in both apps.
+        expect(await docsOf(h, app, BOB)).toBe(6);
         expect(await docsOf(h, other, BOB)).toBe(6);
+      });
+    });
+
+    describe('purgeViewerDocuments', () => {
+      // There is no one-app variant: a caller passing an app expecting a one-app empty would get
+      // an every-app wipe if the option were ignored, so it is refused.
+      it('refuses an app scope rather than wiping every app', async () => {
+        const app = freshApp('NOSCOPE');
+        const other = freshApp('NOSCOPE2');
+        await seed(store, app);
+        await seed(store, other);
+
+        await expect(
+          purgeViewerDocuments(ALICE, { appId: app, store: maint } as never)
+        ).rejects.toThrow(/appId/);
+
+        expect(await docsOf(h, app, ALICE)).toBe(7);
+        expect(await docsOf(h, other, ALICE)).toBe(7);
       });
     });
   });

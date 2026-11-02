@@ -80,7 +80,7 @@ export async function removeDeletedAccountAppData(
     if (result.wiped + result.failed >= batch) break;
     opts.jobContext?.checkIfCanceled();
     result.scanned += 1;
-    if ((await isAccountUnderLegalHold(id)) !== false) {
+    if ((await isAccountUnderLegalHold(id)) === true) {
       result.held += 1;
       continue;
     }

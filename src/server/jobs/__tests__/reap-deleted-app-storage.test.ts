@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { DocStore, DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
 import {
@@ -27,7 +28,7 @@ vi.mock('../job', () => ({
   createJob: (name: string, cron: string, fn: (ctx: unknown) => unknown) => ({ name, cron, fn }),
 }));
 
-const { reapDeletedAppStorage, STORAGE_REAP_AFTER_DAYS } = await import(
+const { reapDeletedAppStorage, reapDeletedAppStorageJob, STORAGE_REAP_AFTER_DAYS } = await import(
   '~/server/jobs/reap-deleted-app-storage'
 );
 
@@ -219,5 +220,108 @@ describe('reapDeletedAppStorage', () => {
     });
     expect(await reapDeletedAppStorage({ store: maint, now: NOW })).toMatchObject({ purged: 1 });
     expect(await rowsOf(id)).toBe(0);
+  });
+});
+
+describe('the reaper before its migrations are applied', () => {
+  let noPolicy: Harness;
+  const runJob = () =>
+    (reapDeletedAppStorageJob as unknown as { fn: (c: unknown) => Promise<unknown> }).fn({
+      checkIfCanceled: () => undefined,
+    });
+  const errorLogs = () =>
+    loggingMock.logToAxiom.mock.calls.filter(([e]) => {
+      const entry = e as { name?: string; type?: string };
+      return entry?.name === 'reap-deleted-app-storage' && entry?.type === 'error';
+    }).length;
+  const at = (ms: number) => new Date(NOW.getTime() + ms);
+
+  beforeAll(async () => {
+    noPolicy = await createPgliteHarness({ rls: true, appPurgePolicy: false });
+  });
+  afterAll(async () => {
+    if (noPolicy) expect(noPolicy.violations).toEqual([]);
+    await noPolicy?.close();
+  });
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    loggingMock.logToAxiom.mockClear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    live.store = maint;
+  });
+
+  it('a missing app-purge policy is logged once a day, not once per app per run, and deletes nothing', async () => {
+    const s = createDocStore({ db: noPolicy.db });
+    live.store = createDocStoreMaintenance({ db: noPolicy.db });
+    const ids: string[] = [];
+    for (const tag of ['NOPOLA', 'NOPOLB']) {
+      const id = freshApp(tag);
+      await s.put(ctx(id, NS_PROD, USERS[0]), PREFS, 'p', { a: 1 });
+      await main.query(
+        `INSERT INTO app_blocks (id, status, storage_deleted_at) VALUES ($1, 'suspended', $2)`,
+        [id, ago(PERIOD + DAY)]
+      );
+      ids.push(id);
+    }
+
+    vi.setSystemTime(NOW);
+    await runJob();
+    expect(errorLogs()).toBe(1);
+
+    vi.setSystemTime(at(HOUR));
+    await runJob();
+    expect(errorLogs()).toBe(1);
+
+    // A day and an hour after the first log: logged again.
+    vi.setSystemTime(at(25 * HOUR));
+    await runJob();
+    expect(errorLogs()).toBe(2);
+
+    for (const id of ids) {
+      const [r] = await noPolicy.raw(
+        `SELECT count(*)::int AS n FROM appdata.doc WHERE app_id = $1`,
+        [id]
+      );
+      expect(Number(r.n)).toBe(1);
+      expect(await purgedAt(id)).toBeNull();
+    }
+  });
+
+  it('missing main-database columns are logged once a day too', async () => {
+    // What Prisma raises for a raw query naming a column the table does not have yet.
+    dbMock.dbWrite.$queryRaw.mockImplementation(async () => {
+      throw Object.assign(
+        new Error(
+          'Raw query failed. Code: `42703`. Message: `column b.storage_deleted_at does not exist`'
+        ),
+        { code: 'P2010', meta: { code: '42703' } }
+      );
+    });
+
+    vi.setSystemTime(NOW);
+    await runJob();
+    expect(errorLogs()).toBe(1);
+
+    vi.setSystemTime(at(HOUR));
+    await runJob();
+    expect(errorLogs()).toBe(1);
+
+    vi.setSystemTime(at(25 * HOUR));
+    await runJob();
+    expect(errorLogs()).toBe(2);
+  });
+
+  it('any other failure is still logged on every run', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async () => {
+      throw new Error('connection reset');
+    });
+
+    vi.setSystemTime(NOW);
+    await runJob();
+    vi.setSystemTime(at(HOUR));
+    await runJob();
+    expect(errorLogs()).toBe(2);
   });
 });
