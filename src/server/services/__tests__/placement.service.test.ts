@@ -162,7 +162,7 @@ describe('placementPriceRange', () => {
 
     const range = await placementPriceRange(1, 'sticker');
 
-    expect(getCapTier).toHaveBeenCalledWith(1, { useKysely: false });
+    expect(getCapTier).toHaveBeenCalledWith(1, { useKysely: true });
     expect(range.tier).toBe('free');
     expect(range.max).toBe(1_000);
   });
