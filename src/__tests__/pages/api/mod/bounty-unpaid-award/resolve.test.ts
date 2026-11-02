@@ -2,16 +2,17 @@ import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const { mockResolve, session } = vi.hoisted(() => ({
+const { mockResolve, session, signedIn } = vi.hoisted(() => ({
   mockResolve: vi.fn(),
   session: {
     user: { id: 7, isModerator: true as boolean, permissions: [], bannedAt: null },
   },
+  signedIn: { current: true },
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: vi.fn() }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => session),
+  getServerAuthSession: vi.fn(async () => (signedIn.current ? session : null)),
 }));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
@@ -53,6 +54,7 @@ const ruling = {
 beforeEach(() => {
   vi.clearAllMocks();
   session.user.isModerator = true;
+  signedIn.current = true;
   mockResolve.mockResolvedValue({ recorded: true });
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
@@ -86,6 +88,12 @@ describe('bounty.resolveUnpaidAward', () => {
     expect((await call(ruling)).json).toMatchObject({ recorded: false });
   });
 
+  it('refuses a caller who is not signed in', async () => {
+    signedIn.current = false;
+    expect((await call(ruling)).status).toBe(401);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
   it('refuses a caller who is not a moderator', async () => {
     session.user.isModerator = false;
     expect((await call(ruling)).status).toBe(403);
@@ -95,6 +103,7 @@ describe('bounty.resolveUnpaidAward', () => {
   it.each([
     ['a blank ledger reference', { ledgerReference: '   ' }],
     ['no ledger reference', { ledgerReference: undefined }],
+    ['a ledger reference over 500 characters', { ledgerReference: 'x'.repeat(501) }],
     ['an unknown ruling', { ruling: 'split' }],
   ])('refuses %s before resolving anything', async (_, change) => {
     expect((await call({ ...ruling, ...change })).status).toBe(400);
