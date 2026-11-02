@@ -1,4 +1,6 @@
 <script lang="ts">
+  import OverlayIcon from '$lib/OverlayIcon.svelte';
+
   let {
     src,
     alt,
@@ -28,21 +30,26 @@
 
 <!-- The stage never resizes to its picture: the picture is fitted inside it and the bands the fit leaves are filled
      by a blurred copy of the same image. -->
-<div class="stage">
-  <img class="backdrop" {src} alt="" aria-hidden="true" />
-  <div class="scrim"></div>
-  <img
-    class="picture"
-    class:fitted={ratio !== null}
-    style:--ar={ratio}
-    {src}
-    {width}
-    {height}
-    {alt}
-    use:watchImage={onfail}
-  />
+<div class="stage" class:failed>
   {#if failed}
-    <p class="failed" role="alert">This image could not be loaded. Skip it to see the next one.</p>
+    <div class="failure" role="alert">
+      <span class="glyph"><OverlayIcon name="image-off" size={40} /></span>
+      <p class="title">This image could not be loaded.</p>
+      <p class="hint">Skip it to see the next one.</p>
+    </div>
+  {:else}
+    <img class="backdrop" {src} alt="" aria-hidden="true" />
+    <div class="scrim"></div>
+    <img
+      class="picture"
+      class:fitted={ratio !== null}
+      style:--ar={ratio}
+      {src}
+      {width}
+      {height}
+      {alt}
+      use:watchImage={onfail}
+    />
   {/if}
 </div>
 
@@ -89,17 +96,34 @@
     aspect-ratio: var(--ar);
     object-fit: contain;
   }
-  .failed {
-    position: absolute;
-    inset: auto 16px 16px;
-    margin: 0;
-    padding: 8px 12px;
+  /* A picture that will not load leaves the stage as it was, so the answer pills stay where they are. */
+  .stage.failed {
     border: 1px solid var(--io-crimson);
-    border-radius: 8px;
-    background: #14110dee;
-    color: var(--io-crimson-text);
-    font: 600 13px/1.4 var(--io-font-ui);
+    background: var(--io-surface);
+  }
+  .failure {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 24px;
     text-align: center;
+  }
+  .glyph {
+    display: flex;
+    margin-bottom: 8px;
+    color: var(--io-crimson-text);
+  }
+  .failure p {
+    margin: 0;
+  }
+  .title {
+    color: var(--io-crimson-text);
+    font: 400 28px/1.3 var(--io-font-body);
+  }
+  .hint {
+    color: var(--io-parchment-muted);
+    font: 400 20px/1.3 var(--io-font-body);
   }
   @keyframes arrive {
     from {
@@ -112,6 +136,12 @@
     }
     .picture {
       border-radius: 4px;
+    }
+    .title {
+      font-size: 24px;
+    }
+    .hint {
+      font-size: 18px;
     }
   }
 </style>

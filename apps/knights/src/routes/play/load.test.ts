@@ -503,6 +503,20 @@ describe('play load notices', () => {
     expect(page.showGuide).toBe(false);
   });
 
+  it('carries what a new rank brings, so the notice can say it', async () => {
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 20, guide: true });
+    getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 21 });
+    const page = await run();
+    expect(page.progress).toEqual({
+      kind: 'rank',
+      rank: 'Templar',
+      level: 21,
+      levels: '21–40',
+      voteWeight: 1.5,
+      goldMultiplier: 1.25,
+    });
+  });
+
   it('offers the rating guide to a player who has not dismissed it, with every level described', async () => {
     seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: false });
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
