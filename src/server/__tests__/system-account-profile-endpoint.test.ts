@@ -241,7 +241,7 @@ describe('POST /api/admin/system-account-profile', () => {
     });
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'error',
+        type: 'info',
         name: 'system-account-profile-set',
         details: {
           userId: SYSTEM_ID,
@@ -322,6 +322,7 @@ describe('POST /api/admin/system-account-profile', () => {
     expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
+        type: 'error',
         name: 'system-account-profile-set-failed',
         details: {
           userId: SYSTEM_ID,

@@ -118,7 +118,7 @@ export default HeaderTokenSecuredEndpoint(
     }
 
     logToAxiom({
-      type: 'error',
+      type: failed ? 'error' : 'info',
       name: failed ? 'system-account-profile-set-failed' : 'system-account-profile-set',
       details: { userId, changed, failed, asserted_actor: actorUserId },
     }).catch(() => null);

@@ -513,6 +513,10 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(apiKeys).toHaveLength(0);
     expect(alertNames()).toContain('system-account-api-key-revoked');
     expect(alertNames()).not.toContain('system-account-api-key-revoke-failed');
+    // Deliberately 'error', not 'info': a revoke only ever cleans up a mint that failed or was refused.
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'system-account-api-key-revoked', type: 'error' })
+    );
   });
 
   it('still refuses with 403, and alerts, when revoking the refused key fails', async () => {
@@ -579,7 +583,7 @@ describe('POST /api/admin/system-account-api-key', () => {
       ([data]) => (data as { name?: string }).name === 'system-account-api-key-minted'
     );
     expect(alerts).toHaveLength(2);
-    expect(alerts.every(([data]) => (data as { type: string }).type === 'error')).toBe(true);
+    expect(alerts.every(([data]) => (data as { type: string }).type === 'info')).toBe(true);
     expect(alerts[0][0]).toMatchObject({
       details: { asserted_actor: 9, userId: SYSTEM_ID, name: 'system' },
     });
