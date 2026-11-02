@@ -148,14 +148,15 @@ export function UserAvatar({
   const passesSfwGate = currentUser
     ? hasSafeBrowsingLevel(nsfwLevel)
     : hasPublicBrowsingLevel(nsfwLevel);
-  // Let owners preview their own picture while it's still pending ingestion (nsfwLevel: 0).
-  const isPendingOwnerPreview =
+  // Owners always see their own picture: while it's still pending ingestion (nsfwLevel: 0), and on
+  // the NSFW-capable site even when its rating is outside their browsing level. Blocked still hides.
+  const isOwnerPreview =
     !!currentUser &&
     currentUser.id === avatarUser.id &&
-    avatarUser.profilePicture?.ingestion === 'Pending';
+    (avatarUser.profilePicture?.ingestion === 'Pending' || features.canViewNsfw);
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
-    (!isPendingOwnerPreview &&
+    (!isOwnerPreview &&
       (!features.canViewNsfw ? !passesSfwGate : !Flags.hasFlag(browsingLevel, nsfwLevel)));
   const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
