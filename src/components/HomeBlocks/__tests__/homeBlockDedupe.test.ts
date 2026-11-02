@@ -162,24 +162,27 @@ describe('selectDedupedItems with per-item keys', () => {
     expect(out.map((x) => x.id)).toEqual([2, 3]);
   });
 
-  it('still repeats the cover when no keys are supplied (the unfixed shape)', () => {
-    const out = selectDedupedItems([model(1, 100), model(2, 200), model(3, 300)], {
-      taken: takenSet('image', [100]),
-      entity: 'model',
-      itemsToShow: 2,
-    });
-    expect(out.map((x) => x.id)).toEqual([1, 2]);
-  });
-
-  it('never shows a claimed item while enough unclaimed ones exist, even with maxPerUser', () => {
-    const items = Array.from({ length: 10 }, (_, i) => item(i + 1, (i % 5) + 1));
+  it('never shows a claimed item while enough unclaimed ones exist, and the cap still binds', () => {
+    // Creator 1 owns ids 1-4, so the cap of 1 skips 2-4; creators 2-5 own one item each. Claimed
+    // ids 5 and 6 must stay behind the unclaimed 1, 7, 8, 9 even though 5 and 6 come earlier in
+    // line than 8 and 9 once creator 1 is capped out.
+    const items = [
+      item(1, 1),
+      item(2, 1),
+      item(3, 1),
+      item(4, 1),
+      item(5, 2),
+      item(6, 3),
+      item(7, 4),
+      item(8, 5),
+      item(9, 6),
+    ];
     const out = selectDedupedItems(items, {
-      taken: takenSet('image', [1, 2]),
+      taken: takenSet('image', [5, 6]),
       entity: 'image',
       itemsToShow: 4,
-      maxPerUser: 2,
+      maxPerUser: 1,
     });
-    expect(out).toHaveLength(4);
-    expect(out.some((x) => [1, 2].includes(x.id))).toBe(false);
+    expect(out.map((x) => x.id)).toEqual([1, 7, 8, 9]);
   });
 });
