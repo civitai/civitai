@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   APPDATA_TABLES,
   isAccountWipeStatement,
+  isAppPurgeStatement,
   isReviewMaintenanceStatement,
   scanStatement,
 } from './doc-store.sql-scan';
@@ -66,6 +67,10 @@ describe('scanner controls', () => {
       `SELECT wu.app_id FROM appdata.usage_user wu WHERE wu.user_id = $1::int`,
       `SELECT wm.app_id FROM appdata.doc_mark wm WHERE wm.user_id = $1::int`,
       `BEGIN; SELECT set_config('appdata.account_wipe_uid', '7', true)`,
+      // App-purge enumeration: the two per-app tables, read only, keyed on the app.
+      `SELECT pu.ns FROM appdata.usage_app pu WHERE pu.app_id = $1 AND pu.ns > $2::text`,
+      `SELECT pd.ns FROM appdata.doc pd WHERE pd.app_id = $1 AND pd.ns > $2::text`,
+      `BEGIN; SELECT set_config('appdata.app_purge_id', 'ab_X', true)`,
     ]) {
       expect({ ok, v: scanStatement(ok) }).toEqual({ ok, v: [] });
     }
@@ -129,6 +134,16 @@ describe('scanner controls', () => {
         `SELECT wu.app_id FROM appdata.usage_user wu JOIN appdata.doc d ON d.key = wu.ns WHERE wu.user_id = $1::int`,
         /lacks d\.app_id = \$1/,
       ],
+      // App-purge shape: never a write, never another table, always keyed on the app.
+      [
+        `WITH gone AS (DELETE FROM appdata.doc pd WHERE pd.app_id = $1 AND pd.ns > $2::text RETURNING 1) SELECT 1`,
+        /app-purge statement on appdata\.doc is not a SELECT/,
+      ],
+      [
+        `SELECT pm.ns FROM appdata.doc_mark pm WHERE pm.app_id = $1 AND pm.ns > $2::text`,
+        /app-purge statement reads appdata\.doc_mark/,
+      ],
+      [`SELECT pu.ns FROM appdata.usage_app pu WHERE pu.ns > $2::text`, /lacks pu\.app_id = \$1/],
     ];
     for (const [sql, want] of bad) {
       expect({ sql, v: scanStatement(sql).join('; ') }).toEqual({
@@ -274,6 +289,56 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces']);
   });
 
+  it('every app-purge-shaped statement is SQL_APP_NAMESPACES', () => {
+    const purge = collect((n) => {
+      const t = literalText(n);
+      return t !== null && /appdata\./.test(t) && isAppPurgeStatement(t);
+    });
+    expect(purge.map((n) => owner(n, 'variable'))).toEqual(['SQL_APP_NAMESPACES']);
+  });
+
+  it('the app-purge setting is set in exactly one place, `appPurgeTx`, which only the enumeration calls', () => {
+    const nearestFn = (n: ts.Node) => {
+      for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+        if ((ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name)
+          return p.name.text;
+      }
+      return null;
+    };
+    const setting = collect((n) => (literalText(n) ?? '').includes('appdata.app_purge_id'));
+    expect(setting.map(nearestFn)).toEqual(['appPurgeTx']);
+    const calls = collect(
+      (n) =>
+        ts.isCallExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === 'appPurgeTx'
+    );
+    expect(calls.map(nearestFn)).toEqual(['listAppNamespaces']);
+  });
+
+  it('no other server code mentions the app-purge setting (only the store, its migration and tests)', () => {
+    const found: string[] = [];
+    const walkAll = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === 'node_modules' || name.startsWith('.')) continue;
+        const full = path.join(dir, name);
+        if (statSync(full).isDirectory()) walkAll(full);
+        else if (
+          /\.(ts|tsx|js|mjs|cjs|sql)$/.test(name) &&
+          readFileSync(full, 'utf8').includes('app_purge_id')
+        ) {
+          found.push(path.relative(SRC_ROOT, full).split(path.sep).join('/'));
+        }
+      }
+    };
+    walkAll(path.join(SRC_ROOT, 'server'));
+    walkAll(path.join(SRC_ROOT, 'pages'));
+    expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
+      'server/services/apps/doc-store.ts',
+      'server/services/apps/migrations/20261102120000_appdata_app_purge.sql',
+    ]);
+  });
+
   it('no other server code mentions the account-wipe setting (only the store, the migration and tests)', () => {
     const found: string[] = [];
     const walkAll = (dir: string) => {
@@ -302,6 +367,8 @@ describe('only the doc-store module touches the appdata tables', () => {
   // Enumerated with fs, not grep: the wrapped grep honours .gitignore. A seam
   // guard pins the RELATIONSHIP — it fails when the set grows or shrinks.
   const EXPECTED = [
+    // The account app-data job suite counts each user's documents to prove only the opted-in one went.
+    'server/jobs/__tests__/remove-deleted-account-app-data.test.ts',
     // The owner-usage router suite seeds usage_app rows with known byte and doc counts.
     'server/routers/__tests__/app-listings.router.doc-store-usage.test.ts',
     // The moderator router suite resets the tables and pins report times between cases.
@@ -314,6 +381,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store-moderation.pglite.test.ts',
     // Reads every column that can hold a user id, to prove an account wipe left none.
     'server/services/apps/__tests__/doc-store.account-wipe.test.ts',
+    // Counts an app's rows in every table, to prove an app purge left none and touched no other app.
+    'server/services/apps/__tests__/doc-store.app-purge.test.ts',
     'server/services/apps/__tests__/doc-store.functional.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
@@ -324,6 +393,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/doc-store.ts',
     'server/services/apps/migrations/20261013120000_appdata_document_store.down.sql',
     'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+    'server/services/apps/migrations/20261102120000_appdata_app_purge.down.sql',
+    'server/services/apps/migrations/20261102120000_appdata_app_purge.sql',
   ];
   const PATTERN =
     /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
