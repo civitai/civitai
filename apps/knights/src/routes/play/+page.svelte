@@ -8,6 +8,7 @@
   import { recapLines } from './recap-text';
   import { answerForKey, keyHints } from './keys';
   import StatusBar from '$lib/StatusBar.svelte';
+  import RatingGuide from '$lib/RatingGuide.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -20,6 +21,13 @@
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
   let yesNo = $derived(data.mode === 'queue' && data.question?.kind === 'bool');
+  // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
+  let guideReopened = $state(false);
+  let guideOpen = $derived(data.showGuide || guideReopened);
+  // A title shows on hover and focus only; touch players get the same text from the Guide button.
+  let levelHint = $derived(
+    new Map(data.ratingGuide.map((entry) => [String(entry.level), `${entry.label}: ${entry.description}`]))
+  );
   let failedItem = $state<string | null>(null);
   let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
 
@@ -69,6 +77,18 @@
     reveal = null;
     await invalidateAll();
   }
+
+  const submitGuide: SubmitFunction = () => {
+    submitting = true;
+    return async ({ result, update }) => {
+      try {
+        await update();
+        if (result.type === 'success') guideReopened = false;
+      } finally {
+        submitting = false;
+      }
+    };
+  };
 
   const submit: SubmitFunction = () => {
     submitting = true;
@@ -199,14 +219,22 @@
         <input type="hidden" name="referenceId" value={data.trial.item.referenceId} />
         <div class="options">
           {#each data.trial.options as option (option.value)}
-            <button type="submit" name="answer" value={option.value} disabled={submitting}>
+            <button
+              type="submit"
+              name="answer"
+              value={option.value}
+              title={levelHint.get(option.value)}
+              disabled={submitting}
+            >
               {option.label}
             </button>
           {/each}
         </div>
       </form>
 
-      {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
+      <p class="skip"><button type="button" onclick={() => (guideReopened = true)}>Rating guide</button></p>
+
+      {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed}
         <p class="notice" role="alert">{form.message}</p>
       {/if}
     {:else if data.trial.kind === 'cooldown'}
@@ -250,6 +278,7 @@
             type="submit"
             name="answer"
             value={option.value}
+            title={levelHint.get(option.value)}
             disabled={submitting || imageFailed}
           >
             {option.label}<kbd>{yesNo ? option.label[0] : index + 1}</kbd>
@@ -267,9 +296,12 @@
     <form method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm} class="skip">
       <input type="hidden" name="item" value={data.item.id} />
       <button type="submit" disabled={submitting}>Skip <kbd>Space</kbd></button>
+      {#if !yesNo}
+        <button type="button" onclick={() => (guideReopened = true)}>Rating guide</button>
+      {/if}
     </form>
 
-    {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
+    {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed}
       <p class="notice" role="alert">{form.message}</p>
     {/if}
   {:else if !data.resetPending}
@@ -279,7 +311,63 @@
   <p class="back"><a href="/">Back</a></p>
 </div>
 
+{#if guideOpen}
+  <div class="overlay">
+    <div class="dialog" role="dialog" aria-modal="true" aria-label="Rating guide">
+      <h2>Rating guide</h2>
+      <p class="muted">What each level means. Rate what the image shows, not what you would like to see.</p>
+      <RatingGuide guide={data.ratingGuide} />
+      {#if form?.guideFailed}
+        <p class="notice" role="alert">{form.message}</p>
+      {/if}
+      <form method="POST" action="?/dismissGuide" use:enhance={submitGuide}>
+        <button type="submit" disabled={submitting}>I understand</button>
+      </form>
+    </div>
+  </div>
+{:else if data.progress}
+  <div class="overlay">
+    <div class="dialog" role="dialog" aria-modal="true" aria-label="Your progress">
+      {#if data.progress.kind === 'rank'}
+        <p class="verdict">You have risen to {data.progress.rank}.</p>
+        <p>You are now a {data.progress.rank} of the Order, at level {data.progress.level}.</p>
+      {:else}
+        <p class="verdict">You have reached level {data.progress.level}.</p>
+        <p>The Order grows in respect for your judgment.</p>
+      {/if}
+      {#if form?.progressFailed}
+        <p class="notice" role="alert">{form.message}</p>
+      {/if}
+      <form method="POST" action="?/dismissProgress" use:enhance={submit}>
+        <button type="submit" disabled={submitting}>Onward</button>
+      </form>
+    </div>
+  </div>
+{/if}
+
 <style>
+  /* Floats over the page so a notice never pushes the answer buttons off a phone screen. */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgb(0 0 0 / 0.7);
+  }
+  .dialog {
+    max-width: 32rem;
+    max-height: 100%;
+    overflow-y: auto;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--gold);
+    background: var(--panel);
+  }
+  .dialog h2 {
+    margin-top: 0;
+  }
   .lockout {
     padding: 1rem 1.5rem;
     border: 1px solid var(--border);
@@ -398,8 +486,12 @@
     .skip {
       margin-top: 0.4rem;
     }
+    .skip {
+      display: flex;
+      gap: 0.4rem;
+    }
     .skip button {
-      width: 100%;
+      flex: 1 1 0;
     }
     kbd,
     .hint {

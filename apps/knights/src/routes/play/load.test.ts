@@ -30,6 +30,8 @@ vi.mock('$lib/server/smites/smites.service', () => ({
   dismissResetNotice: vi.fn(),
 }));
 vi.mock('$lib/server/skip-runtime', () => ({ skipStore: skipList }));
+const seenStore = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }));
+vi.mock('$lib/server/seen-runtime', () => ({ seenStore }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
   pickHiddenCheck,
@@ -57,6 +59,9 @@ beforeEach(() => {
   getFeed.mockResolvedValue(null);
   skipList.list.mockReset();
   skipList.list.mockResolvedValue([]);
+  seenStore.get.mockReset();
+  seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: true });
+  seenStore.set.mockReset();
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ votes: 3 });
   getRecap.mockReset();
@@ -390,5 +395,50 @@ describe('dismissRecap action', () => {
       data: { message: 'Could not dismiss the recap. Try again.', recapFailed: true },
     });
     expect(log).toHaveBeenCalled();
+  });
+});
+
+describe('play load notices', () => {
+  it('announces a new level once it is ahead of what the player was told', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 6 });
+    const page = await run();
+    expect(page.progress).toEqual({ kind: 'level', rank: 'Knight', level: 6 });
+    expect(page.showGuide).toBe(false);
+  });
+
+  it('offers the rating guide to a player who has not dismissed it, with every level described', async () => {
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: false });
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    const page = await run();
+    expect(page.showGuide).toBe(true);
+    expect(page.progress).toBeNull();
+    expect(page.ratingGuide.map((g: { level: number }) => g.level)).toEqual([1, 2, 4, 8, 16, 32]);
+  });
+});
+
+describe('play progress actions', () => {
+  const call = (name: 'dismissGuide' | 'dismissProgress') =>
+    (actions as Record<string, (e: never) => Promise<unknown>>)[name]({
+      locals: { user: { id: 7 } },
+    } as never);
+
+  it('records the current standing as seen', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 12 });
+    await call('dismissProgress');
+    expect(seenStore.set).toHaveBeenCalledWith(7, { rank: 'Templar', level: 12, guide: true });
+  });
+
+  it('records the guide as read without touching what was seen', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 4, guide: false });
+    await call('dismissGuide');
+    expect(seenStore.set).toHaveBeenCalledWith(7, { rank: 'Knight', level: 4, guide: true });
+  });
+
+  it('fails when the store is down so the notice is not lost silently', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    seenStore.set.mockRejectedValue(new Error('down'));
+    expect(await call('dismissGuide')).toMatchObject({ status: 500 });
   });
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { count } from '$lib/format';
+  import RatingGuide from '$lib/RatingGuide.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -129,12 +130,7 @@
 
 <h2>Rating guide</h2>
 <p class="muted">What each level means. Rate what the image shows, not what you would like to see.</p>
-<dl>
-  {#each facts.ratingGuide as entry (entry.level)}
-    <dt>{entry.label}</dt>
-    <dd>{entry.description}</dd>
-  {/each}
-</dl>
+<RatingGuide guide={facts.ratingGuide} />
 
 <p><a href="/">Home</a> · <a href="/play" data-sveltekit-preload-data="off">Play</a></p>
 
@@ -149,25 +145,5 @@
     padding: 0.4rem 1rem 0.4rem 0;
     text-align: left;
     border-bottom: 1px solid var(--border);
-  }
-  dl {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.5rem 1.5rem;
-  }
-  dt {
-    color: var(--gold);
-  }
-  dd {
-    margin: 0;
-  }
-  @media (max-width: 40rem) {
-    dl {
-      grid-template-columns: 1fr;
-      gap: 0.1rem;
-    }
-    dd {
-      margin-bottom: 0.6rem;
-    }
   }
 </style>
