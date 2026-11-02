@@ -195,9 +195,13 @@ match. It is opt-in; a collection without one is not checked.
   `maxLength`, `pattern`, `minimum`, `maximum`, `minItems`, `maxItems`,
   `description`. Submit refuses any other keyword and names it.
 - **Bounds:** at most 16 nested schemas, 16384 bytes of JSON and 16 patterns per
-  collection schema. A `pattern` is at most 256 characters, needs a `maxLength`
-  of at most 1000 on the same schema, and is refused at submit if recheck finds
-  it can backtrack catastrophically (`validateSubmission`). Not allowed on a
+  collection schema, and 32 patterns across all of a manifest's collection schemas
+  (`APP_STORAGE_MANIFEST_MAX_PATTERNS`: each analysis blocks the event loop at
+  submit). A `pattern` is at most 256 characters, needs a `maxLength` of at most
+  1000 on the same schema, and is refused at submit if recheck finds it can
+  backtrack catastrophically (`validateSubmission`). recheck analyses it with the
+  `u` flag the store compiles it with (`APP_STORAGE_SCHEMA_PATTERN_FLAGS`; a setting's
+  pattern has no flags), and each distinct pattern once. Not allowed on a
   `write: "none"` collection, which has no document bodies.
 - **Enforcement:** the store checks every create and put (`writeDoc` in
   `doc-store.ts`), and the REST layer checks again before the ownership check, the

@@ -986,14 +986,24 @@ export class BlockManifestValidator {
 
     // The same ReDoS gate for every `pattern` in a storage collection's `schema`, which the
     // document store runs on every write. `parseManifestStorage` already bounded each pattern's
-    // input (`maxLength`), which cannot save an exponential one. Fail-closed like settings.
+    // input (`maxLength`), which cannot save an exponential one, and the manifest's pattern
+    // count (APP_STORAGE_MANIFEST_MAX_PATTERNS). Fail-closed like settings. Analysed with the
+    // flags the store compiles them with, and each distinct (pattern, flags) once: every
+    // analysis blocks the event loop.
     const schemaPatterns = collectionSchemaPatterns(parseManifestStorage(manifest));
     if (schemaPatterns.length > 0) {
       const { isPatternRedosVulnerable } = await import(
         '~/server/services/blocks/settings-pattern-guard'
       );
-      for (const { at, pattern } of schemaPatterns) {
-        if (await isPatternRedosVulnerable(pattern)) {
+      const verdicts = new Map<string, boolean>();
+      for (const { at, pattern, flags } of schemaPatterns) {
+        const key = JSON.stringify([pattern, flags]);
+        let vulnerable = verdicts.get(key);
+        if (vulnerable === undefined) {
+          vulnerable = await isPatternRedosVulnerable(pattern, flags);
+          verdicts.set(key, vulnerable);
+        }
+        if (vulnerable) {
           errors.push(
             `${at} is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
           );

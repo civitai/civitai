@@ -184,6 +184,18 @@ export const APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH = 256;
 export const APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH = 1000;
 /** Most `pattern`s one collection schema may declare: each costs a ReDoS analysis at submit. */
 export const APP_STORAGE_SCHEMA_MAX_PATTERNS = 16;
+/**
+ * Most `pattern`s all of a manifest's collection schemas may declare together. Each distinct
+ * one costs a ReDoS analysis at submit that blocks the event loop (up to about a second for a
+ * long pattern), so without this a manifest could queue 16 collections × 16 patterns.
+ */
+export const APP_STORAGE_MANIFEST_MAX_PATTERNS = 32;
+/**
+ * The flags a collection schema's `pattern` is compiled with, by the store and the parser,
+ * and analysed with by the submit-time ReDoS gate. One constant, so the gate can never read a
+ * pattern differently from how it runs.
+ */
+export const APP_STORAGE_SCHEMA_PATTERN_FLAGS = 'u';
 
 /**
  * Most errors one parse reports; the rest are summarised in one final line. The errors are
@@ -811,7 +823,7 @@ function parseSchemaNode(
       );
     } else {
       try {
-        new RegExp(pattern, 'u');
+        new RegExp(pattern, APP_STORAGE_SCHEMA_PATTERN_FLAGS);
       } catch {
         errors.push(
           `${at}.pattern is not a valid regular expression (JavaScript syntax with the "u" flag)`
@@ -834,12 +846,26 @@ function parseSchemaNode(
 }
 
 /**
- * Every `pattern` in the declared collection schemas, with where it is — for the submit-time
- * ReDoS gate (`BlockManifestValidator.validateSubmission`), which needs a server-only analyser.
- * Empty when `storage` does not parse (its errors are reported anyway).
+ * Every `pattern` in the declared collection schemas, with where it is and the flags it is
+ * compiled with — for the submit-time ReDoS gate (`BlockManifestValidator.validateSubmission`),
+ * which needs a server-only analyser. Empty when `storage` does not parse (its errors are
+ * reported anyway), so a manifest over {@link APP_STORAGE_MANIFEST_MAX_PATTERNS} is never
+ * analysed.
  */
 export function collectionSchemaPatterns(
   parsed: ParsedManifestStorage
+): { at: string; pattern: string; flags: string }[] {
+  if (parsed.errors.length > 0) return [];
+  return schemaPatternSites(parsed.collections).map(({ at, pattern }) => ({
+    at,
+    pattern,
+    flags: APP_STORAGE_SCHEMA_PATTERN_FLAGS,
+  }));
+}
+
+/** Every `pattern` in the collections' schemas, in declaration order, with where it is. */
+function schemaPatternSites(
+  collections: ReadonlyMap<string, DeclaredStorageCollection>
 ): { at: string; pattern: string }[] {
   const out: { at: string; pattern: string }[] = [];
   const walk = (at: string, node: unknown) => {
@@ -853,8 +879,7 @@ export function collectionSchemaPatterns(
     walk(`${at}.items`, node.items);
     walk(`${at}.additionalProperties`, node.additionalProperties);
   };
-  if (parsed.errors.length > 0) return out;
-  for (const [name, collection] of parsed.collections) {
+  for (const [name, collection] of collections) {
     if (collection.schema) walk(`storage.collections.${name}.schema`, collection.schema);
   }
   return out;
@@ -905,6 +930,13 @@ function parse(
     }
     const collection = parseCollection(`storage.collections.${name}`, raw[name], features, errors);
     if (collection) collections.set(name, collection);
+  }
+  // Counted over the collections that parsed: one over its own cap is already refused.
+  const patterns = schemaPatternSites(collections).length;
+  if (patterns > APP_STORAGE_MANIFEST_MAX_PATTERNS) {
+    errors.push(
+      `storage.collections declare ${patterns} patterns across their schemas — a manifest may declare at most ${APP_STORAGE_MANIFEST_MAX_PATTERNS} in all`
+    );
   }
   return { declared: true, collections, errors };
 }

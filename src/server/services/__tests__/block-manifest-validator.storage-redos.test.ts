@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PatternGuard from '~/server/services/blocks/settings-pattern-guard';
 
 // The REAL guard, wrapped so the calls can be counted: every verdict is still recheck's own.
 vi.mock('~/server/services/blocks/settings-pattern-guard', async (importOriginal) => {
-  const real = await importOriginal<
-    typeof import('~/server/services/blocks/settings-pattern-guard')
-  >();
+  const real = await importOriginal<typeof PatternGuard>();
   return { ...real, isPatternRedosVulnerable: vi.fn(real.isPatternRedosVulnerable) };
 });
 

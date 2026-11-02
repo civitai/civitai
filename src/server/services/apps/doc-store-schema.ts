@@ -19,6 +19,7 @@ import type {
   AppStorageCollectionSchema,
   AppStorageSchemaType,
 } from '~/shared/constants/block-storage.constants';
+import { APP_STORAGE_SCHEMA_PATTERN_FLAGS } from '~/shared/constants/block-storage.constants';
 
 type Failure = { pointer: string; keyword: string; reason: string };
 type Check = (value: unknown, pointer: string) => Failure | null;
@@ -122,7 +123,7 @@ function compile(schema: AppStorageCollectionSchema): Check {
   }
   if (typeof pattern === 'string') {
     // No `g` or `y` flag, so `test` keeps no state between calls.
-    const re = new RegExp(pattern, 'u');
+    const re = new RegExp(pattern, APP_STORAGE_SCHEMA_PATTERN_FLAGS);
     checks.push((v, p) =>
       typeof v === 'string' && !re.test(v)
         ? fail(p, 'pattern', `must match the pattern ${JSON.stringify(pattern)}`)
