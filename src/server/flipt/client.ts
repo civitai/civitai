@@ -410,6 +410,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // On: generateFromGraph / whatIfFromGraph refuse input urls on external hosts. Off (and unknown
   // or unreachable): they are allowed and counted in generation_input_url_refusals_total{mode="log"}.
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
+
+  // On: the followed creator-announcements feed first narrows to authors this viewer follows who
+  // have a live announcement, and makes no feed query when there are none
+  // (`creator-announcement.service.ts`). Off (and unknown or unreachable): the feed query runs as
+  // before for every call. Same rows either way, except that an author who newly goes live can
+  // reach followers up to the live-author cache's TTL (30 s) later.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every bell load. The key must exist in
+  // flag state (enabled: false is fine) before this code serves traffic, for the reason given at
+  // KYSELY_IMAGE_REACTIONS.
+  CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
