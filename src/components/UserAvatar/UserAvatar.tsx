@@ -37,6 +37,8 @@ import { decorationFrameStyle } from '~/components/UserAvatar/decoration-frame.u
 import { UserHoverCard } from '~/components/UserAvatar/UserHoverCard';
 import { isBlobUrl } from '~/utils/type-guards';
 import { Flags } from '~/shared/utils/flags';
+import type { AvatarShowcaseHat } from '~/components/Cosmetics/EventDecoration/AvatarHat';
+import { AvatarHat, isShowcaseHatShowing } from '~/components/Cosmetics/EventDecoration/AvatarHat';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -101,6 +103,7 @@ export function UserAvatar({
   withDecorations = true,
   withOverlay = false,
   withHoverCard = true,
+  withShowcaseHat = false,
   className,
 }: Props) {
   const theme = useMantineTheme();
@@ -169,6 +172,9 @@ export function UserAvatar({
           ?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt' | 'name'>)
       : undefined;
 
+  const showcaseHat =
+    withShowcaseHat && !userDeleted ? (avatarUser as ShowcaseUser).showcaseHat : undefined;
+
   const content = (
     <Group
       className={className}
@@ -207,6 +213,7 @@ export function UserAvatar({
                 optimized
               />
             )}
+            {isShowcaseHatShowing(showcaseHat) && <AvatarHat hat={showcaseHat} size={imageSize} />}
             {hasValidProfilePicture && !blockedProfilePicture && !userDeleted ? (
               <Paper
                 w={imageSize}
@@ -290,8 +297,10 @@ export function UserAvatar({
   return <UserHoverCard user={avatarUser}>{content}</UserHoverCard>;
 }
 
+type ShowcaseUser = { showcaseHat?: AvatarShowcaseHat | null };
+
 type Props = {
-  user?: Partial<UserWithCosmetics> | null;
+  user?: (Partial<UserWithCosmetics> & ShowcaseUser) | null;
   withUsername?: boolean;
   withLink?: boolean;
   avatarProps?: AvatarProps;
@@ -312,6 +321,12 @@ type Props = {
   withDecorations?: boolean;
   withOverlay?: boolean;
   withHoverCard?: boolean;
+  /**
+   * Draw the user's event showcase hat, when the payload carries one. Off by default: only the
+   * surfaces that show who someone is (profile header, creator card, roster, comments) opt in, so
+   * feed bylines stay clean. Not a size rule: comment avatars are smaller than some bylines.
+   */
+  withShowcaseHat?: boolean;
   className?: string;
 };
 

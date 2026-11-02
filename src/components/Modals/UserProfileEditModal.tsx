@@ -168,7 +168,11 @@ export default function UserProfileEditModal() {
   const { mutate, isPending: isUpdating } = trpc.userProfile.update.useMutation({
     onSuccess: (data) => {
       if (currentUser) {
-        utils.userProfile.get.setData({ username: currentUser.username }, data);
+        // The update returns the profile without the showcase hat, which is read beside it.
+        utils.userProfile.get.setData({ username: currentUser.username }, (old) => ({
+          ...data,
+          showcaseHat: old?.showcaseHat ?? null,
+        }));
         utils.userProfile.get.invalidate({ username: currentUser.username });
       }
       showSuccessNotification({ message: 'Profile updated successfully' });
