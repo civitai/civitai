@@ -33,6 +33,8 @@ import {
 const DELIVERY = 'https://delivery.example.com/';
 const ATTACHMENT_ROUTE = 'https://resolver.example.com/resolve-attachment';
 const KEY = 'default/7/my%20report.pdf';
+// A stored file URL in path style on the configured upload host (bucket first).
+const STORED_URL = 'https://storage.example.com/some-bucket/default/7/my%20report.pdf';
 
 type Reply = { status: number; body?: unknown } | Error;
 
@@ -101,18 +103,37 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
       },
     });
 
-    const result = await getDownloadUrl(KEY, 'my%20report.pdf');
+    const result = await getDownloadUrl(STORED_URL, 'my%20report.pdf');
 
     expect(result.url).toBe('https://signed.example.com/a');
     expect(new Date(result.urlExpiryDate).toISOString()).toBe('2030-01-01T00:00:00.000Z');
+
+    // The delivery worker gets the parsed key...
+    const dwBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(dwBody.key).toBe('default/7/my report.pdf');
 
     const calls = attachmentCalls();
     expect(calls).toHaveLength(1);
     const init = calls[0][1] as RequestInit;
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer internal-tok');
-    // The raw stored key, and the decoded download name the delivery worker also gets.
-    expect(JSON.parse(init.body as string)).toEqual({ path: KEY, fileName: 'my report.pdf' });
+    // ...the resolver gets the file URL exactly as stored (it normalises it itself),
+    // and the decoded download name the delivery worker also gets.
+    expect(JSON.parse(init.body as string)).toEqual({
+      path: STORED_URL,
+      fileName: 'my report.pdf',
+    });
+  });
+
+  it('passes a bare key through unchanged', async () => {
+    routes({
+      delivery: { status: 404 },
+      attachment: { status: 200, body: { url: 'https://signed.example.com/b' } },
+    });
+
+    await getDownloadUrl(KEY);
+
+    expect(JSON.parse(attachmentCalls()[0][1].body as string).path).toBe(KEY);
   });
 
   it.each([400, 403, 429, 500, 503])(

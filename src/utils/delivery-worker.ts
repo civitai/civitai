@@ -348,7 +348,7 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
     // Only a 404: every other status, and any failure of the fallback itself,
     // keeps the delivery worker's error exactly as before.
     if (response.status === 404) {
-      const moved = await getMovedAttachmentUrl(key, fileName);
+      const moved = await getMovedAttachmentUrl(fileUrl, fileName);
       if (moved) return moved;
     }
     throw new DeliveryWorkerError(response.status, response.statusText);
@@ -364,13 +364,13 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
  * it does not know, which is every model-file key) yields `null`, so the caller
  * throws its original delivery-worker error unchanged.
  *
- * Sends the key as the delivery worker received it (the raw stored form); the
- * resolver matches it and its decoded form itself.
+ * Sends the file URL exactly as stored (or the bare key a caller passed); the
+ * resolver normalises it to a key and matches both its raw and decoded forms.
  */
 const MOVED_ATTACHMENT_TIMEOUT_MS = 10_000;
 
 async function getMovedAttachmentUrl(
-  key: string,
+  fileUrl: string,
   fileName: string | undefined
 ): Promise<DownloadInfo | null> {
   if (!storageResolverEndpoint || !storageResolverInternalToken) return null;
@@ -386,7 +386,7 @@ async function getMovedAttachmentUrl(
         Authorization: `Bearer ${storageResolverInternalToken}`,
       },
       body: JSON.stringify({
-        path: key,
+        path: fileUrl,
         fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
       }),
     });
