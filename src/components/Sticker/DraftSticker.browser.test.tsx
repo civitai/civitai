@@ -469,6 +469,7 @@ describe('the control toolbar', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -583,6 +584,7 @@ describe('the duplicate control', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -666,6 +668,7 @@ describe('alt-dragging a draft', () => {
     renderWithProviders(
       <div data-drag-host style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -763,6 +766,7 @@ describe('the pack purchase key across one session', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={gated}
           // The gate is a prop now, decided across the drafts on the image
           // rather than frozen onto one of them — so a test that wants a gated
@@ -831,6 +835,7 @@ describe('the clearance reaches the element', () => {
     renderWithProviders(
       <div className="sticker-sized" style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={{ ...draft, rotation, y: 0.4 }}
           art={art}
           selected
