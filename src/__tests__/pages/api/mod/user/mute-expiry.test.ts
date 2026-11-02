@@ -103,6 +103,16 @@ describe('user.mute — the expiry it writes', () => {
     expect(status).toBeGreaterThanOrEqual(500);
   });
 
+  // The mute committed, so the audit row must not read as a failed action.
+  it('audits that committed-but-retryable call as a warning, and a real failure as an error', async () => {
+    setUserMuted.mockResolvedValueOnce({ sessionInvalidated: false });
+    await call({ userId: 42 });
+    expect(mockAudit).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: 'warning' }));
+    setUserMuted.mockRejectedValueOnce(new Error('db down'));
+    await call({ userId: 42 });
+    expect(mockAudit).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: 'error' }));
+  });
+
   it('refuses an unparseable expiry rather than muting indefinitely by accident', async () => {
     const { status } = await call({ userId: 42, expiresAt: 'whenever' });
     expect(status).toBe(400);

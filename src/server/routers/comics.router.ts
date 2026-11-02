@@ -186,10 +186,10 @@ const comicProtectedProcedure = protectedProcedure.use(comicFlag).use(regionProx
 // onboarding and MUTE checks every other comment surface has. Without it a muted account could comment
 // on a chapter — the box is hidden client-side, which is presentation, not a gate.
 const comicGuardedProcedure = guardedProcedure.use(comicFlag).use(regionProxyMiddleware);
-// Generation and spend. The restriction is read from the primary rather than the session, and
+// Generation and spend. The restriction is the stored standing rather than the session's, and
 // without `guardedProcedure`'s onboarding and email gates, which comics has never required.
 const comicGenerationProcedure = comicProtectedProcedure.use(async ({ ctx, next }) => {
-  await assertAccountNotRestricted(ctx.user!.id);
+  await assertAccountNotRestricted(ctx.user!.id, ctx.user!);
   return next();
 });
 const comicPublicProcedure = publicProcedure.use(comicFlag).use(regionProxyMiddleware);
