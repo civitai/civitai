@@ -7,25 +7,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Real service; dbRead, redis, clickhouse, the pool counters and the Axiom logger are faked. The
 // dbRead fake honours `where.id` and `select`.
 
-const { counter, knightPool, inquisitorPool, ratingsCounter, mockCh } = vi.hoisted(() => {
-  const counter = () => ({
-    increment: vi.fn().mockResolvedValue(0),
-    decrement: vi.fn().mockResolvedValue(0),
-    reset: vi.fn().mockResolvedValue(undefined),
-    getCount: vi.fn().mockResolvedValue(0),
-    getCountBatch: vi.fn(),
-    getAll: vi.fn().mockResolvedValue([]),
-    exists: vi.fn().mockResolvedValue(false),
-    key: 'stub',
+const { counter, knightPool, inquisitorPool, ratingsCounter, mockCh, mockClearRatings } =
+  vi.hoisted(() => {
+    const counter = () => ({
+      increment: vi.fn().mockResolvedValue(0),
+      decrement: vi.fn().mockResolvedValue(0),
+      reset: vi.fn().mockResolvedValue(undefined),
+      getCount: vi.fn().mockResolvedValue(0),
+      getCountBatch: vi.fn(),
+      getAll: vi.fn().mockResolvedValue([]),
+      exists: vi.fn().mockResolvedValue(false),
+      key: 'stub',
+    });
+    return {
+      counter: counter(),
+      knightPool: counter(),
+      inquisitorPool: counter(),
+      ratingsCounter: counter(),
+      mockCh: { $query: vi.fn(), $exec: vi.fn(), insert: vi.fn() },
+      mockClearRatings: vi.fn(),
+    };
   });
-  return {
-    counter: counter(),
-    knightPool: counter(),
-    inquisitorPool: counter(),
-    ratingsCounter: counter(),
-    mockCh: { $query: vi.fn(), $exec: vi.fn(), insert: vi.fn() },
-  };
-});
 
 vi.mock('~/server/games/new-order/utils', () => ({
   acolyteFailedJudgments: counter,
@@ -41,11 +43,13 @@ vi.mock('~/server/games/new-order/utils', () => ({
   poolCounters: {
     Knight: { a: [knightPool], b: [] },
     Inquisitor: { a: [inquisitorPool], b: [] },
+    Templar: { a: [], b: [] },
   },
   DEFAULT_POOL_QUOTAS: {},
   checkVotingRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
   computePoolTargets: vi.fn(),
   getActiveSlot: vi.fn().mockResolvedValue('a'),
+  clearImageRatings: mockClearRatings,
   getImageRatingsCounter: vi.fn(() => ratingsCounter),
   getVotingCooldownUntil: vi.fn().mockResolvedValue(null),
   getVotingRateLimitConfig: vi.fn().mockResolvedValue(null),
@@ -82,7 +86,12 @@ vi.mock('~/utils/signal-client', () => ({
   },
 }));
 
-import { addImageRating, getImagesQueue } from '~/server/services/games/new-order.service';
+import {
+  addImageRating,
+  getImagesQueue,
+  leaveQueuesAfterModeratorRating,
+} from '~/server/services/games/new-order.service';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -207,6 +216,7 @@ describe('pending votes on images New Order drops for review', () => {
     await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
 
     expect(voidedIds()).toEqual([HELD]);
+    expect(mockClearRatings).toHaveBeenCalledWith([HELD]);
     // processFinalRatings ran (its first step counts the request).
     expect(redisMock.sysRedis.incr).toHaveBeenCalledTimes(1);
   });
@@ -222,6 +232,7 @@ describe('pending votes on images New Order drops for review', () => {
 
     expect(served.map((i) => i.id)).toEqual([CLEAN]);
     expect(voidedIds()).toEqual([]);
+    expect(mockClearRatings).not.toHaveBeenCalled();
   });
 
   it('(b) control: a queue read with nothing held voids nothing', async () => {
@@ -231,6 +242,19 @@ describe('pending votes on images New Order drops for review', () => {
 
     expect(voidedIds()).toEqual([]);
     expect(redisMock.sysRedis.incr).not.toHaveBeenCalled();
+    expect(mockClearRatings).not.toHaveBeenCalled();
+  });
+
+  it('(c) a failed tally clear does not fail the queue read', async () => {
+    mockClearRatings.mockRejectedValueOnce(new Error('redis down'));
+    knightPool.getAll.mockResolvedValueOnce([
+      { value: String(CLEAN), score: 0 },
+      { value: String(HELD), score: 0 },
+    ]);
+
+    const served = await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
+
+    expect(served.map((i) => i.id)).toEqual([CLEAN]);
   });
 
   it('(c) a failed void does not fail the queue read', async () => {
@@ -243,5 +267,48 @@ describe('pending votes on images New Order drops for review', () => {
     const served = await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
 
     expect(served.map((i) => i.id)).toEqual([CLEAN]);
+  });
+});
+
+describe('leaving the queues after a moderator rating', () => {
+  it('takes the image out of its queue and drops its vote tally', async () => {
+    knightPool.exists.mockImplementation(async (id: number) => id === CLEAN);
+
+    await leaveQueuesAfterModeratorRating(CLEAN);
+
+    expect(knightPool.reset).toHaveBeenCalledWith({ id: CLEAN });
+    expect(mockClearRatings).toHaveBeenCalledWith([CLEAN]);
+  });
+
+  it('a failed tally clear is logged and does not throw', async () => {
+    knightPool.exists.mockImplementation(async (id: number) => id === CLEAN);
+    mockClearRatings.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(leaveQueuesAfterModeratorRating(CLEAN)).resolves.toBeUndefined();
+    expect(handleLogError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'redis down' }),
+      'new-order-mod-rating-queue-cleanup'
+    );
+  });
+
+  it('takes an image out of the Inquisitor queue too', async () => {
+    knightPool.exists.mockResolvedValue(false);
+    inquisitorPool.exists.mockImplementation(async (id: number) => id === CLEAN);
+
+    await leaveQueuesAfterModeratorRating(CLEAN);
+
+    expect(inquisitorPool.reset).toHaveBeenCalledWith({ id: CLEAN });
+    expect(mockClearRatings).toHaveBeenCalledWith([CLEAN]);
+  });
+
+  it('control: an image in no queue is left alone', async () => {
+    inquisitorPool.exists.mockResolvedValue(false);
+    knightPool.exists.mockResolvedValue(false);
+
+    await leaveQueuesAfterModeratorRating(CLEAN);
+
+    expect(knightPool.reset).not.toHaveBeenCalled();
+    expect(mockClearRatings).not.toHaveBeenCalled();
+    expect(handleLogError).not.toHaveBeenCalled();
   });
 });
