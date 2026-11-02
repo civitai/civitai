@@ -480,9 +480,21 @@
                     "type": "string",
                     "pattern": "^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$"
                   }
+                },
+                "schema": {
+                  "description": "Optional. A JSON Schema SUBSET that every document's `data` in this collection must match. The server checks it on every create and update and refuses a document that does not match with 400 `schema_violation`, whose message names the first failing JSON pointer into `data` (for example \"/title\"); counters and marks are not checked. Without a schema, documents are not checked. Supported keywords only: type (object, array, string, number, integer, boolean, null, or an array of them), properties, required, additionalProperties (true, false or a schema), items (one schema for every element), enum, const, minLength, maxLength, pattern, minimum, maximum, minItems, maxItems and description; any other keyword is refused at submit with a message naming it. Keywords that do not apply to a value's type are ignored; string lengths count code points; `pattern` is a JavaScript regular expression (the \"u\" flag), unanchored, of at most 256 characters, and a schema with a `pattern` must also declare a `maxLength` of at most 1000; a pattern that can backtrack catastrophically is refused at submit. At most 16 patterns, schemas nested at most 16 deep, and at most 16384 bytes of JSON. Not allowed on a `write` \"none\" collection. Changing a schema does not re-check documents already stored; they are checked when next written.",
+                  "$ref": "#/$defs/storageCollectionSchema"
                 }
               },
               "allOf": [
+                {
+                  "$comment": "No document body is ever written in a write:\"none\" collection, so a schema there would check nothing.",
+                  "if": {
+                    "required": ["write"],
+                    "properties": { "write": { "const": "none" } }
+                  },
+                  "then": { "properties": { "schema": false } }
+                },
                 {
                   "$comment": "A shared collection must state its write policy; a private one carries none of the shared-only fields.",
                   "if": {
@@ -558,6 +570,50 @@
           }
         }
       }
+    }
+  },
+  "$defs": {
+    "storageCollectionSchema": {
+      "type": "object",
+      "description": "One schema of the storage collection-schema subset (see `storage.collections.<name>.schema`). Depth, size, pattern-count and min-greater-than-max limits, and whether a pattern compiles, are checked by the server, not by this schema.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "anyOf": [
+            { "$ref": "#/$defs/storageCollectionSchemaType" },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/storageCollectionSchemaType" }
+            }
+          ]
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/storageCollectionSchema" }
+        },
+        "required": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "additionalProperties": {
+          "anyOf": [{ "type": "boolean" }, { "$ref": "#/$defs/storageCollectionSchema" }]
+        },
+        "items": { "$ref": "#/$defs/storageCollectionSchema" },
+        "enum": { "type": "array", "minItems": 1 },
+        "const": {},
+        "minLength": { "type": "integer", "minimum": 0 },
+        "maxLength": { "type": "integer", "minimum": 0 },
+        "pattern": { "type": "string", "maxLength": 256 },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "minItems": { "type": "integer", "minimum": 0 },
+        "maxItems": { "type": "integer", "minimum": 0 },
+        "description": { "type": "string" }
+      },
+      "if": { "required": ["pattern"] },
+      "then": { "required": ["maxLength"], "properties": { "maxLength": { "maximum": 1000 } } }
+    },
+    "storageCollectionSchemaType": {
+      "enum": ["object", "array", "string", "number", "integer", "boolean", "null"]
     }
   },
   "allOf": [

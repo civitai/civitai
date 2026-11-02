@@ -16,6 +16,7 @@ import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
 import {
   appStorageScopeErrors,
+  collectionSchemaPatterns,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
@@ -981,6 +982,23 @@ export class BlockManifestValidator {
         '~/server/services/blocks/settings-pattern-guard'
       );
       errors.push(...(await collectSettingsPatternErrors(settings)));
+    }
+
+    // The same ReDoS gate for every `pattern` in a storage collection's `schema`, which the
+    // document store runs on every write. `parseManifestStorage` already bounded each pattern's
+    // input (`maxLength`), which cannot save an exponential one. Fail-closed like settings.
+    const schemaPatterns = collectionSchemaPatterns(parseManifestStorage(manifest));
+    if (schemaPatterns.length > 0) {
+      const { isPatternRedosVulnerable } = await import(
+        '~/server/services/blocks/settings-pattern-guard'
+      );
+      for (const { at, pattern } of schemaPatterns) {
+        if (await isPatternRedosVulnerable(pattern)) {
+          errors.push(
+            `${at} is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
+          );
+        }
+      }
     }
 
     return errors.length === 0 ? { valid: true } : { valid: false, errors };
