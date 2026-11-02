@@ -252,7 +252,6 @@ export function isDefiniteNotFound(err: unknown): boolean {
     // ⚠ A direct caller's 404 may also follow a FAILED moved-attachment lookup
     // (`getMovedAttachmentUrl` swallows its errors), so for an attachment key this
     // `true` is "the delivery worker said not-there", not proof the bytes are gone.
-    // Nothing calls this on a direct `getDownloadUrl` error today.
     return true;
   }
 
@@ -291,7 +290,7 @@ export async function resolveDownloadUrl(
       resolverError = err;
     }
     try {
-      return await getDownloadUrl(fileUrl, fileName);
+      return await getDownloadUrl(fileUrl, fileName, { movedAttachmentFallback: false });
     } catch (deliveryWorkerError) {
       if (deliveryWorkerError instanceof DeliveryWorkerError) {
         deliveryWorkerError.resolverError = resolverError;
@@ -299,19 +298,21 @@ export async function resolveDownloadUrl(
       throw deliveryWorkerError;
     }
   }
-  return getDownloadUrl(fileUrl, fileName);
+  return getDownloadUrl(fileUrl, fileName, { movedAttachmentFallback: false });
 }
 
 /**
  * Get download URL via the delivery worker (legacy path).
- * Used when storage resolver is not configured, as the fallback of
- * `resolveDownloadUrl`, and directly for `File` attachments.
  *
- * When the delivery worker answers 404 and the storage resolver is configured
- * with its internal token, it is asked once for a moved attachment
- * (`getMovedAttachmentUrl`); its URL is returned if it has one.
+ * `movedAttachmentFallback: false` skips the moved-attachment lookup. Model-file
+ * paths (`resolveDownloadUrl`) pass it: their moved files are already resolved
+ * by the storage resolver's `/resolve`.
  */
-export async function getDownloadUrl(fileUrl: string, fileName?: string) {
+export async function getDownloadUrl(
+  fileUrl: string,
+  fileName?: string,
+  { movedAttachmentFallback = true }: { movedAttachmentFallback?: boolean } = {}
+) {
   const { key } = parseKey(fileUrl);
   // Some of our old file keys should not be decoded. `safeDecodeURIComponent`
   // never throws on a malformed/already-encoded key — it falls back to the raw
@@ -343,11 +344,8 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   }
 
   if (!response.ok) {
-    // A 404 can mean the object was moved to the secondary storage tier, which
-    // the delivery worker cannot sign for. Ask the storage resolver for it.
-    // Only a 404: every other status, and any failure of the fallback itself,
-    // keeps the delivery worker's error exactly as before.
-    if (response.status === 404) {
+    // A 404 can mean the object moved to secondary storage.
+    if (response.status === 404 && movedAttachmentFallback) {
       const moved = await getMovedAttachmentUrl(fileUrl, fileName);
       if (moved) return moved;
     }
@@ -362,9 +360,9 @@ const MOVED_ATTACHMENT_TIMEOUT_MS = 10_000;
 /**
  * Signed URL for an attachment key the storage resolver has registered on its
  * secondary storage tier, or `null` when it has none. Never throws: a resolver
- * that is unconfigured, unreachable, or answers non-OK (including 404 for a key
- * it does not know, which is every model-file key) yields `null`, so the caller
- * throws its original delivery-worker error unchanged.
+ * that is unconfigured, unreachable, answers non-OK, or returns no url or no
+ * valid `urlExpiryDate` yields `null`, so the caller throws its original
+ * delivery-worker error unchanged.
  *
  * Sends the file URL exactly as stored (or the bare key a caller passed); the
  * resolver normalises it to a key and matches both its raw and decoded forms.
@@ -377,9 +375,7 @@ async function getMovedAttachmentUrl(
   try {
     const response = await fetch(`${storageResolverEndpoint}/resolve-attachment`, {
       method: 'POST',
-      // Bounded: these callers never waited on the resolver before, so a hung
-      // resolver must not turn a fast 404 into a held connection. A timeout
-      // lands in the catch below and keeps the original error.
+      // A hung resolver must not turn a fast 404 into a held connection.
       signal: AbortSignal.timeout(MOVED_ATTACHMENT_TIMEOUT_MS),
       headers: {
         'Content-Type': 'application/json',
@@ -393,7 +389,10 @@ async function getMovedAttachmentUrl(
     if (!response.ok) return null;
     const result = await response.json();
     if (typeof result?.url !== 'string' || !result.url) return null;
-    return { url: result.url, urlExpiryDate: new Date(result.urlExpiryDate) };
+    const urlExpiryDate = new Date(result.urlExpiryDate);
+    if (typeof result.urlExpiryDate !== 'string' || Number.isNaN(urlExpiryDate.getTime()))
+      return null;
+    return { url: result.url, urlExpiryDate };
   } catch {
     return null;
   }

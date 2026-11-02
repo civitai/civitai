@@ -103,12 +103,12 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
       },
     });
 
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     const result = await getDownloadUrl(STORED_URL, 'my%20report.pdf');
 
     expect(result.url).toBe('https://signed.example.com/a');
     expect(new Date(result.urlExpiryDate).toISOString()).toBe('2030-01-01T00:00:00.000Z');
 
-    // The delivery worker gets the parsed key...
     const dwBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     expect(dwBody.key).toBe('default/7/my report.pdf');
 
@@ -116,11 +116,11 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
     expect(calls).toHaveLength(1);
     const init = calls[0][1] as RequestInit;
     expect(init.method).toBe('POST');
-    // Bounded: these callers never waited on the resolver before.
-    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+    expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+    expect(init.signal).toBe(timeoutSpy.mock.results[0].value);
+    timeoutSpy.mockRestore();
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer internal-tok');
-    // ...the resolver gets the file URL exactly as stored (it normalises it itself),
-    // and the decoded download name the delivery worker also gets.
     expect(JSON.parse(init.body as string)).toEqual({
       path: STORED_URL,
       fileName: 'my report.pdf',
@@ -130,7 +130,10 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
   it('passes a bare key through unchanged', async () => {
     routes({
       delivery: { status: 404 },
-      attachment: { status: 200, body: { url: 'https://signed.example.com/b' } },
+      attachment: {
+        status: 200,
+        body: { url: 'https://signed.example.com/b', urlExpiryDate: '2030-01-01T00:00:00.000Z' },
+      },
     });
 
     await getDownloadUrl(KEY);
@@ -166,6 +169,11 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
       }),
     ],
     ['200 without a url', { status: 200, body: { backend: 'secondary' } }],
+    ['200 without urlExpiryDate', { status: 200, body: { url: 'https://signed.example.com/c' } }],
+    [
+      '200 with an invalid urlExpiryDate',
+      { status: 200, body: { url: 'https://signed.example.com/c', urlExpiryDate: 'not-a-date' } },
+    ],
   ])(
     'throws the original delivery-worker 404 when the resolver answers %s',
     async (_label, attachment) => {
@@ -195,6 +203,30 @@ describe('getDownloadUrl — moved-attachment fallback on a delivery-worker 404'
 });
 
 describe('resolveDownloadUrl — model files keep their not-found semantics', () => {
+  it.each([true, false])(
+    'never asks the moved-attachment route (resolver enabled path: %s)',
+    async (resolverAnswers404) => {
+      routes({
+        delivery: { status: 404 },
+        resolve: resolverAnswers404 ? { status: 404 } : { status: 503 },
+        attachment: {
+          status: 200,
+          body: { url: 'https://signed.example.com/m', urlExpiryDate: '2030-01-01T00:00:00.000Z' },
+        },
+      });
+
+      const err = await rejection(
+        resolveDownloadUrl(1, 'model/1/x.safetensors', undefined, {
+          caller: 'orchestrator-preflight',
+          actor: 'internal',
+        })
+      );
+
+      expect(err).toBeInstanceOf(DeliveryWorkerError);
+      expect(attachmentCalls()).toHaveLength(0);
+    }
+  );
+
   it('a resolver 404 + delivery-worker 404 is still a definite not-found', async () => {
     routes({ delivery: { status: 404 }, resolve: { status: 404 }, attachment: { status: 404 } });
 
