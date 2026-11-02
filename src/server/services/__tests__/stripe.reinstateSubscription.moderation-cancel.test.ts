@@ -16,17 +16,19 @@ type FakeSub = {
   cancellation_details: { comment: string | null; reason: string | null } | null;
 };
 
-const { subs, retrieve, update } = vi.hoisted(() => {
+const { subs, retrieve, update, PERIOD_END } = vi.hoisted(() => {
+  const PERIOD_END = Math.floor(Date.now() / 1000) + 30 * 86_400;
   const subs = new Map<string, FakeSub>();
   return {
+    PERIOD_END,
     subs,
     retrieve: vi.fn(async (id: string) => {
       const sub = subs.get(id);
       if (!sub) throw new Error(`No such subscription: ${id}`);
       return structuredClone(sub);
     }),
-    // Mirrors Stripe for the fields under test: setting cancel_at_period_end records a
-    // cancellation with whatever comment came with it; clearing it clears the details.
+    // Mirrors Stripe for the fields under test: setting cancel_at_period_end also sets cancel_at
+    // and records the cancellation with whatever comment came with it; clearing it clears both.
     update: vi.fn(
       async (
         id: string,
@@ -35,12 +37,14 @@ const { subs, retrieve, update } = vi.hoisted(() => {
         const sub = subs.get(id)!;
         if (params.cancel_at_period_end === true) {
           sub.cancel_at_period_end = true;
+          sub.cancel_at = PERIOD_END;
           sub.cancellation_details = {
             comment: params.cancellation_details?.comment ?? null,
             reason: 'cancellation_requested',
           };
         } else if (params.cancel_at_period_end === false) {
           sub.cancel_at_period_end = false;
+          sub.cancel_at = null;
           sub.cancellation_details = { comment: null, reason: null };
         }
         return structuredClone(sub);
@@ -84,11 +88,12 @@ const activeSub = (overrides: Partial<FakeSub> = {}) => {
   syncRow();
 };
 
-/** What the Stripe billing portal leaves behind when the member cancels. */
+/** What the Stripe billing portal leaves behind when the member cancels and answers its survey. */
 const memberCancels = () => {
   const sub = subs.get(SUB_ID)!;
   sub.cancel_at_period_end = true;
-  sub.cancellation_details = { comment: null, reason: 'cancellation_requested' };
+  sub.cancel_at = PERIOD_END;
+  sub.cancellation_details = { comment: 'too expensive', reason: 'cancellation_requested' };
 };
 
 const resumed = () => subs.get(SUB_ID)!.cancel_at_period_end === false;
@@ -151,6 +156,21 @@ describe('moderation cancel, then reinstate', () => {
   });
 });
 
+describe('reinstateSubscription reads Stripe, not our row', () => {
+  it('resumes a stamped cancel our row has not caught up with yet', async () => {
+    activeSub();
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+    // The webhook that copies cancel_at_period_end onto our row has not landed.
+    dbMock.dbWrite.customerSubscription.findFirst.mockImplementation((async (args: {
+      where: { cancelAtPeriodEnd?: boolean };
+    }) => (args.where.cancelAtPeriodEnd ? null : { id: SUB_ID })) as never);
+
+    await reinstateSubscription({ userId: USER_ID });
+
+    expect(resumed()).toBe(true);
+  });
+});
+
 describe('reinstateSubscription guards', () => {
   const stampedCancel = async () => {
     activeSub();
@@ -203,7 +223,7 @@ describe('cancelSubscription({ atPeriodEnd })', () => {
     await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
 
     expect(update).not.toHaveBeenCalled();
-    expect(subs.get(SUB_ID)!.cancellation_details?.comment).toBeNull();
+    expect(subs.get(SUB_ID)!.cancellation_details?.comment).toBe('too expensive');
   });
 
   it('writes nothing over a gift subscription that already ends on cancel_at', async () => {

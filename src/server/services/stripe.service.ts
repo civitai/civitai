@@ -1419,7 +1419,6 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
       userId,
       product: { provider: 'Stripe' },
       status: { in: ['active', 'past_due', 'trialing'] },
-      cancelAtPeriodEnd: true,
     },
     select: { id: true },
   });
@@ -1428,7 +1427,7 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
-  // Decide on Stripe's copy, not our row: the row lags the webhook and does not carry the stamp.
+  // Stripe's copy decides, not our row: the row lags the webhook and does not carry the stamp.
   const live = await stripe.subscriptions.retrieve(subscription.id);
   if (!live.cancel_at_period_end) return;
   if (live.cancellation_details?.comment !== MODERATION_CANCELLATION) return;
