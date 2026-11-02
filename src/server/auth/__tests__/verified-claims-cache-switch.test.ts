@@ -16,11 +16,7 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptClientSync: h.getFliptClientSync,
   ensureFliptInitialized: h.ensureFliptInitialized,
 }));
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { set: vi.fn() },
-  REDIS_SYS_KEYS: { SESSION: { LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock' } },
-  withSysReadDeadline: (p: Promise<unknown>) => p,
-}));
+// `~/server/redis/client` is the canonical shared mock registered in src/__tests__/setup.ts — not mocked here.
 vi.mock('../session-verifier', () => ({ isRevoked: vi.fn() }));
 vi.mock('@civitai/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof CivitaiAuth>();
