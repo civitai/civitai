@@ -67,8 +67,13 @@ function flipChar(token: string, segment: 0 | 1 | 2): string {
   return parts.join('.');
 }
 
-beforeEach(() => jose.jwtVerify.mockClear());
-afterEach(() => vi.useRealTimers());
+// Braced: an arrow returning mockClear()'s result (the mock itself) would be run by vitest as a teardown.
+beforeEach(() => {
+  jose.jwtVerify.mockClear();
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('verified claims cache — hit and miss', () => {
   it('miss: the first presentation runs the signature check and returns the claims', async () => {
