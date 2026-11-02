@@ -393,8 +393,9 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/doc-store.ts',
     'server/services/apps/migrations/20261013120000_appdata_document_store.down.sql',
     'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+    // The app-purge up migration names its tables through `format('appdata.%I')`, so only the
+    // rollback spells a table out.
     'server/services/apps/migrations/20261102120000_appdata_app_purge.down.sql',
-    'server/services/apps/migrations/20261102120000_appdata_app_purge.sql',
   ];
   const PATTERN =
     /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
