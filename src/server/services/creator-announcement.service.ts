@@ -206,7 +206,7 @@ const LIVE_AUTHORS_LOOKAHEAD_MS = 2 * LIVE_AUTHORS_TTL_MS;
 // One TTL back. The feed reads its `now` before it asks for the set, and a cold set is built a
 // little later, by this or another request; a row that ended in that gap is live for the feed
 // query and must not be missing from the set. Requests take far less than a TTL.
-const LIVE_AUTHORS_LOOKBACK_MS = LIVE_AUTHORS_TTL_MS;
+const LIVE_AUTHORS_LOOKBACK_MS = 0;
 const ANY_DOMAIN = 'any';
 
 /** Exported for tests only. One increment per short-circuit decision, by what it decided. */
