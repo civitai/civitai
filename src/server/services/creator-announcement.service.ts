@@ -525,27 +525,16 @@ export function clampAnnouncementWindow({
   return { startsAt: start, endsAt: end };
 }
 
-type UpsertCreatorAnnouncementInput = UpsertCreatorAnnouncementSchema & {
-  userId: number;
-  isModerator?: boolean;
-  isMember?: boolean;
-};
-
-export async function upsertCreatorAnnouncement(input: UpsertCreatorAnnouncementInput) {
-  const announcement = await writeCreatorAnnouncement(input);
-  // Every save, not only one that makes a row live: an edit can move the window or the domain,
-  // and a superset costs the feed nothing. The author is always the caller here —
-  // `assertOwnedAnnouncement` is called without the moderator widening.
-  noteCreatorAnnouncementWrite(input.userId);
-  return announcement;
-}
-
-async function writeCreatorAnnouncement({
+export async function upsertCreatorAnnouncement({
   userId,
   isModerator = false,
   isMember = false,
   ...input
-}: UpsertCreatorAnnouncementInput) {
+}: UpsertCreatorAnnouncementSchema & {
+  userId: number;
+  isModerator?: boolean;
+  isMember?: boolean;
+}) {
   const existing = input.id ? await assertOwnedAnnouncement(input.id, userId) : undefined;
   const actions = input.actions ?? (input.action ? [input.action] : []);
 
@@ -623,6 +612,12 @@ async function writeCreatorAnnouncement({
     metadata,
     ...(coverId !== undefined ? { coverId } : {}),
   };
+
+  // Into the feed's live-author set before the write, every save rather than only one that makes a
+  // row live: an edit can move the window or the domain. A write that then fails leaves a superset
+  // entry, which the feed query re-filters, so being early costs one follow read at most. The author
+  // is always the caller — `assertOwnedAnnouncement` above is called without the moderator widening.
+  noteCreatorAnnouncementWrite(userId);
 
   if (!spendsAllowance) {
     // The author is set here and never read from input, so this path cannot write a row
