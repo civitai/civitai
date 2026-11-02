@@ -1,11 +1,25 @@
-const abortable = (signal: AbortSignal) =>
-  new Promise<void>((resolve) => {
-    if (signal.aborted) return resolve();
-    signal.addEventListener('abort', () => resolve(), { once: true });
+/** Settles with `work`, or as soon as `signal` aborts; the abort listener never outlives the race. */
+function untilAborted(work: Promise<unknown>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  let onAbort = () => {};
+  const aborted = new Promise<void>((resolve) => {
+    onAbort = resolve;
+    signal.addEventListener('abort', onAbort, { once: true });
   });
+  return Promise.race([work.then(() => undefined), aborted]).finally(() =>
+    signal.removeEventListener('abort', onAbort)
+  );
+}
 
-const wait = (ms: number, signal: AbortSignal) =>
-  Promise.race([new Promise<void>((resolve) => setTimeout(resolve, ms)), abortable(signal)]);
+const wait = (ms: number, signal: AbortSignal) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return untilAborted(
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+    signal
+  ).finally(() => clearTimeout(timer));
+};
 
 /**
  * Re-asks the server until `signal` aborts, one request at a time. Overlapping `invalidate` calls cancel each other, so a
@@ -25,7 +39,10 @@ export async function revalidateUntilStopped(
   }
 ): Promise<void> {
   for (let attempt = 0; !signal.aborted; attempt++) {
-    await Promise.race([revalidate().catch(() => undefined), abortable(signal)]);
+    await untilAborted(
+      revalidate().catch(() => undefined),
+      signal
+    );
     if (signal.aborted) return;
     await sleep(delays[Math.min(attempt, delays.length - 1)], signal);
   }

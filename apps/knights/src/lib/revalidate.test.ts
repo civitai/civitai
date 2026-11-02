@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { revalidateUntilStopped } from './revalidate';
 
 const never = () => new Promise<void>(() => undefined);
@@ -65,6 +65,23 @@ describe('revalidateUntilStopped', () => {
     );
 
     expect(calls).toBe(2);
+  });
+
+  it('leaves no abort listeners behind after many rounds', async () => {
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, 'addEventListener');
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+    let calls = 0;
+
+    await revalidateUntilStopped(
+      async () => {
+        if (++calls === 6) controller.abort();
+      },
+      { signal: controller.signal, delays: [0] }
+    );
+
+    expect(added.mock.calls.length).toBeGreaterThan(5);
+    expect(removed.mock.calls.length).toBe(added.mock.calls.length);
   });
 
   it('stops while a revalidation is still running', async () => {

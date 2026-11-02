@@ -223,7 +223,11 @@ describe('play load feed', () => {
     yesNoSettings.share = 1;
     pickYesNo.mockResolvedValue(null);
 
-    await run();
+    try {
+      await run();
+    } finally {
+      yesNoSettings.share = 0.7;
+    }
 
     expect(getFeed).toHaveBeenCalledWith(expect.anything(), 7, { limit: 1, exclude: [3] });
     expect(pickHiddenCheck).toHaveBeenCalledWith(
@@ -234,7 +238,6 @@ describe('play load feed', () => {
       expect.anything(),
       expect.objectContaining({ exclude: [8] })
     );
-    yesNoSettings.share = 0.7;
   });
 
   it('serves no hidden check when the queue is empty', async () => {
