@@ -143,6 +143,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // Earlier cases leave data in their own apps; every user starts each case with only this
+  // case's two apps, so a wipe's namespaces are exactly those.
+  for (const uid of ALL) await maint.wipeAccount(uid);
   live.holds.clear();
   keyValues.clear();
   await primary.exec('DELETE FROM "User"');

@@ -160,12 +160,14 @@ describe('reapDeletedAppStorage', () => {
     // Restored: deletion cleared, still suspended (e.g. back in review).
     const cleared = await app('CLEARED', { status: 'suspended', deletedAt: null });
     const liveApp = await app('LIVE', { status: 'approved', deletedAt: null });
-    const before = await Promise.all([reApproved, cleared, liveApp].map(rowsOf));
+    const before = await Promise.all([reApproved, cleared, liveApp].map((id) => rowsOf(id)));
 
     const out = await reapDeletedAppStorage({ store: maint, now: NOW });
 
     expect(out.scanned).toBe(0);
-    expect(await Promise.all([reApproved, cleared, liveApp].map(rowsOf))).toEqual(before);
+    expect(await Promise.all([reApproved, cleared, liveApp].map((id) => rowsOf(id)))).toEqual(
+      before
+    );
   });
 
   it("stops within one batch when the app is restored mid-purge, and doesn't stamp it", async () => {

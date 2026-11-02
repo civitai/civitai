@@ -185,6 +185,9 @@ for (const rls of [true, false]) {
 
     describe('wipeAccount with proceed', () => {
       it('stops before the next namespace when `proceed` says no; a re-run finishes', async () => {
+        // Earlier cases in this harness left Alice data in their apps; start from none, so the
+        // four namespaces below are all she has.
+        await maint.wipeAccount(ALICE);
         const app = freshApp('WIPESTOP');
         const other = freshApp('WIPESTOP2');
         await seed(store, app);
