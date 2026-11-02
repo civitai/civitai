@@ -27,6 +27,7 @@ const args = {
   workflowId: 'wf',
   outcome: { triggeredLabels: [], nsfwLevel: 4 },
   subject: { fields: [], declared: {} },
+  ratingBefore: { nsfwLevel: 1, moderatorNsfwLevel: null, userId: 5, title: null, url: '/x' },
 };
 
 beforeEach(() => vi.clearAllMocks());

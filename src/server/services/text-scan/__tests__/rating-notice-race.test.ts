@@ -121,7 +121,30 @@ describe('rating-raised notice when another recompute lands between the verdict 
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
 
+    expect(updatePostNsfwLevels).toHaveBeenCalledTimes(2);
     expect(ratingNotices()).toHaveLength(1);
+  });
+
+  it('sends no notice when the post was already at the floor before the verdict', async () => {
+    stored.level = FLOOR;
+    vi.mocked(getWorkflow).mockResolvedValue({
+      data: { metadata, tags: ['text-scan'], steps: [step(RAISED)] },
+    } as never);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+
+    expect(updatePostNsfwLevels).toHaveBeenCalled();
+    expect(ratingNotices()).toHaveLength(0);
+  });
+
+  it('records and applies the verdict when the snapshot read fails', async () => {
+    dbMock.dbWrite.post.findUnique.mockRejectedValueOnce(new Error('read failed'));
+    vi.mocked(getWorkflow).mockResolvedValue({
+      data: { metadata, tags: ['text-scan'], steps: [step(RAISED)] },
+    } as never);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+
+    expect(stored.level).toBe(FLOOR);
+    expect(updatePostNsfwLevels).toHaveBeenCalled();
   });
 
   it('sends exactly one notice for a partial verdict raised from the parsed segments', async () => {

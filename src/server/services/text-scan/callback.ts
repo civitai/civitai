@@ -145,6 +145,8 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const adapter = submittedActive ? getModerationAdapter(entityType) : undefined;
   // The search pass only ever adds poi/minor; failures stay the main pass's business.
   const failureAdapter = variant ? undefined : adapter;
+  // Without a snapshot the rating floor reads the level itself, after the verdict write.
+  const readRatingBefore = () => adapter?.readRating?.(entityId).catch(() => undefined);
 
   if (event.status && Object.hasOwn(failureStatus, event.status)) {
     const status = event.status as keyof typeof failureStatus;
@@ -187,7 +189,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       raised.map((label) => [label, merged[label]])
     );
     const outcome = evaluateTextScan(output, subject.declared, raised);
-    const ratingBefore = await adapter?.readRating?.(entityId);
+    const ratingBefore = await readRatingBefore();
     const recorded = await recordTextScanRaise({
       entityType: emEntityType,
       entityId,
@@ -282,7 +284,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const subjectMeta = metadata.subjectMeta ?? subject.meta;
   const extra = inputMeta(metadata, flaggedSegments);
   const meta = extra ? { ...subjectMeta, ...extra } : subjectMeta;
-  const ratingBefore = await adapter?.readRating?.(entityId);
+  const ratingBefore = await readRatingBefore();
   const recorded = await recordTextScanSuccess({
     entityType: emEntityType,
     entityId,
