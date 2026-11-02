@@ -661,6 +661,38 @@ describe('assertGenerationInputsUsable', () => {
     }
   });
 
+  describe('the refusal count for an external url', () => {
+    // The setup mock's stub for the counter, found by name; captured at collection time.
+    const registered = vi.mocked(registerCounterWithLabels).mock;
+    const refusalCounter = registered.results[
+      registered.calls.findIndex(([def]) => def.name === 'generation_input_url_refusals_total')
+    ]?.value as { inc: ReturnType<typeof vi.fn> };
+    beforeEach(() => {
+      __resetRecentExternalHostUsersForTest();
+      refusalCounter.inc.mockClear();
+    });
+
+    it('counts it once in log mode while the flag is off, and in refuse mode once it is on', async () => {
+      expect(await gate(['https://example.com/a.png'], 'generateFromGraph')).toBe('accepted');
+      expect(refusalCounter.inc).toHaveBeenCalledExactlyOnceWith({
+        entry: 'generateFromGraph',
+        class: 'external',
+        caller: 'session',
+        mode: 'log',
+      });
+
+      refusalCounter.inc.mockClear();
+      holder.refuseExternal = true;
+      expect(await gate(['https://example.com/a.png'], 'generateFromGraph')).toBe('refused');
+      expect(refusalCounter.inc).toHaveBeenCalledExactlyOnceWith({
+        entry: 'generateFromGraph',
+        class: 'external',
+        caller: 'session',
+        mode: 'refuse',
+      });
+    });
+  });
+
   describe('the external host count', () => {
     // The setup mock's stub for the counter, found by name; captured at collection time.
     const registered = vi.mocked(registerCounterWithLabels).mock;
