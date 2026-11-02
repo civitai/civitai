@@ -76,7 +76,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
   );
 
   // currently not showing any content if the username is undefined
-  if (!username) return <NotFound />;
+  if (!profileUsername) return <NotFound />;
 
   const isSameUser = isViewer(currentUser, user?.id);
   const isModerator = currentUser?.isModerator ?? false;

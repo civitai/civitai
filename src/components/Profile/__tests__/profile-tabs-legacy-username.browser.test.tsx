@@ -13,6 +13,7 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 const state = vi.hoisted(() => ({
   viewer: null as { id: number; username: string; isModerator: boolean } | null,
   postFilters: undefined as Record<string, unknown> | undefined,
+  articleFilters: undefined as Record<string, unknown> | undefined,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -48,11 +49,17 @@ vi.mock('~/components/Post/Infinite/PostsInfinite', () => ({
     return null;
   },
 }));
+vi.mock('~/components/AppLayout/NotFound', () => ({ NotFound: () => <span>not found</span> }));
 vi.mock('~/components/Filters', () => ({ SortFilter: () => <span>sort menu</span> }));
 vi.mock('~/components/Post/Infinite/PostFiltersDropdown', () => ({
   PostFiltersDropdown: () => null,
 }));
-vi.mock('~/components/Article/Infinite/ArticlesInfinite', () => ({ ArticlesInfinite: () => null }));
+vi.mock('~/components/Article/Infinite/ArticlesInfinite', () => ({
+  ArticlesInfinite: (props: { filters: Record<string, unknown> }) => {
+    state.articleFilters = props.filters;
+    return null;
+  },
+}));
 vi.mock('~/components/Article/UserDraftArticles', () => ({ UserDraftArticles: () => null }));
 vi.mock('~/components/Article/Infinite/ArticleFiltersDropdown', () => ({
   ArticleFiltersDropdown: () => null,
@@ -75,6 +82,7 @@ beforeEach(() => {
   router.query = { username: 'foo-bar' };
   state.viewer = null;
   state.postFilters = undefined;
+  state.articleFilters = undefined;
 });
 
 describe('a profile whose username is not its slug', () => {
@@ -82,6 +90,24 @@ describe('a profile whose username is not its slug', () => {
     renderWithProviders(<UserPostsPage />);
 
     await expect.poll(() => state.postFilters?.userId).toBe(42);
+  });
+
+  // Already right before the id change: the articles query takes the name as stored, which the
+  // case-insensitive username column matches. Pinned so a slugify there is noticed.
+  test('the Articles tab lists that account by its name as stored', async () => {
+    renderWithProviders(<UserArticlesPage />);
+
+    await expect.poll(() => state.articleFilters?.username).toBe('foo-bar');
+  });
+
+  test.each([
+    ['Posts', UserPostsPage],
+    ['Articles', UserArticlesPage],
+  ])('%s: a username with no account is not found', async (_tab, Tab) => {
+    router.query = { username: 'nobody' };
+    renderWithProviders(<Tab />);
+
+    await expect.element(page.getByText('not found')).toBeVisible();
   });
 
   test.each([

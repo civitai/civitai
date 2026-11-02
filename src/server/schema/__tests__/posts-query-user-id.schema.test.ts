@@ -9,4 +9,9 @@ describe('postsQuerySchema userId', () => {
 
     expect(parsed.userId).toBe(42);
   });
+
+  // Each distinct id gets its own cache tag set, and Postgres rejects ids past int4.
+  it.each([0, -1, 2 ** 31])('rejects %s', (userId) => {
+    expect(postsQuerySchema.safeParse({ userId }).success).toBe(false);
+  });
 });
