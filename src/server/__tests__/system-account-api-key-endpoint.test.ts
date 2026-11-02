@@ -569,7 +569,7 @@ describe('POST /api/admin/system-account-api-key', () => {
     ).toBe(true);
   });
 
-  it('audits and alerts on every mint, with neither the key nor its hash', async () => {
+  it('audits and logs every mint at info, with neither the key nor its hash', async () => {
     await call({ userId: SYSTEM_ID, actorUserId: 9 });
     await call({ userId: SYSTEM_ID, actorUserId: 9 });
 
@@ -592,6 +592,18 @@ describe('POST /api/admin/system-account-api-key', () => {
     const recorded = JSON.stringify([trackModActivity.mock.calls, logToAxiom.mock.calls]);
     expect(recorded).not.toContain('fake-plaintext');
     expect(recorded).not.toContain('fake-hash-of');
+  });
+
+  it('logs a mint at error when its audit row could not be written', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('db down'));
+    expect((await call({ userId: SYSTEM_ID })).status).toBe(201);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'system-account-api-key-minted',
+        details: expect.objectContaining({ auditRecorded: false }),
+      })
+    );
   });
 
   it('refuses any method but POST', async () => {

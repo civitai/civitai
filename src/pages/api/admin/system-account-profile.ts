@@ -117,11 +117,6 @@ export default HeaderTokenSecuredEndpoint(
       }
     }
 
-    logToAxiom({
-      type: failed ? 'error' : 'info',
-      name: failed ? 'system-account-profile-set-failed' : 'system-account-profile-set',
-      details: { userId, changed, failed, asserted_actor: actorUserId },
-    }).catch(() => null);
     const auditRecorded = await trackModActivity(SYSTEM_ACTOR_ID, {
       entityType: 'user',
       activity: 'setSystemAccountProfile',
@@ -129,6 +124,12 @@ export default HeaderTokenSecuredEndpoint(
     })
       .then(() => true)
       .catch(() => false);
+    // 'error' when no audit row was written: then this line is the only record of the change.
+    logToAxiom({
+      type: failed || !auditRecorded ? 'error' : 'info',
+      name: failed ? 'system-account-profile-set-failed' : 'system-account-profile-set',
+      details: { userId, changed, failed, asserted_actor: actorUserId, auditRecorded },
+    }).catch(() => null);
 
     if (failed)
       return res.status(500).json({ userId, changed, failed: failed.fields, auditRecorded });
