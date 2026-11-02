@@ -16,7 +16,7 @@ import { tagSchema } from './tag.schema';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { BOUNTY_AWARD_RULINGS } from '~/shared/constants/bounty.constants';
+import { BOUNTY_AWARD_RULINGS } from '@civitai/shared/bounty-award';
 
 // A function, not a value: a bound computed at module load freezes "today" at the pod's boot date.
 const utcToday = () => dayjs.utc(stripTime(new Date()));
@@ -141,7 +141,6 @@ export const addBenefactorUnitAmountInputSchema = z.object({
   bountyId: z.number(),
 });
 
-export type ResolveUnpaidBountyAwardInput = z.infer<typeof resolveUnpaidBountyAwardInputSchema>;
 export const resolveUnpaidBountyAwardInputSchema = z.object({
   bountyId: z.number().int().positive(),
   userId: z.number().int().positive(),

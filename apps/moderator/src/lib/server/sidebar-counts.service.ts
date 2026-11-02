@@ -27,6 +27,7 @@ import { countPendingScamRestrictions } from './user-restriction.service';
 import { countPendingCsamHolds } from './csam-holds.queries';
 import { countEvidenceHoldsEnding } from '@civitai/db-queries/evidence-hold';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
+import { countOpenUnpaidAwards } from './bounty-unpaid-award.service';
 import {
   getFlaggedCount,
   getHeldDetectionModelCount,
@@ -133,6 +134,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     siteAppeals,
     evidenceHoldsEnding,
     ticketCounts,
+    bountyUnpaidAwards,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -186,6 +188,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(() => countEvidenceHoldsEnding(dbRead)),
     // Bounded so a slow Redis read cannot hold up the sidebar; these keys are not in `maybe`, so a timeout shows no badge rather than `unavailable`.
     bounded(() => peekTicketCounts(() => ticketSnapshot.peek())),
+    // Bounded: the legacy half filters ModActivity on `activity`, which no index covers.
+    bounded(countOpenUnpaidAwards),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -200,6 +204,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     evidenceHoldsEnding: evidenceHoldsEnding?.owners ?? null,
     stuckIngestion,
     ingestionErrors,
+    bountyUnpaidAwards,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
   const known = Object.entries(maybe).filter((e): e is [string, number] => e[1] != null);
