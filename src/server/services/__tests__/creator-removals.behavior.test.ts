@@ -136,7 +136,7 @@ beforeEach(async () => {
 
 describe('the removed-images list', () => {
   it('leaves out a removal an approved appeal reversed, and keeps every other one', async () => {
-    const result = await getMyRemovedImages(OWNER);
+    const result = await getMyRemovedImages(OWNER, NOW);
 
     expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AGAIN, STILL_REMOVED, REJECTED]);
     expect(result.total).toBe(3);
@@ -147,7 +147,7 @@ describe('the removed-images list', () => {
   it('lists nothing, and so offers no appeal, to an owner under a hold marker', async () => {
     await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
 
-    const result = await getMyRemovedImages(OWNER);
+    const result = await getMyRemovedImages(OWNER, NOW);
 
     expect(result).toEqual({ total: 0, truncated: false, items: [] });
   });
@@ -168,7 +168,7 @@ describe('the removed-images list', () => {
     );
     const canAppeal = async () =>
       Object.fromEntries(
-        (await getMyRemovedImages(OWNER)).items.map((i) => [i.imageId, i.canAppeal])
+        (await getMyRemovedImages(OWNER, NOW)).items.map((i) => [i.imageId, i.canAppeal])
       );
 
     const before = await canAppeal();
@@ -194,7 +194,7 @@ describe('the removed-images list', () => {
     ];
     holder.chQuery.mockResolvedValue({ json: async () => full });
 
-    const result = await getMyRemovedImages(OWNER);
+    const result = await getMyRemovedImages(OWNER, NOW);
 
     expect(result.items.map((i) => i.imageId)).not.toContain(RESTORED);
     expect(result.truncated).toBe(true);
@@ -288,7 +288,7 @@ describe('a removal score exemption', () => {
     const own = removals.filter((r) => r.ownerId === EXEMPT_OWNER);
     holder.chQuery.mockResolvedValue({ json: async () => own });
 
-    const result = await getMyRemovedImages(EXEMPT_OWNER);
+    const result = await getMyRemovedImages(EXEMPT_OWNER, NOW);
 
     expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AFTER_EXEMPTION]);
   });
@@ -465,15 +465,37 @@ describe('the Removed content score', () => {
   it('lets the member-facing list check appeals on the replica', async () => {
     dbMock.dbWrite.$queryRaw.mockClear();
     dbMock.dbRead.$queryRaw.mockClear();
-    await getMyRemovedImages(OWNER);
+    await getMyRemovedImages(OWNER, NOW);
 
     const counting = (c: unknown[]) => (c[0] as string[]).join('?').includes('to_timestamp');
     expect(dbMock.dbRead.$queryRaw.mock.calls.filter(counting)).toHaveLength(1);
     expect(dbMock.dbWrite.$queryRaw.mock.calls.filter(counting)).toHaveLength(0);
   });
 
+  it('lists exactly the removals that cost points, and its owner pays for them', async () => {
+    const own = [
+      { ownerId: OWNER, imageId: 400, removedAt: REMOVED_AT, reason: 'realPerson' },
+      { ownerId: OWNER, imageId: 401, removedAt: REMOVED_AT, reason: 'spam' },
+      { ownerId: OWNER, imageId: 402, removedAt: REMOVED_AT, reason: 'other' }, // costs nothing
+      { ownerId: OWNER, imageId: 403, removedAt: AGED_OUT_AT, reason: 'realPerson' }, // aged out
+    ];
+    holder.chQuery.mockResolvedValue({ json: async () => own });
+    await holder.db.exec(
+      `INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
+        (400, ${OWNER}, 'moderated'), (401, ${OWNER}, 'moderated'),
+        (402, ${OWNER}, 'moderated'), (403, ${OWNER}, 'moderated')`
+    );
+
+    const listed = await getMyRemovedImages(OWNER, NOW);
+    const score = (await scoreRun(fakeClickhouse(own))).get(OWNER)!;
+
+    expect(listed.items.map((i) => i.imageId)).toEqual([400, 401]);
+    expect(listed.total).toBe(2);
+    expect(score).toBe(-1500);
+  });
+
   it('matches the list for the same owner', async () => {
-    const listed = await getMyRemovedImages(OWNER);
+    const listed = await getMyRemovedImages(OWNER, NOW);
 
     expect(Math.abs((await scoreRun()).get(OWNER)!)).toBe(listed.total * 1000);
   });

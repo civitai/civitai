@@ -76,6 +76,10 @@ export const removalWindowStart = (now: Date) =>
 export const isWithinRemovalWindow = (removedAt: number | string, now: Date) =>
   Number(removedAt) * 1000 > removalWindowStart(now).getTime();
 
+/** Whether a removal currently costs points: inside the window, and of a reason that weighs. */
+export const costsPoints = (removal: CreatorRemoval, now: Date) =>
+  isWithinRemovalWindow(removal.removedAt, now) && removalWeight(removal.reason) > 0;
+
 /**
  * Each owner's total removal weight within the last `REMOVAL_SCORE_WINDOW_DAYS`, every removal
  * weighed by its reason (1 per fully weighted removal); an owner with none is absent. Checks
@@ -90,7 +94,7 @@ export async function removalPenaltyWeightsByOwner(
   const weights = new Map<number, number>();
   for (const owners of chunk(ownerIds, 1000)) {
     const rows = await ch.$query<CreatorRemoval>(removalsQuery(`ownerId IN (${owners.join(',')})`));
-    const inWindow = rows.filter((r) => isWithinRemovalWindow(r.removedAt, now));
+    const inWindow = rows.filter((r) => costsPoints(r, now));
     for (const { ownerId, reason } of await withoutReversed(inWindow, dbWrite))
       weights.set(Number(ownerId), (weights.get(Number(ownerId)) ?? 0) + removalWeight(reason));
   }

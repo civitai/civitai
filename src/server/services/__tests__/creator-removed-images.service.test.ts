@@ -22,6 +22,9 @@ import { removalsQuery } from '~/server/services/creator-removals.service';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const USER = 42;
+// Fixtures remove images at tiny epoch times, or around 1.7e9 seconds; `now` keeps each inside the window.
+const EARLY = new Date(10_000);
+const RECENT = new Date(1_700_000_400_000);
 
 type State = {
   imageId: number;
@@ -89,7 +92,7 @@ describe('getMyRemovedImages', () => {
       states: [{ imageId: 1 }, { imageId: 2 }, { imageId: 3 }],
     });
 
-    const result = await getMyRemovedImages(USER);
+    const result = await getMyRemovedImages(USER, RECENT);
 
     expect(result.total).toBe(3);
     expect(result.truncated).toBe(false);
@@ -105,7 +108,7 @@ describe('getMyRemovedImages', () => {
   it('reads the caller’s removals through the definition the score counts', async () => {
     given({ events: [], states: [] });
 
-    await getMyRemovedImages(USER);
+    await getMyRemovedImages(USER, EARLY);
 
     expect(chQuery).toHaveBeenCalledWith(
       expect.objectContaining({ query: REMOVALS_QUERY, query_params: { userId: USER } })
@@ -124,7 +127,7 @@ describe('getMyRemovedImages', () => {
   it('judges each removal with the appeal flow’s excludedRecord', async () => {
     given({ events: [{ imageId: 1, removedAt: 1 }], states: [{ imageId: 1 }] });
 
-    await getMyRemovedImages(USER);
+    await getMyRemovedImages(USER, EARLY);
 
     const query = sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!);
     expect(query.sql).toContain(`${excludedRecord(Prisma.raw('r')).sql} AS excluded`);
@@ -140,7 +143,7 @@ describe('getMyRemovedImages', () => {
       states: [{ imageId: 1 }, { imageId: 2, excluded: true }],
     });
 
-    const result = await getMyRemovedImages(USER);
+    const result = await getMyRemovedImages(USER, EARLY);
 
     expect(result.items.map((i) => i.imageId)).toEqual([1]);
     expect(result.total).toBe(1);
@@ -156,7 +159,7 @@ describe('getMyRemovedImages', () => {
       excludedImages: [2],
     });
 
-    const result = await getMyRemovedImages(USER);
+    const result = await getMyRemovedImages(USER, EARLY);
 
     expect(result.items.map((i) => i.imageId)).toEqual([1]);
     expect(result.total).toBe(1);
@@ -169,7 +172,11 @@ describe('getMyRemovedImages', () => {
       excludedOwners: [USER],
     });
 
-    expect(await getMyRemovedImages(USER)).toEqual({ total: 0, truncated: false, items: [] });
+    expect(await getMyRemovedImages(USER, EARLY)).toEqual({
+      total: 0,
+      truncated: false,
+      items: [],
+    });
   });
 
   it('leaves out a removal it could not check', async () => {
@@ -181,7 +188,7 @@ describe('getMyRemovedImages', () => {
       states: [{ imageId: 1 }],
     });
 
-    expect((await getMyRemovedImages(USER)).items.map((i) => i.imageId)).toEqual([1]);
+    expect((await getMyRemovedImages(USER, EARLY)).items.map((i) => i.imageId)).toEqual([1]);
   });
 
   it('gives a purged image only its date and reason', async () => {
@@ -190,7 +197,7 @@ describe('getMyRemovedImages', () => {
       states: [{ imageId: 9, owned: false, blockedFor: null }],
     });
 
-    expect((await getMyRemovedImages(USER)).items).toEqual([
+    expect((await getMyRemovedImages(USER, EARLY)).items).toEqual([
       { removedAt: new Date(5000), reason: REMOVAL_REASON, imageId: null, canAppeal: false },
     ]);
   });
@@ -219,7 +226,7 @@ describe('getMyRemovedImages', () => {
       { entityId: 1, status: AppealStatus.Rejected },
     ] as never);
 
-    const result = await getMyRemovedImages(USER);
+    const result = await getMyRemovedImages(USER, EARLY);
 
     expect(result.items.map((i) => [i.imageId, i.canAppeal])).toEqual([
       [1, true],
@@ -239,7 +246,7 @@ describe('getMyRemovedImages', () => {
   it('links an image only while the caller still owns it', async () => {
     given({ events: [{ imageId: 1, removedAt: 1 }], states: [{ imageId: 1 }] });
 
-    await getMyRemovedImages(USER);
+    await getMyRemovedImages(USER, EARLY);
 
     expect(sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!).sql).toContain('coalesce(i."userId" = ');
     expect(sqlOf(dbMock.dbRead.$queryRaw.mock.lastCall!).values).toContain(USER);
@@ -252,7 +259,7 @@ describe('getMyRemovedImages', () => {
     }));
     given({ events, states: events.map((e) => ({ imageId: e.imageId })) });
 
-    const result = await getMyRemovedImages(USER);
+    const result = await getMyRemovedImages(USER, EARLY);
 
     expect(result.truncated).toBe(true);
     expect(REMOVALS_QUERY).toContain(`LIMIT ${REMOVED_IMAGES_LIMIT}
@@ -266,7 +273,7 @@ describe('getMyRemovedImages', () => {
     }));
     given({ events, states: events.map((e) => ({ imageId: e.imageId })), excludedImages: [1] });
 
-    const result = await getMyRemovedImages(USER);
+    const result = await getMyRemovedImages(USER, EARLY);
 
     expect(result.total).toBe(REMOVED_IMAGES_LIMIT - 1);
     expect(result.truncated).toBe(true);
@@ -279,7 +286,7 @@ describe('getMyRemovedImages', () => {
       excludedImages: [8],
     });
 
-    expect((await getMyRemovedImages(USER)).items).toEqual([
+    expect((await getMyRemovedImages(USER, RECENT)).items).toEqual([
       {
         removedAt: new Date(1_700_000_000_000),
         reason: REMOVAL_REASON,
@@ -296,13 +303,13 @@ describe('getMyRemovedImages', () => {
       excludedImages: [7],
     });
 
-    expect((await getMyRemovedImages(USER)).items).toEqual([]);
+    expect((await getMyRemovedImages(USER, RECENT)).items).toEqual([]);
   });
 
   it('fails rather than answering an empty list when ClickHouse fails', async () => {
     given({ events: [], states: [] });
     chQuery.mockRejectedValue(new Error('timeout'));
 
-    await expect(getMyRemovedImages(USER)).rejects.toThrow('timeout');
+    await expect(getMyRemovedImages(USER, EARLY)).rejects.toThrow('timeout');
   });
 });

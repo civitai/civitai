@@ -4,6 +4,7 @@ import { dbRead } from '~/server/db/client';
 import { excludedRecord } from '~/server/jobs/appeal-decision-records';
 import {
   type CreatorRemoval,
+  costsPoints,
   removalsQuery,
   withoutReversed,
 } from '~/server/services/creator-removals.service';
@@ -87,12 +88,13 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
 }
 
 /**
- * The member's own removed images, newest first, up to the limit. Removals the appeal flow excludes
- * are left out, and `total` counts only what is listed.
+ * The member's own removed images that currently cost points, newest first, up to the limit: a
+ * removal past the score window, or of a reason that weighs nothing, is not listed. Removals the
+ * appeal flow excludes are left out too, and `total` counts only what is listed.
  */
-export async function getMyRemovedImages(userId: number) {
+export async function getMyRemovedImages(userId: number, now = new Date()) {
   const fetched = await getRemovalEvents(userId);
-  const events = await withoutReversed(fetched);
+  const events = await withoutReversed(fetched.filter((e) => costsPoints(e, now)));
   const none = { total: 0, truncated: false, items: [] as RemovedImage[] };
   if (!events.length) return none;
 
