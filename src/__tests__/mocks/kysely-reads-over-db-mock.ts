@@ -198,3 +198,29 @@ export async function hotReadsOverDbMock() {
       })) ?? undefined,
   };
 }
+
+/**
+ * `readUserCreatorViaKysely` from `dbMock.dbRead.user.findFirst` then `dbMock.dbRead.model.count`,
+ * the two calls the retired Prisma creator-card read made. For tests of what is built around the
+ * card (caching, busts); the card's own rows are pinned in hot-reads-2.kysely-parity.test.ts.
+ */
+export async function userCreatorReadsOverDbMock() {
+  const actual = await import('~/server/services/user-creator.reads');
+  return {
+    ...actual,
+    readUserCreatorViaKysely: async (_db: unknown, where: { id?: number; username?: string }) => {
+      const user = await dbMock.dbRead.user.findFirst({
+        where: {
+          ...where,
+          deletedAt: null,
+          AND: [{ id: { not: -1 } }, { username: { not: 'civitai' } }],
+        },
+      });
+      if (!user) return null;
+      const modelCount = await dbMock.dbRead.model.count({
+        where: { userId: user.id, status: 'Published' },
+      });
+      return { user, modelCount };
+    },
+  };
+}
