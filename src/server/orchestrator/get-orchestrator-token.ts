@@ -48,7 +48,7 @@ type GetOrchestratorTokenOptions = {
    */
   bypassCache?: boolean;
   /**
-   * Issue the token even when the account is restricted. Only for server-side calls that never hand
+   * Issue the token even when the account is muted (never when banned). Only for server-side calls that never hand
    * the token to a client and never submit work: reading, deleting or cancelling the account's own
    * workflows, or a moderator acting on them (which may stamp workflow metadata). Every call site is listed in get-orchestrator-token.allow-restricted.test.ts.
    */
@@ -61,12 +61,14 @@ export async function getOrchestratorToken(
   options: GetOrchestratorTokenOptions = {}
 ) {
   // Before any cache: a token cached before a restriction must not be served after it. The standing
-  // read is cached and falls back to the primary; when neither answers, it refuses.
-  if (!options.allowRestricted) {
-    const standing = await getAccountStanding(userId).catch(() => null);
-    if (!standing || !standing.exists || standing.muted || standing.banned)
-      throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
-  }
+  // read is cached and falls back to the primary; when neither answers, it refuses. `allowRestricted`
+  // admits a muted account only, never a banned or missing one.
+  const standing = await getAccountStanding(userId).catch(() => null);
+  // Not the session-facing wording for a ban: a moderator acting on another account reaches this too.
+  if (standing?.banned)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
+  if (!standing || !standing.exists || (standing.muted && !options.allowRestricted))
+    throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
 
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey

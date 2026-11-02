@@ -104,6 +104,13 @@ describe('the generation token for a restricted account', () => {
     );
   });
 
+  it('a banned account is refused even where a muted one is admitted', async () => {
+    bannedAt = new Date();
+    await expect(
+      getOrchestratorToken(USER, undefined, { bypassCache: true, allowRestricted: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'This account has been banned' });
+  });
+
   it('a moderator still reads a muted account’s work', async () => {
     muted = true;
     redisMock.sysRedis.hGet.mockResolvedValue(null as never);
