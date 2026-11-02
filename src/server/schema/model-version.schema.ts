@@ -193,7 +193,7 @@ export const trainingDetailsParams = z.object({
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 
 // AI Toolkit training parameters (alternate format for database storage)
-const aiToolkitTrainingDetailsParams = z.object({
+export const aiToolkitTrainingDetailsParams = z.object({
   engine: z.literal('ai-toolkit'),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),

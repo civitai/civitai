@@ -454,6 +454,51 @@ describe('createDraftModelFromWorkflow', () => {
     expect(file.metadata.trainingResults.epochs).toHaveLength(2);
   });
 
+  it("records the run's hyperparameters in trainingDetails, defaulting or dropping any the schema rejects", async () => {
+    const workflow = studioWorkflow();
+    Object.assign((workflow.steps![0] as { input: Record<string, unknown> }).input, {
+      batchSize: 0,
+      numRepeats: 4,
+      resolution: 1024,
+      lr: 0.0004,
+      textEncoderLr: 0.00005,
+      trainTextEncoder: true,
+      lrScheduler: 'cosine',
+      optimizerType: 'not-an-optimizer',
+      networkDim: 16,
+      networkAlpha: 8,
+      noiseOffset: 0.1,
+      flipAugmentation: true,
+      keepTokens: 1,
+      shuffleTokens: true,
+      continueFrom: 'urn:air:sdxl:lora:civitai:1@2',
+    });
+    await createDraftModelFromWorkflow({ user: USER, workflow, selectedEpochNumber: 1 });
+
+    const { trainingDetails } = mockUpsertModelVersion.mock.calls[0][0];
+    expect(trainingDetails.params).toMatchObject({
+      steps: 2000,
+      epochs: 3,
+      numRepeats: 4,
+      resolution: 1024,
+      lr: 0.0004,
+      textEncoderLr: 0.00005,
+      trainTextEncoder: true,
+      lrScheduler: 'cosine',
+      optimizerType: 'adamw',
+      networkDim: 16,
+      networkAlpha: 8,
+      noiseOffset: 0.1,
+      flipAugmentation: true,
+      keepTokens: 1,
+      shuffleTokens: true,
+      minSnrGamma: null,
+    });
+    expect(trainingDetails.params).not.toHaveProperty('batchSize');
+    expect(trainingDetails.params).not.toHaveProperty('continueFrom');
+    expect(trainingDetailsObj.safeParse(trainingDetails).success).toBe(true);
+  });
+
   // The placeholder's url is an orchestrator blob the scanner can't resolve; left exists=null,
   // the scan fallback job submits it and only tombstones it after a failed pre-flight. Stamping
   // virusScanResult Success instead would be a fake scan result, so the fix is exists=false.
