@@ -342,7 +342,7 @@ export const CustomSearchBox = forwardRef<
       onBlur={onSearchDone}
       onSubmit={onSearchDone}
       ref={inputRef}
-      onKeyDown={getHotkeyHandler([['Escape', blurInput]])}
+      onKeyDown={getHotkeyHandler([['esc', blurInput]])}
       rightSection={
         !isMobile && (
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
