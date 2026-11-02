@@ -111,7 +111,6 @@ export const processEnqueuedComicPanelsJob = createJob(
         : null;
       if (refusal) {
         log(`User ${userId}: Skipping — account is ${refusal}`);
-        // Mark their panels as failed so they don't get retried
         for (const panel of userPanels) {
           await dbWrite.comicPanel.update({
             where: { id: panel.id },

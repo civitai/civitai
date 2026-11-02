@@ -96,12 +96,7 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckBlockPublishRateLimit(...(a as [])),
   checkBlockPostRateLimit: vi.fn(async () => ({ allowed: true })),
   checkBlockPostAppRateLimit: vi.fn(async () => ({ allowed: true })),
-  // 🔴 Declared here even though it does not exist at this file's BASE. A `vi.mock` factory that
-  // over-declares an export is harmless (the importer only binds what it names), and declaring it
-  // is what lets the RED half of the matrix above be measured against the same file.
   checkBlockPollRateLimit: (...a: unknown[]) => mockCheckBlockPollRateLimit(...(a as [])),
-  // The per-cell bucket `estimateWorkflowBatch` charges beside the catalog one. Absent at this
-  // file's BASE, like the poll one above was, and declared for the same reason.
   checkBlockEstimateCellsRateLimit: (...a: unknown[]) =>
     mockCheckBlockEstimateCellsRateLimit(...(a as [])),
   checkBlockSubmitRateLimit: (...a: unknown[]) => mockCheckBlockSubmitRateLimit(...(a as [])),
@@ -139,10 +134,7 @@ const INSTANCE = 'bki_01JQ8XG7YV2K4M6P8R0T2W4Y6C';
 /** The orchestrator's own id shape: `<owning userId>-<yyyyMMddHHmmssfff>`. */
 const OWN_ID = `${VIEWER}-20260915120000000`;
 
-/**
- * 🔴 PAIRWISE-DISTINCT FIXTURE FIELDS, and distinct from every constant these assertions name, so
- * an `allowed: true` control cannot be satisfied by a stub returning a shared value.
- */
+/** Pairwise-distinct fixture fields: an `allowed: true` control cannot pass on a shared value. */
 function workflowFixture(over: Record<string, unknown> = {}) {
   return {
     id: OWN_ID,
