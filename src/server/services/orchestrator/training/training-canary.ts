@@ -1,5 +1,6 @@
 import type {
   TrainingOutput,
+  TrainingStep,
   TrainingStepTemplate,
   Workflow,
 } from '@civitai/orchestration-client';
@@ -11,6 +12,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
+import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { buildAiToolkitTrainingStep } from '~/server/services/orchestrator/training/training.orch';
 import {
   cancelWorkflow,
@@ -217,7 +219,9 @@ export function evaluateCanaryWorkflow(
     : undefined;
   const base = { at, workflowId, cost, durationMinutes };
 
-  const output = workflow.steps?.[0]?.output as TrainingOutput | undefined;
+  const output = (workflow.steps?.[0] as TrainingStep | undefined)?.output as
+    | TrainingOutput
+    | undefined;
   const epochs = (output?.epochs ?? []).filter((epoch) => epoch.model?.available);
   if (epochs.length < opts.expectedEpochs)
     return {
@@ -460,6 +464,7 @@ async function pollPendingRun(
 async function submitLiveRun(
   entry: TrainingCanaryEntry,
   config: TrainingCanaryConfig,
+  userId: number,
   token: string,
   now: Date
 ): Promise<{ pending: CanaryPendingRun } | { result: CanaryResult }> {
@@ -474,14 +479,11 @@ async function submitLiveRun(
     const workflow = await submitWorkflow({
       token,
       body: {
-        tags: [
-          TRAINING_CANARY_WORKFLOW_TAG,
-          `canary:${entry.key}`,
-          `baseModel:${entry.baseModel}`,
-        ],
+        tags: [TRAINING_CANARY_WORKFLOW_TAG, `canary:${entry.key}`, `baseModel:${entry.baseModel}`],
         steps: [resolved.step],
       },
     });
+    await assertWorkflowOwner(workflow, userId, token);
     if (!workflow.id)
       return { result: { status: 'fail', at, detail: 'submit returned no workflow id' } };
     return { pending: { key: entry.key, workflowId: workflow.id, submittedAt: at } };
@@ -577,7 +579,7 @@ export async function runTrainingCanary({
       const picked = pickLiveEntries(eligible, state.pending, config.maxPendingRuns, state.cursor);
       state.cursor = picked.cursor;
       for (const entry of picked.entries) {
-        const outcome = await submitLiveRun(entry, config, token, now);
+        const outcome = await submitLiveRun(entry, config, config.userId, token, now);
         if ('pending' in outcome) {
           summary.submitted++;
           state.pending.push(outcome.pending);

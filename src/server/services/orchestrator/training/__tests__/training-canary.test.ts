@@ -84,8 +84,9 @@ function keyValues(initial: { config?: unknown; state?: TrainingCanaryState }) {
   const rows = new Map<string, unknown>();
   if (initial.config !== undefined) rows.set('training-canary:config', initial.config);
   if (initial.state !== undefined) rows.set('training-canary:state', initial.state);
-  dbMock.dbWrite.keyValue.findUnique.mockImplementation(async ({ where }: { where: { key: string } }) =>
-    rows.has(where.key) ? { key: where.key, value: rows.get(where.key) } : null
+  dbMock.dbWrite.keyValue.findUnique.mockImplementation(
+    async ({ where }: { where: { key: string } }) =>
+      rows.has(where.key) ? { key: where.key, value: rows.get(where.key) } : null
   );
   dbMock.dbWrite.keyValue.upsert.mockImplementation(
     async ({ where, update }: { where: { key: string }; update: { value: unknown } }) => {
@@ -327,7 +328,10 @@ describe('runTrainingCanary', () => {
     const summary = await runTrainingCanary();
 
     expect(summary).toMatchObject({ completed: 1, submitted: 1 });
-    expect(kv.state()?.entries.sdxl?.live).toMatchObject({ status: 'pass', workflowId: 'wf-live-1' });
+    expect(kv.state()?.entries.sdxl?.live).toMatchObject({
+      status: 'pass',
+      workflowId: 'wf-live-1',
+    });
     expect(liveSubmits()[0][0]).toMatchObject({
       body: { tags: expect.arrayContaining(['canary:flux']) },
     });
@@ -338,7 +342,9 @@ describe('runTrainingCanary', () => {
       config: LIVE_CONFIG,
       state: {
         ...emptyCanaryState(),
-        pending: [{ key: 'sdxl', workflowId: 'wf-stuck', submittedAt: hoursBefore(9).toISOString() }],
+        pending: [
+          { key: 'sdxl', workflowId: 'wf-stuck', submittedAt: hoursBefore(9).toISOString() },
+        ],
       },
     });
     mocks.getWorkflow.mockResolvedValue(workflow({ id: 'wf-stuck', status: 'scheduled' }));
