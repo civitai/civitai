@@ -1,4 +1,4 @@
-import { Modal, Popover } from '@mantine/core';
+import { Menu, Modal, Popover } from '@mantine/core';
 import { useState } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
@@ -22,6 +22,8 @@ function Detail() {
   return (
     <>
       <button type="button">page</button>
+      {/* A closed overlay kept in the DOM must not count as open. */}
+      <div role="dialog" style={{ display: 'none' }} />
       <button type="button" onClick={() => setModal(true)}>
         report
       </button>
@@ -48,6 +50,14 @@ function Detail() {
           <button type="button">in popover</button>
         </Popover.Dropdown>
       </Popover>
+      <Menu transitionProps={{ duration: 0 }}>
+        <Menu.Target>
+          <button type="button">more</button>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item>share</Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
     </>
   );
 }
@@ -87,6 +97,14 @@ describe('Escape on the image detail', () => {
       expect(close).not.toHaveBeenCalled();
     }
   );
+
+  test('leaves the page open while a menu is open', async () => {
+    renderWithProviders(<Detail />);
+    await page.getByRole('button', { name: 'more' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'share' })).toBeVisible();
+    await userEvent.keyboard('{Escape}');
+    expect(close).not.toHaveBeenCalled();
+  });
 
   test('leaves closing to the modal when the detail is inside one', async () => {
     dialog.opened = true;

@@ -144,7 +144,7 @@ export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
     router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
   };
 
-  useHotkeys([['esc', onClose]]);
+  useHotkeys([['Escape', onClose]]);
 
   useEffect(() => {
     if (router) {
