@@ -154,6 +154,9 @@ const useAddedImageContext = () => {
 // #endregion
 
 export const getAllowedResources = (resources: ResourceHelper[], advancedMode: boolean) => {
+  // Advanced Mode allows unrestricted mixing of base models; an empty list leaves the picker
+  // unfiltered, as it is before the image has any resource.
+  if (advancedMode) return [];
   const resourcesSorted = sortByModelTypes(resources);
   for (const resource of resourcesSorted) {
     if (resource.modelType === ModelType.Checkpoint) {
@@ -163,9 +166,7 @@ export const getAllowedResources = (resources: ResourceHelper[], advancedMode: b
       if (isDefined(baseModel)) {
         const options =
           (getGenerationBaseModelResourceOptions(baseModel) as AllowedResource[]) ?? [];
-        // Advanced Mode allows unrestricted mixing of base models; keep Checkpoint available so a
-        // second one can be added.
-        return advancedMode ? options : options.filter((t) => t.type !== 'Checkpoint');
+        return options.filter((t) => t.type !== 'Checkpoint');
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {
