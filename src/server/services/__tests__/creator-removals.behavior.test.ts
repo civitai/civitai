@@ -42,6 +42,7 @@ const OTHER = 43; // whose only removal was reversed on appeal since the last ru
 const RESTORED_OWNER = 44; // whose only removal a restore event reversed since the last run
 const SETTLED = 45; // whose removal was reversed on appeal before the last run, nothing since
 const EXEMPT_OWNER = 46;
+const AGING_OWNER = 47; // whose older removal left the six-month window since the last run
 const REMOVED_AT = 1_700_000_000;
 const LAST_RUN = REMOVED_AT + 86_400;
 const DAY = 86_400;
@@ -57,7 +58,11 @@ const REMOVED_AGAIN = 4; // approved, then removed again later
 const EXEMPT = 7;
 const REMOVED_AFTER_EXEMPTION = 8;
 const POI_VERSION = 500;
+const windowStart = (now: Date) => new Date(dayjs(now).subtract(6, 'month').valueOf());
+const AGED_OUT_AT = Math.floor(windowStart(NOW).getTime() / 1000) - DAY;
 const removals = [
+  { ownerId: AGING_OWNER, imageId: 60, removedAt: AGED_OUT_AT },
+  { ownerId: AGING_OWNER, imageId: 61, removedAt: REMOVED_AT },
   { ownerId: OWNER, imageId: REMOVED_AGAIN, removedAt: REMOVED_AT + 7200 },
   { ownerId: OWNER, imageId: RESTORED, removedAt: REMOVED_AT },
   { ownerId: OWNER, imageId: STILL_REMOVED, removedAt: REMOVED_AT },
@@ -213,6 +218,11 @@ const REMOVED_SINCE_SQL = flat(
 const RESTORED_SINCE_SQL = flat(
   `SELECT DISTINCT ownerId FROM images WHERE type = 'Restore' AND time > ?`
 );
+const AGED_OUT_SQL = flat(`SELECT DISTINCT ownerId FROM images
+  WHERE type IN ('DeleteTOS', 'Restore') AND time > ?
+  GROUP BY ownerId, imageId
+  HAVING maxIf(time, type = 'DeleteTOS') > maxIf(time, type = 'Restore')
+    AND maxIf(time, type = 'DeleteTOS') > ? AND maxIf(time, type = 'DeleteTOS') <= ?`);
 const OWNERS_OF_SQL = (ids: string) =>
   flat(`SELECT DISTINCT ownerId FROM images WHERE type = 'DeleteTOS' AND imageId IN (${ids})`);
 
@@ -220,24 +230,28 @@ const OWNERS_OF_SQL = (ids: string) =>
  * Stands in for ClickHouse, which this suite cannot run: OWNER has a removal since the last run and
  * RESTORED_OWNER a restore event, whose removal the real query then drops (so `removals` has none).
  */
-function fakeClickhouse(
-  ownerRemovals: (Omit<(typeof removals)[number], 'ownerId'> & {
-    ownerId: number;
-    reason?: string | null;
-  })[] = removals
-) {
+type FakeRemoval = { ownerId: number; imageId: number; removedAt: number; reason?: string | null };
+function fakeClickhouse(ownerRemovals: FakeRemoval[] = removals, now = NOW) {
   const $query = vi.fn(async (query: TemplateStringsArray | string, ...values: unknown[]) => {
     // Interpolates as the real client does, with each date checked and shown as `?`.
+    const dates: Date[] = [];
     const text =
       typeof query === 'string'
         ? query
         : query.reduce((acc, part, i) => {
             if (i === 0) return part;
             const value = values[i - 1];
-            if (value instanceof Date) expect(value).toEqual(new Date(LAST_RUN * 1000));
+            if (value instanceof Date) dates.push(value);
             return acc + (value instanceof Date ? '?' : String(value)) + part;
           }, '');
     const sql = flat(text);
+    if (sql === AGED_OUT_SQL) {
+      // The window as it stood at the last run, up to the window as it stands now.
+      const from = windowStart(new Date(LAST_RUN * 1000));
+      expect(dates).toEqual([from, from, windowStart(now)]);
+      return [{ ownerId: AGING_OWNER }];
+    }
+    for (const date of dates) expect(date).toEqual(new Date(LAST_RUN * 1000));
     const owners = sql.match(/ownerId IN \(([\d,]+)\)/)?.[1];
     if (owners && sql === REMOVALS_SQL(owners))
       return ownerRemovals.filter((r) => owners.split(',').map(Number).includes(r.ownerId));
@@ -254,10 +268,10 @@ function fakeClickhouse(
   return { $query };
 }
 
-async function scoreRun(ch: unknown = fakeClickhouse(), now = NOW) {
+async function scoreRun(ch?: unknown, now = NOW) {
   const scores = new Map<number, number>();
   await getReportAgainstScore({
-    ch: ch as never,
+    ch: (ch ?? fakeClickhouse(removals, now)) as never,
     lastUpdate: new Date(LAST_RUN * 1000),
     now,
     scoreMultipliers: { reportsAgainst: -1000 } as never,
@@ -348,14 +362,14 @@ describe('the Removed content score', () => {
 
   it('stops counting a removal six months after it was made', async () => {
     const justInside = new Date(sixMonthsAfter(REMOVED_AT).getTime() - 1000);
-    expect((await scoreRun(fakeClickhouse(), justInside)).get(OWNER)).toBe(-3000);
+    expect((await scoreRun(undefined, justInside)).get(OWNER)).toBe(-3000);
 
     // The three removals made at REMOVED_AT age out; the one made two hours later still counts.
     const afterFirstThree = new Date(sixMonthsAfter(REMOVED_AT).getTime() + 1000);
-    expect((await scoreRun(fakeClickhouse(), afterFirstThree)).get(OWNER)).toBe(-1000);
+    expect((await scoreRun(undefined, afterFirstThree)).get(OWNER)).toBe(-1000);
 
     const afterAll = new Date(sixMonthsAfter(REMOVED_AT + 7200).getTime() + 1000);
-    expect((await scoreRun(fakeClickhouse(), afterAll)).get(OWNER)).toBe(0);
+    expect((await scoreRun(undefined, afterAll)).get(OWNER)).toBe(0);
   });
 
   it('weighs each removal by the reason of its latest removal', async () => {
@@ -399,7 +413,12 @@ describe('the Removed content score', () => {
       OTHER,
       RESTORED_OWNER,
       EXEMPT_OWNER,
+      AGING_OWNER,
     ]);
+  });
+
+  it('re-scores an owner whose removal left the window since the last run, keeping the newer one', async () => {
+    expect((await scoreRun()).get(AGING_OWNER)).toBe(-1000);
   });
 
   it('re-scores an owner exempted since the last run, counting only the removal made after its exemption', async () => {

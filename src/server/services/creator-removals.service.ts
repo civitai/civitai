@@ -125,3 +125,27 @@ export async function getOwnersWithReversalsSince(ch: CustomClickHouseClient, si
   }
   return [...owners];
 }
+
+/**
+ * Owners with a counted removal that left the window between `since` and `now`: made after
+ * `since` minus the window and up to `now` minus it. The nightly job re-scores them, as nothing new
+ * happened to them since its last run.
+ */
+export async function getOwnersWithRemovalsAgedOutSince(
+  ch: CustomClickHouseClient,
+  since: Date,
+  now: Date
+) {
+  const from = removalWindowStart(since);
+  const to = removalWindowStart(now);
+  const rows = await ch.$query<{ ownerId: number }>`
+    SELECT DISTINCT ownerId
+    FROM images
+    WHERE type IN ('${REPORTS_AGAINST_EVENT}', '${REMOVAL_RESTORED_EVENT}') AND time > ${from}
+    GROUP BY ownerId, imageId
+    HAVING maxIf(time, type = '${REPORTS_AGAINST_EVENT}') > maxIf(time, type = '${REMOVAL_RESTORED_EVENT}')
+      AND maxIf(time, type = '${REPORTS_AGAINST_EVENT}') > ${from}
+      AND maxIf(time, type = '${REPORTS_AGAINST_EVENT}') <= ${to}
+  `;
+  return rows.map((r) => Number(r.ownerId));
+}

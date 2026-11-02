@@ -13,6 +13,7 @@ import { CREATOR_SCORE_CATEGORIES } from '~/shared/utils/creator-score';
 import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import {
   countRemovalsByOwner,
+  getOwnersWithRemovalsAgedOutSince,
   getOwnersWithReversalsSince,
   reportsAgainstScore,
 } from '~/server/services/creator-removals.service';
@@ -553,7 +554,8 @@ async function getReportedActionedScore(ctx: Context) {
   `;
 }
 
-// Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts.
+// Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts. Owners
+// whose removals left the window since the last run are re-scored too.
 export async function getReportAgainstScore(
   ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'> & { now?: Date }
 ) {
@@ -563,14 +565,16 @@ export async function getReportAgainstScore(
     WHERE type = '${REPORTS_AGAINST_EVENT}'
     AND time > ${ctx.lastUpdate}
   `;
+  const now = ctx.now ?? new Date();
   const owners = [
     ...new Set([
       ...removed.map((r) => Number(r.ownerId)),
       ...(await getOwnersWithReversalsSince(ctx.ch, ctx.lastUpdate)),
+      ...(await getOwnersWithRemovalsAgedOutSince(ctx.ch, ctx.lastUpdate, now)),
     ]),
   ];
 
-  const violations = await countRemovalsByOwner(ctx.ch, owners, ctx.now);
+  const violations = await countRemovalsByOwner(ctx.ch, owners, now);
   for (const id of owners) {
     const score = reportsAgainstScore(violations.get(id), ctx.scoreMultipliers.reportsAgainst);
     ctx.setScore(id, 'reportsAgainst', score);
