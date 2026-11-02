@@ -185,7 +185,7 @@ export async function searchChats(reader: Reader, rawTerm: string): Promise<Chat
 // Every branch orders before it limits. Without an ORDER BY, `SELECT DISTINCT chatId ... LIMIT 50` is
 // satisfied by a sort/unique on chatId, so it returned the 50 LOWEST ids — the 50 OLDEST chats — and
 // summariseChats then re-sorted them by recency, so the list READ as "newest first". A search for
-// `discord.gg` matches 4,774 chats; the moderator saw 50 ancient ones and no sign there were more.
+// `discord.gg` matches thousands of chats; the moderator saw 50 ancient ones and no sign there were more.
 async function findChatIds(
   mode: SearchMode,
   term: string

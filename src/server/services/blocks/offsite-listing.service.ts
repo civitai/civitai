@@ -91,6 +91,7 @@ import type { AppRole } from '~/server/services/blocks/app-access.service';
 import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import {
   computeListingProblems,
+  listingProblemInput,
   type ListingAssetScan,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
@@ -4622,29 +4623,14 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
     // Empty when there's no backing listing (a rejected/withdrawn row whose listing
     // was deleted) — nothing to flag.
     problems: r.appListing
-      ? computeListingProblems({
-          // 🔴 `listMySubmissions` IS NOT AN OFF-SITE-ONLY READ despite this file's name:
-          // its `where` has an explicit `{ kind: 'onsite' }` OR-branch so on-site MEDIA
-          // REVISIONS appear on /apps/my-submissions. A hardcoded 'offsite' here would
-          // therefore give manifest-governed listings the author-surface advice — exactly
-          // the defect being fixed. A fake that ignores `select` degrades to the original
-          // labels rather than throwing.
-          kind: (r.appListing.kind ?? 'offsite') as ListingProblemKind,
-          iconId: r.appListing.iconId,
-          coverId: r.appListing.coverId,
-          screenshotCount: r.appListing._count.screenshots,
-          description: r.appListing.description,
-          tagline: r.appListing.tagline,
-          category: r.appListing.category,
-          assetScans: assetScansFor(r.appListing),
-          status: r.appListing.status,
-          contentRating: r.appListing.contentRating,
-          declaredContentRating: declaredListingRating({
-            kind: r.appListing.kind ?? 'offsite',
+      ? computeListingProblems(
+          listingProblemInput(r.appListing, {
+            // Not off-site-only: the where includes on-site media revisions, so use the row's own kind.
+            kind: (r.appListing.kind ?? 'offsite') as ListingProblemKind,
             appRating: r.appListing.appBlock?.contentRating,
-            listingRating: r.appListing.contentRating,
-          }),
-        }).problems
+            assetScans: assetScansFor(r.appListing),
+          })
+        ).problems
       : [],
   }));
 

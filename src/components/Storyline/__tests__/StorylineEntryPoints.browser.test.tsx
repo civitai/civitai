@@ -81,7 +81,6 @@ describe('post menu entry', () => {
     expect(page.getByRole('menuitem', { name: ADD }).elements()).toHaveLength(0);
   });
 
-  // Only "start one" was offered: a post could not be added to a storyline that already existed.
   test('a post that is not a chapter can be added to one of your storylines', async () => {
     renderWithProviders(inOpenMenu(<StartStorylineMenuItem post={post} />));
 

@@ -15,7 +15,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * concurrent delete and a chapter-1 draft going live were checked against a real Postgres (see the PR).
  */
 
-const { setFirstChapter } = await import('~/server/services/storyline.service');
+const { addOwnerChapterAtEnd, setFirstChapter } = await import(
+  '~/server/services/storyline.service'
+);
 
 const migration = (name: string) =>
   readFileSync(
@@ -34,6 +36,7 @@ const STRANGER = 2;
 const PG = 1;
 const PG13 = 2;
 const R = 4;
+const BLOCKED = 32;
 const EMPTY = 1;
 const STRANGERS_STORY = 2;
 const OTHER_STORY = 3;
@@ -303,7 +306,35 @@ describe('setFirstChapter', () => {
     expect(await chaptersOf(EMPTY)).toEqual([]);
   });
 
+  // Blocked is a moderation verdict, not a rating: it never raises the ceiling to fit.
+  it.each([
+    ['Blocked', BLOCKED],
+    ['Blocked alongside a rating that fits', PG | BLOCKED],
+  ])('refuses a post rated %s as unusable, changing nothing', async (_name, level) => {
+    await db.pg.exec(`UPDATE "Post" SET "nsfwLevel" = ${level} WHERE id = 100`);
+
+    await expect(attach(100)).rejects.toThrow(
+      "This post or one of its images can't be used in a storyline"
+    );
+    expect(await ceilingOf(EMPTY)).toBe(PG13);
+    expect(await chaptersOf(EMPTY)).toEqual([]);
+  });
+
   it('says not found for a storyline that is gone', async () => {
     await expect(attach(100, 999)).rejects.toThrow('Storyline not found');
+  });
+});
+
+// "Add to a storyline" on an empty storyline: there is no end to walk to.
+describe('addOwnerChapterAtEnd on an empty storyline', () => {
+  it('makes the post chapter 1, with no parent edge', async () => {
+    await expect(
+      addOwnerChapterAtEnd({ storylineId: EMPTY, postId: 100, userId: OWNER })
+    ).resolves.toMatchObject({ storylineId: EMPTY });
+
+    expect(await chaptersOf(EMPTY)).toEqual([{ postId: 100, depth: 0 }]);
+    expect(
+      await rows(`SELECT 1 FROM "StorylineChapterEdge" WHERE "storylineId" = $1`, [EMPTY])
+    ).toEqual([]);
   });
 });

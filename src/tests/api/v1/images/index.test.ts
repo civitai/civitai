@@ -28,6 +28,7 @@ vi.mock('~/server/services/image.service', () => ({
 
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: mockGetHeldGalleryLevel,
+  getHeldLevelsByPost: async () => new Map(),
 }));
 
 vi.mock('~/server/redis/caches', () => ({

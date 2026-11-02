@@ -157,6 +157,15 @@ const writes = () =>
   );
 
 beforeEach(() => {
+  // Only the generation procedures' account-restriction read gets a row.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   // The poll catches and logs any throw, then returns the panel unchanged: the same result as the
   // hold. Every case asserts nothing was logged, so a broken fixture cannot pass as a held output.

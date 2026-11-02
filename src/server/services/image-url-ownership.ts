@@ -42,22 +42,32 @@ export function assertNoUnfinishedUploads(urls: (string | null | undefined)[]) {
 type Db = Prisma.TransactionClient | typeof dbWrite;
 
 export const MAX_KEYS = 64;
-// Overlapping matches too: one key's characters can begin another.
-const UUIDS = /(?=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))/gi;
 
 const ESCAPE = /%([0-9a-f]{2})/gi;
 const MAX_DECODE_PASSES = 8;
 
 const compacted = (value: string) => value.replace(/[\t\r\n]/g, '');
 
+/** A key's length; no shorter string holds one, since decoding and compacting only shorten. */
+const KEY_LENGTH = 36;
+
+/**
+ * Characters `decodedForms` may decode across calls (each pass over text holding `%`). Past it, `left`
+ * goes negative and the forms stop, so the caller must refuse rather than trust what was read.
+ */
+export type DecodeBudget = { left: number };
+
 /**
  * `value` and each form it takes as its `%XX` escapes are decoded, one pass at a time, each escape
  * on its own.
  */
-function decodedForms(value: string) {
+function decodedForms(value: string, budget?: DecodeBudget) {
   const forms = [compacted(value)];
   for (let pass = 0; pass < MAX_DECODE_PASSES; pass++) {
     const current = forms[forms.length - 1];
+    if (!current.includes('%')) break;
+    // Charged before the pass, so a refused input never pays for it.
+    if (budget && (budget.left -= current.length) < 0) break;
     const next = compacted(
       current.replace(ESCAPE, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
     );
@@ -77,11 +87,70 @@ function storedUrlsFor(url: string | null | undefined): string[] {
   return keys.length ? [url as string, ...keys] : [];
 }
 
+const isHex = (c: number) => (c >= 48 && c <= 57) || ((c | 32) >= 97 && (c | 32) <= 102);
+
+/**
+ * Every uuid-shaped key in `value` (hex `8-4-4-4-12`, any case), lowercased, in order, overlapping
+ * ones too (one key's characters can begin another). Each candidate is anchored on its first dash,
+ * so the scan is linear: a regex lookahead at every position costs the length of a key per char.
+ */
+export function uuidsIn(value: string): string[] {
+  const keys: string[] = [];
+  const hexRun = (from: number, length: number) => {
+    for (let i = from; i < from + length; i++) if (!isHex(value.charCodeAt(i))) return false;
+    return true;
+  };
+  const dashAt = (i: number) => value.charCodeAt(i) === 45;
+  for (
+    let p = value.indexOf('-', 8);
+    p !== -1 && p + 28 <= value.length;
+    p = value.indexOf('-', p + 1)
+  ) {
+    if (
+      hexRun(p - 8, 8) &&
+      hexRun(p + 1, 4) &&
+      dashAt(p + 5) &&
+      hexRun(p + 6, 4) &&
+      dashAt(p + 10) &&
+      hexRun(p + 11, 4) &&
+      dashAt(p + 15) &&
+      hexRun(p + 16, 12)
+    )
+      keys.push(value.slice(p - 8, p + 28).toLowerCase());
+  }
+  return keys;
+}
+
+/** The keys in each form, lowercased. */
+const keysInForms = (forms: string[]) => forms.flatMap(uuidsIn);
+
 export function keysIn(url: string | null | undefined): string[] {
-  if (!url || isUnfinishedUploadUrl(url)) return [];
-  return decodedForms(url).flatMap((value) =>
-    [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())
-  );
+  return keysInWithin(url);
+}
+
+/** `keysIn`, decoding no more than `budget` allows (a separate name: `flatMap(keysIn)` is safe). */
+export function keysInWithin(url: string | null | undefined, budget?: DecodeBudget): string[] {
+  if (!url || url.length < KEY_LENGTH || isUnfinishedUploadUrl(url)) return [];
+  return keysInForms(decodedForms(url, budget));
+}
+
+/** A dash as a JSON or HTML escape writes it. */
+const ESCAPED_DASH = /\\u002d|&#0*45(?![0-9]);?|&#x0*2d(?![0-9a-f]);?/gi;
+
+/**
+ * Every key in free text, which is not a url: no scheme exemption (`Image: https://…` is prose),
+ * and dashes written as JSON or HTML escapes read as dashes.
+ */
+export function keysInText(text: string): string[] {
+  return keysInTextWithin(text);
+}
+
+/** `keysInText`, decoding no more than `budget` allows: none once it is spent. */
+export function keysInTextWithin(text: string, budget?: DecodeBudget): string[] {
+  if (text.length < KEY_LENGTH) return [];
+  const forms = decodedForms(text.replace(ESCAPED_DASH, '-'), budget);
+  if (budget && budget.left < 0) return [];
+  return [...new Set(keysInForms(forms))];
 }
 
 /**
@@ -153,25 +222,51 @@ export async function assertClientImageUrlsUsable({
     if (owned.length) throw imageUrlUnavailableError();
     return;
   }
-  // Whatever the other row's state.
-  const owned = await db.$queryRaw<unknown[]>`
-    SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[])
+  if ((await keysOnOtherRows({ keys, userId, shopRow, db, firstOnly: true })).length)
+    throw imageUrlUnavailableError();
+}
+
+/**
+ * The stored values among `keys` that another user's `Image` row, or shop artwork other than
+ * `shopRow`'s own, already has, whatever that row's state. `firstOnly` stops at the first.
+ */
+async function keysOnOtherRows({
+  keys,
+  userId,
+  shopRow,
+  db,
+  firstOnly,
+}: {
+  keys: string[];
+  userId: number;
+  shopRow?: ShopArtworkRow;
+  db: Db;
+  firstOnly: boolean;
+}) {
+  const rows = await db.$queryRaw<{ key: string }[]>`
+    SELECT url AS key FROM "Image" WHERE url = ANY(${keys}::text[])
       AND (${shopRow !== undefined} OR "userId" <> ${userId})
     UNION ALL
-    SELECT 1 FROM "Cosmetic" WHERE ${keyIn(`"data"->>'url'`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"data"->>'url'`)} FROM "Cosmetic" WHERE ${keyIn(
+    `"data"->>'url'`
+  )} = ANY(${keys}::text[])
       AND ${soldInShop}
       AND id IS DISTINCT FROM ${shopRow?.cosmeticId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "CosmeticShopItem" WHERE ${keyIn(`"meta"->>'coverUrl'`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"meta"->>'coverUrl'`)} FROM "CosmeticShopItem" WHERE ${keyIn(
+    `"meta"->>'coverUrl'`
+  )} = ANY(${keys}::text[])
       AND id IS DISTINCT FROM ${shopRow?.shopItemId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "ItemDefinition" WHERE ${keyIn(`"imageUrl"`)} = ANY(${keys}::text[])
+    SELECT ${keyIn(`"imageUrl"`)} FROM "ItemDefinition" WHERE ${keyIn(
+    `"imageUrl"`
+  )} = ANY(${keys}::text[])
       AND id IS DISTINCT FROM ${shopRow?.itemDefinitionId ?? null}::int
     UNION ALL
-    SELECT 1 FROM "ImageCdnShopTakedown" WHERE url = ANY(${keys}::text[])
-    LIMIT 1
+    SELECT url FROM "ImageCdnShopTakedown" WHERE url = ANY(${keys}::text[])
+    ${firstOnly ? Prisma.sql`LIMIT 1` : Prisma.empty}
   `;
-  if (owned.length) throw imageUrlUnavailableError();
+  return rows.map((row) => row.key);
 }
 
 /** The urls among `urls` that name a key shop artwork uses. */
@@ -193,7 +288,7 @@ export async function shopArtworkUrls(urls: string[], db: Db = dbWrite): Promise
 
 const UPLOAD_KEY_OWNER_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** From then, every upload key in a client url needs an issue record or a row of the caller's. */
-export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-05T05:00:00Z');
+export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-18T16:00:00Z');
 
 const uploadKeyOwnerCounter = registerCounterWithLabels({
   name: 'upload_key_owner_total',
@@ -282,13 +377,24 @@ type KeyIssuerArgs = {
   userId: number;
   alsoIssuedTo?: number;
   db?: Db;
+  /** Read the request log for every key, not only those the issue record lacks. */
+  readLogForAll?: boolean;
+  /** Most keys one call reads (`MAX_KEYS` by default); past it the result is `tooMany`. */
+  maxKeys?: number;
 };
 
 /**
  * The upload keys in `urls` that were issued to someone other than `userId` and `alsoIssuedTo`,
  * and those with no issue record and no `Image` row of theirs.
  */
-export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: KeyIssuerArgs) {
+export async function keyIssuers({
+  urls,
+  userId,
+  alsoIssuedTo,
+  db = dbWrite,
+  readLogForAll = false,
+  maxKeys = MAX_KEYS,
+}: KeyIssuerArgs) {
   const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
   const keys = [...new Set(urls.flatMap(keysIn))];
   const result = {
@@ -301,14 +407,14 @@ export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: K
     requestLogReadFailed: false,
   };
   if (!keys.length) return result;
-  if (keys.length > MAX_KEYS) return { ...result, tooMany: true };
+  if (keys.length > maxKeys) return { ...result, tooMany: true };
 
   const { owners, readFailed } = await ownersFromRedis(keys);
   result.recordReadFailed = readFailed;
   const unrecorded = keys.filter((k) => !owners.has(k));
-  const logged = await ownersFromClickhouse(unrecorded);
+  const logged = await ownersFromClickhouse(readLogForAll ? keys : unrecorded);
   result.requestLogReadFailed = logged.failed;
-  for (const [key, owner] of logged.owners) owners.set(key, owner);
+  for (const [key, owner] of logged.owners) if (!owners.has(key)) owners.set(key, owner);
   result.issuedToOthers = [...owners].filter(([, o]) => !allowed.includes(o)).map(([k]) => k);
 
   const remaining = keys.filter((k) => !owners.has(k));
@@ -329,6 +435,21 @@ export async function keyIssuers({ urls, userId, alsoIssuedTo, db = dbWrite }: K
 }
 
 /**
+ * The keys a client save at `now` refuses on their issue records: those issued to another user,
+ * and the unrecorded ones when `refuseUnrecorded`. A save refuses if any key is refused.
+ */
+export function issuerRefusals(issuers: Awaited<ReturnType<typeof keyIssuers>>, now: Date) {
+  // With neither store read, no key's issuee is known.
+  const refuseUnrecorded =
+    now >= UNRECORDED_KEYS_ACCEPTED_UNTIL ||
+    (issuers.recordReadFailed && issuers.requestLogReadFailed);
+  return {
+    refuseUnrecorded,
+    refused: [...issuers.issuedToOthers, ...(refuseUnrecorded ? issuers.unrecorded : [])],
+  };
+}
+
+/**
  * Every upload key in a client-supplied url must have been issued to the caller (or to
  * `alsoIssuedTo`); a key issued to another user is refused with the generic refusal.
  */
@@ -338,32 +459,65 @@ export async function assertClientKeysIssuedToCaller({
 }: KeyIssuerArgs & { now?: Date }) {
   const { userId } = args;
   assertNoUnfinishedUploads(args.urls);
-  const {
-    tooMany,
-    issuedToOthers,
-    unrecorded: remaining,
-    requestLogReadFailed,
-  } = await keyIssuers(args);
+  const issuers = await keyIssuers(args);
+  const { tooMany, issuedToOthers, unrecorded: remaining, requestLogReadFailed } = issuers;
   if (tooMany || issuedToOthers.length) throw imageUrlUnavailableError();
   if (!remaining.length) return;
 
-  if (requestLogReadFailed) {
-    uploadKeyOwnerCounter.inc({ outcome: 'request_log_unavailable' });
+  if (issuerRefusals(issuers, now).refuseUnrecorded) {
+    uploadKeyOwnerCounter.inc({
+      outcome: requestLogReadFailed ? 'request_log_unavailable' : 'unrecorded_refused',
+    });
     throw imageUrlUnavailableError();
   }
-
-  if (now >= UNRECORDED_KEYS_ACCEPTED_UNTIL) {
-    uploadKeyOwnerCounter.inc({ outcome: 'unrecorded_refused' });
-    throw imageUrlUnavailableError();
-  }
-  uploadKeyOwnerCounter.inc({ outcome: 'unrecorded_accepted' });
+  uploadKeyOwnerCounter.inc({
+    outcome: requestLogReadFailed ? 'request_log_unavailable_accepted' : 'unrecorded_accepted',
+  });
   logToAxiom({
     type: 'info',
     name: 'upload-key-unrecorded',
     message: 'Accepted an upload key with no issue record',
     userId,
     keys: remaining.join(','),
+    ...(requestLogReadFailed && { reason: 'request_log_unavailable' }),
   }).catch(() => undefined);
+}
+
+/**
+ * The upload keys among `keys` (bare keys, as a draft stores them) that a client save by `userId`
+ * would refuse once unrecorded keys are refused, whatever the date. A lookup that fails marks
+ * nothing; the save still decides. Writes nothing.
+ */
+export async function clientKeysToReupload({
+  keys,
+  userId,
+  now = new Date(),
+}: {
+  keys: string[];
+  userId: number;
+  now?: Date;
+}) {
+  uploadKeyOwnerCounter.inc({ outcome: 'draft_check' });
+  if (keys.length > MAX_KEYS) return keys;
+  const at = now < UNRECORDED_KEYS_ACCEPTED_UNTIL ? UNRECORDED_KEYS_ACCEPTED_UNTIL : now;
+  // Every key reaches the request log, so whether it failed does not depend on which keys were sent.
+  const issuers = await keyIssuers({ urls: keys, userId, readLogForAll: true });
+  // Marked only from records that were read, or a key of another user's would differ from an absent one.
+  if (issuers.recordReadFailed || issuers.requestLogReadFailed) return [];
+  const refused = new Set(issuerRefusals(issuers, at).refused);
+  // The row check a save runs, once for all the keys.
+  const stored = new Map(keys.map((key) => [key, storedUrlsFor(key)]));
+  const onOtherRows = new Set(
+    await keysOnOtherRows({
+      keys: [...new Set([...stored.values()].flat())],
+      userId,
+      db: dbWrite,
+      firstOnly: false,
+    })
+  );
+  return keys.filter(
+    (key) => refused.has(key.toLowerCase()) || stored.get(key)!.some((v) => onOtherRows.has(v))
+  );
 }
 
 async function ownersFromShopArtwork(keys: string[], db: Db) {
@@ -427,6 +581,8 @@ export async function assertShopArtworkKeysIssued({
   }
 
   if (keys.every((k) => owners.has(k))) return;
-  uploadKeyOwnerCounter.inc({ outcome: failed ? 'request_log_unavailable' : 'unrecorded_refused' });
+  uploadKeyOwnerCounter.inc({
+    outcome: failed ? 'shop_request_log_unavailable' : 'shop_unrecorded_refused',
+  });
   throw imageUrlUnavailableError();
 }

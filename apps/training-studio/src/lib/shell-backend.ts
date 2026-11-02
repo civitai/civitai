@@ -10,7 +10,12 @@ import type {
   SubmittedBatch,
   TrainingRunPayload,
 } from '$lib/backend';
-import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type {
+  DatasetItem,
+  GenerationItem,
+  TrainingDetail,
+  TrainingRow,
+} from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
 import type { TrainingServiceStatus } from '$lib/service-status-core';
 import { UploadError, uploadProblem } from '$lib/upload';
@@ -69,7 +74,7 @@ export const shellBackend: StudioBackend = {
   getRunDataset: async (workflowId) => {
     const res = await fetch(`/api/run-dataset?id=${encodeURIComponent(workflowId)}`);
     if (!res.ok) throw new Error("Couldn't load that dataset.");
-    return (await res.json()) as { air: string; caption: string }[];
+    return (await res.json()) as DatasetItem[];
   },
 
   datasetBlob: async (air, workflowId) => {

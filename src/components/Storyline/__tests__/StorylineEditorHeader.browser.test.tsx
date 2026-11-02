@@ -140,6 +140,15 @@ describe('StorylineEditorHeader', () => {
     expect(page.getByText('Chapter 1', { exact: true }).elements()).toHaveLength(0);
   });
 
+  // Chapter 3 already has a main-path chapter after it, so this draft is a branch, not chapter 4.
+  test('a draft continuing a chapter that already goes on says it is a branch after it', async () => {
+    mocks.pending = pendingLink({ id: 5, depth: 2, postId: 7, startsBranch: true });
+    renderWithProviders(<StorylineEditorHeader post={draft} />);
+
+    await expect.element(page.getByText('A branch after chapter 3', { exact: true })).toBeVisible();
+    expect(page.getByText('Chapter 4', { exact: true }).elements()).toHaveLength(0);
+  });
+
   // A contributor had no way to see the ceiling before publishing and being refused.
   test("a draft continuing a chapter shows the storyline's maximum rating", async () => {
     mocks.pending = pendingLink({ id: 5, depth: 2, postId: 7 });

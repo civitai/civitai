@@ -317,7 +317,7 @@ export class AppSandbox {
 /** The sandbox's own tools the runner keeps to itself: the tunnel, which only `start_preview` drives. */
 const RUNNER_ONLY_TOOL = /^tunnel_/;
 /** A tunnel call waits up to 20 s for sish (`tunnel_connect`); this bounds one the runner makes. */
-const RUNNER_CALL_TIMEOUT_MS = 60_000;
+export const RUNNER_CALL_TIMEOUT_MS = 60_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

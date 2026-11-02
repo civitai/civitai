@@ -520,6 +520,19 @@ describe('StorylineContinueForm copy', () => {
     expect(visibleText(el)).not.toContain('Goes to the creator for review.');
   });
 
+  it("calls the owner's branch a branch, not the next chapter", () => {
+    const branch = visibleText(
+      render(continueForm({ viewerId: owner, ownerAdd: true, branch: true, postId: 11 }))
+    );
+    expect(branch).toContain('as a side path after this chapter');
+    expect(branch).not.toContain('as the next chapter');
+    act(() => root?.unmount());
+    const added = visibleText(
+      render(continueForm({ ownerAdd: true, branch: true, postId: 11, outcome: 'added' }))
+    );
+    expect(added).toContain('Added to your storyline as a branch.');
+  });
+
   it('says an approved continuation is in, and a pending one is waiting', () => {
     const approved = visibleText(render(continueForm({ postId: 11, outcome: 'approved' })));
     expect(approved).toContain('Added to the storyline.');
@@ -564,6 +577,19 @@ describe('StorylineQueueList rows', () => {
     ).toBe('Preview not available on this site');
     expect(button(withheld, 'Accept').disabled).toBe(false);
     expect(button(withheld, 'Approve + invite').disabled).toBe(false);
+  });
+
+  // Accepting under a chapter that already has a main-path chapter makes a branch: say which first.
+  it('says whether accepting it joins the main path or starts a branch', () => {
+    const el = list([
+      { ...row(7), startsBranch: false },
+      { ...row(8), startsBranch: true },
+    ]);
+    expect(
+      [7, 8].map(
+        (id) => el.querySelector(`[data-testid="storyline-queue-path-${id}"]`)?.textContent
+      )
+    ).toEqual(['Joins the main path', 'Starts a branch']);
   });
 
   it('marks a row in a taken-down storyline and offers no answer to it', () => {
@@ -831,18 +857,27 @@ describe('StorylineCollaboratorsPanel', () => {
     expect(calls).toEqual(['remove:50']);
   });
 
-  it('stops endorsing at the cap', () => {
-    const full = Array.from({ length: STORYLINE_MAX_COLLABORATORS }, (_, i) => ({
-      id: 100 + i,
-      username: `u${i}`,
-    }));
-    const el = panel({ collaborators: full });
+  const users = (count: number, from = 100) =>
+    Array.from({ length: count }, (_, i) => ({ id: from + i, username: `u${from + i}` }));
+  const capMessage = `A storyline can have up to ${STORYLINE_MAX_COLLABORATORS} endorsed collaborators, invitations included.`;
+
+  it.each([
+    ['collaborators', users(STORYLINE_MAX_COLLABORATORS), []],
+    ['collaborators and an open invitation', users(STORYLINE_MAX_COLLABORATORS - 1), users(1, 900)],
+  ])('stops endorsing at the cap, counting %s', (_name, collaborators, pending) => {
+    const el = panel({ collaborators, pending });
     act(() => button(el, 'Pick user 60').click());
 
-    expect(visibleText(el)).toContain(
-      `A storyline can have up to ${STORYLINE_MAX_COLLABORATORS} endorsed collaborators, invitations included.`
-    );
+    expect(visibleText(el)).toContain(capMessage);
     expect(button(el, 'Invite').disabled).toBe(true);
+  });
+
+  it('still endorses one below the cap', () => {
+    const el = panel({ collaborators: users(STORYLINE_MAX_COLLABORATORS - 1) });
+    act(() => button(el, 'Pick user 60').click());
+
+    expect(visibleText(el)).not.toContain(capMessage);
+    expect(button(el, 'Invite').disabled).toBe(false);
   });
 
   it('endorses the picked user below the cap, then clears the pick', () => {

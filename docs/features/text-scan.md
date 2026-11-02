@@ -218,7 +218,11 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   restricted" notice; see `docs/moderator-app/strike-rules.md`.
 - Bounty awards are recorded under the payout lock, then paid with one key shared by the manual and
   expiry paths (`bounty-award-b<bountyId>-<accountType>`), so a retry can't pay twice. The hourly
-  `bounty-payout-retry` job settles awards recorded but not yet marked paid.
+  `bounty-payout-retry` job settles awards recorded but not yet marked paid. An award, or a supporter
+  refund the ledger can't confirm, is recorded as unpaid for a manual ruling. Moderators resolve it on
+  the moderator app's `/bounties/unpaid-awards` page (sidebar count `bountyUnpaidAwards`), which calls
+  `/api/mod/bounty-unpaid-award/resolve`. That records the ruling and its ledger reference and moves no
+  Buzz.
 
 ## Adding an entity or a label
 

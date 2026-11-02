@@ -27,6 +27,7 @@ import {
   modelsDisplayedAttributes,
 } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsRankingRules } from '~/server/search-index/ranking-rules';
 import { modelVersionPricingSignals } from '@civitai/buzz';
@@ -158,6 +159,14 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ) {
     const updateTypoToleranceTask = await index.updateTypoTolerance(typoTolerance);
     console.log('onIndexSetup :: updateTypoToleranceTask created', updateTypoToleranceTask);
+  }
+
+  // Meili returns at most maxValuesPerFacet (default 100) values per facet, alphabetically.
+  if (settings.faceting?.maxValuesPerFacet !== SEARCH_FACET_LIMIT) {
+    const updateFacetingTask = await index.updateFaceting({
+      maxValuesPerFacet: SEARCH_FACET_LIMIT,
+    });
+    console.log('onIndexSetup :: updateFacetingTask created', updateFacetingTask);
   }
 };
 

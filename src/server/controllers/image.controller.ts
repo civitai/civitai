@@ -44,7 +44,11 @@ import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import { getGallerySettingsByModelId, getHeldGalleryLevel } from '~/server/services/model.service';
+import {
+  getGallerySettingsByModelId,
+  getHeldGalleryLevel,
+  getHeldLevelsByPost,
+} from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -345,6 +349,24 @@ export const setTosViolationHandler = async ({
  */
 const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
 
+/**
+ * The images a viewer may see whole: one on a minor or SFW-only model's post, above that model's held
+ * level, only the model's owner and moderators may, each in their own session or with a full key.
+ */
+async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLevel: number }>(
+  ctx: Context,
+  images: T[]
+) {
+  const postIds = images.map((image) => image.postId).filter(isDefined);
+  if (!postIds.length || moderatorView(ctx)) return images;
+  const held = await getHeldLevelsByPost(postIds);
+  return images.filter((image) => {
+    const hold = image.postId ? held.get(image.postId) : undefined;
+    const owner = !!ctx.user && isSessionOrFullUserKey(ctx) && hold?.ownerId === ctx.user.id;
+    return !hold || owner || Flags.intersects(hold.level, image.nsfwLevel);
+  });
+}
+
 export const getInfiniteImagesHandler = async ({
   input,
   ctx,
@@ -405,9 +427,11 @@ export const getInfiniteImagesHandler = async ({
       if (!browsingLevel) return { items: [], nextCursor: undefined };
       scopedInput = { ...scopedInput, browsingLevel };
     }
+    // Images picked by id name no model, so each is held by its own post's model.
+    const byId = !!scopedInput.imageId || !!scopedInput.ids?.length;
 
     if (useIndex) {
-      return await getAllImagesIndex({
+      const result = await getAllImagesIndex({
         ...scopedInput,
         user,
         holdExempt: moderatorView(ctx),
@@ -424,6 +448,7 @@ export const getInfiniteImagesHandler = async ({
           userAgent: ctx.req.headers['user-agent'],
         }),
       });
+      return byId ? { ...result, items: await withoutHeldFromViewer(ctx, result.items) } : result;
     } else {
       const result = await getAllImages({
         ...scopedInput,
@@ -439,7 +464,11 @@ export const getInfiniteImagesHandler = async ({
       // than inside getAllImages because the index result type is derived from its
       // return. No client reads it today — it is the wire contract, and the routing
       // tests assert on it to tell a DB page from an index page that returned nothing.
-      return { ...result, source: 'db' as const };
+      return {
+        ...result,
+        items: byId ? await withoutHeldFromViewer(ctx, result.items) : result.items,
+        source: 'db' as const,
+      };
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -513,6 +542,14 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const pinned: Record<number, ResultType[]> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
+    // Only the model's owner and moderators may list the images it hides from its gallery.
+    if (hidden && input.modelId && !moderatorView(ctx)) {
+      const model = await dbRead.model.findUnique({
+        where: { id: input.modelId },
+        select: { userId: true },
+      });
+      if (!user || model?.userId !== user.id) return { nextCursor: undefined, items: [] };
+    }
     // A minor or SFW-only model's gallery serves only its held level, whatever level is asked for:
     // the page, the pinned posts and the sponsored post alike. Moderators see it whole.
     const [modelGallerySettings, heldLevel] = await Promise.all([
@@ -930,7 +967,18 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: result.user.id,
       postId: result.postId ?? null,
     });
-    return canSeeMedia ? result : withoutMedia({ ...result, eventDecoration: null });
+    // A failed hold lookup serves the image without media rather than failing the page.
+    const heldChecked = await withoutHeldFromViewer(ctx, [result]).catch((error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'image-get-held-level',
+        message: (error as Error).message,
+        imageId: input.id,
+      }).catch(() => undefined);
+      return [];
+    });
+    const servable = canSeeMedia && !!heldChecked.length;
+    return servable ? result : withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

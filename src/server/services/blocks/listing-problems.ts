@@ -4,8 +4,10 @@ import {
 } from '~/server/services/blocks/app-listing-assets.service';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { listingAssetAudience } from '~/shared/utils/listing-media-split';
+import { FLOOR_PROBLEM_CODE, type FloorAsset } from '~/shared/utils/listing-publish-floor';
 import {
   assetRating,
+  declaredListingRating,
   MATURE_STORE_HOST,
   SFW_STORE_HOST,
   summarizeListingRating,
@@ -21,10 +23,13 @@ import {
  * rating raised above the declared one that hides an approved listing from the SFW store. `name` is always
  * filled from the manifest so it is intentionally NOT checked.
  *
- * This is a heads-up for the developer, NOT a hard gate — nothing here blocks
- * publish/approve; it only drives the warning icon + popover on the submissions
- * list. Both the on-site (`listMyPublishRequests`) and off-site
- * (`listMySubmissions`) procs project the needed fields and call this per row.
+ * This function only REPORTS; the gates are elsewhere. Its `blocking` problems mirror
+ * real server gates — missing icon / cover is the publish floor (`checkListingMeetsFloor`;
+ * the paths it does not gate are listed in `listing-publish-floor.ts`), and a blocked
+ * image is the scan-clean go-live gate — while `advisory` ones never block. It drives the
+ * warning icon + popover on the submissions list (grouped by severity) and the listing
+ * readiness a submit answers with (`submitVersion`). Every caller builds its input with
+ * {@link listingProblemInput}, so the same listing reports the same problems everywhere.
  *
  * 🔴 KIND-AWARE. `empty-description` / `empty-tagline` / `empty-category` name a
  * DIFFERENT remedy on an on-site listing than on an off-site one, because on-site
@@ -143,12 +148,12 @@ export type ListingProblemsResult = { problems: ListingProblem[] };
  */
 const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
   icon: {
-    code: 'missing-icon',
+    code: FLOOR_PROBLEM_CODE.icon,
     label: 'Missing icon (required before publishing)',
     severity: 'blocking',
   },
   cover: {
-    code: 'missing-cover',
+    code: FLOOR_PROBLEM_CODE.cover,
     label: 'Missing cover image (required before publishing)',
     severity: 'blocking',
   },
@@ -158,6 +163,60 @@ const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
     severity: 'advisory',
   },
 };
+
+/** The floor problems for `missing` floor assets, as {@link computeListingProblems} words them. */
+export function floorProblems(missing: readonly FloorAsset[]): ListingProblem[] {
+  return missing.map((asset) => ASSET_PROBLEM[asset]);
+}
+
+/**
+ * The listing columns {@link listingProblemInput} reads, as the author surfaces select them
+ * (the screenshot count is the `_count` filtered to live images).
+ */
+export type ListingProblemRow = {
+  iconId?: number | null;
+  coverId?: number | null;
+  description?: string | null;
+  tagline?: string | null;
+  category?: string | null;
+  status: string;
+  contentRating?: string | null;
+  _count?: { screenshots?: number } | null;
+};
+
+/**
+ * The ONE listing row → {@link ListingProblemInput} mapping. Every surface that reports
+ * listing problems (`/apps/mine`, My submissions, the submit's readiness) builds its input
+ * here, so none can drop a dimension the others report. `assetScans` is required for that
+ * reason: a caller that has none must say so with `[]`.
+ */
+export function listingProblemInput(
+  row: ListingProblemRow,
+  ctx: {
+    kind: ListingProblemKind;
+    /** The rating the app declares (on-site: the app row, or the submitted manifest). */
+    appRating: string | null | undefined;
+    assetScans: ListingAssetScan[];
+  }
+): ListingProblemInput {
+  return {
+    kind: ctx.kind,
+    iconId: row.iconId ?? null,
+    coverId: row.coverId ?? null,
+    screenshotCount: row._count?.screenshots ?? 0,
+    description: row.description ?? null,
+    tagline: row.tagline ?? null,
+    category: row.category ?? null,
+    assetScans: ctx.assetScans,
+    status: row.status,
+    contentRating: row.contentRating ?? null,
+    declaredContentRating: declaredListingRating({
+      kind: ctx.kind,
+      appRating: ctx.appRating,
+      listingRating: row.contentRating,
+    }),
+  };
+}
 
 /**
  * The three EMPTY-TEXT problems, per listing kind — the kind-aware half of this

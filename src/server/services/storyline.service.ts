@@ -40,6 +40,7 @@ import {
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { getStorylineImageCaptions } from '~/server/services/storyline-caption.service';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
+import { clearTombstoneTips } from '~/server/services/storyline-chapter-removal.service';
 import {
   DIRECT_LIFT_APPEAL_NOTE,
   DIRECT_LIFT_APPEAL_REASON,
@@ -59,6 +60,7 @@ import {
 import type {
   StorylineChapterPost,
   StorylineChapterRank,
+  StorylineRootHiddenReason,
   StorylineTombstoneReason,
 } from '~/shared/utils/storyline';
 import {
@@ -71,6 +73,8 @@ import {
   getStorylineChapterRank,
   getStorylineChapterTombstone,
   isStorylineCeilingLevel,
+  isStorylineChapterRemoved,
+  getStorylineRootHiddenReason,
   STORYLINE_MINOR_CEILING,
   storylineCeiling,
   storylineLevelAllowed,
@@ -150,17 +154,39 @@ const storylineTitleLevelSelect = {
   moderatorNsfwLevel: true,
 } satisfies Prisma.StorylineSelect;
 
+/**
+ * Chapter 1, as `isStorylineHidden` judges it. Its level is also the story's level for the reader's
+ * browsing-level gate.
+ */
+const storylineRootChapterSelect = {
+  where: { depth: 0 },
+  select: {
+    id: true,
+    postId: true,
+    removedAt: true,
+    post: {
+      select: {
+        nsfwLevel: true,
+        publishedAt: true,
+        tosViolation: true,
+        user: { select: { bannedAt: true, deletedAt: true } },
+      },
+    },
+  },
+} satisfies Prisma.Storyline$chaptersArgs;
+
 /** What the read paths need to decide whether the storyline is hidden from a viewer. */
 const storylineReadSelect = {
   ...storylineSelect,
   ...storylineTitleLevelSelect,
   user: { select: { id: true, username: true, bannedAt: true, deletedAt: true } },
-  // The first chapter's level is the story's level for the reader's browsing-level gate.
-  chapters: {
-    where: { depth: 0 },
-    select: { id: true, postId: true, post: { select: { nsfwLevel: true } } },
-  },
+  chapters: storylineRootChapterSelect,
 } satisfies Prisma.StorylineSelect;
+
+type StorylineRootChapter = Prisma.StorylineChapterGetPayload<typeof storylineRootChapterSelect>;
+
+const rootHiddenReason = (root: StorylineRootChapter | undefined) =>
+  root ? getStorylineRootHiddenReason({ post: root.post, removed: !!root.removedAt }) : null;
 
 /** An invited collaborator has no say until they accept. */
 const acceptedCollaboratorWhere = {
@@ -168,6 +194,21 @@ const acceptedCollaboratorWhere = {
 } satisfies Prisma.StorylineCollaboratorWhereInput;
 const acceptedCollaboratorSql = (alias: string) =>
   Prisma.sql`${Prisma.raw(alias)}."acceptedAt" IS NOT NULL`;
+
+/**
+ * A chapter that makes its author a participant: not removed, its post still there and not taken
+ * down (`isStorylineChapterRemoved`, less the author's own ban, which ends their session anyway).
+ */
+const participantChapterSql = (alias: string) =>
+  Prisma.sql`${Prisma.raw(alias)}."removedAt" IS NULL AND EXISTS (
+    SELECT 1 FROM "Post" pp WHERE pp.id = ${Prisma.raw(
+      alias
+    )}."postId" AND pp."tosViolation" = false
+  )`;
+export const participantChapterWhere = {
+  removedAt: null,
+  post: { is: { tosViolation: false } },
+} satisfies Prisma.StorylineChapterWhereInput;
 
 /**
  * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
@@ -224,19 +265,27 @@ async function trackStorylineModEdit({
   }
 }
 
+type StorylineVisibilityFields = {
+  id: number;
+  userId: number;
+  tosViolation: boolean;
+  user: { bannedAt: Date | null; deletedAt: Date | null };
+  chapters: StorylineRootChapter[];
+};
+
 /**
  * `chapters` is the storyline's chapter-1 row, if any. A storyline started before its first post
  * has none until that post is published, and until then it is its owner's draft.
+ *
+ * A chapter 1 that is removed, unpublished or unrated (`getStorylineRootHiddenReason`) hides the
+ * storyline from everyone but its owner, moderators and its participants (`participating`, from
+ * `getParticipatingStorylineIds`). The feed applies the same rule in SQL.
  */
 function isStorylineHidden(
-  storyline: {
-    userId: number;
-    tosViolation: boolean;
-    user: { bannedAt: Date | null; deletedAt: Date | null };
-    chapters: unknown[];
-  },
+  storyline: StorylineVisibilityFields,
   viewer: Viewer,
-  blockedUserIds: ReadonlySet<number>
+  blockedUserIds: ReadonlySet<number>,
+  participating: ReadonlySet<number>
 ) {
   if (viewer?.isModerator) return false;
   if (viewer?.id === storyline.userId) return false;
@@ -245,8 +294,35 @@ function isStorylineHidden(
     storyline.tosViolation ||
     !!storyline.user.bannedAt ||
     !!storyline.user.deletedAt ||
-    blockedUserIds.has(storyline.userId)
+    blockedUserIds.has(storyline.userId) ||
+    (!!rootHiddenReason(storyline.chapters[0]) && !participating.has(storyline.id))
   );
+}
+
+/**
+ * Of these storylines, the ones this viewer participates in: an accepted collaborator, or the
+ * author of a chapter in it that readers are not shown as removed (`participantChapterSql`).
+ * Read only for storylines whose chapter 1 would hide them from the viewer, so most reads make
+ * no query.
+ */
+async function getParticipatingStorylineIds(
+  storylines: Pick<StorylineVisibilityFields, 'id' | 'userId' | 'chapters'>[],
+  viewer: Viewer
+): Promise<ReadonlySet<number>> {
+  if (!viewer || viewer.isModerator) return new Set();
+  const ids = [
+    ...new Set(
+      storylines
+        .filter((s) => s.userId !== viewer.id && rootHiddenReason(s.chapters[0]))
+        .map((s) => s.id)
+    ),
+  ];
+  if (!ids.length) return new Set();
+  const rows = await dbRead.$queryRaw<{ storylineId: number }[]>`
+    SELECT t.id AS "storylineId" FROM unnest(${ids}::int[]) AS t(id)
+    WHERE ${storylineParticipantSql(Prisma.sql`${viewer.id}`, Prisma.sql`t.id`)}
+  `;
+  return new Set(rows.map((row) => row.storylineId));
 }
 
 /**
@@ -267,6 +343,12 @@ const outsideBrowsingLevel = (nsfwLevel: number, browsingLevel: number) =>
   nsfwLevel !== 0 && (nsfwLevel & browsingLevel) === 0;
 
 /**
+ * Chapter 1's level as the story's level. A wholly Blocked chapter 1 is a tombstone, not a rating, so
+ * the storyline falls back to its ceiling for the participants who still see it.
+ */
+const rootLevel = (level: number | undefined) => (level === NsfwLevel.Blocked ? 0 : level ?? 0);
+
+/**
  * Whether the story as a whole is outside the reader's browsing level, in which case nothing of
  * it is served. The story is judged by its first chapter's level (its ceiling when that chapter
  * is gone or unrated), raised to its title's rating.
@@ -284,7 +366,7 @@ function isStorylineOutsideLevel(
 ) {
   if (viewer?.isModerator || viewer?.id === storyline.userId) return false;
   const storyLevel = raiseNsfwLevel(
-    storyline.chapters[0]?.post?.nsfwLevel || storyline.maxNsfwLevel,
+    rootLevel(storyline.chapters[0]?.post?.nsfwLevel) || storyline.maxNsfwLevel,
     storyline.moderatorNsfwLevel ?? storyline.nsfwLevel
   );
   return outsideBrowsingLevel(storyLevel, browsingLevel);
@@ -302,8 +384,18 @@ function raiseNsfwLevel(level: number, floor: number) {
 
 /** The SQL twin of the level `isStorylineOutsideLevel` judges, for the feed query. */
 const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l', 'lv.f'))}
-  FROM (SELECT COALESCE(NULLIF(rp."nsfwLevel", 0), st."maxNsfwLevel") AS l,
+  FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${
+    NsfwLevel.Blocked
+  }), st."maxNsfwLevel") AS l,
     COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
+
+/**
+ * `getStorylineRootHiddenReason` is null, in SQL: chapter 1 `rc` (joined), its post `rp` and that
+ * post's author `ru` (both LEFT JOINed). Change both together.
+ */
+const storylineRootVisibleSql = Prisma.sql`(rp.id IS NOT NULL AND rc."removedAt" IS NULL
+  AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
+  AND rp."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND rp."publishedAt" < now())`;
 
 /** `storylineCeiling` in SQL, for a storyline aliased `st`. */
 export const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
@@ -420,21 +512,20 @@ const lockStorylineForAdd = (db: Db, storylineId: number) =>
   db.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR SHARE`;
 
 /**
- * Inserts a chapter under a parent, canon when the storyline's owner wrote it and the parent has
- * no canon child yet. Edges point at the parent CHAPTER, never its post, so a later takedown of
- * the parent's post leaves this chapter attached.
+ * Inserts a chapter under a parent, canon when the parent has no canon child yet. Whoever wrote it:
+ * a chapter gets here only as the owner's own, one the owner approved, or an accepted
+ * collaborator's. Edges point at the parent CHAPTER, never its post, so a later takedown of the
+ * parent's post leaves this chapter attached.
  */
 async function insertChildChapter(
   db: Db,
   {
     parent,
-    ownerId,
     postId,
     authorId,
     placementId,
   }: {
     parent: { id: number; storylineId: number };
-    ownerId: number;
     postId: number;
     authorId: number;
     placementId?: number;
@@ -463,7 +554,7 @@ async function insertChildChapter(
     select: { id: true },
   });
 
-  const canon = authorId === ownerId && (await takesCanonSlot(db, parent.id));
+  const canon = await takesCanonSlot(db, parent.id);
 
   await db.storylineChapterEdge.create({
     data: {
@@ -491,11 +582,17 @@ export async function writeChapterEdgeForPlacement(
     parentPostId,
     postId,
     placerId,
+    asCollaborator = false,
   }: {
     placementId: number;
     parentPostId: number;
     postId: number;
     placerId: number;
+    /**
+     * An approval nobody answered (auto-approval) stands only on the placer being an accepted
+     * collaborator, so it is re-read here: one removed since submission is refused.
+     */
+    asCollaborator?: boolean;
   },
   // Required: outside a transaction the parent lock is a no-op, and a failed edge insert would
   // leave a chapter row without a parent that a replay then reports as already written.
@@ -515,7 +612,12 @@ export async function writeChapterEdgeForPlacement(
 
   // Re-checked at approval: the storyline may have been taken down, a block made, or the
   // setting changed to collaborators only since the continuation was submitted.
-  const { parent } = await assertCanContinueStoryline({ parentPostId, placerId }, db);
+  const { parent, isCollaborator } = await assertCanContinueStoryline(
+    { parentPostId, placerId },
+    db
+  );
+  if (asCollaborator && !isCollaborator)
+    throw throwBadRequestError('storyline: the placer is no longer a collaborator');
 
   await assertPostCanBeChapter(db, {
     postId,
@@ -525,7 +627,6 @@ export async function writeChapterEdgeForPlacement(
 
   const chapterId = await insertChildChapter(db, {
     parent,
-    ownerId: parent.storyline.userId,
     postId,
     authorId: placerId,
     placementId,
@@ -558,6 +659,7 @@ export async function assertCanContinueStoryline(
           minorByScan: true,
           tosViolation: true,
           whoCanContinue: true,
+          chapters: storylineRootChapterSelect,
         },
       },
     },
@@ -566,24 +668,72 @@ export async function assertCanContinueStoryline(
     throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
   const ownerId = parent.storyline.userId;
-  const [ownerBlocked, authorBlocked, collaborator] = await Promise.all([
+  const isOwner = placerId === ownerId;
+  const hiddenReason = isOwner ? null : rootHiddenReason(parent.storyline.chapters[0]);
+  const [ownerBlocked, authorBlocked, collaborator, liveChapter] = await Promise.all([
     isBlockedPair(db, ownerId, placerId),
     isBlockedPair(db, parent.userId, placerId),
     db.storylineCollaborator.findUnique({
       where: { storylineId_userId: { storylineId: parent.storylineId, userId: placerId } },
       select: { acceptedAt: true },
     }),
+    hiddenReason
+      ? db.storylineChapter.findFirst({
+          where: { storylineId: parent.storylineId, userId: placerId, ...participantChapterWhere },
+          select: { id: true },
+        })
+      : null,
   ]);
+  const isCollaborator = !isOwner && !!collaborator?.acceptedAt;
+  // Hidden by its chapter 1, the storyline is as absent to a non-participant here as on its page
+  // (`isStorylineHidden`): the same refusal as a post that is no chapter, so neither the price
+  // nor the submit tells them it exists.
+  if (hiddenReason && !isCollaborator && !liveChapter)
+    throw new StorylineHiddenRefusal(hiddenReason);
   if (ownerBlocked || authorBlocked)
     throw throwBadRequestError('Continuations are not available on this chapter');
-
-  const isOwner = placerId === ownerId;
-  const isCollaborator = !isOwner && !!collaborator?.acceptedAt;
   if (parent.storyline.whoCanContinue === 'Collaborators' && !isOwner && !isCollaborator)
     throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
 
   return { storylineId: parent.storylineId, ownerId, isOwner, isCollaborator, parent };
 }
+
+/**
+ * `assertCanContinueStoryline`'s refusal of a storyline its chapter 1 hides from the placer. Worded
+ * and coded as `notAChapter`, so the placer learns nothing; a distinct class, with the reason, so
+ * a caller can tell 'unpublished' and 'pendingRating', which may lift by waiting, from 'removed'.
+ * The reason stays server-side: the error formatter sends only the code and message.
+ */
+export class StorylineHiddenRefusal extends TRPCError {
+  constructor(readonly reason: StorylineRootHiddenReason) {
+    super({ code: 'BAD_REQUEST', message: STORYLINE_REFUSALS.notAChapter });
+  }
+}
+
+/**
+ * Chapter 1 (`rc`, its post `rp`, that post's author `ru`) hides its storyline only until it is
+ * published or rated: `getStorylineRootHiddenReason` is 'unpublished' or 'pendingRating'.
+ */
+export const storylineRootWaitingSql = Prisma.sql`(rp.id IS NOT NULL AND rc."removedAt" IS NULL
+  AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
+  AND rp."nsfwLevel" <> ${NsfwLevel.Blocked}
+  AND (rp."publishedAt" IS NULL OR rp."publishedAt" >= now() OR rp."nsfwLevel" = 0))`;
+
+/**
+ * `userId` takes part in storyline `storylineId` (both SQL expressions): an accepted collaborator
+ * or a live chapter's author. The one SQL form of it; `assertCanContinueStoryline` reads the same
+ * through Prisma (`participantChapterWhere`).
+ */
+export const storylineParticipantSql = (userId: Prisma.Sql, storylineId: Prisma.Sql) =>
+  Prisma.sql`(EXISTS (
+    SELECT 1 FROM "StorylineCollaborator" psc
+    WHERE psc."storylineId" = ${storylineId} AND psc."userId" = ${userId}
+      AND ${acceptedCollaboratorSql('psc')}
+  ) OR EXISTS (
+    SELECT 1 FROM "StorylineChapter" psch
+    WHERE psch."storylineId" = ${storylineId} AND psch."userId" = ${userId}
+      AND ${participantChapterSql('psch')}
+  ))`;
 
 /** `assertCanContinueStoryline` as a yes/no, for callers that only need to hide an affordance. */
 export async function isOpenStorylineChapter(postId: number, placerId: number) {
@@ -619,9 +769,11 @@ export async function linkPendingChapter(
     });
     if (!parent || parent.postId == null)
       throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+    // First, so a storyline hidden from this user is refused as no chapter before the id check
+    // could say which storyline the chapter is in.
+    await assertCanContinueStoryline({ parentPostId: parent.postId, placerId: userId }, db);
     if (storylineId && storylineId !== parent.storylineId)
       throw throwBadRequestError('That chapter is not in this storyline');
-    await assertCanContinueStoryline({ parentPostId: parent.postId, placerId: userId }, db);
     linkedStorylineId = parent.storylineId;
   } else {
     if (!storylineId) throw throwBadRequestError('Name the storyline this post starts');
@@ -688,6 +840,13 @@ export async function getPendingChapterForPost({
     },
   });
   if (!link || (link.userId !== userId && !isModerator)) return null;
+  // The parent already has a main-path chapter, so this one starts a branch, as of now.
+  const startsBranch = link.parentChapter
+    ? !!(await dbWrite.storylineChapterEdge.findFirst({
+        where: { parentChapterId: link.parentChapter.id, canon: true },
+        select: { chapterId: true },
+      }))
+    : false;
   const { minorByScan, tosViolation, ...storyline } = link.storyline;
   return {
     postId: link.postId,
@@ -699,7 +858,7 @@ export async function getPendingChapterForPost({
     },
     // Null for chapter 1. `depth` is the parent's first-parent depth; on a route that reaches the
     // parent another way its number can differ (see `onRoute`).
-    parentChapter: link.parentChapter,
+    parentChapter: link.parentChapter && { ...link.parentChapter, startsBranch },
   };
 }
 
@@ -1252,6 +1411,12 @@ export async function removeStorylineChapter({
         DELETE FROM "StorylineChapter" WHERE id = ${chapterId}
       `;
     }
+    // A tombstone, or a leaf deleted from under one, can leave the main route ending where
+    // nothing can be added.
+    await clearTombstoneTips(
+      role === 'moderator' ? [chapterId] : parents.map((p) => p.parentChapterId),
+      tx
+    );
     if (openReportIds.length)
       await tx.$executeRaw`
         INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "storylineTitle", "chapterId",
@@ -1720,9 +1885,57 @@ export async function addOwnerChapter(input: {
 }
 
 /**
- * The owner adds a post at the end of the main path: chapter 1 of an empty storyline, else the
- * canon child of the main path's last chapter. Found here, under the storyline's lock and with no
- * path cap, not by the client: a stale or capped read would add it as a side branch instead.
+ * The main path's last chapter, read under the caller's storyline lock (`lockStorylineForAdd` or
+ * stronger). Every writer that moves the end takes that lock first (add, insert, link, move,
+ * removal, "Make main path"), so none can move it before the transaction ends. A moderator's
+ * takedown does not, but can only remove the end itself, which the callers refuse.
+ */
+async function lockedMainPathEnd(tx: Prisma.TransactionClient, rootId: number) {
+  // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
+  const findEnd = async () =>
+    (
+      await tx.$queryRaw<{ id: number; removed: boolean }[]>`
+        WITH RECURSIVE main AS (
+          SELECT ${rootId}::int AS id, 1 AS step
+          UNION ALL
+          SELECT e."chapterId", main.step + 1 FROM main
+          JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+          WHERE main.step < 100000
+        )
+        SELECT main.id, c."removedAt" IS NOT NULL AS removed
+        FROM main JOIN "StorylineChapter" c ON c.id = main.id
+        ORDER BY step DESC LIMIT 1
+      `
+    )[0];
+  let end = await findEnd();
+  // Removals keep the route off a tombstone, but an insert or "Make main path" racing one, or a
+  // route from before they did, can still end at one. Nothing continues a tombstone, so the
+  // route is moved back to the last live chapter here, where it would otherwise stay stuck.
+  if (end.removed) {
+    // Locks the parents whose edges the heal rewrites first, the order `setCanonChapter` takes
+    // (a parent's row, then its edges), so the two cannot deadlock.
+    await tx.$queryRaw`
+      WITH RECURSIVE up AS (
+        SELECT ${end.id}::int AS id, 1 AS step
+        UNION ALL
+        SELECT e."parentChapterId", up.step + 1 FROM up
+        JOIN "StorylineChapter" c ON c.id = up.id AND c."removedAt" IS NOT NULL
+        JOIN "StorylineChapterEdge" e ON e."chapterId" = up.id AND e.canon
+        WHERE up.step < 100000
+      )
+      SELECT id FROM "StorylineChapter" WHERE id IN (SELECT id FROM up WHERE step > 1)
+      ORDER BY id FOR NO KEY UPDATE
+    `;
+    await clearTombstoneTips([end.id], tx);
+    end = await findEnd();
+  }
+  return end.id;
+}
+
+/**
+ * The owner's post at the end of the main path: chapter 1 of an empty storyline, else the canon
+ * child of its last chapter. The end is found here, under the storyline's lock: the client's read
+ * is capped and can be stale, and a wrong end makes a side branch.
  */
 export async function addOwnerChapterAtEnd({
   storylineId,
@@ -1740,19 +1953,8 @@ export async function addOwnerChapterAtEnd({
 
   return dbWrite.$transaction(async (tx) => {
     await lockStorylineForAdd(tx, storylineId);
-    // One canon child per parent; the step cap only guards against a cycle.
-    const [end] = await tx.$queryRaw<{ id: number }[]>`
-      WITH RECURSIVE main AS (
-        SELECT ${root.id}::int AS id, 1 AS step
-        UNION ALL
-        SELECT e."chapterId", main.step + 1 FROM main
-        JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
-        WHERE main.step < 100000
-      )
-      SELECT id FROM main ORDER BY step DESC LIMIT 1
-    `;
     const { chapterId } = await writeOwnerChapter(tx, {
-      parentChapterId: end.id,
+      parentChapterId: await lockedMainPathEnd(tx, root.id),
       postId,
       userId,
     });
@@ -1793,7 +1995,6 @@ export async function writeOwnerChapter(
   });
   const chapterId = await insertChildChapter(tx, {
     parent,
-    ownerId: parent.storyline.userId,
     postId,
     authorId: userId,
   });
@@ -1820,7 +2021,14 @@ export async function setCanonChapter({
     select: {
       parentChapterId: true,
       storylineId: true,
-      chapter: { select: { removedAt: true } },
+      chapter: {
+        select: {
+          removedAt: true,
+          post: {
+            select: { tosViolation: true, user: { select: { bannedAt: true, deletedAt: true } } },
+          },
+        },
+      },
     },
     take: 2,
   });
@@ -1838,10 +2046,15 @@ export async function setCanonChapter({
     userId,
     isModerator,
   });
-  if (edge.chapter.removedAt)
+  // Every chapter the reading path tombstones as removed or deleted, moderators' view included.
+  const { removedAt, post } = edge.chapter;
+  if (!post || isStorylineChapterRemoved({ post, removed: !!removedAt }))
     throw throwBadRequestError('A removed chapter cannot be the main route');
 
   await dbWrite.$transaction(async (tx) => {
+    // The whole storyline, before the parent, as the other route writers take it: this moves the
+    // main path's end, which an at-end add or join reads under that lock and relies on.
+    await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${edge.storylineId} FOR NO KEY UPDATE`;
     await lockParentChapter(tx, edge.parentChapterId);
     await tx.storylineChapterEdge.updateMany({
       where: { parentChapterId: edge.parentChapterId, canon: true },
@@ -1911,20 +2124,29 @@ async function createChapterJoinable(storyline: {
     }) === null;
 }
 
+const STORYLINE_END_MOVED =
+  'The story has a new last chapter since you opened this. Close it and join from there';
+
 /**
  * The owner (or a moderator) offers an existing chapter as a way on from `parentChapterId`, so
  * two branches rejoin at it. The chapter gains a parent and keeps its depth.
+ *
+ * `atEnd`: the join was offered at the end of the main path, so it must extend it. A chapter added
+ * since the client read `parentChapterId` as the end would turn the join into a side branch, so
+ * it is refused instead, rather than moved after a chapter the owner never saw.
  */
 export async function linkStorylineChapter({
   parentChapterId,
   chapterId,
   userId,
   isModerator,
+  atEnd = false,
 }: {
   parentChapterId: number;
   chapterId: number;
   userId: number;
   isModerator?: boolean;
+  atEnd?: boolean;
 }) {
   if (parentChapterId === chapterId) throw throwBadRequestError('A chapter cannot continue itself');
   const parent = await dbWrite.storylineChapter.findUnique({
@@ -1945,6 +2167,13 @@ export async function linkStorylineChapter({
         select: { tosViolation: true, userId: true, maxNsfwLevel: true, minorByScan: true },
       });
       if (storyline?.tosViolation) throw throwBadRequestError('This storyline was taken down');
+      if (atEnd) {
+        const [root] = await tx.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "StorylineChapter" WHERE "storylineId" = ${storylineId} AND depth = 0
+        `;
+        if (!root || (await lockedMainPathEnd(tx, root.id)) !== parentChapterId)
+          throw throwBadRequestError(STORYLINE_END_MOVED);
+      }
       // Before the reads below, so what they find stays true until the edge is written.
       const live = await lockLiveChapters(tx, [parentChapterId, chapterId]);
       const chapters = await tx.storylineChapter.findMany({
@@ -1967,13 +2196,12 @@ export async function linkStorylineChapter({
       const refusal = judge(chapterId);
       if (refusal) throw throwBadRequestError(STORYLINE_LINK_REFUSALS[refusal]);
 
+      const canon = await takesCanonSlot(tx, parentChapterId);
+      // Under the storyline lock nothing can have given the end a canon child since the check; kept
+      // so a route writer that ever skips that lock refuses here instead of writing a branch.
+      if (atEnd && !canon) throw throwBadRequestError(STORYLINE_END_MOVED);
       await tx.storylineChapterEdge.create({
-        data: {
-          storylineId,
-          chapterId,
-          parentChapterId,
-          canon: await takesCanonSlot(tx, parentChapterId),
-        },
+        data: { storylineId, chapterId, parentChapterId, canon },
       });
     });
   } catch (error) {
@@ -2514,9 +2742,12 @@ export async function getStoryline({
     },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  const blockedUserIds = await getViewerExcludedIds(viewer);
+  const [blockedUserIds, participating] = await Promise.all([
+    getViewerExcludedIds(viewer),
+    getParticipatingStorylineIds([storyline], viewer),
+  ]);
   if (
-    isStorylineHidden(storyline, viewer, blockedUserIds) ||
+    isStorylineHidden(storyline, viewer, blockedUserIds, participating) ||
     isStorylineOutsideLevel(storyline, viewer, browsingLevel)
   )
     throw throwNotFoundError('Storyline not found');
@@ -2641,6 +2872,9 @@ export async function getStoryline({
     titleAppealable,
     titleAppeal,
     rootChapterId: root?.id ?? null,
+    // Why chapter 1 keeps it from the public, for the chip its owner, participants and moderators
+    // see. Anyone else who got this far has none.
+    rootHiddenReason: rootHiddenReason(root),
     // Chapter 1's post id, whatever this reader may see of it: for the discussion thread, not a
     // cover. Take a cover from the reading path, which tombstones chapter 1 where it must.
     rootPostId: root?.postId ?? null,
@@ -3016,7 +3250,14 @@ export async function getStorylinesForPosts({
         postId: true,
         depth: true,
         removedAt: true,
-        post: { select: { nsfwLevel: true, userId: true } },
+        post: {
+          select: {
+            nsfwLevel: true,
+            userId: true,
+            tosViolation: true,
+            user: { select: { bannedAt: true, deletedAt: true } },
+          },
+        },
         storyline: {
           select: {
             id: true,
@@ -3027,7 +3268,7 @@ export async function getStorylinesForPosts({
             tosViolation: true,
             ...storylineTitleLevelSelect,
             user: { select: { bannedAt: true, deletedAt: true } },
-            chapters: { where: { depth: 0 }, select: { post: { select: { nsfwLevel: true } } } },
+            chapters: storylineRootChapterSelect,
           },
         },
       },
@@ -3035,6 +3276,10 @@ export async function getStorylinesForPosts({
     getViewerExcludedIds(viewer),
   ]);
 
+  const participating = await getParticipatingStorylineIds(
+    chapters.map((c) => c.storyline),
+    viewer
+  );
   const byPost: Record<
     number,
     { chapterId: number; depth: number; storylineId: number; title: string }
@@ -3042,8 +3287,9 @@ export async function getStorylinesForPosts({
   for (const c of chapters) {
     if (c.postId == null || !c.post) continue;
     // As getStorylineChapterTombstone: only moderators are shown a removed chapter.
-    if (c.removedAt && !viewer?.isModerator) continue;
-    if (isStorylineHidden(c.storyline, viewer, blockedUserIds)) continue;
+    if (!viewer?.isModerator && isStorylineChapterRemoved({ post: c.post, removed: !!c.removedAt }))
+      continue;
+    if (isStorylineHidden(c.storyline, viewer, blockedUserIds, participating)) continue;
     if (isStorylineOutsideLevel(c.storyline, viewer, browsingLevel)) continue;
     // The post's own author is told it is a chapter whatever their level, as the owner is.
     const isAuthor = viewer?.id === c.post.userId;
@@ -3103,9 +3349,12 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
     select: storylineReadSelect,
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  const blockedUserIds = await getViewerExcludedIds(viewer);
+  const [blockedUserIds, participating] = await Promise.all([
+    getViewerExcludedIds(viewer),
+    getParticipatingStorylineIds([storyline], viewer),
+  ]);
   if (
-    isStorylineHidden(storyline, viewer, blockedUserIds) ||
+    isStorylineHidden(storyline, viewer, blockedUserIds, participating) ||
     isStorylineOutsideLevel(storyline, viewer, browsingLevel)
   )
     throw throwNotFoundError('Storyline not found');
@@ -3798,6 +4047,7 @@ export async function getStorylinesInfinite({
   limit,
   viewer,
   browsingLevel,
+  userId,
 }: {
   filter: StorylineFeedFilter;
   sort: StorylineFeedSort;
@@ -3806,6 +4056,8 @@ export async function getStorylinesInfinite({
   limit: number;
   viewer: Viewer;
   browsingLevel: number;
+  /** Only this owner's storylines (their profile), under the same gates as the feed. */
+  userId?: number;
 }) {
   const excluded = [...(await getViewerExcludedIds(viewer))];
   const viewerId = viewer?.id ?? -1;
@@ -3815,7 +4067,11 @@ export async function getStorylinesInfinite({
     // As `isStorylineHidden`, including a storyline with no chapter 1 yet, except that a taken-down
     // one is out of the feed for its owner and moderators too. They still open it by its URL.
     Prisma.sql`st."tosViolation" = false`,
-    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
+    // A chapter 1 that hides the storyline still leaves it listed for its participants, as
+    // `getParticipatingStorylineIds` reads them.
+    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      AND (${storylineRootVisibleSql}
+        OR ${storylineParticipantSql(Prisma.sql`${viewerId}`, Prisma.sql`st.id`)})))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];
   // One array parameter, not one bind per id: the list can run to tens of thousands.
@@ -3823,6 +4079,7 @@ export async function getStorylinesInfinite({
   if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
   if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
   if (filter === 'mine') where.push(Prisma.sql`st."userId" = ${viewerId}`);
+  if (userId) where.push(Prisma.sql`st."userId" = ${userId}`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
     where.push(Prisma.sql`st.status <> 'Complete'`);
@@ -3856,8 +4113,12 @@ export async function getStorylinesInfinite({
       minorByScan: boolean;
       whoCanContinue: StorylineWhoCanContinue;
       isCollaborator: boolean;
+      rootChapterId: number | null;
+      rootRemovedAt: Date | null;
       rootPostId: number | null;
       rootNsfwLevel: number | null;
+      rootBannedAt: Date | null;
+      rootDeletedAt: Date | null;
       rootPublishedAt: Date | null;
       rootTosViolation: boolean | null;
       storylineMode: string | null;
@@ -3878,8 +4139,10 @@ export async function getStorylinesInfinite({
     'vc'
   )}
       ) AS "isCollaborator",
+      rc.id AS "rootChapterId", rc."removedAt" AS "rootRemovedAt",
       rc."postId" AS "rootPostId", rp."nsfwLevel" AS "rootNsfwLevel",
       rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation",
+      ru."bannedAt" AS "rootBannedAt", ru."deletedAt" AS "rootDeletedAt",
       ss.mode AS "storylineMode", ss.price AS "storylinePrice",
       us.mode AS "userMode", us.price AS "userPrice",
       cc."chapterCount", cc."contributorCount", st."createdAt", st."coverImageId"
@@ -3887,6 +4150,7 @@ export async function getStorylinesInfinite({
     JOIN "User" u ON u.id = st."userId"
     LEFT JOIN "StorylineChapter" rc ON rc."storylineId" = st.id AND rc.depth = 0
     LEFT JOIN "Post" rp ON rp.id = rc."postId"
+    LEFT JOIN "User" ru ON ru.id = rp."userId"
     LEFT JOIN "PlacementSpace" ss
       ON ss.surface = 'storyline' AND ss."entityType" = 'storyline' AND ss."entityId" = st.id
     LEFT JOIN "PlacementSpace" us
@@ -3961,9 +4225,13 @@ export async function getStorylinesInfinite({
       deletedAt: _deletedAt,
       coverImageId,
       isCollaborator,
-      rootNsfwLevel: _rootNsfwLevel,
-      rootPublishedAt: _rootPublishedAt,
-      rootTosViolation: _rootTosViolation,
+      rootChapterId,
+      rootRemovedAt,
+      rootNsfwLevel,
+      rootPublishedAt,
+      rootTosViolation,
+      rootBannedAt,
+      rootDeletedAt,
       storylineMode,
       storylinePrice,
       userMode,
@@ -3984,6 +4252,23 @@ export async function getStorylinesInfinite({
         row.whoCanContinue === 'Anyone' || viewer?.id === userId || isCollaborator;
       return {
         ...row,
+        // Why chapter 1 keeps it from the public, for the chip its owner, participants and
+        // moderators see; the public is never listed one.
+        rootHiddenReason:
+          rootChapterId == null
+            ? null
+            : getStorylineRootHiddenReason({
+                removed: !!rootRemovedAt,
+                post:
+                  row.rootPostId == null
+                    ? null
+                    : {
+                        nsfwLevel: rootNsfwLevel ?? 0,
+                        publishedAt: rootPublishedAt,
+                        tosViolation: !!rootTosViolation,
+                        user: { bannedAt: rootBannedAt, deletedAt: rootDeletedAt },
+                      },
+              }),
         // The ceiling chapters are held to, which the card's rating chip shows.
         maxNsfwLevel: storylineCeiling({ maxNsfwLevel: row.maxNsfwLevel, minorByScan }),
         user: ownerById.get(userId) ?? { id: userId, username },

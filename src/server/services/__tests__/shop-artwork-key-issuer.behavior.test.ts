@@ -1,6 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
+import type { Mock } from 'vitest';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as prom from '~/server/prom/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -47,6 +49,16 @@ const URL = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=tr
 const BEFORE = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() - 60_000);
 
 const redis = new Map<string, string>();
+
+// The setup file stubs every registered metric; this is the stub the module built for its counter.
+const counterAt = vi
+  .mocked(prom.registerCounterWithLabels)
+  .mock.calls.findIndex(([opts]) => opts.name === 'upload_key_owner_total');
+const ownerCounter = vi.mocked(prom.registerCounterWithLabels).mock.results[counterAt].value as {
+  inc: Mock;
+};
+const outcomeCount = (name: string) =>
+  ownerCounter.inc.mock.calls.filter(([labels]) => labels.outcome === name).length;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -121,7 +133,15 @@ describe('assertShopArtworkKeysIssued', () => {
   });
 
   it('refuses a key with no record before the cutoff, which the other image checks still accept', async () => {
+    const [shop, client] = [
+      outcomeCount('shop_unrecorded_refused'),
+      outcomeCount('unrecorded_refused'),
+    ];
     expect(await outcome({ userId: CREATOR })).toBe('refused');
+    expect([outcomeCount('shop_unrecorded_refused'), outcomeCount('unrecorded_refused')]).toEqual([
+      shop + 1,
+      client,
+    ]);
     expect(await kept()).toEqual([]);
     await expect(
       assertClientKeysIssuedToCaller({ urls: [KEY], userId: CREATOR, now: BEFORE })
@@ -147,7 +167,15 @@ describe('assertShopArtworkKeysIssued', () => {
     holder.issued = [{ key: KEY, userId: CREATOR }];
     holder.logDown = true;
     redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('unavailable'));
+    const [shop, client] = [
+      outcomeCount('shop_request_log_unavailable'),
+      outcomeCount('request_log_unavailable'),
+    ];
     expect(await outcome({ userId: CREATOR })).toBe('refused');
+    expect([
+      outcomeCount('shop_request_log_unavailable'),
+      outcomeCount('request_log_unavailable'),
+    ]).toEqual([shop + 1, client]);
   });
 
   it('accepts a logged key when the issue record cannot be read', async () => {

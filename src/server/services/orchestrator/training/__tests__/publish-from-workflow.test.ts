@@ -281,6 +281,15 @@ describe('mapWorkflowToTrainingResultsV2', () => {
 });
 
 describe('createDraftModelFromWorkflow', () => {
+  it('cuts a run name over 150 characters to 150 instead of failing the publish', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'x'.repeat(180), trigger: 'mychar' } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].name).toBe('x'.repeat(150));
+  });
+
   it('scopes the idempotency lookup to the caller — the where clause carries userId + workflowId', async () => {
     await createDraftModelFromWorkflow({
       user: USER,

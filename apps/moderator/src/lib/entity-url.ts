@@ -130,6 +130,10 @@ export const chatAuditUserUrl = (username: string) =>
 export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>
   `${civitaiUrl}/models/${modelId}?modelVersionId=${versionId}`;
 
+/** A bounty on the site. */
+export const bountyUrl = (civitaiUrl: string, bountyId: number) =>
+  `${civitaiUrl}/bounties/${bountyId}`;
+
 /** A bounty entry on the site. Entries have no page of their own outside their bounty, so `entityUrl`
  *  has no entry for them. */
 export const bountyEntryUrl = (civitaiUrl: string, bountyId: number, entryId: number) =>

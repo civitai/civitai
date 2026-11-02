@@ -134,19 +134,23 @@ export function useAddOwnerStorylineChapter({ onSuccess }: { onSuccess: () => vo
   isPending: boolean;
   error: string | null;
   mutate: (input: { parentChapterId: number; postId: number }) => void;
+  /** After the main path's last chapter as the server finds it when adding, not as last read. */
+  mutateAtEnd: (input: { storylineId: number; postId: number }) => void;
 } {
   const utils = trpc.useUtils();
   const mutation = trpc.storyline.addChapter.useMutation();
+  const atEnd = trpc.storyline.addChapterAtEnd.useMutation();
+  const options = {
+    onSuccess: () => {
+      void utils.storyline.invalidate();
+      onSuccess();
+    },
+  };
   return {
-    isPending: mutation.isPending,
-    error: mutation.error?.message ?? null,
-    mutate: (input) =>
-      mutation.mutate(input, {
-        onSuccess: () => {
-          void utils.storyline.invalidate();
-          onSuccess();
-        },
-      }),
+    isPending: mutation.isPending || atEnd.isPending,
+    error: mutation.error?.message ?? atEnd.error?.message ?? null,
+    mutate: (input) => mutation.mutate(input, options),
+    mutateAtEnd: (input) => atEnd.mutate(input, options),
   };
 }
 
@@ -216,7 +220,7 @@ export function useRemoveStorylineChapter({ onSuccess }: { onSuccess?: () => voi
 export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;
-  mutate: (input: { parentChapterId: number; chapterId: number }) => void;
+  mutate: (input: { parentChapterId: number; chapterId: number; atEnd?: boolean }) => void;
 } {
   const utils = trpc.useUtils();
   const mutation = trpc.storyline.linkChapter.useMutation();
@@ -229,8 +233,22 @@ export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }
           void utils.storyline.invalidate();
           onSuccess();
         },
+        // A refused at-end join means the card read an old end: refetch so it shows the new one.
+        onError: () => void utils.storyline.invalidate(),
       }),
   };
+}
+
+export function useSetStorylineMainPath(): {
+  isPending: boolean;
+  mutate: (input: { chapterId: number; parentChapterId: number }) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.setCanon.useMutation({
+    onSuccess: () => void utils.storyline.invalidate(),
+    onError: showError("Couldn't change the main path"),
+  });
+  return { isPending: mutation.isPending, mutate: mutation.mutate };
 }
 
 export function useStorylineQueue({ enabled }: { enabled: boolean }): {

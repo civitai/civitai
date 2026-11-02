@@ -41,6 +41,9 @@ import {
   sendForReview,
   submitBundleFromExport,
 } from '~/components/Apps/AppAssistant/assistantSubmit';
+import { setFeedbackStatusVia } from '~/components/Apps/AppAssistant/assistantFeedback';
+import { chosenAppOf, createAppFeedbackSource } from '@civitai/app-assistant';
+import { appChatOf, appOfChat, rememberAppChat } from '~/components/Apps/AppAssistant/appChats';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
 import {
@@ -63,14 +66,14 @@ import {
 } from '~/components/Apps/AppAssistant/assistantToken';
 import {
   chatTokenOrchestration,
-  createBrowserCoverArtDeps,
-  createCoverArt,
+  createBrowserCoverDeps,
 } from '~/components/Apps/AppAssistant/coverArt';
 import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
 import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import {
   createPreviewTools,
+  devServerUpOf,
   runnerPreviewAction,
 } from '~/components/Apps/AppAssistant/previewTools';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
@@ -220,6 +223,7 @@ export function AppAssistantWorkspace({
   sandboxUrl,
   subagents = false,
   remoteRunner = false,
+  userId = null,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
@@ -231,6 +235,7 @@ export function AppAssistantWorkspace({
    * is away. Off, they run in the browser exactly as before.
    */
   remoteRunner?: boolean;
+  userId?: number | null;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -322,6 +327,35 @@ export function AppAssistantWorkspace({
   }, [chatReady, activeName]);
   const dismissForkSetup = fork.dismissSetup;
 
+  // On a visit the chat has already opened the chat used last before the app is picked, so the app's
+  // chat is applied afterwards.
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
+  const chatOnReady = useRef<string | null>(null);
+  const chatCheckFor = useRef<string | null>(null);
+  const followChat = useCallback((app: string, leavingApp: boolean) => {
+    chatOnReady.current = null;
+    chatCheckFor.current = null;
+    const chat = chatRef.current;
+    if (!chat) return;
+    const own = appChatOf(userIdRef.current, app);
+    if (own) chat.conversationId = own;
+    else if (leavingApp || appOfChat(userIdRef.current, chat.chatId) !== null) chat.newChat();
+  }, []);
+  const checkOpenedChat = useCallback((id: string | null) => {
+    const app = chatCheckFor.current;
+    if (!app || !id) return;
+    chatCheckFor.current = null;
+    const owner = appOfChat(userIdRef.current, id);
+    if (owner !== null && owner !== app) chatRef.current?.newChat();
+  }, []);
+  useEffect(() => {
+    const own = chatOnReady.current;
+    if (!chatReady || !own || !chatRef.current) return;
+    chatOnReady.current = null;
+    chatRef.current.conversationId = own;
+  }, [chatReady, activeName]);
+
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
 
@@ -371,6 +405,9 @@ export function AppAssistantWorkspace({
   }, []);
   // Each preview the server runner starts gets its own frame, even on the same host.
   const runnerViews = useRef(0);
+  // How often the runner said the open app's dev server came back up while its preview was shown
+  // (`devServerUpOf`): the pane reloads a frame that failed on the next one.
+  const [devServerUp, setDevServerUp] = useState(0);
 
   const appTools = useMemo(
     () =>
@@ -389,6 +426,11 @@ export function AppAssistantWorkspace({
       }),
     []
   );
+  // The store cover's listing refresh after a press attaches one. Read through a ref, so a new utils
+  // object never rebuilds the gate (and with it, its state).
+  const utils = trpc.useUtils();
+  const trpcUtils = useRef(utils);
+  trpcUtils.current = utils;
   const gate = useMemo(
     () =>
       createAssistantGate({
@@ -404,36 +446,41 @@ export function AppAssistantWorkspace({
         },
         // A chat changes only the app it made or chose: a new chat never builds over the open one.
         openApp: () => live.current.active?.app ?? null,
+        // The open app's review and user feedback, through My apps' own reads as the user; a status
+        // changes only when the user presses its card. (On the server runner the runner reads it.)
+        feedback: {
+          source: createAppFeedbackSource({
+            listMine: () => trpcVanilla.appListings.listMine.query(),
+            listingHistory: (appListingId) =>
+              trpcVanilla.appListings.listingHistory.query({ appListingId }),
+            listFeedback: (input) => trpcVanilla.appFeedback.listForListing.query(input),
+          }),
+          setStatus: setFeedbackStatusVia((input) =>
+            trpcVanilla.appFeedback.setOwnerStatus.mutate(input)
+          ),
+        },
+        cover: createBrowserCoverDeps({
+          currentApp: () => {
+            const app = live.current.active?.app;
+            return app && isAppBlockId(app) ? app : null;
+          },
+          api: {
+            getMyListingForApp: (input, opts) =>
+              trpcVanilla.appListings.getMyListingForApp.query(input, opts),
+            ingestAssetFromUrl: (input) => trpcVanilla.appListings.ingestAssetFromUrl.mutate(input),
+            setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
+          },
+          orchestration: chatTokenOrchestration(tokens),
+          onAttached: () => void trpcUtils.current.appListings.getMyListingForApp.invalidate(),
+        }),
       }),
-    [appTools]
+    [appTools, tokens]
   );
   // What was verified belongs to the sandbox it was verified in, and so does a Submit for review offer.
   useEffect(() => {
     gate.reset();
     gate.appChanged(activeName);
   }, [activeName, gate]);
-
-  // The store cover (`generate_app_cover`) is the page's own tool: the server runner does not offer it.
-  const trpcUtils = trpc.useUtils();
-  const coverTools = useMemo(
-    () =>
-      createCoverArt(
-        createBrowserCoverArtDeps({
-          currentApp: () => {
-            const app = live.current.active?.app;
-            return app && isAppBlockId(app) ? app : null;
-          },
-          api: {
-            getMyListingForApp: (input) => trpcVanilla.appListings.getMyListingForApp.query(input),
-            ingestAssetFromUrl: (input) => trpcVanilla.appListings.ingestAssetFromUrl.mutate(input),
-            setCover: (input) => trpcVanilla.appListings.setCover.mutate(input),
-          },
-          orchestration: chatTokenOrchestration(tokens),
-          onAttached: () => void trpcUtils.appListings.getMyListingForApp.invalidate(),
-        })
-      ),
-    [tokens, trpcUtils]
-  );
 
   const tools = useMemo(
     () => ({
@@ -452,9 +499,8 @@ export function AppAssistantWorkspace({
       // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
       ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
-      ...(remoteRunner ? {} : coverTools),
     }),
-    [canPreview, gate, appTools, showPreview, remoteRunner, coverTools]
+    [canPreview, gate, appTools, showPreview]
   );
 
   const instructions = useCallback(
@@ -487,6 +533,9 @@ export function AppAssistantWorkspace({
   const onToolResult = useCallback(
     (result: ChatToolResult) => {
       gate.onToolResult(result);
+      const chosen = chosenAppOf(result);
+      if (chosen && chatIdRef.current)
+        rememberAppChat(userIdRef.current, chosen, chatIdRef.current);
       // In the browser and from the runner alike: the card offering to free a slot.
       if (isKeepLimitResult(result))
         setSlot((shown) => shown ?? { message: lastSent.current, deleting: false, error: null });
@@ -495,6 +544,11 @@ export function AppAssistantWorkspace({
       if (preview && 'show' in preview)
         return showPreview({ ...preview.show, sessionId: null, view: ++runnerViews.current });
       if (preview) return stopPreview();
+      if (devServerUpOf(result)) {
+        // Only for a preview shown, which is always the open app's (a switch takes it down).
+        if (live.current.session) setDevServerUp((n) => n + 1);
+        return;
+      }
       if (result.name !== CREATE_APP) return;
       const app = (result.output as { app?: unknown } | null)?.app;
       if (typeof app !== 'string') return;
@@ -828,8 +882,15 @@ export function AppAssistantWorkspace({
     pickedOnLoad.current = true;
     if (activeName || forkClaimsActiveApp) return;
     const recent = mostRecentApp(sandboxes.list.data);
-    if (recent) setActiveName(recent.name);
-  }, [sandboxes.list.data, activeName, forkClaimsActiveApp]);
+    if (!recent) return;
+    setActiveName(recent.name);
+    const own = appChatOf(userIdRef.current, recent.app);
+    if (own) chatOnReady.current = own;
+    else {
+      chatCheckFor.current = recent.app;
+      checkOpenedChat(chatRef.current?.chatId ?? null);
+    }
+  }, [sandboxes.list.data, activeName, forkClaimsActiveApp, checkOpenedChat]);
 
   const resumeRef = useRef(sandboxes.open.mutate);
   resumeRef.current = sandboxes.open.mutate;
@@ -996,8 +1057,9 @@ export function AppAssistantWorkspace({
         lastSent.current = null;
       }
       onChatChange(id);
+      checkOpenedChat(id);
     },
-    [endResumeAsk, onChatChange]
+    [endResumeAsk, onChatChange, checkOpenedChat]
   );
 
   const starting =
@@ -1031,6 +1093,7 @@ export function AppAssistantWorkspace({
   );
   // Picking a paused app starts it, which pauses the one that runs.
   const selectApp = (sandbox: Sandbox) => {
+    if (sandbox.name !== activeName) followChat(sandbox.app, !!active);
     setActiveName(sandbox.name);
     setSwitcherOpen(false);
     if (sandbox.state === 'suspended') startByHand(sandbox);
@@ -1168,6 +1231,8 @@ export function AppAssistantWorkspace({
         pageError.kind === 'limit' &&
         !isRunningLimit(pageError)));
   const startNewApp = () => {
+    chatOnReady.current = null;
+    chatCheckFor.current = null;
     setActiveName(null);
     chatRef.current?.newChat();
     setSwitcherOpen(false);
@@ -1341,7 +1406,6 @@ export function AppAssistantWorkspace({
               slot ? (
                 <FreeUpSlotCard
                   apps={apps}
-                  openName={activeName}
                   deleting={slot.deleting}
                   error={slot.error}
                   exporting={exporting}
@@ -1369,6 +1433,7 @@ export function AppAssistantWorkspace({
               session={session}
               restart={previewRestart}
               tunnelStatus={tunnelStatus}
+              devServerUp={devServerUp}
             />
           </Paper>
         )}

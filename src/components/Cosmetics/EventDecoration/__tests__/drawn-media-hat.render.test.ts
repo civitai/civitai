@@ -56,10 +56,7 @@ let container: HTMLDivElement;
 let layer: HTMLDivElement;
 let root: Root;
 
-async function render(
-  decoration: unknown,
-  props: { layer?: HTMLElement | null; hidden?: boolean } = {}
-) {
+async function render(decoration: unknown, props: { layer?: HTMLElement | null } = {}) {
   await act(async () => {
     root.render(
       React.createElement(
@@ -69,7 +66,6 @@ async function render(
           imageId: 7,
           decoration: decoration as never,
           layer: props.layer === undefined ? layer : props.layer,
-          hidden: props.hidden,
         })
       )
     );
@@ -84,6 +80,8 @@ beforeEach(() => {
   h.hostRef = { current: null };
   container = document.createElement('div');
   layer = document.createElement('div');
+  // happy-dom has no layout: the layer is 800px wide, so a picture 12px in is in view.
+  layer.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600);
   document.body.append(container, layer);
   root = createRoot(container);
 });
@@ -152,9 +150,7 @@ describe('the image detail hat sits on the drawn picture', () => {
     expect(hatButton()).toBeNull();
   });
 
-  it('no hat while the slide is moving, and none without a layer', async () => {
-    await render(hat, { hidden: true });
-    expect(hatButton()).toBeNull();
+  it('no hat without a layer', async () => {
     await render(hat, { layer: null });
     expect(hatButton()).toBeNull();
     expect(container.querySelector('[data-testid="drawn-media-hat"]')).toBeNull();

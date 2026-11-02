@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock('$lib/server/auth/device', () => ({
   isLinkedAndFresh: h.isLinkedAndFresh,
+  canSwitch: async (d: string, p: number, t: number) =>
+    (await h.isLinkedAndFresh(d, p)) && (await h.isLinkedAndFresh(d, t)),
   touchAccount: h.touchAccount,
   rollDeviceCookie: h.rollDeviceCookie,
 }));
@@ -30,6 +32,7 @@ import { POST } from '../+server';
 const DEVICE = 'device-xyz';
 const ACTIVE = 100;
 const TARGET = 200;
+const ACTIVE_SESSION = { sub: String(ACTIVE), jti: 'j', sid: 'family-a' };
 
 function makeEvent(user: Record<string, unknown> | undefined = { id: ACTIVE }) {
   return {
@@ -39,7 +42,7 @@ function makeEvent(user: Record<string, unknown> | undefined = { id: ACTIVE }) {
       body: JSON.stringify({ userId: TARGET }),
     }),
     cookies: {},
-    locals: { user, deviceId: DEVICE },
+    locals: { user, deviceId: DEVICE, session: ACTIVE_SESSION },
   } as never;
 }
 
@@ -70,6 +73,11 @@ describe('POST /api/auth/switch — device membership', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ token: 'new-token', userId: TARGET });
     expect(h.setSessionCookie).toHaveBeenCalledTimes(1);
+    // The switched session stays in the browser's family and is never an impersonation.
+    expect(h.mintUserSession).toHaveBeenCalledWith(
+      { id: TARGET },
+      { parent: ACTIVE_SESSION, clearImpersonation: true }
+    );
   });
 
   it('403s when the target is linked but the active account is not', async () => {

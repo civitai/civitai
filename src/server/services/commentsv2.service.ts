@@ -30,7 +30,6 @@ import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getImageThread } from '@civitai/db-queries/hot-reads';
 import type {
   UpsertCommentV2Input,
@@ -1048,17 +1047,16 @@ export async function getCommentsThreadDetails2({
 }
 
 /**
- * An IMAGE's thread on the replica through Kysely when `kysely-hot-reads-2` is on: `{ id, locked }`,
- * or `null` when the image has none, exactly as the Prisma `findUnique` answers. `undefined` means
- * "not taken": the flag is off or the entity is not an image, and the caller reads Prisma as before.
- * Only images, the hot shape; every other entity type stays on Prisma.
+ * An IMAGE's thread on the replica through Kysely: `{ id, locked }`, or `null` when the image has
+ * none, exactly as the Prisma `findUnique` answers. `undefined` means "not taken": the entity is not
+ * an image, and the caller reads Prisma. Only images, the hot shape; every other entity type stays
+ * on Prisma.
  */
 async function readImageThreadViaKysely(
   entityType: string,
   entityId: number
 ): Promise<{ id: number; locked: boolean } | null | undefined> {
   if (entityType !== 'image') return undefined;
-  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))) return undefined;
   return (await getImageThread((await loadKyselyDb()).kyselyRead, entityId)) ?? null;
 }
 

@@ -152,6 +152,7 @@ export const storylineRouter = router({
       limit: input.limit,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      userId: input.userId,
     })
   ),
 
@@ -327,7 +328,6 @@ export const storylineRouter = router({
       })
     ),
 
-  // Declining is `leave`, which a muted invitee can still reach.
   acceptInvite: storylineWriteProcedure
     .input(leaveStorylineSchema)
     .mutation(({ input, ctx }) =>

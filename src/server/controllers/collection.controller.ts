@@ -55,6 +55,10 @@ import {
   upsertCollection,
   validateContestCollectionEntry,
 } from '~/server/services/collection.service';
+import {
+  getServableCoverCollectionIds,
+  withServableCovers,
+} from '~/server/services/collection-cover-visibility';
 import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
@@ -91,7 +95,7 @@ export const getAllCollectionsInfiniteHandler = async ({
   const limit = input.limit + 1;
 
   try {
-    const items = await getAllCollections({
+    const rows = await getAllCollections({
       input: { ...input, limit },
       select: {
         id: true,
@@ -108,6 +112,8 @@ export const getAllCollectionsInfiniteHandler = async ({
       },
       user: ctx.user,
     });
+    // A cover the viewer may not see falls through to the item covers below.
+    const items = await withServableCovers(rows, ctx.user);
 
     let nextCursor: number | undefined;
     if (items.length > input.limit) {
@@ -231,7 +237,7 @@ export const getCollectionByIdHandler = async ({
       };
     }
 
-    const collection = await getCollectionById({ input });
+    const collection = await getCollectionById({ input, viewer: ctx.user });
 
     // The catch covers the roster read alone — the reads above must still surface — because
     // getById backs the whole detail page and every other useCollection consumer.
@@ -263,7 +269,14 @@ export const getCollectionByIdHandler = async ({
       ? Math.max(0, allLevelsPendingReviewCount - pendingReviewCount)
       : 0;
 
-    return { collection, permissions, collaborators, pendingReviewCount, redPendingReviewCount };
+    return {
+      // Only an editor needs to know a cover is stored but hidden from them.
+      collection: { ...collection, coverHidden: permissions.manage && collection.coverHidden },
+      permissions,
+      collaborators,
+      pendingReviewCount,
+      redPendingReviewCount,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -430,7 +443,24 @@ export const upsertCollectionHandler = async ({
       collectionId: collection.id,
     });
 
-    return { ...collection, isOwner };
+    // The stored cover goes back by id only, and only when the caller may see it; its url is served
+    // through the cover rule on read.
+    const { image, ...rest } = collection;
+    const coverVisible =
+      !!image &&
+      (
+        await getServableCoverCollectionIds(
+          [
+            {
+              collectionId: collection.id,
+              collectionOwnerId: collection.userId,
+              imageId: image.id,
+            },
+          ],
+          user
+        )
+      ).has(collection.id);
+    return { ...rest, image: coverVisible ? { id: image.id } : null, isOwner };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

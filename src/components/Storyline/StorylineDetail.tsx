@@ -97,6 +97,7 @@ export function StorylineStageOverlay({
           chapterTombstone={end.tombstone}
           parentPostId={end.post?.id}
           isOwner={!!currentUser && currentUser.id === storyline.path.storyline.userId}
+          onMain={end.onMain}
           onContinue={storyline.continueTo}
           onClose={() => storyline.setEndOpen(false)}
         />

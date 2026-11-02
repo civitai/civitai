@@ -26,13 +26,13 @@ vi.mock('~/store/generation-graph.store', async (importOriginal) => ({
 
 const { startRemix } = await import('../remix.utils');
 
-async function animate(nsfwLevel: number) {
+async function animate(nsfwLevel: number, type: MediaType = MediaType.image) {
   await startRemix({
     kind: 'video',
     image: {
       id: 1,
       url: 'abc-123',
-      type: MediaType.image,
+      type,
       ingestion: ImageIngestionStatus.Scanned,
       width: 832,
       height: 1216,
@@ -68,4 +68,21 @@ describe('Animate on a gallery image carries its rating to the source', () => {
   ])('a %s image does not', async (_label, nsfwLevel) => {
     expect(await animate(nsfwLevel)).toBe(false);
   });
+});
+
+describe('Animate on a video carries its rating to the frame url', () => {
+  it.each([
+    ['R', 4, 'r'],
+    ['PG', 1, 'pg'],
+  ])(
+    'a %s video: the rating is keyed by the frame, not the mp4',
+    async (_label, nsfwLevel, key) => {
+      await animate(nsfwLevel, MediaType.video);
+      const frameUrl: string = setData.mock.calls[0][0].params.images[0].url;
+
+      expect(frameUrl).toContain('anim=false');
+      expect(frameUrl).toMatch(/\.jpeg$/);
+      expect(sourceMetadataStore.getMetadata(frameUrl)?.nsfwLevel).toBe(key);
+    }
+  );
 });

@@ -8,10 +8,10 @@ import { jsonArrayFrom, jsonObjectFrom } from './infra/helpers';
 //   - the creator card (`readUserCreatorViaKysely`, user-creator.reads.ts),
 // plus two hot single-table reads: the image tags behind `imageTagsCache` and an image's comment
 // thread.
-// They are served behind the default-off server Flipt flag `kysely-hot-reads-2`; off, the Prisma
-// reads run unchanged. The app-side wrappers map these rows to the exact Prisma payload, and
-// <civitai>/src/server/services/__tests__/hot-reads-2.kysely-parity.test.ts compares the two
-// against a real database.
+// They replaced the Prisma reads (formerly behind the `kysely-hot-reads-2` flag). The app-side
+// wrappers map these rows to the exact Prisma payload, and
+// <civitai>/src/server/services/__tests__/hot-reads-2.kysely-parity.test.ts pins them, against a
+// real database, to the values the Prisma reads returned.
 //
 // Nested relations are read with `jsonArrayFrom` / `jsonObjectFrom` ONLY where every nested column
 // survives JSON unchanged: integers, booleans, text, enums (text) and JSON columns. Anything JSON

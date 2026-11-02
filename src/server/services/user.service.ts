@@ -1,4 +1,11 @@
 import {
+  answersToQuestionsSql,
+  heldEntryOnBountySql,
+  keepHeldAnswersCte,
+  keepHeldReviewsCte,
+  reviewsOnModelsSql,
+} from '~/server/services/held-review.service';
+import {
   getModerationAccountId,
   isReservedModerationUsername,
   resemblesReservedModerationUsername,
@@ -24,7 +31,11 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
-import { payoutPendingSql } from '~/server/services/bounty-payout-lock';
+import {
+  bountyUnpaidAwardTableExists,
+  openUnpaidBountyAwardSql,
+  payoutPendingSql,
+} from '~/server/services/bounty-payout-lock';
 import {
   bountyThreadParents,
   detachHeldThreadsCte,
@@ -489,7 +500,7 @@ export async function setUserMuted(
       updateSource: 'retool:unmute',
     });
     if (!result.released) throw new Error(`No user with id ${args.userId}`);
-    return result.user;
+    return { ...result.user, sessionInvalidated: true };
   }
 
   const user = await updateUserById({
@@ -501,9 +512,15 @@ export async function setUserMuted(
     },
     updateSource: 'retool:mute',
   });
-  const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(args.userId, 'moderation');
-  return user;
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  // Never throws from here: the mute has committed, and a caller that retries a toggle would undo it.
+  const sessionInvalidated = await afterAccountStandingChanged(args.userId, {
+    kind: 'invalidate',
+    caller: 'moderation',
+  });
+  return { ...user, sessionInvalidated };
 }
 
 /**
@@ -1802,22 +1819,29 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach({ bountyEntryId: doomedEntries })}
       DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
+    // A held entrant, or an award recorded for manual resolution, keeps the bounty hidden.
+    const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
+    const keepsBounty = Prisma.sql`(${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
+      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)})`;
     const doomedBounties = Prisma.sql`SELECT b.id FROM "Bounty" b
-      WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`
-      WITH ${detach(bountyThreadParents(doomedBounties))}
-      DELETE FROM "Bounty" WHERE id IN (${doomedBounties})`;
+      WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}
+        AND NOT ${keepsBounty}`;
     // Keep the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
-    if (keptBountyIds.length)
-      await dbWrite.$executeRaw`
+    await dbWrite.$executeRaw`
+      WITH ${detach(bountyThreadParents(doomedBounties))},
+      gone AS (DELETE FROM "Bounty" WHERE id IN (${doomedBounties}) RETURNING id),
+      hidden AS (
         UPDATE "Bounty" b
         SET availability = 'Private'::"Availability",
             meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
               'removedWithOwner', true,
               'availabilityBeforeRemoval', b.availability
             )
-        WHERE b.id = ANY(${keptBountyIds}::int[]) AND ${notRemovedWithOwnerSql('b.meta')}
-          AND ${unlessHeld}`;
+        WHERE b."userId" = ${id} AND (b.id = ANY(${keptBountyIds}::int[]) OR ${keepsBounty})
+          AND b.id NOT IN (SELECT id FROM gone)
+          AND ${notRemovedWithOwnerSql('b.meta')} AND ${unlessHeld}
+      )
+      SELECT 1`;
     const owned = (table: string) =>
       Prisma.sql`SELECT o.id FROM ${Prisma.raw(
         `"${table}"`
@@ -1826,7 +1850,8 @@ export const removeAllContent = async ({
       WITH ${detach({ answerId: owned('Answer') })}
       DELETE FROM "Answer" WHERE id IN (${owned('Answer')})`;
     await dbWrite.$executeRaw`
-      WITH ${detach(questionThreadParents(owned('Question')))}
+      WITH ${detach(questionThreadParents(owned('Question')))},
+      ${keepHeldAnswersCte(answersToQuestionsSql(owned('Question')), markerView)}
       DELETE FROM "Question" WHERE id IN (${owned('Question')})`;
     await dbWrite.$executeRaw`
       WITH ${detach({ reviewId: owned('ResourceReview') })}
@@ -1917,7 +1942,8 @@ export const removeAllContent = async ({
       AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('o.id'), markerView)}
       AND o.id NOT IN (${formerOwnerHeld})`;
     await dbWrite.$executeRaw`
-      WITH ${detach(modelThreadParents(doomedModels))}
+      WITH ${detach(modelThreadParents(doomedModels))},
+      ${keepHeldReviewsCte(reviewsOnModelsSql(doomedModels), markerView)}
       DELETE FROM "Model" WHERE id IN (${doomedModels})`;
     // Status only: the unpublish flow stamps meta.unpublishedAt, which notifies the owner.
     await dbWrite.$executeRaw`
@@ -1988,7 +2014,7 @@ export const removeAllContent = async ({
               action: SearchIndexUpdateQueueAction.Delete,
             }))
           );
-        const hidden = await hiddenKeptBounties(keptBountyIds);
+        const hidden = await hiddenKeptBounties([...keptBountyIds, ...bounties.map((b) => b.id)]);
         if (hidden.length)
           await bountiesSearchIndex.queueUpdate(
             hidden.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
@@ -2082,7 +2108,7 @@ export const removeAllContent = async ({
   await unindex('index-collections', collectionsSearchIndex, collections);
   await unindex('index-bounties', bountiesSearchIndex, bounties);
   await runStep('index-kept-bounties', async () => {
-    const hidden = await hiddenKeptBounties(keptBountyIds);
+    const hidden = await hiddenKeptBounties([...keptBountyIds, ...bounties.map((b) => b.id)]);
     if (hidden.length)
       await bountiesSearchIndex.queueUpdate(
         hidden.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
@@ -3442,7 +3468,8 @@ export async function toggleReview({
       }`;
     const markerView = await holdMarkerViewExists();
     await dbWrite.$executeRaw`
-      WITH ${detachHeldThreadsCte({ reviewId: doomed }, markerView)}
+      WITH ${detachHeldThreadsCte({ reviewId: doomed }, markerView)},
+      ${keepHeldReviewsCte(doomed, markerView)}
       DELETE FROM "ResourceReview" WHERE id IN (${doomed})`;
     modelMetrics.queueUpdate(modelId);
     // Use the actual modelVersionId from the existing review row when input was

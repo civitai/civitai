@@ -321,7 +321,15 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    if (req.query.token !== token) {
+    // `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
+    // `?token=` stays accepted until every caller has moved to the header. Either one passing is
+    // enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
+    // arrives as an array and is refused rather than read.
+    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+    const bearerOk = timingSafeEqualStrings(token, bearer);
+    const queryOk = timingSafeEqualStrings(token, queryToken);
+    if (!bearerOk && !queryOk) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }

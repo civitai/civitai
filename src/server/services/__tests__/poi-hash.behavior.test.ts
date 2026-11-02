@@ -17,6 +17,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
+const { mockRestoreOwnerFlagOverride } = vi.hoisted(() => ({
+  mockRestoreOwnerFlagOverride: vi.fn(),
+}));
 const { setModelPoi } = vi.hoisted(() => ({
   setModelPoi: vi.fn(
     async ({
@@ -41,6 +44,7 @@ const { setModelPoi } = vi.hoisted(() => ({
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   setModelPoi,
+  restoreOwnerFlagOverride: mockRestoreOwnerFlagOverride,
 }));
 // The sweep reads through queryWithTimeout on the replica pg pool: route that pool's client to PGlite and keep
 // what it was sent. `failOn` makes a statement throw, as a timeout would.
@@ -154,6 +158,7 @@ const scan = (modelId: number, userId: number, fileId: number, sha256: string) =
 
 beforeEach(async () => {
   setModelPoi.mockClear();
+  mockRestoreOwnerFlagOverride.mockClear();
   pool.sent = [];
   pool.failOn = null;
   await pg.exec(
@@ -449,6 +454,27 @@ describe('revertPoiHashAutoFlag — the system nsfw lock marker', () => {
     await revertPoiHashAutoFlag({ modelId: REVERTED, userId: 99 });
 
     expect(redisMock.redis.del).toHaveBeenCalledWith([`model:gallery-settings:${REVERTED}`]);
+  });
+
+  // An owner's override predates the hash flag, so the ruling it replaced goes back on top.
+  it("puts back the ruling an owner's override replaced, after its own restore", async () => {
+    await addModel(
+      REVERTED,
+      6,
+      `poi = true, nsfw = false, "lockedProperties" = ${LOCKED}, meta = '${snapshotMeta({})}'`
+    );
+    mockRestoreOwnerFlagOverride.mockImplementationOnce(async () => {
+      // The snapshot's own restore has landed by then.
+      const { rows } = await pg.query<{ nsfw: boolean }>(
+        `SELECT nsfw FROM "Model" WHERE id = ${REVERTED}`
+      );
+      expect(rows[0].nsfw).toBe(true);
+    });
+
+    await revertPoiHashAutoFlag({ modelId: REVERTED, userId: 99 });
+
+    expect(mockRestoreOwnerFlagOverride).toHaveBeenCalledTimes(1);
+    expect(mockRestoreOwnerFlagOverride).toHaveBeenCalledWith(REVERTED, { revertedFlag: 'poi' });
   });
 
   it('drops the marker on a model that keeps its minor restrictions', async () => {

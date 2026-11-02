@@ -102,7 +102,19 @@ const storylineRow = (over: Record<string, unknown> = {}) => ({
   nsfwLevel: NsfwLevel.PG,
   moderatorNsfwLevel: null,
   user: { id: OWNER, username: 'owner', bannedAt: null, deletedAt: null },
-  chapters: [{ id: 1, postId: 100, post: { nsfwLevel: NsfwLevel.PG } }],
+  chapters: [
+    {
+      id: 1,
+      postId: 100,
+      removedAt: null,
+      post: {
+        nsfwLevel: NsfwLevel.PG,
+        publishedAt: new Date(0),
+        tosViolation: false,
+        user: { bannedAt: null, deletedAt: null },
+      },
+    },
+  ],
   ...over,
 });
 
@@ -145,7 +157,21 @@ const HIDDEN_FROM_READERS: [string, () => void][] = [
     'above the reader’s browsing level',
     () =>
       dbMock.dbRead.storyline.findUnique.mockResolvedValue(
-        storylineRow({ chapters: [{ id: 1, postId: 100, post: { nsfwLevel: NsfwLevel.X } }] })
+        storylineRow({
+          chapters: [
+            {
+              id: 1,
+              postId: 100,
+              removedAt: null,
+              post: {
+                nsfwLevel: NsfwLevel.X,
+                publishedAt: new Date(0),
+                tosViolation: false,
+                user: { bannedAt: null, deletedAt: null },
+              },
+            },
+          ],
+        })
       ),
   ],
   ['behind a storylines flag the reader lacks', () => (flags.storylines = false)],
@@ -310,7 +336,21 @@ describe('the browsing level a storyline thread is held to', () => {
     reset();
     reader.level = undefined;
     dbMock.dbRead.storyline.findUnique.mockResolvedValue(
-      storylineRow({ chapters: [{ id: 1, postId: 100, post: { nsfwLevel: NsfwLevel.X } }] })
+      storylineRow({
+        chapters: [
+          {
+            id: 1,
+            postId: 100,
+            removedAt: null,
+            post: {
+              nsfwLevel: NsfwLevel.X,
+              publishedAt: new Date(0),
+              tosViolation: false,
+              user: { bannedAt: null, deletedAt: null },
+            },
+          },
+        ],
+      })
     );
   });
   const ctx = (user?: { id: number; browsingLevel: number }) =>

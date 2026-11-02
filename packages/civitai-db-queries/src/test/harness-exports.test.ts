@@ -61,6 +61,7 @@ const PACKAGE_EXPORTS = {
   './hot-reads-4': './src/hot-reads-4.db.ts',
   './hot-reads-5': './src/hot-reads-5.db.ts',
   './hot-reads-6': './src/hot-reads-6.db.ts',
+  './hot-reads-7': './src/hot-reads-7.db.ts',
   './image': './src/image.db.ts',
   './model': './src/model.db.ts',
   './page-access': './src/page-access.db.ts',

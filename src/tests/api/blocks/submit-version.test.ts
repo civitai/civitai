@@ -292,6 +292,38 @@ describe('POST /api/blocks/submit-version', () => {
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
+  it("🔴 forwards the service's listing readiness (warn at submit) and still nothing of the diff", async () => {
+    const listing = {
+      approvalBlocked: true,
+      missing: ['icon', 'cover'],
+      nextStep:
+        "Add an icon and a cover on your listing's Media tab before a moderator can approve it.",
+      problems: [
+        {
+          code: 'missing-icon',
+          label: 'Missing icon (required before publishing)',
+          severity: 'blocking',
+        },
+        {
+          code: 'no-screenshots',
+          label: 'No screenshots (recommended, optional)',
+          severity: 'advisory',
+        },
+      ],
+    };
+    mockSubmitVersion.mockResolvedValueOnce({ ...SERVICE_RESULT, listing });
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toEqual({
+      publishRequestId: 'pr_1',
+      slug: 'my-app',
+      version: '1.0.0',
+      status: 'pending',
+      listing,
+    });
+  });
+
   it('200s on success: decodes the bundle and calls the service with the moderator id', async () => {
     const res = makeRes();
     await invoke(makeReq({ body: { bundleBase64 } }), res);
@@ -302,6 +334,8 @@ describe('POST /api/blocks/submit-version', () => {
       slug: 'my-app',
       version: '1.0.0',
       status: 'pending',
+      // The service answered no listing readiness: the field is still there, as null.
+      listing: null,
     });
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     const arg = mockSubmitVersion.mock.calls[0][0];

@@ -39,7 +39,6 @@ describe("the invitee's answer", () => {
     await page.getByRole('button', { name: 'Accept' }).click();
     expect(mocks.accept).toHaveBeenCalledWith({ storylineId: 4 });
     expect(mocks.decline).not.toHaveBeenCalled();
-    // Declining is leaving, which stays open to a muted account.
     await page.getByRole('button', { name: 'Decline' }).click();
     expect(mocks.decline).toHaveBeenCalledWith({ storylineId: 4 });
     expect(mocks.accept).toHaveBeenCalledTimes(1);

@@ -7,7 +7,9 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  ArticleIngestionStatus,
   ArticleStatus,
+  Availability,
   CollectionContributorPermission,
   CollectionInviteStatus,
   CollectionItemStatus,
@@ -15,6 +17,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  ImageIngestionStatus,
   ModelModifier,
   ModelStatus,
 } from '~/shared/utils/prisma/enums';
@@ -97,6 +100,8 @@ const DRAFT_POST = 2;
 const SCHEDULED_POST = 3;
 const UNRATED_POST = 4;
 const BLOCKED_POST = 5;
+const PRIVATE_POST = 6;
+const UNPUBLISHED_POST = 7;
 
 const enumType = (name: string, values: object) =>
   `CREATE TYPE "${name}" AS ENUM (${Object.values(values)
@@ -118,6 +123,9 @@ beforeAll(async () => {
     ${enumType('ModelStatus', ModelStatus)}
     ${enumType('ModelModifier', ModelModifier)}
     ${enumType('ArticleStatus', ArticleStatus)}
+    ${enumType('Availability', Availability)}
+    ${enumType('ImageIngestionStatus', ImageIngestionStatus)}
+    ${enumType('ArticleIngestionStatus', ArticleIngestionStatus)}
 
     CREATE TABLE "Collection" (
       "id"     integer PRIMARY KEY,
@@ -159,24 +167,34 @@ beforeAll(async () => {
       "modelId"   integer PRIMARY KEY,
       "status"    "ModelStatus" NOT NULL,
       "mode"      "ModelModifier",
-      "nsfwLevel" integer NOT NULL
+      "nsfwLevel" integer NOT NULL,
+      "availability" "Availability" NOT NULL DEFAULT 'Public'
     );
     CREATE TABLE "Post" (
       "id"          integer PRIMARY KEY,
       "publishedAt" timestamp,
-      "nsfwLevel"   integer NOT NULL
+      "nsfwLevel"   integer NOT NULL,
+      "availability" "Availability" NOT NULL DEFAULT 'Public',
+      "metadata"    jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "Image" (
       "id"              integer PRIMARY KEY,
       "postId"          integer,
       "nsfwLevel"       integer NOT NULL,
-      "modelRestricted" boolean NOT NULL DEFAULT false
+      "modelRestricted" boolean NOT NULL DEFAULT false,
+      "needsReview"     text,
+      "ingestion"       "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
+      "blockedFor"      text,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      "metadata"        jsonb NOT NULL DEFAULT '{}',
+      "scanJobs"        jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "Article" (
       "id"          integer PRIMARY KEY,
       "status"      "ArticleStatus" NOT NULL,
       "publishedAt" timestamp,
-      "nsfwLevel"   integer NOT NULL
+      "nsfwLevel"   integer NOT NULL,
+      "ingestion"   "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned'
     );
 
     INSERT INTO "Collection" ("id","userId","mode") VALUES
@@ -213,6 +231,8 @@ beforeAll(async () => {
       -- PG plus Blocked still matches the PG bit and shows.
       (10, 'Published', NULL, 33),
       (11, 'Published', NULL, 4);
+    INSERT INTO "ModelMetric" ("modelId","status","mode","nsfwLevel","availability") VALUES
+      (12, 'Published', NULL, 1, 'Private');
 
     INSERT INTO "Post" ("id","publishedAt","nsfwLevel") VALUES
       (${PUBLISHED_POST}, now() - interval '1 day', 1),
@@ -220,10 +240,13 @@ beforeAll(async () => {
       (${SCHEDULED_POST}, now() + interval '1 day', 1),
       (${UNRATED_POST},   now() - interval '1 day', 0),
       (${BLOCKED_POST},   now() - interval '1 day', 32);
+    INSERT INTO "Post" ("id","publishedAt","nsfwLevel","availability","metadata") VALUES
+      (${PRIVATE_POST},     now() - interval '1 day', 1, 'Private', '{}'),
+      (${UNPUBLISHED_POST}, now() - interval '1 day', 1, 'Public', '{"unpublishedAt": "2026-10-01"}');
 
     INSERT INTO "Image" ("id","postId","nsfwLevel","modelRestricted") VALUES
       (1, ${PUBLISHED_POST}, 1, false),
-      -- The queue reads images with pending: true, so an image on a draft post still shows.
+      -- On a draft post: the reviewer's read leaves it out, as any read of it does.
       (2, ${DRAFT_POST}, 1, false),
       (3, NULL, 1, false),
       -- R-rated on a license-restricted base model: getAllImages never returns it.
@@ -234,6 +257,14 @@ beforeAll(async () => {
       -- Unrated: pending: true keeps nsfwLevel 0 for images, unlike every other target.
       (7, ${PUBLISHED_POST}, 0, false),
       (8, ${PUBLISHED_POST}, 8, false);
+    INSERT INTO "Image" ("id","postId","nsfwLevel","ingestion","blockedFor","needsReview") VALUES
+      (20, ${PUBLISHED_POST}, 1, 'Blocked', NULL, NULL),
+      (21, ${PUBLISHED_POST}, 1, 'Scanned', 'tos', NULL),
+      (22, ${PUBLISHED_POST}, 1, 'Scanned', NULL, 'minor'),
+      (23, ${PRIVATE_POST}, 1, 'Scanned', NULL, NULL),
+      (24, ${UNPUBLISHED_POST}, 1, 'Scanned', NULL, NULL),
+      -- Rated, but its scan errored and no one locked a rating: not shown to any reader.
+      (25, ${PUBLISHED_POST}, 1, 'Error', NULL, NULL);
 
     INSERT INTO "Article" ("id","status","publishedAt","nsfwLevel") VALUES
       (1, 'Published', now() - interval '1 day', 1),
@@ -243,6 +274,8 @@ beforeAll(async () => {
       (5, 'Published', now() - interval '1 day', 0),
       (6, 'Published', now() - interval '1 day', 32),
       (7, 'Published', now() - interval '1 day', 16);
+    INSERT INTO "Article" ("id","status","publishedAt","nsfwLevel","ingestion") VALUES
+      (8, 'Published', now() - interval '1 day', 1, 'Pending');
 
     INSERT INTO "CollectionItem" ("id","collectionId","status","modelId") VALUES
       (1, ${OWNED_WITH_QUEUE}, 'REVIEW',   ${VISIBLE_MODEL}),
@@ -267,7 +300,8 @@ beforeAll(async () => {
       (107, ${VIS_MODEL}, 'REVIEW', 7),
       (108, ${VIS_MODEL}, 'REVIEW', 8),
       (109, ${VIS_MODEL}, 'REVIEW', 9),
-      (110, ${VIS_MODEL}, 'REVIEW', 10);
+      (110, ${VIS_MODEL}, 'REVIEW', 10),
+      (111, ${VIS_MODEL}, 'REVIEW', 12);
     INSERT INTO "CollectionItem" ("id","collectionId","status","imageId") VALUES
       (201, ${VIS_IMAGE}, 'REVIEW', 1),
       (202, ${VIS_IMAGE}, 'REVIEW', 2),
@@ -276,14 +310,21 @@ beforeAll(async () => {
       (205, ${VIS_IMAGE}, 'REVIEW', 5),
       (206, ${VIS_IMAGE}, 'REVIEW', 404),
       (207, ${VIS_IMAGE}, 'REVIEW', 6),
-      (208, ${VIS_IMAGE}, 'REVIEW', 7);
+      (208, ${VIS_IMAGE}, 'REVIEW', 7),
+      (210, ${VIS_IMAGE}, 'REVIEW', 20),
+      (211, ${VIS_IMAGE}, 'REVIEW', 21),
+      (212, ${VIS_IMAGE}, 'REVIEW', 22),
+      (213, ${VIS_IMAGE}, 'REVIEW', 23),
+      (214, ${VIS_IMAGE}, 'REVIEW', 24),
+      (215, ${VIS_IMAGE}, 'REVIEW', 25);
     INSERT INTO "CollectionItem" ("id","collectionId","status","postId") VALUES
       (301, ${VIS_POST}, 'REVIEW', ${PUBLISHED_POST}),
       (302, ${VIS_POST}, 'REVIEW', ${DRAFT_POST}),
       (303, ${VIS_POST}, 'REVIEW', ${SCHEDULED_POST}),
       (304, ${VIS_POST}, 'REVIEW', ${UNRATED_POST}),
       (305, ${VIS_POST}, 'REVIEW', 404),
-      (306, ${VIS_POST}, 'REVIEW', ${BLOCKED_POST});
+      (306, ${VIS_POST}, 'REVIEW', ${BLOCKED_POST}),
+      (307, ${VIS_POST}, 'REVIEW', ${PRIVATE_POST});
     -- Hydration judges a row by its first target column (model, post, image, article), so a draft
     -- post hides the row even though its image alone would show.
     INSERT INTO "CollectionItem" ("id","collectionId","status","postId","imageId") VALUES
@@ -294,7 +335,8 @@ beforeAll(async () => {
       (403, ${VIS_ARTICLE}, 'REVIEW', 3),
       (404, ${VIS_ARTICLE}, 'REVIEW', 4),
       (405, ${VIS_ARTICLE}, 'REVIEW', 5),
-      (406, ${VIS_ARTICLE}, 'REVIEW', 6);
+      (406, ${VIS_ARTICLE}, 'REVIEW', 6),
+      (407, ${VIS_ARTICLE}, 'REVIEW', 8);
     INSERT INTO "CollectionItem" ("id","collectionId","status","model3dId") VALUES
       (501, ${VIS_MODEL3D}, 'REVIEW', 1);
     INSERT INTO "CollectionItem" ("id","collectionId","status","modelId","imageId","articleId") VALUES
@@ -377,17 +419,18 @@ describe('getPendingCollectionReviewCounts', () => {
 // items (which must still count, so a predicate that drops everything fails too) beside hidden
 // ones (which main counted, so every case here was red there).
 const VISIBLE_IDS: Record<number, number[]> = {
-  // The Published, rated, live models. Deleted, Unpublished, UnpublishedViolation, TakenDown,
-  // Archived, missing-metric, unrated and Blocked-only models are hidden.
+  // The Published, rated, live, non-Private models. Deleted, Unpublished, UnpublishedViolation,
+  // TakenDown, Archived, missing-metric, unrated, top-level-only and Private models are hidden.
   [VIS_MODEL]: [101, 110],
-  // Images on any existing post, draft posts included, unrated included; not the
-  // license-restricted one, not a Blocked one, not an image with no post or a missing post, not a
-  // missing image, and not one on a row whose draft post is judged first.
-  [VIS_IMAGE]: [201, 202, 208],
-  // Only the published, rated post. Not a draft, a scheduled post, an unrated, Blocked or missing
-  // one.
+  // Images on a published, non-Private post, unrated included; not one on a draft or unpublished
+  // post, not the license-restricted one, not a top-level-only one, not one the reviewer's own read
+  // leaves out (ingestion status, block reason, a pending review flag, an ingestion check not passed), not an image with no post or
+  // a missing post, not a missing image, and not one on a row whose draft post is judged first.
+  [VIS_IMAGE]: [201, 208],
+  // Only the published, rated, non-Private post. Not a draft, a scheduled post, an unrated,
+  // top-level-only, Private or missing one.
   [VIS_POST]: [301],
-  // Only the Published article with a publish date and a non-Blocked rating.
+  // Only the Published, scanned article with a publish date and a rating below the top level.
   [VIS_ARTICLE]: [401],
   // The queue never selects model3dId, so it shows none: the badge matches it at zero. A
   // follow-up owns real Model3D review support; when it lands, this expectation changes with it.

@@ -1511,6 +1511,35 @@ export interface ComicProjectReport {
   report?: Report;
 }
 
+export interface HeldResourceReview {
+  id: number;
+  modelId: number;
+  modelVersionId: number;
+  userId: number;
+  rating: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  nsfw: boolean;
+  tosViolation: boolean;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  heldAt: Date;
+  holdReasons: string[];
+}
+
+export interface HeldAnswer {
+  id: number;
+  questionId: number;
+  userId: number;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+  heldAt: Date;
+  holdReasons: string[];
+}
+
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -4090,6 +4119,21 @@ export interface BountyBenefactor {
   awartedTo?: BountyEntry | null;
   currency: Currency;
   buzzTransactionId: string[];
+}
+
+export interface BountyUnpaidAward {
+  bountyId: number;
+  userId: number;
+  unitAmount: number;
+  buzzTransactionIds: string[];
+  winnerUserId: number | null;
+  ownerId: number | null;
+  recordedById: number | null;
+  recordedAt: Date;
+  ruling: string | null;
+  ledgerReference: string | null;
+  resolvedById: number | null;
+  resolvedAt: Date | null;
 }
 
 export interface BountyEngagement {

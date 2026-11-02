@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
 import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
@@ -130,6 +131,7 @@ import {
 } from '~/server/services/image-url-ownership';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import {
+  assertGenerationInputsUsable,
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
 } from '~/server/services/generation-input-urls';
@@ -184,6 +186,12 @@ const comicProtectedProcedure = protectedProcedure.use(comicFlag).use(regionProx
 // onboarding and MUTE checks every other comment surface has. Without it a muted account could comment
 // on a chapter — the box is hidden client-side, which is presentation, not a gate.
 const comicGuardedProcedure = guardedProcedure.use(comicFlag).use(regionProxyMiddleware);
+// Generation and spend. The restriction is read from the primary rather than the session, and
+// without `guardedProcedure`'s onboarding and email gates, which comics has never required.
+const comicGenerationProcedure = comicProtectedProcedure.use(async ({ ctx, next }) => {
+  await assertAccountNotRestricted(ctx.user!.id);
+  return next();
+});
 const comicPublicProcedure = publicProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
@@ -2124,6 +2132,12 @@ export const comicsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: [input?.sourceImage?.url, ...(input?.userReferenceImages ?? []).map((r) => r.url)],
+        userId: ctx.user.id,
+        entry: 'comicsCostEstimate',
+        isApiCaller: ctx.apiKeyId != null,
+      });
       try {
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         const modelConfig = getComicModelConfig(input?.baseModel);
@@ -2231,7 +2245,7 @@ export const comicsRouter = router({
     }),
 
   /** Enhances a prompt via LLM and returns the enhanced text without generating an image. */
-  enhancePromptText: comicProtectedProcedure
+  enhancePromptText: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({
@@ -2964,7 +2978,7 @@ export const comicsRouter = router({
     }),
 
   // Panels — generation via the preset image-gen service (model determined by project)
-  createPanel: comicProtectedProcedure
+  createPanel: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(createPanelSchema)
     .use(isChapterOwner)
@@ -4004,7 +4018,7 @@ export const comicsRouter = router({
   // flow: hand `allowMatureContent: true` to the orchestrator, which charges
   // the difference in yellow Buzz, then reset the panel to `Generating` so
   // the existing poll loop downloads the now-unblocked image.
-  unlockPanelGeneration: comicProtectedProcedure
+  unlockPanelGeneration: comicGenerationProcedure
     .input(z.object({ panelId: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       const panel = await dbRead.comicPanel.findUnique({
@@ -4392,7 +4406,7 @@ export const comicsRouter = router({
     }),
 
   // Iterative panel editor — generate image without creating a panel record
-  iterateGenerate: comicProtectedProcedure
+  iterateGenerate: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(iterateGenerateSchema)
     .use(isProjectOwner)
@@ -4529,7 +4543,7 @@ export const comicsRouter = router({
     }),
 
   // Iterative panel editor — poll workflow status without panel involvement
-  generateComicImage: comicProtectedProcedure
+  generateComicImage: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({
@@ -4607,7 +4621,7 @@ export const comicsRouter = router({
     }),
 
   // Smart Create — Plan chapter panels via GPT
-  planChapterPanels: comicProtectedProcedure
+  planChapterPanels: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(planChapterPanelsSchema)
     .use(isProjectOwner)
@@ -4646,7 +4660,7 @@ export const comicsRouter = router({
     }),
 
   // Smart Create — Create chapter with all panels at once
-  smartCreateChapter: comicProtectedProcedure
+  smartCreateChapter: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
@@ -5532,7 +5546,7 @@ export const comicsRouter = router({
 
   // ──── Enhance Panel: create from existing image, optionally with img2img ────
 
-  enhancePanel: comicProtectedProcedure
+  enhancePanel: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(enhancePanelSchema)
     .use(isChapterOwner)
@@ -5815,7 +5829,7 @@ export const comicsRouter = router({
 
   // ──── Bulk Create Panels ────
 
-  bulkCreatePanels: comicProtectedProcedure
+  bulkCreatePanels: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(bulkCreatePanelsSchema)
     .use(isChapterOwner)

@@ -9,14 +9,15 @@ export const watchOpenNowpaymentsJob = createJob(
   'watch-open-nowpayments',
   '0 13 * * *', // Daily
   async () => {
-    const { digest, ...result } = await watchOpenDeposits();
+    const { digest, listed, ...result } = await watchOpenDeposits();
 
     let digestSent = 0;
-    if (digest.length) {
+    if (digest.length || listed.length) {
       try {
         await openCryptoDepositDigestEmail.send({
           to: DIGEST_TO,
           items: digest,
+          listed,
           counts: result.counts,
         });
         digestSent = digest.length;
@@ -40,9 +41,11 @@ export const watchOpenNowpaymentsJob = createJob(
       closed: result.closed,
       lookupFailed: result.lookupFailed,
       digestSent,
+      listed: listed.length,
+      listedAwaitingOk: listed.filter((l) => l.state === 'awaiting_ok').length,
     });
 
-    return { ...result, digestSent };
+    return { ...result, listed, digestSent };
   },
   {
     lockExpiration: 30 * 60,

@@ -440,6 +440,15 @@ describe('writes that evict the bearer cache', () => {
 
   it('GET /api/user/orchestrator-key (regenerate) stops the old orchestrator key', async () => {
     await warm('orchestrator');
+    // The route checks the caller's stored standing first; answer that read only.
+    dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+      select?: Record<string, boolean>;
+    }) =>
+      Object.keys(args.select ?? {})
+        .sort()
+        .join() === 'bannedAt,muted'
+        ? { muted: false, bannedAt: null }
+        : null) as never);
     hubSession.current = {
       user: {
         id: 501,

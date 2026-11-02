@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Anchor, Button, Group, Paper, Radio, Stack, Text } from '@mantine/core';
-import { oldestInactiveApp } from '~/components/Apps/AppAssistant/appLifecycle';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { APP_STATUS, AppError } from '~/components/Apps/AppAssistant/YourApps';
 import dayjs from '~/shared/utils/dayjs';
@@ -14,12 +13,11 @@ function usedLine(sandbox: Sandbox): string {
 
 /**
  * After the last message once the assistant could not make an app because the user keeps as many as they
- * may: pick one to delete (the one used longest ago, not the open one, is chosen), and the request
- * that hit the limit continues by itself.
+ * may: pick one to delete, and the request that hit the limit continues by itself. Nothing is chosen
+ * for the user: deleting stays disabled until they pick an app themselves.
  */
 export function FreeUpSlotCard({
   apps,
-  openName,
   deleting,
   error,
   exporting,
@@ -27,8 +25,6 @@ export function FreeUpSlotCard({
   onDelete,
 }: {
   apps: Sandbox[];
-  /** The app open now, never chosen for the user. */
-  openName: string | null;
   /** The delete the user confirmed is on its way. */
   deleting: boolean;
   error: unknown;
@@ -37,14 +33,11 @@ export function FreeUpSlotCard({
   onExport: (sandbox: Sandbox) => void;
   onDelete: (sandbox: Sandbox) => void;
 }) {
-  const [picked, setPicked] = useState<string | null>(
-    () => oldestInactiveApp(apps, openName)?.name ?? null
-  );
+  const [picked, setPicked] = useState<string | null>(null);
   // An app gone from the list (deleted elsewhere) is not left chosen.
   useEffect(() => {
-    if (!picked || !apps.some((s) => s.name === picked))
-      setPicked(oldestInactiveApp(apps, openName)?.name ?? null);
-  }, [apps, openName, picked]);
+    if (picked && !apps.some((s) => s.name === picked)) setPicked(null);
+  }, [apps, picked]);
   const chosen = apps.find((s) => s.name === picked) ?? null;
   // Exporting a paused app starts it, which pauses the one that runs.
   const running = apps.find((s) => s.state !== 'suspended') ?? null;

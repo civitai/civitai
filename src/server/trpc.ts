@@ -11,6 +11,7 @@ import {
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
 import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
+import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { NextApiRequest } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -346,10 +347,11 @@ const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ct
 const isMuted = middleware(async ({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-  if (user.muted) {
+  // The stored standing, not just the session's copy of it.
+  if (user.muted || (await isAccountMuted(user.id, !!user.muted))) {
     // `.catch`: this decides whether to OFFER a way out, never whether to refuse. A replica blip
     // rejecting here would turn the refusal into a 500 carrying the driver's message.
-    const offer = couldAwaitTosReacceptance(user)
+    const offer = couldAwaitTosReacceptance({ ...user, muted: true })
       ? await shouldOfferTosReacceptance(user.id).catch(() => false)
       : false;
     throw new TRPCError({

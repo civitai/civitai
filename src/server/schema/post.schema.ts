@@ -428,6 +428,12 @@ export const scheduleBatchPostSchema = z.object({
   images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
 });
 
+/** The upload keys a restored batch draft holds; at most the key-check cap (`MAX_KEYS`) at once. */
+export const BATCH_DRAFT_KEYS_PER_CHECK = 64;
+export const checkBatchDraftKeysSchema = z.object({
+  keys: z.array(z.string().uuid()).min(1).max(BATCH_DRAFT_KEYS_PER_CHECK),
+});
+
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;
 export const scheduleBatchSchema = z.object({
   /** One per chunk per attempt; the server refuses a repeat. Superseded by `posts[].clientKey`,

@@ -1145,6 +1145,8 @@ model Model {
 
   @@index([name])
   @@index([status, nsfw])
+  @@index([createdAt])
+  @@index([updatedAt, id])
 }
 
 /// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
@@ -1895,6 +1897,47 @@ model ComicProjectReport {
 
   @@id([reportId, comicProjectId])
   @@index([comicProjectId], type: Hash)
+}
+
+/// A copy of a held author's ResourceReview, written in the same statement as a delete that would
+/// cascade it. Purged once the author's hold ends.
+model HeldResourceReview {
+  /// The original ResourceReview id.
+  id             Int       @id
+  modelId        Int
+  modelVersionId Int
+  userId         Int
+  rating         Int
+  recommended    Boolean
+  details        String?
+  exclude        Boolean
+  nsfw           Boolean
+  tosViolation   Boolean
+  metadata       Json?
+  createdAt      DateTime
+  updatedAt      DateTime
+  heldAt         DateTime  @default(now())
+  /// The holds on the author when it was copied.
+  holdReasons    String[]
+
+  @@index([userId])
+}
+
+/// A copy of a held author's Answer, written in the same statement as a Question delete that would
+/// cascade it. Purged once the author's hold ends.
+model HeldAnswer {
+  /// The original Answer id.
+  id          Int      @id
+  questionId  Int
+  userId      Int
+  content     String
+  createdAt   DateTime
+  updatedAt   DateTime
+  heldAt      DateTime @default(now())
+  /// The holds on the author when it was copied.
+  holdReasons String[]
+
+  @@index([userId])
 }
 
 model ResourceReview {
@@ -6684,6 +6727,30 @@ model BountyBenefactor {
   @@id([bountyId, userId])
   @@index([bountyId], type: Hash)
   @@index([userId], type: Hash)
+}
+
+/// An award a moderator release left neither paid nor refunded because its supporter has no charge
+/// on record, kept for a manual ruling. No foreign key: it outlives the bounty. Open while
+/// resolvedAt is null; an open row keeps the bounty from being deleted.
+model BountyUnpaidAward {
+  bountyId           Int
+  /// The supporter whose award is unpaid.
+  userId             Int
+  unitAmount         Int
+  buzzTransactionIds String[]  @default([])
+  winnerUserId       Int?
+  /// The bounty owner when the award was recorded, before any delete detaches the bounty.
+  ownerId            Int?
+  /// Null on a row backfilled from ModActivity, which did not record the moderator.
+  recordedById       Int?
+  recordedAt         DateTime  @default(now())
+  /// paid_winner | refunded_supporter | no_charge_found
+  ruling             String?
+  ledgerReference    String?
+  resolvedById       Int?
+  resolvedAt         DateTime?
+
+  @@id([bountyId, userId])
 }
 
 enum BountyEngagementType {

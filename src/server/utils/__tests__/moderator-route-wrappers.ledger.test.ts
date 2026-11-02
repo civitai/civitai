@@ -512,6 +512,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'apps/assistant/run-grant',
   'apps/assistant/runner-viewer-token',
   'apps/assistant/token',
+  // The /apps/dev page's Retry: a freshly signed dev-tunnel entry URL.
+  'apps/dev/entry-url',
   'auth/freshdesk',
   // Session submit (App Assistant's Submit for review): no OAuth-client token reaches submitVersion here.
   'blocks/submit-version',

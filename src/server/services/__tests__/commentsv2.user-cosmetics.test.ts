@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake';
+// The image-thread Kysely read, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/hot-reads', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).hotReadsOverDbMock()
+);
 
 const { getCommentsInfinite } = await import('~/server/services/commentsv2.service');
 

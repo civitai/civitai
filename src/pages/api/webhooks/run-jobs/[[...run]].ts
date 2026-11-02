@@ -65,6 +65,7 @@ import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
+import { purgeReleasedHeldCopiesJob } from '~/server/jobs/purge-released-held-copies';
 import {
   advanceReferralSubs,
   expireReferralTokens,
@@ -129,6 +130,7 @@ import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-che
 import { commentV3ParityJob } from '~/server/jobs/comment-v3-parity';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
+import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nudge';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
@@ -183,6 +185,7 @@ export const jobs: Job[] = [
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
   reindexRecentScheduledImages,
+  birthday2026IdleHatNudge,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,
@@ -205,6 +208,7 @@ export const jobs: Job[] = [
   cleanImageResources,
   deleteOldTrainingData,
   purgeReplacedFilesJob,
+  purgeReleasedHeldCopiesJob,
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,

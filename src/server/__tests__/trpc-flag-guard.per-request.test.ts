@@ -54,7 +54,13 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ensureFliptInitialized: async () => undefined,
 }));
 
-import { getFeatureFlagsAsync, getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import {
+  getFeatureFlagsAsync,
+  getFeatureFlagsLazyLegacy,
+  getFeatureFlagsLazyProto,
+  type FeatureAccess,
+  type FeatureAccessContext,
+} from '~/server/services/feature-flags.service';
 import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -81,7 +87,15 @@ const makeUser = (over: Partial<SessionUser> = {}) =>
     ...over,
   } as SessionUser);
 
-const ctxFor = (user: SessionUser | undefined, req: NextApiRequest) =>
+// Both implementations behind `feature-flags-lazy-proto`, chosen explicitly (never through
+// `getFeatureFlagsLazy`, whose choice would follow this file's Flipt stub's answer for the switch).
+type BuildLazy = (ctx: FeatureAccessContext) => FeatureAccess;
+const impls: { name: string; build: BuildLazy }[] = [
+  { name: 'legacy', build: getFeatureFlagsLazyLegacy },
+  { name: 'proto', build: getFeatureFlagsLazyProto },
+];
+
+const ctxFor = (build: BuildLazy, user: SessionUser | undefined, req: NextApiRequest) =>
   ({
     user,
     acceptableOrigin: true,
@@ -91,7 +105,7 @@ const ctxFor = (user: SessionUser | undefined, req: NextApiRequest) =>
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     // As `createContext` builds it: one lazy object per request.
-    features: getFeatureFlagsLazy({ user, req }),
+    features: build({ user, req }),
     track: { action: vi.fn(() => Promise.resolve(true)) },
   } as never);
 
@@ -109,8 +123,8 @@ const batchRouter = router({
   hubsA: publicProcedure.use(isFlagProtected('userHubs')).query(() => 'ok'),
   hubsB: publicProcedure.use(isFlagProtected('userHubs')).query(() => 'ok'),
   hubsC: publicProcedure.use(isFlagProtected('userHubs')).query(() => 'ok'),
-  reviewA: publicProcedure.use(isFlagProtected('collectionAiReview')).query(() => 'ok'),
-  reviewB: publicProcedure.use(isFlagProtected('collectionAiReview')).query(() => 'ok'),
+  reviewA: publicProcedure.use(isFlagProtected('creatorShop')).query(() => 'ok'),
+  reviewB: publicProcedure.use(isFlagProtected('creatorShop')).query(() => 'ok'),
 });
 
 const batch = (caller: Caller) =>
@@ -127,19 +141,19 @@ beforeEach(() => {
   flipt.calls.length = 0;
 });
 
-describe('one HTTP request', () => {
+describe.each(impls)('one HTTP request ($name lazy object)', ({ build }) => {
   it('evaluates each guarded flag once for a whole batch, not the registry per procedure', async () => {
     flipt.overrides['user-hubs'] = true;
-    flipt.overrides['collection-ai-review'] = null; // static ['mod'] decides: a free user is refused
+    flipt.overrides['creator-shop'] = null; // static ['mod'] decides: a free user is refused
     const caller = batchRouter.createCaller(
-      ctxFor(makeUser(), makeReq('civitai.com', 'US'))
+      ctxFor(build, makeUser(), makeReq('civitai.com', 'US'))
     ) as unknown as Caller;
 
     expect(await batch(caller)).toEqual([true, true, true, false, false]);
-    // Three procedures on `userHubs` and two on `collectionAiReview` share one request: one
+    // Three procedures on `userHubs` and two on `creatorShop` share one request: one
     // evaluation per distinct flag, plus the switch itself.
     expect(flipt.calls.map((c) => c.flag).sort()).toEqual([
-      'collection-ai-review',
+      'creator-shop',
       SWITCH_KEY, // 'trpc-flag-guard-per-request' — the list is sorted
       'user-hubs',
     ]);
@@ -148,9 +162,9 @@ describe('one HTTP request', () => {
   it('with the switch off, the guard takes the whole-registry path and answers the same', async () => {
     flipt.overrides[SWITCH_KEY] = null; // dark: no Flipt answer, static `[]` = off
     flipt.overrides['user-hubs'] = true;
-    flipt.overrides['collection-ai-review'] = null;
+    flipt.overrides['creator-shop'] = null;
     const caller = batchRouter.createCaller(
-      ctxFor(makeUser(), makeReq('civitai.com', 'US'))
+      ctxFor(build, makeUser(), makeReq('civitai.com', 'US'))
     ) as unknown as Caller;
 
     expect(await batch(caller)).toEqual([true, true, true, false, false]);

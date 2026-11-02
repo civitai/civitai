@@ -1864,6 +1864,32 @@ export type BountyStat = {
   commentCountYear: number;
   commentCountAllTime: number;
 };
+export type BountyUnpaidAward = {
+  bountyId: number;
+  /**
+   * The supporter whose award is unpaid.
+   */
+  userId: number;
+  unitAmount: number;
+  buzzTransactionIds: Generated<string[]>;
+  winnerUserId: number | null;
+  /**
+   * The bounty owner when the award was recorded, before any delete detaches the bounty.
+   */
+  ownerId: number | null;
+  /**
+   * Null on a row backfilled from ModActivity, which did not record the moderator.
+   */
+  recordedById: number | null;
+  recordedAt: Generated<Timestamp>;
+  /**
+   * paid_winner | refunded_supporter | no_charge_found
+   */
+  ruling: string | null;
+  ledgerReference: string | null;
+  resolvedById: number | null;
+  resolvedAt: Timestamp | null;
+};
 export type BoxContent = {
   id: Generated<number>;
   boxDefinitionId: number;
@@ -3336,6 +3362,45 @@ export type GenerationSizePreset = {
   width: number;
   height: number;
   createdAt: Generated<Timestamp>;
+};
+export type HeldAnswer = {
+  /**
+   * The original Answer id.
+   */
+  id: number;
+  questionId: number;
+  userId: number;
+  content: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  heldAt: Generated<Timestamp>;
+  /**
+   * The holds on the author when it was copied.
+   */
+  holdReasons: string[];
+};
+export type HeldResourceReview = {
+  /**
+   * The original ResourceReview id.
+   */
+  id: number;
+  modelId: number;
+  modelVersionId: number;
+  userId: number;
+  rating: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  nsfw: boolean;
+  tosViolation: boolean;
+  metadata: unknown | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  heldAt: Generated<Timestamp>;
+  /**
+   * The holds on the author when it was copied.
+   */
+  holdReasons: string[];
 };
 export type HomeBlock = {
   id: Generated<number>;
@@ -6421,6 +6486,7 @@ export type DB = {
   BountyRank: BountyRank;
   BountyReport: BountyReport;
   BountyStat: BountyStat;
+  BountyUnpaidAward: BountyUnpaidAward;
   BoxContent: BoxContent;
   BoxOddsSnapshot: BoxOddsSnapshot;
   BoxOpening: BoxOpening;
@@ -6544,6 +6610,8 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
+  HeldAnswer: HeldAnswer;
+  HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;

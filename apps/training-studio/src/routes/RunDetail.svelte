@@ -45,6 +45,7 @@
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
+    editPairCount,
     epochWeightsFileName,
     namedDownloadUrl,
     overallProgressPct,
@@ -54,7 +55,7 @@
     type TrainingDetailEpoch,
   } from '$lib/data/trainingRows';
   import { mediaCount } from '$lib/data/trainingModels';
-  import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
+  import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
   import { extOfAir } from '$lib/media';
   import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
@@ -293,6 +294,9 @@
     return res.blob();
   }
 
+  const pairDataset = $derived(isPairDataset(d.dataset));
+  const pairCount = $derived(editPairCount(d.dataset));
+
   let downloading = $state(false);
   let downloadError = $state('');
   async function downloadDataset() {
@@ -303,8 +307,9 @@
       const pad = Math.max(2, String(d.dataset.length).length);
       const { blob } = await buildDatasetZip(
         d.dataset.map((item, i) => ({
-          base: String(i + 1).padStart(pad, '0'),
-          ext: airExt(item.air),
+          // An edit run keeps its control_1/ + main/ layout, which the edit Data step imports as pairs.
+          base: item.path?.replace(/\.[^./]+$/, '') ?? String(i + 1).padStart(pad, '0'),
+          ext: (item.path && extOfAir(item.path)) || airExt(item.air),
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
         }))
@@ -375,7 +380,7 @@
 
   // Reuse this run's already-scanned dataset blobs as-is (no re-upload) to seed a new training.
   async function reuseDataset() {
-    handoffReuse(await toReuseItems(d.dataset, d.workflowId));
+    handoffReuse(toReuseItems(d.dataset, d.workflowId, d.sourceImages));
   }
 
   // Only an explicit host `false` gates — absent means the host has no membership knowledge and
@@ -1281,7 +1286,9 @@
         <IconPhoto size={16} stroke={2} class="text-dark-2" />
         Training data
         <span class="font-mono text-xs font-normal text-dark-2">
-          {mediaCount(d.dataset.length, d.media)}
+          {pairDataset
+            ? `${pairCount} ${pairCount === 1 ? 'pair' : 'pairs'}`
+            : mediaCount(d.dataset.length, d.media)}
         </span>
         <span class="ml-auto flex items-center gap-1.5">
           <button

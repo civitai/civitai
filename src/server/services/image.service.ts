@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { reviewCollectionImageSql } from '~/server/services/collection-review.sql';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type { EventViewer } from '~/server/events/event-access';
@@ -1125,10 +1126,17 @@ export async function deleteImages(
         SELECT id FROM "Image"
         WHERE id IN (${Prisma.join(ids)})
           ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
+        -- Locked, so a change to the row's own columns made meanwhile is re-checked against the
+        -- guard here, and the thread detach below never acts on an image the guard then keeps.
+        -- Holds kept in other tables are still read from the statement's snapshot.
+        ${onlyWhere ? Prisma.sql`FOR UPDATE` : Prisma.empty}
       ),
       ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
       DELETE FROM "Image"
       WHERE id IN (SELECT id FROM doomed)
+        -- Again here: a row changed while this statement waits for it is re-checked only against
+        -- the DELETE's own WHERE, never the CTE's, and only on its own columns.
+        ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
@@ -2104,6 +2112,12 @@ const getAllImagesUncaptured = async (
     throwOnStatementTimeout?: boolean;
     /** `false`: the per-image caches serve hits but don't write misses back. */
     cacheWriteBack?: boolean;
+    /**
+     * With `pending`: a collection whose REVIEW and REJECTED submissions the viewer reviews, so its
+     * images not yet rated are shown to them too. Server-set only; checked against the viewer's
+     * ownership or MANAGE permission in the query.
+     */
+    reviewCollectionId?: number;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -2181,6 +2195,7 @@ const getAllImagesUncaptured = async (
     minorOnly,
     pendingReviewOnly,
     cacheWriteBack,
+    reviewCollectionId,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
   let { dbTarget = 'read' } = input;
@@ -2788,7 +2803,14 @@ const getAllImagesUncaptured = async (
     } else if (userId) {
       AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
       AND.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId})))`
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId}))${
+          reviewCollectionId
+            ? Prisma.sql` OR ${reviewCollectionImageSql({
+                collectionId: reviewCollectionId,
+                userId,
+              })}`
+            : Prisma.empty
+        })`
       );
     }
   } else {

@@ -1,3 +1,4 @@
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { addApiKey, deleteApiKeys } from '~/server/services/api-key.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
@@ -12,6 +13,7 @@ export default AuthedEndpoint(
       if (!host) return res.status(400).json({ error: 'Missing host header' });
       const name = `${ORCHESTRATOR_KEY_NAME}:${host}`;
 
+      await assertAccountNotRestricted(user.id);
       await deleteApiKeys({ userId: user.id, type: 'System', name });
 
       const key = await addApiKey({

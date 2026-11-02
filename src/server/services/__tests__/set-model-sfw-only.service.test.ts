@@ -126,7 +126,7 @@ const baseModelRow = {
   lockedProperties: [] as string[],
 };
 
-function mockBefore(overrides: Partial<typeof baseModelRow>) {
+function mockBefore(overrides: Partial<typeof baseModelRow> & { meta?: unknown }) {
   mockDbWrite.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
 }
 
@@ -174,6 +174,36 @@ beforeEach(() => {
 });
 
 describe('setModelSfwOnly — set', () => {
+  // A later lift must not put back a rating the moderator has since ruled on.
+  const ownerFlagOverride = {
+    at: '2026-10-01T00:00:00.000Z',
+    flags: ['minor'],
+    prevNsfw: true,
+    prevSfwOnly: false,
+    prevLockedProperties: ['nsfw'],
+  };
+  const rawWrites = () =>
+    mockDbWrite.$executeRaw.mock.calls.map(
+      (call) =>
+        Array.from(call[0] as TemplateStringsArray).join('?') + JSON.stringify(call.slice(1))
+    );
+
+  it.each([true, false])(
+    "drops an owner's flag override and supersedes the minor snapshot (sfwOnly: %s)",
+    async (sfwOnly) => {
+      mockBefore({ sfwOnly: !sfwOnly, meta: { ownerFlagOverride } });
+      await setModelSfwOnly({ id: MODEL_ID, sfwOnly, userId: MODERATOR_ID });
+      expect(rawWrites().filter((sql) => sql.includes('ownerFlagOverride'))).toHaveLength(1);
+      expect(rawWrites().filter((sql) => sql.includes("'supersededAt'"))).toHaveLength(1);
+    }
+  );
+
+  it('writes no override change on a model without one', async () => {
+    mockBefore({});
+    await setModelSfwOnly({ id: MODEL_ID, sfwOnly: true, userId: MODERATOR_ID });
+    expect(rawWrites().filter((sql) => sql.includes('ownerFlagOverride'))).toHaveLength(0);
+  });
+
   it('writes sfwOnly/nsfw/gallerySettings.level and unions locks without dropping an existing poi lock', async () => {
     mockBefore({ lockedProperties: ['poi'] });
 
