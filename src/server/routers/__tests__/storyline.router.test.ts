@@ -16,6 +16,10 @@ const { getBlockedPairIds, hiddenUsersCached } = vi.hoisted(() => ({
   getBlockedPairIds: vi.fn(),
   hiddenUsersCached: vi.fn(),
 }));
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   // Straight through to the origin.
