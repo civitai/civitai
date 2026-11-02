@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Thumbnail from './Thumbnail.svelte';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { PageData } from './$types';
 
@@ -9,6 +10,7 @@
     correct: 'Rightly judged',
     wrong: 'Not quite',
     inconclusive: 'Set aside',
+    forfeited: 'Forfeited by the career reset',
   } as const;
 </script>
 
@@ -18,11 +20,7 @@
 
 {#each data.judgments as judgment (`${judgment.itemId}:${judgment.at}`)}
   <article class="judgment">
-    {#if judgment.src}
-      <img src={judgment.src} alt="The subject of this judgment" width="96" height="96" />
-    {:else}
-      <div class="gone" role="img" aria-label="This image is no longer shown"></div>
-    {/if}
+    <Thumbnail src={judgment.src} />
     <div>
       <p class="muted">{judgment.prompt}</p>
       <p>Your answer: {judgment.answerLabel}</p>
@@ -53,15 +51,6 @@
     gap: 1rem;
     padding: 0.75rem 0;
     border-bottom: 1px solid var(--border);
-  }
-  img,
-  .gone {
-    flex: none;
-    width: 96px;
-    height: 96px;
-    object-fit: cover;
-    border: 1px solid var(--border);
-    background: var(--panel);
   }
   p {
     margin: 0.15rem 0;

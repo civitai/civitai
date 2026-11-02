@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const listJudgments = vi.hoisted(() => vi.fn());
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
-vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => `cdn/${key}` }));
+vi.mock('$lib/server/image-url', () => ({
+  imageUrl: (key: string, width?: number) => `cdn/${key}@${width}`,
+  THUMBNAIL_WIDTH: 192,
+}));
 vi.mock('$lib/server/progression/judgments', () => ({ listJudgments }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 
@@ -56,7 +59,7 @@ describe('judgments load', () => {
     const page = await run();
 
     expect(page.hasMore).toBe(true);
-    expect(page.judgments.map((j: { src: string | null }) => j.src)).toEqual(['cdn/a', null]);
+    expect(page.judgments.map((j: { src: string | null }) => j.src)).toEqual(['cdn/a@192', null]);
     expect(page.status).toMatchObject({ rank: 'Acolyte', fervor: 0 });
   });
 });

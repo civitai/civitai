@@ -2,7 +2,9 @@ import { env } from '$env/dynamic/private';
 
 const WIDTH = 800;
 
-export function imageUrl(key: string): string {
+export const THUMBNAIL_WIDTH = 192;
+
+export function imageUrl(key: string, width = WIDTH): string {
   const base = env.IMAGE_LOCATION ?? '';
-  return [base, key, `width=${WIDTH}`, `${key}.jpeg`].filter(Boolean).join('/');
+  return [base, key, `width=${width}`, `${key}.jpeg`].filter(Boolean).join('/');
 }

@@ -10,4 +10,11 @@ describe('imageUrl', () => {
     process.env.IMAGE_LOCATION = 'https://cdn.example/acct';
     expect(imageUrl('abc-123')).toBe('https://cdn.example/acct/abc-123/width=800/abc-123.jpeg');
   });
+
+  it('serves a narrower variant on request', () => {
+    process.env.IMAGE_LOCATION = 'https://cdn.example/acct';
+    expect(imageUrl('abc-123', 192)).toBe(
+      'https://cdn.example/acct/abc-123/width=192/abc-123.jpeg'
+    );
+  });
 });

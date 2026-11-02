@@ -1,5 +1,5 @@
 import { db } from '$lib/server/db';
-import { imageUrl } from '$lib/server/image-url';
+import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
 import { listJudgments } from '$lib/server/progression/judgments';
 import { requireMember } from '$lib/server/membership';
 import type { PageServerLoad } from './$types';
@@ -22,7 +22,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     status,
     judgments: judgments.map((j) => ({
       ...j,
-      src: j.imageKey ? imageUrl(j.imageKey) : null,
+      src: j.imageKey ? imageUrl(j.imageKey, THUMBNAIL_WIDTH) : null,
       at: j.at.toISOString(),
     })),
   };
