@@ -527,8 +527,10 @@ async function processImageRating({
   const voteLimit = getVoteLimitForRank(valueInQueue.rank);
 
   if (currentVoteCount >= voteLimit && valueInQueue.rank !== NewOrderRankType.Acolyte) {
-    // Vote limit already reached, remove from queue
+    // Vote limit already reached with no decision: the round ends undecided, so its votes are
+    // settled as Inconclusive, as the daily purge does for images that never reached one.
     await removeImageFromQueue({ imageId, valueInQueue });
+    await voidPendingRatings([imageId]);
     return { stats: player.stats };
   }
 
@@ -568,6 +570,8 @@ async function processImageRating({
 
   let currentNsfwLevel: NsfwLevel | undefined = image.nsfwLevel;
   let votesVoided = false;
+  // Set only when this vote decided the image: the level decided, or null for no consensus.
+  let decidedLevel: NsfwLevel | null | undefined;
 
   // Check if we've reached vote limits after the atomic increment
   const reachedKnightVoteLimit =
@@ -578,6 +582,8 @@ async function processImageRating({
   // Now, process what to do with the image:
   if (reachedKnightVoteLimit) {
     const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
+    // Unreachable while the Knight vote limit is below maxKnightVotes: a vote past the limit is
+    // refused above.
     const hitMaxVotes = newVoteCount >= newOrderConfig.limits.maxKnightVotes;
     if (consensus || hitMaxVotes) {
       // Guard against excessive down-rating: allow down-rating by at most 1 level,
@@ -639,6 +645,8 @@ async function processImageRating({
           });
         }
 
+        decidedLevel = consensus ? currentNsfwLevel ?? consensus : null;
+
         // Update pending ratings
         await updatePendingImageRatings({ imageId, rating: consensus });
 
@@ -658,13 +666,15 @@ async function processImageRating({
         : NewOrderImageRatingStatus.AcolyteFailed;
   } else if (votesVoided) {
     status = NewOrderImageRatingStatus.Inconclusive;
-  } else if (reachedKnightVoteLimit && currentNsfwLevel !== undefined) {
+  } else if (decidedLevel === null) {
+    status = NewOrderImageRatingStatus.Inconclusive;
+  } else if (decidedLevel !== undefined) {
     status =
-      currentNsfwLevel === rating
+      decidedLevel === rating
         ? NewOrderImageRatingStatus.Correct
         : NewOrderImageRatingStatus.Failed;
   } else {
-    // Knights leave the image in the pending status until their vote is confirmed.
+    // Until a decision is made, Knight votes stay Pending; the decision grades them.
     status = NewOrderImageRatingStatus.Pending;
   }
 
@@ -1753,7 +1763,11 @@ export async function getImagesQueue({
         // purge will.
         if (removed) {
           await voidPendingRatings(heldIds);
-          await clearImageRatings(heldIds);
+          try {
+            await clearImageRatings(heldIds);
+          } catch (e) {
+            handleLogError(e as Error, 'new-order-held-image-tally-clear');
+          }
         }
       }
 

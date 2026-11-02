@@ -239,6 +239,18 @@ describe('pending votes on images New Order drops for review', () => {
     expect(mockClearRatings).not.toHaveBeenCalled();
   });
 
+  it('(c) a failed tally clear does not fail the queue read', async () => {
+    mockClearRatings.mockRejectedValueOnce(new Error('redis down'));
+    knightPool.getAll.mockResolvedValueOnce([
+      { value: String(CLEAN), score: 0 },
+      { value: String(HELD), score: 0 },
+    ]);
+
+    const served = await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
+
+    expect(served.map((i) => i.id)).toEqual([CLEAN]);
+  });
+
   it('(c) a failed void does not fail the queue read', async () => {
     mockCh.insert.mockRejectedValue(new Error('clickhouse down'));
     knightPool.getAll.mockResolvedValueOnce([

@@ -63,6 +63,7 @@ import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
@@ -1155,8 +1156,11 @@ export async function handleUpdateImageNsfwLevel({
         rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
       });
       if (valueInQueue) {
-        await valueInQueue.pool.reset({ id: input.id });
-        await clearImageRatings([input.id]);
+        // The rating is already applied; leaving the queue is cleanup and must not fail it.
+        await Promise.all([
+          valueInQueue.pool.reset({ id: input.id }),
+          clearImageRatings([input.id]),
+        ]).catch((e) => handleLogError(e as Error, 'new-order-mod-rating-queue-cleanup'));
       }
     }
 
