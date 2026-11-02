@@ -181,7 +181,13 @@ afterEach(() =>
     UPDATE "StorylineChapter" SET "postId" = 102, "removedAt" = NULL WHERE id = 12;
     UPDATE "Post" SET "tosViolation" = false WHERE id = 102;
     UPDATE "StorylineChapter" SET "removedAt" = NULL WHERE id = 11;
-    UPDATE "Storyline" SET "tosViolation" = false WHERE id = 1;
+    UPDATE "Storyline" SET "tosViolation" = false, "userId" = 1 WHERE id = 1;
+    UPDATE "Post" SET "publishedAt" = now() - interval '1 day' WHERE id = 102;
+    UPDATE "User" SET "bannedAt" = NULL WHERE id = 4;
+    DELETE FROM "Placement" WHERE id = 9;
+    DELETE FROM "Image" WHERE "postId" = 209;
+    DELETE FROM "Post" WHERE id = 209;
+    DELETE FROM "User" WHERE id = 6;
   `)
 );
 
@@ -258,17 +264,8 @@ describe('the readiness selection while chapter 1 hides the storyline', () => {
       UPDATE "Storyline" SET "userId" = ${HEIR} WHERE id = 1;
       ${unpublished}
     `);
-    try {
-      await expect(select()).resolves.toEqual([...NOT_HELD, 9].sort((a, b) => a - b));
-    } finally {
-      await db.pg.exec(`
-        UPDATE "Storyline" SET "userId" = ${OWNER} WHERE id = 1;
-        DELETE FROM "Placement" WHERE id = 9;
-        DELETE FROM "Image" WHERE "postId" = 209;
-        DELETE FROM "Post" WHERE id = 209;
-        DELETE FROM "User" WHERE id = ${HEIR};
-      `);
-    }
+    // Undone in `afterEach`.
+    await expect(select()).resolves.toEqual([...NOT_HELD, 9].sort((a, b) => a - b));
   });
 
   // Only chapter 1 can hold a row: an unpublished chapter 2 (the parent) does not.
@@ -289,12 +286,17 @@ describe('the readiness selection while chapter 1 hides the storyline', () => {
  * or a chapter matching `participantChapterWhere`) and stays there: it runs on every paid submit
  * beside the collaborator read it needs anyway. Everywhere else reads `storylineParticipantSql`.
  * The two must agree, or a placer is refused at submit and then held (or the reverse).
+ *
+ * Pins `participantChapterWhere` against the SQL, applied by a reading of Prisma's filter, beside
+ * the submit check's `acceptedAt` rule as written here: a change to that function's own reads is
+ * not seen, so keep it to that where object.
  */
 describe('participation, as SQL and as the submit check reads it', () => {
   /** Prisma's `where` for the fields `participantChapterWhere` uses, applied to a row. */
   const matches = (row: Record<string, unknown> | null, where: object): boolean =>
     Object.entries(where).every(([key, want]) => {
-      const value = row?.[key];
+      if (!row || !(key in row)) throw new Error(`no data for "${key}": add it to the row`);
+      const value = row[key];
       if (want === null) return value === null;
       if (typeof want === 'object' && 'is' in want)
         return value != null && matches(value as Record<string, unknown>, want.is as object);
@@ -339,22 +341,42 @@ describe('participation, as SQL and as the submit check reads it', () => {
     return row.participant;
   };
 
+  // Unpublished and banned change neither form today: there so a clause added to one form only
+  // (a publish or ban check) has a row that tells them apart.
   it.each([
-    ['as written', ''],
+    ['as written', '', [OWNER, COLLABORATOR, CONTRIBUTOR]],
     [
       'with the contributor’s chapter removed',
       `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 12`,
+      [OWNER, COLLABORATOR],
     ],
-    ['with it taken down', `UPDATE "Post" SET "tosViolation" = true WHERE id = 102`],
-    ['with its post deleted', `UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 12`],
-  ])('agrees for every user %s', async (_n, sql) => {
+    [
+      'with it taken down',
+      `UPDATE "Post" SET "tosViolation" = true WHERE id = 102`,
+      [OWNER, COLLABORATOR],
+    ],
+    [
+      'with its post deleted',
+      `UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 12`,
+      [OWNER, COLLABORATOR],
+    ],
+    [
+      'with its post unpublished',
+      `UPDATE "Post" SET "publishedAt" = NULL WHERE id = 102`,
+      [OWNER, COLLABORATOR, CONTRIBUTOR],
+    ],
+    [
+      'with the contributor banned',
+      `UPDATE "User" SET "bannedAt" = now() WHERE id = 4`,
+      [OWNER, COLLABORATOR, CONTRIBUTOR],
+    ],
+  ])('agrees for every user %s', async (_n, sql, participants) => {
     if (sql) await db.pg.exec(sql);
     const users = [OWNER, STRANGER, COLLABORATOR, CONTRIBUTOR, INVITEE];
     const both = await Promise.all(
       users.map(async (u) => [u, await sqlSays(u), await submitCheckSays(u)] as const)
     );
     expect(both.filter(([, a, b]) => a !== b)).toEqual([]);
-    // Not vacuous: both forms see a participant and a non-participant here.
-    expect(new Set(both.map(([, a]) => a))).toEqual(new Set([true, false]));
+    expect(both.filter(([, a]) => a).map(([u]) => u)).toEqual(participants);
   });
 });
