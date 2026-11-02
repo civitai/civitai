@@ -8,8 +8,11 @@ type PathChapter = Pick<StorylinePathChapter, 'chapterId' | 'depth' | 'post' | '
 export type StorylinePostParent = {
   chapterId: number;
   name: string;
-  /** "ch 2", or "CivChan's ch 6" for a parent someone other than the storyline's owner wrote. */
-  where: string;
+  /**
+   * "ch 2", or "CivChan's ch 6" for a parent someone other than the storyline's owner wrote.
+   * Absent for a parent this reader may not see, whose name is already its number.
+   */
+  where?: string;
   /** The parent's post page; absent for a chapter this reader may not see. */
   href?: string;
 };
@@ -26,13 +29,19 @@ export function getStorylinePostParents(
   const before = path[path.length - 2];
   if (!end) return [];
   const parent = (chapter: PathChapter): StorylinePostParent => {
+    // Plain "Chapter 3": nothing about why it is hidden, and no second "(ch 3)".
+    if (!chapter.post)
+      return {
+        chapterId: chapter.chapterId,
+        name: getStorylineChapterName(chapter, { inSentence: true }),
+      };
     const number = `ch ${chapter.depth + 1}`;
-    const author = chapter.post?.username;
+    const author = chapter.post.username;
     return {
       chapterId: chapter.chapterId,
       name: getStorylineChapterName(chapter),
-      where: author && chapter.post?.userId !== ownerId ? `${author}'s ${number}` : number,
-      href: chapter.post ? `/posts/${chapter.post.id}` : undefined,
+      where: author && chapter.post.userId !== ownerId ? `${author}'s ${number}` : number,
+      href: `/posts/${chapter.post.id}`,
     };
   };
   return [...(before ? [parent(before)] : []), ...(end.joins ?? []).map(parent)];
