@@ -119,7 +119,7 @@ export function listUserCosmeticsWithCosmetic(
       'Cosmetic.flags as cosmeticFlags',
     ])
     .where('UserCosmetic.userId', '=', userId);
-  if (equipped) query = query.where('UserCosmetic.equippedAt', 'is not', null);
+  // MUTANT M2: equipped filter dropped
   return query.orderBy('UserCosmetic.cosmeticId').orderBy('UserCosmetic.claimKey').execute();
 }
 

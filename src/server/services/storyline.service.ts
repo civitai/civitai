@@ -3227,7 +3227,7 @@ export async function getStorylinesForPosts({
   if (!postIds.length) return {};
   const readChapters = async () =>
     (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_8))
-      ? readStorylineChaptersForPostsViaKysely((await loadKyselyDb()).kyselyRead, postIds)
+      ? readStorylineChaptersForPostsViaKysely((await loadKyselyDb()).kyselyWrite, postIds) // MUTANT M4
       : readStorylineChaptersForPostsViaPrisma(dbRead, postIds);
   const [chapters, blockedUserIds] = await Promise.all([
     readChapters(),
