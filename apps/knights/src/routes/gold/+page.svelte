@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import StatusBar from '$lib/StatusBar.svelte';
+  import type { ComponentProps } from 'svelte';
+  import Icon from '$lib/Icon.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -8,110 +9,216 @@
   const balance = $derived(data.balance);
   const canConvert = $derived(data.conversionOpen && balance.buzzOnConvert > 0);
   let converting = $state(false);
+
+  type Row = { icon: ComponentProps<typeof Icon>['name']; title: string; note: string; value: number; tone: string };
+  const rows = $derived.by(() => {
+    const list: Row[] = [
+      { icon: 'coins', title: 'Convertible', note: 'Earned; yours to convert', value: balance.convertible, tone: 'gold' },
+      {
+        icon: 'hourglass',
+        title: 'Pending',
+        note: 'From judgments not yet settled; a wrong one earns nothing',
+        value: balance.pending,
+        tone: '',
+      },
+    ];
+    if (balance.held) {
+      list.push({ icon: 'snowflake', title: 'Frozen', note: 'Kept safe while your account is under review', value: balance.frozen, tone: 'frozen' });
+    }
+    if (balance.onItsWay > 0) {
+      list.push({ icon: 'send', title: 'On its way', note: 'A conversion Buzz has not confirmed yet; it is paid once', value: balance.onItsWay, tone: '' });
+    }
+    list.push({ icon: 'circle-check', title: 'Converted so far', note: 'Paid to you as Yellow Buzz', value: balance.converted, tone: 'paid' });
+    return list;
+  });
 </script>
 
-<h1>Gold</h1>
+<div class="page-wide gold">
+  <div class="ledger">
+    <p class="eyebrow">Your ledger</p>
+    <h1 class="page-title">Gold</h1>
+    <p class="lede">
+      Earned gold becomes Yellow Buzz. Pending gold settles when each image is decided.
+    </p>
 
-<StatusBar status={data.status} />
+    <ul class="rows">
+      {#each rows as row (row.title)}
+        <li class="row {row.tone}">
+          <Icon name={row.icon} size={22} />
+          <span class="text">
+            <span class="title">{row.title}</span>
+            <span class="note">{row.note}</span>
+          </span>
+          <span class="value">{gold(row.value)}</span>
+        </li>
+      {/each}
+    </ul>
+  </div>
 
-<table>
-  <tbody>
-    <tr>
-      <th scope="row">Convertible</th>
-      <td>{gold(balance.convertible)}</td>
-      <td class="muted">earned; yours to convert</td>
-    </tr>
-    <tr>
-      <th scope="row">Pending</th>
-      <td>{gold(balance.pending)}</td>
-      <td class="muted">from judgments not yet settled; a wrong one earns nothing</td>
-    </tr>
+  <aside class="side" class:held={balance.held}>
     {#if balance.held}
-      <tr class="frozen">
-        <th scope="row">Frozen</th>
-        <td>{gold(balance.frozen)}</td>
-        <td class="muted">kept safe while your account is under review</td>
-      </tr>
-    {/if}
-    {#if balance.onItsWay > 0}
-      <tr>
-        <th scope="row">On its way</th>
-        <td>{gold(balance.onItsWay)}</td>
-        <td class="muted">a conversion Buzz has not confirmed yet; it is paid once</td>
-      </tr>
-    {/if}
-    <tr>
-      <th scope="row">Converted so far</th>
-      <td>{gold(balance.converted)}</td>
-      <td class="muted">paid to you as Yellow Buzz</td>
-    </tr>
-  </tbody>
-</table>
-
-<p class="muted">
-  {gold(balance.goldPerBuzz)} gold is 1 Yellow Buzz, converted in whole Buzz, at least {balance.minBuzz} at a time.
-</p>
-
-{#if !data.conversionOpen}
-  <p class="muted">Converting gold to Buzz isn't open yet. Your gold keeps accruing.</p>
-{/if}
-
-<form
-  method="POST"
-  action="?/convert"
-  use:enhance={() => {
-    converting = true;
-    return async ({ update }) => {
-      try {
-        await update();
-      } finally {
-        converting = false;
-      }
-    };
-  }}
->
-  <button type="submit" disabled={!canConvert || converting}>
-    {#if converting}
-      Converting…
-    {:else if canConvert}
-      Convert to {balance.buzzOnConvert} Buzz
+      <p class="eyebrow crimson">Payout held</p>
+      <h2 class="side-title">Your gold is frozen.</h2>
+      <p class="muted">
+        You cannot convert gold while the review lasts. Nothing is lost, and judging still earns XP.
+      </p>
     {:else}
-      Convert
+      <p class="eyebrow">Convert</p>
+      <p class="buzz"><span class="amount">{gold(balance.buzzOnConvert)}</span> <span class="unit label-caps">Buzz</span></p>
+      {#if canConvert}
+        <p class="muted from">
+          From {gold(balance.buzzOnConvert * balance.goldPerBuzz)} of your {gold(balance.convertible)} convertible
+          gold. The rest stays in your ledger.
+        </p>
+      {/if}
+      <p class="muted from">
+        {gold(balance.goldPerBuzz)} gold is 1 Yellow Buzz, converted in whole Buzz, at least {balance.minBuzz} at a time.
+      </p>
     {/if}
-  </button>
-</form>
-{#if form?.message}
-  {#if form.ok}
-    <p role="status" class="ok">{form.message}</p>
-  {:else}
-    <p role="alert" class="problem">{form.message}</p>
-  {/if}
-{/if}
 
-<p><a href="/play" data-sveltekit-preload-data="off">Back</a></p>
+    {#if !data.conversionOpen}
+      <p class="muted">Converting gold to Buzz isn't open yet. Your gold keeps accruing.</p>
+    {/if}
+
+    <form
+      method="POST"
+      action="?/convert"
+      use:enhance={() => {
+        converting = true;
+        return async ({ update }) => {
+          try {
+            await update();
+          } finally {
+            converting = false;
+          }
+        };
+      }}
+    >
+      <button type="submit" class="btn primary block" disabled={!canConvert || converting}>
+        {#if converting}
+          Converting…
+        {:else if canConvert}
+          Convert to {balance.buzzOnConvert} Buzz
+        {:else}
+          Convert
+        {/if}
+      </button>
+    </form>
+    {#if form?.message}
+      {#if form.ok}
+        <p role="status" class="ok">{form.message}</p>
+      {:else}
+        <p role="alert" class="problem">{form.message}</p>
+      {/if}
+    {/if}
+  </aside>
+</div>
 
 <style>
-  table {
-    border-collapse: collapse;
-    margin: 1rem 0;
+  p {
+    margin: 0;
   }
-  th,
-  td {
-    padding: 0.4rem 1rem 0.4rem 0;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
+  .gold {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    gap: 3rem;
+    align-items: start;
   }
-  .muted {
-    color: var(--muted);
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 0.25rem;
+    color: var(--io-parchment-muted);
   }
-  .frozen {
-    color: var(--gold);
+  .row .text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .title {
+    color: var(--io-parchment);
+    font: 500 1.05rem/1.3 var(--io-font-ui);
+  }
+  .note {
+    font: 400 0.9rem/1.35 var(--io-font-ui);
+  }
+  .value {
+    color: var(--io-parchment);
+    font: 700 1.75rem/1 var(--io-font-display);
+  }
+  .row.gold .value,
+  .row.gold {
+    color: var(--io-gold);
+  }
+  .row.paid,
+  .row.paid .value {
+    color: var(--io-verdigris);
+  }
+  .row.frozen,
+  .row.frozen .value {
+    color: var(--io-crimson-text);
+  }
+  .row.gold .title,
+  .row.paid .title,
+  .row.frozen .title {
+    color: var(--io-parchment);
+  }
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.75rem;
+    border: 1.5px solid var(--io-gold);
+    border-radius: 8px;
+    background: var(--io-surface);
+  }
+  .side.held {
+    border-color: var(--io-crimson);
+  }
+  .side-title {
+    margin: 0;
+    color: var(--io-parchment);
+    font-size: 1.6rem;
+    text-transform: uppercase;
+  }
+  .buzz {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+  .amount {
+    color: var(--io-gold);
+    font: 700 4rem/1 var(--io-font-display);
+  }
+  .unit {
+    color: var(--io-parchment);
+    font-size: 1.1rem;
+  }
+  .from {
+    font: 400 0.95rem/1.45 var(--io-font-ui);
   }
   .ok {
-    color: var(--gold);
+    color: var(--io-gold);
   }
   .problem {
-    color: #e5766a;
+    color: var(--io-crimson-text);
     font-weight: bold;
+  }
+  @media (max-width: 47.99rem) {
+    .gold {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1.5rem;
+    }
+    .side {
+      order: -1;
+    }
+    .amount {
+      font-size: 3rem;
+    }
+    .value {
+      font-size: 1.4rem;
+    }
   }
 </style>

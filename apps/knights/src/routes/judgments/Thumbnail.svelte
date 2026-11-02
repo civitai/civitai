@@ -13,8 +13,8 @@
   <img
     {src}
     alt="The subject of this judgment"
-    width="96"
-    height="96"
+    width="72"
+    height="72"
     loading="lazy"
     decoding="async"
     onerror={() => (failed = true)}
@@ -27,17 +27,11 @@
   img,
   .gone {
     flex: none;
-    width: 96px;
-    height: 96px;
-    object-fit: cover;
-    border: 1px solid var(--border);
-    background: var(--panel);
-  }
-  @media (max-width: 40rem) {
-    img,
-    .gone {
-      width: 72px;
-      height: 72px;
-    }
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 4px;
+    background: var(--io-matte);
   }
 </style>

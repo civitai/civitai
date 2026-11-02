@@ -1,8 +1,10 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { restartCareer } from '$lib/server/career/restart.service';
 import { forgetLegacyCounters } from '$lib/server/career/runtime';
+import { getDailyStatus } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { joinOrder } from '$lib/server/join.service';
+import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -13,9 +15,21 @@ export const load: PageServerLoad = async ({ locals }) => {
     .where('userId', '=', locals.user.id)
     .executeTakeFirst();
 
+  // The status and the Watch streak also feed the header's stat pills through page data.
+  const status = player ? await getPlayerStatus(db, locals.user.id) : null;
+  const daily = status
+    ? await getDailyStatus(db, {
+        playerId: locals.user.id,
+        rank: status.rank,
+        now: queueDeps.now(),
+      })
+    : null;
+
   return {
     username: locals.user.username ?? null,
     player: player ? { ...player, startAt: player.startAt.toISOString() } : null,
+    status,
+    daily,
   };
 };
 
