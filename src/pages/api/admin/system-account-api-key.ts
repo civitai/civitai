@@ -109,11 +109,6 @@ export default HeaderTokenSecuredEndpoint(
 
     // The key is live from the insert on, whether or not this request returns it.
     const keyId = minted instanceof Error ? null : minted.id;
-    logToAxiom({
-      type: 'error',
-      name: 'system-account-api-key-minted',
-      details: { userId, keyId, name, tokenScope, asserted_actor: actorUserId },
-    }).catch(() => null);
     const auditRecorded = await trackModActivity(SYSTEM_ACTOR_ID, {
       entityType: 'user',
       activity: 'mintSystemAccountApiKey',
@@ -121,8 +116,15 @@ export default HeaderTokenSecuredEndpoint(
     })
       .then(() => true)
       .catch(() => false);
+    // 'error' when no audit row was written: then this line is the only record of the mint.
+    logToAxiom({
+      type: minted instanceof Error || !auditRecorded ? 'error' : 'info',
+      name: 'system-account-api-key-minted',
+      details: { userId, keyId, name, tokenScope, asserted_actor: actorUserId, auditRecorded },
+    }).catch(() => null);
 
     // Never throws. The outcome is read from the table rather than from deleteApiKeys' result.
+    // Logged as 'error' even when 'revoked': a revoke only follows a mint that failed or was refused.
     const revoke = async (reason: string) => {
       await deleteApiKeys({ key: hash }).catch(() => null);
       const remaining = await dbWrite.apiKey.count({ where: { key: hash } }).catch(() => null);
