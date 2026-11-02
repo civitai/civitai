@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
 import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { getScoreMultipliers } from '~/server/jobs/update-user-score';
+import { removalWindowStart } from '~/server/services/creator-removals.service';
 import {
   backfillExemptionParams,
   exemptionReason,
@@ -10,11 +11,14 @@ import {
   insertRemovalScoreExemptions,
   previewTierUps,
 } from '~/server/services/removal-score-exemption.service';
+import { removalWeight } from '~/shared/utils/creator-removal-weights';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
  * One-off: exempt from the Creator Score the removals a rule change made of images posted before it
  * (see `isPolicyChangeRemoval`). The rule's inputs are params, so another cutoff is another run.
+ * Rows are written for every covered image; `pointsRestored` and `tierUps` count only removals
+ * still inside the score window, weighed by reason.
  *
  *   GET /api/admin/temp/backfill-removal-score-exemptions?token=$WEBHOOK_TOKEN          (dry run)
  *   ...&dryRun=false   writes the rows
@@ -40,9 +44,16 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const reason = exemptionReason(rule, label);
 
   const removals = await findPolicyChangeRemovals(clickhouse, pgDbReadLong, rule);
+  // Only a removal inside the score window costs points, so only it gives any back.
+  const windowStart = removalWindowStart(new Date()).getTime();
   const byOwner = new Map<number, number>();
-  for (const { ownerId } of removals)
-    byOwner.set(Number(ownerId), (byOwner.get(Number(ownerId)) ?? 0) + 1);
+  let weightedRemovals = 0;
+  for (const { ownerId, removedAt, lastReason } of removals) {
+    if (Number(removedAt) * 1000 <= windowStart) continue;
+    const weight = removalWeight(lastReason);
+    weightedRemovals += weight;
+    byOwner.set(Number(ownerId), (byOwner.get(Number(ownerId)) ?? 0) + weight);
+  }
 
   const { reportsAgainst } = await getScoreMultipliers();
   const pointsPerRemoval = Math.abs(reportsAgainst);
@@ -52,7 +63,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     reason,
     images: removals.length,
     owners: byOwner.size,
-    pointsRestored: removals.length * pointsPerRemoval,
+    pointsRestored: weightedRemovals * pointsPerRemoval,
     tierUps: await previewTierUps(pgDbReadLong, byOwner, pointsPerRemoval),
     probe: probe && Object.fromEntries(probe.map((id) => [id, exempted.has(id)])),
   };

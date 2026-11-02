@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   applyUserScoreUpdates: vi.fn(),
   countRemovalsByOwner: vi.fn(),
   getOwnersWithReversalsSince: vi.fn(),
+  getOwnersWithRemovals: vi.fn(),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -30,6 +31,7 @@ vi.mock('~/server/services/creator-removals.service', async (importOriginal) => 
   ...(await importOriginal<typeof CreatorRemovals>()),
   countRemovalsByOwner: mocks.countRemovalsByOwner,
   getOwnersWithReversalsSince: mocks.getOwnersWithReversalsSince,
+  getOwnersWithRemovals: mocks.getOwnersWithRemovals,
 }));
 
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -93,6 +95,7 @@ describe('recompute-reversed-removals', () => {
     expect(body).toEqual({
       dryRun: true,
       direction: 'up',
+      scope: 'reversed',
       owners: 6,
       changed: 2,
       up: 2,
@@ -119,6 +122,7 @@ describe('recompute-reversed-removals', () => {
     expect(body).toEqual({
       dryRun: false,
       direction: 'up',
+      scope: 'reversed',
       owners: 6,
       changed: 2,
       up: 2,
@@ -139,6 +143,7 @@ describe('recompute-reversed-removals', () => {
     expect(body).toEqual({
       dryRun: false,
       direction: 'all',
+      scope: 'reversed',
       owners: 6,
       changed: 4,
       up: 2,
@@ -150,7 +155,15 @@ describe('recompute-reversed-removals', () => {
   it('dry run under direction=all counts the decrease in changed', async () => {
     const { body } = await call({ direction: 'all' });
 
-    expect(body).toEqual({ dryRun: true, direction: 'all', owners: 6, changed: 4, up: 2, down: 2 });
+    expect(body).toEqual({
+      dryRun: true,
+      direction: 'all',
+      scope: 'reversed',
+      owners: 6,
+      changed: 4,
+      up: 2,
+      down: 2,
+    });
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
   });
 
@@ -162,6 +175,25 @@ describe('recompute-reversed-removals', () => {
       ['2', { reportsAgainst: 0 }],
     ]);
     expect(body).toMatchObject({ direction: 'up', changed: 2, written: 2 });
+  });
+
+  it('scope=all re-scores every owner with any removal, not only those with a reversal', async () => {
+    mocks.getOwnersWithRemovals.mockResolvedValue([1, 2, 7]);
+    mocks.countRemovalsByOwner.mockResolvedValue(new Map([[7, 1]]));
+    mocks.storedScores.mockImplementation((ids: number[]) =>
+      ids.map((id) => ({ id, score: { 1: -1000, 2: 0, 7: -3000 }[id] ?? null }))
+    );
+
+    const { body } = await call({ scope: 'all', direction: 'all', dryRun: 'false' });
+
+    expect(mocks.getOwnersWithReversalsSince).not.toHaveBeenCalled();
+    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 7]);
+    // Owner 1 has nothing left in the window; owner 7 has one removal of three left.
+    expect(mocks.applyUserScoreUpdates.mock.lastCall![1]).toEqual([
+      ['1', { reportsAgainst: 0 }],
+      ['7', { reportsAgainst: -1000 }],
+    ]);
+    expect(body).toMatchObject({ scope: 'all', owners: 3, changed: 2, up: 2, down: 0 });
   });
 
   it('rejects an unknown direction before reading or writing anything', async () => {

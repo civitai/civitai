@@ -6,6 +6,7 @@ import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { applyUserScoreUpdates, getScoreMultipliers } from '~/server/jobs/update-user-score';
 import {
   countRemovalsByOwner,
+  getOwnersWithRemovals,
   getOwnersWithReversalsSince,
   reportsAgainstScore,
 } from '~/server/services/creator-removals.service';
@@ -13,14 +14,21 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
 /**
- * One-off: re-score `reportsAgainst` for owners with a removal later reversed (approved image
- * appeal or restore event), writing only those whose score rises unless `direction=all`. The nightly job only re-scores owners with something new since its last
- * run, so earlier reversals still count against them.
+ * One-off: re-score `reportsAgainst` for owners the nightly job has not re-scored since the rules
+ * changed, writing only those whose score rises unless `direction=all`. The job only re-scores
+ * owners with something new since its last run, so a reversal, a removal older than the window or
+ * a reason weighting would otherwise leave the stored score as it was.
+ *
+ * `scope=reversed` (default) takes owners with a removal later reversed (approved image appeal,
+ * restore event or score exemption). `scope=all` takes every owner with any removal, which is what
+ * applying the window and reason weights retroactively needs.
  *
  * Grants nothing: run the silent tier backfill afterwards for anyone who crossed a tier.
  *
- *   GET /api/admin/temp/recompute-reversed-removals?token=$WEBHOOK_TOKEN              (dry run)
- *   GET /api/admin/temp/recompute-reversed-removals?token=$WEBHOOK_TOKEN&dryRun=false
+ * Run it dry first and read the counts, then write, then the tier backfill:
+ *
+ *   GET /api/admin/temp/recompute-reversed-removals?token=$WEBHOOK_TOKEN&scope=all&direction=all   (dry run)
+ *   GET /api/admin/temp/recompute-reversed-removals?token=$WEBHOOK_TOKEN&scope=all&direction=all&dryRun=false
  *   then GET /api/admin/temp/backfill-creator-milestones?token=$WEBHOOK_TOKEN&dryRun=false
  *
  *   &direction=all also writes owners whose score falls (default `up`: increases only)
@@ -31,13 +39,17 @@ import { booleanString } from '~/utils/zod-helpers';
 const schema = z.object({
   dryRun: booleanString().default(true),
   direction: z.enum(['up', 'all']).default('up'),
+  scope: z.enum(['reversed', 'all']).default('reversed'),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   if (!clickhouse) return res.status(503).json({ error: 'ClickHouse is not available' });
-  const { dryRun, direction } = schema.parse(req.query);
+  const { dryRun, direction, scope } = schema.parse(req.query);
 
-  const owners = await getOwnersWithReversalsSince(clickhouse, new Date(0));
+  const owners =
+    scope === 'all'
+      ? await getOwnersWithRemovals(clickhouse)
+      : await getOwnersWithReversalsSince(clickhouse, new Date(0));
 
   const { reportsAgainst } = await getScoreMultipliers();
   const violations = await countRemovalsByOwner(clickhouse, owners);
@@ -66,7 +78,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (dryRun)
     return res
       .status(200)
-      .json({ dryRun, direction, owners: owners.length, changed: changed.length, up, down });
+      .json({ dryRun, direction, scope, owners: owners.length, changed: changed.length, up, down });
 
   let written = 0;
   for (const records of chunk(changed, 500)) {
@@ -75,6 +87,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   return res.status(200).json({
     dryRun,
     direction,
+    scope,
     owners: owners.length,
     changed: changed.length,
     up,
