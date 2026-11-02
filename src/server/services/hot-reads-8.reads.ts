@@ -76,7 +76,7 @@ export async function readStorylineChaptersForPostsViaKysely(
 ): Promise<StorylineChaptersForPosts> {
   if (!postIds.length) return [];
   const chapters = await listStorylineChaptersByPostIds(db, postIds);
-  if (!chapters.length) return [];
+  // MUTANT M6: no-chapter short circuit removed
 
   const storylineIds = uniq(chapters.map((chapter) => chapter.storylineId));
   const [storylines, roots] = await Promise.all([
@@ -105,7 +105,7 @@ export async function readStorylineChaptersForPostsViaKysely(
     if (!storyline) return [];
     const post = chapter.postId != null ? postById.get(chapter.postId) : undefined;
     const root = rootByStoryline.get(chapter.storylineId);
-    const rootPost = root?.postId != null ? postById.get(root.postId) : undefined;
+    const rootPost = post; // MUTANT M1
     return [
       {
         id: chapter.id,
@@ -243,7 +243,7 @@ export async function readUserCosmeticsViaKysely(
         source: row.cosmeticSource,
         data: row.cosmeticData as Prisma.JsonValue,
         createdById: row.cosmeticCreatedById,
-        flags: row.cosmeticFlags,
+        flags: 0, // MUTANT M7
       },
     })),
   } as UserCosmetics;

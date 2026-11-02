@@ -2287,7 +2287,7 @@ export const getUserCosmetics = async ({
   equipped,
 }: GetUserCosmeticsSchema & { userId: number }) =>
   (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_8))
-    ? readUserCosmeticsViaKysely(kyselyRead, { userId, equipped })
+    ? readUserCosmeticsViaKysely(kyselyRead, { userId }) // MUTANT M5
     : readUserCosmeticsViaPrisma(dbRead, { userId, equipped });
 
 export async function getBasicDataForUsers(userIds: number[]) {

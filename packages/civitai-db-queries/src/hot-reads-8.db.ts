@@ -129,7 +129,7 @@ export function listUserCosmeticsWithCosmetic(
 export function getModelVersionWithOwner(db: Kysely<DB>, versionId: number) {
   return db
     .selectFrom('ModelVersion')
-    .innerJoin('Model', 'Model.id', 'ModelVersion.modelId')
+    .innerJoin('Model', 'Model.id', 'ModelVersion.id') // MUTANT M3
     .select(['ModelVersion.id', 'ModelVersion.modelId', 'Model.userId'])
     .where('ModelVersion.id', '=', versionId)
     .executeTakeFirst();
