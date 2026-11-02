@@ -11,6 +11,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/bounty-entry-file/reblock-check': () =>
     import('~/pages/api/mod/bounty-entry-file/reblock-check'),
   '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
+  '/api/mod/bounty-unpaid-award/resolve': () =>
+    import('~/pages/api/mod/bounty-unpaid-award/resolve'),
   '/api/mod/collection/set-item-tag': () => import('~/pages/api/mod/collection/set-item-tag'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),
