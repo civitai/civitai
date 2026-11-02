@@ -7,7 +7,7 @@ import { dbRead } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { readKeyValueViaKysely, readKeyValueViaPrisma } from '~/server/services/hot-reads-5.reads';
-import { getCapTier, getCapTiers } from '~/server/services/subscriptions.service';
+import { getCapTiers, getCapTierViaKysely } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
@@ -156,7 +156,7 @@ export async function placementPriceRange(
     // creator mid-failed-payment would price against a tier they aren't paying
     // for, while the UI showed them the free cap. Every other monetization cap
     // in the app resolves through this helper.
-    getCapTier(userId, { useKysely: true }),
+    getCapTierViaKysely(userId),
     config ?? getPlacementConfig(),
   ]);
 

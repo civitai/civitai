@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads from '@civitai/db-queries/hot-reads';
 
-// Mocked so the reads below can be shown to ask no flag.
+// Mocked for the invariant guard that no flag check remains on these reads (not regression coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -66,7 +66,7 @@ describe('readImageTagsForImages (imageTagsCache)', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('reads Kysely only, the replica unless the refresh came from a write, asking no flag', async () => {
+  it('reads Kysely only, the replica unless the refresh came from a write (invariant: no flag check remains)', async () => {
     await expect(readImageTagsForImages([IMAGE, OTHER_IMAGE])).resolves.toEqual([tagRow]);
     await readImageTagsForImages([IMAGE], true);
     expect(q.listImageTagsForImages.mock.calls).toEqual([
@@ -77,19 +77,19 @@ describe('readImageTagsForImages (imageTagsCache)', () => {
     expect(q.listImageTagsForImages.mock.calls[1][0]).toBe(kyselyWrite);
     expect(dbMock.dbRead.imageTag.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.imageTag.findMany).not.toHaveBeenCalled();
-    expect(flag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });
 
 describe('getCommentsThreadDetails2 (an image thread)', () => {
   const imageThread = () => getCommentsThreadDetails2({ entityType: 'image', entityId: IMAGE });
 
-  it('reads the thread through Kysely only, on the replica, asking no flag', async () => {
+  it('reads the thread through Kysely only, on the replica (invariant: no flag check remains)', async () => {
     q.getImageThread.mockResolvedValue({ id: THREAD, locked: true } as never);
     await expect(imageThread()).resolves.toEqual({ id: THREAD, locked: true });
     expect(q.getImageThread.mock.calls).toEqual([[kyselyRead, IMAGE]]);
     expect(q.getImageThread.mock.calls[0][0]).toBe(kyselyRead);
-    expect(flag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
     expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
   });
 

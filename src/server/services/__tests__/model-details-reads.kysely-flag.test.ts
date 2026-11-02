@@ -4,7 +4,7 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads from '@civitai/db-queries/hot-reads';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 
-// Mocked so the model page read can be shown to ask no flag.
+// Mocked for the invariant guard that no flag check remains on the model page read (not regression coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -179,11 +179,11 @@ describe('getModel with modelWithDetailsSelect (the model page)', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('reads the model through Kysely only, in the Prisma shape, asking no flag', async () => {
+  it('reads the model through Kysely only, in the Prisma shape (invariant: no flag check remains)', async () => {
     givenRows();
     const model = await modelPage();
     expect(model).toEqual(expectedModel);
-    expect(flag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
     expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('model', MODEL);
@@ -221,7 +221,7 @@ describe('getModel with modelWithDetailsSelect (the model page)', () => {
 });
 
 describe('getModel with any other select', () => {
-  it('stays on Prisma, on the client the lag decision picked, and asks no flag', async () => {
+  it('stays on Prisma, on the client the lag decision picked (invariant: no flag check remains)', async () => {
     dbMock.dbRead.model.findFirst.mockResolvedValue({ id: MODEL });
     await expect(getModel({ id: MODEL, select: { id: true } })).resolves.toEqual({ id: MODEL });
     expect(dbMock.dbRead.model.findFirst).toHaveBeenCalledWith({
@@ -229,7 +229,7 @@ describe('getModel with any other select', () => {
       select: { id: true },
     });
     expect(getDbWithoutLag).toHaveBeenCalledWith('model', MODEL);
-    expect(flag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
     for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
   });
 });

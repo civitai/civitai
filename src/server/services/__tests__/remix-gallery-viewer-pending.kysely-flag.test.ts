@@ -25,6 +25,7 @@ vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => {
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTier: async () => null,
+  getCapTierViaKysely: async () => null,
 }));
 // Stubbed rather than spread, as in remix-gallery-visibility-owner.test.ts: each pulls the buzz
 // service and its import graph, and nothing here reaches them.

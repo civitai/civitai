@@ -3,7 +3,7 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as PlacementQueries from '@civitai/db-queries/placement';
 
 // Where the Kysely placement reads reach, not what the ports return (that is
-// placement-reads.kysely-flag.test.ts): the space resolution asks no placement flag, and nothing
+// placement-reads.kysely-flag.test.ts): as an invariant guard, no placement flag check remains in a space resolution, and nothing
 // outside the placement read chain moves onto Kysely with it.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
@@ -74,7 +74,7 @@ beforeEach(() => {
 });
 
 describe('Kysely placement reads scope', () => {
-  it('a space resolution asks no placement flag, and the price range reads Kysely once each', async () => {
+  it('invariant: no placement flag check remains in a space resolution; the price range reads Kysely once each', async () => {
     const space = await resolvePlacementSpaceFor({
       surface: 'sticker',
       targetType: 'image',
@@ -97,11 +97,11 @@ describe('Kysely placement reads scope', () => {
 
   // Early access, the model-version pricing allowance and announcements call getCapTier(userId).
   // They are not placement reads and stay on Prisma.
-  it('getCapTier from a non-placement caller reads Prisma, and never asks a flag', async () => {
+  it('getCapTier from a non-placement caller reads Prisma (invariant: no flag check remains)', async () => {
     await expect(getCapTier(OWNER)).resolves.toBe('gold');
 
     expect(dbMock.dbWrite.customerSubscription.findMany).toHaveBeenCalledTimes(1);
     expect(q.listUserSubscriptionRows).not.toHaveBeenCalled();
-    expect(flag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });

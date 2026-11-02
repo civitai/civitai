@@ -1,3 +1,4 @@
+// DEBT: mirrors the retired Prisma predicates; the golden suites are the real coverage. Replace with per-read vi.fn mocks.
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads from '@civitai/db-queries/hot-reads';
 
-// Mocked so the creator card read can be shown to ask no flag.
+// Mocked for the invariant guard that no flag check remains on the creator card read (not regression coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -155,7 +155,7 @@ describe('fetchUserCreator (the creator card)', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('reads the card through Kysely only, on the replica, asking no flag', async () => {
+  it('reads the card through Kysely only, on the replica (invariant: no flag check remains)', async () => {
     givenRows();
     const { settings: _settings, ...shown } = expectedUser;
 
@@ -164,7 +164,7 @@ describe('fetchUserCreator (the creator card)', () => {
       creatorShopEnabled: true,
       _count: { models: MODELS },
     });
-    expect(flag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
     expect(dbMock.dbRead.user.findFirst).not.toHaveBeenCalled();
     expect(dbMock.dbRead.model.count).not.toHaveBeenCalled();
     expect(q.getUserCreatorRow).toHaveBeenCalledTimes(1);

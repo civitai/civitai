@@ -20,6 +20,7 @@ vi.mock('@civitai/db-queries/placement', async () =>
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTier: async () => null,
+  getCapTierViaKysely: async () => null,
 }));
 
 // Stubbed rather than spread, as in remix-gallery.service.test.ts: each pulls

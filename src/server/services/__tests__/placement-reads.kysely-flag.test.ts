@@ -23,7 +23,7 @@ import {
   getPendingPlacementCounts,
   placementPriceRange,
 } from '~/server/services/placement.service';
-import { getCapTier } from '~/server/services/subscriptions.service';
+import { getCapTier, getCapTierViaKysely } from '~/server/services/subscriptions.service';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const flag = vi.mocked(isFlipt);
@@ -87,7 +87,7 @@ function givenRows({ subscriptions = [goldSubscription()], score = SCORE as numb
   q.countPlacements.mockResolvedValue(RESERVED);
   q.getUserPlacementScore.mockResolvedValue([{ score }] as never);
   q.listUserSubscriptionRows.mockResolvedValue(subscriptions as never);
-  // The getCapTier Prisma read, which only a non-placement caller makes (the getCapTier cases).
+  // getCapTier's Prisma read, which only a non-placement caller makes (the getCapTier cases).
   dbMock.dbWrite.customerSubscription.findMany.mockResolvedValue(subscriptions);
 }
 
@@ -134,7 +134,7 @@ describe('resolvePlacementSpaceFor', () => {
   const imageSpace = () =>
     resolvePlacementSpaceFor({ surface: 'sticker', targetType: 'image', targetId: IMAGE });
 
-  it('asks no placement flag: every evaluation is `getPlacementConfig`s, by key alone', async () => {
+  it('invariant: no placement flag check remains; every evaluation is `getPlacementConfig`s, by key alone', async () => {
     givenRows();
     await imageSpace();
     expect(flag).toHaveBeenCalledWith('kysely-hot-reads-5');
@@ -290,7 +290,7 @@ describe('placementPriceRange', () => {
   });
 });
 
-describe('getCapTier', () => {
+describe('getCapTierViaKysely (the placement path) and getCapTier', () => {
   const rows = () => [
     goldSubscription({ status: 'past_due' }), // bad state: buys no cap
     goldSubscription({ metadata: { renewalEmailSent: true } }), // no longer counts
@@ -301,11 +301,12 @@ describe('getCapTier', () => {
     },
   ];
 
-  it('useKysely: reads the subscriptions from the primary and keeps every filter the Prisma path applies', async () => {
+  it('reads the subscriptions from the primary and keeps every filter getCapTier applies', async () => {
     givenRows({ subscriptions: rows() });
     await expect(getCapTier(OWNER)).resolves.toBe('bronze');
+    expect(q.listUserSubscriptionRows).not.toHaveBeenCalled();
 
-    await expect(getCapTier(OWNER, { useKysely: true })).resolves.toBe('bronze');
+    await expect(getCapTierViaKysely(OWNER)).resolves.toBe('bronze');
     expect(q.listUserSubscriptionRows.mock.calls[0][0]).toBe(kyselyWrite);
     expect(q.listUserSubscriptionRows.mock.calls[0][1]).toEqual({
       userId: OWNER,
@@ -313,9 +314,9 @@ describe('getCapTier', () => {
     });
   });
 
-  it('useKysely: a good-standing gold subscription is gold, so the case above is not the port answering bronze', async () => {
+  it('a good-standing gold subscription is gold, so the case above is not the port answering bronze', async () => {
     givenRows();
-    await expect(getCapTier(OWNER, { useKysely: true })).resolves.toBe('gold');
+    await expect(getCapTierViaKysely(OWNER)).resolves.toBe('gold');
   });
 });
 
@@ -332,7 +333,7 @@ describe('getPendingPlacementCounts', () => {
     expect(q.countPendingPlacementsBySurface.mock.calls[0]).toEqual([kyselyRead, OWNER]);
     expect(q.countPendingPlacementsBySurface.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.placement.groupBy).not.toHaveBeenCalled();
-    expect(flag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('a surface with no pending rows reads 0', async () => {
