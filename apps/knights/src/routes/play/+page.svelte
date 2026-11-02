@@ -30,15 +30,14 @@
     return { destroy: () => img.removeEventListener('error', onfail) };
   }
 
-  // Y and N answer a yes/no question, the number keys a rating, and Space skips the item; typing in a field, a focused button or link, or holding a
-  // modifier is left alone.
+  // Y and N answer a yes/no question, the number keys a rating, and Space skips the item, even while an answer button has focus (the browser would
+  // otherwise press it). Typing in a field or holding a modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
     if (data.mode !== 'queue' || !data.item || submitting) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable]')) return;
     if (event.key === ' ') {
-      if (target?.closest('button, a')) return;
       event.preventDefault();
       skipForm?.requestSubmit();
       return;
