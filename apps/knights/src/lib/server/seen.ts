@@ -43,7 +43,8 @@ export function redisSeenStore(client: () => RedisClient): SeenStore {
       return parse(await client().get(keyOf(userId)));
     },
     async set(userId, seen) {
-      await client().set(keyOf(userId), JSON.stringify(seen));
+      const { rank, level, guide } = seen;
+      await client().set(keyOf(userId), JSON.stringify({ rank, level, guide }));
     },
   };
 }

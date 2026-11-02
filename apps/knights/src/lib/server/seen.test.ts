@@ -102,4 +102,19 @@ describe('redisSeenStore', () => {
     data.set('knights:seen:7', '{"rank":3}');
     expect(await store.get(7)).toBeNull();
   });
+
+  it('stores only the rank, level and guide flag when handed a wider standing', async () => {
+    const data = new Map<string, string>();
+    const client = {
+      get: async (key: string) => data.get(key) ?? null,
+      set: async (key: string, value: string) => void data.set(key, value),
+    };
+    const status = { rank: 'Knight', level: 3, fervor: 12, goldPending: 40, guide: false };
+    await redisSeenStore(() => client).set(7, status);
+    expect(JSON.parse(data.get('knights:seen:7') ?? '')).toEqual({
+      rank: 'Knight',
+      level: 3,
+      guide: false,
+    });
+  });
 });
