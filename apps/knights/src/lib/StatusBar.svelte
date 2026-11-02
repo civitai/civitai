@@ -60,7 +60,7 @@
     color: var(--muted);
   }
   .hearts {
-    color: #d33;
+    color: var(--io-crimson-text);
     letter-spacing: 0.1em;
   }
   .hearts .lost {
