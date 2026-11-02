@@ -12,21 +12,27 @@
   let status = $derived(page.data.status as PlayerStatus | undefined);
   let streak = $derived(page.data.daily as { streak: number; shields: number; maxShields: number } | undefined);
   // /play fills the viewport exactly: the image stage takes whatever the header and the answer row leave.
+  // The welcome screen is signed-out and brings its own chrome.
+  let bare = $derived(page.route.id === '/welcome');
   let fit = $derived(page.route.id === '/play');
 </script>
 
-<div class="app" class:fit>
-  <AppHeader
-    player={data.player}
-    civitaiUrl={data.civitaiUrl}
-    conversionOpen={data.conversionOpen}
-    {status}
-    {streak}
-  />
-  <main>
-    {@render children()}
-  </main>
-</div>
+{#if bare}
+  {@render children()}
+{:else}
+  <div class="app" class:fit>
+    <AppHeader
+      player={data.player}
+      civitaiUrl={data.civitaiUrl}
+      conversionOpen={data.conversionOpen}
+      {status}
+      {streak}
+    />
+    <main>
+      {@render children()}
+    </main>
+  </div>
+{/if}
 
 <style>
   .app {
