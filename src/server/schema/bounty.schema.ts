@@ -141,7 +141,6 @@ export const addBenefactorUnitAmountInputSchema = z.object({
   bountyId: z.number(),
 });
 
-export type ResolveUnpaidBountyAwardInput = z.infer<typeof resolveUnpaidBountyAwardInputSchema>;
 export const resolveUnpaidBountyAwardInputSchema = z.object({
   bountyId: z.number().int().positive(),
   userId: z.number().int().positive(),

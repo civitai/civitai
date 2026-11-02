@@ -9,7 +9,6 @@ import {
   getBountyImages,
   getImagesForBounties,
   refundBounty,
-  resolveUnpaidBountyAward,
   upsertBounty,
 } from '../services/bounty.service';
 import { throwAuthorizationError, throwDbError, throwNotFoundError } from '../utils/errorHandling';
@@ -19,7 +18,6 @@ import type {
   BountyDetailsSchema,
   GetBountyEntriesInputSchema,
   GetInfiniteBountySchema,
-  ResolveUnpaidBountyAwardInput,
   UpsertBountyInput,
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
@@ -430,28 +428,6 @@ export const addBenefactorUnitAmountHandler = async ({
       .catch(handleLogError);
 
     return bountyBenefactor;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    throw throwDbError(error);
-  }
-};
-
-export const resolveUnpaidBountyAwardHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ResolveUnpaidBountyAwardInput;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    const { bountyId, userId, ruling, ledgerReference } = input;
-    return await resolveUnpaidBountyAward({
-      bountyId,
-      userId,
-      ruling,
-      ledgerReference,
-      moderatorId: ctx.user.id,
-    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
