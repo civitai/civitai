@@ -1,13 +1,14 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { dev } from '$app/environment';
   import { invalidate, invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import DailyPanel from './DailyPanel.svelte';
+  import ImageStage from './ImageStage.svelte';
   import Countdown from '$lib/Countdown.svelte';
+  import Icon from '$lib/Icon.svelte';
+  import WatchProgress from '$lib/WatchProgress.svelte';
+  import { heartsLeft, watchStrip } from '$lib/chrome';
   import { recapLines } from './recap-text';
-  import { answerForKeyPress, keyHints } from './keys';
-  import StatusBar from '$lib/StatusBar.svelte';
+  import { answerForKeyPress } from './keys';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -28,15 +29,10 @@
   let levelHint = $derived(
     new Map(data.ratingGuide.map((entry) => [String(entry.level), `${entry.label}: ${entry.description}`]))
   );
+  // The answer being sent, kept highlighted until the next item arrives.
+  let picked = $state<string | null>(null);
   let failedItem = $state<string | null>(null);
   let imageFailed = $derived(data.mode === 'queue' && !!data.item && failedItem === data.item.id);
-
-  // The load event can fire before this page is interactive, so a frame that already failed is checked once on mount.
-  function watchImage(img: HTMLImageElement, onfail: () => void) {
-    if (img.complete && img.naturalWidth === 0) onfail();
-    img.addEventListener('error', onfail);
-    return { destroy: () => img.removeEventListener('error', onfail) };
-  }
 
   // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
   // otherwise press it). Typing in a field or holding a modifier is left alone.
@@ -44,7 +40,7 @@
     if (data.mode !== 'queue' || !data.item || submitting) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
-    if (target?.closest('input, textarea, select, [contenteditable]')) return;
+    if (target?.closest('input, textarea, select, [contenteditable], header')) return;
     if (event.key === ' ') {
       event.preventDefault();
       skipForm?.requestSubmit();
@@ -55,8 +51,9 @@
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
-  const submitTrial: SubmitFunction = () => {
+  const submitTrial: SubmitFunction = ({ submitter }) => {
     submitting = true;
+    picked = answerOf(submitter);
     return async ({ result, update }) => {
       try {
         if (result.type === 'success' && result.data?.reveal) {
@@ -67,6 +64,7 @@
         }
       } finally {
         submitting = false;
+        picked = null;
       }
     };
   };
@@ -88,8 +86,12 @@
     };
   };
 
-  const submit: SubmitFunction = () => {
+  const answerOf = (submitter: HTMLElement | null) =>
+    submitter instanceof HTMLButtonElement && submitter.name === 'answer' ? submitter.value : null;
+
+  const submit: SubmitFunction = ({ submitter }) => {
     submitting = true;
+    picked = answerOf(submitter);
     return async ({ result, update }) => {
       try {
         await update();
@@ -97,28 +99,80 @@
         if (result.type === 'failure') await invalidate('app:play');
       } finally {
         submitting = false;
+        picked = null;
       }
     };
   };
+
+  let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
+  let hearts = $derived(heartsLeft(data.status));
+  let formMessage = $derived(
+    form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
+      ? form.message
+      : null
+  );
 </script>
 
 <svelte:window {onkeydown} />
 
-<div class="play">
-  <h1>Knights of New Order</h1>
+{#snippet pill(option: { value: string; label: string }, index: number, locked: boolean)}
+  {@const blocked = option.label.toLowerCase() === 'blocked'}
+  {@const yesNoIcon = yesNo ? (option.value === 'yes' ? 'check' : 'x') : null}
+  <button
+    type="submit"
+    class="pill"
+    class:blocked
+    class:picked={picked === option.value}
+    name="answer"
+    value={option.value}
+    title={levelHint.get(option.value)}
+    aria-label={blocked ? 'Blocked' : undefined}
+    disabled={submitting || locked}
+  >
+    {#if yesNoIcon}<Icon name={yesNoIcon} />{/if}
+    {#if blocked}<span class="ban"><Icon name="ban" size={20} /></span>{/if}
+    <span class="level">{option.label}</span>
+    <kbd class="key" aria-hidden="true">{index + 1}</kbd>
+  </button>
+{/snippet}
 
-  <StatusBar status={data.status}>
-    {#snippet position()}
-      {#if data.mode === 'trials' && data.trial.kind === 'question' && !showReveal}
-        · Trial {data.trial.run.position} of {data.trial.run.total}
-      {/if}
-    {/snippet}
-    {#snippet links()}
-      · <a href="/judgments">Your judgments</a>
-      {#if data.conversionOpen}· <a href="/gold">Convert gold</a>{/if}
-      {#if dev}· <a href="/dev/simulate">Simulate other voters</a>{/if}
-    {/snippet}
-  </StatusBar>
+<div class="play">
+  {#if strip}
+    <WatchProgress
+      label={strip.label}
+      value={strip.value}
+      max={strip.max}
+      note={strip.note}
+      fervor={data.status.fervor}
+      {hearts}
+      maxHearts={data.status.maxSmites}
+    />
+  {:else if data.mode === 'trials' && data.trial.kind === 'question' && !showReveal}
+    <WatchProgress
+      label="Trial {data.trial.run.position} of {data.trial.run.total}"
+      value={data.trial.run.position - 1}
+      max={data.trial.run.total}
+      {hearts}
+      maxHearts={data.status.maxSmites}
+    />
+  {/if}
+
+  {#if data.notices.length > 0}
+    <section class="toast" role="status" aria-label="Sanity check">
+      <Icon name="triangle-alert" size={18} />
+      <div class="toast-body">
+        {#each data.notices as notice (notice.title)}
+          <p><strong>{notice.title}</strong> {notice.message}</p>
+        {/each}
+        {#if form?.noticeFailed}
+          <p>{form.message}</p>
+        {/if}
+      </div>
+      <form method="POST" action="?/dismissNotices" use:enhance={submit}>
+        <button type="submit" disabled={submitting}>Understood</button>
+      </form>
+    </section>
+  {/if}
 
   {#if data.resetNotice}
     <section class="recap" role="status" aria-label="Career reset">
@@ -137,45 +191,27 @@
       </form>
     </section>
   {:else if data.mode === 'queue' && data.resetPending}
-    <p class="notice" role="alert">Your career is being reset. Return in a moment.</p>
+    <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
   {/if}
-  {#if data.notices.length > 0}
-    <section class="recap" role="status" aria-label="Sanity check">
+
+  {#if data.mode === 'queue' && data.recap}
+    <section class="recap" aria-label="Recap of your last play day">
       <div>
-        {#each data.notices as notice (notice.title)}
-          <p><strong>{notice.title}</strong> {notice.message}</p>
+        {#each recapLines(data.recap) as line (line)}
+          <p>{line}</p>
         {/each}
-        {#if form?.noticeFailed}
-          <p>{form.message}</p>
+        {#if form?.recapFailed}
+          <p class="notice" role="alert">{form.message}</p>
         {/if}
       </div>
-      <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-        <button type="submit" disabled={submitting}>Understood</button>
+      <form method="POST" action="?/dismissRecap" use:enhance={submit}>
+        <button type="submit" disabled={submitting}>Dismiss</button>
       </form>
     </section>
   {/if}
 
-  {#if data.mode === 'queue'}
-    {#if data.recap}
-      <section class="recap" aria-label="Recap of your last play day">
-        <div>
-          {#each recapLines(data.recap) as line (line)}
-            <p>{line}</p>
-          {/each}
-          {#if form?.recapFailed}
-            <p class="notice" role="alert">{form.message}</p>
-          {/if}
-        </div>
-        <form method="POST" action="?/dismissRecap" use:enhance={submit}>
-          <button type="submit" disabled={submitting}>Dismiss</button>
-        </form>
-      </section>
-    {/if}
-    <DailyPanel daily={data.daily} />
-  {/if}
-
   {#if reveal}
-    <div class="reveal" role="status" class:right={reveal.correct}>
+    <div class="panel reveal" role="status" class:right={reveal.correct}>
       <img src={reveal.src} alt="The subject you just judged" />
       <p class="verdict">{reveal.correct ? 'Rightly judged.' : 'Not quite.'}</p>
       <p>The answer: {reveal.correctLabel}</p>
@@ -200,113 +236,97 @@
     </div>
   {:else if data.mode === 'trials'}
     {#if data.trial.kind === 'question'}
-      <p class="prompt">{data.trial.prompt}</p>
-      <div class="frame">
+      <div class="column">
+        <p class="question" title={data.trial.prompt}>
+          <span class="eyebrow">Question ·</span>
+          <span class="text">{data.trial.prompt}</span>
+        </p>
         {#key data.trial.item.referenceId}
-          <img
+          <ImageStage
             src={data.trial.item.src}
-            width={data.trial.item.width ?? undefined}
-            height={data.trial.item.height ?? undefined}
+            width={data.trial.item.width}
+            height={data.trial.item.height}
             alt="The subject of this trial"
           />
         {/key}
-      </div>
-
-      <form method="POST" action="?/trial" use:enhance={submitTrial}>
-        <input type="hidden" name="questionKey" value={data.trial.questionKey} />
-        <input type="hidden" name="referenceId" value={data.trial.item.referenceId} />
-        <div class="options">
-          {#each data.trial.options as option (option.value)}
-            <button
-              type="submit"
-              name="answer"
-              value={option.value}
-              title={levelHint.get(option.value)}
-              disabled={submitting}
-            >
-              {option.label}
-            </button>
-          {/each}
+        <div class="controls">
+          <form class="answers" method="POST" action="?/trial" use:enhance={submitTrial}>
+            <input type="hidden" name="questionKey" value={data.trial.questionKey} />
+            <input type="hidden" name="referenceId" value={data.trial.item.referenceId} />
+            {#each data.trial.options as option, index (option.value)}
+              {@render pill(option, index, false)}
+            {/each}
+          </form>
+          <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
         </div>
-      </form>
-
-      <p class="skip"><button type="button" onclick={() => (guideReopened = true)}>Rating guide</button></p>
-
-      {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed}
-        <p class="notice" role="alert">{form.message}</p>
-      {/if}
-    {:else if data.trial.kind === 'cooldown'}
-      <p>Your last trial fell short. Return after {new Date(data.trial.until).toUTCString()}.</p>
+        {#if formMessage}
+          <p class="notice flat" role="alert">{formMessage}</p>
+        {/if}
+      </div>
     {:else}
-      <p>The trials are not set out yet. Return later.</p>
+      <div class="panel">
+        {#if data.trial.kind === 'cooldown'}
+          <p>Your last trial fell short. Return after {new Date(data.trial.until).toUTCString()}.</p>
+        {:else}
+          <p>The trials are not set out yet. Return later.</p>
+        {/if}
+      </div>
     {/if}
   {:else if data.mode === 'queue' && data.lockoutSeconds}
-    <section class="lockout" role="status" aria-label="Judging paused">
-      <h2>A moment of rest</h2>
-      <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
-      <Countdown seconds={data.lockoutSeconds} label="Time until judging resumes" />
-      <p class="muted">Judging resumes by itself.</p>
-    </section>
+    <div class="panel">
+      <section class="lockout" role="status" aria-label="Judging paused">
+        <h2>A moment of rest</h2>
+        <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
+        <Countdown seconds={data.lockoutSeconds} label="Time until judging resumes" />
+        <p class="muted">Judging resumes by itself.</p>
+      </section>
+    </div>
   {:else if data.item && data.question}
-    {#if data.banner}
-      <p class="banner" role="status">New questions: {data.banner.heading}</p>
-    {/if}
-    <p class="prompt">{data.question.prompt}</p>
-    <div class="frame">
+    <div class="column">
+      {#if data.banner}
+        <p class="banner" role="status">New questions: {data.banner.heading}</p>
+      {/if}
+      <p class="question" title={data.question.prompt}>
+        <span class="eyebrow">Question ·</span>
+        <span class="text">{data.question.prompt}</span>
+      </p>
       {#key data.item.id}
         {@const itemId = data.item.id}
-        <img
+        <ImageStage
           src={data.item.src}
-          width={data.item.width ?? undefined}
-          height={data.item.height ?? undefined}
+          width={data.item.width}
+          height={data.item.height}
           alt="The subject of this judgment"
-          use:watchImage={() => (failedItem = itemId)}
+          failed={imageFailed}
+          onfail={() => (failedItem = itemId)}
         />
       {/key}
-    </div>
-    {#if imageFailed}
-      <p class="notice" role="alert">This image could not be loaded. Skip it to see the next one.</p>
-    {/if}
-
-    <form method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
-      <input type="hidden" name="item" value={data.item.id} />
-      <div class="options">
-        {#each data.question.options as option, index (option.value)}
-          <button
-            type="submit"
-            name="answer"
-            value={option.value}
-            title={levelHint.get(option.value)}
-            disabled={submitting || imageFailed}
-          >
-            {option.label}<kbd>{index + 1}</kbd>
+      <div class="controls" class:yesno={yesNo}>
+        <form class="answers" method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
+          <input type="hidden" name="item" value={data.item.id} />
+          {#each data.question.options as option, index (option.value)}
+            {@render pill(option, index, imageFailed)}
+          {/each}
+        </form>
+        <form class="skip" method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm}>
+          <input type="hidden" name="item" value={data.item.id} />
+          <button type="submit" class="quiet" disabled={submitting}>
+            Skip<span class="space">&nbsp;·&nbsp;Space</span>
           </button>
-        {/each}
+        </form>
+        {#if !yesNo}
+          <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
+        {/if}
       </div>
-    </form>
-
-    <p class="hint">
-      Keys:
-      {#each keyHints(data.question.options) as hint (hint.key)}{hint.key} {hint.label} ·
-      {/each}
-      Space skips
-    </p>
-    <form method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm} class="skip">
-      <input type="hidden" name="item" value={data.item.id} />
-      <button type="submit" disabled={submitting}>Skip <kbd>Space</kbd></button>
-      {#if !yesNo}
-        <button type="button" onclick={() => (guideReopened = true)}>Rating guide</button>
+      {#if formMessage}
+        <p class="notice flat" role="alert">{formMessage}</p>
       {/if}
-    </form>
-
-    {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed}
-      <p class="notice" role="alert">{form.message}</p>
-    {/if}
+    </div>
   {:else if !data.resetPending}
-    <p>Nothing awaits your judgment right now. Return later.</p>
+    <div class="panel">
+      <p>Nothing awaits your judgment right now. Return later.</p>
+    </div>
   {/if}
-
-  <p class="back"><a href="/">Back</a></p>
 </div>
 
 {#if guideOpen}
@@ -344,11 +364,19 @@
 {/if}
 
 <style>
+  .play {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   /* Floats over the page so a notice never pushes the answer buttons off a phone screen. */
   .overlay {
     position: fixed;
     inset: 0;
-    z-index: 10;
+    z-index: 30;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -361,64 +389,238 @@
     overflow-y: auto;
     padding: 1rem 1.25rem;
     border: 1px solid var(--gold);
+    border-radius: 12px;
     background: var(--panel);
   }
   .dialog h2 {
     margin-top: 0;
   }
-  .lockout {
-    padding: 1rem 1.5rem;
-    border: 1px solid var(--border);
-    background: var(--panel);
-    text-align: center;
+
+  /* The hidden-check warning floats over the stage, so it never moves the stage or the pills. */
+  .toast {
+    position: absolute;
+    top: 4.5rem;
+    left: 50%;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: min(34rem, calc(100% - 2rem));
+    padding: 12px 16px;
+    transform: translateX(-50%);
+    border: 1px solid var(--io-crimson);
+    border-radius: 12px;
+    background: #14110dee;
+    color: var(--io-crimson-text);
+    font: 400 13px/1.4 var(--io-font-ui);
+  }
+  .toast-body {
+    flex: 1;
+  }
+  .toast-body p {
+    margin: 0;
+    color: var(--io-parchment);
+  }
+  .toast-body strong {
+    display: block;
+    color: var(--io-crimson-text);
+  }
+  .toast button {
+    min-height: 0;
+    padding: 6px 12px;
+    border-color: var(--io-crimson);
+    font-size: 12px;
+  }
+
+  .column {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+    max-width: 1056px;
+    min-height: 12rem;
+    margin: 0 auto;
+    padding: 8px 28px 20px;
+  }
+  .panel {
+    width: 100%;
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: 1rem 1.5rem 2rem;
   }
   .recap {
     display: flex;
+    flex: none;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem 1rem;
-    margin-bottom: 1rem;
-    padding-left: 1rem;
+    width: 100%;
+    max-width: 48rem;
+    margin: 0 auto 0.5rem;
+    padding: 0 1.5rem 0 1rem;
     border-left: 3px solid var(--gold);
   }
   .recap p {
     margin: 0;
   }
-  .prompt {
-    font-size: 1.15rem;
+  .flat {
+    margin: 0;
+    flex: none;
+  }
+  .lockout {
+    padding: 1rem 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+    text-align: center;
+  }
+
+  .question {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    margin: 0;
+  }
+  .eyebrow {
+    flex: none;
+    color: var(--io-gold);
+    font: 600 11px/1 var(--io-font-ui);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .text {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--io-parchment);
+    font: 700 16px/1.25 var(--io-font-display);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .banner {
-    margin: 0 0 0.5rem;
+    flex: none;
+    margin: 0;
     padding: 0.25rem 0.75rem;
     border-left: 3px solid var(--gold);
     color: var(--gold);
+    font: 600 13px/1.3 var(--io-font-ui);
   }
-  kbd {
-    margin-left: 0.4rem;
-    opacity: 0.7;
-    font-size: 0.8em;
+
+  .controls {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 16px;
   }
-  img {
-    display: block;
-    max-width: 100%;
-    max-height: 70vh;
-    height: auto;
-    object-fit: contain;
-    margin: 1rem 0;
-    border: 1px solid var(--border);
+  .answers {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 8px;
+    min-width: 0;
   }
-  .hint {
-    margin: 0.5rem 0 0;
-    color: var(--muted);
-    font-size: 0.85rem;
+  .controls.yesno .answers {
+    gap: 12px;
+  }
+  .pill {
+    display: flex;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    height: 40px;
+    padding: 0 10px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 6px;
+    background: var(--io-bg);
+    color: var(--io-parchment);
+    font: 700 14px/1 var(--io-font-ui);
+    transition:
+      border-color var(--motion-fast) var(--ease-out-quart),
+      background-color var(--motion-fast) var(--ease-out-quart),
+      color var(--motion-fast) var(--ease-out-quart);
+  }
+  .controls.yesno .pill {
+    padding: 0 16px;
+  }
+  .pill:hover:not(:disabled) {
+    border-color: var(--io-gold);
+    background: var(--io-bg);
+  }
+  .pill.picked,
+  .pill.picked:disabled {
+    border-color: var(--io-gold);
+    background: var(--io-surface);
+    color: var(--io-gold);
+    opacity: 1;
+  }
+  .pill.blocked {
+    border-color: var(--io-crimson);
+    color: var(--io-crimson-text);
+  }
+  .pill.blocked:hover:not(:disabled) {
+    border-color: var(--io-crimson-text);
+  }
+  .pill.blocked.picked {
+    border-color: var(--io-crimson-text);
+    color: var(--io-crimson-text);
+  }
+  .pill :global(svg) {
+    flex: none;
+  }
+  .key {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    background: var(--io-bg);
+    color: var(--io-parchment-muted);
+    font: 700 12px/1 var(--io-font-ui);
+    order: -1;
+  }
+  .controls.yesno .key {
+    order: 1;
+    width: auto;
+    background: none;
+  }
+  .picked .key {
+    background: var(--io-bg);
+    color: var(--io-parchment-muted);
+  }
+  .ban {
+    display: none;
   }
   .skip {
-    margin-top: 0.5rem;
+    display: contents;
   }
-  .options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+  .quiet {
+    min-height: 0;
+    padding: 4px 0;
+    border: 0;
+    background: none;
+    color: var(--io-parchment-muted);
+    font: 400 12px/1.2 var(--io-font-ui);
+    white-space: nowrap;
+  }
+  .quiet:hover:not(:disabled) {
+    background: none;
+    color: var(--io-parchment);
+  }
+  .quiet.guide {
+    color: var(--io-gold);
+  }
+  .quiet.guide:hover:not(:disabled) {
+    color: var(--io-parchment);
+  }
+
+  kbd {
+    font-family: inherit;
+  }
+  .verdict {
+    color: var(--gold);
   }
   .reveal {
     border-left: 3px solid var(--border);
@@ -427,76 +629,90 @@
   .reveal.right {
     border-left-color: var(--gold);
   }
-  .verdict {
-    color: var(--gold);
+  .reveal img {
+    display: block;
+    max-width: 100%;
+    max-height: 60vh;
+    height: auto;
+    margin: 1rem 0;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 6px;
+    object-fit: contain;
   }
   .promotion {
     margin: 1rem 0;
     padding: 0.5rem 1rem;
     border: 1px solid var(--gold);
+    border-radius: 8px;
   }
   .explanation {
     color: var(--muted);
   }
 
-  /* On a phone the image takes whatever height the rest of the page leaves, so the answers stay on screen. */
-  @media (max-width: 40rem) {
-    .play {
-      display: flex;
-      flex-direction: column;
-      min-height: calc(100vh - var(--chrome));
-      min-height: calc(100dvh - var(--chrome));
-    }
-    h1 {
-      margin: 0.25rem 0;
-    }
-    .frame {
-      position: relative;
-      flex: 1 1 0;
-      min-height: 8rem;
-      margin: 0.5rem 0;
-    }
-    .frame img {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      max-height: none;
-      margin: 0;
-    }
-    .prompt {
-      margin: 0.25rem 0 0;
-      font-size: 1rem;
-      line-height: 1.3;
-    }
-    .recap {
-      margin-bottom: 0.5rem;
-      gap: 0.25rem 0.75rem;
-      font-size: 0.85rem;
-    }
-    .options {
-      gap: 0.4rem;
-    }
-    .options button {
-      flex: 1 1 4.5rem;
-      padding-inline: 0.4rem;
-    }
-    .skip {
-      margin-top: 0.4rem;
-    }
-    .skip {
-      display: flex;
-      gap: 0.4rem;
-    }
-    .skip button {
-      flex: 1 1 0;
-    }
-    kbd,
-    .hint {
+  /* Touch and narrow screens: no key chips, 44px targets, the two quiet links on their own row. */
+  @media (max-width: 40rem), (hover: none) {
+    .key {
       display: none;
     }
-    .back {
-      margin: 0.5rem 0 0;
+  }
+  @media (max-width: 40rem) {
+    .column {
+      gap: 8px;
+      min-height: 10rem;
+      padding: 4px 16px max(8px, env(safe-area-inset-bottom));
+    }
+    .toast {
+      top: 3.5rem;
+    }
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 1.2px;
+    }
+    .text {
+      font-size: 14px;
+    }
+    .controls {
+      flex-wrap: wrap;
+      gap: 0 16px;
+    }
+    .answers {
+      flex-basis: 100%;
+    }
+    .pill {
+      height: 44px;
+      padding: 0 4px;
+      font-size: 13px;
+    }
+    .pill.blocked .level {
+      display: none;
+    }
+    .pill.blocked .ban {
+      display: inline-flex;
+    }
+    .controls.yesno .pill {
+      font-size: 14px;
+    }
+    .skip {
+      display: block;
+    }
+    .quiet {
+      display: flex;
+      align-items: center;
+      min-width: 56px;
+      min-height: 44px;
+    }
+    .quiet.guide {
+      margin-left: auto;
+    }
+    .space {
+      display: none;
+    }
+    .panel {
+      padding: 0.5rem 1rem 1.5rem;
+    }
+    .recap {
+      padding-right: 1rem;
+      font-size: 0.85rem;
     }
     .reveal img {
       max-height: 40vh;
