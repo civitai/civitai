@@ -6,6 +6,7 @@
   import DailyPanel from './DailyPanel.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import { recapLines } from './recap-text';
+  import { answerForKey, keyHints } from './keys';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -26,7 +27,7 @@
     return { destroy: () => img.removeEventListener('error', onfail) };
   }
 
-  // Y and N answer a yes/no question and Space skips the item; typing in a field, a focused button or link, or holding a
+  // Y and N answer a yes/no question, the number keys a rating, and Space skips the item; typing in a field, a focused button or link, or holding a
   // modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
     if (data.mode !== 'queue' || !data.item || submitting) return;
@@ -39,8 +40,10 @@
       skipForm?.requestSubmit();
       return;
     }
-    if (!yesNo || imageFailed) return;
-    const value = { y: 'yes', n: 'no' }[event.key.toLowerCase()];
+    if (imageFailed || !data.question) return;
+    const value = yesNo
+      ? { y: 'yes', n: 'no' }[event.key.toLowerCase()]
+      : answerForKey(data.question.options, event.key);
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
@@ -209,20 +212,25 @@
   <form method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
     <input type="hidden" name="item" value={data.item.id} />
     <div class="options">
-      {#each data.question.options as option (option.value)}
+      {#each data.question.options as option, index (option.value)}
         <button
           type="submit"
           name="answer"
           value={option.value}
           disabled={submitting || imageFailed}
         >
-          {option.label}{#if yesNo}
-            <kbd>{option.label[0]}</kbd>{/if}
+          {option.label}<kbd>{yesNo ? option.label[0] : index + 1}</kbd>
         </button>
       {/each}
     </div>
   </form>
 
+  <p class="hint">
+    Keys:
+    {#if yesNo}Y yes · N no{:else}{#each keyHints(data.question.options) as hint (hint.key)}{hint.key} {hint.label} ·
+      {/each}{/if}
+    Space skips
+  </p>
   <form method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm} class="skip">
     <input type="hidden" name="item" value={data.item.id} />
     <button type="submit" disabled={submitting}>Skip <kbd>Space</kbd></button>
@@ -278,6 +286,11 @@
     object-fit: contain;
     margin: 1rem 0;
     border: 1px solid var(--border);
+  }
+  .hint {
+    margin: 0.5rem 0 0;
+    color: var(--muted);
+    font-size: 0.85rem;
   }
   .skip {
     margin-top: 0.5rem;
