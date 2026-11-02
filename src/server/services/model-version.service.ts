@@ -2658,12 +2658,6 @@ You agree to the following with respect to the Model (each a “Permission”):
 `;
   }
 
-  if (allowsDifferentLicenseOnMerges(options)) {
-    license += `
-<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.</b>
-`;
-  }
-
   const additionalCommercialRestrictions = Object.entries(commercialUsePermissionContent)
     .map(([key, value]) => {
       if (options.allowCommercialUse.includes(key as CommercialUse)) return '';
@@ -2671,6 +2665,13 @@ You agree to the following with respect to the Model (each a “Permission”):
     })
     .join('');
   license += additionalCommercialRestrictions;
+
+  // Last on purpose: it grants against every restriction above it, so nothing may be appended after.
+  if (allowsDifferentLicenseOnMerges(options)) {
+    license += `
+<b>Changing Permissions: You may modify or eliminate any of the Permissions in this Attachment B when sharing or making available a Merge. This does not change the terms of the License itself, which continue to apply to the Merge.</b>
+`;
+  }
 
   return license;
 }
