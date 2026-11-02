@@ -230,6 +230,19 @@ describe('challenge-entry gates when the replica has not caught up', () => {
     );
   });
 
+  // bulkSaveItems charges after its own write; every other caller charges inside the validator.
+  // A caller that validates early (addSimpleImagePost) must not pay before anything is saved.
+  it.each([
+    ['with image ids', { imageIds: [IMAGE_ID] }],
+    ['with no ids', { imageIds: [] }],
+  ])('never charges the entry fee when the charge is deferred, %s', async (_label, ids) => {
+    seed({ replica: [], primary: [challenge({ entryFee: 50 })] });
+
+    await expect(entry({ ...ids, deferEntryFeeCharge: true })).resolves.toBeUndefined();
+
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
   it('neither charges nor accepts an entry into a challenge the replica still sees as Active but the primary has Cancelled', async () => {
     seed({
       replica: [challenge({ entryFee: 50 })],
@@ -238,5 +251,23 @@ describe('challenge-entry gates when the replica has not caught up', () => {
 
     await expect(entry()).rejects.toThrow('Challenge is starting shortly');
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+});
+
+describe('contest ban', () => {
+  it('refuses a user on the contest-ban list before any other gate', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({
+      id: USER_ID,
+      meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
+    });
+
+    await expect(entry()).rejects.toThrow('You are banned from participating in contests');
+    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: USER_ID } })
+    );
+  });
+
+  it('does not refuse an unbanned user for the ban', async () => {
+    await expect(entry()).rejects.not.toThrow('banned from participating');
   });
 });

@@ -230,6 +230,11 @@ function pendingRequest(over: Partial<Record<string, unknown>> = {}) {
 }
 
 beforeEach(() => {
+  // Only the spend-entitlement read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {}).join() === 'muted' ? { muted: false } : undefined) as never);
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
   mockMultiIncr.malformedExec = false;
@@ -308,6 +313,26 @@ describe('POST /api/v1/blocks/dev-token', () => {
     // Every other belt unchanged: forced SFW + page ctx.
     expect(arg.maxBrowsingLevel).toBe(SFW);
     expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
+  });
+
+  it('200: a restricted account still mints, with its read scopes but no spend scope or budget', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_SPEND_SESSION);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    expect(arg.scopes).toEqual(['apps:storage:read', 'models:read:self', 'user:read:self']);
+    expect(arg.buzzBudget).toBeUndefined();
+  });
+
+  it('200: an account with no row mints without spend', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_SPEND_SESSION);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).not.toContain('ai:write:budgeted');
   });
 
   it('200: OAuth token WITH AppBlocksSubmit but WITHOUT AIServicesWrite mints, but the uniform spend ceiling STRIPS ai:write:budgeted', async () => {

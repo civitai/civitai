@@ -1,4 +1,5 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
+import type { CombinedDataTransformer } from '@trpc/server';
 import type {
   GetServerSidePropsContext,
   GetServerSidePropsResult,
@@ -32,12 +33,66 @@ import {
 } from '~/server/shell/shell-response';
 import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
+
+/**
+ * The page-props key the patched `withTRPC` (patches/@trpc__next@11.17.0.patch) reads the
+ * pre-serialisation dehydrated state from on the server render. A symbol key, so JSON — the
+ * page's `__NEXT_DATA__` and `/_next/data` responses — never carries it.
+ */
+export const SSR_DEHYDRATED_STATE = Symbol.for('civitai.trpc.ssrDehydratedState');
+
+/** Anonymous requests spread over this many entities, so a percentage rollout splits them too. */
+const ANONYMOUS_ROLLOUT_BUCKETS = 64;
+
+function skipsTrpcStateReparse(session: Session | null) {
+  const entityId = session?.user
+    ? String(session.user.id)
+    : `anonymous-${Math.floor(Math.random() * ANONYMOUS_ROLLOUT_BUCKETS)}`;
+  return isFliptSync(FLIPT_FEATURE_FLAGS.SSR_SKIP_TRPCSTATE_REPARSE, entityId) === true;
+}
+
+/** One request's slot for the value its helpers' dehydrate handed the transformer. */
+export type DehydratedStateCapture = { state?: unknown };
+
+function capturingTransformer(
+  base: CombinedDataTransformer,
+  capture: DehydratedStateCapture
+): CombinedDataTransformer {
+  return {
+    input: base.input,
+    output: {
+      deserialize: base.output.deserialize,
+      serialize: (value) => {
+        capture.state = value;
+        return base.output.serialize(value);
+      },
+    },
+  };
+}
+
+/**
+ * Hand the server render the state `trpcState` was serialised from, so it does not parse what this
+ * request just wrote. Only a devalue `trpcState` (a string): devalue.stringify accepted the whole
+ * value, so the browser's parse rebuilds the same structure. A superjson write (the fallback for a
+ * value devalue rejects) can pass class instances through, so the server keeps parsing it.
+ */
+function attachSsrDehydratedState(pageProps: unknown, capture: DehydratedStateCapture | undefined) {
+  const props = pageProps as Record<PropertyKey, unknown>;
+  if (!capture || capture.state === undefined || typeof props.trpcState !== 'string') return;
+  // The render then holds the resolvers' own objects, which a cache may share across requests.
+  props[SSR_DEHYDRATED_STATE] = shouldFreezeRenderState()
+    ? freezeRenderState(capture.state)
+    : capture.state;
+}
 
 export const getServerProxySSGHelpers = async (
   // A page's gSSP context, or an API route's request/response (`/api/page-data/*`).
   ctx: { req: GetServerSidePropsContext['req']; res: GetServerSidePropsContext['res'] },
   session: Session | null,
-  features: FeatureAccess
+  features: FeatureAccess,
+  capture?: DehydratedStateCapture
 ) => {
   const domain = getRequestDomainColor(ctx.req) ?? 'blue';
   const ssg = createServerSideHelpers({
@@ -70,7 +125,7 @@ export const getServerProxySSGHelpers = async (
     // bundle (a stale tab's `/_next/data` fetch is a buildId mismatch, which Next
     // turns into a full reload), so the client check would only switch SSR to
     // superjson without protecting anyone.
-    transformer: unionTransformer,
+    transformer: capture ? capturingTransformer(unionTransformer, capture) : unionTransformer,
   });
   return ssg;
 };
@@ -182,9 +237,12 @@ export function createServerSideProps<P>({
       syncShellRouteCookie(context.req, context.res, shell, enabled);
     }
 
+    // Only a full page load renders on the server; a `/_next/data` response is JSON alone.
+    const capture: DehydratedStateCapture | undefined =
+      useSSG && !isClient && skipsTrpcStateReparse(session) ? {} : undefined;
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
-        ? await getServerProxySSGHelpers(context, session, features)
+        ? await getServerProxySSGHelpers(context, session, features, capture)
         : undefined;
 
     const result = ((await resolver?.({
@@ -206,14 +264,14 @@ export function createServerSideProps<P>({
 
     const adsGated = resolveAdsGated(result, features);
 
-    return {
-      props: {
-        ...(props ?? {}),
-        adsGated,
-        ...(ssg ? { trpcState: dehydrateSsgState(ssg, context.resolvedUrl) } : {}),
-        session: jsonSafeSession(session),
-      } as NonNullable<P>,
-    };
+    const pageProps = {
+      ...(props ?? {}),
+      adsGated,
+      ...(ssg ? { trpcState: dehydrateSsgState(ssg, context.resolvedUrl) } : {}),
+      session: jsonSafeSession(session),
+    } as NonNullable<P>;
+    attachSsrDehydratedState(pageProps, capture);
+    return { props: pageProps };
   };
 }
 

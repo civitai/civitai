@@ -26,6 +26,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/services/bounty.service', () => ({
   settleBountyPayout: mockSettle,
   retryUnsettledBountyPayouts: vi.fn(),
+  deleteSettledKeptBounties: vi.fn(),
 }));
 vi.mock('~/server/search-index', () => ({ bountiesSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/email/templates', () => {
@@ -77,6 +78,7 @@ function expiredLoraBounty(entryFiles: { entryId: number; metadata: object }[]) 
     const sql = strings.join('');
     if (sql.includes('FOR UPDATE')) return [{ complete: false, refunded: false }];
     if (sql.includes('SELECT currency FROM "BountyBenefactor"')) return [{ currency: 'BUZZ' }];
+    if (sql.includes('bf."awardedAt" IS NULL LIMIT 1')) return [{ one: 1 }];
     if (sql.includes('JOIN "File" f')) return entryFiles;
     if (sql.includes('FROM "BountyEntry" be')) return [{ id: CLEAN_ENTRY, userId: 7 }];
     return [];

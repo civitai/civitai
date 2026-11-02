@@ -19,6 +19,7 @@ ALTER TABLE "CollectionContributor" REPLICA IDENTITY FULL;   -- reads `permissio
 ALTER TABLE "CollectionItem" REPLICA IDENTITY FULL;          -- reads entity ids,addedById,status (PK: id)
 ALTER TABLE "Comment" REPLICA IDENTITY FULL;                 -- reads userId,modelId (PK: id)
 ALTER TABLE "CommentV2" REPLICA IDENTITY FULL;               -- reads userId,threadId (PK: id)
+ALTER TABLE "CommentV3" REPLICA IDENTITY FULL;               -- reads userId,entityType,entityId,deletedAt (PK: id)
 ALTER TABLE "Article" REPLICA IDENTITY FULL;                 -- reads status,userId (PK: id)
 ALTER TABLE "Bounty" REPLICA IDENTITY FULL;                  -- reads userId (PK: id)
 ALTER TABLE "BountyEntry" REPLICA IDENTITY FULL;             -- reads userId,bountyId (PK: id)

@@ -170,13 +170,13 @@ scripts/metric-migration/
 
 ```bash
 # Backfill a specific table
-npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric
+npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric
 
 # Backfill with custom date
-npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric --date 2025-01-21
+npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric --date 2025-01-21
 
 # Dry run (no insert)
-npx ts-node scripts/metric-migration/backfill-metrics.ts --table BountyMetric --dry-run
+npx tsx scripts/metric-migration/backfill-metrics.ts --table BountyMetric --dry-run
 ```
 
 ### Config Structure

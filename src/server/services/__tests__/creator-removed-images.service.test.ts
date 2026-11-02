@@ -67,6 +67,9 @@ function given({
       Promise.resolve(ids.filter((id) => asked.includes(id)).map((id) => ({ id })));
     if (sql.includes('jsonb_array_elements')) return answer(excludedImages);
     if (sql.includes('"UserReport"')) return answer(excludedOwners);
+    // `getHoldMarkerBlockedImageIds`: no hold kept any of these; creator-removals.behavior.test.ts covers one.
+    if (sql.includes('"EvidenceHoldImage"'))
+      return Promise.resolve((values[1] as number[]).map((id) => ({ id, blocked: false })));
     throw new Error(`unexpected query: ${sql}`);
   }) as never);
 }

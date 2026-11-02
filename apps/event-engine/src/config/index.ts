@@ -56,6 +56,7 @@ export const config = {
       'public.CollectionItem',
       'public.Comment',
       'public.CommentV2',
+      'public.CommentV3',
       'public.ImageResourceNew',
       'public.BuzzTip',
       'public.TagEngagement',
@@ -73,7 +74,7 @@ export const config = {
       'public.TagsOnBounty',
       'public.Bounty',
       'public.Article',
-      'public.ComicProjectEngagement'
+      'public.ComicProjectEngagement',
     ],
 
     // Streamed by the connector but not consumed by the metrics watcher (only by
@@ -117,17 +118,17 @@ export const config = {
   },
   cache: {
     queryCache: {
-      maxSize: parseInt(process.env.QUERY_CACHE_MAX_SIZE ?? (250 * 1024 * 1024)+''), // max size in bytes
+      maxSize: parseInt(process.env.QUERY_CACHE_MAX_SIZE ?? 250 * 1024 * 1024 + ''), // max size in bytes
       syncEnabled: process.env.QUERY_CACHE_SYNC_ENABLED !== 'false', // default: true
       backupKey: process.env.QUERY_CACHE_BACKUP_KEY ?? 'query-cache:backup', // Redis key for backup
       chunkSize: parseInt(process.env.QUERY_CACHE_CHUNK_SIZE ?? '500000'), // entries per chunk (500k ~= 25-50MB uncompressed)
       // When sync is enabled: backup every 30min (cache is shared across instances)
       // When sync is disabled: backup every 5min (need frequent snapshots)
       get backupIntervalMs() {
-        const envInterval = process.env.QUERY_CACHE_BACKUP_INTERVAL
-        if (envInterval) return parseInt(envInterval) * 1000
-        return this.syncEnabled ? 30 * 60 * 1000 : 5 * 60 * 1000
-      }
+        const envInterval = process.env.QUERY_CACHE_BACKUP_INTERVAL;
+        if (envInterval) return parseInt(envInterval) * 1000;
+        return this.syncEnabled ? 30 * 60 * 1000 : 5 * 60 * 1000;
+      },
     },
     pgPoolMaxConnections: parseInt(process.env.PG_POOL_MAX_CONNECTIONS ?? '20'),
   },
@@ -138,7 +139,8 @@ export const config = {
   spine: {
     url: process.env.SPINE_URL ?? '',
     apiKey: process.env.SPINE_API_KEY ?? '',
-    kafkaCallbackUrl: process.env.SPINE_KAFKA_CALLBACK_URL ?? 'https://orchestrator-kafka.civitai.com/callback',
+    kafkaCallbackUrl:
+      process.env.SPINE_KAFKA_CALLBACK_URL ?? 'https://orchestrator-kafka.civitai.com/callback',
   },
   s3: {
     accessKey: process.env.S3_ACCESS_KEY ?? '',
@@ -174,6 +176,8 @@ export const config = {
     embedOutageRetrySeconds: vectorInt('VECTOR_EMBED_OUTAGE_RETRY_SECONDS', 900, 0, 7200),
     // Backfill and reconcile steps submitted per second per process, cache hits included; 0 is unlimited.
     embedMaxStepsPerSecond: vectorInt('VECTOR_EMBED_MAX_STEPS_PER_SECOND', 10, 0, 1000),
+    // false: ignore the orchestrator's in-flight quota headers (429s still hold); anything else honours them.
+    embedHonorQuota: process.env.VECTOR_EMBED_HONOR_QUOTA !== 'false',
     // Inputs per workflow, 1 to 128.
     embedBatchSize: vectorInt('VECTOR_EMBED_BATCH_SIZE', 128, 1, 128),
     embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
@@ -181,11 +185,7 @@ export const config = {
 };
 
 export function validateConfig() {
-  const required = [
-    'DATABASE_URL',
-    'CLICKHOUSE_URL',
-    'REDIS_URL',
-  ];
+  const required = ['DATABASE_URL', 'CLICKHOUSE_URL', 'REDIS_URL'];
 
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length > 0) {

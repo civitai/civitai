@@ -94,6 +94,14 @@ export default function CosmeticShopMain() {
   const { wishlistedIds } = useQueryWishlistedShopItems();
   const features = useFeatureFlags();
 
+  // The sections mount only after the owned-cosmetics query settles, past the browser's own
+  // hash scroll, so a /shop#shop-section-<id> link has to scroll once they exist.
+  const sectionsReady = !isLoading && !loadingOwnedCosmetics;
+  useEffect(() => {
+    if (!sectionsReady) return;
+    document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
+  }, [sectionsReady]);
+
   const { updateLastViewed, isFetched } = useShopLastViewed();
 
   useEffect(() => {

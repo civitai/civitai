@@ -43,6 +43,9 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       findUnique: vi.fn(
         async (..._a: unknown[]): Promise<unknown> => ({ id: 'apl_existing', kind: 'onsite' })
       ),
+      // approveRequest's up-front "which listing does this approve publish" read (the
+      // publish floor): no draft / reset listing here, so nothing is gated.
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },

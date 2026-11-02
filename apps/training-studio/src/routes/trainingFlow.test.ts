@@ -9,6 +9,7 @@ import {
   defaultRunParams,
   newRun,
   nextImgId,
+  optimizerLrParams,
   paramDeviations,
   promptHasTrigger,
   runExtraCapabilities,
@@ -379,5 +380,36 @@ describe('sample input images', () => {
   it('has nothing to flag when every prompt or none has an image', () => {
     expect(sampleImagesProblem(prompts(['a', 'a.png'], ['b', 'b.png'], ['']))).toBeNull();
     expect(sampleImagesProblem(prompts(['a'], ['b']))).toBeNull();
+  });
+});
+
+describe('optimizer learning-rate coupling', () => {
+  it('puts both rates at 1 when Prodigy is picked', () => {
+    const r = run('sdxl');
+    const params = { ...defaultRunParams(r), optimizer: 'Prodigy' };
+    expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '1' });
+  });
+
+  it('leaves a locked text-encoder rate at 0 under Prodigy', () => {
+    const krea = run('krea2');
+    const params = { ...defaultRunParams(krea), optimizer: 'Prodigy' };
+    expect(optimizerLrParams(krea, params)).toMatchObject({ unetLr: '1' });
+    expect(Number(optimizerLrParams(krea, params).textEncoderLr)).toBe(0);
+  });
+
+  it('resets Prodigy-level rates to the model defaults when switching away', () => {
+    const r = run('sdxl');
+    const d = defaultRunParams(r);
+    const params = { ...d, optimizer: 'AdamW8Bit', unetLr: '1', textEncoderLr: '1' };
+    expect(optimizerLrParams(r, params)).toEqual({
+      unetLr: d.unetLr,
+      textEncoderLr: d.textEncoderLr,
+    });
+  });
+
+  it('keeps a rate the user picked below the Prodigy level', () => {
+    const r = run('sdxl');
+    const params = { ...defaultRunParams(r), optimizer: 'Adafactor', unetLr: '0.0002' };
+    expect(optimizerLrParams(r, params).unetLr).toBe('0.0002');
   });
 });

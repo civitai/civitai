@@ -88,6 +88,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { blocksRouter } from '../blocks.router';
 import {
   A1111_PARAMETERS,
@@ -138,6 +139,7 @@ function writtenRow() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  redisMock.sysRedis.mGet.mockResolvedValue([String(VIEWER_ID)] as never);
   parserOverride.throws = false;
   mockAuthorizeBlockBridgeToken.mockResolvedValue({
     sub: `user:${VIEWER_ID}`,

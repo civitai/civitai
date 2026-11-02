@@ -49,7 +49,7 @@ ImageCaption's (an author's caption on one image of a storyline chapter, keyed b
 rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
 has no Clavata counterpart.
 
-ChatMessage, Comment, CommentV2, UserProfile, Post, Model and Article also list `csam`, asked only while its
+ChatMessage, Comment, CommentV2, CommentV3, UserProfile, Post, Model and Article also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
 in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
 workflow per window.
@@ -140,6 +140,7 @@ every entity type is off whatever the hash says, so XGuard and the profanity fil
 Clavata runs again for any entity cut over by `disableClavataFor` (the cutover is kept in its own
 set, `system:text-scan:clavata-cutover`, and the Clavata job skips a cut-over entity only while the
 switch is on and that entity type is 100% active; anything less hands it back to Clavata).
+`CommentV3` has no rollout of its own and uses `CommentV2`'s (`rolloutFor()` in `text-scan/mode.ts`), for both scanning and the cutover's 100%-active check.
 Turning it off does not undo verdicts already applied.
 
 - **off** — nothing is submitted.
@@ -217,7 +218,11 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   restricted" notice; see `docs/moderator-app/strike-rules.md`.
 - Bounty awards are recorded under the payout lock, then paid with one key shared by the manual and
   expiry paths (`bounty-award-b<bountyId>-<accountType>`), so a retry can't pay twice. The hourly
-  `bounty-payout-retry` job settles awards recorded but not yet marked paid.
+  `bounty-payout-retry` job settles awards recorded but not yet marked paid. An award, or a supporter
+  refund the ledger can't confirm, is recorded as unpaid for a manual ruling. Moderators resolve it on
+  the moderator app's `/bounties/unpaid-awards` page (sidebar count `bountyUnpaidAwards`), which calls
+  `/api/mod/bounty-unpaid-award/resolve`. That records the ruling and its ledger reference and moves no
+  Buzz.
 
 ## Adding an entity or a label
 

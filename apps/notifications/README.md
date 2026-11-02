@@ -18,7 +18,9 @@ One process owns the whole notification write side:
   and applies **no** opt-out filter; each `send-notifications` processor filters in its own SQL. This
   is the path `src/server/jobs/send-notifications.ts` uses, and it is why a processor missing its
   `NOT EXISTS "UserNotificationSettings"` clause is unmuteable.
-- **(B) Fan-out worker** — the ported ~5s poll loop. Claims `PendingNotification` rows, fans each into
+- **(B) Fan-out worker** — the ported ~5s poll loop, run as two lanes: rows with over 1000 recipients
+  (follower fan-outs) go one at a time through a bulk lane, so they never delay the rest. Claims
+  `PendingNotification` rows, fans each into
   `Notification` + `UserNotification` rows (normal / debounced), deletes/reschedules the pending row,
   and POSTs a realtime `notification:new` signal per affected user, bumping that user's redis unread
   counter only if one is already cached (an uncached user is recounted from the DB on the next read).
@@ -32,7 +34,7 @@ One process owns the whole notification write side:
   A dry run already pins the `sendId` to its type, message and url, so fixing a typo needs a new `sendId`.
   TypeScript callers use `sendSystemNotices()` from `@civitai/notifications`.
 - **Ops routes** — `GET /health` (liveness; touches no dependency, but returns 503 on a worker pod whose
-  redis commands have all failed for 60s or whose poll loop has stalled for 10 min), `GET /pool-stats`
+  redis commands have all failed for 60s or where either poll-loop lane has stalled for 10 min), `GET /pool-stats`
   (notif pool snapshots), `GET /metrics` (Prometheus, private-by-XFF).
 
 The producer↔consumer contract is the `PendingNotification` table, not HTTP — so the monolith's

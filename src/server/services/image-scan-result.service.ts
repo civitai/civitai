@@ -314,6 +314,7 @@ export async function processImageScanWorkflow({
     userId: image.userId,
     ingestion: outcome.ingestion,
     blockedFor: outcome.blockedFor,
+    nsfwLevel: outcome.nsfwLevel,
   });
 }
 

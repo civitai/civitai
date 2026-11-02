@@ -22,6 +22,8 @@ import {
   NsfwLevelDeprecated,
 } from '~/shared/constants/browsingLevel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { Flags } from '~/shared/utils/flags';
+import { isDefined } from '~/utils/type-guards';
 
 /**
  * Shared image-search + response-shaping body extracted verbatim from
@@ -375,4 +377,22 @@ export async function runImageSearch(
   });
 
   return { items: shaped, nextCursor };
+}
+
+/**
+ * Leaves out the images above the held gallery level of their post's minor or SFW-only model, for
+ * searches that pick images by id and so name no model to hold them by.
+ */
+export async function withoutHeldImages<T extends Pick<ShapedImage, 'postId' | 'browsingLevel'>>(
+  items: T[]
+) {
+  // Loaded on demand: the model service's import graph is large.
+  const { getHeldLevelsByPost } = await import('~/server/services/model.service');
+  const postIdOf = (image: T) => (typeof image.postId === 'number' ? image.postId : undefined);
+  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined));
+  return items.filter((image) => {
+    const postId = postIdOf(image);
+    const hold = postId ? held.get(postId) : undefined;
+    return !hold || Flags.intersects(hold.level, image.browsingLevel);
+  });
 }

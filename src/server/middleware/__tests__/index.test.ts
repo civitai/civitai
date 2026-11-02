@@ -31,7 +31,7 @@ describe('runMiddlewares', () => {
       },
     });
 
-    const response = await runMiddlewares(makeRequest('/api/trpc/image.getInfinite'), [
+    const response = await runMiddlewares(makeRequest('/api/v1/images'), [
       apiCacheLike,
       botDetectionLike,
     ]);
@@ -139,7 +139,7 @@ describe('runMiddlewares', () => {
       },
     });
 
-    await runMiddlewares(makeRequest('/api/trpc/foo'), [skipped, ran]);
+    await runMiddlewares(makeRequest('/api/v1/foo'), [skipped, ran]);
     expect(firstRan).toBe(false);
     expect(secondRan).toBe(true);
   });

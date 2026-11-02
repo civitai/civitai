@@ -9,15 +9,19 @@ import { envMock } from '~/__tests__/mocks/env.mock';
  * job passes it as a plain `true`, so the tRPC path must keep passing the session's own value —
  * these pin that the two callers are not interchangeable.
  */
-const { createFile, registerFileLocation, createModelFileScanRequest } = vi.hoisted(() => ({
-  createFile: vi.fn(),
-  registerFileLocation: vi.fn(),
-  createModelFileScanRequest: vi.fn(),
-}));
+const { createFile, updateFile, registerFileLocation, createModelFileScanRequest } = vi.hoisted(
+  () => ({
+    createFile: vi.fn(),
+    updateFile: vi.fn(),
+    registerFileLocation: vi.fn(),
+    createModelFileScanRequest: vi.fn(),
+  })
+);
 
 vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelFileService>()),
   createFile,
+  updateFile,
 }));
 vi.mock('~/utils/storage-resolver', () => ({ registerFileLocation }));
 vi.mock('~/server/services/model-file-scan.service', () => ({
@@ -25,7 +29,11 @@ vi.mock('~/server/services/model-file-scan.service', () => ({
   ModelFileScanSubmissionError: class extends Error {},
 }));
 
-import { createFileHandler, createModelFile } from '~/server/controllers/model-file.controller';
+import {
+  createFileHandler,
+  createModelFile,
+  updateFileHandler,
+} from '~/server/controllers/model-file.controller';
 
 const input = {
   modelVersionId: 42,
@@ -211,6 +219,50 @@ describe('the uploadDomain stamp on a training-data upload', () => {
 
     const [{ metadata }] = createFile.mock.calls[0];
     expect(metadata?.uploadDomain).toBeUndefined();
+  });
+});
+
+describe('training results in the metadata a client sends', () => {
+  const trainingResults = {
+    version: 2,
+    epochs: [
+      {
+        epochNumber: 1,
+        modelUrl: 'https://example.com/m',
+        sampleImages: ['https://example.com/a.jpeg'],
+      },
+    ],
+  };
+
+  it.each([input, trainingInput])('are dropped on create ($type), the rest kept', async (base) => {
+    await createFileHandler({
+      input: { ...base, metadata: { numImages: 3, trainingResults } } as never,
+      ctx: { user: { id: 7, isModerator: false }, track, domain: 'green' } as never,
+    });
+
+    const [{ metadata }] = createFile.mock.calls[0];
+    expect(metadata).not.toHaveProperty('trainingResults');
+    expect(metadata.numImages).toBe(3);
+  });
+
+  it('are dropped on update, the rest kept', async () => {
+    updateFile.mockResolvedValue({
+      id: 900,
+      replacedFileId: undefined,
+      modelVersion: { modelId: 5 },
+    });
+
+    await updateFileHandler({
+      input: {
+        id: 900,
+        metadata: { selectedEpochUrl: 'https://example.com/m', trainingResults },
+      } as never,
+      ctx: { user: { id: 7, isModerator: false }, track, domain: 'green' } as never,
+    }).catch(() => null);
+
+    const [{ metadata }] = updateFile.mock.calls[0];
+    expect(metadata).not.toHaveProperty('trainingResults');
+    expect(metadata.selectedEpochUrl).toBe('https://example.com/m');
   });
 });
 

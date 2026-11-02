@@ -23,6 +23,7 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
 }));
 
 import type { Workflow } from '@civitai/orchestration-client';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getServerSideProps } from '~/pages/models/train/from-orchestrator';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -98,5 +99,13 @@ describe('from-orchestrator SSR — refusals render a reason', () => {
     await expect(resolve({ user: { ...session.user, onboarding: 0 } })).resolves.toEqual({
       redirect: { destination: '/models', permanent: false },
     });
+  });
+
+  it('redirects a banned user before fetching an orchestrator token', async () => {
+    mockGetWorkflow.mockResolvedValue(run('approved'));
+    await expect(resolve({ user: { ...session.user, bannedAt: new Date() } })).resolves.toEqual({
+      redirect: { destination: '/models', permanent: false },
+    });
+    expect(getOrchestratorToken).not.toHaveBeenCalled();
   });
 });

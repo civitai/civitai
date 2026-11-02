@@ -12,7 +12,7 @@ import { minorFlagRateLimit, modelId } from '~/server/schema/moderator/minor-fla
 export default defineModeratorEndpoint('minorFlag.rule', {
   summary:
     'Rule on a standing text-scan minor or real-person flag outside an appeal: keep it or lift it.',
-  returns: '{ ruled: "kept" | "lifted", label, modelId }',
+  returns: '{ ruled: "kept" | "lifted" | "keptMinor", label, modelId }',
   notes: [
     '`keep: false` lifts the flag and closes an open owner appeal on it; `keep: true` records that the flag stands.',
     "Refuses when the model has no such flag, or when `textHash` is not the flag's current text hash (the text changed; reload).",

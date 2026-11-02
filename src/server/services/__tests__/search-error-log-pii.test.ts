@@ -30,6 +30,10 @@ const { fetchDocumentsAbortableMock } = vi.hoisted(() => ({
 
 // metricsSearchClient must be TRUTHY or both functions early-return before the
 // try/catch we are testing. fetchDocumentsAbortable is the throw seam.
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
+
 vi.mock('~/server/meilisearch/client', async (importOriginal) => {
   const actual = await importOriginal<typeof MeilisearchClient>();
   return {

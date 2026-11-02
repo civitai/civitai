@@ -1,0 +1,85 @@
+name: Full CI on label
+
+# Adding the `full-ci` label to a PR starts the full test suite on it, right away.
+#
+# lint.yml and apps.yml read the label themselves on every PR run (opened, synchronize,
+# reopened, ready_for_review): with it on, the four `Unit tests` shards run and the draft
+# ESLint-only gate is lifted, so every push after the label is added runs the full suite in the
+# PR run. What they cannot do without help is react to the label being ADDED, which is a
+# `labeled` event. This file does that, by dispatching both workflows on the PR branch.
+#
+# ── WHY A DISPATCHER, AND NOT `labeled` IN lint.yml / apps.yml ────────────────────────────────
+#
+# That was the first design, and it was measured live before being dropped. `labeled` fires for
+# EVERY label, and GitHub has no trigger filter on the label name, so any other label starts a
+# run whose jobs all skip. Those skipped jobs still create check-runs, with the SAME NAMES as the
+# real ones, on the PR's head commit. `gh pr checks` keeps the newest check-run per name, so
+# after someone added an unrelated label it showed `ESLint + Prettier (changed files)`,
+# `Package unit tests`, `Component + geometry tests` and `App unit tests + typecheck` as
+# `skipping` over a real run whose jobs had all passed, and exited 0. A real failure would have
+# been covered the same way. (Giving the skipped jobs another name through an expression does not
+# work: GitHub does not evaluate `name:` for a skipped job and shows the raw expression text.)
+#
+# Here, any other label starts only this workflow, whose one job skips under a name nothing else
+# uses (`Start full CI on label`), so it overlays nothing.
+#
+# ── WHAT THE DISPATCHED RUNS TEST ─────────────────────────────────────────────────────────────
+#
+# A dispatch runs on the BRANCH HEAD, not on the PR's merge commit with its base, so this first
+# full run tests the branch as pushed.
+#
+# 🔴 ITS RESULTS ARE NOT IN THE PR'S CHECKS LIST. Measured: the dispatched runs' check-runs sit on
+# the head commit (the commit's check-runs API, the Actions tab), but `gh pr checks` and the PR's
+# status rollup list only pull_request-event runs, so they still show the draft run's skipped
+# `Unit tests` there. This job's summary links the two runs; open `Start full CI on label` to
+# reach them. Every LATER push runs the full suite in the PR run, which the checks list does show. Later PR runs (on push) test the merge commit as usual.
+# The dispatched Lint run is `only: all`: every suite but ESLint, which is PR-only and already
+# ran on the PR. Its concurrency group is the dispatch one, so it does not cancel the PR's own
+# run in flight. The dispatched apps.yml run is not path-filtered (`paths:` applies to
+# pull_request events only), so it runs the app suites even on a PR that cannot affect them.
+#
+# Not for fork PRs: their branch is not in this repo, so there is nothing here to dispatch on,
+# and their token cannot dispatch anyway. The `if` skips them.
+
+on:
+  pull_request:
+    branches: [main, release]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Start full CI on label
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'full-ci' && github.event.pull_request.head.repo.full_name == github.repository
+    # `actions: write` is what workflow_dispatch needs. A dispatch is the one event a
+    # GITHUB_TOKEN may start another workflow with.
+    permissions:
+      actions: write
+      contents: read
+    timeout-minutes: 5
+    steps:
+      # The branch name reaches the shell through env, never interpolated into the script: a
+      # branch name is attacker-chosen text, and `${{ }}` in `run:` is pasted in before the
+      # shell parses it.
+      - name: Dispatch Lint (only=all) and App suites on the PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
+          gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
+          # Link the runs from this job's summary: it is the only place on the PR that reaches
+          # them (see the header). A dispatch's run appears a few seconds after the call returns.
+          sleep 10
+          echo "### Full CI dispatched on \`$HEAD_REF\`" >> "$GITHUB_STEP_SUMMARY"
+          for wf in lint.yml apps.yml; do
+            url=$(gh run list -R "$REPO" --workflow "$wf" --branch "$HEAD_REF" --event workflow_dispatch \
+              --limit 1 --json url -q '.[0].url' || true)
+            echo "$wf: ${url:-not found yet, see the Actions tab}"
+            echo "- $wf: ${url:-not found yet, see the Actions tab}" >> "$GITHUB_STEP_SUMMARY"
+          done

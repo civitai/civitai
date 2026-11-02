@@ -80,7 +80,19 @@ const xStory = {
   moderatorNsfwLevel: null,
   createdAt: new Date('2026-10-01'),
   user: { id: OWNER, username: 'owner', ...notBanned },
-  chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.X } }],
+  chapters: [
+    {
+      id: 1,
+      postId: 101,
+      removedAt: null,
+      post: {
+        nsfwLevel: NsfwLevel.X,
+        publishedAt: new Date(0),
+        tosViolation: false,
+        user: { bannedAt: null, deletedAt: null },
+      },
+    },
+  ],
   collaborators: [],
 };
 
@@ -117,7 +129,7 @@ describe('storyline router: a story outside the reader’s level serves nothing 
         postId: 102,
         depth: 1,
         // A PG chapter deep inside the X story.
-        post: { nsfwLevel: NsfwLevel.PG },
+        post: { nsfwLevel: NsfwLevel.PG, tosViolation: false, user: notBanned },
         storyline: { ...xStory, user: notBanned },
       },
     ] as never);
@@ -156,7 +168,19 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
     r.storyline.findUnique.mockResolvedValue({
       ...xStory,
       maxNsfwLevel: NsfwLevel.R,
-      chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: NsfwLevel.PG,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     } as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 1 } as never);
     r.$queryRaw.mockResolvedValue([
@@ -185,6 +209,26 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
     getBlockedPairIds.mockResolvedValue([AUTHOR]);
     expect(await pathTombstones()).toEqual([null, 'unavailable']);
     expect(getBlockedPairIds).toHaveBeenCalledWith(READER);
+  });
+});
+
+// A profile's Storylines tab is this feed narrowed to one owner, under the feed's own gates.
+describe("storyline router: the feed narrowed to one owner's storylines", () => {
+  const ownerClauses = async (input: { userId?: number }) => {
+    r.$queryRaw.mockReset();
+    r.$queryRaw.mockResolvedValue([] as never);
+    await callerFor(READER).getInfinite({ filter: 'all', sort: 'newest', ...input });
+    const [strings, ...values] = r.$queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const composed = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return (composed.sql.match(/st\."userId" = \?/g) ?? []).length;
+  };
+
+  it('adds the owner to the feed query, and only when asked', async () => {
+    const without = await ownerClauses({});
+    expect(await ownerClauses({ userId: OWNER })).toBe(without + 1);
   });
 });
 
@@ -236,7 +280,19 @@ describe('storyline router: who may call the engagement procedures', () => {
     dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
     r.storyline.findUnique.mockResolvedValue({
       ...xStory,
-      chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: NsfwLevel.PG,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     } as never);
     dbMock.dbWrite.storylineChapterEdge.findUnique.mockResolvedValue({ chapterId: 2 } as never);
     await callerFor(READER).trackBranchChoice({

@@ -5,6 +5,10 @@ import type { ReactNode } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import {
+  storylineThumbRequestWidth,
+  type StorylineThumbRatio,
+} from '~/components/Storyline/storyline-thumb';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 export type StorylineThumbImage = {
@@ -35,7 +39,7 @@ export function StorylineThumb({
   image: StorylineThumbImage | null | undefined;
   /** Rendered width in px; also sizes the image request. */
   width: number;
-  ratio?: '3/4' | '4/5' | '16/6';
+  ratio?: StorylineThumbRatio;
   /** The picture's vertical focus, as a percent. */
   focusY?: number;
   /** Fill the parent's width instead; `width` then only sizes the image request. */
@@ -70,7 +74,7 @@ export function StorylineThumb({
                 <EdgeMedia
                   src={image.url}
                   type={image.type}
-                  width={width * 2}
+                  width={storylineThumbRequestWidth(width, ratio, image)}
                   className={clsx(
                     'absolute inset-0 size-full object-cover',
                     ratio === '16/6' ? 'object-center' : 'object-[50%_20%]'

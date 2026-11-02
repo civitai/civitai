@@ -28,7 +28,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     type: n.type,
     details: n.details,
   }));
-  await populateNotificationDetails(bare);
+  await populateNotificationDetails(bare, { showSfwFace: true });
 
   const results = bare.map((n) => {
     const prepared = getNotificationMessage(n);

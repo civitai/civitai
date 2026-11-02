@@ -39,7 +39,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           id: model.id,
           reason: 'other', // The function expects a specific enum type
           customMessage: customMessage ?? 'User has requested models to be unpublished',
-          meta: undefined,
           userId: userId, // User who owns the models
           isModerator: true,
         }).catch((error) => {

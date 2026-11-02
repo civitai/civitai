@@ -155,7 +155,9 @@ describe('making a model with a taken-down version private', () => {
   it('writes the model and its versions in one transaction', async () => {
     const onTx: string[] = [];
     const tx = {
+      $queryRaw: dbMock.dbWrite.$queryRaw,
       model: {
+        findUnique: dbMock.dbWrite.model.findUnique,
         update: (args: never) => (onTx.push('model.update'), dbMock.dbWrite.model.update(args)),
       },
       modelVersion: {

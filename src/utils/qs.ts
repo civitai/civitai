@@ -1,9 +1,9 @@
 import type { ParseOptions, StringifyOptions, UrlObject } from 'query-string';
-import { stringify, parse, stringifyUrl } from 'query-string';
+import queryString from 'query-string';
 
 export abstract class QS {
   static stringify(query: Record<string, unknown>, options?: StringifyOptions) {
-    return stringify(query, {
+    return queryString.stringify(query, {
       skipEmptyString: true,
       skipNull: true,
       sort: false,
@@ -11,7 +11,7 @@ export abstract class QS {
     });
   }
   static parse<T extends Record<string, unknown>>(search: string, options?: ParseOptions) {
-    return parse(search, {
+    return queryString.parse(search, {
       parseBooleans: true,
       parseNumbers: true,
       sort: false,
@@ -19,7 +19,7 @@ export abstract class QS {
     }) as T;
   }
   static stringifyUrl({ url, query, ...options }: UrlObject & StringifyOptions) {
-    return stringifyUrl(
+    return queryString.stringifyUrl(
       { url, query },
       { skipEmptyString: true, skipNull: true, sort: false, ...options }
     );

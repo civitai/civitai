@@ -1,8 +1,8 @@
+import { heldLegacyReplyBelowSql } from '~/server/services/comment-thread-hold';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import { isEqual, omit } from 'lodash-es';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
@@ -16,6 +16,11 @@ import {
   afterCommentsV2Deleted,
   deleteCommentsV2UnlessHeld,
 } from '~/server/services/commentsv2.service';
+import {
+  afterCommentsV3Deleted,
+  deleteCommentsV3UnlessHeld,
+  v3WriteCommentIds,
+} from '~/server/services/commentv3/moderation.service';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 
 import { ReviewFilter } from '~/server/common/enums';
@@ -436,21 +441,29 @@ export const togglePinComment = async ({
   await preventReplicationLag('commentModel', comment.modelId);
 };
 
-export const deleteCommentById = async ({ id }: GetByIdInput) => {
+export const deleteCommentById = async ({
+  id,
+  byAuthor = false,
+}: GetByIdInput & { byAuthor?: boolean }) => {
   const { modelId, model } =
     (await dbWrite.comment.findUnique({
       where: { id },
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  const deleted = await dbWrite.comment.delete({ where: { id } });
-  if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+  // Its replies go with it, so one kept for a held reply below it is hidden instead, as in the
+  // moderator bulk delete.
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite.$transaction((tx) =>
+    deleteLegacyCommentsUnlessHeld(tx, [id], markerView, { byAuthor })
+  );
+  if (!deleted.length && !retained.length) throw throwNotFoundError(`No comment with id ${id}`);
   await preventReplicationLag('commentModel', modelId);
 
   if (model?.userId) await userMetrics.queueUpdate(model.userId);
   if (modelId) await modelMetrics.queueUpdate(modelId);
 
-  return deleted;
+  return { id };
 };
 
 export const updateCommentById = async ({
@@ -496,6 +509,14 @@ export const updateCommentReportStatusByReason = ({
   `;
 };
 
+/**
+ * Whether a legacy comment is already hidden for ToS: one its author deleted may be kept that way for
+ * a hold, and its author must not hear about a comment they removed.
+ */
+export const isLegacyCommentHidden = async (id: number) =>
+  !!(await dbWrite.comment.findUnique({ where: { id }, select: { tosViolation: true } }))
+    ?.tosViolation;
+
 export async function bulkSetCommentTosViolation({
   ids,
   actor,
@@ -516,6 +537,7 @@ export async function bulkSetCommentTosViolation({
   let count = 0;
 
   for (const id of ids) {
+    const wasHidden = await isLegacyCommentHidden(id);
     const comment = await updateCommentById({ id, data: { tosViolation: true } }).catch(() => null);
     if (!comment) continue;
     count += 1;
@@ -534,11 +556,12 @@ export async function bulkSetCommentTosViolation({
       )
     );
 
+    if (wasHidden) continue;
     await createNotification({
       userId: comment.user.id,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:comment:${uuid()}`,
+      key: `tos-violation:comment:${crypto.randomUUID()}`,
       details: { modelName: comment.model?.name ?? '', entity: 'comment' },
     })
       .then(() => {
@@ -565,15 +588,25 @@ export async function bulkDeleteComments({
   commentV2Ids: number[];
 }) {
   const markerView = await holdMarkerViewExists();
-  const { v1, v2 } = await dbWrite.$transaction(async (tx) => ({
-    v1: await deleteLegacyCommentsUnlessHeld(tx, commentIds, markerView),
-    v2: await deleteCommentsV2UnlessHeld(tx, commentV2Ids, markerView),
-  }));
+  const { v1, v2, v3 } = await dbWrite.$transaction(async (tx) => {
+    // A comment on a surface that writes CommentV3 is deleted there; it may have no CommentV2 row.
+    const v3Ids = await v3WriteCommentIds(commentV2Ids, tx);
+    return {
+      v1: await deleteLegacyCommentsUnlessHeld(tx, commentIds, markerView),
+      v2: await deleteCommentsV2UnlessHeld(
+        tx,
+        commentV2Ids.filter((id) => !v3Ids.includes(id)),
+        markerView
+      ),
+      v3: await deleteCommentsV3UnlessHeld(tx, v3Ids, markerView),
+    };
+  });
   // The deletes have committed, so a failing follow-up is logged and never reported as a failed
   // delete: the moderator app records only what the endpoint reports as done.
   const followUps = await Promise.allSettled([
     afterLegacyCommentsDeleted(v1),
     afterCommentsV2Deleted(v2),
+    afterCommentsV3Deleted(v3),
   ]);
   for (const f of followUps)
     if (f.status === 'rejected')
@@ -585,35 +618,31 @@ export async function bulkDeleteComments({
       }).catch(() => undefined);
   return {
     commentDeleted: v1.deleted.length,
-    commentV2Deleted: v2.deleted.length,
-    retainedHidden: v1.retained.length + v2.retained.length,
+    commentV2Deleted: v2.deleted.length + v3.deleted.length,
+    retainedHidden: v1.retained.length + v2.retained.length + v3.retained.length,
   };
 }
 
-async function deleteLegacyCommentsUnlessHeld(
+export async function deleteLegacyCommentsUnlessHeld(
   tx: Prisma.TransactionClient,
   ids: number[],
-  markerView: boolean
+  markerView: boolean,
+  { byAuthor = false }: { byAuthor?: boolean } = {}
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
   // A reply goes with its parent (the foreign key cascades), so a comment is also kept while any
-  // reply under it, at any depth, is held.
+  // reply under it, at any depth, is held. Checked once per author: its cost grows with the number
+  // of holding reports.
   const deleted = await tx.$queryRaw<{ modelId: number }[]>`
     DELETE FROM "Comment" c
     WHERE c.id = ANY(${ids}::int[])
       AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
-      AND NOT EXISTS (
-        WITH RECURSIVE below AS (
-          SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = c.id
-          UNION
-          SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
-        )
-        SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
-      )
+      AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}
     RETURNING c."modelId"
   `;
   const retained = await tx.$queryRaw<{ userId: number }[]>`
     UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+      ${byAuthor ? Prisma.sql`, "removedByAuthor" = true` : Prisma.empty}
     WHERE id = ANY(${ids}::int[])
     RETURNING "userId"
   `;
@@ -652,32 +681,29 @@ async function afterLegacyCommentsDeleted({
  * puts them back in the queue. Reopening is only ever correct for the ones this flag actioned.
  */
 export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) => {
-  if (ids.length === 0) return { count: 0, reopenedReports: 0 };
+  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 };
 
-  const ReportReason = (await import('~/shared/utils/prisma/enums')).ReportReason;
-  const ReportStatus = (await import('~/shared/utils/prisma/enums')).ReportStatus;
+  const { clearTosOrKeep } = await import('~/server/services/commentsv2.service');
+  const markerView = await holdMarkerViewExists();
 
   let reopenedReports = 0;
   let count = 0;
+  const retained: number[] = [];
+  let retainedHidden = 0;
+  let failed = 0;
 
   for (const id of ids) {
-    const updated = await dbWrite.comment
-      .update({ where: { id }, data: { tosViolation: false }, select: { id: true } })
-      .catch(() => null);
-    if (!updated) continue;
+    const outcome = await clearTosOrKeep('Comment', id, markerView);
+    if (outcome?.failed) failed += 1;
+    if (outcome?.held) {
+      retainedHidden += 1;
+      if (outcome.userId !== null) retained.push(outcome.userId);
+    }
+    if (!outcome?.cleared) continue;
     count += 1;
-
-    const reports = await dbWrite.$queryRaw<{ id: number }[]>`
-      UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
-      FROM "CommentReport" c
-      WHERE c."reportId" = r.id
-        AND c."commentId" = ${id}
-        AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
-        AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
-      RETURNING id
-    `;
-    reopenedReports += reports.length;
+    reopenedReports += outcome.reopened;
   }
 
-  return { count, reopenedReports };
+  if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
+  return { count, reopenedReports, retainedHidden, failed };
 };

@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as PlacementQueries from '@civitai/db-queries/placement';
 
-// Where `kysely-placement-reads` reaches, not what the ports return (that is
-// placement-reads.kysely-flag.test.ts): one evaluation per space resolution, and nothing outside
-// the placement read chain switches with it.
+// Where the Kysely placement reads reach, not what the ports return (that is
+// placement-reads.kysely-flag.test.ts): as an invariant guard, no placement flag check remains in a space resolution, and nothing
+// outside the placement read chain moves onto Kysely with it.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -59,7 +59,7 @@ const goldSubscription = {
 beforeEach(() => {
   resetSharedMocks();
   for (const fn of Object.values(q)) if (vi.isMockFunction(fn)) fn.mockReset();
-  flag.mockReset().mockResolvedValue(true);
+  flag.mockReset().mockResolvedValue(false);
   dbMock.dbWrite.customerSubscription.findMany.mockResolvedValue([goldSubscription]);
   q.getImagePlacementTarget.mockResolvedValue({
     id: IMAGE,
@@ -73,16 +73,22 @@ beforeEach(() => {
   q.listUserSubscriptionRows.mockResolvedValue([goldSubscription] as never);
 });
 
-describe('kysely-placement-reads scope', () => {
-  it('a space resolution evaluates the flag ONCE, and every read in it follows that answer', async () => {
+describe('Kysely placement reads scope', () => {
+  it('invariant: no placement flag check remains in a space resolution; the price range reads Kysely once each', async () => {
     const space = await resolvePlacementSpaceFor({
       surface: 'sticker',
       targetType: 'image',
       targetId: IMAGE,
     });
 
-    expect(flag).toHaveBeenCalledTimes(1);
-    // The price range's two reads took the resolution's answer rather than asking again.
+    // The only key this path evaluates is `kysely-hot-reads-5` (`getPlacementConfig`'s KeyValue
+    // read), by key alone. It is also the positive control that the flag mock is reached at all.
+    const keys = flag.mock.calls.map((call) => {
+      expect(call).toHaveLength(1);
+      return call[0];
+    });
+    expect(keys).toContain('kysely-hot-reads-5');
+    for (const key of keys) expect(key).toBe('kysely-hot-reads-5');
     expect(q.getUserPlacementScore).toHaveBeenCalledTimes(1);
     expect(q.listUserSubscriptionRows).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.customerSubscription.findMany).not.toHaveBeenCalled();
@@ -90,12 +96,12 @@ describe('kysely-placement-reads scope', () => {
   });
 
   // Early access, the model-version pricing allowance and announcements call getCapTier(userId).
-  // They are not placement reads and must not move with the placement A/B.
-  it('getCapTier from a non-placement caller reads Prisma with the flag ON, and never asks the flag', async () => {
+  // They are not placement reads and stay on Prisma.
+  it('getCapTier from a non-placement caller reads Prisma (invariant: no flag check remains)', async () => {
     await expect(getCapTier(OWNER)).resolves.toBe('gold');
 
     expect(dbMock.dbWrite.customerSubscription.findMany).toHaveBeenCalledTimes(1);
     expect(q.listUserSubscriptionRows).not.toHaveBeenCalled();
-    expect(flag).not.toHaveBeenCalled();
+    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 });

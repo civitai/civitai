@@ -45,6 +45,17 @@ describe('storylinePublishMessage', () => {
     ).toMatch(/can't be added/);
   });
 
+  test('a chapter above the ceiling names both ratings', () => {
+    expect(
+      storylinePublishMessage({
+        ...base,
+        status: 'waiting',
+        reason: 'aboveRating',
+        rating: { postLevel: NsfwLevel.R, maxNsfwLevel: NsfwLevel.PG13 },
+      }).message
+    ).toContain('Your storyline allows up to PG-13; this post is R.');
+  });
+
   test("a dropped link shows the server's reason, as a problem", () => {
     expect(
       storylinePublishMessage({
@@ -62,5 +73,14 @@ describe('storylinePublishMessage', () => {
         { chapterNumber: 4 }
       ).message
     ).toBe('Chapter 4 goes live once your images finish checking.');
+  });
+
+  it('calls a chapter that starts a branch a branch, not the next chapter number', () => {
+    expect(
+      storylinePublishMessage({ status: 'chapterWritten', ceilingRaisedTo: null } as never, {
+        chapterNumber: 5,
+        startsBranch: true,
+      }).message
+    ).toBe('Your branch is live.');
   });
 });

@@ -35,6 +35,13 @@ export type StorylineContinueModalProps = {
   insertBeforeChapterId?: number;
   /** Which way the owner's picker opens; they can switch. */
   mode?: 'post' | 'join';
+  /** The parent already has a main-path chapter: this starts a branch, and says so. */
+  branch?: boolean;
+  /**
+   * `parentChapterId` was read as the main path's end. The owner's post goes at the end found when
+   * it is added; a join is refused if the end has moved. Either would otherwise make a branch.
+   */
+  atEnd?: boolean;
 };
 
 export default function StorylineContinueModal({
@@ -43,6 +50,8 @@ export default function StorylineContinueModal({
   parentChapterId,
   insertBeforeChapterId,
   mode: initialMode = 'post',
+  branch = false,
+  atEnd = false,
 }: StorylineContinueModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -67,12 +76,18 @@ export default function StorylineContinueModal({
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
   const addOwn = useAddOwnerStorylineChapter({ onSuccess: () => setOutcome('added') });
   const insert = useInsertStorylineChapter({ onSuccess: () => setOutcome('added') });
-  const ownerAdd =
-    !!currentUser && !!storyline && !!parentChapterId && storyline.userId === currentUser.id;
+  const inserting = insertBeforeChapterId !== undefined;
+  const isOwner = !!currentUser && !!storyline && storyline.userId === currentUser.id;
+  // A moderator inserts and joins for the owner; continuing as themselves stays theirs.
+  const managing = isOwner || (!!storyline && !!currentUser?.isModerator);
+  const ownerAdd = !!parentChapterId && (isOwner || (managing && inserting));
+  const actingAsOwner = ownerAdd && !isOwner;
+  const joining = managing && !!parentChapterId && mode === 'join';
 
-  const { posts, alreadyChapters, postsLoading, postsError, morePosts } = useOwnStorylinePosts({
-    enabled,
+  const { posts, alreadyChapters, postsLoading, postsError, paging } = useOwnStorylinePosts({
+    enabled: enabled && !!storyline,
     excludePostId: parentPostId,
+    author: actingAsOwner && storyline ? storyline.user : undefined,
   });
 
   const parentName =
@@ -89,7 +104,6 @@ export default function StorylineContinueModal({
         })
       : null;
 
-  const inserting = insertBeforeChapterId !== undefined;
   const ownerPending = inserting ? insert.isPending : addOwn.isPending;
   const ownerError = inserting ? insert.error : addOwn.error;
 
@@ -99,7 +113,13 @@ export default function StorylineContinueModal({
     <Modal
       {...dialog}
       title={
-        inserting ? 'Insert a chapter' : ownerAdd ? 'Add the next chapter' : 'Continue the story'
+        inserting
+          ? 'Insert a chapter'
+          : branch
+          ? 'Start a branch'
+          : ownerAdd
+          ? 'Add the next chapter'
+          : 'Continue the story'
       }
       size="md"
     >
@@ -113,9 +133,9 @@ export default function StorylineContinueModal({
         </Group>
       ) : !storylineId || !storyline ? (
         <Alert color="gray">This chapter is not part of a storyline you can continue.</Alert>
-      ) : !ownerAdd && terms.unavailable ? (
+      ) : !ownerAdd && !joining && terms.unavailable ? (
         <Alert color="gray">Continuing storylines is not open yet.</Alert>
-      ) : !ownerAdd && !terms.data ? (
+      ) : !ownerAdd && !joining && !terms.data ? (
         <Alert color="red">Couldn&apos;t load what continuing this storyline costs.</Alert>
       ) : (
         <>
@@ -132,15 +152,16 @@ export default function StorylineContinueModal({
               data-testid="storyline-add-mode"
             />
           )}
-          {ownerAdd && parentChapterId && mode === 'join' ? (
+          {joining && parentChapterId ? (
             <StorylineJoinChapterForm
               parentChapterId={parentChapterId}
               parentName={parentName}
+              atEnd={atEnd}
               onClose={dialog.onClose}
             />
           ) : (
             <StorylineContinueForm
-              viewerId={currentUser.id}
+              viewerId={actingAsOwner ? storyline.userId : currentUser.id}
               storyline={storyline}
               cover={storyline.coverImage}
               parentName={parentName}
@@ -148,12 +169,13 @@ export default function StorylineContinueModal({
               price={terms.data?.price ?? 0}
               ownerAdd={ownerAdd}
               inserting={inserting}
+              branch={branch}
               isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
               posts={posts}
               postsLoading={postsLoading}
               alreadyChapters={alreadyChapters}
               postsError={postsError}
-              morePosts={morePosts}
+              paging={paging}
               postId={postId}
               onPostChange={setPostId}
               submitting={ownerAdd ? ownerPending : submit.isPending}
@@ -171,6 +193,8 @@ export default function StorylineContinueModal({
                       childChapterId: insertBeforeChapterId,
                       postId: post.id,
                     });
+                  else if (atEnd)
+                    addOwn.mutateAtEnd({ storylineId: storyline.id, postId: post.id });
                   else addOwn.mutate({ parentChapterId, postId: post.id });
                   return;
                 }

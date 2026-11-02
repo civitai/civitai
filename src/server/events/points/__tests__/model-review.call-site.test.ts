@@ -83,8 +83,19 @@ beforeEach(() => {
   db.resourceReview.findUnique.mockResolvedValue({ modelId: MODEL });
   db.resourceReview.create.mockResolvedValue(row);
   db.resourceReview.update.mockResolvedValue(row);
-  db.resourceReview.delete.mockResolvedValue(row);
 });
+
+/** The text of a raw call: a tagged template's strings joined, or a `Prisma.Sql`'s text. */
+const rawText = (first: unknown) =>
+  Array.isArray(first) ? first.join('?') : (first as { text?: string })?.text ?? '';
+/** Answers the review DELETE with `rows`, as its RETURNING would. */
+const deleteReturns = (rows: unknown[]) =>
+  db.$queryRaw.mockImplementation(((first: unknown) =>
+    Promise.resolve(rawText(first).includes('DELETE FROM "ResourceReview"') ? rows : [])) as never);
+const deleteStatement = () =>
+  db.$queryRaw.mock.calls
+    .map(([first]) => rawText(first))
+    .find((text) => text.includes('DELETE FROM "ResourceReview"'));
 
 describe('ResourceReview event points', () => {
   it('awards a recommended review on create', async () => {
@@ -116,6 +127,7 @@ describe('ResourceReview event points', () => {
   });
 
   it('removes on delete', async () => {
+    deleteReturns([row]);
     db.resourceReview.count.mockResolvedValue(0);
     await deleteResourceReview({ id: 7 });
     await settle();
@@ -124,17 +136,14 @@ describe('ResourceReview event points', () => {
   });
 
   it('removes for each author in a moderator bulk delete', async () => {
-    // Seeded on the primary only: a read from the replica would find nothing.
-    db.resourceReview.findMany.mockResolvedValue([row]);
-    db.resourceReview.deleteMany.mockResolvedValue({ count: 1 });
+    // The authors come from the DELETE's own RETURNING, on the primary.
+    deleteReturns([row]);
     db.resourceReview.count.mockResolvedValue(0);
     await deleteResourceReviews({ ids: [7] });
     await settle();
     expect(removeEventPoints).toHaveBeenCalledTimes(1);
     expect(removeEventPoints).toHaveBeenCalledWith([modelLike]);
-    expect(db.resourceReview.findMany.mock.calls[0][0]).toMatchObject({
-      select: expect.objectContaining({ userId: true }),
-    });
+    expect(deleteStatement()).toMatch(/RETURNING[^;]*"userId"/);
   });
 
   it('is not failed by a failing points call', async () => {

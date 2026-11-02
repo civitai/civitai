@@ -21,7 +21,9 @@ import { useEffect, useRef, useState } from 'react';
  * stays correct as the grid reflows. Returns a ref to attach to the clipping
  * element + the current overflow verdict.
  */
-export function useIsOverflowing<T extends HTMLElement = HTMLElement>() {
+export function useIsOverflowing<T extends HTMLElement = HTMLElement>({
+  vertical = true,
+}: { vertical?: boolean } = {}) {
   const ref = useRef<T>(null);
   const [overflowing, setOverflowing] = useState(false);
 
@@ -29,7 +31,9 @@ export function useIsOverflowing<T extends HTMLElement = HTMLElement>() {
     const el = ref.current;
     if (!el) return;
     const measure = () =>
-      setOverflowing(el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight);
+      setOverflowing(
+        el.scrollWidth > el.clientWidth || (vertical && el.scrollHeight > el.clientHeight)
+      );
     measure();
     // ResizeObserver covers card reflow / responsive breakpoints without a
     // window resize listener (the AuctionPlacementCard OverflowTooltip missed
@@ -39,7 +43,7 @@ export function useIsOverflowing<T extends HTMLElement = HTMLElement>() {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [vertical]);
 
   return { ref, overflowing };
 }
@@ -70,7 +74,9 @@ export function TruncatedText({
   style,
   ...textProps
 }: { children: string; tooltipLabel?: string; clampLines?: number } & TextProps) {
-  const { ref, overflowing } = useIsOverflowing<HTMLSpanElement>();
+  // A single line clips only horizontally; its glyph box can be a pixel taller than the line
+  // box, which would otherwise read as overflow and open the tooltip on every title.
+  const { ref, overflowing } = useIsOverflowing<HTMLSpanElement>({ vertical: clampLines != null });
   const clipping =
     clampLines == null
       ? // Single line. `component="span"` (inline-VALID inside the chip's <a>) +

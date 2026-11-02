@@ -13,6 +13,7 @@ import { env } from '~/env/server';
 import { isPreview } from '~/env/other';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
+import { refuseModerationAccountSession } from './moderation-account';
 import { observeLegacyDecode } from './session-metrics';
 import {
   getHubSession,
@@ -38,7 +39,9 @@ async function getLegacySession(req: AuthRequest): Promise<Session | null> {
   const claims = await decodeLegacySessionCookie(token, secret);
   const userId = Number(claims?.sub ?? claims?.user?.id);
   if (!Number.isFinite(userId)) return null;
+  if (refuseModerationAccountSession(userId, 'legacy-cookie')) return null;
   const user = await sessionClient.getSessionUserById(userId);
+  if (user && refuseModerationAccountSession(user, 'legacy-cookie')) return null;
   if (user) return { user } as Session;
   // PREVIEW-ONLY fallback. getSessionUserById resolves a user from the shared
   // session cache then the centralized hub (auth.civitai.com) — both of which read

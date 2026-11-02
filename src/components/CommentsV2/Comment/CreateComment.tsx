@@ -113,7 +113,13 @@ export function CreateComment({
  * one comment. Only rendered on the top-level composer: on a reply box the enclosing comment's own
  * menu is the right place, and two mute controls a few pixels apart would mean different things.
  */
-function useSectionMute({ target, enabled }: { target?: SectionMuteInput; enabled: boolean }) {
+export function useSectionMute({
+  target,
+  enabled,
+}: {
+  target?: SectionMuteInput;
+  enabled: boolean;
+}) {
   const queryUtils = trpc.useUtils();
   const [opened, setOpened] = useState(false);
 
@@ -127,7 +133,7 @@ function useSectionMute({ target, enabled }: { target?: SectionMuteInput; enable
       if (!target) return;
       queryUtils.commentv2.getSectionMuted.setData(target, {
         muted: result.muted,
-        hasThread: result.threadId !== null,
+        hasThread: result.hasThread,
       });
       showSuccessNotification({
         // States the action, not the outcome — the same correction the per-comment toast needed. A

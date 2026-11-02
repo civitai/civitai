@@ -10,6 +10,22 @@ import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
+/**
+ * Columns that fit in `width`. 0 means "not measured": a hidden container can measure negative
+ * (clientWidth 0 minus its padding), which must not become a column count.
+ */
+export function getColumnCount(
+  width: number,
+  columnWidth: number,
+  maxColumnCount: number,
+  gap = 16
+) {
+  if (!Number.isFinite(width) || width <= 0) return 0;
+  const fit = Math.floor((width + gap) / (columnWidth + gap));
+  const count = Math.floor(Math.min(fit, maxColumnCount));
+  return Number.isFinite(count) ? Math.max(1, count) : 1;
+}
+
 export function useMasonryColumns<TData>(
   data: TData[],
   columnWidth: number,
@@ -25,7 +41,9 @@ export function useMasonryColumns<TData>(
   const createAdFeed = useCreateAdFeed();
 
   return useMemo(() => {
-    if (columnCount === 0) return [];
+    // 0 = not laid out yet. Anything else non-positive/fractional is a bad measurement; render
+    // nothing rather than throw from Array(n).
+    if (!Number.isInteger(columnCount) || columnCount < 1) return [];
 
     const feed = createAdFeed({
       data,

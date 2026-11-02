@@ -1,5 +1,5 @@
 import { FliptClient } from '@flipt-io/flipt-client-js';
-import { fliptCacheKey, TtlCache, type TtlCacheStats } from './cache';
+import { fliptCacheKeySuffix, TtlCache, type TtlCacheStats } from './cache';
 import { loadFliptConnection, loadFliptTuning, type FliptConfig, type FliptTuning } from './env';
 
 export type FliptLogFn = (message: string, ...args: unknown[]) => void;
@@ -91,6 +91,22 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
   let initializing: Promise<FliptClient | null> | null = null;
   let lastFailureTime = 0;
 
+  // The context part of the cache key, built once per FROZEN context (as `buildFliptContext`
+  // returns) instead of once per flag: a caller evaluating every flag for one user passes the same
+  // object each time. Frozen only, because a frozen object cannot change after its key part was
+  // built; any other context builds it on every call, as before. Weak, so it lives as long as the
+  // context does (one request).
+  const keySuffixes = new WeakMap<object, { entityId: string; suffix: string }>();
+
+  function evalCacheKey(flag: string, entityId: string, context: Record<string, string>): string {
+    if (!Object.isFrozen(context)) return flag + fliptCacheKeySuffix(entityId, context);
+    const memo = keySuffixes.get(context);
+    if (memo && memo.entityId === entityId) return flag + memo.suffix;
+    const suffix = fliptCacheKeySuffix(entityId, context);
+    keySuffixes.set(context, { entityId, suffix });
+    return flag + suffix;
+  }
+
   async function getInstance(): Promise<FliptClient | null> {
     if (instance) return instance;
 
@@ -158,7 +174,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
       return client.evaluateBoolean({ flagKey: flag, entityId, context }).enabled;
     }
     const now = Date.now();
-    const key = fliptCacheKey(flag, entityId, context);
+    const key = evalCacheKey(flag, entityId, context);
     const cached = boolCache.get(key, now);
     if (cached.hit) return cached.value as boolean;
     const { enabled } = client.evaluateBoolean({ flagKey: flag, entityId, context });
@@ -177,7 +193,7 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
       return evaluation.match ? evaluation.variantKey : null;
     }
     const now = Date.now();
-    const key = fliptCacheKey(flag, entityId, context);
+    const key = evalCacheKey(flag, entityId, context);
     const cached = variantCache.get(key, now);
     if (cached.hit) return cached.value as string | null;
     const evaluation = client.evaluateVariant({ flagKey: flag, entityId, context });

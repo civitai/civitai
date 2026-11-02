@@ -22,6 +22,10 @@ const { populatedQueryMock, chFailSoftIncMock } = vi.hoisted(() => ({
   chFailSoftIncMock: vi.fn(),
 }));
 
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
+
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/server/prom/client')>();
   return {

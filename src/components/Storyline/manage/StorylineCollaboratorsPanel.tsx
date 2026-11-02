@@ -12,7 +12,8 @@ export type StorylineCollaborator = { id: number; username: string | null };
 export function StorylineCollaboratorsPanel({
   ownerId,
   collaborators,
-  canManage,
+  pending,
+  canEndorse,
   onAdd,
   onRemove,
   adding,
@@ -20,19 +21,22 @@ export function StorylineCollaboratorsPanel({
 }: {
   ownerId: number;
   collaborators: StorylineCollaborator[];
-  canManage: boolean;
+  /** Invited, not yet accepted: not shown on the storyline and no rights until they accept. */
+  pending: StorylineCollaborator[];
+  /** Only the owner endorses: it pre-approves the collaborator's priced continuations. */
+  canEndorse: boolean;
   onAdd: (user: StorylineCollaborator) => void;
   onRemove: (userId: number) => void;
   adding?: boolean;
   removingId?: number;
 }) {
   const [selected, setSelected] = useState<StorylineCollaborator | null>(null);
-  const full = collaborators.length >= STORYLINE_MAX_COLLABORATORS;
-  const excludedUserIds = [ownerId, ...collaborators.map((user) => user.id)];
+  const full = collaborators.length + pending.length >= STORYLINE_MAX_COLLABORATORS;
+  const excludedUserIds = [ownerId, ...[...collaborators, ...pending].map((user) => user.id)];
 
   return (
     <Stack gap="md">
-      {canManage && (
+      {canEndorse && (
         <Stack gap={6}>
           <Group gap="xs" align="flex-start" wrap="nowrap">
             <div className="min-w-0 grow">
@@ -54,7 +58,7 @@ export function StorylineCollaboratorsPanel({
                   showIndexSelect={false}
                   startingIndex="users"
                   dropdownItemLimit={10}
-                  placeholder="Endorse by username"
+                  placeholder="Invite by username"
                   onItemSelected={(_entity, item) => {
                     const user = item as SearchIndexDataMap['users'][number];
                     setSelected({ id: user.id, username: user.username ?? null });
@@ -75,14 +79,18 @@ export function StorylineCollaboratorsPanel({
                 setSelected(null);
               }}
             >
-              Endorse
+              Invite
             </Button>
           </Group>
           {full && (
             <Text size="xs" c="dimmed">
-              A storyline can have up to {STORYLINE_MAX_COLLABORATORS} endorsed collaborators.
+              A storyline can have up to {STORYLINE_MAX_COLLABORATORS} endorsed collaborators,
+              invitations included.
             </Text>
           )}
+          <Text size="xs" c="dimmed">
+            They are asked first, and join once they accept.
+          </Text>
         </Stack>
       )}
 
@@ -111,20 +119,49 @@ export function StorylineCollaboratorsPanel({
               }
               subTextForce
             />
-            {canManage && (
+            <LegacyActionIcon
+              size="sm"
+              color="red"
+              aria-label={`Remove ${user.username ?? 'collaborator'}`}
+              loading={removingId === user.id}
+              onClick={() => onRemove(user.id)}
+            >
+              <IconTrash size={14} />
+            </LegacyActionIcon>
+          </Group>
+        ))}
+        {pending.map((user) => (
+          <Group key={user.id} justify="space-between" wrap="nowrap" px={4} py={6}>
+            <UserAvatar
+              userId={user.id}
+              withUsername
+              size="sm"
+              subText={
+                <Group gap={6} wrap="nowrap" component="span">
+                  <Badge variant="light" color="gray" size="sm" radius="xl">
+                    Invited
+                  </Badge>
+                  <Text size="xs" c="dimmed" span>
+                    Waiting for them to accept
+                  </Text>
+                </Group>
+              }
+              subTextForce
+            />
+            {canEndorse && (
               <LegacyActionIcon
                 size="sm"
                 color="red"
-                aria-label={`Remove ${user.username ?? 'collaborator'}`}
+                aria-label={`Cancel ${user.username ?? 'the'} invitation`}
                 loading={removingId === user.id}
                 onClick={() => onRemove(user.id)}
               >
-                <IconTrash size={14} />
+                <IconX size={14} />
               </LegacyActionIcon>
             )}
           </Group>
         ))}
-        {!collaborators.length && (
+        {!collaborators.length && !pending.length && (
           <Stack align="center" gap={6} py="lg" className="text-gray-5 dark:text-dark-3">
             <IconRosetteDiscountCheck size={28} stroke={1.5} />
             <Text size="sm" c="dimmed">

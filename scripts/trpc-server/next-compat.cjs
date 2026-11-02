@@ -1,0 +1,409 @@
+'use strict';
+/**
+ * The parts of Next's router-server and base-server that the standalone tRPC server still has
+ * to do itself, because it calls the compiled pages-API route modules directly instead of going
+ * through `next/dist/server/lib/start-server`.
+ *
+ * Everything here is built from Next's OWN helpers (the same modules router-server,
+ * resolve-routes and base-server call) and from the build's own `routes-manifest.json`, so the
+ * rules are the ones Next applies, not a re-statement of them. Each function names the Next
+ * source it ports. When a Next bump changes one of those, the parity harness
+ * (`scripts/trpc-server/parity/`) is what notices: it sends the same requests to `server.js` and
+ * to this server and diffs the responses.
+ *
+ * Plain CommonJS with no compile step, so it ships as-is in the runner image. Every require below
+ * is a literal at module scope on purpose: `scripts/ci/assert-standalone-boot-graph.mjs` reads
+ * them from this file and loads them from the shipped tree, so a Next internal that the
+ * standalone trace dropped fails the image build instead of the first request.
+ */
+
+// Plain CommonJS that runs without a compile step, so `require` is the only way to load here.
+/* eslint-disable @typescript-eslint/no-var-requires */
+/**
+ * Every Next export this server uses, checked HERE, at module scope, as the module loads.
+ *
+ * These are unpublished internals (`next/dist/...`), so a Next bump can rename or drop one
+ * without any type error. Destructuring a missing name gives `undefined`, which would surface as
+ * a TypeError on some later request, or never. Instead, loading this file throws, naming the
+ * export. `scripts/ci/assert-standalone-boot-graph.mjs` loads this file in the image build, so
+ * that throw fails the BUILD.
+ *
+ * Each `require` stays a short literal on its own unindented line: that is the form the boot-graph
+ * gate reads.
+ */
+function expectExport(mod, specifier, name, type) {
+  const value = mod == null ? undefined : mod[name];
+  const ok =
+    type === 'string' ? typeof value === 'string' && value.length > 0 : typeof value === type;
+  if (!ok) {
+    throw new Error(
+      `trpc-server: ${specifier} no longer exports ${name} as a ${
+        type === 'string' ? 'non-empty string' : type
+      } ` + `(got ${typeof value}). A Next upgrade changed an internal this server depends on.`
+    );
+  }
+  return value;
+}
+
+const ipcUtils = require('next/dist/server/lib/server-ipc/utils');
+const sharedUtils = require('next/dist/shared/lib/utils');
+const parseUrlMod = require('next/dist/shared/lib/router/utils/parse-url');
+const pathMatch = require('next/dist/shared/lib/router/utils/path-match');
+const prepareDest = require('next/dist/shared/lib/router/utils/prepare-destination');
+const redirectStatus = require('next/dist/lib/redirect-status');
+const localePath = require('next/dist/shared/lib/i18n/normalize-locale-path');
+const pathPrefix = require('next/dist/shared/lib/router/utils/add-path-prefix');
+const routeRegex = require('next/dist/shared/lib/router/utils/route-regex');
+const routeMatcher = require('next/dist/shared/lib/router/utils/route-matcher');
+const nextConstants = require('next/dist/lib/constants');
+const instrumentationGlobals = require('next/dist/server/lib/router-utils/instrumentation-globals.external');
+const httpAgentEnv = require('next/dist/server/setup-http-agent-env');
+const globalBehaviors = require('next/dist/server/node-environment-extensions/global-behaviors');
+const processErrorHandlers = require('next/dist/server/node-environment-extensions/process-error-handlers');
+
+const NEXT = 'next/dist';
+const filterInternalHeaders = expectExport(
+  ipcUtils,
+  `${NEXT}/server/lib/server-ipc/utils`,
+  'filterInternalHeaders',
+  'function'
+);
+const DecodeError = expectExport(
+  sharedUtils,
+  `${NEXT}/shared/lib/utils`,
+  'DecodeError',
+  'function'
+);
+const parseUrl = expectExport(
+  parseUrlMod,
+  `${NEXT}/shared/lib/router/utils/parse-url`,
+  'parseUrl',
+  'function'
+);
+const getPathMatch = expectExport(
+  pathMatch,
+  `${NEXT}/shared/lib/router/utils/path-match`,
+  'getPathMatch',
+  'function'
+);
+const matchHas = expectExport(
+  prepareDest,
+  `${NEXT}/shared/lib/router/utils/prepare-destination`,
+  'matchHas',
+  'function'
+);
+const compileNonPath = expectExport(
+  prepareDest,
+  `${NEXT}/shared/lib/router/utils/prepare-destination`,
+  'compileNonPath',
+  'function'
+);
+const modifyRouteRegex = expectExport(
+  redirectStatus,
+  `${NEXT}/lib/redirect-status`,
+  'modifyRouteRegex',
+  'function'
+);
+const normalizeLocalePath = expectExport(
+  localePath,
+  `${NEXT}/shared/lib/i18n/normalize-locale-path`,
+  'normalizeLocalePath',
+  'function'
+);
+const addPathPrefix = expectExport(
+  pathPrefix,
+  `${NEXT}/shared/lib/router/utils/add-path-prefix`,
+  'addPathPrefix',
+  'function'
+);
+const getRouteRegex = expectExport(
+  routeRegex,
+  `${NEXT}/shared/lib/router/utils/route-regex`,
+  'getRouteRegex',
+  'function'
+);
+const getRouteMatcher = expectExport(
+  routeMatcher,
+  `${NEXT}/shared/lib/router/utils/route-matcher`,
+  'getRouteMatcher',
+  'function'
+);
+const NEXT_QUERY_PARAM_PREFIX = expectExport(
+  nextConstants,
+  `${NEXT}/lib/constants`,
+  'NEXT_QUERY_PARAM_PREFIX',
+  'string'
+);
+const NEXT_INTERCEPTION_MARKER_PREFIX = expectExport(
+  nextConstants,
+  `${NEXT}/lib/constants`,
+  'NEXT_INTERCEPTION_MARKER_PREFIX',
+  'string'
+);
+// Used by server.cjs; checked here so that the build's load of this file covers them too.
+const ensureInstrumentationRegistered = expectExport(
+  instrumentationGlobals,
+  `${NEXT}/server/lib/router-utils/instrumentation-globals.external`,
+  'ensureInstrumentationRegistered',
+  'function'
+);
+const setHttpClientAndAgentOptions = expectExport(
+  httpAgentEnv,
+  `${NEXT}/server/setup-http-agent-env`,
+  'setHttpClientAndAgentOptions',
+  'function'
+);
+const installGlobalBehaviors = expectExport(
+  globalBehaviors,
+  `${NEXT}/server/node-environment-extensions/global-behaviors`,
+  'installGlobalBehaviors',
+  'function'
+);
+const installProcessErrorHandlers = expectExport(
+  processErrorHandlers,
+  `${NEXT}/server/node-environment-extensions/process-error-handlers`,
+  'installProcessErrorHandlers',
+  'function'
+);
+
+/**
+ * `buildCustomRoute` from `next/dist/server/lib/router-utils/filesystem.js` (module-local there,
+ * so it cannot be imported): the matcher router-server builds for each `headers()` entry of the
+ * routes manifest.
+ */
+function buildHeaderRoute(item, caseSensitive) {
+  const match = getPathMatch(item.source, {
+    strict: true,
+    removeUnnamedParams: true,
+    regexModifier: (regex) => (item.internal ? regex : modifyRouteRegex(regex, undefined)),
+    sensitive: caseSensitive,
+  });
+  return { ...item, match };
+}
+
+/**
+ * Builds the routing rules this server applies before a route module runs. Throws when the
+ * manifest uses a feature this server does not implement, so the process refuses to start
+ * rather than serving requests Next would have routed differently.
+ */
+function createRouting({ routesManifest, nextConfig }) {
+  const basePath = nextConfig.basePath || '';
+  if (basePath) throw new Error('trpc-server: basePath is not supported');
+  if (nextConfig.trailingSlash)
+    throw new Error('trpc-server: trailingSlash: true is not supported');
+
+  const rewrites = routesManifest.rewrites || {};
+  const beforeFiles = Array.isArray(rewrites) ? [] : rewrites.beforeFiles || [];
+  if (beforeFiles.length > 0) {
+    // A beforeFiles rewrite runs before the filesystem match, so it could send a request for an
+    // existing route somewhere else. This server does not implement rewrites.
+    throw new Error('trpc-server: beforeFiles rewrites are not supported');
+  }
+  if ((routesManifest.onMatchHeaders || []).length > 0) {
+    throw new Error('trpc-server: onMatchHeaders are not supported');
+  }
+
+  const caseSensitive = Boolean(
+    nextConfig.experimental && nextConfig.experimental.caseSensitiveRoutes
+  );
+  const headers = (routesManifest.headers || []).map((item) =>
+    buildHeaderRoute(item, caseSensitive)
+  );
+  const i18n = nextConfig.i18n || null;
+
+  // `redirects()` are deliberately NOT ported. Next answers a redirected path (the trailing-slash
+  // and repeated-slash 308s, every user redirect) before any route runs, and the router in front
+  // of this server sends it only single-segment `/api/trpc/<seg>` paths, which none of them match.
+  // A redirected path that does arrive is not a page here, so it gets the plain 404.
+  return { headers, i18n };
+}
+
+/**
+ * The pathname a custom route is matched against: resolve-routes `handleRoute`. Under i18n the
+ * request path carries the default locale (`/en/api/...`) for user routes, and has it stripped
+ * again for internal ones.
+ */
+function routeMatchPathname(routing, parsedPathname, route) {
+  if (!routing.i18n || !route.internal) return parsedPathname;
+  const localeResult = normalizeLocalePath(parsedPathname, routing.i18n.locales);
+  if (localeResult.detectedLocale === routing.i18n.defaultLocale) return localeResult.pathname;
+  return parsedPathname;
+}
+
+/**
+ * The config headers router-server would set for this request before invoking any route, ported
+ * from `resolve-routes.js` (`resolveRoutes`, the headers branch). Returns { headers }.
+ */
+function resolveRouting(routing, req) {
+  const parsedUrl = parseUrl(req.url || '');
+
+  // i18n: the default locale is added to the path for matching (resolve-routes ~L141).
+  let pathname = parsedUrl.pathname || '/';
+  if (routing.i18n) {
+    const initial = normalizeLocalePath(pathname, routing.i18n.locales);
+    if (!initial.detectedLocale && !initial.pathname.startsWith('/_next/')) {
+      pathname =
+        initial.pathname === '/'
+          ? `/${routing.i18n.defaultLocale}`
+          : addPathPrefix(initial.pathname || '', `/${routing.i18n.defaultLocale}`);
+    }
+  }
+
+  // headers() entries come first in the route list and accumulate.
+  const resHeaders = {};
+  for (const route of routing.headers) {
+    let params = route.match(routeMatchPathname(routing, pathname, route));
+    if ((route.has || route.missing) && params) {
+      const hasParams = matchHas(req, parsedUrl.query, route.has, route.missing);
+      if (hasParams) Object.assign(params, hasParams);
+      else params = false;
+    }
+    if (!params) continue;
+    const hasParams = Object.keys(params).length > 0;
+    for (const header of route.headers) {
+      let { key, value } = header;
+      if (hasParams) {
+        key = compileNonPath(key, params);
+        value = compileNonPath(value, params);
+      }
+      if (key.toLowerCase() === 'set-cookie') {
+        if (!Array.isArray(resHeaders[key])) {
+          const val = resHeaders[key];
+          resHeaders[key] = typeof val === 'string' ? [val] : [];
+        }
+        resHeaders[key].push(value);
+      } else {
+        resHeaders[key] = value;
+      }
+    }
+  }
+
+  return { headers: resHeaders };
+}
+
+/** router-server applies the routing headers with `setHeader`, before the route runs. */
+function applyRoutingHeaders(res, headers) {
+  for (const key of Object.keys(headers)) res.setHeader(key, headers[key]);
+}
+
+/**
+ * base-server `handleRequestImpl`: fill the `x-forwarded-*` request headers a direct client did
+ * not send. `hostname` and `port` are the values the server listens with, as Next's are.
+ */
+function fillForwardedHeaders(req, { hostname, port }) {
+  const xForwardedProto = req.headers['x-forwarded-proto'];
+  const isHttps = xForwardedProto
+    ? xForwardedProto === 'https'
+    : Boolean(req.socket && req.socket.encrypted);
+  req.headers['x-forwarded-host'] ??= req.headers['host'] ?? hostname;
+  req.headers['x-forwarded-port'] ??= port ? port.toString() : isHttps ? '443' : '80';
+  req.headers['x-forwarded-proto'] ??= isHttps ? 'https' : 'http';
+  req.headers['x-forwarded-for'] ??= req.socket ? req.socket.remoteAddress : undefined;
+}
+
+/** `filterInternalQuery` in `next/dist/server/server-utils.js`. */
+function isInternalQueryKey(key) {
+  return (
+    key === 'nextInternalLocale' ||
+    (key !== NEXT_QUERY_PARAM_PREFIX && key.startsWith(NEXT_QUERY_PARAM_PREFIX)) ||
+    (key !== NEXT_INTERCEPTION_MARKER_PREFIX && key.startsWith(NEXT_INTERCEPTION_MARKER_PREFIX))
+  );
+}
+
+/**
+ * Removes Next's internal query keys (`nxtP…`, `nxtI…`, `nextInternalLocale`) from `req.url`.
+ *
+ * Why this exists: a route module that is NOT wrapped by next-server treats `nxtP<param>` query
+ * keys as the route params an upstream proxy resolved (`normalizeQueryParams` in
+ * `server-utils.js`), and prefers them over the path. Under next-server the same keys are
+ * deleted (`filterInternalQuery`). Without this, `/api/trpc/a?nxtPtrpc=b` would run procedure
+ * `b` here and `a` under Next. The URL is only rebuilt when such a key is present.
+ */
+function stripInternalQuery(req) {
+  const url = req.url || '';
+  const q = url.indexOf('?');
+  if (q === -1) return;
+  const params = new URLSearchParams(url.slice(q + 1));
+  let found = false;
+  for (const key of params.keys()) {
+    if (isInternalQueryKey(key)) {
+      found = true;
+      break;
+    }
+  }
+  if (!found) return;
+  const kept = new URLSearchParams();
+  for (const [key, value] of params) if (!isInternalQueryKey(key)) kept.append(key, value);
+  const search = kept.toString();
+  req.url = url.slice(0, q) + (search ? `?${search}` : '');
+}
+
+/**
+ * Maps a request path to one of the served pages. `pages` maps a page (`/api/trpc/[trpc]`) to
+ * anything; only the keys are used. Static pages match exactly; dynamic ones through Next's own
+ * route matcher, which throws `DecodeError` on a malformed `%` escape exactly as it does inside
+ * router-server.
+ *
+ * Returns { page } | { notFound: true } | { decodeError: true }.
+ */
+function createPageMatcher(pages) {
+  const statics = new Set();
+  const dynamics = [];
+  for (const page of pages) {
+    if (/\[[^\]]+\]/.test(page))
+      dynamics.push({ page, match: getRouteMatcher(getRouteRegex(page)) });
+    else statics.add(page);
+  }
+  return function matchPage(pathname) {
+    // Next never invokes a route for a trailing-slash path (it 308s first, and this server does
+    // not port redirects), so this server does not serve one either.
+    if (pathname.length > 1 && pathname.endsWith('/')) return { notFound: true };
+    if (statics.has(pathname)) return { page: pathname };
+    for (const { page, match } of dynamics) {
+      try {
+        if (match(pathname)) return { page };
+      } catch (err) {
+        if (err instanceof DecodeError) return { decodeError: true };
+        throw err;
+      }
+    }
+    return { notFound: true };
+  };
+}
+
+/**
+ * The answer for a path this server does not serve. Next renders its 404 PAGE here, which this
+ * server cannot do (it never loads the page renderer); the one case it reproduces exactly is
+ * router-server's plain-text 404 for a non-document fetch (`sec-fetch-dest` present and not
+ * `document`), which is what browsers send for `fetch()`. The parity harness records the rest as
+ * a declared divergence.
+ */
+function sendNotFound(res) {
+  res.statusCode = 404;
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.end('Not Found');
+}
+
+/** Next renders its `/_error` page with 400 for an undecodable path. Same limitation as above. */
+function sendBadRequest(res) {
+  res.statusCode = 400;
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.end('Bad Request');
+}
+
+module.exports = {
+  applyRoutingHeaders,
+  ensureInstrumentationRegistered,
+  expectExport,
+  installGlobalBehaviors,
+  installProcessErrorHandlers,
+  setHttpClientAndAgentOptions,
+  createPageMatcher,
+  createRouting,
+  fillForwardedHeaders,
+  filterInternalHeaders,
+  resolveRouting,
+  sendBadRequest,
+  sendNotFound,
+  stripInternalQuery,
+};

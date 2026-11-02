@@ -57,7 +57,21 @@ export const LIST_CEILING = 1000;
 const ROUTED_MEMBER_COLUMNS = `ticket_id, ticket_id AS routed_ticket_id, ticket_subject, ticket_status,
            member_tier, is_paying_priority, is_novel, civitai_user_id, question_spec_hash`;
 
+/**
+ * Topic and linked account for a list of ticket ids, for the ticket views.
+ * 🔴 Like `ticketSql`: the address is selected only when `includeEmail`, so without the PII grant the
+ * column is not in the statement.
+ */
+export function routedByIdsSql(includeEmail: boolean): string {
+  return `
+    SELECT ticket_id, chosen_topic, civitai_user_id${includeEmail ? ', requester_email' : ''}
+    FROM support_tickets_routed FINAL
+    WHERE router_version = {v:String} AND ticket_id IN {ids:Array(String)}`;
+}
+
 export const SUPPORT_SQL = {
+  // The ticket views' enrichment, without the address. The with-address form is `routedByIdsSql(true)`.
+  routedByIds: routedByIdsSql(false),
   latestVersion: `
     SELECT router_version FROM support_tickets_routed FINAL
     GROUP BY router_version ORDER BY max(ingested_at) DESC LIMIT 1`,
@@ -772,4 +786,48 @@ export async function getSupportTicket(
   ]);
   if (tickets.length === 0) return null;
   return mapTicket(tickets[0], membership[0], input.includeEmail);
+}
+
+/** What the router knows about a ticket. Absent when it has not routed that ticket. */
+export type RoutedTicketContext = {
+  topic: string | null;
+  civitaiUserId: number | null;
+  /** Present only when the caller asked for it with `includeEmail`. */
+  requesterEmail?: string | null;
+};
+
+/**
+ * The latest router version's topic and linked account for each ticket id, for the ticket views.
+ *
+ * 🔴 `includeEmail` is decided by the caller from the PII grant, and without it the column is not
+ * selected (see `ticketSql`). Ids that are not Freshdesk ids are dropped before they reach the query.
+ */
+export async function getRoutedTicketContext(
+  ticketIds: readonly string[],
+  includeEmail: boolean,
+  client = reader()
+): Promise<Map<string, RoutedTicketContext>> {
+  const ids = [...new Set(ticketIds.filter(isFreshdeskId))];
+  const out = new Map<string, RoutedTicketContext>();
+  if (ids.length === 0) return out;
+  const version = await latestRouterVersion(client);
+  if (!version) return out;
+  const found = await rows<{
+    ticket_id: string;
+    chosen_topic: string | null;
+    civitai_user_id: number | string | null;
+    requester_email?: string | null;
+  }>(client, routedByIdsSql(includeEmail), {
+    v: version,
+    ids,
+  });
+  for (const r of found) {
+    const userId = Number(r.civitai_user_id);
+    out.set(String(r.ticket_id), {
+      topic: r.chosen_topic || null,
+      civitaiUserId: Number.isInteger(userId) && userId > 0 ? userId : null,
+      ...(includeEmail ? { requesterEmail: r.requester_email || null } : {}),
+    });
+  }
+  return out;
 }

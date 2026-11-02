@@ -38,8 +38,7 @@ export const reactionWithdrawalDetection = createJob(
       ch: defaultClickhouse(),
       sendReport: (report) => moderatorApp.abuseReport(report),
       now: () => new Date(),
-      log: (name, data) =>
-        void logToAxiom({ type: 'info', name, ...data }, 'moderation').catch(() => undefined),
+      log: (name, data) => void logToAxiom({ type: 'info', name, ...data }).catch(() => undefined),
     });
   },
   { lockExpiration: 10 * 60 }

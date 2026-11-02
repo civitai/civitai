@@ -188,6 +188,15 @@ const repeatOverImages = (template: Record<string, unknown>) => ({
 });
 
 beforeEach(() => {
+  // Only the submit's account-restriction read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   store.clear();
   for (const fn of Object.values(h)) fn.mockClear();
   installRedis();

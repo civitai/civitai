@@ -33,7 +33,8 @@ import {
 } from '@tabler/icons-react';
 import { useClipboard } from '@mantine/hooks';
 import clsx from 'clsx';
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useScrollToHighlightedComment } from '~/components/CommentsV2/Comment/useScrollToHighlightedComment';
 import { create } from 'zustand';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
 import {
@@ -145,10 +146,10 @@ export function CommentContent({
   );
 
   const handleCopyLink = () => {
-    // Resolve through /comments/v2/<id> rather than patching the current URL: the latter keeps
+    // Resolve through /comments/<id> rather than patching the current URL: the latter keeps
     // whatever deep-link params (commentParentId, threadId) the page arrived with, so a link copied
     // from a notification thread stays rooted on the notification's comment instead of this one.
-    clipboard.copy(`${window.location.origin}/comments/v2/${comment.id}`);
+    clipboard.copy(`${window.location.origin}/comments/${comment.id}`);
     showSuccessNotification({ message: 'Comment link copied to clipboard' });
   };
 
@@ -182,24 +183,7 @@ export function CommentContent({
 
   const isHighlighted = highlighted === comment.id;
 
-  useEffect(() => {
-    if (!isHighlighted) return;
-    const elem = document.getElementById(`comment-${comment.id}`);
-    if (!elem) return;
-    const center = () => elem.scrollIntoView({ behavior: 'auto', block: 'center' });
-    const recenterIfDrifted = () => {
-      const rect = elem.getBoundingClientRect();
-      if (rect.top < 0 || rect.bottom > window.innerHeight) center();
-    };
-    // Initial scroll, then retry as layout settles (images, late mounts, paginated batches)
-    center();
-    const t1 = window.setTimeout(recenterIfDrifted, 100);
-    const t2 = window.setTimeout(recenterIfDrifted, 500);
-    return () => {
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-    };
-  }, [isHighlighted, comment.id]);
+  useScrollToHighlightedComment(isHighlighted, comment.id);
 
   const maxDepth = constants.comments.getMaxDepth({ entityType: rootEntityType ?? entityType });
   // Subscribe per comment rather than to the whole set: opening one thread must not re-render

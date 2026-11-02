@@ -79,6 +79,7 @@ const {
   holdLookup,
   appealedIds,
   csamFlaggedIds,
+  csamBlockedIds,
   evidenceHeldUserIds,
   accountHeldIds,
   markerView,
@@ -93,6 +94,7 @@ const {
   const holdLookup = { error: null as Error | null };
   const appealedIds: number[] = [];
   const csamFlaggedIds: number[] = [];
+  const csamBlockedIds: number[] = [];
   // Owners under a hold marker.
   const evidenceHeldUserIds: number[] = [];
   // Blocked images of accounts under any other account hold.
@@ -163,8 +165,8 @@ const {
       if (at < 0) return undefined;
       return values[sql.slice(0, at + pattern.length).split('?').length - 2];
     };
-    const only = bound('"entityId" = ANY(?');
-    const excluded = bound('"entityId" <> ALL(?');
+    const only = bound('AND EXISTS (SELECT 1 FROM unnest(?');
+    const excluded = bound('NOT EXISTS (SELECT 1 FROM unnest(?');
     const before = bound('"createdAt" <= ?');
     const where = {
       type: bound('type = ?'),
@@ -173,10 +175,10 @@ const {
       ...(before ? { createdAt: { lte: before } } : {}),
     };
     queueWhereLog.push(where);
-    const limit = sql.match(/LIMIT (\d+)/);
+    const limit = bound('LIMIT ?');
     return queueRows(where, {
-      limit: limit ? Number(limit[1]) : undefined,
-      oldestFirst: /ORDER BY "createdAt" ASC/.test(sql),
+      limit: limit === undefined ? undefined : Number(limit),
+      oldestFirst: /ORDER BY j\."createdAt" ASC/.test(sql),
     });
   };
   const queryRaw = async (first: TemplateStringsArray | SqlLike, ...rawValues: unknown[]) => {
@@ -186,8 +188,7 @@ const {
     if (values.length > MAX_BIND_VARIABLES) throw tooManyBindVariables(values.length);
     sqlLog.push(sql);
     // The job's two queue reads; its backlog count reads "JobQueue" too, and falls through.
-    if (sql.includes('SELECT "entityId"') && sql.includes('FROM "JobQueue"'))
-      return queueRead(sql, values);
+    if (sql.includes('FROM "JobQueue" j')) return queueRead(sql, values);
     if (sql.includes('SELECT to_regclass(')) return [{ present: markerView.present }];
     // Routed before the report lookup below: the account hold reads "CsamReport" too.
     if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
@@ -202,10 +203,12 @@ const {
     const reviewFlags = sql.match(/"needsReview" IN \(([^)]*)\)/);
     if (reviewFlags) {
       const named = [...reviewFlags[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      const blocks = sql.includes(`"blockedFor" = 'CSAM'`);
       return [
-        ...appealedIds.map((id) => ({ id, needsReview: 'appeal' })),
-        ...csamFlaggedIds.map((id) => ({ id, needsReview: 'csam' })),
-      ].filter((r) => named.includes(r.needsReview));
+        ...appealedIds.map((id) => ({ id, needsReview: 'appeal', blockedFor: null })),
+        ...csamFlaggedIds.map((id) => ({ id, needsReview: 'csam', blockedFor: null })),
+        ...csamBlockedIds.map((id) => ({ id, needsReview: null, blockedFor: 'CSAM' })),
+      ].filter((r) => (r.needsReview ? named.includes(r.needsReview) : blocks));
     }
     // The moderator-activity lookup that gates blob retraction. Routed before the catch-all
     // below, which would otherwise answer it with Image rows.
@@ -245,6 +248,7 @@ const {
     holdLookup,
     appealedIds,
     csamFlaggedIds,
+    csamBlockedIds,
     evidenceHeldUserIds,
     accountHeldIds,
     markerView,
@@ -256,8 +260,7 @@ const {
         // The job reads its queue with raw SQL now. Kept so a return to Prisma's `in`/`notIn`
         // fails here the way it fails in Postgres: one bind variable per listed id.
         findMany: vi.fn(async ({ where }: any) => {
-          const listed =
-            (where?.entityId?.notIn?.length ?? 0) + (where?.entityId?.in?.length ?? 0);
+          const listed = (where?.entityId?.notIn?.length ?? 0) + (where?.entityId?.in?.length ?? 0);
           if (listed > MAX_BIND_VARIABLES) throw tooManyBindVariables(listed);
           queueWhereLog.push(where);
           return queueRows(where);
@@ -402,6 +405,7 @@ beforeEach(() => {
   heldUsers.length = 0;
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
+  csamBlockedIds.length = 0;
   evidenceHeldUserIds.length = 0;
   accountHeldIds.length = 0;
   markerView.present = true;
@@ -673,7 +677,7 @@ describe('remove-blocked-images retention clock', () => {
     heldUsers.length = 0;
     const result = await runJob();
 
-    expect(batchWhere()?.entityId).toBeUndefined();
+    expect(batchWhere()?.entityId).toEqual({ notIn: [] });
     expect(result.csamHeld).toBe(0);
     // id 5 is now an ordinary expired block.
     expect(deletedIds()).toContain(5);
@@ -733,6 +737,20 @@ describe('remove-blocked-images retention clock', () => {
     expect(result.csamHeld).toBe(0);
   });
 
+  it('holds a CSAM-blocked image with no other hold on its owner', async () => {
+    heldUsers.length = 0;
+    extraImages.push({ id: 9, userId: 999, blockedFor: 'CSAM' });
+    extraQueue.push({ entityId: 9, createdAt: EXPIRED });
+    csamBlockedIds.push(9);
+    const result = await runJob();
+
+    expect(deletedIds()).not.toContain(9);
+    expect(queuePruneIds()).not.toContain(9);
+    expect(result.csamBlockHeld).toBe(1);
+    expect(batchWhere()?.entityId?.notIn).toEqual([9]);
+    expect(result.csamReviewHeld).toBe(0);
+  });
+
   // Neither mock evaluates these, so they are pinned here. Dropping the ingestion predicate puts
   // every flagged image on the site, blocked or not, into the batch's notIn list; reading from
   // the replica misses a flag set inside the lag window.
@@ -747,7 +765,7 @@ describe('remove-blocked-images retention clock', () => {
     expect(onRead).toEqual([]);
     expect(onWrite).toHaveLength(1);
     expect(onWrite[0]).toMatch(
-      /WHERE "needsReview" IN \('appeal', 'csam'\)\s+AND ingestion = 'Blocked'::"ImageIngestionStatus"\s*$/
+      /WHERE \("needsReview" IN \('appeal', 'csam'\) OR "blockedFor" = 'CSAM'\)\s+AND ingestion = 'Blocked'::"ImageIngestionStatus"\s*$/
     );
   });
 

@@ -5,6 +5,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { APP_ACCESS_REQUESTS_REVIEW_HREF } from '~/shared/constants/app-access-request.constants';
 import { isMigratedModeratorHref } from '~/shared/constants/migrated-moderator-routes';
 
 export function ModerationNav() {
@@ -22,7 +23,8 @@ export function ModerationNav() {
         },
         { label: 'Models', href: '/moderator/models' },
         { label: 'HuggingFace Import', href: '/moderator/huggingface-import' },
-        { label: 'App Access Requests', href: '/moderator/app-access-requests' },
+        // Lives as a tab on /apps/review; the old /moderator route only redirects there.
+        { label: 'App Access Requests', href: APP_ACCESS_REQUESTS_REVIEW_HREF },
         { label: 'Training Models', href: '/moderator/training-models' },
         { label: 'Training Data Review', href: '/moderator/review/training-data' },
         // Migrated to the moderator app — the /moderator/* route redirects there (see the moderator

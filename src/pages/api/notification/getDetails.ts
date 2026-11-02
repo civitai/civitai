@@ -4,6 +4,9 @@ import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import type { SessionUser } from '~/types/session';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 /**
  * A notification id as it actually travels. The column is 64-bit, and the notifications service
@@ -54,7 +57,10 @@ export default AuthedEndpoint(
       if (!stored) return res.status(404).json({ error: 'Notification not found' });
 
       const notification = { id: stored.id, type: stored.type, details: stored.details };
-      await populateNotificationDetails([notification]);
+      const features = getFeatureFlagsLazy({ user, req });
+      await populateNotificationDetails([notification], {
+        showSfwFace: showsSfwFace(getRequestBrowsingLevel({ features, user })),
+      });
       return res.json(notification);
     } catch (error) {
       // civitai#3845 (population B): `populateNotificationDetails` fans out over

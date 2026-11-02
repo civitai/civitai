@@ -165,6 +165,20 @@ describe('upsertComment — block enforcement on create', () => {
     expect(db.tx.commentV2.update).toHaveBeenCalledTimes(1);
   });
 
+  // `includeHidden` widens only the edit's target (the challenge judge's own hidden comment): its
+  // LLM-written text is checked like any author's.
+  it('keeps the content and block checks on an includeHidden edit', async () => {
+    const hiddenEdit = { ...baseCreate, id: 5, includeHidden: true } as Parameters<
+      typeof upsertComment
+    >[0];
+    await upsertComment(hiddenEdit);
+    expect(throwOnBlockedCommentContent).toHaveBeenCalledWith('hello', { isModerator: undefined });
+
+    amIBlockedByUser.mockResolvedValue(true);
+    await expect(upsertComment(hiddenEdit)).rejects.toThrow();
+    expect(db.tx.commentV2.update).toHaveBeenCalledTimes(1);
+  });
+
   // The update is scoped by comment id alone — entityType/entityId are never checked against the
   // comment being edited. If the edit resolved its target from the request, a blocked user could
   // name an entity with no owner and edit freely; the check has to come from the stored comment.
@@ -215,8 +229,9 @@ describe('upsertComment — block enforcement on a reply create', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 1, rooted: false }]);
     db.thread.findUnique.mockResolvedValueOnce({ id: 1, locked: false });
     await expect(upsertComment(reply)).rejects.toThrow('comment thread is no longer available');
-    // One walk ran: the block check's own. The lock walk would be a second.
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    // The block check's own walk, then its CommentV3 lookup for the unresolved chain. The lock walk
+    // would be a third.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
     expect(isOwnerWalk(dbMock.dbWrite.$queryRaw.mock.calls[0][0])).toBe(true);
     expect(db.tx.commentV2.create).not.toHaveBeenCalled();
   });

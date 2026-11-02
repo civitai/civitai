@@ -14,6 +14,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ingestImage } from '~/server/services/image.service';
 
 const STORAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png';
@@ -58,6 +59,7 @@ async function submitAndReadStamp() {
 beforeEach(() => {
   mockCreateImageIngestionRequest.mockReset();
   dbMock.dbWrite.$executeRaw.mockReset();
+  loggingMock.logToAxiom.mockClear();
 });
 
 describe('ingestImage — orchestrator 429', () => {
@@ -90,5 +92,21 @@ describe('ingestImage — orchestrator 429', () => {
     expect(stamp.errorJson.failureClass).not.toBe('permanent');
     expect(stamp.retryIncrement).toBe(1);
     expect(stamp.scanRequestedAt.getTime()).toBeLessThan(stamp.before + 60_000);
+  });
+});
+
+describe('ingestImage — send-fail log', () => {
+  it('writes the orchestrator error body as readable text, not [object Object]', async () => {
+    failedSubmit(429, "Free tier quota for 'x' is exhausted", 600);
+
+    await submitAndReadStamp();
+
+    const log = loggingMock.logToAxiom.mock.calls
+      .map(([payload]) => payload as Record<string, unknown>)
+      .find((p) => p.failureType === 'send-fail' && p.reason === 'no-workflow-response');
+    expect(log).toBeDefined();
+    const text = JSON.stringify(log);
+    expect(text).not.toContain('[object Object]');
+    expect(text).toContain("Free tier quota for 'x' is exhausted");
   });
 });

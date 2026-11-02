@@ -336,10 +336,15 @@ describe('sync transitions', () => {
 });
 
 describe('embed inputs', () => {
-  test('an image is sent as a 512px edge variant; an absolute URL is not sent', () => {
+  test("an image is sent as the image cards' stored 800px variant; an absolute URL is not sent", () => {
     const opts = { imageLocation: 'https://cdn.example', embedVideo: false };
     expect(buildEmbedInput(imageRow(1, { url: 'abc-123' }), opts)).toEqual({
-      input: { id: '1', imageUrl: 'https://cdn.example/abc-123/width=512/abc-123.jpeg' },
+      // The cacher keys a stored variant by these parameters: any other set renders a new one
+      // from the original, which is the download this exists to avoid.
+      input: {
+        id: '1',
+        imageUrl: 'https://cdn.example/abc-123/anim=false,width=800,optimized=true/abc-123.jpeg',
+      },
     });
     expect(buildEmbedInput(imageRow(1, { url: 'https://elsewhere.example/a.png' }), opts)).toEqual({
       skip: 'external-url',
@@ -663,6 +668,7 @@ describe('backfill', () => {
     let dead = false;
     const hung: Array<(r: Response) => void> = [];
     const first = memoryState();
+    const c = clock();
     const run1 = runBackfill(
       { watermark: 40, floor: 0, span: 40, pages: 1 },
       {
@@ -674,7 +680,9 @@ describe('backfill', () => {
             ? new Response('', { status: 401 })
             : new Promise<Response>((r) => hung.push(r))) as unknown as typeof fetch),
         state: first,
-        sleep: async () => undefined,
+        // The loop ticks while the fourth workflow hangs, and its retry backoff is fake time.
+        now: c.now,
+        sleep: c.sleep,
       }
     );
     for (let i = 0; posts < 4 && i < 200; i++) await new Promise((r) => setTimeout(r, 0));
@@ -758,24 +766,532 @@ describe('backfill', () => {
     expect(state.cursor).toBe(81);
   });
 
-  test('a paused run starts no pages until resumed', async () => {
-    const pg = new FakePg().put(imageRow(1));
+  /** A sleep that yields a macrotask, so a loop ticking while a workflow hangs lets the test run. */
+  const tick = () => new Promise<void>((r) => setImmediate(r));
+  const until = async (done: () => boolean) => {
+    for (let i = 0; i < 2000 && !done(); i++) await tick();
+    expect(done()).toBe(true);
+  };
+  /** A clock the backfill's sleeps advance; the loop is its only sleeper in these tests. */
+  function clock() {
+    const c = {
+      t: 0,
+      now: () => c.t,
+      sleep: async (ms: number) => void ((c.t += ms), await tick()),
+    };
+    return c;
+  }
+  /** A FakeEmbedder whose call containing `id` waits for `release()`. */
+  function stuckOn(id: number) {
+    const embedder = new FakeEmbedder();
+    const embed = embedder.embed;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    let stuck = false;
+    let started = 0;
+    embedder.embed = async (inputs, opts) => {
+      started++;
+      if (inputs.some((i) => Number(i.id) === id)) {
+        stuck = true;
+        await gate;
+      }
+      return embed(inputs, opts);
+    };
+    return { embedder, release: () => release(), isStuck: () => stuck, started: () => started };
+  }
+  const ids = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+  test('pause stops new submissions at the next tick; the workflow in flight is still written', async () => {
+    const pg = new FakePg().put(...ids(1, 30).map((id) => imageRow(id)));
     const store = new FakeStore();
     const state = memoryState();
-    state.paused = true;
-    let waits = 0;
-    await runBackfill(
-      { watermark: 1, floor: 0, span: 10, pages: 1 },
+    const { embedder, release, isStuck, started } = stuckOn(25);
+    // One workflow out at a time, so the pause has submissions left to stop.
+    Object.assign(embedder, { budget: { capacity: 10, inFlight: 0 } });
+    const c = clock();
+    const sleeps: number[] = [];
+    const run = runBackfill(
+      { watermark: 30, floor: 0, span: 10 },
       {
-        ...deps(pg, store),
+        ...deps(pg, store, embedder),
         state,
-        sleep: async () => {
-          if (++waits === 3) state.paused = false;
-        },
+        now: c.now,
+        sleep: async (ms) => void (sleeps.push(ms), await c.sleep(ms)),
       }
     );
-    expect(waits).toBe(3);
-    expect(store.points.has(1)).toBe(true);
+    await until(isStuck);
+    state.paused = true;
+    const callsAtPause = started();
+    release();
+    await until(() => store.points.has(25));
+    const ticked = sleeps.length;
+    await until(() => sleeps.length > ticked + 20);
+    expect(started()).toBe(callsAtPause);
+    expect([...store.points.keys()].sort((a, b) => a - b)).toEqual(ids(21, 30));
+    // Re-checked at least every 5 s while paused.
+    expect(Math.max(...sleeps.slice(ticked))).toBeLessThanOrEqual(5000);
+    state.paused = false;
+    await run;
+    expect(store.points.size).toBe(30);
+  });
+
+  // A straggler holds only the cursor: the budget it does not hold keeps submitting at the rate.
+  test('one workflow that never returns: submissions continue at the step rate and the cursor holds above it', async () => {
+    const pg = new FakePg().put(...ids(1, 100).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const state = memoryState();
+    const c = clock();
+    const submitAt: number[] = [];
+    const embedderWaits: number[] = [];
+    let releaseStraggler: () => void = () => undefined;
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 20,
+      maxRetries: 0,
+      batchSize: 5,
+      priority: 'low',
+      maxStepsPerSecond: 10,
+      // The backfill submits on the embedder's own schedule, so its pacer should never wait.
+      now: () => c.t,
+      sleep: async (ms) => void embedderWaits.push(ms),
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        submitAt.push(c.t);
+        if (stepIds(init).includes('60'))
+          return new Promise<Response>((r) => (releaseStraggler = () => r(okWorkflow(init))));
+        return okWorkflow(init);
+      }) as unknown as typeof fetch,
+    });
+    const run = runBackfill(
+      { watermark: 100, floor: 0, span: 25 },
+      { ...deps(pg, store, null), embedder: e, state, now: c.now, sleep: c.sleep }
+    );
+    await until(() => store.points.size === 95);
+    expect(submitAt).toHaveLength(20);
+    const gaps = submitAt.slice(1).map((t, i) => t - submitAt[i]);
+    // 5 steps at 10 steps/s: one batch every 500 ms, with no gap behind the straggler.
+    expect(gaps.every((g) => g === 500)).toBe(true);
+    expect(embedderWaits).toEqual([]);
+    // The straggler's page is [51, 76): the cursor stops at its top.
+    expect(state.cursor).toBe(76);
+    releaseStraggler();
+    await run;
+    expect(store.points.size).toBe(100);
+    expect(state.cursor).toBe(0);
+  });
+
+  test('a workflow past its deadline is counted failed and the cursor moves on; its vectors are still kept', async () => {
+    const pg = new FakePg().put(...ids(1, 30).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const state = memoryState();
+    const { embedder, release } = stuckOn(15);
+    const c = clock();
+    const run = runBackfill(
+      { watermark: 30, floor: 0, span: 10, deadlineMs: 60_000 },
+      { ...deps(pg, store, embedder), state, now: c.now, sleep: c.sleep }
+    );
+    await until(() => state.cursor === 0);
+    expect(c.t).toBeGreaterThanOrEqual(60_000);
+    expect([...store.points.keys()].some((id) => id > 10 && id <= 20)).toBe(false);
+    release();
+    const result = await run;
+    expect(result.failed).toBe(10);
+    expect(result.done).toBe(true);
+    expect(store.points.size).toBe(30);
+  });
+
+  test('the reader stops maxDistance ids past a cursor a straggler holds', async () => {
+    const pg = new FakePg().put(...ids(1, 100).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const state = memoryState();
+    const { embedder, release, isStuck } = stuckOn(95);
+    const reads: number[] = [];
+    const query = pg.query;
+    pg.query = (async (sql: string, params: unknown[]) => {
+      if (sql.includes('i.id >= $1 AND i.id < $2')) reads.push((params as number[])[0]);
+      return query(sql, params);
+    }) as FakePg['query'];
+    const c = clock();
+    const run = runBackfill(
+      { watermark: 100, floor: 0, span: 10, maxDistance: 30 },
+      { ...deps(pg, store, embedder), state, now: c.now, sleep: c.sleep }
+    );
+    await until(isStuck);
+    await until(() => store.points.size === 20);
+    for (let i = 0; i < 50; i++) await tick();
+    // [91,101) is stuck; the reader stops at 71, 30 ids below the cursor.
+    expect(reads).toEqual([91, 81, 71]);
+    expect(store.points.size).toBe(20);
+    release();
+    await run;
+    expect(store.points.size).toBe(100);
+    expect(state.cursor).toBe(0);
+  });
+
+  test('set-inflight lowered mid-run: once the running workflows drain, no more than the new limit are ever out', async () => {
+    const pg = new FakePg().put(...ids(1, 100).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const held: Array<() => void> = [];
+    let out = 0;
+    const outAtSubmit: number[] = [];
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 20,
+      maxRetries: 0,
+      batchSize: 5,
+      priority: 'low',
+      sleep: async () => undefined,
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        out += stepIds(init).length;
+        outAtSubmit.push(out);
+        await new Promise<void>((r) => held.push(r));
+        out -= stepIds(init).length;
+        return okWorkflow(init);
+      }) as unknown as typeof fetch,
+    });
+    // The pipeline's own gate: a batch is handed over only when the budget can take it now, so
+    // none waits inside the embedder (the JobBudget alone would also keep `out` in bounds).
+    const embed = e.embed.bind(e);
+    let handed = 0;
+    const handedOver: number[] = [];
+    e.embed = async (inputs, opts) => {
+      handed += inputs.length;
+      handedOver.push(handed - e.budget.capacity);
+      try {
+        return await embed(inputs, opts);
+      } finally {
+        handed -= inputs.length;
+      }
+    };
+    const run = runBackfill(
+      { watermark: 100, floor: 0, span: 50 },
+      { ...deps(pg, store, null), embedder: e, state: memoryState(), sleep: tick }
+    );
+    await until(() => out === 20);
+    e.setLimits({ inFlight: 5 });
+    const lowered = outAtSubmit.length;
+    while (store.points.size < 100) {
+      await until(() => held.length > 0 || store.points.size === 100);
+      held.shift()?.();
+      await tick();
+    }
+    await run;
+    expect(Math.max(...outAtSubmit.slice(0, lowered))).toBe(20);
+    // Each submit after the lowering found at most 5 steps out, its own included.
+    expect(outAtSubmit.length).toBeGreaterThan(lowered);
+    expect(outAtSubmit.slice(lowered).every((n) => n <= 5)).toBe(true);
+    expect(handedOver.filter((over) => over > 0)).toEqual([]);
+  });
+
+  test('a run killed with a straggler out resumes from its cursor with no unwritten id above it', async () => {
+    const pg = new FakePg().put(...ids(1, 40).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const first = memoryState();
+    const straggler = stuckOn(25);
+    const run1 = runBackfill(
+      { watermark: 40, floor: 0, span: 10 },
+      { ...deps(pg, store, straggler.embedder), state: first, sleep: tick }
+    );
+    await until(() => store.points.size === 30);
+    // Killed here: [21,31) is out, the pages below it are written, the cursor holds at its top.
+    expect(first.cursor).toBe(31);
+    const unwrittenAbove = (cursor: number) =>
+      ids(cursor, 40).filter((id) => !store.points.has(id));
+    expect(unwrittenAbove(first.cursor!)).toEqual([]);
+
+    const second = memoryState(first.cursor);
+    const violations: string[] = [];
+    const setCursor = second.setCursor;
+    second.setCursor = async (cursor: number) => {
+      for (const id of unwrittenAbove(Math.max(cursor, 1)))
+        violations.push(`${id} below ${cursor}`);
+      await setCursor(cursor);
+    };
+    const embedder = new FakeEmbedder();
+    await runBackfill(
+      { watermark: 40, floor: 0, span: 10 },
+      { ...deps(pg, store, embedder), state: second }
+    );
+    expect(
+      embedder.calls
+        .flat()
+        .map(Number)
+        .sort((a, b) => a - b)
+    ).toEqual(ids(21, 30));
+    expect(violations).toEqual([]);
+    expect(store.points.size).toBe(40);
+    expect(second.cursor).toBe(0);
+    straggler.release();
+    await run1;
+  });
+
+  // Reserving a full batch of step rate for a short one ran the embedder's schedule ahead on
+  // sparse pages, so batches queued inside it, out of a pause's reach.
+  test('sparse pages: short batches are paced by their length and never wait inside the embedder', async () => {
+    const pg = new FakePg().put(...ids(1, 30).map((n) => imageRow(n * 10)));
+    const store = new FakeStore();
+    const c = clock();
+    const embedderWaits: number[] = [];
+    const submits: number[] = [];
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 40,
+      maxRetries: 0,
+      batchSize: 20,
+      priority: 'low',
+      maxStepsPerSecond: 10,
+      now: () => c.t,
+      sleep: async (ms) => void embedderWaits.push(ms),
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        submits.push(c.t);
+        return okWorkflow(init);
+      }) as unknown as typeof fetch,
+    });
+    await runBackfill(
+      { watermark: 300, floor: 0, span: 10 },
+      { ...deps(pg, store, null), embedder: e, state: memoryState(), now: c.now, sleep: c.sleep }
+    );
+    expect(store.points.size).toBe(30);
+    expect(embedderWaits).toEqual([]);
+    // 30 steps at 10 steps/s go out within 3 s; reserving a full 20-step slot per batch takes longer.
+    expect(Math.max(...submits)).toBeLessThanOrEqual(3000);
+  });
+
+  test('a batch whose re-check failed after its upsert is re-read on retry, not re-embedded', async () => {
+    const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const embedder = new FakeEmbedder();
+    let armed = false;
+    store.afterUpsert = () => void (armed = true);
+    const query = pg.query;
+    pg.query = (async (sql: string, params: unknown[]) => {
+      if (armed && sql.includes('i.id = ANY')) {
+        armed = false;
+        throw new Error('postgres blip');
+      }
+      return query(sql, params);
+    }) as FakePg['query'];
+    const state = memoryState();
+    const c = clock();
+    await runBackfill(
+      { watermark: 10, floor: 0, span: 10 },
+      { ...deps(pg, store, embedder), state, now: c.now, sleep: c.sleep }
+    );
+    expect(
+      embedder.calls
+        .flat()
+        .map(Number)
+        .sort((a, b) => a - b)
+    ).toEqual(ids(1, 10));
+    expect(store.points.size).toBe(10);
+    expect(state.cursor).toBe(0);
+  });
+
+  // The loop runs while a failed batch is re-read; requeueing entries its deadline cleared would
+  // be an unhandled rejection that ends the process.
+  test('a batch past its deadline while its failure is re-read is not requeued, and the run ends cleanly', async () => {
+    const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const embedder = new FakeEmbedder();
+    embedder.dropIds.add(3);
+    const c = clock();
+    let releaseReread: () => void = () => undefined;
+    let rereading = false;
+    const query = pg.query;
+    pg.query = (async (sql: string, params: unknown[]) => {
+      if (sql.includes('i.id = ANY') && String(params[0]) === '3' && !rereading) {
+        rereading = true;
+        await new Promise<void>((r) => (releaseReread = r));
+      }
+      return query(sql, params);
+    }) as FakePg['query'];
+    const state = memoryState();
+    const run = runBackfill(
+      { watermark: 10, floor: 0, span: 10, deadlineMs: 60_000 },
+      { ...deps(pg, store, embedder), state, now: c.now, sleep: c.sleep }
+    );
+    // Expired while the re-read is held: the cursor passes 3 once it is counted failed.
+    await until(() => rereading && state.cursor === 0);
+    releaseReread();
+    const result = await run;
+    expect(result.failed).toBe(1);
+    expect(embedder.calls).toHaveLength(1);
+    expect(store.points.has(3)).toBe(false);
+    expect(result.cursor).toBe(0);
+  });
+
+  // A quota with nothing left would split one batch inside embed() into one-step workflows sent
+  // one after another, out of a pause's reach.
+  test('a used-up quota sizes batches in the pipeline, so a pause stops the next workflow', async () => {
+    const pg = new FakePg().put(...ids(1, 30).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const state = memoryState();
+    const c = clock();
+    let fetches = 0;
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 10,
+      maxRetries: 0,
+      batchSize: 10,
+      priority: 'low',
+      now: () => c.t,
+      sleep: async () => undefined,
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        if (++fetches === 3) state.paused = true;
+        return new Response(workflowBody(stepIds(init)), {
+          status: 200,
+          headers: {
+            'RateLimit-Policy': '"inflight-multimodalEmbedding";q=80',
+            RateLimit: '"inflight-multimodalEmbedding";r=0;t=0',
+          },
+        });
+      }) as unknown as typeof fetch,
+    });
+    const run = runBackfill(
+      { watermark: 30, floor: 0, span: 30 },
+      { ...deps(pg, store, null), embedder: e, state, now: c.now, sleep: c.sleep }
+    );
+    await until(() => fetches >= 3);
+    for (let i = 0; i < 50; i++) await tick();
+    expect(fetches).toBe(3);
+    state.paused = false;
+    await run;
+    expect(store.points.size).toBe(30);
+  });
+
+  test('with --max-rate, a page whose rewrites are still being paced does not hold up a stop', async () => {
+    const pg = new FakePg().put(...ids(1, 100).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    for (const id of ids(1, 100))
+      store.points.set(id, { vector: vec(id), payload: {} as ImagePayload });
+    const reads: number[] = [];
+    const query = pg.query;
+    pg.query = (async (sql: string, params: unknown[]) => {
+      if (sql.includes('i.id >= $1 AND i.id < $2')) reads.push((params as number[])[0]);
+      return query(sql, params);
+    }) as FakePg['query'];
+    const c = clock();
+    // Page one rewrites 50 payloads at 1 write/s: page two may not start for 50 s.
+    await runBackfill(
+      { watermark: 100, floor: 0, span: 50, maxRate: 1 },
+      {
+        ...deps(pg, store),
+        state: memoryState(),
+        now: c.now,
+        sleep: c.sleep,
+        shouldStop: () => c.t >= 10_000,
+      }
+    );
+    expect(reads).toEqual([51]);
+    expect(c.t).toBeLessThan(20_000);
+  });
+
+  // Vectors in hand are paid for: a failing write is retried as a write, never by re-embedding.
+  test('vectors in hand whose write keeps failing are written again, not re-embedded', async () => {
+    const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const upsert = store.upsert;
+    let upserts = 0;
+    store.upsert = async (points) => {
+      if (++upserts <= 2) throw new Error('qdrant down');
+      return upsert(points);
+    };
+    const embedder = new FakeEmbedder();
+    const c = clock();
+    const state = memoryState();
+    await runBackfill(
+      { watermark: 10, floor: 0, span: 10 },
+      { ...deps(pg, store, embedder), state, now: c.now, sleep: c.sleep }
+    );
+    expect(embedder.calls.flat()).toHaveLength(10);
+    expect(store.points.size).toBe(10);
+    expect(state.cursor).toBe(0);
+  });
+
+  test('a Qdrant write that never recovers stops the run with the cursor held, re-embedding nothing', async () => {
+    const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    store.upsert = async () => {
+      throw new Error('qdrant down');
+    };
+    const embedder = new FakeEmbedder();
+    const c = clock();
+    const state = memoryState();
+    await expect(
+      runBackfill(
+        { watermark: 10, floor: 0, span: 10 },
+        { ...deps(pg, store, embedder), state, now: c.now, sleep: c.sleep }
+      )
+    ).rejects.toThrow('qdrant down');
+    expect(embedder.calls.flat()).toHaveLength(10);
+    expect(state.cursor).toBeNull();
+  });
+
+  // A run lasts days: only consecutive read failures stop it, not four blips spread over it.
+  test('a page read that fails once is retried, and failures on different pages do not add up', async () => {
+    const pg = new FakePg().put(...ids(1, 50).map((id) => imageRow(id)));
+    const failedOnce = new Set<number>();
+    const query = pg.query;
+    pg.query = (async (sql: string, params: unknown[]) => {
+      const lo = (params as number[])[0];
+      if (sql.includes('i.id >= $1 AND i.id < $2') && !failedOnce.has(lo)) {
+        failedOnce.add(lo);
+        throw new Error('pg blip');
+      }
+      return query(sql, params);
+    }) as FakePg['query'];
+    const store = new FakeStore();
+    const c = clock();
+    const result = await runBackfill(
+      { watermark: 50, floor: 0, span: 10 },
+      { ...deps(pg, store), state: memoryState(), now: c.now, sleep: c.sleep }
+    );
+    expect(failedOnce.size).toBe(6);
+    expect(result.done).toBe(true);
+    expect(store.points.size).toBe(50);
+  });
+
+  // Decision: a wait the loop is woken from clears its timer, so a finished run does not keep the
+  // process alive for the rest of a tick.
+  test('a run leaves no timer behind once it returns', async () => {
+    const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const embedder = new FakeEmbedder();
+    const embed = embedder.embed;
+    embedder.embed = async (inputs, opts) => {
+      await new Promise((r) => setTimeout(r, 20));
+      return embed(inputs, opts);
+    };
+    // Only this run's timers, by wrapping setTimeout: a process-wide count moves with other suites.
+    const pending = new Set<unknown>();
+    const { setTimeout: realSet, clearTimeout: realClear } = globalThis;
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+      const t: unknown = realSet(() => {
+        pending.delete(t);
+        fn();
+      }, ms);
+      pending.add(t);
+      return t;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((t?: Parameters<typeof clearTimeout>[0]) => {
+      pending.delete(t);
+      realClear(t);
+    }) as typeof clearTimeout;
+    try {
+      await runBackfill(
+        { watermark: 10, floor: 0, span: 10 },
+        { ...deps(pg, store, embedder), state: memoryState() }
+      );
+    } finally {
+      globalThis.setTimeout = realSet;
+      globalThis.clearTimeout = realClear;
+    }
+    expect(store.points.size).toBe(10);
+    expect(pending.size).toBe(0);
   });
 });
 
@@ -1069,10 +1585,17 @@ describe('review round: paid-path failure modes', () => {
       close: async () => undefined,
       ...memoryLease(),
     };
+    // The read backoff is the run's clock, so a fake one keeps the test fast.
+    let t = 0;
     await expect(
       runBackfill(
         { watermark: 40, floor: 0, span: 10, pages: 2 },
-        { ...deps(pg, store), state, sleep: async () => undefined }
+        {
+          ...deps(pg, store),
+          state,
+          now: () => t,
+          sleep: async (ms) => void ((t += ms), await new Promise((r) => setImmediate(r))),
+        }
       )
     ).rejects.toThrow('pg down');
     expect(cursor).toBe(31);
@@ -1450,22 +1973,64 @@ describe('follow-ups 13 and 14', () => {
         ...deps(pg, store),
         state,
         now: () => clock,
-        sleep: async (ms: number) => void (clock += Math.max(ms, 1)),
+        // A macrotask per sleep: the loop ticks while a workflow is stuck, and an instant sleep
+        // would starve the test's own timers.
+        sleep: async (ms: number) => {
+          clock += Math.max(ms, 1);
+          await new Promise((r) => setImmediate(r));
+        },
       },
     };
   }
 
-  test('--max-rate spaces pages by their writes', async () => {
+  // 10-28: with every other page done and a --max-rate hold set, the loop waited only on the
+  // one page stuck behind a slow workflow, and submitted nothing for minutes.
+  test('a page stuck on a slow workflow does not stop new pages once the --max-rate hold ends', async () => {
     const pg = new FakePg().put(...Array.from({ length: 30 }, (_, i) => imageRow(i + 1)));
     const store = new FakeStore();
     const run = clockedRun(pg, store, 0);
-    // 10 writes per page at 5 writes/s: each page must start at least 2 s after the last.
-    await runBackfill({ watermark: 30, floor: 0, span: 10, pages: 1, maxRate: 5 }, run.deps);
+    let release: () => void = () => undefined;
+    const stuck = new Promise<void>((r) => (release = r));
+    const embedder = new FakeEmbedder();
+    const embed = embedder.embed;
+    embedder.embed = async (inputs, opts) => {
+      if (inputs.some((i) => Number(i.id) > 20)) await stuck;
+      return embed(inputs, opts);
+    };
+    const done = runBackfill(
+      { watermark: 30, floor: 0, span: 10, pages: 2, maxRate: 5 },
+      { ...run.deps, embedder }
+    );
+    for (let i = 0; i < 200 && !store.points.has(1); i++) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    // The bottom page (ids 1-10) started after the hold, while the top page is still stuck.
+    expect([...store.points.keys()].filter((id) => id <= 10)).toHaveLength(10);
+    expect([...store.points.keys()].some((id) => id > 20)).toBe(false);
+    release();
+    await done;
     expect(store.points.size).toBe(30);
-    const gaps = run.pageStarts.slice(1).map((t, i) => t - run.pageStarts[i]);
-    // Pages [21,31), [11,21), [1,11) and the empty [0,1): three gaps, each after 10 writes.
-    expect(gaps.length).toBe(3);
-    expect(gaps.every((g) => g >= 2000)).toBe(true);
+  });
+
+  test('--max-rate paces Qdrant writes', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 30 }, (_, i) => imageRow(i + 1)));
+    const store = new FakeStore();
+    const run = clockedRun(pg, store, 0);
+    const upserts: Array<[number, number]> = [];
+    const upsert = store.upsert;
+    store.upsert = async (points) => {
+      upserts.push([run.deps.now(), points.length]);
+      return upsert(points);
+    };
+    // 5 writes/s: by the time a write starts, the writes before it fit the rate.
+    await runBackfill({ watermark: 30, floor: 0, span: 10, maxRate: 5 }, run.deps);
+    expect(store.points.size).toBe(30);
+    expect(upserts).toHaveLength(3);
+    let before = 0;
+    for (const [at, n] of upserts) {
+      expect(at).toBeGreaterThanOrEqual((before / 5) * 1000);
+      before += n;
+    }
   });
 
   test('--window starts no page outside it, including after it closes mid-run', async () => {
@@ -1671,6 +2236,40 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     });
   const inputs = (n: number) =>
     Array.from({ length: n }, (_, i) => ({ id: String(i + 1), imageUrl: 'u' }));
+
+  // The orchestrator owners asked for the quota to be ignored while its value is provisional;
+  // honoured, a reported r=0 shrank every workflow to one step.
+  test('with the quota not honoured, workflows keep their full size and the cap its configured value; a 429 still holds', async () => {
+    let clock = 0;
+    const sizes: number[] = [];
+    const sleeps: number[] = [];
+    let calls = 0;
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 500,
+      maxRetries: 2,
+      batchSize: 32,
+      priority: 'low',
+      honorQuota: false,
+      now: () => clock,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        clock += ms;
+      },
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        if (++calls === 2)
+          return new Response('', { status: 429, headers: { 'Retry-After': '7' } });
+        sizes.push(stepIds(init).length);
+        return ok(init, 0);
+      }) as unknown as typeof fetch,
+    });
+    const result = await e.embed(inputs(128));
+    expect(result.vectors.size).toBe(128);
+    expect(sizes).toEqual([32, 32, 32, 32]);
+    expect(e.budget.capacity).toBe(500);
+    expect(Math.max(...sleeps)).toBeGreaterThanOrEqual(7000);
+  });
 
   test('parses the RateLimit and RateLimit-Policy headers', () => {
     expect(parseRateLimitHeader(POLICY)).toEqual(

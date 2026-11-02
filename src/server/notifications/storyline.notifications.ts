@@ -146,6 +146,45 @@ export const storylineNotifications = createNotificationProcessor({
   },
 });
 
+/** Answered on the storyline's page, which offers Accept and Decline to the invitee. */
+export const storylineInviteNotifications = createNotificationProcessor({
+  'storyline-collaborator-invited': {
+    displayName: 'You were invited to collaborate on a storyline',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.ownerUsername} invited you to collaborate on "${details.storylineTitle}"`,
+      url: storylineUrl(details.storylineId as number),
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          sc."userId",
+          sc."storylineId",
+          jsonb_build_object(
+            'storylineId', s.id,
+            'storylineTitle', s.title,
+            'ownerId', s."userId",
+            'ownerUsername', u.username
+          ) as "details"
+        FROM "StorylineCollaborator" sc
+        JOIN "Storyline" s ON s.id = sc."storylineId"
+        JOIN "User" u ON u.id = s."userId"
+        WHERE sc."acceptedAt" IS NULL
+          AND sc."createdAt" > '${lastSent}'
+          AND NOT s."tosViolation"
+          AND ${notBlockedBetween('sc."userId"', 's."userId"')}
+      )
+      SELECT
+        CONCAT('storyline-collaborator-invited:',"storylineId",':',"userId") "key",
+        "userId",
+        'storyline-collaborator-invited' "type",
+        details
+      FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'storyline-collaborator-invited')
+    `,
+  },
+});
+
 /**
  * Sent where it happens (`storyline-publish.service`), not by a query. About the owner's own
  * storyline, so it names nobody and stays out of the placement avatar fetcher.

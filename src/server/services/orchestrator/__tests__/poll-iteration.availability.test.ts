@@ -36,13 +36,22 @@ vi.mock('~/server/services/storage-resolver', async (importOriginal) => ({
   registerMediaLocation: vi.fn(),
 }));
 
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 
 const MATURE = 'x';
 const SAFE = 'pg';
+
+// The output images fetched; the upload request log is written through fetch too.
+const downloaded = () =>
+  vi
+    .mocked(fetch)
+    .mock.calls.map(([url]) => String(url))
+    .filter((url) => url.startsWith('https://orchestrator.test/'));
 
 const output = (over: Record<string, unknown> = {}) => ({
   id: 'b1',
@@ -107,6 +116,36 @@ describe('pollIterationWorkflow availability', () => {
     expect(console.error).not.toHaveBeenCalled();
   });
 
+  it('records the stored key as issued to the polling user', async () => {
+    givenWorkflow([output({ nsfwLevel: SAFE })]);
+
+    await poll();
+
+    const key = (mocks.createImage.mock.calls[0][0] as { url: string }).url;
+    expect(key).toEqual(expect.any(String));
+    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+      `system:upload-key-owner:${key}`,
+      '7',
+      { EX: 30 * 24 * 60 * 60 }
+    );
+  });
+
+  it("logs the stored key as an upload request through the poller's request", async () => {
+    givenWorkflow([output({ nsfwLevel: SAFE })]);
+    const imageUploadRequest = vi.fn(async () => true);
+
+    await pollIterationWorkflow({
+      workflowId: 'wf-1',
+      width: 512,
+      height: 512,
+      userId: 7,
+      ctx: { domain: 'red', user: { id: 7, showNsfw: true }, track: { imageUploadRequest } },
+    });
+
+    const key = (mocks.createImage.mock.calls[0][0] as { url: string }).url;
+    await vi.waitFor(() => expect(imageUploadRequest).toHaveBeenCalledExactlyOnceWith(key, 7));
+  });
+
   it('formats nothing while the workflow is still running', async () => {
     givenWorkflow([], { status: 'processing' });
 
@@ -125,6 +164,17 @@ describe('pollIterationWorkflow availability', () => {
     expect(result.errorMessage).toMatch(/yellow Buzz/);
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
+  });
+
+  it('tells a user held to PG-13 by their source image how to bring a Civitai image in', async () => {
+    givenWorkflow([output({ available: false, blockedReason: 'NSFWLevelSourceImageRestricted' })], {
+      status: 'failed',
+    });
+
+    const result = await poll();
+
+    expect(result.status).toBe('failed');
+    expect(result.errorMessage).toBe(UNMARKED_SOURCE_IMAGE_MESSAGE);
   });
 
   it('hands a mature result off instead of returning it on the restricted site', async () => {
@@ -166,8 +216,7 @@ describe('pollIterationWorkflow availability', () => {
 
     expect(result.status).toBe('succeeded');
     expect(result.images).toHaveLength(1);
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith('https://orchestrator.test/safe.jpeg');
+    expect(downloaded()).toEqual(['https://orchestrator.test/safe.jpeg']);
   });
 
   it('returns the shown results rather than handing off when only some are restricted', async () => {
@@ -182,7 +231,6 @@ describe('pollIterationWorkflow availability', () => {
     const result = await poll({ domain: 'green' });
 
     expect(result.status).toBe('succeeded');
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith('https://orchestrator.test/safe.jpeg');
+    expect(downloaded()).toEqual(['https://orchestrator.test/safe.jpeg']);
   });
 });

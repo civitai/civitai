@@ -274,6 +274,28 @@ describe('/api/mod/held-media', () => {
     }
   );
 
+  it('sends no bytes until the view row is written', async () => {
+    let land!: () => void;
+    trackModActivity.mockImplementationOnce(
+      () => new Promise<undefined>((r) => (land = () => r(undefined)))
+    );
+    const req = Object.assign(new EventEmitter(), {
+      method: 'GET',
+      query: { imageId: '7' },
+      headers: {},
+    }) as unknown as NextApiRequest;
+    const res = new FakeRes();
+    const writeHead = vi.spyOn(res, 'writeHead');
+    const answering = handler(req, res as unknown as NextApiResponse);
+
+    await vi.waitFor(() => expect(trackModActivity).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(writeHead).not.toHaveBeenCalled();
+    land();
+    await answering;
+    expect(writeHead).toHaveBeenCalled();
+  });
+
   it('skips the row only for a mid-file range', async () => {
     storeAnswers(206, 'bytes 2-99/100');
     await call({ imageId: '7' }, 'bytes=2-');

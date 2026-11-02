@@ -1,3 +1,5 @@
+import { isSystemAccountMeta } from '@civitai/auth';
+import { isModerationAccountRow } from '~/server/auth/moderation-account';
 import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
 
 export const SCAM_AUTO_MUTE_MAX_ACCOUNT_AGE_DAYS = 7;
@@ -9,13 +11,21 @@ export function scamAccountAgeCutoff(now = new Date()) {
 
 export type ScamMuteCandidate = {
   id: number;
+  username: string | null;
+  meta: unknown;
   createdAt: Date;
   isModerator: boolean | null;
   deletedAt: Date | null;
   bannedAt: Date | null;
 };
 
-export type ScamMuteIneligibility = 'protected' | 'moderator' | 'deleted' | 'banned' | 'too-old';
+export type ScamMuteIneligibility =
+  | 'protected'
+  | 'system-account'
+  | 'moderator'
+  | 'deleted'
+  | 'banned'
+  | 'too-old';
 
 /** Why a scam verdict about this account may not act on it, or `null` when it may. */
 export function scamMuteIneligibility(
@@ -23,6 +33,7 @@ export function scamMuteIneligibility(
   { ignoreAccountAge = false, now = new Date() }: { ignoreAccountAge?: boolean; now?: Date } = {}
 ): ScamMuteIneligibility | null {
   if (PROTECTED_USER_IDS.has(user.id)) return 'protected';
+  if (isModerationAccountRow(user) || isSystemAccountMeta(user.meta)) return 'system-account';
   if (user.isModerator) return 'moderator';
   if (user.deletedAt) return 'deleted';
   if (user.bannedAt) return 'banned';

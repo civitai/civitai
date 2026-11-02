@@ -4,7 +4,7 @@ import { CONNECTOR_NAME } from '@/services/debezium-manager';
 import { buildEmbedInput, type Embedder, type EmbedInput } from './embedder';
 import { isEligible, type ImageRow } from './eligibility';
 import type { VectorStore } from './qdrant';
-import { getImageRows, getPayloads } from './source';
+import { getImageRows, getPayloads, type ImagePayload } from './source';
 
 export type VectorStoreLike = Pick<
   VectorStore,
@@ -125,6 +125,36 @@ export async function syncRows(
   goneIds: number[],
   deps: SyncDeps
 ): Promise<SyncStats> {
+  const { stats, inputs, payloads } = await prepareRows(rows, goneIds, deps);
+  if (!inputs.length || !deps.embedder) return stats;
+
+  // Each workflow's vectors are stored as it returns, so a process killed mid-call loses only
+  // the workflows still in flight; a re-run finds the rest as existing points.
+  const store = vectorWriter(payloads, stats, deps);
+  const result = await deps.embedder.embed(inputs, {
+    acceptStamp: (stamp) => deps.store.assertModel(stamp),
+    onVectors: async (vectors) => void (await store(vectors)),
+  });
+  // Whatever was not stored as it came (an embedder without onVectors, or a failed early write).
+  await store(result.vectors);
+  stats.failed = result.failed.length;
+
+  // Stored what was paid for; now surface the failure so the caller retries the rest.
+  if (result.error) throw result.error;
+  return stats;
+}
+
+/**
+ * Applies the deletes and payload rewrites `rows` need and returns the inputs still to embed,
+ * with their payloads. Writes nothing in a dry run; with embedding off the inputs are only counted.
+ * `paceWrites` is given each group's write count before it is written.
+ */
+export async function prepareRows(
+  rows: ImageRow[],
+  goneIds: number[],
+  deps: SyncDeps,
+  paceWrites?: (writes: number) => Promise<void>
+): Promise<{ stats: SyncStats; inputs: EmbedInput[]; payloads: Map<number, ImagePayload> }> {
   const stats = emptyStats();
   const eligible = rows.filter(isEligible);
   const remove = [...goneIds, ...rows.filter((r) => !isEligible(r)).map((r) => r.id)];
@@ -151,27 +181,37 @@ export async function syncRows(
   if (deps.dryRun) {
     // Counts what a real run would embed.
     stats.embedded = inputs.length;
-    return stats;
+    return { stats, inputs: [], payloads };
   }
 
+  await paceWrites?.(toDelete.size + update.size);
   await deps.store.delete([...toDelete]);
   await deps.store.setPayloads(update);
   if (!deps.embedder) {
     stats.embedOff = inputs.length;
     stats.deferredIds = inputs.map((i) => Number(i.id));
-    return stats;
+    return { stats, inputs: [], payloads };
   }
-  if (!inputs.length) return stats;
+  return { stats, inputs, payloads };
+}
 
-  // Each workflow's vectors are stored as it returns, so a process killed mid-page loses only
-  // the workflows still in flight; a re-run finds the rest as existing points. The cursor still
-  // moves only once this whole call has returned.
+/**
+ * Stores vectors as points with their payloads, adding to `stats`, and returns the ids it stored
+ * (including any deleted again because they lapsed meanwhile). Each id is stored once.
+ */
+export function vectorWriter(
+  payloads: Map<number, ImagePayload>,
+  stats: SyncStats,
+  deps: SyncDeps,
+  paceWrites?: (writes: number) => Promise<void>
+) {
   const written = new Set<number>();
-  const store = async (vectors: Iterable<[number, number[]]>) => {
+  return async (vectors: Iterable<[number, number[]]>): Promise<number[]> => {
     const points = [...vectors]
       .filter(([id]) => payloads.has(id) && !written.has(id))
       .map(([id, vector]) => ({ id, vector, payload: payloads.get(id)! }));
-    if (!points.length) return;
+    if (!points.length) return [];
+    await paceWrites?.(points.length);
     await deps.store.upsert(points);
     const ids = points.map((p) => p.id);
     for (const id of ids) written.add(id);
@@ -196,16 +236,8 @@ export async function syncRows(
     stats.embedded -= lapsed.length;
     stats.deleted += lapsed.length;
     stats.updated += changed.size;
+    // Charged after: a lapsed image's delete is not held back by the write rate.
+    await paceWrites?.(lapsed.length + changed.size);
+    return ids;
   };
-  const result = await deps.embedder.embed(inputs, {
-    acceptStamp: (stamp) => deps.store.assertModel(stamp),
-    onVectors: (vectors) => store(vectors),
-  });
-  // Whatever was not stored as it came (an embedder without onVectors, or a failed early write).
-  await store(result.vectors);
-  stats.failed = result.failed.length;
-
-  // Stored what was paid for; now surface the failure so the caller retries the rest.
-  if (result.error) throw result.error;
-  return stats;
 }

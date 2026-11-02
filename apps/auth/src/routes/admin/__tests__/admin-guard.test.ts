@@ -27,7 +27,7 @@ vi.mock('$lib/server/db/db', () => {
         get(_target, prop) {
           if (prop === 'then') return undefined;
           if (prop === 'execute') return async () => [];
-          if (prop === 'executeTakeFirst') return async () => ({ id: 1 });
+          if (prop === 'executeTakeFirst') return async () => ({ id: 1, redirectUris: [] });
           return () => chain;
         },
       }

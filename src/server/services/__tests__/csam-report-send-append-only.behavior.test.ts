@@ -175,6 +175,14 @@ beforeAll(async () => {
       "images" JSONB NOT NULL DEFAULT '[]',
       "type" "CsamReportType" NOT NULL DEFAULT 'Image'
     );
+    CREATE TABLE "ModActivity" (
+      "id" SERIAL PRIMARY KEY,
+      "userId" INTEGER,
+      "activity" TEXT NOT NULL,
+      "entityType" TEXT,
+      "entityId" INTEGER,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
   await db.pg.exec(readFileSync(migration('20261112120000_csam_report_append_only'), 'utf8'));
   await db.pg.exec(readFileSync(migration('20261123120000_csam_report_send_claim'), 'utf8'));

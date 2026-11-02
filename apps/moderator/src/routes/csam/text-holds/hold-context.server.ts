@@ -175,11 +175,14 @@ const bare = ({ type, id }: ParentRef): HoldParent => ({
 });
 
 async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>> {
-  const v2Ids = holds.filter((h) => h.entityType === 'CommentV2').map((h) => h.entityId);
-  const v2 = v2Ids.length ? await commentParents(v2Ids) : new Map<number, ParentRef>();
+  // `commentParents` reads `CommentV3`, which shares its ids with `CommentV2`, so it answers both.
+  const isThreadComment = (hold: HoldRef) =>
+    hold.entityType === 'CommentV2' || hold.entityType === 'CommentV3';
+  const threadIds = holds.filter(isThreadComment).map((h) => h.entityId);
+  const threads = threadIds.length ? await commentParents(threadIds) : new Map<number, ParentRef>();
   const refOf = (hold: HoldRef): ParentRef | null =>
-    hold.entityType === 'CommentV2'
-      ? v2.get(hold.entityId) ?? null
+    isThreadComment(hold)
+      ? threads.get(hold.entityId) ?? null
       : hold.entityType === 'Comment' && hold.commentModelId
       ? { type: 'model', id: hold.commentModelId }
       : null;
@@ -199,7 +202,8 @@ async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>
 export async function getHoldContexts(holds: HoldRef[]): Promise<Map<number, HoldContext>> {
   const profileHolds = holds.filter((h) => h.entityType === 'UserProfile');
   const commentHolds = holds.filter(
-    (h) => h.entityType === 'Comment' || h.entityType === 'CommentV2'
+    (h) =>
+      h.entityType === 'Comment' || h.entityType === 'CommentV2' || h.entityType === 'CommentV3'
   );
   const [profiles, parents] = await Promise.all([
     profileHolds.length

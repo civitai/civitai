@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Positive control for the `Package unit tests` and `App unit tests` CI jobs.
+ * Positive control for the `Package unit tests` CI job (lint.yml) and the app suites (apps.yml).
  *
  * A green vitest run is not evidence that anything ran. Ways either job could report success
  * having tested nothing, EXIT CODE 0 AND ALL:
@@ -22,11 +22,22 @@
  * file on disk must appear in the results with at least one test. The check fails when that
  * set SHRINKS, which is the regression, and adapts on its own when a new one is added.
  *
+ * A suite a PR leaves out ON PURPOSE (`--scope`, apps only): `scripts/ci/app-suite-scope.mjs`
+ * may leave an app's suite out of a pull_request run when nothing it reads changed, and writes
+ * what it decided to a scope file. Given that file, the ledger excuses those apps, but only after
+ * re-checking the decision (`checkDeclaredSkips`): it must be a pull_request run, the changed
+ * files this script lists again from git (not the file's own list) must match the file's and
+ * still lead to the same skip, and the app must really be absent from the report. A suite missing for any other reason fails exactly as before; without the file, or with
+ * an empty skip list, nothing is excused.
+ *
  * Usage:  node scripts/ci/assert-workspace-suites-ran.mjs <vitest-json-report> <packages|apps>
+ *           [--scope <app-suite-scope.json>]
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
+
+import { changedFiles, checkDeclaredSkips } from './app-suite-scope.mjs';
 
 /**
  * A floor as well as the ledger: the ledger passes if every workspace contributes one test,
@@ -39,8 +50,14 @@ const WORKSPACES = {
   apps: { minTests: 250 },
 };
 
-const [reportPath, workspace] = process.argv.slice(2);
-if (!reportPath || !WORKSPACES[workspace]) {
+const [reportPath, workspace, ...rest] = process.argv.slice(2);
+const scopeFlag = rest.indexOf('--scope');
+const scopePath = scopeFlag > -1 ? rest[scopeFlag + 1] : null;
+if (
+  !reportPath ||
+  !WORKSPACES[workspace] ||
+  (scopeFlag > -1 && (!scopePath || workspace !== 'apps'))
+) {
   const choices = Object.keys(WORKSPACES).join('|');
   console.error(`usage: assert-workspace-suites-ran.mjs <vitest-json-report> <${choices}>`);
   process.exit(2);
@@ -129,7 +146,39 @@ for (const result of report.testResults ?? []) {
   ran.set(match[1], entry);
 }
 
-const missing = expected.filter((name) => !ran.has(name) || ran.get(name).executed === 0);
+// Apps left out of this run on purpose, each re-checked before it is excused. A scope file that
+// is absent (the step that writes it failed or never ran) excuses nothing: the suite then had to
+// run, and the ledger requires it.
+let leftOut = [];
+if (scopePath && existsSync(scopePath)) {
+  const scope = JSON.parse(readFileSync(scopePath, 'utf8'));
+  // Listed again here rather than read from the scope file, so a wrong list there cannot excuse
+  // its own skip.
+  let changed = null;
+  try {
+    changed = changedFiles(repoRoot);
+  } catch (error) {
+    console.error(`could not list the changed files from git: ${error.message}`);
+  }
+  const problems = checkDeclaredSkips(
+    repoRoot,
+    scope,
+    ran.keys(),
+    process.env.GITHUB_EVENT_NAME,
+    changed
+  );
+  if (problems.length > 0) {
+    for (const p of problems) console.error(`FAIL: ${p}`);
+    process.exit(1);
+  }
+  leftOut = scope.skipped ?? [];
+} else if (scopePath) {
+  console.log(`no scope file at ${scopePath}: no suite is excused`);
+}
+
+const missing = expected.filter(
+  (name) => !leftOut.includes(name) && (!ran.has(name) || ran.get(name).executed === 0)
+);
 
 console.log(`${workspace}/ dirs with a vitest config and tests on disk : ${expected.length}`);
 console.log(`${workspace}/ dirs that appear in the run                 : ${ran.size}`);
@@ -138,8 +187,11 @@ for (const name of expected) {
   const detail = entry
     ? `${entry.files} file(s), ${entry.executed} executed` +
       (entry.skipped > 0 ? `, ${entry.skipped} skipped` : '')
+    : leftOut.includes(name)
+    ? 'left out of this PR run: nothing it reads changed'
     : 'did not run';
-  console.log(`  ${missing.includes(name) ? 'MISSING' : '     ok'}  ${name.padEnd(28)} ${detail}`);
+  const mark = missing.includes(name) ? 'MISSING' : leftOut.includes(name) ? 'LEFTOUT' : '     ok';
+  console.log(`  ${mark}  ${name.padEnd(28)} ${detail}`);
 }
 console.log(
   `totals: ${report.numTotalTestSuites ?? '?'} suite(s), ${report.numTotalTests ?? 0} test(s), ` +
@@ -168,4 +220,7 @@ if (totalExecuted < minTests) {
   process.exit(1);
 }
 
-console.log(`\nOK: every ${workspace}/ suite with tests on disk executed.`);
+console.log(
+  `\nOK: every ${workspace}/ suite with tests on disk executed` +
+    (leftOut.length > 0 ? `, except ${leftOut.join(', ')}, left out on purpose.` : '.')
+);

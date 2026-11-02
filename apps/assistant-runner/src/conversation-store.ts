@@ -30,7 +30,7 @@ export interface OrchestrationStoreOptions {
 /**
  * The conversation head where the browser keeps it: orchestration `echo` workflows tagged
  * `cvt:head`, one per turn, the conversation in the workflow's metadata, exactly as the chat's
- * `ThreadStore` (`@civitai/components-chat` 0.25.0) writes and reads them. So a conversation
+ * `ThreadStore` (`@civitai/components-chat`) writes and reads them. So a conversation
  * started on the runner opens in the browser, and one started in the browser carries on here.
  *
  * A new turn is a new workflow (`externalId` `cvt-head-<conversation>-<seq>`, so a save retried

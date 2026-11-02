@@ -9,6 +9,7 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
@@ -161,16 +162,20 @@ async function drainUser(
       if (isCanceled())
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
       deletedPosts += await dbWrite.$executeRaw`
-        DELETE FROM "Post"
-        WHERE id IN (${Prisma.join(batch)})
-          AND "userId" = ${userId}
-          AND EXISTS (
-            SELECT 1 FROM "User" u
-            WHERE u.id = ${userId}
-              AND u."deletedAt" IS NOT NULL
-              AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
-          )
-          AND NOT ${held}
+        WITH doomed AS (
+          SELECT p.id FROM "Post" p
+          WHERE p.id IN (${Prisma.join(batch)})
+            AND p."userId" = ${userId}
+            AND EXISTS (
+              SELECT 1 FROM "User" u
+              WHERE u.id = ${userId}
+                AND u."deletedAt" IS NOT NULL
+                AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+            )
+            AND NOT ${held}
+        ),
+        ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
+        DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
       `;
     }
 

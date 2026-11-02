@@ -1,8 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { countPlacements } from '@civitai/db-queries/placement';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import {
   freePlacementsOnWhere,
@@ -112,7 +111,7 @@ type SpaceTarget = {
  * Written once because the claim decides on it and the UI displays it. Scope it
  * by status later in one of two copies and the surface offers a placement the
  * mutation refuses. The predicate is `freePlacementsTodayWhere`, which the
- * display path's Kysely count (under `kysely-placement-reads`) reads too.
+ * display path's Kysely count reads too.
  */
 const countFreePlacementsToday = (client: PlacementClient, placerId: number) =>
   client.placement.count({ where: freePlacementsTodayWhere(placerId) });
@@ -310,9 +309,12 @@ export async function createFreePlacement({
  */
 export async function getFreePlacementAllowance({ placerId }: { placerId: number }) {
   const dayStart = freePlacementDayStart();
-  const used = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    ? await countPlacements((await loadKyselyDb()).kyselyRead, freePlacementsTodayWhere(placerId))
-    : await countFreePlacementsToday(dbRead, placerId);
+  const used = await countPlacements(
+    (
+      await loadKyselyDb()
+    ).kyselyRead,
+    freePlacementsTodayWhere(placerId)
+  );
 
   return {
     used,
@@ -329,6 +331,4 @@ export async function getFreePlacementAllowance({ placerId }: { placerId: number
  * never the thing a mutation decides on.
  */
 export const hasUsedFreePlacementOn = async (input: SpaceTarget & { placerId: number }) =>
-  ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
-    ? await countPlacements((await loadKyselyDb()).kyselyRead, freePlacementsOnWhere(input))
-    : await countFreePlacementsOn(dbRead, input)) > 0;
+  (await countPlacements((await loadKyselyDb()).kyselyRead, freePlacementsOnWhere(input))) > 0;

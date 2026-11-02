@@ -13,6 +13,10 @@ const assertCanPlace = vi.fn();
 // `reservedFreeSlots` is deliberately NOT stubbed: it is the predicate the claim
 // decides on, and a double would let the count-under-lock be tested against a
 // shape the real query does not have.
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   resolvePlacementSpaceFor: resolveSpace,

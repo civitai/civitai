@@ -1,8 +1,17 @@
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { OutputFormatInput } from '~/components/generation_v2/inputs/OutputFormatInput';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import type * as MobileGenerator from '~/hooks/useMobileGenerator';
+
+// The mobile generator comes from the flag and media queries, which the test browser can't set.
+let mobile = false;
+vi.mock('~/hooks/useMobileGenerator', async (importOriginal) => ({
+  ...(await importOriginal<typeof MobileGenerator>()),
+  useMobileGenerator: () => mobile,
+  useGeneratorLayout: () => (mobile ? 'mobile' : 'desktop'),
+}));
 
 // OutputFormatInput is a pure value/onChange leaf (no tRPC/router): a Mantine
 // Menu whose trigger (an UnstyledButton) shows the *selected* option's label,
@@ -27,7 +36,7 @@ describe('OutputFormatInput', () => {
   // (and don't break as the selected value changes the full name).
   const trigger = () => page.getByRole('button', { name: /Output Format/ });
 
-  test('trigger shows the selected option\'s label', async () => {
+  test("trigger shows the selected option's label", async () => {
     renderWithProviders(<OutputFormatInput value="png" options={options} onChange={vi.fn()} />);
 
     // Scope to the trigger (the menu is closed, but be explicit about intent).
@@ -37,12 +46,14 @@ describe('OutputFormatInput', () => {
   test('trigger falls back to JPEG when value is unset', async () => {
     // selected is undefined -> `selected?.label ?? 'JPEG'`. This must hold even
     // though no option is currently active.
-    renderWithProviders(<OutputFormatInput value={undefined} options={options} onChange={vi.fn()} />);
+    renderWithProviders(
+      <OutputFormatInput value={undefined} options={options} onChange={vi.fn()} />
+    );
 
     await expect.element(trigger().getByText('JPEG')).toBeInTheDocument();
   });
 
-  test('trigger renders the selected option\'s own +Buzz offset glyph', async () => {
+  test("trigger renders the selected option's own +Buzz offset glyph", async () => {
     // Distinct from FormatLabel inside the menu: the trigger has its OWN offset
     // span (`selected && offset>0`). value=png (offset 5) -> trigger shows +5,
     // without opening the dropdown.
@@ -89,5 +100,29 @@ describe('OutputFormatInput', () => {
     const jpeg = page.getByRole('menuitem', { name: /JPEG/ });
     await expect.element(png.getByText('Free for Members')).toBeInTheDocument();
     await expect.element(jpeg.getByText('Free for Members')).not.toBeInTheDocument();
+  });
+
+  describe('in the mobile generator', () => {
+    beforeEach(() => {
+      mobile = true;
+      return () => {
+        mobile = false;
+      };
+    });
+
+    test('the choices open in a sheet, and picking one reports it and closes the sheet', async () => {
+      const onChange = vi.fn();
+      renderWithProviders(<OutputFormatInput value="jpeg" options={options} onChange={onChange} />);
+      await trigger().click();
+
+      const sheet = page.getByRole('dialog', { name: 'Output Format' });
+      await expect
+        .element(sheet.getByRole('menuitemradio', { name: 'JPEG' }))
+        .toHaveAttribute('aria-checked', 'true');
+      await sheet.getByRole('menuitemradio', { name: /PNG/ }).click();
+
+      expect(onChange).toHaveBeenCalledWith('png');
+      await expect.element(sheet).not.toBeInTheDocument();
+    });
   });
 });

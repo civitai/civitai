@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { heldImageSql } from '@civitai/shared/held-media';
+import { heldImageSql, SERVED_ACTIVITY } from '@civitai/shared/held-media';
 import { dbRead } from './db';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
@@ -33,13 +33,13 @@ export function recordHeldGridView(moderatorId: number, count: number) {
   void logToAxiom({ name: 'held-media-grid', type: 'info', moderatorId, count }).catch(() => null);
 }
 
-/** One image opened from byte 0, in the grid or the full view. */
+/** One image opened from byte 0, in the grid or the full view. Never throws. */
 export function recordHeldView(moderatorId: number, imageId: number) {
-  void recordModActivity({
+  return recordModActivity({
     userId: moderatorId,
     entityType: 'image',
     entityId: imageId,
-    activity: 'heldMedia:view',
+    activity: SERVED_ACTIVITY,
   });
 }
 

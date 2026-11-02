@@ -1,0 +1,32 @@
+import type { ShownAction, ShownRendition } from '@civitai/shared/held-media';
+
+const pending = new Set<Promise<unknown>>();
+
+/** One image the report page put on screen and the moderator then opened or selected. Resolves to
+ *  whether the row landed; a row that does not only leaves the image unrecorded. */
+export function recordShown(body: {
+  imageId: number;
+  userId: number;
+  action: ShownAction;
+  rendition: ShownRendition;
+}): Promise<boolean> {
+  const sending: Promise<boolean> = fetch('/api/mod/held-media/shown', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    keepalive: true,
+  })
+    .then((res) => res.ok)
+    .catch(() => false)
+    .finally(() => pending.delete(sending));
+  pending.add(sending);
+  return sending;
+}
+
+/** Settles once every row sent so far has landed or failed, or after `waitMs`, so a filing made now
+ *  follows them without a stalled request holding it. */
+export const settleShown = (waitMs = 3000) =>
+  Promise.race([
+    Promise.allSettled([...pending]),
+    new Promise<void>((resolve) => setTimeout(resolve, waitMs)),
+  ]);

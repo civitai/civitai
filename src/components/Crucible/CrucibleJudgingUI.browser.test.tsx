@@ -83,6 +83,9 @@ const reactionEnv = vi.hoisted(() => ({
   lookupLoaded: true,
 }));
 
+const openReportModal = vi.hoisted(() => vi.fn());
+vi.mock('~/components/Dialog/triggers/report', () => ({ openReportModal }));
+
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof IsMobileMod>()),
   useHasCoarsePointer: () => device.mobile,
@@ -1231,6 +1234,37 @@ describe('CrucibleJudgingUI — reactions', () => {
       entityType: 'image',
       reaction: 'Heart',
     });
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  test('clicking the card itself votes for that side (control for the report test below)', async () => {
+    const { onVote } = await renderPair();
+
+    document
+      .querySelector<HTMLElement>('[data-testid="crucible-report"][data-side="right"]')!
+      .parentElement!.click();
+
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+  });
+
+  test('reporting opens the report modal for that side and does not vote or skip', async () => {
+    const { onVote, onSkip } = await renderPair();
+    const reportButton = (side: string) =>
+      document.querySelector<HTMLButtonElement>(
+        `[data-testid="crucible-report"][data-side="${side}"] button`
+      )!;
+
+    reportButton('right').click();
+    for (const key of ['Enter', ' ', '1']) {
+      reportButton('left').dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      );
+    }
+    await pastFeedbackDelay();
+
+    expect(openReportModal).toHaveBeenCalledTimes(1);
+    expect(openReportModal).toHaveBeenCalledWith({ entityType: 'image', entityId: rightImageId });
     expect(onVote).not.toHaveBeenCalled();
     expect(onSkip).not.toHaveBeenCalled();
   });

@@ -1819,6 +1819,44 @@ export async function getListingDetail(
 }
 
 /**
+ * One listing as a store CARD, by slug or id, through the same visibility gate as
+ * `getListingDetail` (`loadStoreVisibleListingRow`): a listing the store would 404 returns
+ * null here too.
+ */
+export async function getListingCard(
+  input: GetAppListingDetailInput,
+  opts: {
+    redCapable?: boolean;
+    scope?: StoreVisibilityScope;
+    floor?: ListingAudienceFloor;
+    viewer?: ListingViewer;
+    viewerBrowsingLevel?: number | null;
+  } = {}
+): Promise<ListingCard | null> {
+  const redCapable = opts.redCapable ?? false;
+  const floor: ListingAudienceFloor = opts.floor ?? 'public';
+  const gated = await loadStoreVisibleListingRow(input, { redCapable, scope: opts.scope, floor });
+  if (!gated) return null;
+  const { row, visibility } = gated;
+  const [beta, red] = await Promise.all([
+    readListingBetaForRender(row.id, dbRead),
+    redCapable
+      ? readListingRedMediaManyForRender(dbRead, [row.id])
+      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
+  ]);
+  return projectListingCard(
+    row,
+    beta,
+    restrictedAudienceForRow(row, visibility, floor, opts.viewer ?? ANONYMOUS_LISTING_VIEWER),
+    {
+      kind: 'public',
+      audience: { redCapable, viewerBrowsingLevel: opts.viewerBrowsingLevel },
+      red: red.get(row.id) ?? null,
+    }
+  );
+}
+
+/**
  * The `{ id, slug, name }` of one listing IF this request may open its public store page, else
  * `null` — exactly the gates of {@link getListingDetail} (one shared loader), so "visible" can
  * never mean something different here. For the fork surfaces: resolving a fork's parent for the

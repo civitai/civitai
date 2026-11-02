@@ -1,8 +1,9 @@
-import { Badge, Button, Divider, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Badge, Divider, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconThumbDown, IconThumbUp } from '@tabler/icons-react';
 import { useMemo } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { AppListingReviewListItem } from '~/server/schema/blocks/app-listing-review.schema';
@@ -52,23 +53,17 @@ export function AppListingReviews({ appListingId }: { appListingId: string }) {
         </div>
       ))}
       {hasNextPage && (
-        <Group justify="center">
-          <Button variant="default" onClick={() => fetchNextPage()} loading={isFetchingNextPage}>
-            Load more
-          </Button>
-        </Group>
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
+          <Group justify="center" data-testid="apps-reviews-loading-more">
+            <Loader size="sm" />
+          </Group>
+        </InViewLoader>
       )}
     </Stack>
   );
 }
 
-function ReviewRow({
-  review,
-  isViewer,
-}: {
-  review: AppListingReviewListItem;
-  isViewer: boolean;
-}) {
+function ReviewRow({ review, isViewer }: { review: AppListingReviewListItem; isViewer: boolean }) {
   return (
     <Group align="flex-start" wrap="nowrap" gap="sm">
       <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>

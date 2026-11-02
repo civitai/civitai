@@ -22,8 +22,11 @@ const writers = vi.hoisted(() => ({
   deleteStoryline: vi.fn(async () => ({ id: 1 })),
   setFirstChapter: vi.fn(async () => ({ storylineId: 10, chapterId: 1 })),
   addOwnerChapter: vi.fn(async () => ({ id: 1 })),
+  addOwnerChapterAtEnd: vi.fn(async () => ({ id: 1 })),
   insertStorylineChapter: vi.fn(async () => ({ chapterId: 1 })),
   moveStorylineChapter: vi.fn(async () => ({ chapterIds: [1] })),
+  removeStorylineChapter: vi.fn(async () => ({ storylineId: 10, chapterId: 4 })),
+  acceptStorylineInvite: vi.fn(async () => ({})),
   setCanonChapter: vi.fn(async () => ({ id: 1 })),
   linkStorylineChapter: vi.fn(async () => ({ id: 1 })),
   addStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
@@ -65,6 +68,11 @@ const WRITE_CALLS = [
     input: { parentChapterId: 3, postId: 12 },
   },
   {
+    name: 'addChapterAtEnd',
+    writer: writers.addOwnerChapterAtEnd,
+    input: { storylineId: 10, postId: 12 },
+  },
+  {
     name: 'insertChapter',
     writer: writers.insertStorylineChapter,
     input: { storylineId: 10, parentChapterId: 3, childChapterId: 4, postId: 12 },
@@ -75,6 +83,7 @@ const WRITE_CALLS = [
     input: { storylineId: 10, chapterId: 4, afterChapterId: 6 },
   },
   { name: 'setCanon', writer: writers.setCanonChapter, input: { chapterId: 3 } },
+  { name: 'removeChapter', writer: writers.removeStorylineChapter, input: { chapterId: 4 } },
   {
     name: 'linkChapter',
     writer: writers.linkStorylineChapter,
@@ -85,6 +94,7 @@ const WRITE_CALLS = [
     writer: writers.addStorylineCollaborator,
     input: { storylineId: 10, userId: 77 },
   },
+  { name: 'acceptInvite', writer: writers.acceptStorylineInvite, input: { storylineId: 10 } },
   {
     name: 'removeCollaborator',
     writer: writers.removeStorylineCollaborator,
@@ -179,6 +189,15 @@ describe('storyline router — account state refuses a storyline write', () => {
       expect(writer).toHaveBeenCalledTimes(1);
     });
   }
+
+  // The end-of-chapter card's join check: zod drops a key the schema does not name, which would
+  // turn the server's end check off with every other test still green.
+  it('passes the at-end check of a join through to the service', async () => {
+    await callerFor().linkChapter({ parentChapterId: 3, chapterId: 7, atEnd: true });
+    expect(writers.linkStorylineChapter).toHaveBeenCalledWith(
+      expect.objectContaining({ parentChapterId: 3, chapterId: 7, atEnd: true })
+    );
+  });
 });
 
 describe('storyline router — stepping down and taking down', () => {
@@ -210,4 +229,15 @@ describe('storyline router — stepping down and taking down', () => {
     await callerFor({ isModerator: true }).setTakedown({ id: 10, takenDown: true });
     expect(writers.setStorylineTakedown).toHaveBeenCalledWith({ id: 10, takenDown: true });
   });
+
+  // The service lets a moderator remove any storyline's chapter only when told the caller is one.
+  it.each([true, false])(
+    'passes isModerator %s through to removing a chapter',
+    async (isModerator) => {
+      await callerFor({ isModerator }).removeChapter({ chapterId: 4 });
+      expect(writers.removeStorylineChapter).toHaveBeenCalledWith(
+        expect.objectContaining({ chapterId: 4, isModerator })
+      );
+    }
+  );
 });

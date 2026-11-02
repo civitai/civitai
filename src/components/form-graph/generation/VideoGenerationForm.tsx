@@ -1,4 +1,5 @@
-import { Checkbox, Input, Select, Stack } from '@mantine/core';
+import { Checkbox, Input, Stack } from '@mantine/core';
+import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
 
@@ -142,10 +143,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         name="mode"
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
-            <ControllerLabel
-              label="Mode"
-              info="Standard mode is faster to generate and more cost-effective. Professional takes longer to generate and has higher quality output."
-            />
+            <ControllerLabel label="Mode" info={meta?.info} />
             <SegmentedControlWrapper
               value={value}
               onChange={(v) => onChange(v as typeof value)}
@@ -195,7 +193,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
               onPrev={() => cycle(-1)}
               onNext={() => cycle(1)}
               header={
-                <Select
+                <SheetSelect
                   label="Preprocessor"
                   description="Choose a control signal, or browse previews with the arrows below."
                   data={groups}

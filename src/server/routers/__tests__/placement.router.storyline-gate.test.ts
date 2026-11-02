@@ -247,7 +247,11 @@ describe('the storyline procedures', () => {
     await c.retractStorylineContinuation({ placementId: 1 });
 
     const s = storylineServices;
-    expect(s.getStorylineSpace).toHaveBeenCalledWith({ storylineId: 1, userId: PLACER });
+    expect(s.getStorylineSpace).toHaveBeenCalledWith({
+      storylineId: 1,
+      userId: PLACER,
+      isModerator: false,
+    });
     expect(s.setStorylineSpace).toHaveBeenCalledWith(expect.objectContaining({ userId: PLACER }));
     expect(s.getStorylineContinuePrice).toHaveBeenCalledWith({ parentPostId: 1, viewerId: PLACER });
     expect(s.getPendingStorylineContinuations).toHaveBeenCalledWith(

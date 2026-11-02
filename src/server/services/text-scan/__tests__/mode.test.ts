@@ -59,6 +59,14 @@ describe('getTextScanMode', () => {
     expect(redisMock.withSysReadDeadline).toHaveBeenCalled();
   });
 
+  it('scans CommentV3 at the CommentV2 rollout until it is given its own', async () => {
+    hash({ CommentV2: '{"shadow":0,"active":100}' });
+    expect(await getTextScanMode('CommentV3', 7)).toBe('active');
+    resetTextScanRolloutCache();
+    hash({ CommentV2: '{"shadow":0,"active":100}', CommentV3: '{"shadow":0,"active":0}' });
+    expect(await getTextScanMode('CommentV3', 7)).toBe('off');
+  });
+
   it('is active for every id at active 100, whatever shadow says', async () => {
     hash({ Model: '{"shadow":0,"active":100}' });
     for (const id of [1, 2, 3, 99, 1000]) expect(await getTextScanMode('Model', id)).toBe('active');
@@ -129,7 +137,7 @@ describe('rollout percentages', () => {
 });
 
 describe('isTextScanEntityType', () => {
-  it('covers 17 entity types', () => expect(TEXT_SCAN_ENTITY_TYPES).toHaveLength(17));
+  it('covers 18 entity types', () => expect(TEXT_SCAN_ENTITY_TYPES).toHaveLength(18));
 
   it.each([
     ['Post', true],

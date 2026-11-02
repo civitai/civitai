@@ -1,7 +1,10 @@
 import { ArticleStatus, Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -9,7 +12,10 @@ import { booleanString } from '~/utils/zod-helpers';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { ImageConnectionType } from '~/server/common/enums';
-import { recomputeArticleIngestion } from '~/server/services/article.service';
+import {
+  checkSavedArticleContentUrls,
+  recomputeArticleIngestion,
+} from '~/server/services/article.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('migrate-article-images', 'blue');
@@ -22,6 +28,10 @@ type MigrationStats = {
   articlesProcessed: number;
   imagesCreated: number;
   connectionsCreated: number;
+  /** Articles with content urls owned by or issued to another user; not migrated. */
+  articlesSkipped: number;
+  /** Migrated articles with content keys that have no issue record. */
+  articlesWithUnrecordedKeys: number;
   errors: number;
 };
 
@@ -111,7 +121,16 @@ async function runRollback(params: MigrationParams): Promise<{
       )
   `;
   const sharedImageIds = new Set(sharedImages.map((r) => r.imageId));
-  const orphanedImageIds = imageIds.filter((id) => !sharedImageIds.has(id));
+  // A held owner's images are left as they are, tags included.
+  const heldImages = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    WHERE i.id IN (${Prisma.join(imageIds)})
+      AND ${accountHoldSql(Prisma.raw('i."userId"'), true)}
+  `;
+  const heldImageIds = new Set(heldImages.map((r) => r.id));
+  const orphanedImageIds = imageIds.filter(
+    (id) => !sharedImageIds.has(id) && !heldImageIds.has(id)
+  );
 
   log(
     `${orphanedImageIds.length} images are article-only (will delete), ${sharedImageIds.size} shared with other entities (will keep)`
@@ -130,8 +149,10 @@ async function runRollback(params: MigrationParams): Promise<{
   let tagsDeleted = 0;
   if (orphanedImageIds.length > 0) {
     const tagResult = await dbWrite.$executeRaw`
-      DELETE FROM "TagsOnImageNew"
-      WHERE "imageId" IN (${Prisma.join(orphanedImageIds)})
+      DELETE FROM "TagsOnImageNew" t
+      USING "Image" i
+      WHERE t."imageId" = i.id AND i.id IN (${Prisma.join(orphanedImageIds)})
+        AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
     `;
     tagsDeleted = tagResult;
     log(`Deleted ${tagsDeleted} tag associations`);
@@ -148,8 +169,13 @@ async function runRollback(params: MigrationParams): Promise<{
   let imagesDeleted = 0;
   if (orphanedImageIds.length > 0) {
     const imgResult = await dbWrite.$executeRaw`
-      DELETE FROM "Image"
-      WHERE id IN (${Prisma.join(orphanedImageIds)})
+      WITH doomed AS (
+        SELECT i.id FROM "Image" i
+        WHERE i.id IN (${Prisma.join(orphanedImageIds)})
+          AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
+      ),
+      ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, true)}
+      DELETE FROM "Image" WHERE id IN (SELECT id FROM doomed)
     `;
     imagesDeleted = imgResult;
     log(`Deleted ${imagesDeleted} orphaned images`);
@@ -248,11 +274,46 @@ async function runReconcile(params: MigrationParams): Promise<{
 // all images terminate.
 
 async function processBatch(
-  articles: Article[],
+  batch: Article[],
   dryRun: boolean,
   concurrency: number,
   stats: MigrationStats
 ): Promise<void> {
+  const articles: Article[] = [];
+  for (const article of batch) {
+    try {
+      const { issuedToOthers, unrecorded, lookupFailed } = await checkSavedArticleContentUrls({
+        content: article.content,
+        ownerId: article.userId,
+      });
+      if (lookupFailed && unrecorded.length) {
+        stats.errors++;
+        log(`  ⚠️  article ${article.id}: upload key lookup unavailable, retry later`);
+        continue;
+      }
+      if (issuedToOthers.length) {
+        stats.articlesSkipped++;
+        log(`  ⏭️  article ${article.id}: ${issuedToOthers.length} keys issued to another user`);
+        continue;
+      }
+      if (unrecorded.length) {
+        stats.articlesWithUnrecordedKeys++;
+        log(`  🔑 article ${article.id}: ${unrecorded.length} keys with no issue record`);
+      }
+      articles.push(article);
+    } catch (error) {
+      if (error instanceof TRPCError && error.code === 'BAD_REQUEST') {
+        stats.articlesSkipped++;
+        log(`  ⏭️  article ${article.id}: content image url refused, skipped`);
+      } else {
+        stats.errors++;
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        log(`  ⚠️  article ${article.id}: content image url check failed: ${msg}`);
+      }
+    }
+  }
+  if (!articles.length) return;
+
   const batchIds = articles.map((a) => a.id);
 
   // Extract URLs. Deduplicate across the batch so shared URLs create a
@@ -371,12 +432,21 @@ async function processBatch(
   stats.articlesProcessed += articles.length;
 }
 
+const MIGRATED_STATUSES = Prisma.join(
+  [
+    ArticleStatus.Published,
+    ArticleStatus.Draft,
+    ArticleStatus.Unpublished,
+    ArticleStatus.UnpublishedViolation,
+  ].map((status) => Prisma.sql`${status}::"ArticleStatus"`)
+);
+
 async function fetchArticleBatch(
   start: number,
   end: number,
   cancelFns: (() => Promise<void>)[]
 ): Promise<Article[]> {
-  // Unprocessed = Published + has content + no Article ImageConnection yet.
+  // Unprocessed = a migrated status + has content + no Article ImageConnection yet.
   // Uses cancellableQuery so a client disconnect kills the in-flight pg query
   // (dataProcessor calls all registered cancelFns from its `close` handler).
   const query = await pgDbRead.cancellableQuery<Article>(Prisma.sql`
@@ -384,7 +454,7 @@ async function fetchArticleBatch(
     FROM "Article" a
     LEFT JOIN "ImageConnection" ic ON ic."entityId" = a.id AND ic."entityType" = 'Article'
     WHERE a.id >= ${start} AND a.id <= ${end}
-      AND a.status = ${ArticleStatus.Published}::"ArticleStatus"
+      AND a.status IN (${MIGRATED_STATUSES})
       AND a.content != ''
       AND ic."imageId" IS NULL
     ORDER BY a.id ASC
@@ -406,6 +476,8 @@ async function runMigration(
     articlesProcessed: 0,
     imagesCreated: 0,
     connectionsCreated: 0,
+    articlesSkipped: 0,
+    articlesWithUnrecordedKeys: 0,
     errors: 0,
   };
   let lastProcessedEnd = params.start;
@@ -422,7 +494,7 @@ async function runMigration(
       const query = await pgDbRead.cancellableQuery<{ max: number }>(Prisma.sql`
         SELECT MAX(a.id) "max" FROM "Article" a
         LEFT JOIN "ImageConnection" ic ON ic."entityId" = a.id AND ic."entityType" = 'Article'
-        WHERE a.status = ${ArticleStatus.Published}::"ArticleStatus"
+        WHERE a.status IN (${MIGRATED_STATUSES})
           AND a.content != ''
           AND ic."imageId" IS NULL
       `);
@@ -447,7 +519,9 @@ async function runMigration(
       log(
         `[batch ${start}-${end}] ${articles.length} articles | ` +
           `totals: ${stats.articlesProcessed} processed, ${stats.imagesCreated} images, ` +
-          `${stats.connectionsCreated} connections, ${stats.errors} errors | ` +
+          `${stats.connectionsCreated} connections, ${stats.articlesSkipped} skipped, ` +
+          `${stats.articlesWithUnrecordedKeys} with unrecorded keys, ` +
+          `${stats.errors} errors | ` +
           `${rate.toFixed(1)}/s | elapsed: ${elapsedSec.toFixed(1)}s`
       );
     },

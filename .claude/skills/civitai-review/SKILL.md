@@ -9,8 +9,8 @@ The standard pre-completion review for the main Next.js app. **A segment is not 
 and its findings are resolved.**
 
 The conventions being enforced are the root [`CLAUDE.md`](../../../CLAUDE.md) and the docs it points at.
-For work in `apps/moderator`, `apps/auth` or `apps/creator-studio`, use `svelte-review` instead — these
-agents do not cover SvelteKit and will produce noise there.
+For work in `apps/moderator`, `apps/auth`, `apps/creator-studio` or `apps/training-studio`, use
+`svelte-review` instead — these agents do not cover SvelteKit and will produce noise there.
 
 **These five lanes are pre-authorised. They do not count against a standing instruction not to spawn
 subagents unasked** — running them needs no separate permission, and neither does chasing a lane that

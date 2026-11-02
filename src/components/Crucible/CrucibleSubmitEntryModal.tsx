@@ -40,6 +40,8 @@ import {
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import {
   clipLengthAllowed,
@@ -360,6 +362,7 @@ export default function CrucibleSubmitEntryModal({
 }: CrucibleSubmitEntryModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
   const queryUtils = trpc.useUtils();
   const isVideo = contentType === MediaType.video;
   const noun = isVideo ? 'video' : 'image';
@@ -567,7 +570,11 @@ export default function CrucibleSubmitEntryModal({
 
   // Calculate how many more entries the user can submit
   const remainingEntries = entryLimit - currentEntryCount;
-  const canSubmitMore = remainingEntries > 0 && !entriesClosed;
+  // The ban covers every image, so it gets one notice and not a badge on each. The server's answer
+  // is the truth; the session meta only shows it before any image has been checked.
+  const contestBanned =
+    isContestBanned || !!eligibility?.some(({ reasons }) => reasons.includes('contest-banned'));
+  const canSubmitMore = remainingEntries > 0 && !entriesClosed && !contestBanned;
 
   // Validate image and check if it's selectable
   // Returns detailed validation criteria for hover card display
@@ -980,6 +987,11 @@ export default function CrucibleSubmitEntryModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 pb-5">
+          {contestBanned && (
+            <Alert color="red" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
+              {CONTEST_BANNED_MESSAGE}
+            </Alert>
+          )}
           {entriesClosed && (
             <Alert color="red" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
               {CRUCIBLE_ENTRIES_CLOSED_MESSAGE}

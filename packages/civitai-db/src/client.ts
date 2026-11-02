@@ -54,6 +54,10 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
     const clientOptions = {
       log: logDef,
       datasources: { db: { url: dbUrl } },
+      // A legacy billing pointer no client may see. Runtime only: the types still list the field,
+      // because typing the clients with this omit runs `tsc` out of memory. Read it with an explicit
+      // `omit: { subscriptionId: false }` or `select`.
+      omit: { user: { subscriptionId: true } },
     } as Prisma.PrismaClientOptions;
     const prisma = new PrismaClient(clientOptions);
 

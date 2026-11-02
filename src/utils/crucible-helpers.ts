@@ -237,12 +237,14 @@ export function getCrucibleManageActions({
   endAt,
   isCreator,
   isModerator,
+  takenDownAt = null,
   now = new Date(),
 }: {
   status: CrucibleStatus;
   endAt: Date | null;
   isCreator: boolean;
   isModerator: boolean;
+  takenDownAt?: Date | null;
   now?: Date;
 }) {
   const ended =
@@ -250,11 +252,15 @@ export function getCrucibleManageActions({
     status === CrucibleStatus.Cancelled ||
     (!!endAt && new Date(endAt) <= now);
   const isPending = status === CrucibleStatus.Pending;
+  // An Active crucible past its end is finalize's until it lands as Completed.
+  const finalizing = status === CrucibleStatus.Active && !!endAt && new Date(endAt) <= now;
   return {
     canEdit:
       !ended && (isModerator || (isCreator && (isPending || status === CrucibleStatus.Active))),
     canCancel: !ended && (isModerator || (isCreator && isPending)),
-    canRemoveEntries: !ended && isModerator && status === CrucibleStatus.Active,
+    // An owner's removals are capped and need a reason; see CRUCIBLE_OWNER_REMOVAL_CAP.
+    canRemoveEntries: !ended && (isModerator || isCreator) && status === CrucibleStatus.Active,
+    canTakeDown: isModerator && !takenDownAt && !finalizing,
   };
 }
 
@@ -615,3 +621,31 @@ export const isCrucibleAwaitingReviewToStart = (
   crucible: { status: CrucibleStatus; startAt: Date | null },
   now = new Date()
 ) => crucible.status === CrucibleStatus.Pending && !!crucible.startAt && crucible.startAt <= now;
+
+/** Entries a crucible's owner can remove from it. Moderator removals don't count against it. */
+export const CRUCIBLE_OWNER_REMOVAL_CAP = 10;
+export const CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH = 200;
+
+export const crucibleOwnerRemovalReasons = {
+  'off-topic': 'Off-topic for this crucible',
+  'breaks-rules': "Breaks the crucible's rules",
+  'low-effort': 'Low effort or spam',
+  other: 'Other',
+} as const;
+export type CrucibleOwnerRemovalReason = keyof typeof crucibleOwnerRemovalReasons;
+export const crucibleOwnerRemovalReasonKeys = Object.keys(crucibleOwnerRemovalReasons) as [
+  CrucibleOwnerRemovalReason,
+  ...CrucibleOwnerRemovalReason[]
+];
+
+/** What the entrant is told: the fixed reason's label, or the owner's note for "other". */
+export const getCrucibleOwnerRemovalReasonText = ({
+  reason,
+  note,
+}: {
+  reason: CrucibleOwnerRemovalReason;
+  note?: string | null;
+}) => (reason === 'other' && note ? note : crucibleOwnerRemovalReasons[reason]);
+
+export const getCrucibleOwnerRemovalsLeft = (ownerRemovalCount: number) =>
+  Math.max(0, CRUCIBLE_OWNER_REMOVAL_CAP - ownerRemovalCount);

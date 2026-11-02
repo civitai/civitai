@@ -30,6 +30,7 @@ import type {
 // because `src/pages/api/v1/blocks/me.ts` is its other caller and a Next API route must
 // not import this router. See that module's docblock for why a second copy is banned.
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import {
   assertSharedWriteTrust,
   hasLinkedOAuthAccount,
@@ -70,6 +71,8 @@ import {
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
+  checkBlockSubmitRateLimit,
+  checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -150,7 +153,9 @@ import {
   isAppBlocksAppReactionsEnabled,
   isAppBlocksEnabled,
   isAppBlocksPostCreationEnabled,
+  resolveViewerAudienceFloor,
 } from '~/server/services/app-blocks-flag';
+import { listingVisibleInStore } from '~/shared/utils/app-listing-visibility';
 import { rateLimit } from '~/server/middleware.trpc';
 // The SITE's reaction limits, imported rather than restated: the app wrapper shares them.
 import { reactionRateLimits } from '~/server/schema/reaction.schema';
@@ -193,13 +198,13 @@ import { updateBlockUserSettingsFromClaims } from '~/server/services/blocks/user
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
 import {
   computeListingProblems,
+  listingProblemInput,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
 // The ONE spelling of "which moderation actions can explain a removal". Value import:
 // it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
 import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isRedCapableHost } from '~/server/utils/server-domain';
-import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -384,6 +389,10 @@ import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  assertGenerationInputsUsable,
+  opaqueInputUrlsIn,
+} from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sessionClient } from '~/server/auth/session-client';
@@ -1953,6 +1962,7 @@ async function createBlockTextToImageStep(opts: {
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
     isWhatIf: opts.whatIf,
     isGreen: opts.isGreen,
+    inputGate: { entry: 'appBlocks', isApiCaller: false },
   });
   // The block path is plain txt2img with no snippet fan-out, so the graph
   // always yields exactly one step. Fail closed if that invariant breaks rather
@@ -2020,6 +2030,56 @@ function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: n
       message: 'this app session belongs to a different account; reload the page to continue',
     });
   }
+}
+
+/**
+ * May this viewer read `blocks.getAppDetail` for this app block, as far as the backing
+ * LISTING's visibility level is concerned?
+ *
+ * 🔴 WHY IT EXISTS: `getAppDetail` reads `app_blocks` by id and never consulted the
+ * listing's level. Its only audience gate was `app-blocks-enabled`, which stood in for
+ * "the tester cohort" only while that flag was cohort-segmented; civitai/flipt-state#263
+ * widens it to everyone, after which any id-holder could read a testers-only or private
+ * app's detail.
+ *
+ * THE RULE, in order:
+ *   1. A MODERATOR is admitted (unchanged; server-stamped session flag).
+ *   2. The app's OWNER or an accepted COLLABORATOR is admitted, whatever the level — they
+ *      must be able to inspect their own app. ⚠️ This is WIDER than the store's own detail
+ *      read (`appListings.getAppDetail`), which applies the level to owners too. Deliberate:
+ *      this procedure backs `AppDetailsModal`, which an owner opens on their own app.
+ *   3. Everyone else: the block's canonical listing must be visible to their audience floor
+ *      under EXACTLY the predicate the store detail uses (`listingVisibleInStore`, the
+ *      app-layer twin of `listingLevelVisibilityFilter`). So `private` is refused to every
+ *      non-owner: "anyone with the link can still open it" is a promise about the RUN route,
+ *      which never reads the level — the store detail 404s a private listing too.
+ *   4. No listing at all → refused (fail closed: there is no level to admit anyone by).
+ *
+ * A refusal is surfaced by the caller as the SAME `NOT_FOUND` a missing app produces.
+ */
+async function appBlockDetailVisibleTo(
+  appBlockId: string,
+  user: SessionUser | undefined
+): Promise<boolean> {
+  if (user?.isModerator === true) return true;
+  if (user) {
+    const { resolveAppAccess } = await import('~/server/services/blocks/app-access.service');
+    const access = await resolveAppAccess(appBlockId, user.id);
+    if (access?.role) return true;
+  }
+  const listing = await dbRead.appListing.findFirst({
+    where: { appBlockId, revisionOfId: null },
+    select: { id: true, status: true },
+  });
+  if (!listing) return false;
+  const { readListingVisibility } = await import(
+    '~/server/services/blocks/app-listing-visibility.service'
+  );
+  const [level, floor] = await Promise.all([
+    readListingVisibility(listing.id, dbRead),
+    resolveViewerAudienceFloor({ user }),
+  ]);
+  return listingVisibleInStore({ status: listing.status, visibility: level.visibility, floor });
 }
 
 export const blocksRouter = router({
@@ -2169,8 +2229,9 @@ export const blocksRouter = router({
    * dedicated route `POST /api/blocks/submit-version`, NOT here. The bundle is
    * a base64 ZIP (~67 MiB encoded) that exceeds the shared tRPC body limit;
    * keeping it off tRPC lets `/api/trpc/[trpc]` stay at 17 MiB instead of
-   * lifting the cap for every tRPC call app-wide. That route uses ModEndpoint
-   * (same moderator + appBlocks-flag gate) and the same `submitVersion` service.
+   * lifting the cap for every tRPC call app-wide. That route takes the
+   * session, the `appBlocksAuthor` capability + appBlocks flag (the CLI route's
+   * gates) and calls the same `submitVersion` service.
    */
 
   /**
@@ -3117,76 +3178,90 @@ export const blocksRouter = router({
     // live/removed listing state. A publish request stays `approved` after an owner
     // unpublish, so the request status alone can't tell live from owner-hidden. One
     // batched findMany (NOT per-row) keyed by appBlockId.
-    // Additive projection (advisory listing-completeness warning on
-    // /apps/my-submissions): the asset ids + key text fields + a screenshot
-    // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
-    // helper below. Purely additive — the owner-controls fields are unchanged.
-    const listingByBlockId = new Map<
-      string,
-      {
-        id: string;
-        status: string;
-        iconId: number | null;
-        coverId: number | null;
-        description: string | null;
-        tagline: string | null;
-        category: string | null;
-        screenshotCount: number;
-        contentRating: string | null;
-        /**
-         * The listing's kind, threaded into `computeListingProblems` so the three
-         * empty-text problems name the right remedy.
-         *
-         * 🔴 PROJECTED, NOT ASSUMED, even though the `where` below filters
-         * `kind: 'onsite'`. A literal `'onsite'` at the call site would be a SECOND
-         * place that has to stay in step with that filter, and it would go wrong
-         * SILENTLY (wrong advice, no error) if the filter is ever widened. Reading
-         * the column costs nothing and cannot drift.
-         */
-        kind: string;
-      }
-    >();
-    if (appBlockIds.length) {
-      const listings = await dbRead.appListing.findMany({
-        where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
-        select: {
-          id: true,
-          appBlockId: true,
-          status: true,
-          kind: true,
-          iconId: true,
-          coverId: true,
-          description: true,
-          tagline: true,
-          category: true,
-          contentRating: true,
-          // Filtered COUNT — only screenshots whose Image is still live. A row
-          // whose Image was deleted (imageId → null via onDelete: SetNull) has
-          // no displayable asset, so it must not inflate the count, else the
-          // `no-screenshots` warning is a false-negative. Matches the
-          // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
-          // in app-listing-assets.service.ts (buildAssetStatus).
-          _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+    // The listing projection both queries below select — the keyed backing listing and the
+    // pre-approval draft — so the two feed `computeListingProblems` identically.
+    const listingSelect = {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      status: true,
+      kind: true,
+      iconId: true,
+      coverId: true,
+      description: true,
+      tagline: true,
+      category: true,
+      contentRating: true,
+      // Filtered COUNT — only screenshots whose Image is still live. A row
+      // whose Image was deleted (imageId → null via onDelete: SetNull) has
+      // no displayable asset, so it must not inflate the count, else the
+      // `no-screenshots` warning is a false-negative. Matches the
+      // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
+      // in app-listing-assets.service.ts (buildAssetStatus).
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+    } as const;
+    type ProjectedListing = {
+      id: string;
+      appBlockId: string | null;
+      slug?: string;
+      status: string;
+      kind: ListingProblemKind;
+      iconId: number | null;
+      coverId: number | null;
+      description: string | null;
+      tagline: string | null;
+      category: string | null;
+      contentRating?: string | null;
+      _count: { screenshots: number };
+    };
+    const listingByBlockId = new Map<string, ProjectedListing>();
+
+    // Pre-approval draft of an unkeyed pending/rejected first version (no AppBlock until
+    // approve). Uses approveRequest's draftTransitionWhere so we flag the listing approve
+    // will transition, never another user's draft on a released slug. Withdraw deletes the
+    // draft, so it is read only for pending/rejected. Feeds `problems` ONLY:
+    // appListingId/listingStatus drive owner unpublish/republish, which a draft is not
+    // eligible for.
+    const readsDraft = (r: RawRow) =>
+      !r.appBlock?.id && (r.status === 'pending' || r.status === 'rejected');
+    const draftSlugs = [...new Set(rows.filter(readsDraft).map((r: RawRow) => r.slug))];
+    const draftBySlug = new Map<string, ProjectedListing>();
+    if (draftSlugs.length) {
+      const { draftTransitionWhere } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      const userId = ctx.user.id;
+      const drafts = (await dbRead.appListing.findMany({
+        where: {
+          OR: draftSlugs.map((slug) => draftTransitionWhere({ slug, submittedByUserId: userId })),
         },
-      });
+        select: listingSelect,
+      })) as ProjectedListing[];
+      for (const d of drafts) if (d.slug) draftBySlug.set(d.slug, d);
+    }
+
+    if (appBlockIds.length) {
+      const listings = (await dbRead.appListing.findMany({
+        where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
+        select: listingSelect,
+      })) as ProjectedListing[];
       for (const l of listings) {
-        if (l.appBlockId)
-          listingByBlockId.set(l.appBlockId, {
-            id: l.id,
-            status: l.status,
-            // A narrow test fake that ignores `select` yields `undefined`; the `where`
-            // clause above admits only on-site rows, so that is the honest fallback.
-            kind: l.kind ?? 'onsite',
-            iconId: l.iconId,
-            coverId: l.coverId,
-            description: l.description,
-            tagline: l.tagline,
-            category: l.category,
-            screenshotCount: l._count.screenshots,
-            contentRating: l.contentRating ?? null,
-          });
+        if (l.appBlockId) listingByBlockId.set(l.appBlockId, l);
       }
     }
+    // The scan dimension of `problems` (blocked / still-scanning media), batched over every
+    // listing the page reports on, as /apps/mine reads it.
+    const { loadListingAssetScansBatch } = await import(
+      '~/server/services/blocks/app-listing-assets.service'
+    );
+    const problemListings = [
+      ...new Map(
+        [...listingByBlockId.values(), ...draftBySlug.values()].map((l) => [l.id, l])
+      ).values(),
+    ];
+    const scansByListingId = await loadListingAssetScansBatch(
+      problemListings.map((l) => ({ id: l.id, iconId: l.iconId, coverId: l.coverId }))
+    );
 
     // For every REMOVED backing listing, its MOST-RECENT STATUS-CHANGING moderation-event
     // action — so the UI distinguishes an owner-hidden listing (last event
@@ -3236,6 +3311,10 @@ export const blocksRouter = router({
       const totalSubs = counts?.userSubscriptions ?? null;
       const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
       const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
+      // The listing the completeness advisory describes: the keyed backing listing, or —
+      // for an unkeyed pending/rejected first version — its pre-approval draft (see the
+      // `draftBySlug` note above).
+      const problemsListing = listing ?? (readsDraft(r) ? draftBySlug.get(r.slug) : undefined);
       return {
         ...rest,
         modelInstallCount: pinnedCount,
@@ -3248,25 +3327,17 @@ export const blocksRouter = router({
         listingStatus: listing?.status ?? null,
         lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
         // Advisory listing-completeness problems (missing assets + empty key
-        // fields). Empty when there's no backing listing yet (a pending first
-        // version) — nothing to flag until a listing row exists.
-        problems: listing
-          ? computeListingProblems({
-              kind: listing.kind as ListingProblemKind,
-              iconId: listing.iconId,
-              coverId: listing.coverId,
-              screenshotCount: listing.screenshotCount,
-              description: listing.description,
-              tagline: listing.tagline,
-              category: listing.category,
-              status: listing.status,
-              contentRating: listing.contentRating,
-              declaredContentRating: declaredListingRating({
-                kind: listing.kind,
+        // fields) — the same `computeListingProblems` /apps/mine runs over the same
+        // listing. Empty only when there is no listing row at all (a legacy pending
+        // request from before draft-at-submit, or a draft create that failed).
+        problems: problemsListing
+          ? computeListingProblems(
+              listingProblemInput(problemsListing, {
+                kind: problemsListing.kind,
                 appRating: r.appBlock?.contentRating,
-                listingRating: listing.contentRating,
-              }),
-            }).problems
+                assetScans: scansByListingId.get(problemsListing.id) ?? [],
+              })
+            ).problems
           : [],
         // Whether the manifest declares a launchable page (drives the Open-live →
         // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
@@ -4068,24 +4139,15 @@ export const blocksRouter = router({
 
   /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
-   * and/or a free-text query. Cursor-paginated. Public, ANON-CAPABLE (F-E E1):
-   * any viewer the appBlocks flag grants can browse the marketplace without a
-   * session; install requires auth (the Install CTA opens LoginModal for anon).
+   * and/or a free-text query. Cursor-paginated. LEGACY: backs only the retired
+   * `MarketplaceBody` (no importer); the store reads `appListings.listAvailable`.
    *
-   * GATING INVARIANT (E1) — this is anon-capable but stays DARK until launch:
-   *   - `enforceAppBlocksFlag` runs FIRST and evaluates `isAppBlocksEnabled`
-   *     with `ctx.user`. For a real anon / non-mod viewer the flag is the live
-   *     mod-segmented `app-blocks-enabled`, which can never match without a
-   *     moderator context → the middleware sets `_appBlocksDisabled` → we
-   *     return empty below. So removing the prior hardcoded `isModerator` gate
-   *     does NOT widen access today: the flag gate keeps it dark. The procedure
-   *     only starts serving real anon callers once the SEGMENT is widened at
-   *     launch (a deliberate, separate Flipt change). The earlier
-   *     `if (!ctx.user?.isModerator) return []` was a redundant Phase-2 belt on
-   *     top of the flag gate; it has to go for the segment-widen to actually
-   *     expose this to anon, but the flag gate is the real control.
+   * GATING: `enforceAppBlocksFlag` runs first (flag off → empty), THEN a
+   * moderator check (non-moderator → empty). The procedure was once designed to
+   * open to anon by widening the flag alone; that design is retired — see the
+   * 🔴 paragraph at the end of this block.
    *
-   * EXPOSURE / SECURITY (what an anon caller can fetch once the segment widens):
+   * EXPOSURE / SECURITY (what the moderator caller receives):
    *   - ONLY `status='approved'` rows (the service WHERE-clause filters
    *     pending/rejected/withdrawn apps out — never returned).
    *   - ONLY an explicit PUBLIC-FIELD ALLOWLIST projection of each row
@@ -4101,6 +4163,15 @@ export const blocksRouter = router({
    * Anon rate-limiting: keyed on IP for anon (ctx.user?.id ?? ctx.ip in the
    * rateLimit middleware), consistent with other public procedures. Mods/dev/
    * test are exempt by the middleware itself.
+   *
+   * 🔴 MODERATOR-ONLY, AND NOT BECAUSE OF THE FLAG. The service SQL reads `app_blocks`
+   * with no join to `app_listings`, so per-listing visibility (testers-only, private) is
+   * never applied. While `app-blocks-enabled` was cohort-segmented that was masked; once
+   * it widens to every user (civitai/flipt-state#263) a flag-only gate would let any
+   * caller, signed out included, enumerate testers-only and private apps. Nothing in the
+   * product calls this for a non-moderator any more: the store reads
+   * `appListings.listAvailable`, which does apply visibility. So a non-moderator gets the
+   * same empty answer a disabled flag gives. Teach it visibility before reopening it.
    */
   listAvailable: publicProcedure
     .use(enforceAppBlocksFlag)
@@ -4116,14 +4187,13 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [], nextCursor: undefined };
       }
-      // PAGE-ONLY LAUNCH GATE: the public (non-mod) audience sees launch (page)
-      // apps only; moderators are grandfathered (see everything, incl. the
-      // mod-only model-slot apps like generate-from-model). Mod status comes
-      // from the server-stamped session `ctx.user?.isModerator` (cannot be
-      // spoofed client-side — same source as every other belt in this router).
+      // MODERATOR-ONLY (see the docblock): the SQL applies no listing visibility.
+      // Server-stamped session flag, never client-supplied.
+      if (ctx.user?.isModerator !== true) return { items: [], nextCursor: undefined };
+      // `launchOnly` = false: only moderators reach here, and they see every app.
       return BlockRegistry.listAvailable(
         input,
-        !ctx.user?.isModerator,
+        false,
         // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the listing off .red.
         isRedCapableRequest(ctx)
       );
@@ -4191,19 +4261,21 @@ export const blocksRouter = router({
         isRedCapableRequest(ctx)
       );
       if (!detail) throw throwNotFoundError('App block not found');
+      // LISTING-VISIBILITY GATE: a testers-only / private app the viewer may not see is
+      // indistinguishable from a missing one. See `appBlockDetailVisibleTo`.
+      if (!(await appBlockDetailVisibleTo(input.appBlockId, ctx.user))) {
+        throw throwNotFoundError('App block not found');
+      }
       return detail;
     }),
 
   /**
-   * Featured rail — the curated, approved staff-picks (F-E E4). Public,
-   * ANON-CAPABLE; backs the "Featured" rail above the marketplace grid.
+   * Featured rail — the curated, approved staff-picks (F-E E4). LEGACY: backs
+   * only the retired `MarketplaceBody` rail (no importer).
    *
-   * GATING INVARIANT (E4) — anon-capable but DARK until launch (same as E1/E2):
-   *   - `enforceAppBlocksFlag` runs FIRST. For a real anon / non-mod viewer the
-   *     mod-segmented `app-blocks-enabled` flag never matches → the middleware
-   *     marks `_appBlocksDisabled` → this query returns an EMPTY rail (the same
-   *     posture as `listAvailable` for a disabled flag; no data leaks). The rail
-   *     only serves real anon callers once the SEGMENT is widened at launch.
+   * GATING: `enforceAppBlocksFlag` runs first (flag off → empty rail), THEN a
+   * moderator check (non-moderator → empty rail), same as `listAvailable`. See
+   * the 🔴 paragraph at the end of this block.
    *
    * EXPOSURE / SECURITY — returns the SAME public `AvailableBlock` allowlist the
    * marketplace LISTING uses (no widening): the service hard-filters
@@ -4213,6 +4285,15 @@ export const blocksRouter = router({
    * per-user data.
    *
    * Anon rate-limiting: same posture as `listAvailable`.
+   *
+   * 🔴 MODERATOR-ONLY, AND NOT BECAUSE OF THE FLAG. The service SQL reads `app_blocks`
+   * with no join to `app_listings`, so per-listing visibility (testers-only, private) is
+   * never applied. While `app-blocks-enabled` was cohort-segmented that was masked; once
+   * it widens to every user (civitai/flipt-state#263) a flag-only gate would let any
+   * caller, signed out included, enumerate testers-only and private apps. Nothing in the
+   * product calls this for a non-moderator any more: the store reads
+   * `appListings.listAvailable`, which does apply visibility. So a non-moderator gets the
+   * same empty answer a disabled flag gives. Teach it visibility before reopening it.
    */
   getFeaturedBlocks: publicProcedure
     .use(enforceAppBlocksFlag)
@@ -4228,11 +4309,12 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [] };
       }
-      // PAGE-ONLY LAUNCH GATE: same public-vs-mod split as listAvailable — the
-      // non-mod featured rail carries launch (page) apps only; mods see all.
+      // MODERATOR-ONLY (see the docblock): the SQL applies no listing visibility.
+      if (ctx.user?.isModerator !== true) return { items: [] };
+      // `launchOnly` = false: only moderators reach here, and they see every app.
       const items = await BlockRegistry.getFeaturedBlocks(
         input.limit,
-        !ctx.user?.isModerator,
+        false,
         // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the featured rail off .red.
         isRedCapableRequest(ctx)
       );
@@ -6523,104 +6605,17 @@ export const blocksRouter = router({
    * as block lifecycle errors but expects budget rejections as workflow
    * outcomes the block can recover from (e.g. by opening BuyBuzzModal).
    *
-   * 🔴 RATE LIMIT: NONE, DELIBERATELY — AND HERE IS WHAT BOUNDS IT INSTEAD
-   * (clawgate #569, criterion 1). This is the one bridge procedure in the
-   * decision ledger that takes no per-request bucket, so the reason is recorded
-   * here rather than left to be re-derived.
+   * RATE LIMIT: two buckets, charged above every `kind` branch: `:submit:` per (install,
+   * token subject) and `:submit-user:` per subject across all installs, so a submit refused before
+   * `reserveAppSpend` still counts. It fails open on a Redis error like every blocks
+   * limiter; `reserveAppSpend` (per-app generation velocity, per-user and per-app daily
+   * Buzz) fails closed and still bounds accepted generations.
    *
-   * WHAT BOUNDS IT SERVER-SIDE, all inside `reserveAppSpend`
-   * (`services/blocks/app-spend-cap.service`) and the per-user reservation above
-   * it, on every `kind` (txt2img here; customComfy, step and pass-through each
-   * call the same belt in their own handler):
-   *   1. A per-app generation VELOCITY ceiling — a fixed-window count of GENS,
-   *      `velocityMaxGens` per `BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS`. On the
-   *      `standard` tier every app has today that is 120 per 60 s, i.e. 2/s
-   *      AGGREGATE ACROSS EVERY INSTALL of the app — tighter than any per-instance
-   *      request-rate limit worth shipping here, so a second bound on the same
-   *      quantity would bound nothing while adding a way to break a generation.
-   *      🔴 THAT CONCLUSION IS TIER-SCOPED, AND AN EARLIER REVISION OF THIS
-   *      DOCBLOCK GENERALISED IT WITHOUT SAYING SO. `trusted` is 600/60 s and
-   *      `platform` is 3,000/60 s = 50 gens/s (`app-cap-limits.constants.ts`), and
-   *      a moderator `velocityOverride` is clamped only by the absolute max — so on
-   *      a promoted app this ceiling is LOOSER than the poll bucket this same
-   *      change judged appropriate. The argument below holds on `standard`, which
-   *      is every app today; it weakens as apps are promoted, and that is the
-   *      trigger to revisit rather than a reason to act now.
-   *   2. The per-user daily Buzz cap, and the per-app aggregate daily Buzz
-   *      ceiling (`dailyBuzz`), both reserved before the orchestrator is called.
-   *   3. The per-call budget the token itself carries (`claims.buzzBudget`).
-   *
-   * 🔴 THE TWO HOLES IN THAT, STATED BECAUSE THEY ARE OPEN. Do not read the
-   * paragraph above as a ceiling on REQUESTS; it is a ceiling on ACCEPTED
-   * generations.
-   *   (a) A submit REJECTED BEFORE `reserveAppSpend` never increments the
-   *       velocity counter — a version resolve, a checkpoint resolve, the
-   *       entitlement gate and the cost computation have all run by then. A block
-   *       looping on a body that fails one of those gates is doing real origin
-   *       work that no counter sees.
-   *   (b) G8 is SKIPPED for `claims.dev === true`. A dev token is self-bound (only
-   *       the owner can spend, only their own Buzz, still under the per-user daily
-   *       cap and the dev-session backstop), so the anti-Sybil aggregate does not
-   *       apply — but neither does its velocity half.
-   *   (c) 🔴 THE VELOCITY COUNTER IS NEVER REFUNDED, AND IT IS APP-WIDE. Its key is
-   *       `…:vel:<appBlockId>:<bucket>` — no user, no install — and the throw-path
-   *       rollback in this file refunds the per-user reservation, the per-app DAILY
-   *       key and the dev-session key, but not the velocity key (`refundAppSpend`
-   *       takes an `AppSpendDailyKey` and can only decrement that one). So a submit
-   *       that fails AFTER the reserve permanently consumes one slot of the app's
-   *       shared allowance at zero net Buzz cost. Since that allowance is the whole
-   *       thing standing in for a request limit here, one install can degrade
-   *       generation for every other viewer of the same app. A per-instance bucket
-   *       is precisely the control that would bound one install's share of it —
-   *       which is the sharpest argument AGAINST the decision recorded here, and it
-   *       is written down rather than omitted.
-   *
-   * 🔴 THE OTHER DIRECTION, BECAUSE THE RECORD MUST NOT BE ONE-SIDED EITHER:
-   * `reserveAppSpend` FAILS CLOSED on a Redis error (`denyAppSpend('unavailable')`),
-   * where every limiter in `block-catalog-rate-limit.ts` fails OPEN. So the one
-   * procedure left without a request bucket is the one bounded by the stricter
-   * posture, and a Redis incident stops spend here while it removes the ceiling
-   * everywhere else on this bridge.
-   *
-   * 🔴 THE DECISION WAS RE-OPENED IN THE ROUND-0 AUDIT AND IS STILL `none` — BUT THE
-   * ORIGINAL REASON WAS WRONG AND IS RETRACTED HERE RATHER THAN QUIETLY RESTATED. It
-   * read: "not shipped because the spend path is the highest-blast-radius surface in
-   * this file". That objection does not reach the placement this same docblock names —
-   * the TOP of the resolver, above the `kind` branch, where nothing has been reserved,
-   * nothing needs refunding, and the usual counter (a throw breaks a paid generation) is
-   * at its weakest because no money has moved and this procedure already returns a
-   * failed-shape snapshot for the over-budget case. An objection that does not apply to
-   * the option under discussion is not an argument; it was a reflex dressed as one.
-   *
-   * THE REASON THAT SURVIVES IS NARROWER AND IT IS ABOUT FIT, NOT RISK. Hole (c) is not
-   * "this procedure is called too often" — it is "the counter stands in for a request
-   * limit and cannot tell a burnt reservation from a delivered generation". A
-   * per-instance request bucket is a blunt instrument for that: it would bound one
-   * install's call RATE while leaving the shared velocity counter just as unrefundable,
-   * so an app with two installs still drains it. The precise fix is to make the velocity
-   * key refundable — `AppSpendResult` exposes only `dailyKey`, so the throw-path rollback
-   * has no velocity key to return even in principle — and that is a change to
-   * `app-spend-cap.service.ts`'s contract, not to this resolver.
-   * **Closing condition: a PR that returns the velocity key alongside `dailyKey` and
-   * refunds it on the same paths that refund the daily reservation.** Until then hole (c)
-   * stands, stated, as the open item it is.
-   *
-   * It is also not shipped here because the card that raised the question asks for limits
-   * to be argued rather than added reflexively, and because nothing on this surface can
-   * currently grade one: see the refusal counter noted at hole (a).
-   *
-   * 🔴 AND THE EVIDENCE THAT WOULD SETTLE IT DOES NOT EXIST — an earlier revision of
-   * this docblock named `block_scope_invocations` as the source for "the rejected-
-   * submit rate per instance", and that source is STRUCTURALLY EMPTY for exactly the
-   * population in question: this resolver's single `recordScopeInvocation` write sits
-   * AFTER every `TRPCError` throw in it, so a rejected submit — the thing hole (a) is
-   * about — records nothing, under any load. The companion claim that "nothing is
-   * under load" cited `civitai_app_block_requests_total`, which is incremented only
-   * inside the REST `withBlockScope` wrapper and never counts a bridge call at all.
-   * Both were wrong in the reassuring direction. **What would create the evidence: a
-   * counter on bridge calls and on pre-reserve submit rejections, labelled by
-   * procedure. Closing condition for reopening this decision: that counter exists and
-   * shows a non-trivial pre-reserve rejection rate on any instance.**
+   * Open: the per-app velocity counter is never refunded (`refundAppSpend` takes only the
+   * daily key), so a submit that fails after the reserve still spends one slot of the
+   * app's shared allowance. **Closing condition: a PR that returns the velocity key
+   * alongside `dailyKey` and refunds it on the same paths that refund the daily
+   * reservation.**
    */
   submitWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -6649,12 +6644,33 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
+      // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
+      const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
+      if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const userRate = await checkBlockSubmitUserRateLimit(claims.sub);
+      if (!userRate.allowed) {
+        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit-user');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
       if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
       }
+      // After the limiters, so a flood is turned away by Redis before it reaches the primary.
+      // An anonymous subject is refused later, by each branch.
+      const subjectId = parseSubjectUserId(claims.sub);
+      if (subjectId != null) await assertAccountNotRestricted(subjectId);
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path
@@ -6674,6 +6690,13 @@ export const blocksRouter = router({
       if (input.body.kind === 'training') {
         return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
+      if (input.body.kind === 'workflow' || input.body.kind === 'step')
+        await assertStepOrWorkflowInputsUsable(input.body, claims, {
+          confirmedSubmit:
+            input.body.kind === 'step' &&
+            isPassThroughStepBody(input.body) &&
+            input.body.quoteId !== undefined,
+        });
       if (input.body.kind === 'workflow') {
         return await submitMultiStepWorkflow({
           ctx,
@@ -9413,6 +9436,8 @@ async function estimateBlockWorkflowCell(
   if (input.body.kind === 'training') {
     return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
   }
+  if (input.body.kind === 'workflow' || input.body.kind === 'step')
+    await assertStepOrWorkflowInputsUsable(input.body, claims);
   if (input.body.kind === 'workflow') {
     return await estimateMultiStepWorkflow({ ctx, claims, body: input.body });
   }
@@ -10559,6 +10584,42 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
  */
 function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
+}
+
+/** Every url a `kind:'step'` or `kind:'workflow'` body carries must pass the generation input gate. */
+async function assertStepOrWorkflowInputsUsable(
+  body: StepBody | Extract<BlockWorkflowBody, { kind: 'workflow' }>,
+  claims: BlockClaims,
+  /** A confirmed step's submit: its own, stricter token gate and refusal run instead. */
+  { confirmedSubmit = false }: { confirmedSubmit?: boolean } = {}
+) {
+  // The arm's own token checks first: a caller refused those never pays for the walk below.
+  const userId = confirmedSubmit
+    ? parseSubjectUserId(claims.sub)
+    : await assertStepRequestAllowed(claims);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
+  const [entry, inputs] =
+    body.kind === 'workflow'
+      ? (['appBlocksWorkflow', [body.steps.map((step) => step.input), body.arguments]] as const)
+      : isPassThroughStepBody(body)
+      ? (['appBlocksPassThrough', body.input] as const)
+      : (['appBlocksStep', body.params] as const);
+  const { urls, tooDeep, tooLarge } = opaqueInputUrlsIn(inputs);
+  if (tooDeep) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input nests too deeply' });
+  }
+  if (tooLarge) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'step input is too large to check' });
+  }
+  await assertGenerationInputsUsable({
+    urls,
+    userId,
+    entry,
+    isApiCaller: false,
+    opaqueInput: true,
+  });
 }
 
 /**

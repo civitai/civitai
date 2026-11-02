@@ -1,4 +1,4 @@
-import { Box, Button, Group, Stack, Textarea } from '@mantine/core';
+import { Alert, Box, Button, Group, Stack, Textarea } from '@mantine/core';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import {
@@ -14,6 +14,7 @@ import {
 } from '~/components/Apps/ReasonGatedActionModal';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import type { ListingMediaSplitDecision } from '~/shared/constants/listing-media-split.constants';
+import { listingFloorApproveRefusal } from '~/shared/utils/listing-publish-floor';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
@@ -81,6 +82,11 @@ export function ReviewActionBar({
   // no decision, which the server carries out as it did before the split existed.
   const [mediaSplit, setMediaSplit] = useState<ListingMediaSplitResolution | null>(null);
   const splitStateUnknown = request.approveRating != null && mediaSplit == null;
+  // The publish floor (icon + cover) the server refuses this approve on, from the same
+  // predicate (`listingFactsForRequests` → `approveFloorMissing`). Approve is disabled and the
+  // reason shown, rather than offered and refused.
+  const floorMissing = request.approveFloorMissing ?? [];
+  const floorBlocked = floorMissing.length > 0;
   const mediaSplitDecision =
     request.approveRating && mediaSplit && mediaSplit !== MEDIA_SPLIT_NO_DECISION
       ? mediaSplit
@@ -176,6 +182,11 @@ export function ReviewActionBar({
       </Stack>
     ) : (
       <Stack gap="xs">
+        {floorBlocked && (
+          <Alert color="orange" variant="light" data-testid="apps-review-approve-floor">
+            {listingFloorApproveRefusal(floorMissing)}
+          </Alert>
+        )}
         {request.approveRating && (
           <OnsiteApproveRatingWarning
             listingId={request.approveRating.listingId}
@@ -222,7 +233,7 @@ export function ReviewActionBar({
                 ...(mediaSplitDecision ? { mediaSplit: mediaSplitDecision } : {}),
               })
             }
-            disabled={busy || splitStateUnknown}
+            disabled={busy || splitStateUnknown || floorBlocked}
             loading={approveMut.isPending}
           >
             Approve + build

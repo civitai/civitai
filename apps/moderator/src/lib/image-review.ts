@@ -28,7 +28,7 @@ export const FLAG_KEPT_THROUGH_BLOCK = 'csam' satisfies ImageReviewType;
 /**
  * Removed, with only that flag left to rule on. Accepting would put the image back live and
  * removing it again would notify the uploader a second time, so the one verdict left is to dismiss
- * the flag.
+ * it from the queue.
  */
 export function isFlagOnlyRemaining(image: { needsReview: string | null; ingestion: string }) {
   return image.needsReview === FLAG_KEPT_THROUGH_BLOCK && image.ingestion === 'Blocked';

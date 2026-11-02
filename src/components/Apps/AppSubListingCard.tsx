@@ -4,14 +4,14 @@ import Link from 'next/link';
 import { ListingCover } from '~/components/Apps/AppListingCard';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
-import {
-  LISTING_ACTION_ROW_HEIGHT_PX,
-  LISTING_ACTION_ROW_PT_PX,
-  LISTING_CARD_TITLE_LINES,
-  LISTING_CARD_TITLE_LINE_HEIGHT,
-  LISTING_CARD_TITLE_MIN_HEIGHT,
-} from '~/components/Apps/appListingCardGeometry';
+import { LISTING_CARD_TITLE_LINE_HEIGHT } from '~/components/Apps/appListingCardGeometry';
 import type { SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+
+/** The sub-listing card keeps the original two-line title and a fixed action row. */
+const LISTING_CARD_TITLE_LINES = 2;
+const LISTING_CARD_TITLE_MIN_HEIGHT = `calc(${LISTING_CARD_TITLE_LINES} * ${LISTING_CARD_TITLE_LINE_HEIGHT}em)`;
+const LISTING_ACTION_ROW_PT_PX = 10;
+const LISTING_ACTION_ROW_HEIGHT_PX = LISTING_ACTION_ROW_PT_PX + 36;
 
 /**
  * Where a sub-listing card goes. An off-site item opens on its platform. An on-site item opens

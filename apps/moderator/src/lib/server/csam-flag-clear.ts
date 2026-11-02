@@ -127,8 +127,8 @@ export async function getFlagClearHolds(
   return held;
 }
 
-/** Clears the review flag from every one of `userId`'s removed images whose flag `dismissReviewFlag`
- *  would clear, unless the user is held by a leg other than `overriding`. The hold is repeated in the
+/** Clears the review flag from every one of `userId`'s removed, flagged images, unless the user is
+ *  held by a leg other than `overriding`. The hold is repeated in the
  *  UPDATE so the check and the write are one statement. Returns the cleared image ids. */
 export async function clearRemovedFlagsUnlessHeld(
   db: Kysely<DB>,
@@ -165,8 +165,8 @@ async function flaggedCount(db: Kysely<DB>, userId: number): Promise<number> {
 }
 
 /**
- * `dismissReviewFlag` for all of one user's removed, flagged images, in one transaction: the same
- * update and the same ModActivity row per image. Refused for a held user. `expectedCount` is what the
+ * Clears the review flag from all of one user's removed, flagged images, in one transaction, with a
+ * `dismissReviewFlag` ModActivity row per image. Refused for a held user. `expectedCount` is what the
  * moderator confirmed; any other number rolls back, so nothing is cleared that was not shown.
  */
 export async function clearUserCsamFlags({

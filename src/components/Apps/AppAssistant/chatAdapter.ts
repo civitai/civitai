@@ -40,7 +40,7 @@ export function listenReplyResume(
 /**
  * Calls `onChange` with the open chat's id whenever the viewer opens another chat. Since
  * components-chat 0.22, `chat-change` also fires for the same chat once its first save lands
- * (`saved`); that is no change of chat, so it is not passed on (it would take Build it away).
+ * (`saved`); that is no change of chat, so it is not passed on (it would close a Submit for review offer).
  * `current`: the chat already open as this starts listening.
  */
 export function listenChatChange(
@@ -57,23 +57,4 @@ export function listenChatChange(
   };
   el.addEventListener('chat-change', listener);
   return () => el.removeEventListener('chat-change', listener);
-}
-
-/**
- * What is in the chat's message box now, from the chat's `draft`: what the user typed, or what
- * `compose()` put there; `''` with no chat, or before the chat has drawn its box. Read on demand: the
- * chat fills and empties the box with no `input` event, and its other fields fire `input` too.
- */
-export function messageBoxText(chat: Pick<CivitaiChat, 'draft'> | null): string {
-  return chat?.draft ?? '';
-}
-
-/**
- * Whether the user is dictating, from the chat's `dictating`: true from the moment they start talking
- * until what they said has been joined to the end of `draft` (or sent, or thrown away), including the
- * moment between recording and transcribing. Meanwhile `draft` is what the box held before. `false`
- * with no chat.
- */
-export function isDictating(chat: Pick<CivitaiChat, 'dictating'> | null): boolean {
-  return chat?.dictating === true;
 }

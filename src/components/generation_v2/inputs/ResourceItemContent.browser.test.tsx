@@ -1,5 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 // =============================================================================
@@ -28,15 +28,9 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     fuller fixture would add no coverage. The mock is what makes the shield
 //     (`domain.green` off, and sfwOnly, minor or an SFW-only base) drivable.
 //
-//   * NumberSlider (`~/libs/form/components/NumberSlider`) — the real one is a
-//     Mantine Slider+NumberInput composite with its own focus/precision/preset
-//     state. We replace it with a thin stub that SURFACES the props the strength
-//     branch wires (value / min / max / disabled) and exposes an
-//     `onChange`-driving button, so the hasStrength gate, the min/max
-//     (isSameMinMaxStrength) math, the `disabled` pass-through, and the
-//     `onStrengthChange(strength ?? 1)` callback stay observable. SHADOWS: the
-//     real slider's drag/keyboard interaction + its internal value clamping —
-//     not under test here.
+//   * The strength slider is NOT stubbed: `SliderInput` is light enough to render for real, so
+//     its range, value, disabled state and the `onStrengthChange` wiring are asserted on the
+//     actual control (role `slider`) rather than on a stub that could drift from it.
 //
 //   * EdgeMedia2 (`~/components/EdgeMedia/EdgeMedia`) — drags in
 //     BrowserSettingsProvider + the edge-image/-video URL pipeline. Stubbed to a
@@ -73,34 +67,6 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     Layer 2 does not assert them — Layer 1 covers that helper directly.
 
 // ---- Boundary stubs (hoisted; factories self-contained) ---------------------
-
-vi.mock('~/libs/form/components/NumberSlider', () => ({
-  NumberSlider: ({
-    value,
-    onChange,
-    min,
-    max,
-    disabled,
-  }: {
-    value?: number;
-    onChange?: (v?: number) => void;
-    min?: number;
-    max?: number;
-    disabled?: boolean;
-  }) => (
-    <div
-      data-testid="strength-slider"
-      data-value={String(value)}
-      data-min={String(min)}
-      data-max={String(max)}
-      data-disabled={String(!!disabled)}
-    >
-      <button type="button" data-testid="strength-set" onClick={() => onChange?.(0.5)}>
-        set-strength
-      </button>
-    </div>
-  ),
-}));
 
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia2: ({ src }: { src?: string }) => <img data-testid="edge-media" src={src} alt="" />,
@@ -649,7 +615,7 @@ describe('ResourceItemContent (render)', () => {
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
 
     await expect.element(page.getByText('Turbo', { exact: true })).toBeInTheDocument();
-    await expect.element(page.getByTestId('strength-slider')).toBeInTheDocument();
+    await expect.element(page.getByRole('slider', { name: 'M strength' })).toBeInTheDocument();
   });
 
   test('strength slider present for LORA + onStrengthChange + enabled; onChange wires back', async () => {
@@ -661,14 +627,16 @@ describe('ResourceItemContent (render)', () => {
     const onStrengthChange = vi.fn();
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={onStrengthChange} />);
 
-    const slider = page.getByTestId('strength-slider');
+    const slider = page.getByRole('slider', { name: 'M strength' });
     await expect.element(slider).toBeInTheDocument();
     // min/max from resource (not the isSameMinMaxStrength -1/2 fallback).
-    await expect.element(slider).toHaveAttribute('data-min', '0.1');
-    await expect.element(slider).toHaveAttribute('data-max', '1.5');
+    await expect.element(slider).toHaveAttribute('aria-valuemin', '0.1');
+    await expect.element(slider).toHaveAttribute('aria-valuemax', '1.5');
 
-    await page.getByTestId('strength-set').click();
-    expect(onStrengthChange).toHaveBeenCalledWith(0.5);
+    // One step right from the version default of 1.
+    (slider.element() as HTMLElement).focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(onStrengthChange).toHaveBeenCalledWith(1.05);
   });
 
   test('strength slider uses the -1/2 fallback when the bounds are equal', async () => {
@@ -679,10 +647,10 @@ describe('ResourceItemContent (render)', () => {
     });
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
 
-    const slider = page.getByTestId('strength-slider');
+    const slider = page.getByRole('slider', { name: 'M strength' });
     await expect.element(slider).toBeInTheDocument();
-    await expect.element(slider).toHaveAttribute('data-min', '-1');
-    await expect.element(slider).toHaveAttribute('data-max', '2');
+    await expect.element(slider).toHaveAttribute('aria-valuemin', '-1');
+    await expect.element(slider).toHaveAttribute('aria-valuemax', '2');
   });
 
   test('strength slider passes the disabled prop through and uses the value fallback', async () => {
@@ -692,10 +660,10 @@ describe('ResourceItemContent (render)', () => {
     });
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} disabled />);
 
-    const slider = page.getByTestId('strength-slider');
+    const slider = page.getByRole('slider', { name: 'M strength' });
     await expect.element(slider).toBeInTheDocument();
-    await expect.element(slider).toHaveAttribute('data-disabled', 'true');
-    await expect.element(slider).toHaveAttribute('data-value', '0.8');
+    await expect.element(slider).toHaveAttribute('aria-disabled', 'true');
+    await expect.element(slider).toHaveAttribute('aria-valuenow', '0.8');
   });
 
   test("strength slider prefers strengthValue over the version's default", async () => {
@@ -707,9 +675,9 @@ describe('ResourceItemContent (render)', () => {
       <ResourceItemContent resource={r} strengthValue={0.3} onStrengthChange={vi.fn()} />
     );
 
-    const slider = page.getByTestId('strength-slider');
+    const slider = page.getByRole('slider', { name: 'M strength' });
     await expect.element(slider).toBeInTheDocument();
-    await expect.element(slider).toHaveAttribute('data-value', '0.3');
+    await expect.element(slider).toHaveAttribute('aria-valuenow', '0.3');
   });
 
   test('strength slider ABSENT when showStrength is false', async () => {
@@ -719,7 +687,7 @@ describe('ResourceItemContent (render)', () => {
     );
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
-    await expect.element(page.getByTestId('strength-slider')).not.toBeInTheDocument();
+    await expect.element(page.getByRole('slider', { name: 'M strength' })).not.toBeInTheDocument();
   });
 
   test('strength slider ABSENT when no onStrengthChange', async () => {
@@ -727,7 +695,7 @@ describe('ResourceItemContent (render)', () => {
     renderWithProviders(<ResourceItemContent resource={r} />);
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
-    await expect.element(page.getByTestId('strength-slider')).not.toBeInTheDocument();
+    await expect.element(page.getByRole('slider', { name: 'M strength' })).not.toBeInTheDocument();
   });
 
   test('strength slider ABSENT when type is not LORA/LoCon/DoRA', async () => {
@@ -735,7 +703,7 @@ describe('ResourceItemContent (render)', () => {
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
-    await expect.element(page.getByTestId('strength-slider')).not.toBeInTheDocument();
+    await expect.element(page.getByRole('slider', { name: 'M strength' })).not.toBeInTheDocument();
   });
 
   test('strength slider ABSENT when status is disabled (incompatible)', async () => {
@@ -748,7 +716,7 @@ describe('ResourceItemContent (render)', () => {
     );
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
-    await expect.element(page.getByTestId('strength-slider')).not.toBeInTheDocument();
+    await expect.element(page.getByRole('slider', { name: 'M strength' })).not.toBeInTheDocument();
   });
 
   // ---------------------------------------------------------------------------

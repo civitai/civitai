@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildStandingsSeries,
   coverRequestWidth,
   defaultPlaceableTab,
   describeEntityTypes,
@@ -168,5 +169,88 @@ describe('placeableTabCount', () => {
     expect(placeableTabCount({ count: 3, more: false, loaded: true })).toBe('3');
     expect(placeableTabCount({ count: 0, more: false, loaded: false })).toBe('');
     expect(placeableTabCount(undefined)).toBe('');
+  });
+});
+
+describe('buildStandingsSeries', () => {
+  const history = [
+    {
+      team: 'Yellow',
+      scores: [
+        { date: d(1), score: 10 },
+        { date: d(2), score: 30 },
+      ],
+    },
+    {
+      team: 'Pink',
+      scores: [
+        { date: d(1), score: 20 },
+        { date: d(2), score: 25 },
+      ],
+    },
+  ];
+  const now = d(2).getTime() + 90 * 60 * 1000;
+  const byTeam = (series: { team: string; points: { x: number; y: number }[] }[], team: string) =>
+    series.find((s) => s.team === team)!.points;
+
+  it('ends each points line at the live total, stamped now', () => {
+    const series = buildStandingsSeries({
+      mode: 'points',
+      history,
+      teams: [
+        { team: 'Yellow', score: 41, rank: 1 },
+        { team: 'Pink', score: 33, rank: 2 },
+      ],
+      liveTotals: true,
+      now,
+    });
+    expect(byTeam(series, 'Yellow').at(-1)).toEqual({ x: now, y: 41 });
+    expect(byTeam(series, 'Pink').at(-1)).toEqual({ x: now, y: 33 });
+    expect(byTeam(series, 'Yellow')).toHaveLength(3);
+  });
+
+  it('ends each positions line at the live rank', () => {
+    const series = buildStandingsSeries({
+      mode: 'position',
+      history,
+      teams: [
+        { team: 'Pink', score: 50, rank: 1 },
+        { team: 'Yellow', score: 41, rank: 2 },
+      ],
+      liveTotals: true,
+      now,
+    });
+    expect(byTeam(series, 'Pink').at(-1)).toEqual({ x: now, y: 1 });
+    expect(byTeam(series, 'Yellow').at(-1)).toEqual({ x: now, y: 2 });
+  });
+
+  it('adds no point when the live total equals the last history point', () => {
+    const series = buildStandingsSeries({
+      mode: 'points',
+      history,
+      teams: [
+        { team: 'Yellow', score: 30, rank: 1 },
+        { team: 'Pink', score: 33, rank: 2 },
+      ],
+      liveTotals: true,
+      now,
+    });
+    expect(byTeam(series, 'Yellow')).toHaveLength(2);
+    expect(byTeam(series, 'Pink')).toHaveLength(3);
+  });
+
+  it('adds nothing when the totals are not live', () => {
+    const series = buildStandingsSeries({
+      mode: 'points',
+      history,
+      teams: [
+        { team: 'Yellow', score: 41, rank: 1 },
+        { team: 'Pink', score: 33, rank: 2 },
+      ],
+      liveTotals: false,
+      now,
+    });
+    expect(byTeam(series, 'Yellow')).toHaveLength(2);
+    expect(byTeam(series, 'Pink')).toHaveLength(2);
   });
 });

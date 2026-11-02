@@ -729,6 +729,7 @@ What's already handled:
   node .claude/skills/dev-server/cli.mjs wt env                 # state per skill, never a value
   node .claude/skills/dev-server/cli.mjs wt env <worktree>      # fill another tree's gaps
   node .claude/skills/dev-server/cli.mjs wt env <worktree> --refresh  # …and re-copy env files the primary edited since
+  node .claude/skills/dev-server/cli.mjs wt env <worktree> --force    # …and re-copy them over the tree's own edits too
   node .claude/skills/dev-server/cli.mjs wt env --backup        # copy them OUTSIDE the repo
   node .claude/skills/dev-server/cli.mjs wt env --restore       # bring back what this tree lacks
   ```
@@ -741,8 +742,11 @@ What's already handled:
   a tree also works for a bare `pnpm`/`prisma` command that reads `.env` itself, never inherits an
   app `.env` pointed at another database, and never carries storage credentials for the restricted
   bucket. A copy is a snapshot: when the primary's file changes, `wt env <worktree> --refresh`
-  re-copies every one the primary edited more recently, over the tree's version. Without
-  `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
+  re-copies every one the tree has not edited since it was last written, whatever the mtimes say.
+  An edit is a file whose sha256 differs from the one recorded at that write (kept in the tree's
+  git dir, `dev-server-app-env.json`); a tree copied before that record existed counts a file that
+  differs from the primary as edited. `--refresh` skips both and names `--force`, which re-copies
+  them anyway (and implies `--refresh`). Without `--refresh`, existing files are left alone apart from those database and `CSAM_*` keys, which
   `wt env` (with or without `--refresh`) rewrites in place, mtime kept: run it to repair a tree
   copied before either existed. Env files only the tree has (a hand-made `.env.local`) get their
   `CSAM_*` keys emptied too; their database lines stay as written. A hand edit to a tree's app

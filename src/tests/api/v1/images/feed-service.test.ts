@@ -36,6 +36,10 @@ const h = vi.hoisted(() => ({
   rawQuery: vi.fn(),
 }));
 
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
+
 vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbHelpers>()),
   queryWithTimeout: (...args: unknown[]) => h.rawQuery(...args),

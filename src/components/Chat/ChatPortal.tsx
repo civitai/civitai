@@ -1,5 +1,7 @@
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
+import { useEffect } from 'react';
 import { AdUnitOutstreamWithCloseButton } from '~/components/Ads/AdUnitOutstream';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -7,7 +9,20 @@ import { useIsClient } from '~/providers/IsClientProvider';
 
 const ChatWindow = dynamic(() => import('~/components/Chat/ChatWindow').then((m) => m.ChatWindow));
 
+/** `?chat=<id>` opens that conversation, so a notification can link straight to a thread. */
+function useOpenChatFromQuery() {
+  const router = useRouter();
+  const chatId = Number(router.query.chat);
+  useEffect(() => {
+    if (!router.isReady || !Number.isInteger(chatId) || chatId <= 0) return;
+    useChatStore.setState({ open: true, isCreating: false, existingChatId: chatId });
+    const { chat: _, ...query } = router.query;
+    router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+  }, [router, chatId]);
+}
+
 export function ChatPortal({ showFooter }: { showFooter: boolean }) {
+  useOpenChatFromQuery();
   const open = useChatStore((state) => state.open);
   const isMobile = useIsMobile();
   const isClient = useIsClient();

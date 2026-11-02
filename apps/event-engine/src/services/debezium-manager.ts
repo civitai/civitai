@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { Kafka } from 'kafkajs';
 import { logger } from '@/utils/logger';
 import { config } from '@/config';
@@ -24,6 +23,34 @@ interface ConnectorStatus {
 }
 
 export const CONNECTOR_NAME = 'civitai-postgres-connector';
+
+class ConnectHttpError extends Error {
+  constructor(readonly status: number, readonly data: any) {
+    super(`Kafka Connect responded ${status}`);
+  }
+}
+
+/** Kafka Connect REST call; throws ConnectHttpError on a non-2xx response. */
+async function connectRequest<T = any>(
+  url: string,
+  init: { method?: string; body?: unknown; timeoutMs?: number } = {}
+): Promise<T> {
+  const response = await fetch(url, {
+    method: init.method ?? 'GET',
+    headers: init.body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    signal: init.timeoutMs ? AbortSignal.timeout(init.timeoutMs) : undefined,
+  });
+  const text = await response.text();
+  let data: any = text;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    // Not JSON: keep the raw text for the error log.
+  }
+  if (!response.ok) throw new ConnectHttpError(response.status, data);
+  return data as T;
+}
 
 export class DebeziumManager {
   private static instance: DebeziumManager;
@@ -127,12 +154,12 @@ export class DebeziumManager {
       logger.info('✅ Debezium connector setup complete')
 
     } catch (err) {
-      if (axios.isAxiosError(err)) {
+      if (err instanceof ConnectHttpError) {
         logger.error({
           err,
-          response: err.response?.data,
-          status: err.response?.status
-        }, '❌ Failed to configure Debezium connector - Axios error');
+          response: err.data,
+          status: err.status
+        }, '❌ Failed to configure Debezium connector - HTTP error');
       } else {
         logger.error({ err }, '❌ Failed to configure Debezium connector');
       }
@@ -142,8 +169,8 @@ export class DebeziumManager {
 
   private async checkDebeziumAvailability(): Promise<boolean> {
     try {
-      const response = await axios.get(`${this.debeziumUrl}/`, { timeout: 5000 });
-      logger.info(`📡 Connected to Debezium Connect version: ${response.data.version}`);
+      const info = await connectRequest<{ version: string }>(`${this.debeziumUrl}/`, { timeoutMs: 5000 });
+      logger.info(`📡 Connected to Debezium Connect version: ${info.version}`);
       return true;
     } catch (err) {
       return false;
@@ -218,13 +245,13 @@ export class DebeziumManager {
 
   private async getConnectorConfig(): Promise<ConnectorConfig | null> {
     try {
-      const response = await axios.get(`${this.debeziumUrl}/connectors/${this.connectorName}/config`);
+      const config = await connectRequest(`${this.debeziumUrl}/connectors/${this.connectorName}/config`);
       return {
         name: this.connectorName,
-        config: response.data
+        config
       };
     } catch (err) {
-      if (axios.isAxiosError(err) && err.response?.status === 404) {
+      if (err instanceof ConnectHttpError && err.status === 404) {
         return null;
       }
       throw err;
@@ -255,20 +282,14 @@ export class DebeziumManager {
 
   private async createConnector(config: ConnectorConfig): Promise<void> {
     try {
-      await axios.post(
-        `${this.debeziumUrl}/connectors`,
-        config,
-        {
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
+      await connectRequest(`${this.debeziumUrl}/connectors`, { method: 'POST', body: config });
       logger.info(`✅ Created connector: ${config.name}`);
     } catch (err) {
-      if (axios.isAxiosError(err) && err.response?.data) {
+      if (err instanceof ConnectHttpError && err.data) {
         logger.error({
           err,
-          response: err.response.data,
-          message: err.response.data.message
+          response: err.data,
+          message: err.data.message
         }, '❌ Debezium connector creation failed');
       }
       throw err;
@@ -283,12 +304,12 @@ export class DebeziumManager {
 
   private async deleteConnector(): Promise<void> {
     try {
-      await axios.delete(`${this.debeziumUrl}/connectors/${this.connectorName}`);
+      await connectRequest(`${this.debeziumUrl}/connectors/${this.connectorName}`, { method: 'DELETE' });
       logger.info(`🗑️ Deleted existing connector: ${this.connectorName}`);
       // Wait for deletion to complete
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err) {
-      if (!axios.isAxiosError(err) || err.response?.status !== 404) {
+      if (!(err instanceof ConnectHttpError) || err.status !== 404) {
         throw err;
       }
     }
@@ -296,8 +317,7 @@ export class DebeziumManager {
 
   private async getConnectorStatus(): Promise<ConnectorStatus | null> {
     try {
-      const response = await axios.get(`${this.debeziumUrl}/connectors/${this.connectorName}/status`);
-      return response.data;
+      return await connectRequest<ConnectorStatus>(`${this.debeziumUrl}/connectors/${this.connectorName}/status`);
     } catch (err) {
       return null;
     }
@@ -305,7 +325,7 @@ export class DebeziumManager {
 
   private async restartConnector(): Promise<void> {
     try {
-      await axios.post(`${this.debeziumUrl}/connectors/${this.connectorName}/restart`);
+      await connectRequest(`${this.debeziumUrl}/connectors/${this.connectorName}/restart`, { method: 'POST' });
       logger.info('🔄 Restarted connector');
     } catch (err) {
       logger.error({ err }, 'Failed to restart connector');

@@ -14,6 +14,7 @@ import {
   handleError,
   submitWorkflow as clientSubmitWorkflow,
 } from '@civitai/orchestration-client';
+import { UploadType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -50,11 +51,11 @@ import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 import { env as clientEnv } from '~/env/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
-  deleteObject,
   getB2S3Client,
   getGetUrl,
   getPutUrl,
   getS3Client,
+  getUploadBucket,
   isB2Url,
   parseKey,
 } from '~/utils/s3-utils';
@@ -312,6 +313,18 @@ export type AutoCaptionResponse = {
   [key: string]: string;
 };
 
+// The auto-label input is the zip the client just uploaded via /api/upload, whose keys are
+// `${type}/${userId}/...` (see buildUploadKey).
+function assertOwnTrainingTempUpload(url: string, userId: number) {
+  const { key, bucket } = parseKey(url);
+  if (
+    !bucket ||
+    bucket !== getUploadBucket(isB2Url(url) ? 'b2' : 'default') ||
+    !key.startsWith(`${UploadType.TrainingImagesTemp}/${userId}/`)
+  )
+    throw throwBadRequestError('Invalid URL');
+}
+
 export const autoTagHandler = async ({
   url,
   modelId,
@@ -319,11 +332,10 @@ export const autoTagHandler = async ({
 }: AutoTagInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   // todo check if this property comes through
 
@@ -341,12 +353,10 @@ export const autoTagHandler = async ({
   console.log(response, payload);
 
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -364,11 +374,10 @@ export const autoCaptionHandler = async ({
 }: AutoCaptionInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   const payload: Orchestrator.Training.ImageAutoCaptionJobPayload = {
     mediaUrl: getUrl,
@@ -385,12 +394,10 @@ export const autoCaptionHandler = async ({
   });
 
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -496,9 +503,8 @@ export async function updateTrainingWorkflowRecords(
   // Read, never derived: createTrainingWorkflow stamps this at submit, and this runs again on any
   // re-sync of a finished run. Deriving it here would renumber one — and generation binds an epoch
   // by value, where getTrainingFileEpochNumberDetails answers a miss with the newest epoch rather
-  // than an error, so those bindings would silently move to other weights. Not enforced, though:
-  // `modelFileMetadataSchema` takes `trainingResults` from the client, so an owner can seed any
-  // offset on their own run.
+  // than an error, so those bindings would silently move to other weights. modelFile writes drop
+  // client `trainingResults`, but a file saved before that may carry any offset.
   const epochData = offsetEpochNumbers(derivedEpochs, trainingResults.epochOffset);
 
   const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;

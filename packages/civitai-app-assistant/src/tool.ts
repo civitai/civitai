@@ -38,6 +38,14 @@ export type ToolGate = (
   context: ToolGateContext
 ) => ToolDecision | Promise<ToolDecision>;
 
+/**
+ * Waits one macrotask. The chat starts every call of a step together, so a call that judges the
+ * checks (report_ready, submit_for_review) waits here first: without it, a write made in the same
+ * step has not reached the gate yet and the app is judged ready before that write lands.
+ */
+export const letStepCallsReachGate = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 0));
+
 /** One finished call, as the gate is told of it. */
 export interface ToolResult {
   name: string;

@@ -44,25 +44,13 @@ const GEOMETRY_MODULE = '~/components/Apps/appListingCardGeometry';
  * 🔴 THE ONE CONSTANT THE SKELETON IS NOT REQUIRED TO READ — NAMED, SO IT CANNOT
  * BECOME A SILENT HOLE.
  *
- * `LISTING_ACTION_ROW_GAP_PX` is the gap between the CTA and the `⋮` overflow
- * trigger. A card renders that trigger only for an owner or a moderator, which a
- * loading state cannot know, so the skeleton's action row holds exactly ONE child
- * and the gap has nothing to apply to. Importing it to satisfy a set-equality
- * check would be an unread declaration that the next reader has to prove unused —
- * the same shape this component family deleted a `@container` rule and a hook for.
- *
- * It costs no geometry, and that is MEASURED rather than promised — a carve-out
- * justified by "it costs nothing" has to have the cost measured or it is a
- * promise. `AppListingCardSkeleton.geometry.test.tsx` renders the same listings at
- * the same width for a signed-out viewer and for their OWNER, and pins that the
- * CTA gives up exactly `LISTING_ACTION_ROW_CONTROL_PX + LISTING_ACTION_ROW_GAP_PX`
- * of WIDTH to the trigger while the card's box is byte-identical across the two
- * arms ("the ⋮ trigger takes width from the CTA and NOTHING from the card box").
- *
- * The test below still asserts this name IS an export, so the exclusion cannot rot
- * into a reference to a constant that no longer exists.
+ * `LISTING_CARD_MENU_TRIGGER_PX` is the `⋮` trigger over the cover's corner. A card renders
+ * it only for an owner or a moderator, which a loading state cannot know, and it is
+ * absolutely positioned over the cover, so it takes no space in the flow: the skeleton
+ * has nothing to reserve for it. The test below still asserts this name IS an export,
+ * so the exclusion cannot rot into a reference to a constant that no longer exists.
  */
-const NOT_REQUIRED_IN_SKELETON = ['LISTING_ACTION_ROW_GAP_PX'] as const;
+const NOT_REQUIRED_IN_SKELETON = ['LISTING_CARD_MENU_TRIGGER_PX'] as const;
 
 const read = (p: string) => fs.readFileSync(p, 'utf8');
 

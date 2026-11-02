@@ -13,7 +13,7 @@
  *
  * It also owns the relay's EXECUTION half — `postImageUploadRelay`, `relayWithRetry` and
  * `relayImageFallback` below. The DECISION half lives in `~/utils/upload-retry`
- * (`shouldRelayOnPartFailure`, `RELAY_FALLBACK_MAX_BYTES`). That split is deliberate:
+ * (`selectRelayFallback`, `RELAY_FALLBACK_MAX_BYTES`). That split is deliberate:
  * a new relay constant belongs on the decide side if something reads it to choose whether
  * to relay, and on this side if it shapes the request that gets sent.
  */
@@ -46,6 +46,8 @@ import type { RelayFallbackFailureReason } from '~/utils/relay-fallback-outcome'
  * is complete.
  */
 const IMAGE_UPLOAD_RELAY_PATH = '/api/v1/image-upload/relay';
+/** The chunked relay, for images over the single-shot cap. Built only by `postChunkedRelayStep`. */
+const IMAGE_UPLOAD_RELAY_CHUNKED_PATH = '/api/v1/image-upload/relay-chunked';
 
 /**
  * Build and send the relay POST.
@@ -278,7 +280,7 @@ export type RelayFallbackResult =
  * origin (`/api/v1/image-upload/relay`) and resolve the relay-minted key, or the reason
  * the rescue did not produce one.
  *
- * The DECISION to call this lives in `shouldRelayOnPartFailure` (~/utils/upload-retry);
+ * The DECISION to call this lives in `selectRelayFallback` (~/utils/upload-retry);
  * this is the execution half, extracted from `useS3Upload` so it is unit-testable the
  * same way `attachUploadSettlement` is.
  *
@@ -329,5 +331,145 @@ export async function relayImageFallback(
       ok: false,
       reason: isClientAbort(err, opts.signal) ? 'aborted' : 'transport_error',
     };
+  }
+}
+
+export type RelayPiece = { partNumber: number; start: number; end: number };
+
+/**
+ * The byte ranges the chunked relay expects, in order: `pieceSize` each, the last one short.
+ * `pieceSize` comes from the server's `start` response, never a client constant, because the
+ * server length-checks every piece against the plan it derived from the same number.
+ */
+export function planRelayPieces(fileSize: number, pieceSize: number): RelayPiece[] {
+  if (!Number.isInteger(fileSize) || fileSize <= 0) return [];
+  if (!Number.isInteger(pieceSize) || pieceSize <= 0) return [];
+  const pieces: RelayPiece[] = [];
+  for (let start = 0; start < fileSize; start += pieceSize) {
+    pieces.push({
+      partNumber: pieces.length + 1,
+      start,
+      end: Math.min(start + pieceSize, fileSize),
+    });
+  }
+  return pieces;
+}
+
+type ChunkedRelayStep =
+  | { action: 'start'; size: number; contentType: string }
+  | { action: 'part'; session: string; part: number; body: Blob }
+  | { action: 'complete' | 'abort'; session: string };
+
+/**
+ * The one construction site for chunked-relay requests, so the producer header cannot go missing
+ * from one step. `multipart` because the multipart path is its only caller.
+ */
+function postChunkedRelayStep(step: ChunkedRelayStep, signal?: AbortSignal): Promise<Response> {
+  const params = new URLSearchParams({ action: step.action });
+  const headers: Record<string, string> = { [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: 'multipart' };
+  let body: Blob | undefined;
+  if (step.action === 'start') {
+    params.set('size', String(step.size));
+    headers['Content-Type'] = step.contentType;
+  } else {
+    params.set('session', step.session);
+    if (step.action === 'part') {
+      params.set('part', String(step.part));
+      headers['Content-Type'] = 'application/octet-stream';
+      body = step.body;
+    }
+  }
+  return fetch(`${IMAGE_UPLOAD_RELAY_CHUNKED_PATH}?${params}`, {
+    method: 'POST',
+    headers,
+    body,
+    signal,
+  });
+}
+
+/**
+ * The chunked counterpart of `relayImageFallback`, for images over the single-shot relay cap:
+ * open a server-side multipart session, send the pieces one at a time, then complete it. Same
+ * result shape and the same NEVER-THROWS contract, so the caller's handling is identical.
+ *
+ * Sequential on purpose: each piece holds one of the server's per-pod buffering slots, and this
+ * is a rescue path, not a fast one.
+ *
+ * On any failure after `start` the server session is aborted best-effort WITHOUT the signal —
+ * a cancel is exactly when the multipart upload must still be closed.
+ */
+export async function relayImageChunkedFallback(
+  file: File,
+  opts: {
+    signal: AbortSignal;
+    sleep: (ms: number) => Promise<void>;
+    defaultRetryAfterSeconds: number;
+    onProgress?: (bytesSent: number) => void;
+  }
+): Promise<RelayFallbackResult> {
+  let session: string | undefined;
+  const fail = (reason: RelayFallbackFailureReason): RelayFallbackResult => {
+    if (session) postChunkedRelayStep({ action: 'abort', session }).catch(() => undefined);
+    return { ok: false, reason };
+  };
+  const readJson = async (res: Response): Promise<Record<string, unknown> | 'aborted' | null> => {
+    try {
+      const body: unknown = await res.json();
+      return body && typeof body === 'object' ? (body as Record<string, unknown>) : null;
+    } catch (err) {
+      return isClientAbort(err, opts.signal) ? 'aborted' : null;
+    }
+  };
+
+  try {
+    const started = await relayWithRetry(
+      () =>
+        postChunkedRelayStep(
+          {
+            action: 'start',
+            size: file.size,
+            contentType: file.type || 'application/octet-stream',
+          },
+          opts.signal
+        ),
+      opts
+    );
+    if (!started.ok) return fail('non_2xx');
+    const plan = await readJson(started);
+    if (plan === 'aborted') return fail('aborted');
+    if (typeof plan?.session === 'string' && plan.session) session = plan.session;
+    const pieces = planRelayPieces(file.size, Number(plan?.pieceSize));
+    if (!session || pieces.length === 0 || pieces.length !== plan?.partCount)
+      return fail('bad_body');
+
+    for (const piece of pieces) {
+      const sessionId = session;
+      const res = await relayWithRetry(
+        () =>
+          postChunkedRelayStep(
+            {
+              action: 'part',
+              session: sessionId,
+              part: piece.partNumber,
+              body: file.slice(piece.start, piece.end),
+            },
+            opts.signal
+          ),
+        opts
+      );
+      if (!res.ok) return fail('non_2xx');
+      opts.onProgress?.(piece.end);
+    }
+
+    const completed = await postChunkedRelayStep({ action: 'complete', session }, opts.signal);
+    if (!completed.ok) return fail('non_2xx');
+    // Complete consumed the session server-side; nothing is left to abort.
+    session = undefined;
+    const done = await readJson(completed);
+    if (done === 'aborted') return fail('aborted');
+    const id = done?.id;
+    return typeof id === 'string' && id ? { ok: true, id } : fail('bad_body');
+  } catch (err) {
+    return fail(isClientAbort(err, opts.signal) ? 'aborted' : 'transport_error');
   }
 }

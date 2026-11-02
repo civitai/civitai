@@ -76,6 +76,11 @@ import { isDefined } from '~/utils/type-guards';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
+// Judged on the row as read, not on pool membership; matches the scan pipeline's enqueue gate.
+function isHeldForReview(image: { needsReview: string | null }) {
+  return image.needsReview !== null;
+}
+
 // Helper functions for atomic voting
 function getVoteLimitForRank(rank: NewOrderHighRankType): number {
   switch (rank) {
@@ -560,6 +565,7 @@ async function processImageRating({
   });
 
   let currentNsfwLevel: NsfwLevel | undefined = image.nsfwLevel;
+  let votesVoided = false;
 
   // Check if we've reached vote limits after the atomic increment
   const reachedKnightVoteLimit =
@@ -583,29 +589,41 @@ async function processImageRating({
 
         // Remove from Knight queue and escalate to Inquisitor queue for mod review
         await removeImageFromQueue({ imageId, valueInQueue });
-        await addImageToQueue({
+        const { added } = await addImageToQueue({
           imageIds: imageId,
           rankType: 'Inquisitor' as NewOrderHighRankType,
           priority: 1,
         });
 
-        logToAxiom({
-          type: 'info',
-          name: 'new-order-down-rating-escalated',
-          details: {
-            imageId,
-            currentLevel: image.nsfwLevel,
-            consensusLevel: consensus,
-            distance: Flags.distance(image.nsfwLevel, consensus),
-            voteCount: newVoteCount,
-          },
-          message: `Image ${imageId} down-rating consensus (${
-            image.nsfwLevel
-          } → ${consensus}, distance ${Flags.distance(
-            image.nsfwLevel,
-            consensus
-          )}) escalated to Inquisitor queue`,
-        }).catch(() => null);
+        if (!added) {
+          // Not escalated, so no mod decision will settle these votes: void them now. This vote is
+          // written as Inconclusive below, since its row does not exist yet.
+          votesVoided = true;
+          await voidPendingRatings([imageId]);
+          logToAxiom({
+            type: 'info',
+            name: 'new-order-escalation-skipped',
+            details: { imageId, userId: playerId },
+            message: `Image ${imageId} was not escalated to Inquisitor queue`,
+          }).catch(() => null);
+        } else
+          logToAxiom({
+            type: 'info',
+            name: 'new-order-down-rating-escalated',
+            details: {
+              imageId,
+              currentLevel: image.nsfwLevel,
+              consensusLevel: consensus,
+              distance: Flags.distance(image.nsfwLevel, consensus),
+              voteCount: newVoteCount,
+            },
+            message: `Image ${imageId} down-rating consensus (${
+              image.nsfwLevel
+            } → ${consensus}, distance ${Flags.distance(
+              image.nsfwLevel,
+              consensus
+            )}) escalated to Inquisitor queue`,
+          }).catch(() => null);
       } else {
         // Apply the consensus decision (same level, up-rating, or down-rating by 1 level)
         if (consensus) {
@@ -636,6 +654,8 @@ async function processImageRating({
       currentNsfwLevel === rating
         ? NewOrderImageRatingStatus.AcolyteCorrect
         : NewOrderImageRatingStatus.AcolyteFailed;
+  } else if (votesVoided) {
+    status = NewOrderImageRatingStatus.Inconclusive;
   } else if (reachedKnightVoteLimit && currentNsfwLevel !== undefined) {
     status =
       currentNsfwLevel === rating
@@ -834,6 +854,26 @@ async function removeImageFromQueue({
   await valueInQueue.pool.reset({ id: imageId });
   await getImageRatingsCounter(imageId).reset({ all: true }); // Clear vote distribution
   await notifyQueueUpdate(valueInQueue.rank, imageId, NewOrderSignalActions.RemoveImage);
+}
+
+/**
+ * Settles every vote still Pending on these images as Inconclusive, the same way the daily
+ * rating-slot purge does. Never throws: callers are mid-request. A failed void is only logged;
+ * nothing retries it.
+ */
+async function voidPendingRatings(imageIds: number[]) {
+  if (imageIds.length === 0) return;
+  try {
+    if (!clickhouse) throw new Error('ClickHouse not available');
+    await clickhouse.insert({
+      table: 'knights_rating_updates_buffer',
+      values: imageIds.map((imageId) => ({ imageId, rating: null })),
+      format: 'JSONEachRow',
+    });
+    await processFinalRatings();
+  } catch (e) {
+    handleLogError(e as Error, 'new-order-void-pending-ratings');
+  }
 }
 
 export async function updatePendingImageRatings({
@@ -1217,9 +1257,9 @@ export async function getSanityCheckImage(): Promise<SanityCheck | null> {
     // Fetch image data from database (url, metadata)
     const imageData = await dbRead.image.findUnique({
       where: { id: imageId },
-      select: { url: true, metadata: true },
+      select: { url: true, metadata: true, needsReview: true },
     });
-    if (!imageData) return null;
+    if (!imageData || isHeldForReview(imageData)) return null;
 
     return {
       imageId,
@@ -1575,15 +1615,22 @@ export async function addImageToQueue({
   imageIds: number | number[];
   rankType: NewOrderHighRankType;
   priority?: 1 | 2 | 3;
-}) {
+}): Promise<{ added: boolean; heldIds: number[] }> {
   imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
-  if (imageIds.length === 0) return false;
+  if (imageIds.length === 0) return { added: false, heldIds: [] };
 
-  const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
-    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+  const heldIds: number[] = [];
+  const images = (
+    await dbRead.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
+    })
+  ).filter((image) => {
+    if (!isHeldForReview(image)) return true;
+    heldIds.push(image.id);
+    return false;
   });
-  if (images.length === 0) return false;
+  if (images.length === 0) return { added: false, heldIds };
 
   // Get active filling slot for this rank
   const activeSlot = await getActiveSlot(rankType, 'filling');
@@ -1605,7 +1652,7 @@ export async function addImageToQueue({
   //   })
   //   .catch();
 
-  return true;
+  return { added: true, heldIds };
 }
 
 export async function getImagesQueue({
@@ -1708,7 +1755,7 @@ export async function getImagesQueue({
       const unratedImageIds = await filterUnratedImages(ratedKey, unseenImageIds);
       if (unratedImageIds.length === 0) continue;
 
-      const images = await dbRead.image.findMany({
+      const fetched = await dbRead.image.findMany({
         where: {
           id: { in: unratedImageIds },
           type: MediaType.image,
@@ -1717,8 +1764,30 @@ export async function getImagesQueue({
             publishedAt: { not: null, lt: new Date() },
           },
         },
-        select: { id: true, url: true, nsfwLevel: true, metadata: true },
+        select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
       });
+
+      const heldIds: number[] = [];
+      const images = fetched.filter((image) => {
+        if (!isHeldForReview(image)) return true;
+        heldIds.push(image.id);
+        return false;
+      });
+      if (heldIds.length > 0) {
+        // Removal is cleanup only: the filter above is what keeps them out.
+        let removed = false;
+        try {
+          await pool.reset({ id: heldIds });
+          removed = true;
+          // The removed members shifted the rest of the pool down.
+          poolOffsets[poolIdx] -= heldIds.length;
+        } catch (e) {
+          handleLogError(e as Error, 'new-order-held-image-pool-removal');
+        }
+        // Out of the pool, so the daily purge can no longer settle their votes. Still in it, the
+        // purge will.
+        if (removed) await voidPendingRatings(heldIds);
+      }
 
       // Don't overshoot the target — pass 2 redistribution relies on
       // per-pool quotas being respected during pass 1. We mark `seenImageIds`
@@ -1731,7 +1800,7 @@ export async function getImagesQueue({
       sliced.forEach((image) => seenImageIds.add(image.id));
 
       validatedImages.push(
-        ...sliced.map(({ nsfwLevel, ...image }) => ({
+        ...sliced.map(({ nsfwLevel, needsReview: _needsReview, ...image }) => ({
           ...image,
           nsfwLevel:
             effectiveRankType === NewOrderRankType.Acolyte || isModerator ? nsfwLevel : undefined,
@@ -1839,9 +1908,11 @@ export async function getImagesQueue({
         const sanityImageIds = selectedChecks.map((entry) => Number(entry.split(':')[0]));
         const sanityImagesData = await dbRead.image.findMany({
           where: { id: { in: sanityImageIds } },
-          select: { id: true, url: true, metadata: true },
+          select: { id: true, url: true, metadata: true, needsReview: true },
         });
-        const sanityImageMap = new Map(sanityImagesData.map((img) => [img.id, img]));
+        const sanityImageMap = new Map(
+          sanityImagesData.filter((img) => !isHeldForReview(img)).map((img) => [img.id, img])
+        );
 
         for (const entry of selectedChecks) {
           const [imageIdStr] = entry.split(':');
@@ -2032,14 +2103,15 @@ export async function getPlayerHistory({
         publishedAt: { not: null, lt: new Date() },
       },
     },
-    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+    select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
   });
 
   return {
     items: judgments
       .map(({ imageId, ...data }) => {
-        const image = images.find((i) => i.id === imageId);
-        if (!image) return null;
+        const found = images.find((i) => i.id === imageId);
+        if (!found || isHeldForReview(found)) return null;
+        const { needsReview: _needsReview, ...image } = found;
 
         return {
           ...data,

@@ -10,6 +10,7 @@ import {
 import { setSessionCookie, clearLegacyCookies, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
+import { refuseModerationAccountSession } from './moderation-account';
 import {
   observeSessionLeg,
   observeLegacyUpgrade,
@@ -53,7 +54,7 @@ export async function getHubSession(req: {
   const token = readSessionToken(req.cookies)?.value;
   if (!token) return null;
   const user = await sessionClient.getSessionUser(token);
-  if (!user) return null;
+  if (!user || refuseModerationAccountSession(user, 'session-token')) return null;
   // Impersonation (F): surface the moderator's id from the (already-verified) token so the client can show the
   // "exit impersonation" control. The claim is identity-only — no credential.
   const impersonatedBy = decodeTokenClaim(token, 'impersonatedBy');

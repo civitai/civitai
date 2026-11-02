@@ -359,11 +359,15 @@ export type MinorFlagSnapshot = {
   confirmedFrom?: 'auto' | 'manual' | 'text-scan';
   confirmedAt?: string;
   confirmedBy?: number;
+  /** Absent on snapshots written before it was kept. */
+  prevMinor?: boolean;
   prevNsfw?: boolean;
   prevSfwOnly?: boolean;
   prevGalleryLevel?: number | null;
   prevLockedProperties?: string[];
   prevMinorImageIds?: number[];
+  /** When a lift ended this flag or a moderator ruled on the rating: a later lift restores nothing from it. */
+  supersededAt?: string;
 };
 
 /** Written when the hash match applies the real-person flag, so a revert can restore what it changed. */
@@ -396,6 +400,10 @@ export type ModelMeta = Partial<{
   archivedBy: number;
   takenDownAt: string;
   takenDownBy: number;
+  /** Written by a content wipe on a model it kept and hid; see model-removed-with-owner.service. */
+  removedWithOwner: boolean;
+  statusBeforeRemoval: string;
+  versionsUnpublishedByRemoval: { id: number; status: string }[];
   bountyId: number;
   unpublishedBy: number;
   declinedReason: string;
@@ -425,6 +433,16 @@ export type ModelMeta = Partial<{
     scannedAt: string;
   };
   minorFlagSnapshot: MinorFlagSnapshot;
+  /** What an owner's minor/POI declaration replaced when it cleared a locked nsfw. */
+  ownerFlagOverride: {
+    at: string;
+    flags: ('minor' | 'poi')[];
+    prevNsfw: boolean;
+    prevSfwOnly: boolean;
+    prevLockedProperties: string[];
+    /** Absent on records written before it was kept. */
+    prevGalleryLevel?: number | null;
+  };
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
@@ -433,6 +451,8 @@ export type ModelMeta = Partial<{
   poiHashMatch: { at: string; hash: string };
   /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
   poiHashCleared: { at: string };
+  /** A system check (not a moderator) added the nsfw lock. Server-owned. */
+  systemNsfwLock: { source: string; at: string };
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {

@@ -572,8 +572,8 @@ export async function fetchDocumentsAbortable<T>(
  * Typed error thrown by withMeili() when a wrapped Meilisearch call exceeds
  * MEILI_CALL_TIMEOUT_MS.
  *
- * Hot-path callers (image feed, /api/health.searchMetrics, getImagesFromSearch
- * SDK call) catch this and return a fast 408/probe-failure instead of
+ * Hot-path callers (image feed, getImagesFromSearch SDK call) catch this and
+ * return a fast 408 instead of
  * bleeding event-loop time waiting for Traefik's 30s router timeout — which
  * is what bled api-primary pods to kubelet SIGKILL on 2026-05-29.
  */
@@ -602,16 +602,10 @@ export class MeiliCallTimeoutError extends Error {
  * both. The 2026-05-29 cascade originated in the metrics backend; the feeds
  * backend was healthy. Splitting them isolates the blast radius.
  *
- * Health-probe traffic uses its own tiny limiter so a user-traffic spike on
- * the main limiter can't starve the kubelet probe — exactly the failure mode
- * we just patched out.
- *
  * p-limit is already in use elsewhere (see src/utils/generator-import.ts).
  */
 export type MeiliBackend = 'search' | 'metricsSearch';
-type LimiterKey = MeiliBackend | 'healthProbe' | 'resourceSelect';
-
-const HEALTH_PROBE_CONCURRENCY = 2;
+type LimiterKey = MeiliBackend | 'resourceSelect';
 
 // 🔴 SHARED_STATE: the limiters and circuits live on globalThis, not in module scope.
 //
@@ -647,7 +641,6 @@ const meiliWrapperState = (globalThis.__civitaiMeiliWrapperState ??= {
   limiters: {
     search: pLimit(env.MEILI_CALL_CONCURRENCY),
     metricsSearch: pLimit(env.MEILI_CALL_CONCURRENCY),
-    healthProbe: pLimit(HEALTH_PROBE_CONCURRENCY),
     resourceSelect: pLimit(env.MEILI_RESOURCE_SELECT_CONCURRENCY),
   },
   circuits: {
@@ -663,7 +656,7 @@ const limiters = meiliWrapperState.limiters;
 // touch a hot path on every call.
 const meiliCallTimeoutsCounter = registerCounterWithLabels({
   name: 'meili_call_timeouts_total',
-  help: 'Meilisearch wrapped-call timeouts by backend (search|metricsSearch|healthProbe)',
+  help: 'Meilisearch wrapped-call timeouts by backend (search|metricsSearch|resourceSelect)',
   labelNames: ['backend'] as const,
 });
 const meiliCallActiveGauge = registerGaugeWithLabels({
@@ -712,10 +705,6 @@ const meiliCallDurationHistogram = registerHistogram({
 // failing, eliminating that accumulated wait. Each backend is tracked
 // independently so a brownout on metricsSearch doesn't shed load from
 // search.
-//
-// healthProbe is intentionally NOT under the breaker — health-probe is the
-// canonical signal we need to keep responsive even when the circuit is open.
-// (Failure mode: health-check returns false, not bypassed.)
 //
 // State machine (per backend):
 //   CLOSED → (failures >= TRIP_THRESHOLD in WINDOW_SECONDS) → OPEN
@@ -907,8 +896,7 @@ async function runWithLimiter<T>(
   const useTimeout = opts.useTimeout ?? true;
   const timeoutMs = opts.timeoutMs ?? env.MEILI_CALL_TIMEOUT_MS;
 
-  // Circuit breaker gate — only for the two user-traffic backends. healthProbe
-  // bypasses the circuit so the kubelet probe always issues a real request.
+  // Circuit breaker gate — only for the two shared user-traffic backends.
   let isTrial = false;
   if (key === 'search' || key === 'metricsSearch') {
     const decision = admitCall(key);
@@ -995,21 +983,11 @@ export function withMeili<T>(backend: MeiliBackend, fn: () => Promise<T>): Promi
 }
 
 /**
- * Health-probe variant of withMeili(). Uses a separate tiny limiter so a
- * user-traffic saturation on the main `metricsSearch` slot can't starve the
- * kubelet probe — that's exactly how /api/health flipped to slow-fail on
- * 2026-05-29.
- */
-export function withMeiliHealthProbe<T>(fn: () => Promise<T>): Promise<T> {
-  return runWithLimiter('healthProbe', 'healthProbe', fn);
-}
-
-/**
  * Resource-select (generation picker) variant of withMeili().
  *
  * Runs on a dedicated limiter and — because the circuit gate in runWithLimiter
  * only admits the two shared user-traffic backends — bypasses the `search`
- * circuit breaker entirely, the same way withMeiliHealthProbe() does.
+ * circuit breaker entirely.
  *
  * WHY the picker is exempt: shedding it is far more costly than shedding its
  * co-tenants. The image feed and the polled orchestrator routes recover on

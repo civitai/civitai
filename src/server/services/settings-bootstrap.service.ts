@@ -83,6 +83,7 @@ export async function resolveSettingsBootstrapSeeds(
   // bootstrap, which `_app` reads as "degraded" — so one blip would drop the
   // session seed and the browsing-settings addons too.
   const domainColor = getRequestDomainColor(req);
+  const announcementsDomainColor = getRequestDomainColor({ headers: { host: viewerHost(req) } });
   const [
     settings,
     tosMeta,
@@ -113,11 +114,13 @@ export async function resolveSettingsBootstrapSeeds(
     // Seeds the ambient `announcement.getAnnouncements` query (fires on every
     // bootstrap, anon + authed). Match the resolver byte-for-byte: its
     // `applyRequestDomainColor` middleware overrides the client input with
-    // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
-    // value here. On failure fall back to undefined and let the client self-heal
-    // via a live fetch.
+    // `getRequestDomainColor(req)` (NO 'blue' fallback) for the request the BROWSER
+    // sends, so we resolve the same raw value from the viewer's host — not the
+    // internal bootstrap host, which maps to no domain and would seed the
+    // all-domains list under the client's per-domain query key (`viewerHost`). On
+    // failure fall back to undefined and let the client self-heal via a live fetch.
     settle(
-      getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }),
+      getCurrentAnnouncements({ domain: announcementsDomainColor, userId: session?.user?.id }),
       undefined,
       'getCurrentAnnouncements'
     ),
@@ -184,9 +187,14 @@ const TIMED_OUT = Symbol('settings bootstrap timed out');
  * (measured on Node 24.19 and 24.21: a forwarded `Host: civitai.com` arrived as the URL's
  * `host:port`). So the route never saw the page's public host, and everything it derives from
  * the host — the domain colour behind the ToS fields and the domain-targeted announcements —
- * resolved for the internal host. Rendering with the page's host would change both on first
- * paint. Derived exactly as `_app` derived that URL; whether a render SHOULD see the public
- * host is a separate product question, not part of moving this call in-process.
+ * resolved for the internal host. Derived exactly as `_app` derived that URL; whether the ToS
+ * fields SHOULD see the public host is a separate product question.
+ *
+ * The announcements seed does NOT read this host: it resolves its domain from the viewer's
+ * (`viewerHost`). It seeds a query the browser keeps fresh for minutes and then refetches at
+ * the public host, so a seed for any other domain is a different answer under the same query
+ * key — the banner showed the all-domains list until that refetch, and the two lists were
+ * cached under different keys that went stale independently.
  *
  * No base URL rejects, as the fetch to `undefined/...` did: the render degrades.
  */
@@ -201,6 +209,19 @@ function bootstrapHost(): string {
 
 type BootstrapSourceRequest = IncomingMessage & { cookies?: Partial<Record<string, string>> };
 
+/** Where `settingsBootstrapRequest` keeps the caller's own `Host` once it has replaced the header. */
+const VIEWER_HOST = Symbol('settings bootstrap viewer host');
+
+/**
+ * The host the viewer's browser addressed. For a request built by `settingsBootstrapRequest` that
+ * is the caller's original `Host`; for the HTTP route (a real request, which the browser sent
+ * itself) it is the request's own.
+ */
+function viewerHost(req: AuthArgs['req']): string | undefined {
+  const built = (req as unknown as { [VIEWER_HOST]?: string | undefined })[VIEWER_HOST];
+  return VIEWER_HOST in (req as object) ? built : req.headers?.host;
+}
+
 /**
  * The request the settings bootstrap reads, built from a page's (or page-data endpoint's) own
  * request. ONE builder for every in-process caller, so they cannot drift:
@@ -212,6 +233,7 @@ type BootstrapSourceRequest = IncomingMessage & { cookies?: Partial<Record<strin
  *   - Host: the internal bootstrap host by default (`bootstrapHost`), which is what the seeds were
  *     built against. `host` overrides it for a session lookup whose cookie writes reach the browser:
  *     the rolled cookie's Domain is derived from it, so it must be the viewer's own host.
+ *     The caller's own `Host` is kept aside either way, for the announcements seed (`viewerHost`).
  *   - Its own `req.context`, unless `context` is passed: whatever the session lookup records (the
  *     credential) lands there, never on the caller's request by accident.
  */
@@ -224,6 +246,7 @@ export function settingsBootstrapRequest(
     headers: { ...request.headers, host: host ?? bootstrapHost() },
     cookies: request.cookies,
     url: SETTINGS_BOOTSTRAP_PATH,
+    [VIEWER_HOST]: request.headers?.host,
     ...(context ? { context } : {}),
   } as unknown as AuthArgs['req'];
 }
@@ -235,7 +258,8 @@ export function settingsBootstrapRequest(
  * base URL, forwarding the page request's headers, would have answered, because that is what
  * callers were built against:
  *
- *   - `Host` is the internal base URL's, not the page's — `bootstrapHost` says why.
+ *   - `Host` is the internal base URL's, not the page's — `bootstrapHost` says why, and why the
+ *     announcements seed is the one member that resolves the page's host instead.
  *   - The session is resolved from the page request's HEADERS AND COOKIES ONLY, never its
  *     URL. `getServerAuthSession` treats a `?token=` query parameter as an API credential,
  *     and a page URL may carry an unrelated one.

@@ -1,4 +1,4 @@
-import { Badge } from '@mantine/core';
+import { Badge, Tooltip } from '@mantine/core';
 import type { MantineSize } from '@mantine/core';
 import { queueCountBadgeShape } from '~/components/Placement/queue-count-badge.shape';
 
@@ -23,6 +23,7 @@ export function QueueCountBadge({
   color = 'yellow',
   size = 'sm',
   ml,
+  tooltip,
 }: {
   count: number;
   /** There may be more than `count` — renders a `+`. */
@@ -32,11 +33,13 @@ export function QueueCountBadge({
   color?: string;
   size?: MantineSize;
   ml?: number;
+  /** Hover text saying what is counted; wraps at a fixed width. */
+  tooltip?: string;
 }) {
   const shape = queueCountBadgeShape(count, { truncated, max });
   if (!shape) return null;
 
-  return (
+  const badge = (
     <Badge
       size={size}
       color={color}
@@ -50,5 +53,11 @@ export function QueueCountBadge({
     >
       {shape.label}
     </Badge>
+  );
+  if (!tooltip) return badge;
+  return (
+    <Tooltip label={tooltip} multiline w={220} withArrow>
+      {badge}
+    </Tooltip>
   );
 }

@@ -244,6 +244,18 @@
               {t.counterpartyLabel ?? `account ${t.counterpartyId}`}
             </span>
           {/if}
+          {#if t.placement}
+            <span class="text-xs text-dark-2">
+              {t.placement.surface} by
+              <a href="?q={t.placement.placerId}" class={LINK_CLASS}>
+                {t.placement.placerName ?? `account ${t.placement.placerId}`}
+              </a>
+              on
+              <a href="?q={t.placement.ownerId}" class={LINK_CLASS}>
+                {t.placement.ownerName ?? `account ${t.placement.ownerId}`}
+              </a>
+            </span>
+          {/if}
           <span class="text-xs text-dark-2">{dateTime(t.date)}</span>
           {#if t.description}
             <span class="truncate text-xs text-dark-2" title={t.description}>{t.description}</span>

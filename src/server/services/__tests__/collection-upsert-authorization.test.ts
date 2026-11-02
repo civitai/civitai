@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -37,6 +39,10 @@ const COLLECTION_ID = 10;
 const OWNER_ID = 999;
 const MANAGER_ID = 777;
 
+// The transaction's own client, apart from `dbWrite`, so a read made outside it is not answered.
+const txImageFindUnique = vi.fn();
+const txQueryRaw = vi.fn();
+
 function arrange({
   actorId,
   currentWrite = 'Private',
@@ -65,9 +71,13 @@ function arrange({
     createdAt: new Date('2026-01-01'),
     image: null,
   });
+  txImageFindUnique.mockReset().mockResolvedValue(null);
+  txQueryRaw.mockReset().mockResolvedValue([]);
   mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
     fn({
       collection: { update: mockDbWrite.collection.update },
+      image: { findUnique: txImageFindUnique },
+      $queryRaw: txQueryRaw,
       tagsOnCollection: { deleteMany: vi.fn(), createMany: vi.fn() },
     })
   );
@@ -111,6 +121,152 @@ describe('upsertCollection authorization', () => {
     expect(updateArgs.data.read).toBeUndefined();
     expect(updateArgs.data.write).toBeUndefined();
     expect(updateArgs.data.mode).toBeUndefined();
+  });
+
+  describe('the cover image', () => {
+    const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e34';
+    const OTHER_ID = 555;
+    const saveCover = (
+      cover: { image?: Record<string, unknown>; imageId?: number },
+      actor: { userId?: number; isModerator?: boolean } = {}
+    ) =>
+      upsertCollection({
+        input: {
+          id: COLLECTION_ID,
+          name: 'Mine',
+          userId: OWNER_ID,
+          isMember: true,
+          ...cover,
+          ...actor,
+        },
+      } as never);
+    // Answers from these rows and the bound values, so a wrong key set or userId is seen.
+    const withRows = (
+      rows: { id: number; url: string; userId: number }[],
+      issuedTo: number = OWNER_ID
+    ) => {
+      redisMock.sysRedis.mGet.mockResolvedValue([String(issuedTo)] as never);
+      txQueryRaw.mockImplementation(imageUrlOwnersFake(rows));
+      txImageFindUnique.mockImplementation(
+        (async ({ where }: { where: { id: number } }) =>
+          rows.find((r) => r.id === where.id) ?? null) as never
+      );
+    };
+    const imageWrite = () => mockDbWrite.collection.update.mock.calls[0][0].data.image;
+    it('is refused, before writing, when its url is owned by another user', async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+
+      await expect(saveCover({ image: { url: KEY, type: 'image' } })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it('is refused, before writing, when its key was issued to another user', async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([], OTHER_ID);
+
+      await expect(saveCover({ image: { url: KEY, type: 'image' } })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it('reads its key issue record before opening the transaction', async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([]);
+
+      await saveCover({ image: { url: KEY, type: 'image' } });
+
+      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+      expect(redisMock.sysRedis.mGet.mock.invocationCallOrder[0]).toBeLessThan(
+        mockDbWrite.$transaction.mock.invocationCallOrder[0]
+      );
+      expect(imageWrite()).toEqual({
+        create: expect.objectContaining({ url: KEY, userId: OWNER_ID }),
+      });
+    });
+
+    it('is created from a url no row has, or one the caller owns', async () => {
+      for (const rows of [[], [{ id: 1, url: KEY, userId: OWNER_ID }]]) {
+        vi.clearAllMocks();
+        arrange({ actorId: OWNER_ID });
+        withRows(rows);
+
+        await saveCover({ image: { url: KEY, type: 'image' } });
+
+        expect(imageWrite()).toEqual({
+          create: expect.objectContaining({ url: KEY, userId: OWNER_ID }),
+        });
+      }
+    });
+
+    it("is refused when an id that names no row carries another user's url", async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+
+      await expect(
+        saveCover({ image: { id: 404, url: KEY, type: 'image' } })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it('is refused when an id that names no row carries a key issued to another user', async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([], OTHER_ID);
+
+      await expect(
+        saveCover({ image: { id: 404, url: KEY, type: 'image' } })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it("connects the caller's own image by id, without checking the url it carries", async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([
+        { id: 55, url: 'own-key', userId: OWNER_ID },
+        { id: 1, url: KEY, userId: OTHER_ID },
+      ]);
+
+      await saveCover({ image: { id: 55, url: KEY, type: 'image' } });
+
+      expect(imageWrite()).toEqual({ connect: { id: 55 } });
+    });
+
+    it("refuses to connect another user's image by id", async () => {
+      for (const cover of [{ imageId: 1 }, { image: { id: 1, url: KEY, type: 'image' } }]) {
+        vi.clearAllMocks();
+        arrange({ actorId: OWNER_ID });
+        withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+
+        await expect(saveCover(cover)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+      }
+    });
+
+    it("keeps another user's image that is already the cover", async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+      mockDbWrite.collection.findUnique.mockResolvedValue({
+        id: COLLECTION_ID,
+        read: 'Public',
+        write: 'Private',
+        mode: null,
+        image: { id: 1 },
+      } as never);
+
+      await saveCover({ image: { id: 1, url: KEY, type: 'image' } });
+      expect(imageWrite()).toEqual({ connect: { id: 1 } });
+    });
+
+    it("lets a moderator connect another user's image", async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+      await saveCover({ imageId: 1 }, { isModerator: true });
+      expect(imageWrite()).toEqual({ connect: { id: 1 } });
+    });
   });
 
   it('lets the owner change write when they are a member', async () => {
@@ -632,25 +788,30 @@ describe('upsertCollection cover image', () => {
 
   it('points the cover at an existing image by id', async () => {
     arrange({ actorId: MANAGER_ID });
+    txImageFindUnique.mockResolvedValueOnce({
+      id: EXISTING_IMAGE,
+      userId: MANAGER_ID,
+    } as never);
 
     await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
 
     const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
-    expect(image.connectOrCreate.where).toEqual({ id: EXISTING_IMAGE });
+    expect(image).toEqual({ connect: { id: EXISTING_IMAGE } });
   });
 
   it('creates a new cover from client columns only', async () => {
     arrange({ actorId: MANAGER_ID });
+    redisMock.sysRedis.mGet.mockResolvedValue([String(MANAGER_ID)] as never);
 
     await save({ url: COVER_KEY, type: 'image', width: 10, postId: 9_001, index: 2 });
 
     const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
-    expect(image.connectOrCreate.create).toMatchObject({
+    expect(image.create).toMatchObject({
       url: COVER_KEY,
       width: 10,
       userId: MANAGER_ID,
     });
-    expect(image.connectOrCreate.create).not.toHaveProperty('postId');
-    expect(image.connectOrCreate.create).not.toHaveProperty('index');
+    expect(image.create).not.toHaveProperty('postId');
+    expect(image.create).not.toHaveProperty('index');
   });
 });

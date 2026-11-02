@@ -10,7 +10,11 @@ const classifyPromptExternally = vi.hoisted(() =>
     externalError: null,
   }))
 );
-vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ classifyPromptExternally }));
+const auditPromptServer = vi.hoisted(() => vi.fn(async (_options: unknown) => undefined));
+vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
+  classifyPromptExternally,
+  auditPromptServer,
+}));
 const gate = vi.hoisted(() => ({ allow: vi.fn() }));
 vi.mock('~/server/utils/training-studio-access', () => ({ allowTrainingStudio: gate.allow }));
 // The auth wrapper is the shared one; here it only supplies the caller. Errors go through the real
@@ -50,6 +54,7 @@ async function call(body: unknown) {
 describe('POST /api/training-studio/check-text', () => {
   beforeEach(() => {
     classifyPromptExternally.mockClear();
+    auditPromptServer.mockReset().mockResolvedValue(undefined);
     gate.allow.mockReset().mockResolvedValue(true);
   });
 
@@ -86,10 +91,11 @@ describe('POST /api/training-studio/check-text', () => {
   it.each([
     ['the wrong shape', { triggerWord: 1 }],
     ['an oversized trigger word', { triggerWord: 'a'.repeat(1001) }],
+    ['an edit prompt posing as a trigger word', { triggerWord: 'ok', editPrompt: 'unchecked' }],
   ])('answers %s as invalid, without running the rule', async (_l, body) => {
     const res = await call(body);
     expect(res.statusCode).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid trigger word.' });
+    expect(res.body).toEqual({ error: 'Invalid text to check.' });
     expect(classifyPromptExternally).not.toHaveBeenCalled();
   });
 
@@ -98,5 +104,26 @@ describe('POST /api/training-studio/check-text', () => {
     const res = await call({ triggerWord: 'mystyle' });
     expect(res.statusCode).toBe(500);
     expect(JSON.stringify(res.body)).not.toContain('boom');
+  });
+
+  it("runs an edit prompt through the generator's prompt check, not the trigger word rule", async () => {
+    const image = 'https://orch.example/v2/consumer/blobs/start.png';
+    const res = await call({ editPrompt: 'turn her around', inputImages: [image] });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(auditPromptServer).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'turn her around', userId: 7, inputImages: [image] })
+    );
+    expect(classifyPromptExternally).not.toHaveBeenCalled();
+  });
+
+  it('passes a refused edit prompt on as a 400 with its reason', async () => {
+    const { TRPCError } = await import('@trpc/server');
+    auditPromptServer.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Your prompt was flagged.' })
+    );
+    const res = await call({ editPrompt: 'something bad' });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ message: 'Your prompt was flagged.' });
   });
 });

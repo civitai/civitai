@@ -29,9 +29,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   canAccess.mockImplementation(() => true);
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  getPromptScans.mockResolvedValue([
-    { id: 'h', createdAt: 't', prompt: 'p', negativePrompt: null, scores: [] },
-  ]);
+  getPromptScans.mockResolvedValue({
+    items: [{ id: 'h', createdAt: 't', prompt: 'p', negativePrompt: null, scores: [] }],
+    truncated: true,
+  });
 });
 
 describe('/api/user-prompt-scans', () => {
@@ -54,7 +55,13 @@ describe('/api/user-prompt-scans', () => {
 
   it('records who read whose prompts, over what window, and how many rows', async () => {
     const res = await call('?days=90&limit=250');
-    expect(await res.json()).toMatchObject({ items: [{ id: 'h' }], days: 90, limit: 250 });
+    // The panel's "capped" label reads `truncated`; one row under a limit of 250 is still capped.
+    expect(await res.json()).toMatchObject({
+      items: [{ id: 'h' }],
+      truncated: true,
+      days: 90,
+      limit: 250,
+    });
     expect(getPromptScans).toHaveBeenCalledWith(
       5,
       expect.objectContaining({ days: 90, limit: 250 })

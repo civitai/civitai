@@ -34,6 +34,7 @@ export function useUserMenuRegistry({ opened }: { opened: boolean }): UserMenuRe
     color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
     label: 'Prizes',
     badge: unclaimedPrizes,
+    badgeTooltip: "Prizes you haven't claimed yet",
   };
   // The site pages, as the nav bar links them; `challenges` is "Your Challenges".
   registry['browse-challenges'] = {

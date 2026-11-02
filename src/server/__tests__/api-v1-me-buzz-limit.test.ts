@@ -118,7 +118,7 @@ beforeEach(() => {
     where: { id: number };
   }) => {
     const row = rows.find((r) => r.id === where.id);
-    return row ? { buzzLimit: row.buzzLimit } : null;
+    return row ? { buzzLimit: row.buzzLimit, expiresAt: row.expiresAt } : null;
   }) as never);
   dbMock.dbWrite.apiKey.update.mockImplementation((async ({
     where,
@@ -155,6 +155,18 @@ describe('/api/v1/me spend limit', () => {
   it('refuses rather than report "no cap" for a key deleted mid-request', async () => {
     const session = await getSessionFromBearerToken('personal');
     rows = [];
+    const { status, body } = await me(session);
+    expect(status).toBe(401);
+    expect(body).not.toHaveProperty('buzzLimit');
+  });
+
+  it('refuses a key expired in place whose bearer row cache could not be evicted', async () => {
+    await getSessionFromBearerToken('personal');
+    // A ban expires the row rather than deleting it; here the eviction that goes with it failed.
+    rows[0].expiresAt = new Date(Date.now() - 1);
+    const session = await getSessionFromBearerToken('personal');
+    // Control: the bearer path itself is still serving the cached, unexpired row.
+    expect(session?.apiKeyId).toBe(71);
     const { status, body } = await me(session);
     expect(status).toBe(401);
     expect(body).not.toHaveProperty('buzzLimit');

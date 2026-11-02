@@ -2,6 +2,7 @@ import type { BoxProps } from '@mantine/core';
 import { Box } from '@mantine/core';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
+import { getColumnCount } from '~/components/MasonryColumns/masonry.utils';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useDebouncer } from '~/utils/debouncer';
 
@@ -59,9 +60,9 @@ export function MasonryProvider({
   }, []);
 
   const [columnCount, combinedWidth] = useMemo(() => {
-    if (width === 0) return [0, 0];
     const gap = 16;
-    const count = Math.min(Math.floor((width + gap) / (columnWidth + gap)), maxColumnCount) || 1;
+    const count = getColumnCount(width, columnWidth, maxColumnCount, gap);
+    if (count === 0) return [0, 0];
     const combinedWidth = count * columnWidth + (count - 1) * gap;
     return [count, combinedWidth];
   }, [width, columnWidth, maxColumnCount]);

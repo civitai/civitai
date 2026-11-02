@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { ModelStatus, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -24,6 +23,7 @@ import {
   getCommentsViaKysely,
   getPinnedComments,
   getPinnedCommentsViaKysely,
+  isLegacyCommentHidden,
   toggleHideComment,
   togglePinComment,
   updateCommentById,
@@ -264,7 +264,7 @@ export const deleteUserCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const deleted = await deleteCommentById({ ...input });
+    const deleted = await deleteCommentById({ ...input, byAuthor: !ctx.user.isModerator });
     // if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     await ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id });
@@ -406,6 +406,7 @@ export const setTosViolationHandler = async ({
     const { id } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
+    const wasHidden = await isLegacyCommentHidden(id);
     const updatedComment = await updateCommentById({ id, data: { tosViolation: true } });
     if (!updatedComment) throw throwNotFoundError(`No comment with id ${id}`);
 
@@ -423,11 +424,12 @@ export const setTosViolationHandler = async ({
       )
     );
 
+    if (wasHidden) return updatedComment;
     await createNotification({
       userId: updatedComment.user.id,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:comment:${uuid()}`,
+      key: `tos-violation:comment:${crypto.randomUUID()}`,
       details: { modelName: updatedComment.model.name, entity: 'comment' },
     }).catch((error) => {
       // Print out any errors

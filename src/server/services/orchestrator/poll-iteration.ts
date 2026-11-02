@@ -5,11 +5,14 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
+import type { Tracker } from '~/server/clickhouse/client';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { sanitizeStepErrors } from './provider-errors';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -43,7 +46,8 @@ async function downloadAndUploadImage(
   userId: number,
   width: number,
   height: number,
-  prompt?: string
+  prompt?: string,
+  tracker?: Tracker
 ): Promise<{ s3Key: string; imageId: number } | null> {
   try {
     const imageResponse = await fetch(imageUrl);
@@ -61,6 +65,7 @@ async function downloadAndUploadImage(
       })
     );
     registerMediaLocation(s3Key, backend, imageBuffer.length);
+    await recordMintedUploadKey(s3Key, userId, tracker);
 
     const image = await createImage({
       url: s3Key,
@@ -165,7 +170,14 @@ export async function pollIterationWorkflow({
 
     const results = await Promise.all(
       outputImages.map(async (url) => {
-        const uploaded = await downloadAndUploadImage(url, userId, imgWidth, imgHeight, prompt);
+        const uploaded = await downloadAndUploadImage(
+          url,
+          userId,
+          imgWidth,
+          imgHeight,
+          prompt,
+          ctx.track
+        );
         if (!uploaded) return null;
         return {
           ...uploaded,
@@ -243,7 +255,7 @@ function blockedReasonToMessage(blockedReason: string | undefined): string | und
     case 'NSFWLevel':
       return 'One or more resources used here cannot generate mature content. Try a different model or a tamer prompt.';
     case 'NSFWLevelSourceImageRestricted':
-      return 'Source image lacks valid metadata, so generation is restricted to PG / PG-13. Use a clean source image to lift the restriction.';
+      return UNMARKED_SOURCE_IMAGE_MESSAGE;
     default:
       return `Generation failed: ${blockedReason}.`;
   }

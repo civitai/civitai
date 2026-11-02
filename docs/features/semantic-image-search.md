@@ -50,8 +50,11 @@ unscanned upload is never embedded.
 
 Inputs are built per media type (`buildEmbedInput`):
 
-- **image**: the image CDN's 512px-wide variant (the model's profile is 512x512 pixels), never
-  the original.
+- **image**: the image CDN's `anim=false,width=800,optimized=true` variant, an 800px-wide WebP.
+  The image cards request it for 2x screens, so the image cacher usually has it stored and
+  redirects to it without converting the original; it is the smallest rung of its width ladder
+  at or above the model's 512x512 profile that the site requests. The cacher falls back to the
+  original when a conversion times out.
 - **video**: the original clip, at most 60 s, 100 MiB and 4096 px per side, at most 8 per
   batch, one vector per clip. Off until `VECTOR_EMBED_VIDEO=true`. Until then videos are
   counted as skipped.
@@ -70,9 +73,11 @@ locally until the orchestration client ships it.
   value refuses to start), and never more than the account's in-flight
   quota the orchestrator reports (`RateLimit-Policy` `inflight-multimodalEmbedding` `q`). Each
   workflow is sized to the quota it says is left (`RateLimit` `r`). Every call on one process
-  shares the budget, so a backfill's concurrent pages draw from one. The consumer and a backfill
+  shares the budget, so a backfill's concurrent workflows draw from one. The consumer and a backfill
   or reconcile are separate processes; the orchestrator's quota is per account and bounds them
-  together. The first response's quota and buzz window are logged at info level
+  together. `VECTOR_EMBED_HONOR_QUOTA=false` ignores `q` and `r` (the cap is then
+  `VECTOR_EMBED_MAX_IN_FLIGHT` and any runtime limit); 429s and `Retry-After` still hold. The
+  first response's quota, buzz window and whether the quota is honoured are logged at info level
   (`vector-sync: orchestrator rate limits`).
 - **429s:** a 429 (the in-flight quota or the buzz window) is retried after exactly its
   `Retry-After` (at least 250 ms, at most an hour), and every submit on that process waits it out too. 429s
@@ -205,22 +210,37 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
 `node dist/vector-sync/backfill.js run --watermark <id> --confirm` embeds eligible images with
 `id <= watermark`, newest first. Live sync covers everything above the watermark.
 
-- Pages are id windows (`--span`, default 5000), not `LIMIT` queries. A page's cost is bounded by
-  its span however sparse eligibility is, and each log line reports rows `scanned`.
-  `--pages` (default 2) pages run at once.
+- It is a pipeline, so one slow workflow holds back only the cursor. A reader pages id windows
+  (`--span`, default 5000), not `LIMIT` queries, so a page's cost is bounded by its span however
+  sparse eligibility is; it waits while 2,000 images are buffered, or while it is 500,000 ids
+  past the cursor. A batch leaves the buffer only when the in-flight budget and the step rate
+  have room for it now, sized to what the account's in-flight quota has left, so nothing queues
+  inside the embedder: throughput follows
+  `set-inflight` and `set-steps-per-second`, and a pause or a lowered limit applies to the next
+  batch. Each workflow's vectors are written as it returns and its rows re-read at once (so a
+  block that landed meanwhile is deleted right away). `--pages` is ignored, with a warning.
 - The cursor is kept in Redis (`vector-sync:{backfill:<collection>:<name>}:cursor`), so it
-  survives restarts,
-  deploys and reschedules. It moves past a page only once every page above it is written.
-  Within a page, each workflow's vectors are written as it returns and its rows re-read at once
-  (so a block that landed meanwhile is deleted right away), and a run killed mid-page loses only
-  its workflows still in flight. Points that already exist are not re-embedded, so
-  resuming over a page costs payload writes only. `--cursor-file` keeps it in a local file
-  instead, for runs without Redis.
+  survives restarts, deploys and reschedules. It moves past a page only once every image in it,
+  and in every page above it, is written or counted failed, so a run killed at any point resumes
+  with no gap and loses only its workflows in flight. Points that already exist are not
+  re-embedded, so resuming over a page costs payload writes only. `--cursor-file` keeps it in a
+  local file instead, for runs without Redis.
+- A workflow not back 45 minutes after it was handed to the embedder is counted `failed` and the
+  cursor moves past its images; it keeps its jobs, and its vectors are still written if it
+  returns. Its images get no point, so the reconciler over that range finds them `missing` and
+  embeds them. Nothing retries them automatically: run the reconciler after a run that logged
+  `workflow past its deadline`.
+- A batch that fails as a whole (embedding retries exhausted, a Qdrant write) is re-read like a
+  page, so an image stored before the failure is re-checked rather than re-embedded, and the rest
+  go back to the front of the buffer, up to 3 retries 5, 10 and 15 s apart; then the run stops. A model
+  mismatch stops it at once.
 - `--dry-run` writes nothing, Qdrant or cursor, and reports what it would embed. `--limit N`
-  stops after about N eligible images (it can overshoot by up to `--pages × --span` ids).
-- `pause` / `resume` set a flag the run checks before each page. They, `status` and `reset`
-  address the run for `VECTOR_COLLECTION` in their own env, and log it. `status` prints the cursor.
-  `reset` clears it and the limits below. SIGTERM finishes in-flight pages and stops.
+  stops reading after about N eligible images (it can overshoot by up to `--span` ids).
+- `pause` / `resume` set a flag the run checks before each batch and at least every 5 s:
+  paused, it reads and submits nothing, and workflows in flight finish and are written. They,
+  `status` and `reset` address the run for `VECTOR_COLLECTION` in their own env, and log it.
+  `status` prints the cursor. `reset` clears it and the limits below. SIGTERM submits nothing
+  more, waits for the workflows in flight and stops.
 - `set-inflight <n|clear>` and `set-steps-per-second <n|clear>` change a running backfill's
   in-flight jobs and step rate within 30 s, with no restart. They only lower:
   `VECTOR_EMBED_MAX_IN_FLIGHT` and `VECTOR_EMBED_MAX_STEPS_PER_SECOND` stay the ceiling.
@@ -228,14 +248,16 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
 - A run holds a lease (`...:lease` beside the cursor, renewed every 30 s, lapsing 2 minutes
   after the run dies), so a second copy of the same backfill refuses to start instead of
   paying for every page twice. A run that loses its lease stops and no longer writes the cursor.
-- It re-checks the connector every 5 minutes; while it does not stream Image, no new page
-  starts.
-- `--max-rate <writes/s>` paces pages so Qdrant writes (points embedded, rewritten or deleted)
-  average at most that rate; `--window HH:MM-HH:MM` (UTC, may wrap midnight) starts new pages
-  only inside the window; pages already running finish after it closes. The rate is an
-  average: the first `--pages` pages (and the first after the window opens) start together.
-  The disk Qdrant writes to may be shared, so set both for a full run.
-  The throughput log reports `writesPerSec`, `maxRate` and `window`.
+- It re-checks the connector every 5 minutes; while it does not stream Image, it reads and
+  submits nothing.
+- `--max-rate <writes/s>` paces Qdrant writes (points embedded, rewritten or deleted) to that
+  rate on average: a workflow's writes each wait for the next slot, and a page's payload
+  rewrites go out at once and hold the next page read back until the rate has caught up;
+  `--window HH:MM-HH:MM` (UTC, may wrap midnight) reads and submits only inside the window; workflows in flight finish after it closes. The
+  disk Qdrant writes to may be shared, so set both for a full run.
+- Every 30 s it logs `vector-backfill: progress` with `submittedPerSec`, `inFlight`,
+  `writtenPerSec`, `cursor`, `readerDistance` (ids between the reader and the cursor),
+  `oldestOutstandingSec`, `queued`, `maxRate` and `window`.
 - Writing needs `--confirm`, `VECTOR_SYNC_EMBED_ENABLED=true` and `CDC_IMAGE_ENABLED=true`,
   so that live sync is already removing blocked images. Kafka Connect must also confirm the
   connector streams Image and is running. `--without-image-cdc` lifts the Image conditions for

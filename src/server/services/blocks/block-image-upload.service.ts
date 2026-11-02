@@ -76,6 +76,7 @@ export async function persistBlockUploadImage(opts: {
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
+    clientUrl: true,
     name: input.name ?? undefined,
     type: 'image',
     meta,

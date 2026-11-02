@@ -598,7 +598,11 @@ export const placementRouter = router({
 
   getStorylineSpace: protectedProcedure.input(storylineIdSchema).query(({ input, ctx }) => {
     assertStorylinesEnabled(ctx);
-    return getStorylineSpace({ storylineId: input.storylineId, userId: ctx.user.id });
+    return getStorylineSpace({
+      storylineId: input.storylineId,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
   }),
 
   setStorylineSpace: protectedProcedure

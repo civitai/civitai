@@ -2,7 +2,6 @@ import { test as setup } from '@playwright/test';
 import fs from 'fs';
 import { EncryptJWT } from 'jose';
 import { hkdfSync } from 'node:crypto';
-import { v4 as uuid } from 'uuid';
 import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fixtures';
 
 /**
@@ -67,7 +66,7 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
     muted: false,
   };
 
-  const token = { user, sub: String(u.id), id: uuid(), signedAt: Date.now() };
+  const token = { user, sub: String(u.id), id: crypto.randomUUID(), signedAt: Date.now() };
   const value = await new EncryptJWT(token)
     .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
     .setIssuedAt()

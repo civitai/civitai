@@ -48,14 +48,15 @@ export const getLinkHref = (href: string | undefined) => {
   return civitaiChatLinkPath(href) ?? undefined;
 };
 
-export const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undefined> = ({
+export const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement> = ({
   attributes,
   content,
 }) => {
   const { href, ...props }: { href?: string } = attributes;
 
   const modHref = getLinkHref(href);
-  if (!modHref) return;
+  // linkify-react reads `.props` off whatever this returns, so plain text still needs an element.
+  if (!modHref) return <>{content}</>;
 
   if (isExternalChatLink(modHref)) {
     // TODO: In a perfect world, we wouldn't be relying on Mantine here.
@@ -95,7 +96,8 @@ export const validateLink = {
 
 export const linkifyOptions: Opts = {
   render: renderLink,
-  validate: validateLink,
+  // A type missing from an object `validate` passes, so anything but a url (an email) is text.
+  validate: (value, type) => type === 'url' && validateLink.url(value),
 };
 
 export const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);

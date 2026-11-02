@@ -34,7 +34,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NewOrderImageRatings } from '~/components/Games/NewOrder/NewOrderImageRatings';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { RankUp } from '~/components/Games/LevelProgress/RankUp';
-import { DEFAULT_EDGE_IMAGE_WIDTH, newOrderConfig } from '~/server/common/constants';
+import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { useIsTabActive } from '~/hooks/useIsTabActive';
@@ -52,6 +52,8 @@ export const getServerSideProps = createServerSideProps({
       };
   },
 });
+
+const KNIGHTS_IMAGE_WIDTH = 1200;
 
 export default Page(
   function KnightsNewOrderPage() {
@@ -214,12 +216,12 @@ export default Page(
                   ) : isCooldownLocked ? (
                     <NewOrderCooldownLockout />
                   ) : currentImage ? (
-                    <div className="relative flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
+                    <div className="relative flex size-full flex-col items-center justify-center gap-4 overflow-hidden">
                       <ImageGuard2 image={currentImage} explain={false}>
                         {() => (
                           <div
                             className={clsx(
-                              'relative my-auto flex max-h-[85%] max-w-full items-center justify-center @md:my-0'
+                              'relative my-auto flex max-h-[85%] min-h-0 max-w-full items-center justify-center @md:my-0'
                             )}
                           >
                             {currentUser?.isModerator && (
@@ -236,7 +238,7 @@ export default Page(
                               onLoad={() => setImageStatus('idle')}
                               onError={() => setImageStatus('error')}
                               contain
-                              width={DEFAULT_EDGE_IMAGE_WIDTH}
+                              width={KNIGHTS_IMAGE_WIDTH}
                             />
                             {currentUser?.isModerator && (
                               <LegacyActionIcon
@@ -266,23 +268,25 @@ export default Page(
                       >
                         PG
                       </Card>
-                      <NewOrderImageRater
-                        muted={muted}
-                        disabled={imageStatus === 'loading' || imageStatus === 'error'}
-                        onVolumeClick={() => setMuted((prev) => !prev)}
-                        onSkipClick={handleSkipRating}
-                        onRatingClick={({ rating, damnedReason }) =>
-                          damnedReason
-                            ? handleAddDamnedReason({ reason: damnedReason })
-                            : handleAddRating({ rating })
-                        }
-                      />
-                      {currentUser?.isModerator && (
-                        <NewOrderImageRatings
-                          imageId={currentImage.id}
-                          imageNsfwLevel={currentImage.nsfwLevel}
+                      <div className="flex w-full max-w-sm shrink-0 flex-col items-center justify-center gap-4">
+                        <NewOrderImageRater
+                          muted={muted}
+                          disabled={imageStatus === 'loading' || imageStatus === 'error'}
+                          onVolumeClick={() => setMuted((prev) => !prev)}
+                          onSkipClick={handleSkipRating}
+                          onRatingClick={({ rating, damnedReason }) =>
+                            damnedReason
+                              ? handleAddDamnedReason({ reason: damnedReason })
+                              : handleAddRating({ rating })
+                          }
                         />
-                      )}
+                        {currentUser?.isModerator && (
+                          <NewOrderImageRatings
+                            imageId={currentImage.id}
+                            imageNsfwLevel={currentImage.nsfwLevel}
+                          />
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="flex max-w-sm flex-col items-center justify-center gap-4">

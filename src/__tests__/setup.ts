@@ -201,6 +201,7 @@ const promMetricStub = () => {
     zero: vi.fn(),
     startTimer: vi.fn(() => vi.fn()),
     labels: vi.fn(() => child),
+    reset: vi.fn(),
   };
 };
 

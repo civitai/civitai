@@ -30,7 +30,8 @@ export function downloadBlob(blob: Blob, filename: string) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(href);
+  // Revoking in the same tick can cancel a large download before the browser has read it.
+  setTimeout(() => URL.revokeObjectURL(href), 40_000);
 }
 
 export function blobToFile(

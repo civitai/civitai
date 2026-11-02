@@ -41,15 +41,18 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   if (action === 'insert-in-queue') {
     const { imageIds, rankType, priority } = payload;
 
-    const added = await addImageToQueue({
+    const { added, heldIds } = await addImageToQueue({
       imageIds,
       rankType,
       priority: priority as 1 | 2 | 3,
     });
 
-    return res
-      .status(200)
-      .json({ message: added ? 'Image inserted into queue successfully' : 'bonk' });
+    const message = added
+      ? 'Image inserted into queue successfully'
+      : heldIds.length > 0
+      ? 'Not inserted: held for review'
+      : 'bonk';
+    return res.status(200).json({ message, heldImageIds: heldIds });
   }
 
   if (action === 'show-all-queues') {

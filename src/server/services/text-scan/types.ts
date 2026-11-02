@@ -24,6 +24,7 @@ export type TextScanEntityType =
   | 'ChatMessage'
   | 'Comment'
   | 'CommentV2'
+  | 'CommentV3'
   | 'ResourceReview'
   | 'User'
   | 'UserProfile'

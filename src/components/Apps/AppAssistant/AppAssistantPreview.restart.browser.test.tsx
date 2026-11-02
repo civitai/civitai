@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as PreviewFrameMod from '~/components/Apps/AppAssistant/previewFrame';
 import type { PreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
+import type { SandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -27,6 +28,8 @@ const m = vi.hoisted(() => ({
   fetchFrame: vi.fn(),
   /** What the frame's host reports of its terminal fallback, as the page host would. */
   host: null as null | { onFallbackChange?: (reason: string | null) => void },
+  /** The host's entry token failed: it shows the pane's `tokenErrorFallback` instead of the frame. */
+  tokenError: false,
 }));
 
 vi.mock('~/components/Apps/AppAssistant/previewFrame', async (importOriginal) => ({
@@ -37,8 +40,10 @@ vi.mock('~/components/AppBlocks/DevTunnelBlockHost', () => ({
   DevTunnelBlockHost: (props: {
     iframeSrc: string;
     onFallbackChange?: (reason: string | null) => void;
+    tokenErrorFallback?: React.ReactNode;
   }) => {
     m.host = props;
+    if (m.tokenError) return <>{props.tokenErrorFallback}</>;
     return <div data-testid="frame" data-src={props.iframeSrc} />;
   },
 }));
@@ -47,6 +52,8 @@ vi.mock('~/components/AppBlocks/DevTunnelDnsGate', () => ({
 }));
 
 const { AppAssistantPreview } = await import('./AppAssistantPreview');
+// The real error class (the module mock keeps every export but the fetch).
+const { PreviewGoneError } = await import('~/components/Apps/AppAssistant/previewFrame');
 
 const restartButton = () => page.getByRole('button', { name: 'Restart preview' });
 const offer = (error: string | null = null, pending = false) => ({
@@ -57,6 +64,7 @@ const offer = (error: string | null = null, pending = false) => ({
 
 beforeEach(() => {
   m.host = null;
+  m.tokenError = false;
   m.fetchFrame.mockReset();
 });
 
@@ -113,5 +121,238 @@ describe('AppAssistantPreview — Restart preview on the server runner', () => {
     m.host!.onFallbackChange?.('timeout');
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(restartButton().query()).toBeNull();
+  });
+});
+
+describe('AppAssistantPreview — a shown preview whose tunnel went', () => {
+  const LIVE_CHECK_MS = 40;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, LIVE_CHECK_MS * 5));
+
+  test('turns into “The live preview isn’t running.” with Restart preview once civitai has no tunnel', async () => {
+    let gone = false;
+    m.fetchFrame.mockImplementation(async () => {
+      if (gone) throw new PreviewGoneError('No live preview is running for this app');
+      return FRAME;
+    });
+    const restart = offer();
+    await renderWithProviders(
+      <AppAssistantPreview
+        canPreview
+        session={RUNNER_SESSION}
+        restart={restart}
+        liveCheckMs={LIVE_CHECK_MS}
+      />
+    );
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    // Control: checked while live, and still shown.
+    await settle();
+    expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(1);
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+
+    gone = true;
+    await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+    expect(page.getByTestId('frame').elements()).toHaveLength(0);
+    await restartButton().click();
+    expect(restart.onRestart).toHaveBeenCalledTimes(1);
+  });
+
+  test('a check that fails for any other reason leaves the preview shown', async () => {
+    let failing = false;
+    m.fetchFrame.mockImplementation(async () => {
+      if (failing) throw new Error('network down');
+      return FRAME;
+    });
+    await renderWithProviders(
+      <AppAssistantPreview
+        canPreview
+        session={RUNNER_SESSION}
+        restart={offer()}
+        liveCheckMs={LIVE_CHECK_MS}
+      />
+    );
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    failing = true;
+    const before = m.fetchFrame.mock.calls.length;
+    await settle();
+    // Control: it was checked meanwhile.
+    expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(before);
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+  });
+});
+
+describe('AppAssistantPreview — asking the app’s sandbox when the tab comes back', () => {
+  const LIVE_CHECK_MS = 40;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, LIVE_CHECK_MS * 5));
+  const setVisibility = (state: 'hidden' | 'visible') => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+  };
+  /** The user leaves the tab and comes back to it. */
+  const tabComesBack = async () => {
+    setVisibility('hidden');
+    await settle();
+    setVisibility('visible');
+  };
+  afterEach(() => {
+    delete (document as unknown as { visibilityState?: string }).visibilityState;
+  });
+
+  const renderShown = async (tunnelStatus: () => Promise<SandboxTunnelStatus | null>) => {
+    m.fetchFrame.mockImplementation(async () => FRAME);
+    const restart = offer();
+    await renderWithProviders(
+      <AppAssistantPreview
+        canPreview
+        session={RUNNER_SESSION}
+        restart={restart}
+        liveCheckMs={LIVE_CHECK_MS}
+        tunnelStatus={tunnelStatus}
+      />
+    );
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    return restart;
+  };
+
+  test('asks the sandbox on the first check, then only when the tab comes back; its “down” stands', async () => {
+    let answer: SandboxTunnelStatus = { running: true, host: HOST };
+    const tunnelStatus = vi.fn(async () => answer);
+    const restart = await renderShown(tunnelStatus);
+    await settle();
+    // Control: asked once (the first check after load), and not again on the interval — every ask
+    // counts as activity for the app's idle clock — while civitai is checked on.
+    expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(2);
+    expect(tunnelStatus).toHaveBeenCalledTimes(1);
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+
+    answer = { running: false, host: null };
+    await tabComesBack();
+    await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+    expect(tunnelStatus).toHaveBeenCalledTimes(2);
+    // civitai still lists the tunnel on every later check: the sandbox's answer stands.
+    await settle();
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(1);
+    expect(page.getByTestId('frame').elements()).toHaveLength(0);
+    await restartButton().click();
+    expect(restart.onRestart).toHaveBeenCalledTimes(1);
+  });
+
+  test('turns into “isn’t running” when the sandbox’s tunnel runs to another host than civitai’s', async () => {
+    let answer: SandboxTunnelStatus = { running: true, host: HOST };
+    const tunnelStatus = vi.fn(async () => answer);
+    await renderShown(tunnelStatus);
+    await vi.waitFor(() => expect(tunnelStatus).toHaveBeenCalledTimes(1));
+    answer = { running: true, host: 'dev-0f0f0f0f0f0f0f0f.apps.example' };
+    await tabComesBack();
+    await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+    await settle();
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(1);
+  });
+
+  test('stays shown when the sandbox runs to the same host', async () => {
+    const tunnelStatus = vi.fn(async () => ({ running: true, host: HOST }));
+    await renderShown(tunnelStatus);
+    await tabComesBack();
+    await settle();
+    // Control: the sandbox was asked.
+    expect(tunnelStatus).toHaveBeenCalled();
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+  });
+
+  test('stays shown when the sandbox cannot be reached: no answer is not “down”', async () => {
+    let answer: SandboxTunnelStatus | null = { running: true, host: HOST };
+    const tunnelStatus = vi.fn(async () => answer);
+    await renderShown(tunnelStatus);
+    await vi.waitFor(() => expect(tunnelStatus).toHaveBeenCalledTimes(1));
+    answer = null;
+    await tabComesBack();
+    // Control: the sandbox was asked again, and would not say.
+    await vi.waitFor(() => expect(tunnelStatus).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+  });
+});
+
+describe('AppAssistantPreview — a failed frame when the dev server comes back up', () => {
+  // The page learns of a restart only through `devServerUp` (counted by the workspace).
+  const RELOADED: PreviewFrame = { ...FRAME, iframeSrc: `https://${HOST}/?dev=entry-token-second` };
+  const frameSrc = () => page.getByTestId('frame').element().getAttribute('data-src');
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+  const shown = (devServerUp: number) => (
+    <AppAssistantPreview
+      canPreview
+      session={RUNNER_SESSION}
+      restart={offer()}
+      devServerUp={devServerUp}
+    />
+  );
+  const renderShown = async (devServerUp = 3) => {
+    m.fetchFrame.mockResolvedValueOnce(FRAME).mockResolvedValue(RELOADED);
+    const screen = await renderWithProviders(shown(devServerUp));
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    expect(frameSrc()).toBe(FRAME.iframeSrc);
+    return screen;
+  };
+
+  test('🔴 a frame in its fallback reloads, as Reload would: a fresh entry URL, a fresh host', async () => {
+    const screen = await renderShown();
+    m.host!.onFallbackChange!('timeout');
+    await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
+
+    await screen.rerender(shown(4));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
+    // The fresh host has not failed: the offer goes.
+    await expect.element(page.getByText('The preview isn’t loading.')).not.toBeInTheDocument();
+  });
+
+  test('🔴 a frame whose entry token failed reloads too', async () => {
+    const screen = await renderShown();
+    m.tokenError = true;
+    await screen.rerender(shown(3));
+    await expect
+      .element(page.getByText('The preview couldn’t sign in to your app.', { exact: false }))
+      .toBeInTheDocument();
+
+    // The host still shows its failure when the dev server comes back up.
+    await screen.rerender(shown(4));
+    await vi.waitFor(() => expect(m.fetchFrame).toHaveBeenCalledTimes(2));
+    m.tokenError = false;
+    await screen.rerender(shown(4));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+  });
+
+  test('NEGATIVE CONTROL: a frame that loads is left alone (a reload resets its saved data)', async () => {
+    const screen = await renderShown();
+    await screen.rerender(shown(4));
+    await settle();
+    expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+    expect(frameSrc()).toBe(FRAME.iframeSrc);
+
+    // Control: the same frame, once failed, reloads on the next one.
+    m.host!.onFallbackChange!('timeout');
+    await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
+    await screen.rerender(shown(5));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+  });
+
+  test('NEGATIVE CONTROL: a failed frame re-rendered with no new dev server start stays as it is', async () => {
+    const screen = await renderShown();
+    m.host!.onFallbackChange!('timeout');
+    await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
+    await screen.rerender(shown(3));
+    // A lower count is no new start either.
+    await screen.rerender(shown(2));
+    await settle();
+    expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+    expect(frameSrc()).toBe(FRAME.iframeSrc);
+
+    // Control: a higher count, in the same frame, does reload it.
+    await screen.rerender(shown(4));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
   });
 });

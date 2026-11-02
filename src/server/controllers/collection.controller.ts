@@ -53,12 +53,17 @@ import {
   updateCollectionCoverImage,
   updateCollectionItemsStatus,
   upsertCollection,
+  validateContestCollectionEntry,
 } from '~/server/services/collection.service';
+import {
+  getServableCoverCollectionIds,
+  withServableCovers,
+} from '~/server/services/collection-cover-visibility';
 import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
 import { setModelShowcaseCollection } from '~/server/services/model.service';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import { addPostImage, createPost, deletePost } from '~/server/services/post.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   throwAuthorizationError,
@@ -90,7 +95,7 @@ export const getAllCollectionsInfiniteHandler = async ({
   const limit = input.limit + 1;
 
   try {
-    const items = await getAllCollections({
+    const rows = await getAllCollections({
       input: { ...input, limit },
       select: {
         id: true,
@@ -107,6 +112,8 @@ export const getAllCollectionsInfiniteHandler = async ({
       },
       user: ctx.user,
     });
+    // A cover the viewer may not see falls through to the item covers below.
+    const items = await withServableCovers(rows, ctx.user);
 
     let nextCursor: number | undefined;
     if (items.length > input.limit) {
@@ -230,7 +237,7 @@ export const getCollectionByIdHandler = async ({
       };
     }
 
-    const collection = await getCollectionById({ input });
+    const collection = await getCollectionById({ input, viewer: ctx.user });
 
     // The catch covers the roster read alone — the reads above must still surface — because
     // getById backs the whole detail page and every other useCollection consumer.
@@ -262,7 +269,14 @@ export const getCollectionByIdHandler = async ({
       ? Math.max(0, allLevelsPendingReviewCount - pendingReviewCount)
       : 0;
 
-    return { collection, permissions, collaborators, pendingReviewCount, redPendingReviewCount };
+    return {
+      // Only an editor needs to know a cover is stored but hidden from them.
+      collection: { ...collection, coverHidden: permissions.manage && collection.coverHidden },
+      permissions,
+      collaborators,
+      pendingReviewCount,
+      redPendingReviewCount,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -429,7 +443,24 @@ export const upsertCollectionHandler = async ({
       collectionId: collection.id,
     });
 
-    return { ...collection, isOwner };
+    // The stored cover goes back by id only, and only when the caller may see it; its url is served
+    // through the cover rule on read.
+    const { image, ...rest } = collection;
+    const coverVisible =
+      !!image &&
+      (
+        await getServableCoverCollectionIds(
+          [
+            {
+              collectionId: collection.id,
+              collectionOwnerId: collection.userId,
+              imageId: image.id,
+            },
+          ],
+          user
+        )
+      ).has(collection.id);
+    return { ...rest, image: coverVisible ? { id: image.id } : null, isOwner };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -594,7 +625,19 @@ export const addSimpleImagePostHandler = async ({
     if (!(permissions.write || permissions.writeReview))
       throw throwAuthorizationError('You do not have permission to add items to this collection.');
 
-    // create post
+    // Entry-level refusals (ban, own/unavailable challenge, closed window) need no image ids, so
+    // they fire before anything is created. Image-level ones are caught by the rollback below.
+    if (collection.mode === CollectionMode.Contest) {
+      await validateContestCollectionEntry({
+        metadata: collection.metadata,
+        collectionId: collection.id,
+        userId,
+        isModerator,
+        canAccessUserChallenges: ctx.features.userChallenges,
+        deferEntryFeeCharge: true,
+      });
+    }
+
     const post = await createPost({
       title: `${collection.name} Images`,
       userId,
@@ -602,22 +645,54 @@ export const addSimpleImagePostHandler = async ({
       publishedAt: collection.read === CollectionReadConfiguration.Public ? new Date() : undefined,
     });
 
-    // createImage's own primary-DB post-owner check runs once per request per post;
-    // addPostImage keeps its existing per-image check.
-    const assertPostOwnedBy = createPostOwnerCheck();
-    const postImages = await Promise.all(
-      images.map((image, index) =>
-        addPostImage({
-          ...image,
-          postId: post.id,
-          index,
-          user: ctx.user,
-          assertPostOwnedBy,
-        })
-      )
-    );
+    // Everything that can refuse an entry without having charged anything runs inside this try.
+    // Once bulkSaveItems starts, fee legs may be on the ledger (never refunded, keyed on the
+    // image id), so from there the post and its images stay whatever happens.
+    let imageIds: number[];
+    try {
+      // createImage's own primary-DB post-owner check runs once per request per post;
+      // addPostImage keeps its existing per-image check.
+      const assertPostOwnedBy = createPostOwnerCheck();
+      // allSettled: a sibling still in flight must not land on the post after the rollback.
+      const results = await Promise.allSettled(
+        images.map((image, index) =>
+          addPostImage({
+            ...image,
+            postId: post.id,
+            index,
+            user: ctx.user,
+            assertPostOwnedBy,
+          })
+        )
+      );
+      const rejected = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (rejected) throw rejected.reason;
+      imageIds = results.map((r) => (r as PromiseFulfilledResult<{ id: number }>).value.id);
 
-    const imageIds = postImages.map((image) => image.id);
+      if (collection.mode === CollectionMode.Contest) {
+        await validateContestCollectionEntry({
+          metadata: collection.metadata,
+          collectionId: collection.id,
+          userId,
+          isModerator,
+          canAccessUserChallenges: ctx.features.userChallenges,
+          imageIds,
+          deferEntryFeeCharge: true,
+        });
+      }
+    } catch (error) {
+      // The refusal is what the user needs to see; a failed cleanup must not replace it.
+      await deletePost({ id: post.id, isModerator }).catch((rollbackError) =>
+        logToAxiom({
+          type: 'error',
+          name: 'add-simple-image-post-rollback-failed',
+          message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          postId: post.id,
+          collectionId,
+        }).catch(() => undefined)
+      );
+      throw error;
+    }
 
     await bulkSaveItems({
       input: {
@@ -630,11 +705,7 @@ export const addSimpleImagePostHandler = async ({
       permissions,
     });
 
-    return {
-      post,
-      permissions,
-      imageIds,
-    };
+    return { post, permissions, imageIds };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

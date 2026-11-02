@@ -96,7 +96,7 @@ import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constan
  * Every fixture below is named as a CONTENT WIDTH (736 / 1168 / 1408 / 2528) and every
  * number in the file is a function of that input: how a proportional `<colgroup>` spends
  * it, where a card grid steps, how tall a row gets when a column is squeezed. The rail
- * changes the INPUT (it takes 276px off the body on every `/apps/*` route); it does not
+ * changes the INPUT (it takes 292px off the body on every `/apps/*` route); it does not
  * change any of those mechanisms. Re-baselining ~40 measured literals to rail-reduced
  * widths would mean re-deriving each of them from the implementation that just changed —
  * and would delete this file's coverage at exactly the 1408 / 2528 content widths the
@@ -105,18 +105,18 @@ import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constan
  * So `useAppsNavSections` returns an EMPTY list, which is a real production state (the
  * `< 2 sections` collapse) and makes `AppsPageLayout` render no rail and give the body the
  * full container. The rail's own cost is pinned exactly once, where it belongs:
- * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures `bodyLeft − navLeft === 276`
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures `bodyLeft − navLeft === appsRailChromeWidth(false)`
  * on all 12 routes in both rail states, and `__tests__/appsRailGeometry.test.ts` pins the
  * constant it comes from.
  *
  * ⚠️ WHAT THAT LEAVES UNMEASURED, STATED RATHER THAN LEFT TO BE DISCOVERED: no test in
  * this file reads these TABLES at the content width a 1440 viewer with an OPEN rail
- * actually gets (1132). The `RAIL-OPEN` describe at the end of this file is a deliberate
- * PARTIAL answer and nothing more: it pins a PRECONDITION (the body really is 276px
+ * actually gets (1116). The `RAIL-OPEN` describe at the end of this file is a deliberate
+ * PARTIAL answer and nothing more: it pins a PRECONDITION (the body really is the rail's chrome
  * narrower) and one NON-degradation (the card list still steps to two columns at the new
  * `APPS_CARD_LIST_MIN_COLUMN`). ⚠️ AN EARLIER DRAFT OF THIS SENTENCE CLAIMED IT "records
  * the two degradations that width causes". It records none — there is no degradation
- * asserted anywhere in this file at 1132, and saying otherwise turned an admitted gap
+ * asserted anywhere in this file at 1116, and saying otherwise turned an admitted gap
  * into a false claim of coverage, which is worse than the gap. The one degradation this
  * change does cause at a narrowed width is the `/apps/build` table scrolling a viewport
  * step earlier, and it is recorded at `SUBMISSIONS_TABLE_MIN_WIDTH`, not here.
@@ -397,6 +397,7 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 }));
 
 const { AppsPageLayout } = await import('~/components/Apps/AppsPageLayout');
+const { appsRailChromeWidth } = await import('~/components/Apps/appsRailGeometry');
 const { AppsCardGrid, APPS_REVIEW_QUEUE_COLUMNS } = await import(
   '~/components/Apps/appsWideLayout'
 );
@@ -2271,9 +2272,9 @@ describe('/apps/activity — the space-between row keeps its control near its co
  * Everything above measures a wide-layout mechanism against a CONTENT WIDTH, with the rail
  * removed via the `< 2 sections` collapse so the four fixture widths keep meaning what
  * they say. That is the right scoping for those claims and the wrong scoping for one
- * question: what does a real viewer with an OPEN rail actually get? The rail takes 276px
- * off the body on every `/apps/*` route, so a 1440 monitor hands these components 1132 of
- * content and a 2560 one hands them 2252.
+ * question: what does a real viewer with an OPEN rail actually get? The rail takes 292px
+ * off the body on every `/apps/*` route, so a 1440 monitor hands these components 1116 of
+ * content and a 2560 one hands them 2236.
  *
  * This block measures that directly, at the one place it changes a PRODUCT outcome rather
  * than a pixel: the `/apps/activity` card list's column count, which is what
@@ -2282,7 +2283,7 @@ describe('/apps/activity — the space-between row keeps its control near its co
  * rail was open — the 640px content-to-control gap the constant exists to close reopened
  * on exactly the monitors it was written for.
  *
- * ⚠️ TWO ARMS, NOT A BATTERY. This does not re-measure the tables above at 1132; that
+ * ⚠️ TWO ARMS, NOT A BATTERY. This does not re-measure the tables above at 1116; that
  * remains genuinely uncovered, and the accepted consequence is recorded on
  * `SUBMISSIONS_TABLE_MIN_WIDTH` (the `/apps/build` table scrolls one viewport step
  * earlier).
@@ -2321,17 +2322,17 @@ describe('🔴 RAIL-OPEN — the content width a real /apps viewer gets', () => 
     }
   }
 
-  test('the rail really is open, and the body really is 276px narrower', async () => {
+  test('the rail really is open, and the body really is narrower by the rail chrome', async () => {
     // The precondition for the column assertions below. Without it, "one column at 1440"
     // would also be satisfied by a render in which the rail never appeared.
     const narrow = await renderWithRail(NARROW);
     expect(narrow.railShown, 'the rail did not render — the section stub did not take').toBe(true);
-    expect(narrow.bodyWidth).toBe(NARROW.content - 276);
+    expect(narrow.bodyWidth).toBe(NARROW.content - appsRailChromeWidth(false));
     await cleanup();
 
     const wide = await renderWithRail(WIDE);
     expect(wide.railShown).toBe(true);
-    expect(wide.bodyWidth).toBe(WIDE.content - 276);
+    expect(wide.bodyWidth).toBe(WIDE.content - appsRailChromeWidth(false));
     await cleanup();
   });
 

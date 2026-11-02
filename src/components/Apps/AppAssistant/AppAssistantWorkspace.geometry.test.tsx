@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { MantineThemeProvider } from '@mantine/core';
 import { ModalsProvider } from '@mantine/modals';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import type * as TrpcMod from '~/utils/trpc';
@@ -11,6 +12,7 @@ import {
   renderAtViewport,
 } from '../../../../test/geometry-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
+import { theme as siteTheme } from '~/providers/ThemeProvider';
 
 const BASE = 'https://sandbox.example';
 
@@ -29,8 +31,7 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
   }) => {
     m.tools = props.tools;
     m.beforeToolCall = props.beforeToolCall;
-    // A chat that takes no message, with something typed in its box: a Build it it cannot send comes back
-    // as a "not sent" notice.
+    // A chat that takes no message, with something typed in its box.
     props.chatRef.current = {
       send: vi.fn(),
       compose: vi.fn(),
@@ -293,4 +294,79 @@ describe.each(WIDE)('App Assistant at $width px (wide)', (viewport) => {
     await startPreview();
     expectSideBySide();
   });
+});
+
+describe.each([
+  { width: 390, height: 844 },
+  { width: 1280, height: 800 },
+])('App Assistant app menu at $width px', (viewport) => {
+  const app = (key: string, state: Sandbox['state'], lastActivityAt: string): Sandbox => ({
+    name: `sbx-${key}`,
+    app: key,
+    state,
+    mcpUrl: `${BASE}/s/${key}/mcp`,
+    createdAt: null,
+    lastActivityAt,
+    expiresAt: null,
+  });
+  const overlap = (a: ReturnType<typeof box>, b: ReturnType<typeof box>) =>
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  /** What a tap at the centre of each item hits: the item itself, or what is painted over it. */
+  const hits = (items: HTMLElement[]) =>
+    items.map((item) => {
+      const b = box(item);
+      const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return item.contains(hit) ? 'item' : hit?.outerHTML.slice(0, 160) ?? 'nothing';
+    });
+
+  test.each([
+    { of: 'first-app', items: [/^Pause/, /^Export/, /^Delete app/] },
+    { of: 'second-app', items: [/^Start/, /^Export/, /^Delete app/] },
+  ])(
+    '🔴 the menu of $of paints over the app list: each item is what a tap on it hits',
+    async ({ of, items: labels }) => {
+      m.list = [
+        app('first-app', 'running', '2026-10-03T10:00:00Z'),
+        app('second-app', 'suspended', '2026-10-02T10:00:00Z'),
+        app('third-app', 'suspended', '2026-10-01T10:00:00Z'),
+      ];
+      // The site's own theme, whose popovers render in place (no portal), as on civitai.com.
+      await renderAtViewport(
+        <MantineThemeProvider theme={siteTheme}>
+          <ModalsProvider>
+            <AppAssistantWorkspace canPreview sandboxUrl={BASE} />
+          </ModalsProvider>
+        </MantineThemeProvider>,
+        viewport
+      );
+      await vi.waitFor(() =>
+        expect(document.querySelector('[aria-label^="Switch app: first-app"]')).not.toBeNull()
+      );
+      document.querySelector<HTMLElement>('[aria-label^="Switch app"]')!.click();
+      await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+      await nextLayout();
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+      // POSITIVE CONTROL: the site theme applies, so the list is in place in the page, not portalled.
+      expect(dialog.closest('[data-portal]')).toBeNull();
+      dialog.querySelector<HTMLElement>(`[aria-label="Actions for ${of}"]`)!.click();
+      await vi.waitFor(() =>
+        expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(3)
+      );
+      await nextLayout();
+
+      const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+      // The actions, by their first word only: the hit test below is the assertion.
+      items.forEach((item, i) => expect(item.textContent).toMatch(labels[i]));
+      // POSITIVE CONTROL: the menu lies over another app's row, so a row painted over it would show.
+      const rows = [...dialog.querySelectorAll('li')].filter((row) => !row.contains(items[0]));
+      expect(items.some((item) => rows.some((row) => overlap(box(item), box(row))))).toBe(true);
+      await vi.waitFor(() => expect(hits(items)).toEqual(['item', 'item', 'item']));
+
+      // NEGATIVE CONTROL: the same check sees a menu painted under the list.
+      const menu = items[0].closest<HTMLElement>('[role="menu"]')!;
+      menu.style.zIndex = '-1';
+      await nextLayout();
+      expect(hits(items)).not.toEqual(['item', 'item', 'item']);
+    }
+  );
 });

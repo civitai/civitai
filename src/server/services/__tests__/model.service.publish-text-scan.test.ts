@@ -8,7 +8,12 @@ import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {
-    model: { update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+    model: {
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      findUnique: vi.fn(),
+    },
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     post: { updateMany: vi.fn() },
     $executeRaw: vi.fn(),
@@ -123,6 +128,9 @@ beforeEach(() => {
   dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) =>
     fn(mockTx)
   );
+  // The publish re-reads the model under its lock; it is the same row the first read saw.
+  mockTx.model.findUnique.mockImplementation(((args: unknown) =>
+    dbMock.dbWrite.model.findUnique(args as never)) as never);
   mockTx.model.update.mockResolvedValue({
     id: MODEL_ID,
     userId: OWNER_ID,

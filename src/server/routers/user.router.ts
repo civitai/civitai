@@ -327,7 +327,7 @@ export const userRouter = router({
       }
     );
     track();
-    return { incomplete: result.incomplete };
+    return { incomplete: result.incomplete, keptModelIds: result.keptModelIds };
   }),
   getArticleEngagement: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

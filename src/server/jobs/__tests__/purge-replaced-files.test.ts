@@ -24,13 +24,13 @@ describe('buildReplacedFilesQuery', () => {
   // Bound as a parameter the day count arrives as int8 and make_interval only takes
   // int4, so the query fails to resolve the function (42883) on every run.
   it('inlines the grace period rather than binding it', () => {
-    const query = buildReplacedFilesQuery();
+    const query = buildReplacedFilesQuery(true);
     expect(query.sql).toContain('make_interval(days => 30)');
     expect(query.values).toEqual([]);
   });
 
   it('skips rows already purged', () => {
-    expect(buildReplacedFilesQuery().sql).toContain('"dataPurged" IS NOT TRUE');
+    expect(buildReplacedFilesQuery(true).sql).toContain('"dataPurged" IS NOT TRUE');
   });
 });
 

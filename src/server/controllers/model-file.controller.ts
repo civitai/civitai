@@ -254,6 +254,11 @@ export const createModelFile = async ({
       if (uploadDomain) metadata.uploadDomain = uploadDomain;
       createInput.metadata = metadata;
     }
+    // Training results are written by the server from the training run, never taken from input.
+    if (createInput.metadata && 'trainingResults' in createInput.metadata) {
+      const { trainingResults: _dropped, ...metadata } = createInput.metadata;
+      createInput.metadata = metadata;
+    }
 
     const file = await createFile({
       ...createInput,
@@ -333,6 +338,11 @@ export const updateFileHandler = async ({
     if (updateInput.metadata && 'uploadDomain' in updateInput.metadata) {
       const nextMetadata = { ...updateInput.metadata };
       delete nextMetadata.uploadDomain;
+      updateInput.metadata = nextMetadata;
+    }
+    // Training results are server-owned too: a metadata update keeps the stored ones.
+    if (updateInput.metadata && 'trainingResults' in updateInput.metadata) {
+      const { trainingResults: _dropped, ...nextMetadata } = updateInput.metadata;
       updateInput.metadata = nextMetadata;
     }
 

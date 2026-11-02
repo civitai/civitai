@@ -44,7 +44,7 @@ function resolveHttpHref(href: string): URL | null {
   return url;
 }
 
-const EXTERNAL_LINK_INTERSTITIAL_PATH = '/leaving';
+export const EXTERNAL_LINK_INTERSTITIAL_PATH = '/leaving';
 
 /**
  * The absolute http(s) URL the leaving-Civitai page may offer as a link, or null.

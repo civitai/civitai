@@ -96,6 +96,26 @@ describe('ingestImage URL allowlist (submit seam)', () => {
     });
   });
 
+  it('an orchestrator 400 logs its problem-details body as readable text', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+    mockCreateImageIngestionRequest.mockResolvedValue({
+      data: undefined,
+      error: { title: 'Bad Request', status: 400, detail: 'mediaUrl could not be fetched' },
+      status: 400,
+      useImageScanning: false,
+    });
+
+    expect(await ingestImage({ image: image(STORAGE_KEY) })).toBe(false);
+
+    const log = loggingMock.logToAxiom.mock.calls
+      .map(([payload]) => payload as Record<string, unknown>)
+      .find((p) => p.failureType === 'send-fail');
+    expect(log).toMatchObject({ reason: 'no-workflow-response', responseStatus: 400 });
+    const text = JSON.stringify(log);
+    expect(text).not.toContain('[object Object]');
+    expect(text).toContain('mediaUrl could not be fetched');
+  });
+
   it('rejects a blob: url the same way — the failed-submit fold-in', async () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 

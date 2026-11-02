@@ -1,9 +1,18 @@
 import type { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import { v4 as uuid } from 'uuid';
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readDismissedAnnouncementIdsViaKysely,
+  readDismissedAnnouncementIdsViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
+import {
+  activeAnnouncementWhere,
+  announcementWindowOverlapsWhere,
+} from '~/server/services/announcement-window';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import type {
@@ -70,7 +79,7 @@ async function notifyAnnouncementTargets(
       userIds: batch,
       category: NotificationCategory.System,
       type: 'system-announcement',
-      key: `system-announcement:targeted:${announcement.id}:${uuid()}`,
+      key: `system-announcement:targeted:${announcement.id}:${crypto.randomUUID()}`,
       details: { message: announcement.title, url },
     });
   }
@@ -235,6 +244,25 @@ export async function getCurrentAnnouncements({
 // shared per-domain array.
 const ANNOUNCEMENTS_INPROC_TTL_MS = 30_000;
 
+/**
+ * Lifetime of a per-domain redis entry. Apart from a moderator upsert/delete, expiry is the
+ * only thing that refills one, so it bounds how late anything excluded at fill time can appear.
+ */
+const ANNOUNCEMENTS_CACHE_TTL_S = CacheTTL.day;
+
+/**
+ * How far past "now" a fill reaches for announcements that have not started yet.
+ *
+ * A fill must hold every announcement that can go live while the entry exists: `startsAt` is
+ * applied on READ (getCurrentAnnouncements), so a scheduled announcement shows the moment its
+ * start passes. Excluding not-yet-started rows at fill time made one scheduled inside the
+ * entry's lifetime appear only at the next fill — up to a day late, and at a different moment
+ * on each domain. Twice the entry's lifetime covers every start the entry can outlive, with
+ * margin for the gap between computing `now` and the `SET`; anything later is picked up by a
+ * later fill, which keeps rows scheduled months out from riding every entry.
+ */
+const ANNOUNCEMENTS_FILL_LOOKAHEAD_MS = 2 * ANNOUNCEMENTS_CACHE_TTL_S * 1000;
+
 const getAnnouncementsCachedMemo = createKeyedTtlMemo<CachedAnnouncement[]>(
   async (domainKey) => {
     const domain = (domainKey || undefined) as DomainColor | undefined;
@@ -248,7 +276,7 @@ const getAnnouncementsCachedMemo = createKeyedTtlMemo<CachedAnnouncement[]>(
     const announcements = await getAnnouncements(domain);
 
     await redis.set(cacheKey, JSON.stringify(announcements), {
-      EX: CacheTTL.day,
+      EX: ANNOUNCEMENTS_CACHE_TTL_S,
     });
 
     return announcements;
@@ -310,52 +338,19 @@ export async function getDismissedAnnouncementIds({
   userId: number;
   domain?: DomainColor;
 }) {
-  const rows = await dbRead.announcementDismissal.findMany({
-    where: {
+  const now = new Date();
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    return readDismissedAnnouncementIdsViaKysely((await loadKyselyDb()).kyselyRead, {
       userId,
-      announcement: {
-        ...activeAnnouncementWhere(new Date()),
-        ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-      },
-    },
-    select: { announcementId: true },
-  });
-
-  return rows.map((x) => x.announcementId);
+      now,
+      domain,
+    });
+  return readDismissedAnnouncementIdsViaPrisma(dbRead, { userId, now, domain });
 }
 
-/**
- * Enabled announcements whose (open-ended) start/end window overlaps `[from, to]`.
- *
- * The single source of truth for "is this announcement showing". `activeAnnouncementWhere`
- * is the degenerate `from === to === now` case used by the read path; the media health
- * check widens only the upper bound so it can see a banner before it goes live.
- */
-export function announcementWindowOverlapsWhere(
-  from: Date,
-  to: Date
-): Prisma.AnnouncementWhereInput {
-  return {
-    disabled: false,
-    AND: [
-      {
-        OR: [{ startsAt: { lte: to } }, { startsAt: { equals: null } }],
-      },
-      {
-        OR: [{ endsAt: { gte: from } }, { endsAt: { equals: null } }],
-      },
-    ],
-  };
-}
-
-/**
- * The "currently live" predicate: enabled, and now is inside the (open-ended)
- * start/end window. Shared with the announcement media health check so a monitor
- * can never disagree with the read path about which announcements are live.
- */
-export function activeAnnouncementWhere(now: Date): Prisma.AnnouncementWhereInput {
-  return announcementWindowOverlapsWhere(now, now);
-}
+// The live-window predicates live in a leaf module so the kysely-hot-reads-5 Prisma reader and its
+// parity suite use them without importing this service; re-exported so every caller is unchanged.
+export { activeAnnouncementWhere, announcementWindowOverlapsWhere };
 
 /**
  * How far ahead of "now" the media health check looks.
@@ -409,7 +404,12 @@ async function getAnnouncements(domain?: DomainColor) {
   const now = new Date();
   const announcements = await dbWrite.announcement.findMany({
     where: {
-      ...activeAnnouncementWhere(now),
+      // Live now OR starting within the lookahead: the start is enforced on read, so this
+      // must not drop an announcement that goes live while the entry is still cached.
+      ...announcementWindowOverlapsWhere(
+        now,
+        new Date(now.getTime() + ANNOUNCEMENTS_FILL_LOOKAHEAD_MS)
+      ),
       domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
       // Platform announcements only. This cache is global per domain, so an
       // authored row reaching it would show one creator's post to everyone.

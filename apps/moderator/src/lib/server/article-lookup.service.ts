@@ -29,7 +29,7 @@ export type ArticleRow = {
   lockedProperties: string[];
   metadata: unknown;
   coverId: number | null;
-  /** The pre-`coverId` cover, held as a URL string. 7 of 26,505 articles have only this one. */
+  /** The pre-`coverId` cover, held as a URL string. A few articles have only this one. */
   cover: string | null;
   moderatorNsfwLevelBasis: number | null;
   userId: number;

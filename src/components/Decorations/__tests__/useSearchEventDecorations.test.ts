@@ -248,7 +248,7 @@ describe('the search grids', () => {
   // Wiring only: the behaviour is pinned above. Each grid must render the decorated list, in every
   // element that hands the items to the cards.
   it.each([
-    ['models', 'Model', [['MasonryGrid', 'data={decorated as any}']]],
+    ['models', 'Model', [['MasonryGrid', 'data={withCreate as any}']]],
     [
       'images',
       'Image',
@@ -267,6 +267,13 @@ describe('the search grids', () => {
     // Above the first early return, or the hook count changes between renders.
     expect(callAt).toBeLessThan(source.indexOf('if (hits.length === 0)'));
     for (const [tag, prop] of sites) expect(openingTag(source, tag)).toContain(prop);
+  });
+
+  // The models grid renders `withCreate`, which adds each card's Create to the decorated list.
+  it('models keeps its hats through the Create step', () => {
+    expect(readSource('pages/search/models.tsx')).toMatch(
+      /const withCreate = useMemo\(\s*\(\) =>\s*decorated\.map\(/
+    );
   });
 
   it('pages the index by the same size the hat lookup chunks by', () => {

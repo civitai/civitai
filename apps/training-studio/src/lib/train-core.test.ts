@@ -7,6 +7,7 @@ import {
   submitTrainingBatch,
   TrainingTextRefusedError,
   type TrainingRunInput,
+  type TrainingTextCheck,
 } from './train-core';
 
 const submitWorkflow = vi.fn();
@@ -131,8 +132,9 @@ describe('the trigger word check', () => {
 
   it('a refused run stops the whole batch, so nothing is charged', async () => {
     const calls = submitWorkflow.mock.calls.length;
-    const refuse = vi.fn(async ({ triggerWord }: { triggerWord: string }) => {
-      if (triggerWord === 'bad') throw new TrainingTextRefusedError('blocked');
+    const refuse = vi.fn(async (input: Parameters<TrainingTextCheck>[0]) => {
+      if ('triggerWord' in input && input.triggerWord === 'bad')
+        throw new TrainingTextRefusedError('blocked');
     });
     await expect(
       submitTrainingBatch(client, [baseRun(), { ...baseRun(), trigger: 'bad' }], {
@@ -370,6 +372,150 @@ describe('sample input images', () => {
         checkText,
       })
     ).rejects.toThrow(/runs\[0\]\.sourceImages must be an array of image URLs/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});
+
+describe('edit LoRA pairs', () => {
+  const pair = (n: string, instruction = 'add a smiley') => [
+    { air: `blob-start-${n}`, caption: '', path: `control_1/pair_${n}.png` },
+    { air: `blob-result-${n}`, caption: instruction, path: `main/pair_${n}.jpg` },
+  ];
+  const editRun = (): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: 'flux2klein',
+    modelVariant: '9b',
+    editTraining: true,
+    items: [...pair('0001'), ...pair('0002')],
+  });
+
+  it('sends the pairs as blobs placed by path, flagged as edit training', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-pairs' } });
+    await submitTrainingBatch(client, [editRun()], { checkText });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input.trainingData).toEqual({ type: 'blobs', items: editRun().items });
+    expect(input.isEditTraining).toBe(true);
+  });
+
+  it('keeps a starting image shared by two pairs once per pair', async () => {
+    const shared = [
+      ...pair('0001'),
+      { air: 'blob-start-0001', caption: '', path: 'control_1/pair_0002.png' },
+      { air: 'blob-result-0002', caption: 'add a hat', path: 'main/pair_0002.png' },
+    ];
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-shared' } });
+    await submitTraining(client, { ...editRun(), items: shared });
+    expect(
+      submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.trainingData.items
+    ).toHaveLength(4);
+  });
+
+  it('never flags a plain dataset as edit training', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-plain' } });
+    await submitTraining(client, { ...editRun(), editTraining: undefined, items: baseRun().items });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect('isEditTraining' in input).toBe(false);
+  });
+
+  it.each([
+    ['on a model without edit training', { ecosystem: 'sdxl' }, /editTraining is not supported/],
+    [
+      'with a result missing its start',
+      { items: [pair('0001')[1]!] },
+      /pair pair_0001 is missing an image/,
+    ],
+    [
+      'with a start missing its result',
+      { items: [pair('0001')[0]!] },
+      /pair pair_0001 is missing an image/,
+    ],
+    [
+      'with a result missing its instruction',
+      { items: pair('0001', ' ') },
+      /caption must hold the instruction/,
+    ],
+    [
+      'with a path outside the two folders',
+      { items: [{ air: 'b', caption: 'x', path: 'control_2/pair_0001.png' }, ...pair('0001')] },
+      /path must be control_1\/<name> or main\/<name>/,
+    ],
+    [
+      'with paths on a plain dataset',
+      { editTraining: false },
+      /carry a path only for edit training/,
+    ],
+  ])('refuses pairs %s, before submitting', async (_label, over, error) => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...editRun(), ...over } as TrainingRunInput], { checkText })
+    ).rejects.toThrow(error);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('keeps training a pair dataset as an edit LoRA', async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            $type: 'training',
+            input: {
+              engine: 'ai-toolkit',
+              ecosystem: 'flux2klein',
+              epochs: 10,
+              steps: 2000,
+              isEditTraining: true,
+              trainingData: { type: 'blobs', items: pair('0001') },
+            },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(
+      client,
+      { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 },
+      { checkText }
+    );
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input.isEditTraining).toBe(true);
+    expect(input.trainingData.items).toEqual(pair('0001'));
+  });
+});
+
+describe('Prodigy learning rate', () => {
+  // Prodigy finds its own step size and expects lr 1; the orchestrator refuses lr >= 0.1 for
+  // anything else. The main trainer couples the two the same way.
+  it('sends lr 1 for a Prodigy run, whatever the run carries', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-prodigy' } });
+    await submitTraining(client, { ...baseRun(), optimizer: 'Prodigy' });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ optimizerType: 'prodigy', lr: 1, textEncoderLr: 1 });
+    expect(input.trainTextEncoder).toBe(true);
+  });
+
+  it('keeps the text encoder off for a Prodigy run that does not train it', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-prodigy-te-off' } });
+    await submitTraining(client, { ...baseRun(), optimizer: 'Prodigy', textEncoderLr: 0 });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ lr: 1, textEncoderLr: 0, trainTextEncoder: false });
+  });
+
+  it('leaves the rate alone for other optimizers', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-adafactor' } });
+    await submitTraining(client, baseRun());
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ lr: 5e-4, textEncoderLr: 5e-5 });
+  });
+
+  it('refuses a Prodigy-level rate on another optimizer before anything is submitted', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), unetLr: 1 }], { checkText })
+    ).rejects.toThrow(/unetLr must be less than 0.1 for non-Prodigy optimizers/);
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), textEncoderLr: 0.1 }], { checkText })
+    ).rejects.toThrow(/textEncoderLr must be less than 0.1 for non-Prodigy optimizers/);
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 });

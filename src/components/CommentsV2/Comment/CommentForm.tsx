@@ -168,7 +168,7 @@ export const CommentForm = ({
           onFocus={!autoFocus ? () => setFocused(true) : undefined}
           onSuperEnter={() => form.handleSubmit(handleSubmit)()}
           classNames={{
-            root: borderless ? 'border-none' : undefined,
+            root: clsx('overflow-hidden rounded-3xl', borderless && 'border-none'),
             content: clsx(classes.content, 'rounded-3xl'),
           }}
           data-testid="comment-form"

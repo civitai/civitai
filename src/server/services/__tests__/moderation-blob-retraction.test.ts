@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { NsfwLevel } from '~/server/common/enums';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 
 const mockLogToAxiom = loggingMock.logToAxiom;
 
@@ -25,6 +29,8 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 // image.service is the graph root; the mock scaffold mirrors the established recipe
 // (delete-image-from-s3-logging.test.ts): stub the infra clients and the event-engine-common
 // submodule so importing it boots no real infra. Env comes from the canonical mock.
+
+const mockShopArtworkUrls = vi.hoisted(() => vi.fn(async (_urls: string[]) => new Set<string>()));
 
 const { mockFetch, mockB2Send, mockResolveMediaLocation, mockGetB2ImageS3Client } = vi.hoisted(
   () => ({
@@ -87,9 +93,18 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
-const { purgeResizeCache, deleteImageFromS3, deleteImages, deleteImageById } = await import(
-  '../image.service'
-);
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUrlOwnership>()),
+  shopArtworkUrls: mockShopArtworkUrls,
+}));
+
+const {
+  purgeResizeCache,
+  deleteImageFromS3,
+  deleteImages,
+  deleteImageById,
+  imagesWithOpenReports,
+} = await import('../image.service');
 const { callCdnAccess } = await import('../cdn-access.service');
 
 const invalidateCalls = () =>
@@ -120,6 +135,7 @@ beforeEach(() => {
   mockResolveMediaLocation.mockResolvedValue({ backend: 'backblaze', url: 'https://b2/x' });
   mockB2Send.mockResolvedValue({ Key: KEY });
   mockGetB2ImageS3Client.mockReturnValue({ send: mockB2Send });
+  mockShopArtworkUrls.mockResolvedValue(new Set());
 });
 
 describe('purgeResizeCache retraction opt-in', () => {
@@ -504,5 +520,130 @@ describe('retraction load on the image-cache service', () => {
       vi.useRealTimers();
       release();
     }
+  });
+});
+
+describe('an image whose key shop artwork uses', () => {
+  const OWNER = 7;
+  // The delete is one raw statement; the other raw reads around it find nothing.
+  // The delete is one raw statement; `reports` answers the open-report read before it, and the
+  // other raw reads around it find nothing.
+  const deleted = (
+    over: Record<string, unknown> | null = {},
+    reports: () => unknown[] = () => []
+  ) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const text = strings.join('');
+      if (text.includes('"ImageReport"')) return reports();
+      return text.includes('DELETE FROM "Image"') && over
+        ? [
+            {
+              url: KEY,
+              postId: null,
+              nsfwLevel: 1,
+              userId: OWNER,
+              metadata: null,
+              ingestion: 'Scanned',
+              needsReview: null,
+              blockedFor: null,
+              ...over,
+            },
+          ]
+        : [];
+    }) as never);
+  beforeEach(() => mockShopArtworkUrls.mockResolvedValue(new Set([KEY])));
+
+  it('keeps its object when the owner deletes it', async () => {
+    deleted();
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).not.toHaveBeenCalled();
+    expect(invalidateCalls()).toHaveLength(0);
+  });
+
+  it.each([
+    ['a moderator deletes it', { deletedById: 99 }, {}],
+    ['the deleter is unknown', {}, {}],
+    ['it is blocked', { deletedById: OWNER }, { ingestion: 'Blocked' }],
+    // A scan error or rescan moves ingestion off Blocked but keeps the other block markers.
+    ['it keeps a block reason', { deletedById: OWNER }, { ingestion: 'Error', blockedFor: 'tos' }],
+    ['it keeps the Blocked level', { deletedById: OWNER }, { nsfwLevel: NsfwLevel.Blocked }],
+    ['it is not scanned yet', { deletedById: OWNER }, { ingestion: 'Pending' }],
+    ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }],
+  ])('deletes and purges its object when %s', async (_case, args, over) => {
+    deleted(over);
+
+    await deleteImageById({ id: 4242, ...args });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(invalidateCalls()).toHaveLength(1);
+  });
+
+  it('deletes and purges its object when the owner deletes it under an open report', async () => {
+    deleted({}, () => [{ imageId: 4242 }]);
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(invalidateCalls()).toHaveLength(1);
+  });
+
+  it('deletes and purges its object when the report lookup fails', async () => {
+    deleted({}, () => {
+      throw new Error('lookup failed');
+    });
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+  });
+
+  // A hold marker keeps the row, so nothing reaches storage, whoever deletes it.
+  it('leaves a held image to its hold', async () => {
+    deleted(null);
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).not.toHaveBeenCalled();
+  });
+
+  it('is deleted by the delete paths that do not ask to keep it', async () => {
+    await deleteImageFromS3({ id: 4242, url: KEY });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('imagesWithOpenReports', () => {
+  // Image 1 is reported itself; images 2 and 3 share post 20, which is reported; image 4's post
+  // has only a closed report; image 5's own report is closed.
+  const run = async (reports: string) => {
+    const pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int);
+      CREATE TABLE "Report" (id int PRIMARY KEY, status text NOT NULL);
+      CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
+      CREATE TABLE "PostReport" ("postId" int, "reportId" int);
+      INSERT INTO "Image" VALUES (1, 10), (2, 20), (3, 20), (4, 40), (5, 50);
+      ${reports}
+    `);
+    try {
+      return await imagesWithOpenReports([1, 2, 3, 4, 5], {
+        $queryRaw: pgliteRaw(pg).queryRaw,
+      } as never);
+    } finally {
+      await pg.close();
+    }
+  };
+
+  it('finds images reported themselves or through their post, open reports only', async () => {
+    const reported = await run(`
+      INSERT INTO "Report" VALUES (1, 'Pending'), (2, 'Processing'), (3, 'Actioned'), (4, 'Unactioned');
+      INSERT INTO "ImageReport" VALUES (1, 1), (5, 4);
+      INSERT INTO "PostReport" VALUES (20, 2), (40, 3);
+    `);
+
+    expect([...reported].sort()).toEqual([1, 2, 3]);
   });
 });

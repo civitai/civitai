@@ -2,7 +2,8 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { legalHoldSkipReason, ownerUnderLegalHoldSql } from '~/server/utils/legal-hold';
+import { heldModelIdsSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { legalHoldSkipReason } from '~/server/utils/legal-hold';
 import {
   deleteModelFileObject,
   getQuarantineBucket,
@@ -247,11 +248,13 @@ export const deleteOldTrainingData = createJob(
         AND mf.visibility != 'Public'
     `;
 
+    const markerView = await holdMarkerViewExists();
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
+      WITH picked AS MATERIALIZED (
       SELECT mf.id                                        as mf_id,
              mf.metadata -> 'trainingResults' ->> 'jobId' as job_id,
              mf.url,
-             ${ownerUnderLegalHoldSql(Prisma.raw('mf."modelVersionId"'))} as held
+             mv."modelId"
       FROM "ModelVersion" mv
              JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
       WHERE mv."uploadType" = 'Trained'
@@ -278,6 +281,12 @@ export const deleteOldTrainingData = createJob(
       -- parsing; no such revision was committed, so do not go looking for it in the history.)
       ORDER BY random()
       LIMIT ${DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS}
+      )
+      SELECT p.mf_id, p.job_id, p.url, p."modelId" IN (${heldModelIdsSql(
+        Prisma.sql`SELECT "modelId" FROM picked`,
+        markerView
+      )}) as held
+      FROM picked p
     `;
 
     if (oldTraining.length === 0) {

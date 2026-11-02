@@ -153,7 +153,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
       // Update existing judge comment in-place, or create if none exists
       await upsertComment({
-        ...(entry.judgeCommentId !== null ? { id: entry.judgeCommentId } : {}),
+        // Its comment is edited even when hidden for ToS; the text is still checked like any author's.
+        ...(entry.judgeCommentId !== null ? { id: entry.judgeCommentId, includeHidden: true } : {}),
         userId: judgingConfig.userId,
         entityType: 'image',
         entityId: entry.imageId,

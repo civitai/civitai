@@ -5,9 +5,11 @@ import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 
 /**
  * Paths the bot-detection middleware runs on. Scoped to detail-page surfaces
- * (where we paywall content) plus the tRPC / public REST API routes (so
+ * (where we paywall content) plus the public REST API routes (so
  * client-side queries fired during hydration also carry the bot header,
  * which `applyDomainFeature` consumes to skip the anonymous PG-only cap).
+ * `/api/trpc` is outside the proxy matcher: the tRPC route makes the same
+ * decision itself, which is why `isBotAwarePath` still includes it.
  * Swap to a single broad matcher (e.g. `'/((?!api|_next|fonts).*)'`)
  * if we ever need bot awareness globally.
  *
@@ -21,7 +23,6 @@ export const BOT_DETECTION_MATCHER = [
   '/bounties/:path*',
   '/challenges/:path*',
   '/collections/:path*',
-  '/api/trpc/:path*',
   '/api/v1/:path*',
 ];
 

@@ -406,13 +406,7 @@ export function PanelModal({
               height,
             });
           } catch (err) {
-            console.error('Failed to upload generator image:', err);
-            setEnhanceSourceImage({
-              url: img.url,
-              previewUrl: img.url,
-              width,
-              height,
-            });
+            showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
           } finally {
             setEnhanceUploading(false);
           }
@@ -556,8 +550,8 @@ export function PanelModal({
               try {
                 cfId = await fetchAndUploadGeneratorImage(img.url, 'bulk_gen', uploadBulkToCF);
               } catch (err) {
-                console.error('Failed to upload generator image:', err);
-                cfId = img.url;
+                showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
+                continue;
               }
               newItems.push({
                 id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,

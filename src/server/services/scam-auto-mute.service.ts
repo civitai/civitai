@@ -60,6 +60,7 @@ export type ScamEvidence = {
 export type ScamAutoMuteSkip =
   | 'invalid-user'
   | 'protected'
+  | 'system-account'
   | 'not-found'
   | 'moderator'
   | 'deleted'
@@ -143,6 +144,8 @@ async function decide(
     where: { id: userId },
     select: {
       id: true,
+      username: true,
+      meta: true,
       createdAt: true,
       isModerator: true,
       muted: true,

@@ -13,7 +13,9 @@ import {
   collectionRatingLevel,
   isRatingReviewEntityType,
   ratingReviewEntityPath,
+  ratingReviewLevelLabel,
   ratingReviewModeratorLevels,
+  SYSTEM_NSFW_LOCK_META_KEY,
   textScanNsfwReason,
   textScanResultTextHash,
   type RatingReviewEntityType,
@@ -72,6 +74,19 @@ function moderatorLevelsFor(
   const live = entityType === 'Challenge' || entityType === 'Crucible' ? liveLevel : undefined;
   const level = live != null ? getHighestBrowsingLevelBit(ratingBits(live)) : snapshotLevel;
   return ratingReviewModeratorLevels(entityType, level);
+}
+
+// The owner's notice compares labels against the snapshot (two NSFW levels on a model both read NSFW),
+// and a challenge or crucible can already sit at the applied level live.
+function keepsRating(
+  entityType: RatingReviewEntityType,
+  snapshotLevel: number,
+  liveLevel: number | undefined,
+  appliedLevel: number
+): boolean {
+  const label = ratingReviewLevelLabel(entityType, appliedLevel);
+  if (label === ratingReviewLevelLabel(entityType, snapshotLevel)) return true;
+  return liveLevel != null && getHighestBrowsingLevelBit(ratingBits(liveLevel)) === appliedLevel;
 }
 
 type Summary = Omit<RatingReviewEntitySummary, 'path'> & { parentId: number | null };
@@ -750,6 +765,11 @@ const addLock = (prop: string) =>
   sql<string[]>`CASE WHEN ${prop} = ANY("lockedProperties") THEN "lockedProperties"
     ELSE array_append("lockedProperties", ${prop}) END`;
 
+// A moderator's ruling makes the nsfw lock the moderator's, so the marker that let the owner dispute
+// a system-set lock goes with it.
+const withoutSystemNsfwLock = sql<unknown>`CASE WHEN jsonb_typeof("meta") = 'object'
+    THEN "meta" - ${SYSTEM_NSFW_LOCK_META_KEY}::text ELSE "meta" END`;
+
 const gone = (entityType: RatingReviewEntityType) =>
   new RatingReviewResolveError(`That ${entityType} no longer exists; reload the queue.`);
 
@@ -794,7 +814,7 @@ async function applyOverride(
       const nsfw = appliedLevel >= 4;
       const updated = await trx
         .updateTable('Model')
-        .set({ nsfw, lockedProperties: addLock('nsfw') })
+        .set({ nsfw, lockedProperties: addLock('nsfw'), meta: withoutSystemNsfwLock })
         .where('id', '=', entityId)
         .where('deletedAt', 'is', null)
         .$if(nsfw, (qb) =>
@@ -1012,6 +1032,12 @@ export async function resolveRatingReview(input: {
       throw new RatingReviewResolveError(
         "This crucible has started; its allowed levels can't change."
       );
+    if (
+      exists &&
+      !modComment?.trim() &&
+      keepsRating(entityType, review.currentLevel, liveLevel, appliedLevel)
+    )
+      throw new RatingReviewResolveError('Add a reason when keeping the rating as it is');
 
     const basis =
       exists &&

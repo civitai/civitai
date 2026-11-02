@@ -7,6 +7,7 @@ import {
   leaveStorylineSchema,
   linkStorylineChapterSchema,
   moveStorylineChapterSchema,
+  removeStorylineChapterSchema,
   moderateStorylineTitleSchema,
   setCanonChapterSchema,
   setFirstChapterSchema,
@@ -26,9 +27,11 @@ import {
 } from '~/server/schema/storyline.schema';
 import {
   addOwnerChapter,
+  addOwnerChapterAtEnd,
   addStorylineCollaborator,
   createStoryline,
   deleteStoryline,
+  removeStorylineChapter,
   getStoryline,
   getStorylineCanonAhead,
   getStorylineChapterLevels,
@@ -51,6 +54,7 @@ import {
   recordStorylineCreateClick,
   removePendingChapter,
   removeStorylineCollaborator,
+  acceptStorylineInvite,
   setCanonChapter,
   setFirstChapter,
   setStorylineTakedown,
@@ -148,6 +152,7 @@ export const storylineRouter = router({
       limit: input.limit,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      userId: input.userId,
     })
   ),
 
@@ -234,7 +239,9 @@ export const storylineRouter = router({
 
   delete: storylineWriteProcedure
     .input(storylineIdSchema)
-    .mutation(({ input, ctx }) => deleteStoryline({ id: input.id, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      deleteStoryline({ id: input.id, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
 
   setImageCaption: storylineWriteProcedure
     .input(setStorylineImageCaptionSchema)
@@ -249,6 +256,10 @@ export const storylineRouter = router({
   addChapter: storylineWriteProcedure
     .input(addOwnerChapterSchema)
     .mutation(({ input, ctx }) => addOwnerChapter({ ...input, userId: ctx.user.id })),
+
+  addChapterAtEnd: storylineWriteProcedure
+    .input(setFirstChapterSchema)
+    .mutation(({ input, ctx }) => addOwnerChapterAtEnd({ ...input, userId: ctx.user.id })),
 
   setCanon: storylineWriteProcedure.input(setCanonChapterSchema).mutation(({ input, ctx }) =>
     setCanonChapter({
@@ -269,6 +280,12 @@ export const storylineRouter = router({
     .input(moveStorylineChapterSchema)
     .mutation(({ input, ctx }) =>
       moveStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  removeChapter: storylineWriteProcedure
+    .input(removeStorylineChapterSchema)
+    .mutation(({ input, ctx }) =>
+      removeStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
 
   linkChapter: storylineWriteProcedure
@@ -294,7 +311,6 @@ export const storylineRouter = router({
         storylineId: input.storylineId,
         targetUserId: input.userId,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
       })
     ),
 
@@ -310,6 +326,12 @@ export const storylineRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       })
+    ),
+
+  acceptInvite: storylineWriteProcedure
+    .input(leaveStorylineSchema)
+    .mutation(({ input, ctx }) =>
+      acceptStorylineInvite({ storylineId: input.storylineId, userId: ctx.user.id })
     ),
 
   leave: storylineMemberProcedure.input(leaveStorylineSchema).mutation(({ input, ctx }) =>
