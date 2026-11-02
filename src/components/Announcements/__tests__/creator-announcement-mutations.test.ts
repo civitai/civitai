@@ -18,6 +18,7 @@ import type * as Trpc from '~/utils/trpc';
 const invalidate = vi.hoisted(() => ({
   getCreatorAnnouncements: vi.fn(),
   getFollowedAnnouncements: vi.fn(),
+  getFollowedAnnouncementIds: vi.fn(),
   getMutedCreators: vi.fn(),
   isCreatorMuted: vi.fn(),
 }));
@@ -34,22 +35,28 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       return { mutate: vi.fn(), isPending: false };
     },
   });
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        announcement: {
-          getCreatorAnnouncements: { invalidate: invalidate.getCreatorAnnouncements },
-          getFollowedAnnouncements: { invalidate: invalidate.getFollowedAnnouncements },
-          getMutedCreators: { invalidate: invalidate.getMutedCreators },
-          isCreatorMuted: { invalidate: invalidate.isCreatorMuted },
-        },
-      }),
-      announcement: {
-        deleteCreatorAnnouncement: mutationHook('delete'),
-        toggleAnnouncementMute: mutationHook('mute'),
+    trpc: makeTrpcProxy(
+      {
+        'announcement.deleteCreatorAnnouncement': mutationHook('delete'),
+        'announcement.toggleAnnouncementMute': mutationHook('mute'),
       },
-    },
+      {
+        // A literal on purpose: an invalidation this test does not list throws instead of
+        // passing silently through an inert utils node.
+        useUtils: () => ({
+          announcement: {
+            getCreatorAnnouncements: { invalidate: invalidate.getCreatorAnnouncements },
+            getFollowedAnnouncements: { invalidate: invalidate.getFollowedAnnouncements },
+            getFollowedAnnouncementIds: { invalidate: invalidate.getFollowedAnnouncementIds },
+            getMutedCreators: { invalidate: invalidate.getMutedCreators },
+            isCreatorMuted: { invalidate: invalidate.isCreatorMuted },
+          },
+        }),
+      }
+    ),
   };
 });
 
@@ -85,6 +92,9 @@ describe('creator announcement mutations invalidate both feeds', () => {
     // covers, where a delete from the notifications panel left the card on screen.
     expect(invalidate.getCreatorAnnouncements).toHaveBeenCalled();
     expect(invalidate.getFollowedAnnouncements).toHaveBeenCalled();
+    // Under `bellLazyCreatorFeed` the badge reads its own ids query; left stale, the bell keeps
+    // counting the deleted card.
+    expect(invalidate.getFollowedAnnouncementIds).toHaveBeenCalled();
   });
 
   it('a mute toggle busts the followed feed', async () => {
@@ -92,6 +102,7 @@ describe('creator announcement mutations invalidate both feeds', () => {
     await captured.options.mute.onSuccess({ muted: true });
 
     expect(invalidate.getFollowedAnnouncements).toHaveBeenCalled();
+    expect(invalidate.getFollowedAnnouncementIds).toHaveBeenCalled();
     expect(invalidate.getMutedCreators).toHaveBeenCalled();
   });
 });

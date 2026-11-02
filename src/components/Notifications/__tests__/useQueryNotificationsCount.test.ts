@@ -34,23 +34,27 @@ vi.mock('~/components/Announcements/announcements.utils', () => ({
 vi.mock('~/components/Announcements/creator-announcements.utils', () => ({
   useQueryFollowedAnnouncements: (enabled?: boolean) => {
     state.followedEnabled = enabled;
-    return { announcements: state.followed, isLoading: false };
+    return { announcements: state.followed, isLoading: false, hasData: true };
   },
+  // `bellLazyCreatorFeed` off: the path these tests cover. The flag-on path has its own file.
+  useBellLazyCreatorFeed: () => false,
+  useQueryFollowedAnnouncementIds: () => ({ ids: [] }),
 }));
 vi.mock('~/components/Announcements/creator-announcement-dismissals', async (importOriginal) => ({
   ...(await importOriginal<typeof DismissalsModule>()),
   useDismissedCreatorAnnouncements: () => state.dismissedCreatorIds,
 }));
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    user: {
-      checkNotifications: {
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({
+      'user.checkNotifications': {
         useQuery: () => ({ data: state.counts, isLoading: state.countsLoading }),
       },
-    },
-  },
-}));
+    }),
+  };
+});
 
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 

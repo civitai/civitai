@@ -30,6 +30,7 @@ import {
 import {
   deleteCreatorAnnouncement,
   getCreatorAnnouncements,
+  getFollowedAnnouncementIds,
   getFollowedAnnouncements,
   getMutedAnnouncementCreators,
   isAnnouncementCreatorMuted,
@@ -101,6 +102,19 @@ export const announcementRouter = router({
     )
     .use(applyRequestDomainColor)
     .query(({ ctx, input }) => getFollowedAnnouncements({ ...input, userId: ctx.user.id })),
+  // The bell badge's half of the feed (behind `bellLazyCreatorFeed`): the first page's ids only.
+  getFollowedAnnouncementIds: protectedProcedure
+    .use(isFlagProtected('creatorAnnouncements'))
+    .input(
+      z
+        .object({
+          limit: z.number().min(1).max(50).default(20),
+          domain: domainColorEnum.optional(),
+        })
+        .default({ limit: 20 })
+    )
+    .use(applyRequestDomainColor)
+    .query(({ ctx, input }) => getFollowedAnnouncementIds({ ...input, userId: ctx.user.id })),
   getMutedCreators: protectedProcedure
     .use(isFlagProtected('creatorAnnouncements'))
     .query(({ ctx }) => getMutedAnnouncementCreators(ctx.user.id)),

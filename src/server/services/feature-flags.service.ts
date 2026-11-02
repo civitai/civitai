@@ -488,6 +488,11 @@ const featureFlags = createFeatureFlags({
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.
   creatorAnnouncements: { availability: ['mod'], fliptKey: 'creator-announcements' },
+  // Perf: the header bell's badge reads only the ids of the followed creator-announcements feed
+  // (`announcement.getFollowedAnnouncementIds`), and the full feed is fetched when the
+  // notifications panel opens instead of on every signed-in page. Same badge number either way.
+  // `[]`: dark and fails CLOSED, so the `bell-lazy-creator-feed` rollout is the only on-switch.
+  bellLazyCreatorFeed: { availability: [], fliptKey: 'bell-lazy-creator-feed' },
   // The post planner (docs/batch-scheduling-planner-element.md): the `post.*` planner procedures,
   // their REST twins and both hosts. Creator Studio reads the same Flipt key.
   postPlanner: { availability: ['mod'], fliptKey: 'post-planner', displayName: 'Post planner' },

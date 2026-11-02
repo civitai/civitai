@@ -14,7 +14,9 @@ import {
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getAllServerHosts } from '~/server/utils/server-domain';
+import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -167,6 +169,166 @@ export async function getCreatorAnnouncements({
   return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO), { hydrate: false });
 }
 
+/*
+ * The live-author short-circuit for the followed feed (behind CREATOR_FEED_SHORTCIRCUIT).
+ *
+ * The feed query filters through the author relation with correlated subqueries, and the bell
+ * runs it on every signed-in page load — for most viewers to find that nobody they follow has a
+ * live announcement. So the feed first asks two cheap questions: which authors have a feedable
+ * announcement at all (one small read per domain per pod per TTL), and which of those this viewer
+ * follows (a primary-key range read on UserEngagement). An empty answer to either ends the call;
+ * otherwise the feed query runs exactly as before, with `userId IN (that intersection)` added.
+ *
+ * Why the results are the same rows: the added filter can only drop rows whose author is not in
+ * the intersection, and the feed query itself requires both halves of it — the author follows
+ * relation (`engagedUsers some Follow`) and a non-profileOnly, non-disabled row in the live
+ * window for the domain. The author set is a SUPERSET of the authors that are live at any moment
+ * inside its TTL: it looks ahead past `startsAt` by twice the TTL and keeps rows whose `endsAt`
+ * passes during it, and the feed query re-applies the exact window. Every viewer predicate —
+ * mutes, blocks both ways, hides — stays in the feed query, untouched.
+ *
+ * Where it can differ: a write the set has not seen. A save on THIS pod adds its author to
+ * `recentAuthorWrites`, which is unioned in for longer than a TTL plus replica lag, so the author's
+ * followers see it as soon as the replica does. A save on ANOTHER pod, or a moderator re-enabling
+ * a disabled row through the sitewide announcement tool, reaches this pod's set on its next
+ * refresh: up to LIVE_AUTHORS_TTL_MS late. Removals (delete, disable, profileOnly) only shrink the
+ * true set, which a superset absorbs. That window is why this sits behind a switch.
+ */
+const LIVE_AUTHORS_TTL_MS = 30_000;
+// Twice the TTL, so a row whose start falls inside a cached set's lifetime is already in it even
+// when the read that built the set was slow (the memo's expiry is stamped after the read).
+const LIVE_AUTHORS_LOOKAHEAD_MS = 2 * LIVE_AUTHORS_TTL_MS;
+// Comfortably more than a TTL plus replica lag: an author saved here stays in the set until a
+// refresh has certainly read a replica that has the row.
+const RECENT_AUTHOR_WRITE_MS = 10 * 60_000;
+const ANY_DOMAIN = 'any';
+
+/** Exported for tests only. */
+export const liveAuthorIdsMemo = createKeyedTtlMemo<number[]>(
+  async (domainKey) => {
+    const now = Date.now();
+    const rows = await dbRead.announcement.findMany({
+      where: {
+        profileOnly: false,
+        disabled: false,
+        userId: { not: null },
+        ...(domainKey !== ANY_DOMAIN
+          ? { domain: { hasSome: [DomainColor.all, domainKey as DomainColor] } }
+          : {}),
+        OR: [{ startsAt: null }, { startsAt: { lte: new Date(now + LIVE_AUTHORS_LOOKAHEAD_MS) } }],
+        AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: new Date(now) } }] }],
+      },
+      select: { userId: true },
+    });
+    return [...new Set(rows.map((x) => x.userId).filter(isDefined))];
+  },
+  LIVE_AUTHORS_TTL_MS,
+  () => Date.now(),
+  // One array served to every request on the pod for the TTL.
+  { freeze: true }
+);
+
+// author id -> until when it is unioned into the live set. Bounded by the save rate over
+// RECENT_AUTHOR_WRITE_MS, and pruned on every read. Module-local: where the server build emits
+// this module more than once, a save through one copy reaches the other copy's readers only on
+// its next set refresh — the same TTL bound as a save on another pod, so no global pin.
+const recentAuthorWrites = new Map<number, number>();
+
+function noteCreatorAnnouncementWrite(authorId: number) {
+  recentAuthorWrites.set(authorId, Date.now() + RECENT_AUTHOR_WRITE_MS);
+}
+
+/** Exported for tests only. */
+export function resetLiveAuthorCache() {
+  liveAuthorIdsMemo.clear();
+  recentAuthorWrites.clear();
+}
+
+/**
+ * The authors this viewer follows who may have a feedable announcement, or `undefined` when the
+ * feed should run unnarrowed (switch off, or the narrowing read failed — the feed query then
+ * answers as it always has). An empty array means the feed is empty.
+ */
+async function resolveFollowedLiveAuthors({
+  userId,
+  domain,
+}: {
+  userId: number;
+  domain?: DomainColor;
+}): Promise<number[] | undefined> {
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CREATOR_FEED_SHORTCIRCUIT))) return undefined;
+
+  try {
+    const now = Date.now();
+    const candidates = new Set(await liveAuthorIdsMemo(domain ?? ANY_DOMAIN));
+    for (const [authorId, until] of recentAuthorWrites) {
+      if (until <= now) recentAuthorWrites.delete(authorId);
+      else candidates.add(authorId);
+    }
+    if (!candidates.size) return [];
+
+    const follows = await dbRead.userEngagement.findMany({
+      where: { userId, type: UserEngagementType.Follow, targetUserId: { in: [...candidates] } },
+      select: { targetUserId: true },
+    });
+    return follows.map((x) => x.targetUserId);
+  } catch {
+    return undefined;
+  }
+}
+
+function followedAnnouncementsWhere({
+  userId,
+  domain,
+  authorIds,
+  now,
+}: {
+  userId: number;
+  domain?: DomainColor;
+  authorIds?: number[];
+  now: Date;
+}) {
+  return {
+    profileOnly: false,
+    disabled: false,
+    userId: authorIds ? { in: authorIds } : { not: null },
+    user: {
+      // engagedUsers = rows where this author is the TARGET, i.e. their followers.
+      // engagingUsers is the other direction (follows the author made) and would
+      // return a plausible, wrong feed.
+      announcementMutesReceived: { none: { userId } },
+      // Blocks both ways, mirroring `notBlockedBetween` exactly — the asymmetry is
+      // deliberate there: the viewer's Block OR Hide of the author hides it, while the
+      // author's side hides it only on Block. A follow predates the block that
+      // followed it, so the follow edge alone is not consent to keep appearing.
+      engagingUsers: { none: { targetUserId: userId, type: UserEngagementType.Block } },
+      // Both conditions are on engagedUsers, so they go in AND rather than as two keys
+      // of the same object. A repeated key here is TS1117 and would not compile; the
+      // hazard is the sibling `where`, where a spread between two keys makes the same
+      // mistake legal and silent.
+      AND: [
+        { engagedUsers: { some: { userId, type: UserEngagementType.Follow } } },
+        {
+          engagedUsers: {
+            none: {
+              userId,
+              type: { in: [UserEngagementType.Block, UserEngagementType.Hide] },
+            },
+          },
+        },
+      ],
+    },
+    ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
+    OR: [{ startsAt: null }, { startsAt: { lte: now } }],
+    AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }],
+  } satisfies Prisma.AnnouncementWhereInput;
+}
+
+const followedAnnouncementsOrderBy = [
+  { startsAt: { sort: 'desc', nulls: 'last' } },
+  { id: 'desc' },
+] satisfies Prisma.AnnouncementOrderByWithRelationInput[];
+
 /**
  * The *Creators* chip: live announcements from authors the caller follows.
  *
@@ -188,43 +350,13 @@ export async function getFollowedAnnouncements({
 }) {
   const now = new Date();
 
+  const authorIds = await resolveFollowedLiveAuthors({ userId, domain });
+  if (authorIds && !authorIds.length) return { items: [], nextCursor: undefined };
+
   const announcements = await dbRead.announcement.findMany({
-    where: {
-      profileOnly: false,
-      disabled: false,
-      userId: { not: null },
-      user: {
-        // engagedUsers = rows where this author is the TARGET, i.e. their followers.
-        // engagingUsers is the other direction (follows the author made) and would
-        // return a plausible, wrong feed.
-        announcementMutesReceived: { none: { userId } },
-        // Blocks both ways, mirroring `notBlockedBetween` exactly — the asymmetry is
-        // deliberate there: the viewer's Block OR Hide of the author hides it, while the
-        // author's side hides it only on Block. A follow predates the block that
-        // followed it, so the follow edge alone is not consent to keep appearing.
-        engagingUsers: { none: { targetUserId: userId, type: UserEngagementType.Block } },
-        // Both conditions are on engagedUsers, so they go in AND rather than as two keys
-        // of the same object. A repeated key here is TS1117 and would not compile; the
-        // hazard is the sibling `where`, where a spread between two keys makes the same
-        // mistake legal and silent.
-        AND: [
-          { engagedUsers: { some: { userId, type: UserEngagementType.Follow } } },
-          {
-            engagedUsers: {
-              none: {
-                userId,
-                type: { in: [UserEngagementType.Block, UserEngagementType.Hide] },
-              },
-            },
-          },
-        ],
-      },
-      ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-      OR: [{ startsAt: null }, { startsAt: { lte: now } }],
-      AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }],
-    },
+    where: followedAnnouncementsWhere({ userId, domain, authorIds, now }),
     select: creatorAnnouncementSelect,
-    orderBy: [{ startsAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+    orderBy: followedAnnouncementsOrderBy,
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
@@ -238,6 +370,35 @@ export async function getFollowedAnnouncements({
     items,
     nextCursor: announcements.length > limit ? items[items.length - 1]?.id : undefined,
   };
+}
+
+/**
+ * The ids of the first page of `getFollowedAnnouncements`, for the bell's badge: the same
+ * filter, order and page size, without the cover and author reads, the identity caches or the
+ * row bodies. The badge counts the undismissed ids of that first page, so this is everything it
+ * needs.
+ */
+export async function getFollowedAnnouncementIds({
+  userId,
+  limit = 20,
+  domain,
+}: {
+  userId: number;
+  limit?: number;
+  domain?: DomainColor;
+}) {
+  const now = new Date();
+
+  const authorIds = await resolveFollowedLiveAuthors({ userId, domain });
+  if (authorIds && !authorIds.length) return [];
+
+  const rows = await dbRead.announcement.findMany({
+    where: followedAnnouncementsWhere({ userId, domain, authorIds, now }),
+    select: { id: true },
+    orderBy: followedAnnouncementsOrderBy,
+    take: limit,
+  });
+  return rows.map((x) => x.id);
 }
 
 /**
@@ -364,16 +525,27 @@ export function clampAnnouncementWindow({
   return { startsAt: start, endsAt: end };
 }
 
-export async function upsertCreatorAnnouncement({
+type UpsertCreatorAnnouncementInput = UpsertCreatorAnnouncementSchema & {
+  userId: number;
+  isModerator?: boolean;
+  isMember?: boolean;
+};
+
+export async function upsertCreatorAnnouncement(input: UpsertCreatorAnnouncementInput) {
+  const announcement = await writeCreatorAnnouncement(input);
+  // Every save, not only one that makes a row live: an edit can move the window or the domain,
+  // and a superset costs the feed nothing. The author is always the caller here —
+  // `assertOwnedAnnouncement` is called without the moderator widening.
+  noteCreatorAnnouncementWrite(input.userId);
+  return announcement;
+}
+
+async function writeCreatorAnnouncement({
   userId,
   isModerator = false,
   isMember = false,
   ...input
-}: UpsertCreatorAnnouncementSchema & {
-  userId: number;
-  isModerator?: boolean;
-  isMember?: boolean;
-}) {
+}: UpsertCreatorAnnouncementInput) {
   const existing = input.id ? await assertOwnedAnnouncement(input.id, userId) : undefined;
   const actions = input.actions ?? (input.action ? [input.action] : []);
 
@@ -539,6 +711,8 @@ export async function deleteCreatorAnnouncement({
   isModerator?: boolean;
 }) {
   await assertOwnedAnnouncement(id, userId, isModerator);
+  // No live-author note: a delete can only remove an author from the feed's live set, and the
+  // set is a superset the feed query re-filters, so a stale entry costs one cheap follow read.
   return dbWrite.announcement.delete({ where: { id }, select: { id: true } });
 }
 
