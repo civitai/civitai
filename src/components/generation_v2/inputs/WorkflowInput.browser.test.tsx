@@ -1,7 +1,7 @@
 import type * as MantineHooks from '@mantine/hooks';
 import type { ReactNode } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 // Mock notes:
@@ -12,8 +12,8 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //   mocked via importActual with only useMediaQuery overridden. `setMobile(true)` makes every query
 //   match; with the mobile generator's flag off, that is the legacy generator on a narrow screen.
 //   Which surface opens where is PopoverOrSheet's own test.
-// - `WorkflowInput` renders only icon segments (aria-label "Image" / "Video" / ...). The workflow
-//   label text is `SelectedWorkflowDisplay`'s job.
+// - `WorkflowInput` renders only icon segments (aria-label "Image" / "Video" / ...). The label text
+//   is `SelectedWorkflowDisplay`'s (desktop) or `WorkflowPicker`'s (mobile card) job.
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: vi.fn(() => ({})),
@@ -43,6 +43,7 @@ vi.mock('@mantine/hooks', async (importOriginal) => ({
 
 import {
   WorkflowInput,
+  WorkflowPicker,
   SelectedWorkflowDisplay,
 } from '~/components/generation_v2/inputs/WorkflowInput';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -172,5 +173,66 @@ describe('SelectedWorkflowDisplay (standalone — label render from props)', () 
     // null: NO display container is rendered at all (the presence marker the
     // primary-key test asserts is absent here — that's the teeth).
     expect(document.querySelector('div.rounded-lg.border')).toBeNull();
+  });
+});
+
+describe('WorkflowPicker (the mobile generator card)', () => {
+  beforeEach(() => {
+    featureFlagsMock.mockReset();
+    featureFlagsMock.mockReturnValue({} as any);
+    useMediaQueryMock.mockReset();
+    setMobile(false);
+  });
+
+  test('the card names the workflow, and a pick from another category reports it and closes', async () => {
+    const onChange = vi.fn();
+    renderWithProviders(<WorkflowPicker value="txt2img" onChange={onChange} />);
+
+    await expect.element(page.getByText('Image workflow', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: /Workflow: Create Image/ }).click();
+    await expect.element(page.getByText('Draft', { exact: true })).toBeVisible();
+    await page.getByRole('radio', { name: 'Video' }).click();
+    await page.getByText('Image to Video', { exact: true }).click();
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('img2vid', expect.any(Array), 'img2vid');
+    await expect.element(page.getByText('Image to Video', { exact: true })).not.toBeInTheDocument();
+  });
+
+  test("opens on the current workflow's category, every time", async () => {
+    renderWithProviders(<WorkflowPicker value="txt2vid" onChange={vi.fn()} />);
+    const card = page.getByRole('button', { name: /Change workflow/ });
+
+    await card.click();
+    await expect.element(page.getByText('Image to Video', { exact: true })).toBeVisible();
+    await expect.element(page.getByText('Draft', { exact: true })).not.toBeInTheDocument();
+
+    // A tab left on another category doesn't carry over to the next opening.
+    await page.getByRole('radio', { name: 'Image' }).click();
+    await expect.element(page.getByText('Draft', { exact: true })).toBeVisible();
+    await userEvent.keyboard('{Escape}');
+    await expect.element(page.getByText('Draft', { exact: true })).not.toBeInTheDocument();
+    await card.click();
+    await expect.element(page.getByText('Image to Video', { exact: true })).toBeVisible();
+  });
+
+  test('the back arrow shows only with onBack, and calls it', async () => {
+    const onBack = vi.fn();
+    renderWithProviders(
+      <>
+        <div data-testid="without">
+          <WorkflowPicker value="txt2img" />
+        </div>
+        <WorkflowPicker value="txt2img" onBack={onBack} />
+      </>
+    );
+    const without = page.getByTestId('without');
+    await expect.element(without.getByRole('button', { name: /Change workflow/ })).toBeVisible();
+    await expect
+      .element(without.getByRole('button', { name: 'Back to previous workflow' }))
+      .not.toBeInTheDocument();
+
+    await page.getByRole('button', { name: 'Back to previous workflow' }).click();
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

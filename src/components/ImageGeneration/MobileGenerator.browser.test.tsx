@@ -16,8 +16,8 @@ import { TitleRowReset } from '~/components/form-graph/generation/MobileFooterPa
 // which density is showing.
 // The stand-in scrolls, as the real results do.
 vi.mock('~/components/ImageGeneration/GenerationResults', () => ({
-  GenerationResults: ({ view }: { view: string }) => (
-    <div data-testid="results" style={{ height: 300, overflowY: 'auto' }}>
+  GenerationResults: ({ view, className }: { view: string; className?: string }) => (
+    <div data-testid="results" className={className} style={{ height: 300, overflowY: 'auto' }}>
       {view}
       <div style={{ height: 3000 }} />
     </div>
@@ -130,7 +130,7 @@ describe('MobileGenerator', () => {
     expect(view()).toBe('queue');
   });
 
-  test('the header folds away while the results scroll down, and comes back on the way up', async () => {
+  test('the header slides away while the results scroll down, and comes back on the way up', async () => {
     useGenerationPanelStore.setState({ view: 'queue' });
     renderGenerator();
     const results = page.getByTestId('results');
@@ -141,9 +141,24 @@ describe('MobileGenerator', () => {
       el.scrollTop = top;
       el.dispatchEvent(new Event('scroll'));
     };
+    const resultsBox = () => {
+      const { top, height } = results.element().parentElement!.getBoundingClientRect();
+      return { top, height };
+    };
+    const before = resultsBox();
+    // The results start clear of the header lying over them.
+    expect(parseFloat(getComputedStyle(results.element()).paddingTop)).toBeCloseTo(
+      header.element().getBoundingClientRect().height,
+      1
+    );
 
     scrollTo(400);
     await expect.element(header).toHaveAttribute('data-hidden');
+    // Once it has slid off the results, they have kept their place and size.
+    await expect
+      .poll(() => header.element().getBoundingClientRect().bottom)
+      .toBeLessThanOrEqual(before.top);
+    expect(resultsBox()).toEqual(before);
     scrollTo(250);
     await expect.element(header).not.toHaveAttribute('data-hidden');
     scrollTo(800);

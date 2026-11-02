@@ -2,13 +2,23 @@
  * WorkflowInput
  *
  * A form input for selecting generation features (workflows).
- * One segment per category (image, video, audio, 3D), each opening its own picker.
+ * One segment per category (image, video, audio, 3D), each opening its own picker. The mobile
+ * generator uses WorkflowPicker instead.
  */
 
-import { Badge, Group, Text, Tooltip, UnstyledButton, Stack } from '@mantine/core';
+import {
+  Badge,
+  Group,
+  SegmentedControl,
+  Text,
+  Tooltip,
+  UnstyledButton,
+  Stack,
+} from '@mantine/core';
 import {
   IconArrowLeft,
   IconCheck,
+  IconChevronDown,
   IconCube,
   IconMusic,
   IconPhoto,
@@ -16,7 +26,8 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { forwardRef, useMemo, useState } from 'react';
+import type { ReactElement } from 'react';
+import { cloneElement, forwardRef, useMemo, useState } from 'react';
 
 import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
@@ -294,7 +305,7 @@ const DROPDOWN_CLASS = 'max-h-[70vh] overflow-y-auto';
 
 const SEGMENTS: {
   category: WorkflowCategory;
-  icon: React.ReactNode;
+  icon: ReactElement<{ size?: number }>;
   label: string;
   title: string;
 }[] = [
@@ -323,6 +334,31 @@ const SEGMENTS: {
     title: 'Select 3D Model Workflow',
   },
 ];
+
+/** The category segments to offer, each with its workflows. */
+function getVisibleSegments(options: WorkflowCategoryGroup[]) {
+  return (
+    SEGMENTS.map((segment) => ({
+      ...segment,
+      categories: options.filter((cat) => cat.category === segment.category),
+    }))
+      // Image always shows; the others only when they have a workflow to offer.
+      .filter(
+        (segment) =>
+          segment.category === 'image' || segment.categories.some((cat) => cat.workflows.length > 0)
+      )
+  );
+}
+
+/** A workflow's display option and label, a variant resolved to its parent ("img2vid:first-last" shows as "Image to Video"). */
+function resolveWorkflowDisplay(workflowId: string | undefined, ecosystemId?: number) {
+  const resolvedId = workflowId
+    ? workflowConfigByKey.get(workflowId)?.variantOf ?? workflowId
+    : undefined;
+  const workflow = resolvedId ? workflowOptionById.get(resolvedId) : undefined;
+  if (!resolvedId || !workflow) return undefined;
+  return { workflow, label: getWorkflowLabelForEcosystem(resolvedId, ecosystemId) };
+}
 
 // =============================================================================
 // Workflow List Content (shared between Popover and Modal)
@@ -418,13 +454,9 @@ export function SelectedWorkflowDisplay({
   className,
   onBack,
 }: SelectedWorkflowDisplayProps) {
-  const resolvedId = workflowId
-    ? workflowConfigByKey.get(workflowId)?.variantOf ?? workflowId
-    : undefined;
-  const workflow = resolvedId ? workflowOptionById.get(resolvedId) : undefined;
-  if (!workflow) return null;
-
-  const label = getWorkflowLabelForEcosystem(resolvedId!, ecosystemId);
+  const display = resolveWorkflowDisplay(workflowId, ecosystemId);
+  if (!display) return null;
+  const { workflow, label } = display;
 
   return (
     <div
@@ -460,6 +492,111 @@ export function SelectedWorkflowDisplay({
 }
 
 // =============================================================================
+// Workflow Picker (the mobile generator's one workflow control)
+// =============================================================================
+
+export interface WorkflowPickerProps extends Omit<WorkflowInputProps, 'className' | 'disabled'> {
+  /** Renders a back arrow beside the card. */
+  onBack?: () => void;
+}
+
+/**
+ * The selected workflow as a card that opens a sheet of every workflow, by category.
+ */
+export function WorkflowPicker({
+  value,
+  onChange,
+  ecosystemId,
+  isCompatible,
+  isMember = false,
+  onBack,
+}: WorkflowPickerProps) {
+  const [opened, setOpened] = useState(false);
+  const options = useAvailableWorkflowGroups();
+  const selected = getSelectedWorkflow(options, value, ecosystemId);
+  const display = resolveWorkflowDisplay(value, ecosystemId);
+  const category = selected?.category.category ?? display?.workflow.category ?? 'image';
+  const [tab, setTab] = useState(category);
+
+  const segments = getVisibleSegments(options);
+  const segment = segments.find((s) => s.category === category) ?? segments[0];
+  if (!display) return null;
+  const { workflow, label } = display;
+
+  return (
+    <div className="flex items-center gap-2">
+      {onBack && (
+        <UnstyledButton
+          onClick={onBack}
+          data-tap-target
+          className="flex shrink-0 items-center rounded p-1 text-gray-6 dark:text-dark-2"
+          aria-label="Back to previous workflow"
+        >
+          <IconArrowLeft size={20} />
+        </UnstyledButton>
+      )}
+      <PopoverOrSheet
+        opened={opened}
+        onClose={() => setOpened(false)}
+        title="Choose a workflow"
+        tall
+        target={
+          <button
+            type="button"
+            onClick={() => {
+              setTab(category);
+              setOpened(true);
+            }}
+            aria-label={`Workflow: ${label}. Change workflow`}
+            className="flex min-h-16 w-full min-w-0 flex-1 items-center gap-3 rounded-lg border border-solid border-blue-6 bg-white px-3 py-2.5 text-left font-[inherit] text-inherit dark:bg-dark-7"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-blue-0 text-blue-6 dark:bg-blue-9/20 dark:text-blue-4">
+              {cloneElement(segment.icon, { size: 20 })}
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-6 dark:text-dark-2">
+                {segment.label} workflow
+              </span>
+              <span className="text-base font-semibold leading-tight">{label}</span>
+              {workflow.description && (
+                <span className="text-sm leading-tight text-gray-6 dark:text-dark-2">
+                  {workflow.description}
+                </span>
+              )}
+            </span>
+            <span className="flex h-8 shrink-0 items-center gap-1 rounded-full bg-gray-1 px-2.5 text-sm font-semibold text-blue-6 dark:bg-dark-5 dark:text-blue-4">
+              Change
+              <IconChevronDown size={14} stroke={2.5} />
+            </span>
+          </button>
+        }
+      >
+        <Stack gap="sm">
+          {segments.length > 1 && (
+            <SegmentedControl
+              fullWidth
+              value={tab}
+              onChange={(next) => setTab(next as WorkflowCategory)}
+              data={segments.map((s) => ({ value: s.category, label: s.label }))}
+            />
+          )}
+          <WorkflowListContent
+            categories={segments.find((s) => s.category === tab)?.categories ?? []}
+            selectedValue={selected?.workflow.id}
+            onSelect={(graphKey, ecosystemIds, optionId) => {
+              onChange?.(graphKey, ecosystemIds, optionId);
+              setOpened(false);
+            }}
+            isCompatible={isCompatible}
+            isMember={isMember}
+          />
+        </Stack>
+      </PopoverOrSheet>
+    </div>
+  );
+}
+
+// =============================================================================
 // Component
 // =============================================================================
 
@@ -477,17 +614,7 @@ export function WorkflowInput({
   const options = useAvailableWorkflowGroups();
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
-  const byCategory = (category: WorkflowCategory) =>
-    options.filter((cat) => cat.category === category);
-  const segments = SEGMENTS.map((segment) => ({
-    ...segment,
-    categories: byCategory(segment.category),
-  }))
-    // Image always shows; the others only when they have a workflow to offer.
-    .filter(
-      (segment) =>
-        segment.category === 'image' || segment.categories.some((cat) => cat.workflows.length > 0)
-    );
+  const segments = getVisibleSegments(options);
 
   const handleSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);

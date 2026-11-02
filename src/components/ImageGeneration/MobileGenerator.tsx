@@ -1,5 +1,5 @@
 import { Badge, CloseButton, Text, UnstyledButton } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
+import { useElementSize, useLocalStorage } from '@mantine/hooks';
 import {
   IconChevronDown,
   IconChevronUp,
@@ -89,6 +89,8 @@ export function MobileGenerator({ form, onClose, closeLabel }: Props) {
   // The iOS keyboard shrinks only the visual viewport; lifting the bottom edge by it keeps the open
   // form's footer above the keyboard.
   const keyboardInset = useVisualViewportBottomInset();
+  // The results start below the header lying over them, however tall it renders.
+  const { ref: headerRef, height: headerHeight } = useElementSize();
   const challenges = !!useFeatureFlags().challengePlatform;
   const selecting = useSelectedCount() > 0;
   const headerHidden = useHideOnScroll(resultsRef, { resetKey: resultsView }) && !selecting;
@@ -99,40 +101,47 @@ export function MobileGenerator({ form, onClose, closeLabel }: Props) {
       <MobileGeneratorSlots>
         <div
           className={classes.root}
-          style={{ '--generator-keyboard': `${keyboardInset}px` } as CSSProperties}
+          style={
+            {
+              '--generator-keyboard': `${keyboardInset}px`,
+              ...(headerHeight > 0 && { '--generator-header': `${headerHeight}px` }),
+            } as CSSProperties
+          }
         >
-          <header className={classes.header} data-hidden={headerHidden || undefined}>
-            <div className={classes.headerFold}>
-              <div className={classes.headerRow}>
-                {selecting ? (
-                  <div className="min-w-0 flex-1">
-                    <GeneratedImageActions compact />
+          <header
+            ref={headerRef}
+            className={classes.header}
+            data-hidden={headerHidden || undefined}
+          >
+            <div className={classes.headerRow}>
+              {selecting ? (
+                <div className="min-w-0 flex-1">
+                  <GeneratedImageActions compact />
+                </div>
+              ) : (
+                <>
+                  {challenges && <ChallengeIndicator />}
+                  <div className="flex min-w-0 flex-1 items-center gap-2 pl-1">
+                    <Text fw={700} size="lg" className="truncate">
+                      Generator
+                    </Text>
+                    <QueueCount />
                   </div>
-                ) : (
-                  <>
-                    {challenges && <ChallengeIndicator />}
-                    <div className="flex min-w-0 flex-1 items-center gap-2 pl-1">
-                      <Text fw={700} size="lg" className="truncate">
-                        Generator
-                      </Text>
-                      <QueueCount />
-                    </div>
-                    <DensityToggle value={resultsView} />
-                    <GeneratedImageActions compact />
-                  </>
-                )}
-                <CloseButton
-                  aria-label={closeLabel}
-                  onClick={onClose}
-                  size="lg"
-                  variant="transparent"
-                />
-                <QueueSlots fill className="absolute inset-x-3 bottom-1.5" />
-              </div>
+                  <DensityToggle value={resultsView} />
+                  <GeneratedImageActions compact />
+                </>
+              )}
+              <CloseButton
+                aria-label={closeLabel}
+                onClick={onClose}
+                size="lg"
+                variant="transparent"
+              />
+              <QueueSlots fill className="absolute inset-x-3 bottom-1.5" />
             </div>
           </header>
           <div ref={resultsRef} className={classes.results} {...inert(expanded)}>
-            <GenerationResults view={resultsView} />
+            <GenerationResults view={resultsView} className={classes.resultsScroll} />
           </div>
           <div
             data-scrim

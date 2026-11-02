@@ -18,27 +18,20 @@
 
 // Header and results are their own stacking contexts, so nothing in them (Mantine's Indicator
 // sits at z-index 200) shows through the sheet.
-// It folds away while the results scroll down: its one row collapses to nothing.
+//
+// Overlays the results instead of sitting above them: folding its height resized the scroller and
+// made the list jump mid-scroll.
 .header {
-  position: relative;
-  z-index: 0;
-  flex: none;
-  display: grid;
-  grid-template-rows: 1fr;
-  overflow: hidden;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  transition: grid-template-rows 0.2s ease;
+  position: absolute;
+  top: var(--safe-area-inset-top, 0px);
+  inset-inline: 0;
+  z-index: 1;
+  background: var(--mantine-color-body);
+  transition: transform 0.2s ease;
 
   &[data-hidden] {
-    grid-template-rows: 0fr;
-    border-bottom-width: 0;
+    transform: translateY(calc(-100% - var(--safe-area-inset-top, 0px)));
   }
-}
-
-// What folds: no padding of its own, since a fold can shrink content to 0 but never padding.
-.headerFold {
-  min-height: 0;
-  overflow: hidden;
 }
 
 .headerRow {
@@ -48,6 +41,8 @@
   gap: 4px;
   min-height: 56px;
   padding-inline: 8px;
+  // On the row, not the header, so the header's measured height includes it.
+  border-bottom: 1px solid var(--mantine-color-default-border);
 }
 
 // The closed sheet covers the bottom of the results, so they end above it.
@@ -58,6 +53,11 @@
   display: flex;
   flex-direction: column;
   padding-bottom: var(--sheet-peek);
+}
+
+.resultsScroll {
+  // The header's measured height, set by MobileGenerator.
+  padding-top: var(--generator-header, 57px);
 }
 
 // Dims the results behind the open sheet; visible through the status-bar inset and when the sheet is

@@ -32,8 +32,9 @@ keeps today's layout.
 
 - **The queue is the screen.** Header, one 56px row: the desktop daily-challenges button
   (`ChallengeIndicator`), "Generator" with the queue count, the Batches/Grid toggle, sort and
-  filters as icons, and Close. It folds away while the results scroll down and comes back on the
-  way up or near the top; while images are selected it is their actions instead, and stays.
+  filters as icons, and Close. It lies over the results and slides away while they scroll down,
+  coming back on the way up or near the top; hiding it never resizes the results, which made the
+  list jump mid-scroll. While images are selected it is their actions instead, and stays.
   Presets act on the form, so they sit in the form's title row (a product decision). No Generate /
   Queue / Feed tabs.
 - **Feed becomes a density toggle** in the header (Batches or Grid). Same outputs, filters,
@@ -368,6 +369,11 @@ Built:
 - Output format and priority open their choices as a sheet (`SheetOption` rows, shared with
   `SheetSelect`); a member-only priority still offers the membership to a non-member.
 - Version picker: past three versions, a `SheetSelect` (a select on desktop too).
+- The workflow is one card above the ecosystem (`WorkflowPicker`): its category, name and
+  description, and a Change pill. It opens a "Choose a workflow" sheet with a tab per category,
+  open on the current one. The category icons alone didn't read as a picker on a phone, and the
+  name beside them read as a label. Desktop and the legacy narrow layout keep the icons; which one
+  renders is `WorkflowRow` and `WorkflowModes` (`form-graph/generation/WorkflowRow.tsx`).
 - The queue filters' Ecosystem and Workflow selects are `SheetSelect`s: a full-height sheet with a
   search box that waits for a tap, so the keyboard stays down until wanted. A clearable
   `SheetSelect` lists its placeholder ("All Models") first, which clears it, and its field has an ✕.
