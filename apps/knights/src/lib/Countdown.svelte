@@ -1,20 +1,27 @@
 <script lang="ts">
   import { invalidate } from '$app/navigation';
   import { formatWait } from '$lib/format';
+  import { revalidateUntilStopped } from '$lib/revalidate';
 
   /** `seconds` is the server's remaining time, so the browser clock cannot skew it. */
   let { seconds, label }: { seconds: number; label: string } = $props();
   let remaining = $state(0);
 
-  // Past zero the server may still say wait; keep asking until the parent stops rendering this.
+  // At zero, ask the server again, one request at a time, until it stops rendering this component.
   $effect(() => {
     const endsAt = performance.now() + seconds * 1000;
     remaining = seconds;
+    let asking: AbortController | undefined;
     const timer = setInterval(() => {
       remaining = (endsAt - performance.now()) / 1000;
-      if (remaining <= 0) invalidate('app:play');
+      if (remaining > 0 || asking) return;
+      asking = new AbortController();
+      void revalidateUntilStopped(() => invalidate('app:play'), { signal: asking.signal });
     }, 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      asking?.abort();
+    };
   });
 </script>
 
