@@ -3,7 +3,7 @@
  * device, or once the browser forgets it, the app starts in a new chat.
  */
 const KEY_PREFIX = 'app-assistant:app-chats:';
-/** Apps remembered per user; the oldest choice goes first. Far above the apps a user can keep. */
+/** Apps remembered per user; the oldest choice is evicted first. */
 export const APP_CHATS_MAX = 50;
 
 type AppChats = Record<string, string>;

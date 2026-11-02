@@ -99,10 +99,7 @@ export function AppAssistantPreview({
    * would not say. Given, a check made when the tab comes back into view asks it too.
    */
   tunnelStatus?: () => Promise<SandboxTunnelStatus | null>;
-  /**
-   * Counts the times the open app's dev server came back up (on the server runner): each new one
-   * reloads a frame in its fallback, which the runner's once-per-reply preview never reopens.
-   */
+  /** Counts the times the open app's dev server came back up (`devServerUpOf`). */
   devServerUp?: number;
 }) {
   const frame = useQuery({

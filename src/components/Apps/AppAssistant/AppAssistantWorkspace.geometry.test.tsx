@@ -320,15 +320,8 @@ describe.each([
     });
 
   test.each([
-    { of: 'first-app', items: ['Pause', 'ExportDownload as zip', 'Delete app'] },
-    {
-      of: 'second-app',
-      items: [
-        'Startfirst-app will be paused',
-        'ExportDownload as zipfirst-app will be paused',
-        'Delete app',
-      ],
-    },
+    { of: 'first-app', items: [/^Pause/, /^Export/, /^Delete app/] },
+    { of: 'second-app', items: [/^Start/, /^Export/, /^Delete app/] },
   ])(
     '🔴 the menu of $of paints over the app list: each item is what a tap on it hits',
     async ({ of, items: labels }) => {
@@ -362,7 +355,8 @@ describe.each([
       await nextLayout();
 
       const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
-      expect(items.map((item) => item.textContent)).toEqual(labels);
+      // The actions, by their first word only: the hit test below is the assertion.
+      items.forEach((item, i) => expect(item.textContent).toMatch(labels[i]));
       // POSITIVE CONTROL: the menu lies over another app's row, so a row painted over it would show.
       const rows = [...dialog.querySelectorAll('li')].filter((row) => !row.contains(items[0]));
       expect(items.some((item) => rows.some((row) => overlap(box(item), box(row))))).toBe(true);

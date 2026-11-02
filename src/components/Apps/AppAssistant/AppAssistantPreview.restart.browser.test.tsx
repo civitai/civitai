@@ -277,9 +277,7 @@ describe('AppAssistantPreview — asking the app’s sandbox when the tab comes 
 });
 
 describe('AppAssistantPreview — a failed frame when the dev server comes back up', () => {
-  // The runner opens an app's preview by itself only once per reply: when the app then fails to load
-  // and the assistant fixes it and restarts its dev server, the page is told only that the dev server
-  // is up again (`devServerUp`, counted by the workspace).
+  // The page learns of a restart only through `devServerUp` (counted by the workspace).
   const RELOADED: PreviewFrame = { ...FRAME, iframeSrc: `https://${HOST}/?dev=entry-token-second` };
   const frameSrc = () => page.getByTestId('frame').element().getAttribute('data-src');
   const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
@@ -319,10 +317,12 @@ describe('AppAssistantPreview — a failed frame when the dev server comes back 
       .element(page.getByText('The preview couldn’t sign in to your app.', { exact: false }))
       .toBeInTheDocument();
 
+    // The host still shows its failure when the dev server comes back up.
+    screen.rerender(shown(4));
+    await vi.waitFor(() => expect(m.fetchFrame).toHaveBeenCalledTimes(2));
     m.tokenError = false;
     screen.rerender(shown(4));
     await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
-    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
   });
 
   test('NEGATIVE CONTROL: a frame that loads is left alone (a reload resets its saved data)', async () => {
@@ -349,5 +349,10 @@ describe('AppAssistantPreview — a failed frame when the dev server comes back 
     await settle();
     expect(m.fetchFrame).toHaveBeenCalledTimes(1);
     expect(frameSrc()).toBe(FRAME.iframeSrc);
+
+    // Control: a higher count, in the same frame, does reload it.
+    screen.rerender(shown(4));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
   });
 });

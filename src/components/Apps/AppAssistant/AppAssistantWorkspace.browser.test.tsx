@@ -86,7 +86,6 @@ const m = vi.hoisted(() => ({
   suspend: vi.fn(),
   remove: vi.fn(),
   newChat: vi.fn(),
-  /** The chat's `chatId`: the chat open now. */
   chatId: null as string | null,
   /** Each saved chat the page asked the chat to open (`conversationId`), in order. */
   opened: [] as string[],
@@ -1990,7 +1989,7 @@ describe('AppAssistantWorkspace chats follow the app', () => {
     expect(m.opened).toEqual([]);
   });
 
-  test('a chat that chooses another app is no longer the first app’s', async () => {
+  test('switching back to the first app starts a new chat once its chat chose another app', async () => {
     await mount();
     await workOnBoth();
     // chat-b, open with app-bbbb, is then asked to work on app-aaaa.
@@ -2711,8 +2710,7 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     expect(m.stop).not.toHaveBeenCalled();
   });
 
-  // The runner opens an app's preview by itself once per reply; a frame that failed then hears of a
-  // later restart only through these results (`devServerUp`, which reloads a failed frame).
+  // The page learns of a restart only through `devServerUp` (`devServerUpOf`).
   test('🔴 the shown preview is told each time the dev server comes back up', async () => {
     await mountRunner();
     await openFirst();

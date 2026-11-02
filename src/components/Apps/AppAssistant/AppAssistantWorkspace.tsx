@@ -235,7 +235,6 @@ export function AppAssistantWorkspace({
    * is away. Off, they run in the browser exactly as before.
    */
   remoteRunner?: boolean;
-  /** The signed-in user: the chat each app was chosen in is kept per user (`appChats`). */
   userId?: number | null;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
@@ -328,14 +327,13 @@ export function AppAssistantWorkspace({
   }, [chatReady, activeName]);
   const dismissForkSetup = fork.dismissSetup;
 
-  // On a visit the chat opens the chat used last before the page picks its app, so the app's own chat
-  // is applied once the chat is ready (`chatOnReady`), or the opened chat is checked once its id is
-  // known (`chatCheckFor`).
+  // On a visit the chat has already opened the chat used last before the app is picked, so the app's
+  // chat is applied afterwards.
   const userIdRef = useRef(userId);
   userIdRef.current = userId;
   const chatOnReady = useRef<string | null>(null);
   const chatCheckFor = useRef<string | null>(null);
-  /** Opens `app`'s chat: the one it was chosen in; else a new one, when an app was open or the chat is another app's. */
+  /** Opens the chat `app` was chosen in, or a new one. */
   const followChat = useCallback((app: string, leavingApp: boolean) => {
     chatOnReady.current = null;
     chatCheckFor.current = null;
@@ -345,7 +343,7 @@ export function AppAssistantWorkspace({
     if (own) chat.conversationId = own;
     else if (leavingApp || appOfChat(userIdRef.current, chat.chatId) !== null) chat.newChat();
   }, []);
-  /** On a visit with no chat known for the app picked: the chat the chat opened, if another app's, gives way to a new one. */
+  /** Starts a new chat if the chat that opened belongs to another app. */
   const checkOpenedChat = useCallback((id: string | null) => {
     const app = chatCheckFor.current;
     if (!app || !id) return;
