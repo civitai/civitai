@@ -30,6 +30,7 @@ import type {
 // because `src/pages/api/v1/blocks/me.ts` is its other caller and a Next API route must
 // not import this router. See that module's docblock for why a second copy is banned.
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import {
   assertSharedWriteTrust,
   hasLinkedOAuthAccount,
@@ -6666,6 +6667,10 @@ export const blocksRouter = router({
       if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
       }
+      // After the limiters, so a flood is turned away by Redis before it reaches the primary.
+      // An anonymous subject is refused later, by each branch.
+      const subjectId = parseSubjectUserId(claims.sub);
+      if (subjectId != null) await assertAccountNotRestricted(subjectId);
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path

@@ -308,6 +308,15 @@ const TXT2IMG_BODY = {
 const IDEMPOTENCY_KEY = 'c4e81b02-6d39-4f57-8a1e-90b7d2f46c3a';
 
 beforeEach(() => {
+  // Only the submit's account-restriction read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   for (const fn of [
     mockVerifyBlockToken,
     mockGetOrchestratorToken,
@@ -558,6 +567,19 @@ describe('the rate-limit postures reach the wire unchanged', () => {
  * Each of the four exits below is a DIFFERENT layer, and each is identified by the
  * layer's own message rather than by "some failure happened".
  */
+describe('the account-restriction check reaches the wire', () => {
+  it('a restricted subject is a 403 and nothing reaches the orchestrator', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true, bannedAt: null } as never);
+    const out = await call(
+      submitHandler,
+      { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(403);
+    expect(mockOrchSubmitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
 describe('the budget and cap ladder reaches the wire as a PRICED 200, not an error', () => {
   /** The whatIf price the orchestrator quotes for the preflight step. */
   const QUOTED = 999;

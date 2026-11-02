@@ -66,6 +66,15 @@ const caller = () =>
 const refused = new TRPCError({ code: 'BAD_REQUEST', message: 'unavailable' });
 
 beforeEach(() => {
+  // Only the generation procedures' account-restriction read gets a row.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   mocks.assertUsable.mockRejectedValue(refused);
   mocks.assertInputs.mockRejectedValue(refused);

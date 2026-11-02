@@ -94,6 +94,7 @@ const DERIVED_BASES: Record<string, string> = {
   buzzMembershipProcedure: 'protectedProcedure',
   buzzProcedure: 'protectedProcedure',
   cashManagementProcedure: 'moderatorProcedure',
+  comicGenerationProcedure: 'comicProtectedProcedure',
   comicGuardedProcedure: 'guardedProcedure',
   comicModeratorProcedure: 'moderatorProcedure',
   comicProtectedProcedure: 'protectedProcedure',

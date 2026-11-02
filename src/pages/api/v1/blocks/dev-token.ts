@@ -833,7 +833,15 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // a usable, safely-clamped token. This bearer path is UNCHANGED by the
   // extraction (a parity test locks it).
   // ENTITLEMENT — unchanged: the bearer credential's AIServicesWrite bit.
-  const spendEntitled = Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite);
+  // A restricted account still mints, for reads; from the primary, as the session may lag.
+  const subjectRow = await dbWrite.user.findUnique({
+    where: { id: user.id },
+    select: { muted: true },
+  });
+  const spendEntitled =
+    Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite) &&
+    subjectRow != null &&
+    !subjectRow.muted;
   // INTENT — did the caller ask to spend on THIS mint?
   //
   // 🔴 `?? true` IS THE STEP-1 NON-BREAKING DEFAULT AND MUST STAY. A client that
