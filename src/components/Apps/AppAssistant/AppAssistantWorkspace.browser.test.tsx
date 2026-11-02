@@ -1891,7 +1891,7 @@ describe('AppAssistantWorkspace chats follow the app', () => {
   test('🔴 a reload opens the picked app’s own chat, not the chat used last', async () => {
     const screen = await mount();
     await workOnBoth();
-    // Back in app-aaaa's chat (from the chat list) with app-bbbb open: the chat used last is chat-a.
+    // chat-a was used last, though app-bbbb is the picked app.
     await chatOpens('chat-a');
     screen.unmount();
 
@@ -1926,7 +1926,6 @@ describe('AppAssistantWorkspace chats follow the app', () => {
     await mount();
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
     expect(m.newChat).not.toHaveBeenCalled();
-    // The chat opens the chat used last, app-aaaa's.
     await chatOpens('chat-a');
     expect(m.newChat).toHaveBeenCalledTimes(1);
     expect(m.opened).toEqual([]);

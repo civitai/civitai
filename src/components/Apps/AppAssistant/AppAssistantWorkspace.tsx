@@ -327,11 +327,9 @@ export function AppAssistantWorkspace({
   }, [chatReady, activeName]);
   const dismissForkSetup = fork.dismissSetup;
 
-  // CHATS FOLLOW THE APP: opening an app opens the chat it was made or chosen in (`appChats`), or a
-  // new chat when the open one is another app's. On a visit the chat opens the chat used last before
-  // the page has picked its app, so then the app's own chat is asked for as the chat starts
-  // (`chatOnReady`), or, with none known, the chat it opened is checked once its id is known
-  // (`chatCheckFor`, the app picked).
+  // On a visit the chat opens the chat used last before the page picks its app, so the app's own chat
+  // is applied once the chat is ready (`chatOnReady`), or the opened chat is checked once its id is
+  // known (`chatCheckFor`).
   const userIdRef = useRef(userId);
   userIdRef.current = userId;
   const chatOnReady = useRef<string | null>(null);
@@ -343,7 +341,6 @@ export function AppAssistantWorkspace({
     const chat = chatRef.current;
     if (!chat) return;
     const own = appChatOf(userIdRef.current, app);
-    // The chat opens it, unless it is the open chat.
     if (own) chat.conversationId = own;
     else if (leavingApp || appOfChat(userIdRef.current, chat.chatId) !== null) chat.newChat();
   }, []);
@@ -536,7 +533,6 @@ export function AppAssistantWorkspace({
   const onToolResult = useCallback(
     (result: ChatToolResult) => {
       gate.onToolResult(result);
-      // The chat that made or chose an app is the one the app opens with.
       const chosen = chosenAppOf(result);
       if (chosen && chatIdRef.current)
         rememberAppChat(userIdRef.current, chosen, chatIdRef.current);
