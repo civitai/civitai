@@ -335,6 +335,7 @@ describe.skipIf(!databaseUrl)(
         on ? 'on' : 'off'
       })`, async () => {
         switchState.on = on;
+        const followReadsBefore = dbMock.dbRead.userEngagement.findMany.mock.calls.length;
         let compared = 0;
         for (const userId of VIEWERS)
           for (const domain of DOMAINS)
@@ -356,6 +357,12 @@ describe.skipIf(!databaseUrl)(
             }
         // The walk itself is bounded and must have compared pages, not zero of them.
         expect(compared).toBeGreaterThan(VIEWERS.length * DOMAINS.length * 4 * 2);
+        // Which path ran: with the switch on the narrowing follow read must have happened, or
+        // an inert switch would make this an off-versus-oracle comparison that proves nothing.
+        const followReads =
+          dbMock.dbRead.userEngagement.findMany.mock.calls.length - followReadsBefore;
+        if (on) expect(followReads).toBeGreaterThan(0);
+        else expect(followReads).toBe(0);
       });
     }
 
@@ -373,8 +380,13 @@ describe.skipIf(!databaseUrl)(
       // lifetime, so the cached set is what answers — 961 has started and the original query
       // shows it. A set built on the bare live window would hide it until the next refresh.
       switchState.on = true;
+      const followReadsBefore = dbMock.dbRead.userEngagement.findMany.mock.calls.length;
       const before = await feed({ userId: NARROW, limit: 50 });
       expect(before.ids).not.toContain(961);
+      // The narrowing path ran (see the walk above for why this is asserted).
+      expect(dbMock.dbRead.userEngagement.findMany.mock.calls.length).toBeGreaterThan(
+        followReadsBefore
+      );
 
       vi.setSystemTime(at(25_000));
       const expected = await originalFeed({ userId: NARROW, limit: 50 });
