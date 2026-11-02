@@ -11,7 +11,7 @@ import {
   type QueueDeps,
 } from '../queue/queue.service';
 import { PROGRESSION } from './config';
-import { listJudgments, type JudgmentFilter } from './judgments';
+import { JUDGMENT_FILTERS, listJudgments, type JudgmentFilter } from './judgments';
 
 const NOW = new Date('2026-12-15T12:00:00Z');
 let pg: PGlite;
@@ -159,6 +159,55 @@ describe('listJudgments', () => {
       expect(await ofFilter('pending')).toEqual([ids[4]]);
       expect(await ofFilter('inconclusive')).toEqual([]);
       expect(await ofFilter('forfeited')).toEqual([]);
+    });
+
+    it('keeps SQL and display in step: every row a filter returns shows that status', async () => {
+      const at = (h: number) => new Date(`2026-12-15T${String(h).padStart(2, '0')}:00:00Z`);
+      const ids: number[] = [];
+      for (let i = 0; i < 8; i++) ids.push(await judge(10 + i, at(i)));
+      const set = (verdict: string, settled: boolean, ...items: number[]) =>
+        pg.exec(
+          `UPDATE "KnightsVote" SET verdict='${verdict}', "settledAt"=${
+            settled ? 'now()' : 'NULL'
+          } WHERE "itemId" IN (${items.join(',')})`
+        );
+      // 0-3 are cast before the reset at 04:00, 4-7 after it.
+      await set('correct', true, ids[0], ids[4]);
+      await set('failed', true, ids[1], ids[5]);
+      await set('inconclusive', true, ids[2], ids[6]);
+      await set('correct', false, ids[3]); // graded but unsettled, still pending
+      await pg.exec(
+        `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-15T03:30:00Z' WHERE "userId"=1`
+      );
+
+      const all = (await listJudgments(db, 1, { page: 1 })).judgments;
+      expect(new Set(all.map((j) => j.status))).toEqual(
+        new Set(['forfeited', 'correct', 'wrong', 'inconclusive', 'pending'])
+      );
+
+      for (const filter of JUDGMENT_FILTERS) {
+        const rows = (await listJudgments(db, 1, { page: 1, filter })).judgments;
+        const expected = all.filter((j) => filter === 'all' || j.status === filter);
+        expect(rows.map((j) => j.itemId)).toEqual(expected.map((j) => j.itemId));
+        for (const row of rows) if (filter !== 'all') expect(row.status).toBe(filter);
+      }
+    });
+
+    it('excludes a correct vote cast before the reset from correct and returns it as forfeited', async () => {
+      const before = await judge(10, new Date('2026-12-15T09:00:00Z'));
+      const after = await judge(11, new Date('2026-12-15T11:00:00Z'));
+      await pg.exec(
+        `UPDATE "KnightsVote" SET verdict='correct', "settledAt"=now() WHERE "itemId" IN (${before},${after})`
+      );
+      await pg.exec(
+        `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-15T10:00:00Z' WHERE "userId"=1`
+      );
+
+      const ids = async (filter: JudgmentFilter) =>
+        (await listJudgments(db, 1, { page: 1, filter })).judgments.map((j) => j.itemId);
+
+      expect(await ids('correct')).toEqual([after]);
+      expect(await ids('forfeited')).toEqual([before]);
     });
 
     it('moves a pre-reset vote from pending to forfeited', async () => {

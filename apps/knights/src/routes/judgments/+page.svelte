@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { judgmentsHref } from './href';
   import Thumbnail from './Thumbnail.svelte';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { PageData } from './$types';
@@ -22,13 +23,6 @@
     ['forfeited', 'Forfeited'],
   ] as const;
 
-  const href = (filter: string, page: number) => {
-    const params = new URLSearchParams();
-    if (filter !== 'all') params.set('status', filter);
-    if (page > 1) params.set('page', String(page));
-    const query = params.toString();
-    return query ? `/judgments?${query}` : '/judgments';
-  };
 </script>
 
 <h1>Your judgments</h1>
@@ -38,7 +32,7 @@
 <nav class="filters" aria-label="Filter by status">
   {#each FILTERS as [value, label] (value)}
     <a
-      href={href(value, 1)}
+      href={judgmentsHref(value, 1)}
       aria-current={data.filter === value ? 'true' : undefined}
       class:active={data.filter === value}>{label}</a
     >
@@ -71,10 +65,10 @@
 
 <nav class="pager">
   {#if data.page > 1}
-    <a href={href(data.filter, data.page - 1)}>Newer</a>
+    <a href={judgmentsHref(data.filter, data.page - 1)}>Newer</a>
   {/if}
   {#if data.hasMore}
-    <a href={href(data.filter, data.page + 1)}>Older</a>
+    <a href={judgmentsHref(data.filter, data.page + 1)}>Older</a>
   {/if}
 </nav>
 
