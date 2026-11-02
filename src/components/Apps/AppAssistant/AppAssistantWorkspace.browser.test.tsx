@@ -364,17 +364,22 @@ const r = vi.hoisted(() => ({
       ) => Promise<boolean | null>
     >(),
   pane: undefined as undefined | { onRestart: () => void; pending: boolean; error: string | null },
+  /** How many times the pane was told the dev server came back up (`devServerUp`). */
+  devServerUp: undefined as number | undefined,
 }));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
   AppAssistantPreview: ({
     session,
     restart,
+    devServerUp,
   }: {
     session: unknown;
     restart?: { onRestart: () => void; pending: boolean; error: string | null };
+    devServerUp?: number;
   }) => {
     m.previewSession = session;
     r.pane = restart;
+    r.devServerUp = devServerUp;
     return <div data-testid="preview" />;
   },
 }));
@@ -398,6 +403,7 @@ beforeEach(() => {
   // Built unless a test says otherwise: an app opened on a visit has had a preview.
   r.built.mockReset().mockResolvedValue(true);
   r.pane = undefined;
+  r.devServerUp = undefined;
 });
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
   const { useReducer } = await import('react');
@@ -2703,6 +2709,74 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await openFromSwitcher('app-bbbb');
     await expect.element(pane()).not.toBeInTheDocument();
     expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  // The runner opens an app's preview by itself once per reply; a frame that failed then hears of a
+  // later restart only through these results (`devServerUp`, which reloads a failed frame).
+  test('🔴 the shown preview is told each time the dev server comes back up', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":4242}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 1));
+    reported('sandbox__preview_check', 'render: ok\npage_errors: 0\nconsole_errors: 0');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 2));
+    reported('sandbox__dev_server_start', '{"running":true,"pid":5151}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 3));
+  });
+
+  test('NEGATIVE CONTROL: a failed start or restart, a check that did not render, and other calls tell it nothing', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+
+    reported('sandbox__dev_server_restart', { error: 'port 5173 is in use' }, true);
+    reported('sandbox__dev_server_start', { error: 'npm exited with code 1' }, true);
+    reported('sandbox__preview_check', 'render: start_error\npage_errors: 2');
+    reported('sandbox__preview_check', { error: 'timed out' }, true);
+    reported('sandbox__dev_server_status', '{"running":true,"pid":4242}');
+    await settle();
+    expect(r.devServerUp ?? 0).toBe(before);
+
+    // Control: the same pane hears a restart that worked.
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":6363}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 1));
+  });
+
+  test('NEGATIVE CONTROL: a restart reported while another app is open, its preview gone, is not told to that app’s preview', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+    await openFromSwitcher('app-bbbb');
+    await expect.element(pane()).not.toBeInTheDocument();
+
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":7474}');
+    await settle();
+    reported('start_preview', { shown: true, blockId: 'app-bbbb', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    await settle();
+    const shown = r.devServerUp ?? 0;
+    expect(shown).toBe(before);
+    // Control: b's own restart, once its preview shows, is told.
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":8585}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(shown + 1));
+  });
+
+  test('NEGATIVE CONTROL: replies in the browser tell the preview nothing', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('app-aaaa');
+    await expect.element(pane()).toBeInTheDocument();
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":4242}');
+    await settle();
+    expect(r.devServerUp ?? 0).toBe(0);
   });
 });
 
