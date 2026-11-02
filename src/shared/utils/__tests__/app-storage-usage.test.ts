@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isNearStorageLimit, storagePercent } from '~/shared/utils/app-storage-usage';
+import {
+  clearableDocs,
+  isNearStorageLimit,
+  keptStorageNote,
+  storagePercent,
+} from '~/shared/utils/app-storage-usage';
 
 // Ceilings distinct from the store's defaults (2 MiB, 1,000 documents) and from each other, so a
 // threshold read off the wrong ceiling, or a hard-coded default, moves the answer.
@@ -41,5 +46,50 @@ describe('storagePercent', () => {
     expect(storagePercent(1_234, 5_000)).toBe(25);
     expect(storagePercent(9_999, 5_000)).toBe(100);
     expect(storagePercent(10, 0)).toBe(0);
+  });
+});
+
+describe('what an Empty leaves', () => {
+  const NONE = { bytes: 0, docs: 0 };
+  const h = (parts: Record<string, { bytes: number; docs: number }>) => ({
+    private: NONE,
+    shared: NONE,
+    hidden: NONE,
+    counters: NONE,
+    ...parts,
+  });
+
+  it('clearable documents are the private ones and the visible shared ones, never hidden posts or counters', () => {
+    expect(
+      clearableDocs(
+        h({
+          private: { bytes: 1, docs: 3 },
+          shared: { bytes: 1, docs: 5 },
+          hidden: { bytes: 1, docs: 7 },
+          counters: { bytes: 1, docs: 11 },
+        })
+      )
+    ).toBe(8);
+    expect(
+      clearableDocs(h({ hidden: { bytes: 4, docs: 1 }, counters: { bytes: 2, docs: 1 } }))
+    ).toBe(0);
+  });
+
+  it('names what stays, counted in items', () => {
+    expect(keptStorageNote(h({ counters: { bytes: 2, docs: 1 } }))).toBe(
+      '1 item stays: counters you started.'
+    );
+    expect(keptStorageNote(h({ hidden: { bytes: 40, docs: 3 } }))).toBe(
+      '3 items stay: posts hidden by moderation.'
+    );
+    expect(
+      keptStorageNote(h({ hidden: { bytes: 40, docs: 3 }, counters: { bytes: 2, docs: 4 } }))
+    ).toBe('7 items stay: counters you started and posts hidden by moderation.');
+  });
+
+  it('is null when an Empty can remove everything', () => {
+    expect(
+      keptStorageNote(h({ private: { bytes: 9, docs: 2 }, shared: { bytes: 9, docs: 6 } }))
+    ).toBeNull();
   });
 });

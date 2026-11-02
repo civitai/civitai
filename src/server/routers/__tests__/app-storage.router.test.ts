@@ -62,12 +62,16 @@ import {
   POSTS,
   PREFS,
   snapshot,
+  TALLIES,
 } from '~/server/services/apps/__tests__/doc-store.functional';
 
 // Pairwise distinct, and distinct from every figure below.
 const USER = 8_101;
 const OTHER = 8_202;
 const NOBODY = 8_303;
+// Holds only a counter document their increment created, then only a post moderation hid.
+const COUNTER_ONLY = 8_404;
+const HIDDEN_ONLY = 8_505;
 
 const LIMITS = { appBytes: 900_001, appDocs: 9_001, userBytes: 7_003, userDocs: 17 };
 
@@ -76,18 +80,32 @@ const APP_A = { id: 'apb_STO_A', blockId: 'alpha-store', listing: 'Alpha Notes' 
 const APP_B = { id: 'apb_STO_B', blockId: 'beta-store', listing: null };
 // Its AppBlock row is gone; the data is still the user's to see and empty.
 const APP_GONE = 'apb_STO_Z';
+// A publish request under review: its data lives in `rev:<request>:<moderator>` namespaces.
+const REVIEW_REQUEST = 'apr_STO_R';
+const REVIEW_NS = `rev:${REVIEW_REQUEST}:${USER}`;
 const BLOCKS = [APP_B, APP_A];
 
 const NOTES: DocCollection = { name: 'notes', config: decl({ visibility: 'private' }) };
 
 /** A payload whose stored size is exactly `bytes`. */
 const sized = (bytes: number) => ({ t: 'x'.repeat(bytes - 9) });
+const NONE = { bytes: 0, docs: 0 };
+/** What an empty does with each part of the user's figure (`holdings`). */
+const holdings = (
+  parts: Partial<Record<'private' | 'shared' | 'hidden' | 'counters', object>>
+) => ({
+  private: NONE,
+  shared: NONE,
+  hidden: NONE,
+  counters: NONE,
+  ...parts,
+});
 
-function trpcCtx(user: unknown) {
+function trpcCtx(user: unknown, auth: { apiKeyId: number | null } = { apiKeyId: null }) {
   return {
     acceptableOrigin: true,
     user,
-    apiKeyId: null,
+    apiKeyId: auth.apiKeyId,
     tokenScope: TokenScope.Full,
     req: { headers: {} } as never,
     res: { setHeader: () => undefined } as never,
@@ -104,6 +122,9 @@ const user = (id: number) => ({
   onboarding: 0x1f,
 });
 const caller = (u: unknown) => appStorageRouter.createCaller(trpcCtx(u) as never);
+/** A full-scope personal API key of that user: bearer auth, so no origin check applies. */
+const apiKeyCaller = (u: unknown) =>
+  appStorageRouter.createCaller(trpcCtx(u, { apiKeyId: 4_242 }) as never);
 
 function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
   let harness: Harness;
@@ -191,14 +212,25 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
             name: 'Alpha Notes',
             slug: 'alpha-store',
             usage: { bytes: 411, docs: 3 },
+            holdings: holdings({
+              private: { bytes: 354, docs: 2 },
+              shared: { bytes: 57, docs: 1 },
+            }),
           },
           {
             appBlockId: APP_B.id,
             name: 'beta-store',
             slug: 'beta-store',
             usage: { bytes: 309, docs: 1 },
+            holdings: holdings({ private: { bytes: 309, docs: 1 } }),
           },
-          { appBlockId: APP_GONE, name: null, slug: null, usage: { bytes: 73, docs: 1 } },
+          {
+            appBlockId: APP_GONE,
+            name: null,
+            slug: null,
+            usage: { bytes: 73, docs: 1 },
+            holdings: holdings({ private: { bytes: 73, docs: 1 } }),
+          },
         ],
       });
     });
@@ -213,6 +245,10 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
             name: 'Alpha Notes',
             slug: 'alpha-store',
             usage: { bytes: 125, docs: 2 },
+            holdings: holdings({
+              private: { bytes: 86, docs: 1 },
+              shared: { bytes: 39, docs: 1 },
+            }),
           },
         ],
       });
@@ -224,6 +260,51 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
         limits: { userBytes: 7_003, userDocs: 17 },
         apps: [],
       });
+    });
+
+    it('splits the figure by what Empty does with it: a counter document and a hidden post are listed as staying, and an empty removes neither', async () => {
+      // A counter document is created by the first increment and charged to the incrementer:
+      // its data is `{}`, 2 bytes.
+      await h.store.increment(storeCtx(APP_A.id, 'prod', COUNTER_ONLY), TALLIES, 'c1', 'plays');
+      await h.store.put(storeCtx(APP_A.id, 'prod', HIDDEN_ONLY), BOARD, 'hid', sized(47));
+      await harness.raw(
+        `UPDATE appdata.doc SET hidden_at = now(), hidden_by = 1
+          WHERE app_id = $1 AND ns = 'prod' AND coll = 'board' AND key = 'hid'`,
+        [APP_A.id]
+      );
+      const expected = {
+        [COUNTER_ONLY]: {
+          usage: { bytes: 2, docs: 1 },
+          holdings: holdings({ counters: { bytes: 2, docs: 1 } }),
+        },
+        [HIDDEN_ONLY]: {
+          usage: { bytes: 47, docs: 1 },
+          holdings: holdings({ hidden: { bytes: 47, docs: 1 } }),
+        },
+      };
+      for (const uid of [COUNTER_ONLY, HIDDEN_ONLY]) {
+        const row = {
+          appBlockId: APP_A.id,
+          name: 'Alpha Notes',
+          slug: 'alpha-store',
+          ...expected[uid],
+        };
+        expect(await caller(user(uid)).listMine()).toEqual({
+          status: 'ok',
+          limits: { userBytes: 7_003, userDocs: 17 },
+          apps: [row],
+        });
+        // Nothing listed as clearable is deleted: the figure the listing shows is unchanged.
+        expect(
+          await caller(user(uid)).emptyMine({ appBlockId: APP_A.id, includeShared: true })
+        ).toEqual({ privateDocs: 0, privateBytes: 0, sharedDocs: 0, sharedBytes: 0 });
+        expect(await caller(user(uid)).listMine()).toEqual({
+          status: 'ok',
+          limits: { userBytes: 7_003, userDocs: 17 },
+          apps: [row],
+        });
+      }
+      expect(harness.violations).toEqual([]);
     });
 
     it('a disabled store reads as unavailable, never as no data', async () => {
@@ -299,6 +380,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
         name: 'Alpha Notes',
         slug: 'alpha-store',
         usage: { bytes: 57, docs: 1 },
+        holdings: holdings({ shared: { bytes: 57, docs: 1 } }),
       });
     });
 
@@ -365,6 +447,54 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       expect(harness.violations).toEqual([]);
     });
 
+    it('never reaches a review or dev namespace, whatever the call carries', async () => {
+      // The user's own data in a review namespace (as the reviewing moderator) and their dev
+      // namespace: a private document and a shared post in each.
+      const rev = storeCtx(REVIEW_REQUEST, REVIEW_NS, USER);
+      await h.store.put(rev, PREFS, 'theme', sized(61));
+      await h.store.put(rev, POSTS, 'post-r', sized(43));
+      await h.store.put(storeCtx(APP_A.id, `dev:${USER}`, USER), POSTS, 'post-d', sized(51));
+      const before = {
+        rev: await snapshot(harness, REVIEW_REQUEST),
+        dev: await userRows(APP_A.id, `dev:${USER}`, USER),
+      };
+      // Positive controls: the rows exist.
+      expect(await userRows(REVIEW_REQUEST, REVIEW_NS, USER)).toEqual({
+        privateKeys: ['prefs/theme'],
+        sharedKeys: ['posts/post-r'],
+        usage: { bytes: 104, docs: 2 },
+      });
+      expect(before.dev).toEqual({
+        privateKeys: ['prefs/theme'],
+        sharedKeys: ['posts/post-d'],
+        usage: { bytes: 560, docs: 2 },
+      });
+
+      // A namespace in the input is not an input: the empty is always the production one.
+      const crafted = [
+        { appBlockId: REVIEW_REQUEST, includeShared: true, ns: REVIEW_NS },
+        { appBlockId: APP_A.id, includeShared: true, ns: `dev:${USER}` },
+        { appBlockId: APP_A.id, includeShared: true, namespace: `dev:${USER}` },
+      ];
+      for (const input of crafted) await caller(user(USER)).emptyMine(input as never);
+      // A namespace smuggled into the app id is refused by its shape.
+      for (const appBlockId of [REVIEW_NS, `${APP_A.id}:dev:${USER}`]) {
+        await expect(caller(user(USER)).emptyMine({ appBlockId })).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+        });
+      }
+
+      expect(await snapshot(harness, REVIEW_REQUEST)).toEqual(before.rev);
+      expect(await userRows(APP_A.id, `dev:${USER}`, USER)).toEqual(before.dev);
+      // Positive control on the same calls: the production data of app A did go.
+      expect(await userRows(APP_A.id, 'prod', USER)).toEqual({
+        privateKeys: [],
+        sharedKeys: [],
+        usage: { bytes: 0, docs: 0 },
+      });
+      expect(harness.violations).toEqual([]);
+    });
+
     it("acts on the caller only: another user emptying the same app, shared posts included, leaves this user's documents", async () => {
       await caller(user(OTHER)).emptyMine({ appBlockId: APP_A.id, includeShared: true });
       expect((await userRows(APP_A.id, 'prod', USER)).sharedKeys).toEqual(['posts/post-u']);
@@ -393,6 +523,23 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       await expect(caller(undefined).emptyMine({ appBlockId: APP_A.id })).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });
+    });
+
+    it('an API-key caller is refused on every procedure (bearer auth skips the origin check), and deletes nothing', async () => {
+      const key = apiKeyCaller(user(USER));
+      const refused = { code: 'FORBIDDEN' };
+      await expect(key.listMine()).rejects.toMatchObject(refused);
+      await expect(key.getMineForApp({ appBlockId: APP_A.id })).rejects.toMatchObject(refused);
+      await expect(
+        key.emptyMine({ appBlockId: APP_A.id, includeShared: true })
+      ).rejects.toMatchObject(refused);
+      expect(await userRows(APP_A.id, 'prod', USER)).toEqual({
+        privateKeys: ['notes/n1', 'prefs/theme'],
+        sharedKeys: ['posts/post-u'],
+        usage: { bytes: 411, docs: 3 },
+      });
+      // Control: the same user's session is served.
+      expect((await caller(user(USER)).listMine()).status).toBe('ok');
     });
 
     it('is refused with App Blocks off, and deletes nothing', async () => {
