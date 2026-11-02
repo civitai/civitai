@@ -13,6 +13,7 @@ const h = vi.hoisted(() => {
     sys: undefined as unknown as SysRedisFake,
     tokens: new Map<string, Record<string, unknown>>(),
     users: new Map<number, Record<string, unknown>>(),
+    firstParty: true,
   };
 });
 
@@ -69,7 +70,7 @@ vi.mock('$lib/server/oauth/server', () => ({
 vi.mock('$lib/server/oauth/model', () => ({
   authorizeRedirectUriStore: { run: (_: string, fn: () => unknown) => fn() },
   resolveClientLite: async () => ({
-    isFirstParty: true,
+    isFirstParty: h.firstParty,
     skipConsent: true,
     redirectUris: [CALLBACK],
     accessMode: 'public',
@@ -189,6 +190,7 @@ beforeEach(() => {
   h.sys.reset();
   h.tokens.clear();
   h.users.clear();
+  h.firstParty = true;
   setMode('shared');
 });
 afterEach(() => {
@@ -231,6 +233,19 @@ describe('/authorize copying the hub session into the host-only slot', () => {
 
     expect(later.session?.sub).toBe('100');
     expect(later.deviceId).toBe('dev-d');
+  });
+
+  // Through a third-party client: a first-party one re-writes the shared device cookie first, which mirrors it
+  // into the host slot and would hide which id the copy carries.
+  it('carries the shared-slot device id over a different host-only one', async () => {
+    h.firstParty = false;
+    sharedSession();
+    const cookies = jar({ [SHARED()]: J0, [SHARED_DEVICE()]: 'dev-new', [HOST_DEVICE()]: 'dev-d' });
+
+    await authorize(cookies);
+
+    expect(cookies.get(HOST())).toBeDefined();
+    expect(cookies.get(HOST_DEVICE())).toBe('dev-new');
   });
 
   it('does not copy an impersonation session', async () => {
