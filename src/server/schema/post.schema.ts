@@ -162,6 +162,9 @@ export const postsQuerySchema = baseQuerySchema.merge(
       .string()
       .transform((data) => postgresSlugify(data))
       .nullish(),
+    // Scopes to this account and wins over `username`: some older usernames hold characters the
+    // slug above strips, so their profile can only name them by id.
+    userId: z.number().int().optional(),
     modelVersionId: z.number().optional(),
     ids: z.array(z.number()).optional(),
     collectionId: z.number().optional(),

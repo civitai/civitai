@@ -10,6 +10,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 const state = vi.hoisted(() => ({
   availability: { isModerator: false, canViewNsfw: false, showNsfw: false },
   feedFilters: undefined as Record<string, unknown> | undefined,
+  profileLookups: [] as unknown[],
 }));
 
 vi.mock('~/components/Filters/useSortAvailability', () => ({
@@ -19,7 +20,14 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: (await import('../../../../test/trpcProxyStub')).makeTrpcProxy({
-    'userProfile.get': { useQuery: () => ({ data: { id: 7 }, isLoading: false }) },
+    // Like the database: the account is found by its name as stored (case-insensitively).
+    'userProfile.get': {
+      useQuery: (input: { username: string }) => {
+        state.profileLookups.push(input);
+        const found = ['alice', 'foo-bar'].includes(input.username.toLowerCase());
+        return { data: found ? { id: 7 } : undefined, isLoading: false };
+      },
+    },
   }),
 }));
 // Capture what the feed would query with; the feed's own fetching is not under test.
@@ -54,5 +62,23 @@ describe('UserMediaInfinite sort', () => {
 
     await expect.element(page.getByText('Newest')).toBeVisible();
     expect(state.feedFilters?.sort).toBe('Newest');
+  });
+});
+
+describe('UserMediaInfinite profile scope', () => {
+  beforeEach(() => {
+    state.feedFilters = undefined;
+    state.profileLookups = [];
+    state.availability = { isModerator: false, canViewNsfw: false, showNsfw: false };
+  });
+
+  // Older usernames may hold a '-' or space; their slug ('foobar') names no account, and a
+  // lookup by it leaves the tab on "No results".
+  test.each(['alice', 'foo-bar'])('the %s profile lists its own account', async (username) => {
+    useRouter().query = { username };
+    renderWithProviders(<UserMediaInfinite type={MediaType.image} />);
+
+    await expect.poll(() => state.profileLookups).toContainEqual({ username });
+    await expect.poll(() => state.feedFilters?.userId).toBe(7);
   });
 });

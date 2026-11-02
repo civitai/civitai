@@ -247,6 +247,7 @@ export const getPostsInfinite = async ({
   cursor,
   query,
   username,
+  userId: profileUserId,
   excludedImageIds,
   excludedUserIds,
   period,
@@ -282,7 +283,11 @@ export const getPostsInfinite = async ({
 
   let targetUser: number | undefined;
 
-  if (username) {
+  if (profileUserId) {
+    targetUser = profileUserId;
+    AND.push(Prisma.sql`p."userId" = ${targetUser}`);
+    cacheTags.push(`posts-user:${targetUser}`);
+  } else if (username) {
     const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (!record) return { items: [] };
 
