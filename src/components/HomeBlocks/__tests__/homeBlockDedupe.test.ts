@@ -3,6 +3,7 @@ import {
   claimedBelow,
   claimKey,
   dedupeOrder,
+  modelClaimKeys,
   selectDedupedItems,
 } from '~/components/HomeBlocks/homeBlockDedupe';
 
@@ -117,5 +118,68 @@ describe('claimedBelow', () => {
 
   it('accumulates every earlier order, not just the previous one', () => {
     expect(claimedBelow(claims, dedupeOrder(2)).sort()).toEqual(['image:1', 'image:2']);
+  });
+});
+
+const model = (id: number, coverId: number, extra: Record<string, unknown> = {}) => ({
+  id,
+  user: { id },
+  images: [{ id: coverId }],
+  ...extra,
+});
+
+describe('modelClaimKeys', () => {
+  it('claims the model and the cover image the card shows', () => {
+    expect(modelClaimKeys(model(7, 700), false)).toEqual(['model:7', 'image:700']);
+  });
+
+  it('claims the cover the viewer is shown, not the other face', () => {
+    const m = model(7, 700, {
+      images: [{ id: 700 }, { id: 701 }],
+      hasSfwFace: true,
+      coverImageId: 700,
+      sfwCoverImageId: 701,
+    });
+    expect(modelClaimKeys(m, true)).toEqual(['model:7', 'image:701']);
+    expect(modelClaimKeys(m, false)).toEqual(['model:7', 'image:700']);
+  });
+
+  it('claims only the model when it has no images', () => {
+    expect(modelClaimKeys({ id: 7, images: [] }, false)).toEqual(['model:7']);
+  });
+});
+
+describe('selectDedupedItems with per-item keys', () => {
+  const keysFor = (m: ReturnType<typeof model>) => modelClaimKeys(m, false);
+
+  it('demotes a model whose cover an earlier image row already shows', () => {
+    const out = selectDedupedItems([model(1, 100), model(2, 200), model(3, 300)], {
+      taken: takenSet('image', [100]),
+      entity: 'model',
+      itemsToShow: 2,
+      keysFor,
+    });
+    expect(out.map((x) => x.id)).toEqual([2, 3]);
+  });
+
+  it('still repeats the cover when no keys are supplied (the unfixed shape)', () => {
+    const out = selectDedupedItems([model(1, 100), model(2, 200), model(3, 300)], {
+      taken: takenSet('image', [100]),
+      entity: 'model',
+      itemsToShow: 2,
+    });
+    expect(out.map((x) => x.id)).toEqual([1, 2]);
+  });
+
+  it('never shows a claimed item while enough unclaimed ones exist, even with maxPerUser', () => {
+    const items = Array.from({ length: 10 }, (_, i) => item(i + 1, (i % 5) + 1));
+    const out = selectDedupedItems(items, {
+      taken: takenSet('image', [1, 2]),
+      entity: 'image',
+      itemsToShow: 4,
+      maxPerUser: 2,
+    });
+    expect(out).toHaveLength(4);
+    expect(out.some((x) => [1, 2].includes(x.id))).toBe(false);
   });
 });
