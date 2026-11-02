@@ -48,7 +48,7 @@ import {
   payoutPendingSql,
 } from '~/server/services/bounty-payout-lock';
 import { assertBountyStarted } from '~/server/services/bounty-schedule';
-import type { BountyAwardRuling } from '~/shared/constants/bounty.constants';
+import type { BountyAwardRuling } from '@civitai/shared/bounty-award';
 import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
 import {
   hasOpenTextScanFlag,
