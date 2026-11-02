@@ -11,6 +11,7 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as ConcurrencyHelpers from '~/server/utils/concurrency-helpers';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as CloudflareClient from '~/server/cloudflare/client';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Booting PGlite (WASM Postgres) can exceed the default hook timeout on a contended runner.
@@ -41,6 +42,10 @@ const CDN_ACCESS_MIGRATION = path.join(MIGRATIONS, '20261111120000_cdn_access_sy
 const CDN_ACCESS_FIXES_MIGRATION = path.join(
   MIGRATIONS,
   '20261121120000_cdn_access_sync_fixes/migration.sql'
+);
+const SHOP_TAKEDOWN_MIGRATION = path.join(
+  MIGRATIONS,
+  '20261212120000_image_cdn_shop_takedown/migration.sql'
 );
 const PERSIST_RETRY_MIGRATION = path.join(
   MIGRATIONS,
@@ -119,11 +124,34 @@ const fetchFake = vi.fn(async (input: string, init?: { method?: string }) => {
   return { ok: status >= 200 && status < 300, status, headers: new Headers() } as Response;
 });
 
+/**
+ * Upload key issue records: who each key was issued to. A key with no entry has no record,
+ * `unreadKeys` are keys whose record read fails, and `issuersFail` makes the lookup throw.
+ */
+const issuedTo = new Map<string, number>();
+const unreadKeys = new Set<string>();
+let issuersFail = false;
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUrlOwnership>()),
+  keyIssueRecords: async (keys: string[]) => {
+    if (issuersFail) throw new Error('issue record unreadable');
+    const owners = new Map<string, number>();
+    // As the real one: a failed read of one store can leave the other's answer standing.
+    for (const k of keys) if (issuedTo.has(k)) owners.set(k, issuedTo.get(k)!);
+    return { owners, failed: keys.some((k) => unreadKeys.has(k)) };
+  },
+}));
+
 const realFetch = globalThis.fetch;
 const s3Send = vi.spyOn(S3Client.prototype, 'send');
 
-const { syncCdnAccess, reconcileCdnAccess, retryTakedownPersists, sendTakedownPersistOrRetry } =
-  await import('~/server/services/cdn-access.service');
+const {
+  syncCdnAccess,
+  reconcileCdnAccess,
+  retryTakedownPersists,
+  sendTakedownPersistOrRetry,
+  recordShopTakedownArtwork,
+} = await import('~/server/services/cdn-access.service');
 const { persistDeletedTakedowns } = await import('~/server/services/cdn-access.service');
 const { cdnAccessSync } = await import('~/server/jobs/cdn-access-sync');
 const { purgeHoldGuard } = await import('~/server/jobs/image-ingestion');
@@ -204,12 +232,21 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE "Cosmetic" (id int PRIMARY KEY, "createdById" int, data jsonb);
+    CREATE TABLE "CosmeticShopItem" (
+      id int PRIMARY KEY,
+      "cosmeticId" int,
+      "addedById" int,
+      meta jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "ItemDefinition" (id int PRIMARY KEY, "imageUrl" text);
   `);
   await pg.db.exec(evidenceHoldSql());
   await pg.db.exec(readFileSync(BLOCKED_QUEUE_MIGRATION, 'utf8'));
   await pg.db.exec(readFileSync(CDN_ACCESS_MIGRATION, 'utf8'));
   await pg.db.exec(readFileSync(CDN_ACCESS_FIXES_MIGRATION, 'utf8'));
   await pg.db.exec(readFileSync(PERSIST_RETRY_MIGRATION, 'utf8'));
+  await pg.db.exec(readFileSync(SHOP_TAKEDOWN_MIGRATION, 'utf8'));
 });
 
 afterAll(async () => {
@@ -219,7 +256,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await pg.db.exec(`
     TRUNCATE "JobQueue", "Image", "Post", "ModelVersion", "Model", "ModActivity", "CsamReport",
-      "EvidenceHold", "ImageCdnAccess", "ImageCdnModeratorDelete", "ImageCdnAccessClaim";
+      "EvidenceHold", "ImageCdnAccess", "ImageCdnModeratorDelete", "ImageCdnAccessClaim",
+      "Cosmetic", "CosmeticShopItem", "ItemDefinition", "ImageCdnShopTakedown";
     INSERT INTO "Model" (id, status) VALUES (1, 'Published');
     INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (1, 1, 'Published');
   `);
@@ -229,6 +267,9 @@ beforeEach(async () => {
   purged.length = 0;
   purgeFails = 0;
   combinedOk.clear();
+  issuedTo.clear();
+  issuersFail = false;
+  unreadKeys.clear();
   purgeUrlsOrThrow.mockReset().mockImplementation(async (urls: string[]) => {
     if (purgeFails > 0) {
       purgeFails--;
@@ -1025,6 +1066,397 @@ describe('moderator-app deletes', () => {
           ${JSON.stringify({ url: GONE, moderatorDelete: true })}::jsonb)`;
     await syncCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny']);
+  });
+});
+
+describe('Creator Shop takedowns', () => {
+  const ART = u(200);
+  const COVER = u(201);
+  const TAKEDOWN = { takedown: { reason: 'ip', moderatorId: MOD, at: '2026-10-29T00:00:00Z' } };
+  /**
+   * A listing of cosmetic `id`, whose art is stored as `stored` (shop columns hold what the client
+   * sent). The art's key was issued to its creator unless `issued` says otherwise.
+   */
+  const listing = async (
+    id: number,
+    {
+      stored = ART,
+      creator = OWNER as number | null,
+      lister = OWNER,
+      issued = (creator ?? lister) as number | null,
+      takenDown = false,
+    } = {}
+  ) => {
+    if (issued !== null) issuedTo.set(ART, issued);
+    await sql`INSERT INTO "Cosmetic" (id, "createdById", data)
+              VALUES (${id}, ${creator}, jsonb_build_object('url', ${stored}::text))`;
+    await sql`INSERT INTO "CosmeticShopItem" (id, "cosmeticId", "addedById", meta)
+              VALUES (${id}, ${id}, ${lister}, ${JSON.stringify(
+      takenDown ? TAKEDOWN : {}
+    )}::jsonb)`;
+  };
+  const pack = (id: number, lister: number | null = OWNER) =>
+    sql`INSERT INTO "CosmeticShopItem" (id, "cosmeticId", "addedById", meta)
+        VALUES (${id}, NULL, ${lister}, jsonb_build_object('coverUrl', ${COVER}::text))`;
+  /** `takedownCosmeticShopItem`: the archive writes `meta.takedown`, then records the artwork. */
+  const takedown = async (id: number) => {
+    await sql`UPDATE "CosmeticShopItem" SET meta = meta || ${JSON.stringify(TAKEDOWN)}::jsonb
+              WHERE id = ${id}`;
+    return recordShopTakedownArtwork(id);
+  };
+  /** A moderator or admin hard delete of the listing and its cosmetic. */
+  const hardDelete = async (id: number) => {
+    await sql`DELETE FROM "CosmeticShopItem" WHERE id = ${id}`;
+    await sql`DELETE FROM "Cosmetic" WHERE id = ${id}`;
+  };
+  const leftServing = () => logsOf('warning', 'shop-takedown-artwork-left-serving');
+
+  it('queues the listing under its id negated, apart from an image with the same id', async () => {
+    await image(1, { url: u(1) });
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    await listing(1);
+    await takedown(1);
+    expect(
+      (await sql`SELECT "entityId" FROM "JobQueue" WHERE type = 'CdnAccessSync' ORDER BY 1`).rows
+    ).toEqual([{ entityId: -1 }, { entityId: 1 }]);
+  });
+
+  it('retracts the artwork and persists the deny, and never touches the stored original', async () => {
+    await listing(1);
+    expect(await takedown(1)).toEqual({ queued: 1, unproven: 0, otherOwner: 0, inUse: 0 });
+    await syncCdnAccess();
+
+    expect(callsFor(ART)).toEqual(['retract']);
+    expect(persistsFor(ART)).toHaveLength(1);
+    expect(await stateOf(ART)).toBe('Retracted');
+    expect(await queued()).toEqual({ n: 0 });
+    // The label's evidence is the stored original: every call is an invalidate on the image server,
+    // which retracts its public variants only, and no storage request goes out.
+    expect(calls.map((c) => `${c.method} ${c.path.split('?')[0]}`)).toEqual([
+      'POST /admin/invalidate',
+      'POST /admin/invalidate',
+    ]);
+    expect(s3Send).not.toHaveBeenCalled();
+    expect(leftServing()).toEqual([]);
+  });
+
+  it('finds the art by its key whatever form the shop row stored it in', async () => {
+    await listing(1, { stored: `https://example.test/${ART.toUpperCase()}` });
+    await takedown(1);
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['retract']);
+  });
+
+  it("retracts a pack's own cover issued to its lister", async () => {
+    issuedTo.set(COVER, OWNER);
+    await pack(5);
+    await takedown(5);
+    await syncCdnAccess();
+    expect(callsFor(COVER)).toEqual(['retract']);
+  });
+
+  it('records nothing for a listing with no artwork key', async () => {
+    await sql`INSERT INTO "CosmeticShopItem" (id, "cosmeticId", "addedById") VALUES (6, NULL, ${OWNER})`;
+    expect(await takedown(6)).toEqual({ queued: 0, unproven: 0, otherOwner: 0, inUse: 0 });
+    expect(await queued()).toEqual({ n: 0 });
+  });
+
+  describe("leaves the art serving, and says so, when the key is not shown to be the owner's", () => {
+    it('no issue record', async () => {
+      await listing(1, { issued: null });
+      expect(await takedown(1)).toMatchObject({ queued: 0, unproven: 1 });
+    });
+
+    it('a stored value that names no key', async () => {
+      await listing(1, { stored: 'https://example.test/art.png' });
+      expect(await takedown(1)).toMatchObject({ queued: 0, unproven: 1 });
+    });
+
+    it('another user has an image on it', async () => {
+      await image(1, { url: ART, userId: OTHER_OWNER });
+      await listing(1);
+      expect(await takedown(1)).toMatchObject({ queued: 0, inUse: 1 });
+    });
+
+    it('issued to someone else', async () => {
+      await listing(1, { issued: OTHER_OWNER });
+      expect(await takedown(1)).toMatchObject({ queued: 0, otherOwner: 1 });
+    });
+
+    it('no owner to prove it for', async () => {
+      issuedTo.set(COVER, OWNER);
+      await pack(5, null);
+      expect(await takedown(5)).toMatchObject({ queued: 0, unproven: 1 });
+    });
+
+    it('another listing not taken down uses it', async () => {
+      await listing(1);
+      await sql`INSERT INTO "CosmeticShopItem" (id, "cosmeticId", "addedById") VALUES (2, 1, ${OWNER})`;
+      expect(await takedown(1)).toMatchObject({ queued: 0, inUse: 1 });
+    });
+
+    it('a pack not taken down uses it as its cover', async () => {
+      await listing(1);
+      await sql`INSERT INTO "CosmeticShopItem" (id, "cosmeticId", "addedById", meta)
+                VALUES (2, NULL, ${OWNER}, jsonb_build_object('coverUrl', ${ART}::text))`;
+      expect(await takedown(1)).toMatchObject({ queued: 0, inUse: 1 });
+    });
+
+    it('a box uses it', async () => {
+      await listing(1);
+      await sql`INSERT INTO "ItemDefinition" (id, "imageUrl") VALUES (1, ${ART})`;
+      expect(await takedown(1)).toMatchObject({ queued: 0, inUse: 1 });
+    });
+
+    afterEach(async () => {
+      await syncCdnAccess();
+      expect(calls).toEqual([]);
+      expect(await queued()).toEqual({ n: 0 });
+      expect(leftServing()).toEqual([expect.objectContaining({ shopItemId: expect.any(Number) })]);
+      // Counts and the listing only.
+      expect(JSON.stringify(leftServing())).not.toContain('00000000-');
+    });
+  });
+
+  it('records the keys it proved, then fails for a lookup that failed', async () => {
+    issuedTo.set(COVER, OWNER);
+    await listing(1);
+    await sql`UPDATE "CosmeticShopItem" SET meta = jsonb_build_object('coverUrl', ${COVER}::text)
+              WHERE id = 1`;
+    unreadKeys.add(COVER);
+
+    await expect(takedown(1)).rejects.toThrow('lookup failed for 1 key(s)');
+    expect(await sql`SELECT url FROM "ImageCdnShopTakedown"`.then((r) => r.rows)).toEqual([
+      { url: ART },
+    ]);
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['retract']);
+    expect(callsFor(COVER)).toEqual([]);
+    expect(leftServing()).toEqual([expect.objectContaining({ unproven: 1, lookupFailed: 1 })]);
+  });
+
+  it('fails, recording nothing, when the lookup throws', async () => {
+    await listing(1);
+    issuersFail = true;
+    await expect(takedown(1)).rejects.toThrow('lookup failed for 1 key(s)');
+    expect(await sql`SELECT url FROM "ImageCdnShopTakedown"`.then((r) => r.rows)).toEqual([]);
+  });
+
+  it('records only the keys it proved, and queues them', async () => {
+    await listing(1);
+    issuedTo.set(COVER, OTHER_OWNER);
+    await sql`UPDATE "CosmeticShopItem" SET meta = jsonb_build_object('coverUrl', ${COVER}::text)
+              WHERE id = 1`;
+    expect(await takedown(1)).toMatchObject({ queued: 1, otherOwner: 1 });
+    expect(await sql`SELECT url FROM "ImageCdnShopTakedown"`.then((r) => r.rows)).toEqual([
+      { url: ART },
+    ]);
+  });
+
+  it("does not take an image of the owner's on the key as proof", async () => {
+    await image(1, { url: ART });
+    await listing(1, { issued: null });
+    expect(await takedown(1)).toMatchObject({ queued: 0, unproven: 1 });
+    expect(await sql`SELECT url FROM "ImageCdnShopTakedown"`.then((r) => r.rows)).toEqual([]);
+  });
+
+  it('does not record a key whose record names the owner when another read failed for it', async () => {
+    await listing(1);
+    unreadKeys.add(ART);
+    await expect(takedown(1)).rejects.toThrow('lookup failed for 1 key(s)');
+    expect(await sql`SELECT url FROM "ImageCdnShopTakedown"`.then((r) => r.rows)).toEqual([]);
+  });
+
+  it('a retry that proves fewer keys still queues every key the listing recorded', async () => {
+    issuedTo.set(COVER, OWNER);
+    await listing(1);
+    await sql`UPDATE "CosmeticShopItem" SET meta = jsonb_build_object('coverUrl', ${COVER}::text)
+              WHERE id = 1`;
+    await takedown(1);
+    await sql`DELETE FROM "JobQueue" WHERE type = 'CdnAccessSync'`;
+    issuedTo.delete(COVER);
+
+    expect(await recordShopTakedownArtwork(1)).toMatchObject({ queued: 1, unproven: 1 });
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['retract']);
+    expect(callsFor(COVER)).toEqual(['retract']);
+  });
+
+  it('other listings already taken down do not count as using the art', async () => {
+    await listing(1);
+    await sql`INSERT INTO "CosmeticShopItem" (id, "cosmeticId", "addedById", meta)
+              VALUES (2, 1, ${OWNER}, ${JSON.stringify(TAKEDOWN)}::jsonb),
+                     (3, NULL, ${OWNER},
+                      ${JSON.stringify({ ...TAKEDOWN, coverUrl: ART })}::jsonb)`;
+    expect(await takedown(1)).toMatchObject({ queued: 1, inUse: 0 });
+  });
+
+  it("caps a takedown at deny when another owner's image arrives before the drain", async () => {
+    await listing(1);
+    await takedown(1);
+    await image(1, { url: ART, userId: OTHER_OWNER });
+    await syncCdnAccess();
+    await reconcileCdnAccess();
+    expect(callsFor(ART)).toEqual(['deny']);
+    expect(await stateOf(ART)).toBe('Denied');
+  });
+
+  it("retracts art the creator's own image also uses", async () => {
+    await image(1, { url: ART });
+    await listing(1);
+    await takedown(1);
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['retract']);
+  });
+
+  it('names the lister as the owner of a cosmetic with no creator', async () => {
+    await image(1, { url: ART, userId: OTHER_OWNER });
+    await listing(1, { creator: null, lister: OTHER_OWNER });
+    await takedown(1);
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['retract']);
+  });
+
+  it('caps a held creator at deny, and retracts once the hold is released', async () => {
+    await holdMarker(OWNER);
+    await listing(1);
+    await takedown(1);
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['deny']);
+
+    await releaseMarkers();
+    await reconcileCdnAccess();
+    expect(callsFor(ART)).toEqual(['deny', 'retract']);
+  });
+
+  it('leaves an upgrade to the drain while a takedown row still covers the art', async () => {
+    await holdMarker(OWNER);
+    await listing(1);
+    await takedown(1);
+    await syncCdnAccess();
+    await releaseMarkers();
+    await takedown(1);
+
+    expect(await reconcileCdnAccess()).toMatchObject({ leftToSync: 1 });
+    expect(callsFor(ART)).toEqual(['deny']);
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['deny', 'retract']);
+  });
+
+  it('holds the creator, not the lister, of a cosmetic someone else listed', async () => {
+    await holdMarker(OWNER);
+    await listing(1, { lister: OTHER_OWNER });
+    await takedown(1);
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['deny']);
+  });
+
+  it('caps a creator any CSAM report names at deny', async () => {
+    await verifiedReport([999]);
+    await releaseMarkers();
+    await listing(1);
+    await takedown(1);
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual(['deny']);
+  });
+
+  it('keeps the takedown through the reconciler: not dropped, not lifted by a live image', async () => {
+    await image(1, { url: ART });
+    await listing(1);
+    await takedown(1);
+    await syncCdnAccess();
+    // The live image row is written again, which re-checks the url.
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    await syncCdnAccess();
+    await sql`DELETE FROM "Image"`;
+    await sql`UPDATE "ImageCdnAccess" SET "lastAssertedAt" = now() - interval '25 days'`;
+    await reconcileCdnAccess();
+
+    expect(callsFor(ART)).toEqual(['retract', 'deny']);
+    expect(await stateOf(ART)).toBe('Retracted');
+  });
+
+  it('keeps a shared key denied after the listing and its cosmetic are deleted', async () => {
+    await listing(1);
+    await takedown(1);
+    await image(1, { url: ART, userId: OTHER_OWNER });
+    await syncCdnAccess();
+    await hardDelete(1);
+    // The other owner's image is written again, and the daily pass runs.
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    await syncCdnAccess();
+    await sql`UPDATE "ImageCdnAccess" SET "lastAssertedAt" = now() - interval '25 days'`;
+    await reconcileCdnAccess();
+
+    expect(callsFor(ART)).toEqual(['deny', 'deny']);
+    expect(await stateOf(ART)).toBe('Denied');
+  });
+
+  it('keeps re-asserting art no image uses after the listing is deleted', async () => {
+    await listing(1);
+    await takedown(1);
+    await syncCdnAccess();
+    await hardDelete(1);
+    await sql`UPDATE "ImageCdnAccess" SET "lastAssertedAt" = now() - interval '25 days'`;
+    await reconcileCdnAccess();
+
+    expect(callsFor(ART)).toEqual(['retract', 'deny']);
+    expect(await stateOf(ART)).toBe('Retracted');
+  });
+
+  it("queues each key's purge the CDN refused as busy, and the retry sends both", async () => {
+    issuedTo.set(COVER, OWNER);
+    await listing(1);
+    await sql`UPDATE "CosmeticShopItem" SET meta = jsonb_build_object('coverUrl', ${COVER}::text)
+              WHERE id = 1`;
+    await takedown(1);
+    const { CloudflarePurgeBusyError } = await import('~/server/cloudflare/client');
+    const busy = async () => {
+      throw new CloudflarePurgeBusyError([Object.assign(new Error('429'), { statusCode: 429 })]);
+    };
+    purgeUrlsOrThrow.mockImplementationOnce(busy).mockImplementationOnce(busy);
+    await syncCdnAccess();
+    const rows = await retryRows();
+    expect(rows.map((r) => r.data.url).sort()).toEqual([ART, COVER].sort());
+    expect(rows.every((r) => r.entityId < 0)).toBe(true);
+
+    await retryTakedownPersists();
+    expect(purged).toHaveLength(2);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('resends a persist for a recorded takedown whose access row is gone', async () => {
+    await listing(1);
+    await takedown(1);
+    await syncCdnAccess();
+    // Only the takedown row says the deny stands.
+    await sql`DELETE FROM "ImageCdnAccess"`;
+    await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+              VALUES (-1, 'Image', 'ImageCdnPersistRetry',
+                      ${JSON.stringify({ url: ART, retract: false, purgeEdge: false })}::jsonb)`;
+    await retryTakedownPersists();
+    expect(persistsFor(ART)).toHaveLength(2);
+  });
+
+  it("keeps a pack's cover re-asserted after the pack is deleted", async () => {
+    issuedTo.set(COVER, OWNER);
+    await pack(5);
+    await takedown(5);
+    await syncCdnAccess();
+    await sql`DELETE FROM "CosmeticShopItem" WHERE id = 5`;
+    await sql`UPDATE "ImageCdnAccess" SET "lastAssertedAt" = now() - interval '25 days'`;
+    await reconcileCdnAccess();
+    expect(callsFor(COVER)).toEqual(['retract', 'deny']);
+    expect(await stateOf(COVER)).toBe('Retracted');
+  });
+
+  it('leaves art alone that no takedown recorded', async () => {
+    await image(1, { url: ART });
+    await listing(1, { takenDown: true });
+    await sql`SELECT queue_cdn_access_sync(-1, 'Image',
+          ${JSON.stringify({ shopTakedown: true, urls: [ART] })}::jsonb)`;
+    await syncCdnAccess();
+    expect(callsFor(ART)).toEqual([]);
   });
 });
 

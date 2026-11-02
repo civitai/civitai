@@ -1511,6 +1511,35 @@ export interface ComicProjectReport {
   report?: Report;
 }
 
+export interface HeldResourceReview {
+  id: number;
+  modelId: number;
+  modelVersionId: number;
+  userId: number;
+  rating: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  nsfw: boolean;
+  tosViolation: boolean;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  heldAt: Date;
+  holdReasons: string[];
+}
+
+export interface HeldAnswer {
+  id: number;
+  questionId: number;
+  userId: number;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+  heldAt: Date;
+  holdReasons: string[];
+}
+
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -3785,6 +3814,18 @@ export interface Article {
   collectionItems?: CollectionItem[];
   rewardsBonusEvents?: RewardsBonusEvent[];
   ratingReviews?: ArticleRatingReview[];
+  contentLinkHold?: ArticleContentLinkHold | null;
+}
+
+export interface ArticleContentLinkHold {
+  articleId: number;
+  article?: Article;
+  deferred: string[];
+  refused: string[];
+  editorId: number;
+  deferredSince: Date | null;
+  reportedAt: Date | null;
+  checkedAt: Date;
 }
 
 export interface PressMention {
@@ -4077,6 +4118,21 @@ export interface BountyBenefactor {
   awartedTo?: BountyEntry | null;
   currency: Currency;
   buzzTransactionId: string[];
+}
+
+export interface BountyUnpaidAward {
+  bountyId: number;
+  userId: number;
+  unitAmount: number;
+  buzzTransactionIds: string[];
+  winnerUserId: number | null;
+  ownerId: number | null;
+  recordedById: number | null;
+  recordedAt: Date;
+  ruling: string | null;
+  ledgerReference: string | null;
+  resolvedById: number | null;
+  resolvedAt: Date | null;
 }
 
 export interface BountyEngagement {
@@ -4570,6 +4626,20 @@ export interface ImageCdnModeratorDelete {
   userId: number | null;
   csamReview: boolean;
   deletedAt: Date;
+}
+
+export interface ShopArtworkKeyOwner {
+  key: string;
+  userId: number;
+  recordedAt: Date;
+}
+
+export interface ImageCdnShopTakedown {
+  id: number;
+  url: string;
+  shopItemId: number;
+  userId: number | null;
+  takenDownAt: Date;
 }
 
 export interface ImageCdnAccessClaim {
@@ -6675,6 +6745,23 @@ export interface StorylineChapterEdge {
   createdAt: Date;
 }
 
+export interface StorylineChapterRemovalHold {
+  id: number;
+  storylineId: number;
+  storylineTitle: string;
+  chapterId: number;
+  postId: number | null;
+  chapterUserId: number;
+  depth: number;
+  placementId: number | null;
+  parentChapterIds: number[];
+  chapterCreatedAt: Date;
+  removedById: number;
+  removedByRole: string;
+  reportIds: number[];
+  createdAt: Date;
+}
+
 export interface ImageCaption {
   imageId: number;
   image?: Image;
@@ -6692,6 +6779,7 @@ export interface StorylineCollaborator {
   userId: number;
   user?: User;
   createdAt: Date;
+  acceptedAt: Date | null;
 }
 
 export interface StorylineBranchChoice {
@@ -6986,6 +7074,7 @@ export interface Crucible {
   seededPrizePool: number;
   prizePool: number;
   entryLimit: number;
+  ownerRemovalCount: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
   entryWarningPercent: number;
@@ -7008,6 +7097,10 @@ export interface Crucible {
   textNsfw: boolean;
   timeAdjustedPlacement: boolean;
   eventTags: string[];
+  takenDownAt: Date | null;
+  takenDownById: number | null;
+  takedownReason: string | null;
+  takedownRefundsCreator: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

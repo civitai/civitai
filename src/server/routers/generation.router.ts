@@ -47,6 +47,7 @@ import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { coverageAudience } from '~/server/services/generation/coverage-source';
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -165,6 +166,9 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       setAdditionalResourceFeeWaived({ ...input, isModerator: ctx.user.isModerator })
     ),
+  getCoverageAudience: publicProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .query(({ ctx }) => coverageAudience(ctx.user ?? undefined)),
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getResourceDataByIdsSchema)

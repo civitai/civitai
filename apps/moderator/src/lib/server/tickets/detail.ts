@@ -8,7 +8,7 @@ import {
   type TicketDetail,
 } from '../freshdesk.service';
 import { getRoutedTicketContext } from '../decision-sources/support';
-import { loadPanels, type CanRead } from './panels';
+import { loadPanels, loadersFor, type CanRead } from './panels';
 import { sentByTickets } from './sent-by';
 import { ticketSnapshot, toRecord } from './snapshot';
 import { resolveUserId } from '../user-lookup.service';
@@ -147,7 +147,8 @@ export async function loadTicketPayload(
         ticket.description.status === 'found' ? ticket.description.text : '',
       ].join('\n'),
     },
-    canRead
+    canRead,
+    loadersFor({ canSeeEmail })
   );
 
   const sentToSupport = hasSentToSupportTag(ticket.tags);

@@ -84,13 +84,16 @@ function fakeCtx() {
     req: undefined,
     res: { setHeader: () => undefined } as never,
     cache: { edgeTTL: 0 },
-    track: {} as never,
+    track: track as never,
     ip: '127.0.0.1',
     fingerprint: 'test' as never,
   };
 }
 
 const caller = () => comicsRouter.createCaller(fakeCtx() as never);
+
+// The request's tracker: a stored output key is logged through it, so the row keeps the caller's IP.
+const track = { imageUploadRequest: vi.fn(async (_key: string, _userId?: number) => true) };
 
 const output = (id: string, over: Record<string, unknown> = {}) => ({
   type: 'image',
@@ -154,6 +157,15 @@ const writes = () =>
   );
 
 beforeEach(() => {
+  // Only the generation procedures' account-restriction read gets a row.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   // The poll catches and logs any throw, then returns the panel unchanged: the same result as the
   // hold. Every case asserts nothing was logged, so a broken fixture cannot pass as a held output.
@@ -320,7 +332,9 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
     vi
       .mocked(redisMock.sysRedis.set)
       .mock.calls.filter((c) => String(c[0]).startsWith('system:upload-key-owner:'));
-  const expectEachStoredKeyRecorded = (count: number) => {
+  beforeEach(() => track.imageUploadRequest.mockClear());
+
+  const expectEachStoredKeyRecorded = async (count: number) => {
     expect(storedKeys()).toHaveLength(count);
     expect(recordedOwners()).toEqual(
       storedKeys().map((key) => [
@@ -328,6 +342,9 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
         String(USER_ID),
         { EX: 30 * 24 * 60 * 60 },
       ])
+    );
+    await vi.waitFor(() =>
+      expect(track.imageUploadRequest.mock.calls).toEqual(storedKeys().map((key) => [key, USER_ID]))
     );
   };
 
@@ -337,7 +354,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
 
     await caller().pollPanelStatus({ panelId: PANEL_ID });
 
-    expectEachStoredKeyRecorded(1);
+    await expectEachStoredKeyRecorded(1);
   });
 
   it('by the poll of a multi-image panel', async () => {
@@ -346,7 +363,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
 
     await caller().pollPanelStatus({ panelId: PANEL_ID });
 
-    expectEachStoredKeyRecorded(2);
+    await expectEachStoredKeyRecorded(2);
   });
 
   it('by the unlock of a single-image panel', async () => {
@@ -355,7 +372,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
 
     await caller().unlockPanelGeneration({ panelId: PANEL_ID });
 
-    expectEachStoredKeyRecorded(1);
+    await expectEachStoredKeyRecorded(1);
   });
 
   it('by the unlock of a multi-image panel', async () => {
@@ -373,6 +390,6 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
 
     await caller().unlockPanelGeneration({ panelId: PANEL_ID });
 
-    expectEachStoredKeyRecorded(2);
+    await expectEachStoredKeyRecorded(2);
   });
 });

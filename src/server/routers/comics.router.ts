@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
 import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
@@ -127,8 +128,13 @@ import { registerMediaLocation } from '~/server/services/storage-resolver';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
-  recordUploadKeyOwner,
 } from '~/server/services/image-url-ownership';
+import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
+import {
+  assertGenerationInputsUsable,
+  assertGenerationInputUrlsUsable,
+  assertStoredImageUrlsUnblocked,
+} from '~/server/services/generation-input-urls';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -180,6 +186,12 @@ const comicProtectedProcedure = protectedProcedure.use(comicFlag).use(regionProx
 // onboarding and MUTE checks every other comment surface has. Without it a muted account could comment
 // on a chapter — the box is hidden client-side, which is presentation, not a gate.
 const comicGuardedProcedure = guardedProcedure.use(comicFlag).use(regionProxyMiddleware);
+// Generation and spend. The restriction is read from the primary rather than the session, and
+// without `guardedProcedure`'s onboarding and email gates, which comics has never required.
+const comicGenerationProcedure = comicProtectedProcedure.use(async ({ ctx, next }) => {
+  await assertAccountNotRestricted(ctx.user!.id);
+  return next();
+});
 const comicPublicProcedure = publicProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
@@ -467,7 +479,11 @@ const createPanelSchema = z.object({
   prompt: z.string().min(1).max(2000),
   useContext: z.boolean().default(true),
   referencePanelId: z.number().int().optional(),
-  layoutImagePath: z.string().optional(),
+  // Appended to the site origin, so only a bundled layout image may be named.
+  layoutImagePath: z
+    .string()
+    .regex(/^\/images\/comics\/layouts\/[a-z0-9-]+\.png$/)
+    .optional(),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),
@@ -725,6 +741,19 @@ async function assertCanGrantEarlyAccess({
   }
 }
 
+/** A reference panel's image goes to the generation, so it must not be blocked. */
+async function assertReferencePanelImageUnblocked(
+  referencePanelId: number | undefined,
+  projectId: number
+) {
+  if (!referencePanelId) return;
+  const panel = await dbRead.comicPanel.findFirst({
+    where: { id: referencePanelId, chapter: { projectId } },
+    select: { imageUrl: true },
+  });
+  if (panel?.imageUrl) await assertStoredImageUrlsUnblocked([panel.imageUrl]);
+}
+
 // Shared helper: resolve a reference's images for generation
 async function getReferenceImages(referenceId: number) {
   const reference = await dbRead.comicReference.findUnique({
@@ -733,21 +762,25 @@ async function getReferenceImages(referenceId: number) {
       name: true,
       images: {
         orderBy: { position: 'asc' },
-        include: { image: { select: { id: true, url: true, width: true, height: true } } },
+        include: {
+          image: { select: { id: true, url: true, width: true, height: true, blockedFor: true } },
+        },
       },
     },
   });
 
   if (!reference) return { referenceName: '', refImages: [] };
-
   return {
     referenceName: reference.name,
-    refImages: reference.images.map((ri) => ({
-      imageId: ri.image.id,
-      url: getEdgeUrl(ri.image.url, { original: true }),
-      width: ri.image.width ?? 512,
-      height: ri.image.height ?? 512,
-    })),
+    // A blocked image is never sent to a generation.
+    refImages: reference.images
+      .filter((ri) => !ri.image.blockedFor)
+      .map((ri) => ({
+        imageId: ri.image.id,
+        url: getEdgeUrl(ri.image.url, { original: true }),
+        width: ri.image.width ?? 512,
+        height: ri.image.height ?? 512,
+      })),
   };
 }
 
@@ -2099,6 +2132,12 @@ export const comicsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: [input?.sourceImage?.url, ...(input?.userReferenceImages ?? []).map((r) => r.url)],
+        userId: ctx.user.id,
+        entry: 'comicsCostEstimate',
+        isApiCaller: ctx.apiKeyId != null,
+      });
       try {
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         const modelConfig = getComicModelConfig(input?.baseModel);
@@ -2133,7 +2172,11 @@ export const comicsRouter = router({
             width: number;
             height: number;
           }[] = [];
-          for (const refId of input.referenceIds) {
+          const ownRefs = await dbRead.comicReference.findMany({
+            where: { id: { in: input.referenceIds }, userId: ctx.user.id },
+            select: { id: true },
+          });
+          for (const { id: refId } of ownRefs) {
             const { refImages: imgs } = await getReferenceImages(refId);
             characterRefImages.push(...imgs);
           }
@@ -2202,7 +2245,7 @@ export const comicsRouter = router({
     }),
 
   /** Enhances a prompt via LLM and returns the enhanced text without generating an image. */
-  enhancePromptText: comicProtectedProcedure
+  enhancePromptText: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({
@@ -2935,7 +2978,7 @@ export const comicsRouter = router({
     }),
 
   // Panels — generation via the preset image-gen service (model determined by project)
-  createPanel: comicProtectedProcedure
+  createPanel: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(createPanelSchema)
     .use(isChapterOwner)
@@ -2954,6 +2997,7 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      await assertReferencePanelImageUnblocked(input.referencePanelId, input.projectId);
 
       // Get all user's ready references for prompt context and auto-detection
       const allUserRefs = await dbRead.comicReference.findMany({
@@ -3657,7 +3701,7 @@ export const comicsRouter = router({
                 })
               );
               registerMediaLocation(s3Key, multiBackend, buf.length);
-              await recordUploadKeyOwner(s3Key, ctx.user!.id);
+              await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
               newCandidates.push({
                 key: s3Key,
                 ...(nsfwLevel != null ? { nsfwLevel } : {}),
@@ -3816,7 +3860,7 @@ export const comicsRouter = router({
               })
             );
             registerMediaLocation(s3ImageKey, singleBackend, imageBuffer.length);
-            await recordUploadKeyOwner(s3ImageKey, ctx.user!.id);
+            await recordMintedUploadKey(s3ImageKey, ctx.user!.id, ctx.track);
           } catch (e) {
             console.error(`Failed to upload panel ${panel.id} image to S3:`, e);
             await dbWrite.comicPanel.update({
@@ -3974,7 +4018,7 @@ export const comicsRouter = router({
   // flow: hand `allowMatureContent: true` to the orchestrator, which charges
   // the difference in yellow Buzz, then reset the panel to `Generating` so
   // the existing poll loop downloads the now-unblocked image.
-  unlockPanelGeneration: comicProtectedProcedure
+  unlockPanelGeneration: comicGenerationProcedure
     .input(z.object({ panelId: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       const panel = await dbRead.comicPanel.findUnique({
@@ -4085,7 +4129,7 @@ export const comicsRouter = router({
             })
           );
           registerMediaLocation(s3Key, backend, buf.length);
-          await recordUploadKeyOwner(s3Key, ctx.user!.id);
+          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
         } catch (e) {
           console.error(`Failed to download unlocked panel ${panel.id}:`, e);
           throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
@@ -4207,7 +4251,7 @@ export const comicsRouter = router({
             })
           );
           registerMediaLocation(s3Key, multiBackend, buf.length);
-          await recordUploadKeyOwner(s3Key, ctx.user!.id);
+          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
           newCandidates.push({
             key: s3Key,
             ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
@@ -4362,7 +4406,7 @@ export const comicsRouter = router({
     }),
 
   // Iterative panel editor — generate image without creating a panel record
-  iterateGenerate: comicProtectedProcedure
+  iterateGenerate: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(iterateGenerateSchema)
     .use(isProjectOwner)
@@ -4375,6 +4419,10 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      await assertGenerationInputUrlsUsable({
+        urls: [input.sourceImageUrl, ...(input.userReferenceImages ?? []).map((ref) => ref.url)],
+        userId: ctx.user!.id,
+      });
 
       const modelConfig = getComicModelConfig(input.baseModel ?? project.baseModel);
       const effectiveVersionId =
@@ -4495,7 +4543,7 @@ export const comicsRouter = router({
     }),
 
   // Iterative panel editor — poll workflow status without panel involvement
-  generateComicImage: comicProtectedProcedure
+  generateComicImage: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({
@@ -4509,6 +4557,10 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputUrlsUsable({
+        urls: (input.userReferenceImages ?? []).map((ref) => ref.url),
+        userId: ctx.user!.id,
+      });
       const token = await getOrchestratorToken(ctx.user!.id, ctx).catch((error) => {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       });
@@ -4569,7 +4621,7 @@ export const comicsRouter = router({
     }),
 
   // Smart Create — Plan chapter panels via GPT
-  planChapterPanels: comicProtectedProcedure
+  planChapterPanels: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(planChapterPanelsSchema)
     .use(isProjectOwner)
@@ -4608,7 +4660,7 @@ export const comicsRouter = router({
     }),
 
   // Smart Create — Create chapter with all panels at once
-  smartCreateChapter: comicProtectedProcedure
+  smartCreateChapter: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
@@ -5494,7 +5546,7 @@ export const comicsRouter = router({
 
   // ──── Enhance Panel: create from existing image, optionally with img2img ────
 
-  enhancePanel: comicProtectedProcedure
+  enhancePanel: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(enhancePanelSchema)
     .use(isChapterOwner)
@@ -5507,6 +5559,14 @@ export const comicsRouter = router({
       });
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
+      }
+      // Without a prompt the image is saved as the panel, and createImage checks it.
+      if (input.prompt?.trim() || input.forceGenerate) {
+        await assertGenerationInputUrlsUsable({
+          urls: [input.sourceImageUrl],
+          userId: ctx.user!.id,
+        });
+        await assertReferencePanelImageUnblocked(input.referencePanelId, input.projectId);
       }
 
       // Get next position
@@ -5769,7 +5829,7 @@ export const comicsRouter = router({
 
   // ──── Bulk Create Panels ────
 
-  bulkCreatePanels: comicProtectedProcedure
+  bulkCreatePanels: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(bulkCreatePanelsSchema)
     .use(isChapterOwner)
@@ -5784,6 +5844,13 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      // A panel without a prompt saves its source image, and createImage checks it.
+      await assertGenerationInputUrlsUsable({
+        urls: input.panels
+          .filter((p) => p.prompt?.trim() && p.sourceImageUrl)
+          .map((p) => p.sourceImageUrl),
+        userId: ctx.user!.id,
+      });
 
       const bulkModelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
 

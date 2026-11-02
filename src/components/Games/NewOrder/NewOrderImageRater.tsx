@@ -115,7 +115,7 @@ export function NewOrderImageRater({
 
   useHotkeys([
     ['m', () => onVolumeClick()],
-    ['Escape', () => setShowReasons(false)],
+    ['esc', () => setShowReasons(false)],
     ['Space', debouncedSkipClick],
     ...hotKeys,
   ]);

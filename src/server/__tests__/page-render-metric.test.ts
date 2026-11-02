@@ -140,7 +140,8 @@ describe('page_render_total counts HTML documents', () => {
   // count them itself.
   it('_app.getInitialProps counts nothing, so redirects and /_next/data requests count zero', async () => {
     signedIn();
-    const res = { writeHead: vi.fn(), end: vi.fn() };
+    // `getHeader`: `_app` reads the incoming Cache-Control first (`~/server/utils/static-asset-cache`).
+    const res = { writeHead: vi.fn(), end: vi.fn(), getHeader: vi.fn() };
     await runApp({ headers: {}, url: '/images' }, '/images');
     await appGetInitialProps({
       Component: () => null,

@@ -42,7 +42,7 @@ import {
   isCommentDetached,
   isCommentGoneForMembers,
   isThreadDetached,
-  getCommentThreadCrucibleId,
+  getCommentCrucibleId,
   getCommentStorylineId,
   getCommentThreadStorylineId,
   toggleHideComment,
@@ -79,24 +79,55 @@ export async function assertCommentEntityVisible(
 ) {
   const { user } = ctx;
   if (input.entityType === 'storyline') return assertStorylineThreadVisible(input.entityId, ctx);
+  let crucibleId = input.entityType === 'crucible' ? input.entityId : null;
   if (input.entityType === 'comment') {
-    const [detached, storylineId] = await Promise.all([
+    const [detached, storylineId, replyCrucibleId] = await Promise.all([
       !user?.isModerator && isCommentDetached(input.entityId),
       getCommentStorylineId(input.entityId),
+      user?.isModerator ? null : getCommentCrucibleId(input.entityId),
     ]);
     if (detached) throw throwNotFoundError();
     if (storylineId) return assertStorylineThreadVisible(storylineId, ctx);
+    crucibleId = replyCrucibleId;
   }
   if (input.entityType === 'bounty') await assertBountyVisible({ bountyId: input.entityId }, user);
   else if (input.entityType === 'bountyEntry')
     await assertBountyVisible({ entryId: input.entityId }, user);
-  else if (input.entityType === 'crucible')
-    await assertCrucibleVisible(input.entityId, {
+  else if (crucibleId)
+    await assertCrucibleVisible(crucibleId, {
       viewerId: user?.id,
       isModerator: !!user?.isModerator,
       isGreen: !!ctx.features?.isGreen,
       blockedCreatorIds: user && !user.isModerator ? await getBlockedCreatorIds(user.id) : [],
     });
+}
+
+/**
+ * For a member's action on one comment: a comment they cannot see answers as gone, and the storyline
+ * or crucible above it gates it as it gates a reply there.
+ */
+export async function assertCommentActionable(commentId: number, ctx: CommentReadContext) {
+  const { user } = ctx;
+  if (user?.isModerator) return;
+  const [gone, storylineId, crucibleId] = await Promise.all([
+    isCommentGoneForMembers(commentId),
+    getCommentStorylineId(commentId),
+    getCommentCrucibleId(commentId),
+  ]);
+  if (gone) throw throwNotFoundError(`No comment with id ${commentId}`);
+  if (storylineId) {
+    const storyline = await assertStorylineThreadVisible(storylineId, ctx);
+    if (storyline.tosViolation)
+      throw throwAuthorizationError('This storyline has been taken down.');
+    return;
+  }
+  if (!crucibleId) return;
+  await assertCrucibleVisible(crucibleId, {
+    viewerId: user?.id,
+    isModerator: false,
+    isGreen: !!ctx.features?.isGreen,
+    blockedCreatorIds: user ? await getBlockedCreatorIds(user.id) : [],
+  });
 }
 
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
@@ -108,7 +139,7 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
       const [detached, bounty, crucibleId, storylineId] = await Promise.all([
         isThreadDetached(comment.threadId),
         getCommentThreadBounty(comment.threadId),
-        getCommentThreadCrucibleId(comment.threadId),
+        getCommentCrucibleId(comment.id),
         getCommentThreadStorylineId(comment.threadId),
       ]);
       if (detached) throw throwNotFoundError(`No comment with id ${input.id}`);
@@ -359,8 +390,7 @@ export const toggleHideCommentHandler = async ({
   const { id } = input;
 
   try {
-    if (!isModerator && (await isCommentGoneForMembers(id)))
-      throw throwNotFoundError(`No comment with id ${id}`);
+    await assertCommentActionable(id, ctx);
     const { hidden, ownerId } = await getContentOwnerIdForComment(id);
     if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 
@@ -384,8 +414,7 @@ export const togglePinnedCommentHandler = async ({
   const { id } = input;
 
   try {
-    if (!isModerator && (await isCommentGoneForMembers(id)))
-      throw throwNotFoundError(`No comment with id ${id}`);
+    await assertCommentActionable(id, ctx);
     const { ownerId } = await getContentOwnerIdForComment(id);
     if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 

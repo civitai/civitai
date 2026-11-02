@@ -1,6 +1,14 @@
 import {
+  answersToQuestionsSql,
+  heldEntryOnBountySql,
+  keepHeldAnswersCte,
+  keepHeldReviewsCte,
+  reviewsOnModelsSql,
+} from '~/server/services/held-review.service';
+import {
   getModerationAccountId,
   isReservedModerationUsername,
+  resemblesReservedModerationUsername,
 } from '~/server/auth/moderation-account';
 import { Prisma } from '@prisma/client';
 import {
@@ -16,6 +24,11 @@ import {
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
 import {
+  bountyUnpaidAwardTableExists,
+  openUnpaidBountyAwardSql,
+  payoutPendingSql,
+} from '~/server/services/bounty-payout-lock';
+import {
   bountyThreadParents,
   detachHeldThreadsCte,
   heldLegacyCommentOnModelSql,
@@ -24,7 +37,11 @@ import {
   questionThreadParents,
   type ThreadParents,
 } from '~/server/services/comment-thread-hold';
-import { KEPT_MODEL_STATUS, PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import {
+  KEPT_MODEL_STATUS,
+  notRemovedWithOwnerSql,
+  PLACEHOLDER_OWNER_ID,
+} from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -475,7 +492,7 @@ export async function setUserMuted(
       updateSource: 'retool:unmute',
     });
     if (!result.released) throw new Error(`No user with id ${args.userId}`);
-    return result.user;
+    return { ...result.user, sessionInvalidated: true };
   }
 
   const user = await updateUserById({
@@ -487,9 +504,15 @@ export async function setUserMuted(
     },
     updateSource: 'retool:mute',
   });
-  const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(args.userId, 'moderation');
-  return user;
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  // Never throws from here: the mute has committed, and a caller that retries a toggle would undo it.
+  const sessionInvalidated = await afterAccountStandingChanged(args.userId, {
+    kind: 'invalidate',
+    caller: 'moderation',
+  });
+  return { ...user, sessionInvalidated };
 }
 
 /**
@@ -933,6 +956,25 @@ export const toggleFollowUser = async ({
     select: { type: true },
   });
 
+  // The block lives on the reverse pair, so the row read above never shows it.
+  // Only the branches that can establish a follow are gated; unfollowing stays allowed.
+  if (!engagement || engagement.type === 'Hide') {
+    const blocked = await amIBlockedByUser({ userId, targetUserId, confirmOnPrimary: true });
+    if (blocked) throw throwBadRequestError('You cannot follow a user that has blocked you');
+  }
+  // A block committing between that check and our write clears the reverse Follow
+  // before ours exists, so check again once it does: each side writes, then reads.
+  const lostToBlock = async () => {
+    const block = await dbWrite.userEngagement.findFirst({
+      where: { userId: targetUserId, targetUserId: userId, type: UserEngagementType.Block },
+      select: { userId: true },
+    });
+    if (!block) return false;
+    await clearUserEngagement({ userId, targetUserId, type: UserEngagementType.Follow });
+    await setUserFollowCached({ userId, targetUserId, following: false });
+    return true;
+  };
+
   // Every write below is scoped by `type`. The row read a moment ago may already
   // be a different type — a block applied from another tab, say — and an
   // unqualified `delete`/`update` on the PK would take that block with it while
@@ -952,8 +994,9 @@ export const toggleFollowUser = async ({
       // second concurrent toggle that won this same `updateMany`. Asserting `false`
       // there writes a WRONG entry that stands for the rest of the day-long TTL,
       // where the refetch merely costs.
-      if (count) await setUserFollowCached({ userId, targetUserId, following: true });
-      else await userFollowsCache.refresh(userId);
+      const followed = count > 0 && !(await lostToBlock());
+      if (followed) await setUserFollowCached({ userId, targetUserId, following: true });
+      else if (!count) await userFollowsCache.refresh(userId);
       // This branch REMOVES a Hide, and `HiddenUsers` is keyed on `type = 'Hide'`.
       // Without this the target stays hidden from the feed of the user who just
       // followed them, until the hash TTL expires.
@@ -961,7 +1004,7 @@ export const toggleFollowUser = async ({
       // Zero rows means the Hide is gone — replaced by a Block, most likely — so
       // no follow was established and saying otherwise would be a lie the caller
       // acts on (reward, notification, tracking event).
-      return count > 0;
+      return followed;
     }
 
     return false;
@@ -994,6 +1037,7 @@ export const toggleFollowUser = async ({
     return followed;
   }
 
+  if (await lostToBlock()) return false;
   await setUserFollowCached({ userId, targetUserId, following: true });
 
   {
@@ -1249,10 +1293,10 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (!user.deletedAt) throw throwBadRequestError(`User ${id} is not deleted; nothing to restore`);
-  const reserved = isReservedModerationUsername(username);
   const isShared = id === getModerationAccountId();
-  if (reserved && !isShared) throw throwBadRequestError('This username is reserved.');
-  if (isShared && !reserved)
+  if (!isShared && resemblesReservedModerationUsername(username))
+    throw throwBadRequestError('This username is reserved.');
+  if (isShared && !isReservedModerationUsername(username))
     throw throwBadRequestError('The shared moderation account keeps its reserved username.');
 
   // Make sure the username and email aren't claimed by some other user since the closure.
@@ -1496,6 +1540,13 @@ async function goneIds(table: 'Model' | 'Article' | 'Collection' | 'Bounty', ids
   return ids.filter((i) => !kept.has(i));
 }
 
+/** The listed bounties a wipe kept and hid, read on the primary. */
+async function hiddenKeptBounties(ids: number[]) {
+  if (!ids.length) return [];
+  return dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Bounty" WHERE id = ANY(${ids}::int[]) AND meta ->> 'removedWithOwner' = 'true'`;
+}
+
 /** The listed models that no longer exist or are no longer published, read on the primary. */
 async function modelsOffSite(ids: number[]) {
   if (!ids.length) return [];
@@ -1680,25 +1731,50 @@ export const removeAllContent = async ({
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
-  const unsettled = await dbWrite.bounty.findMany({
-    // `isPayoutPending` as a query; keep the two in step.
-    where: { userId: id, payoutRecordedAt: { not: null }, payoutSettledAt: null },
-    select: { id: true },
-  });
+  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from, so an
+  // unsettled payout is settled first and an open bounty's supporters are refunded.
+  const owing = await dbWrite.$queryRaw<{ id: number; pending: boolean; open: boolean }[]>`
+    SELECT b.id, ${payoutPendingSql} AS pending,
+      (NOT b.complete AND NOT b.refunded) AS open
+    FROM "Bounty" b
+    WHERE b."userId" = ${id}
+      AND (${payoutPendingSql} OR (NOT b.complete AND NOT b.refunded
+        AND EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id)))`;
   const keptBountyIds: number[] = [];
-  if (unsettled.length) {
-    const { settleBountyPayout, refundUnpayableBountyAward } = await import(
-      '~/server/services/bounty.service'
-    );
-    for (const { id: bountyId } of unsettled)
-      if (!(await settleBountyPayout(bountyId)) && !(await refundUnpayableBountyAward(bountyId)))
-        keptBountyIds.push(bountyId);
+  if (owing.length) {
+    const { claimBountyRefundForDelete, settleBountyPayout, refundUnpayableBountyAward } =
+      await import('~/server/services/bounty.service');
+    const settle = async (bountyId: number, firstAttempt = false) =>
+      (await settleBountyPayout(bountyId, {
+        firstAttempt,
+        refundDescription: 'Refund reason: owner content removed',
+      })) || (await refundUnpayableBountyAward(bountyId));
+    for (const { id: bountyId, pending, open } of owing) {
+      let settled = false;
+      try {
+        // A pending award is paid before the claim turns the bounty into a refund.
+        settled = !pending || (await settle(bountyId));
+        if (settled && open) {
+          const claim = await claimBountyRefundForDelete(bountyId);
+          if (claim?.owed) settled = await settle(bountyId, claim.firstAttempt);
+        }
+      } catch (e) {
+        settled = false;
+        logToAxiom({
+          name: 'remove-all-content',
+          type: 'error',
+          message: `Bounty payout failed - ${(e as Error).message}`,
+          userId: id,
+          bountyId,
+        }).catch(() => undefined);
+      }
+      if (!settled) keptBountyIds.push(bountyId);
+    }
     if (keptBountyIds.length)
       logToAxiom({
         name: 'remove-all-content',
         type: 'error',
-        message: 'Kept bounties whose payout is not settled',
+        message: 'Kept bounties whose payout is not settled, hidden until it settles',
         userId: id,
         bountyIds: keptBountyIds,
       }).catch(() => undefined);
@@ -1730,11 +1806,29 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach({ bountyEntryId: doomedEntries })}
       DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
+    // A held entrant, or an award recorded for manual resolution, keeps the bounty hidden.
+    const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
+    const keepsBounty = Prisma.sql`(${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
+      OR ${openUnpaidBountyAwardSql(Prisma.raw('b.id'), awardTable)})`;
     const doomedBounties = Prisma.sql`SELECT b.id FROM "Bounty" b
-      WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
+      WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}
+        AND NOT ${keepsBounty}`;
+    // Keep the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
     await dbWrite.$executeRaw`
-      WITH ${detach(bountyThreadParents(doomedBounties))}
-      DELETE FROM "Bounty" WHERE id IN (${doomedBounties})`;
+      WITH ${detach(bountyThreadParents(doomedBounties))},
+      gone AS (DELETE FROM "Bounty" WHERE id IN (${doomedBounties}) RETURNING id),
+      hidden AS (
+        UPDATE "Bounty" b
+        SET availability = 'Private'::"Availability",
+            meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
+              'removedWithOwner', true,
+              'availabilityBeforeRemoval', b.availability
+            )
+        WHERE b."userId" = ${id} AND (b.id = ANY(${keptBountyIds}::int[]) OR ${keepsBounty})
+          AND b.id NOT IN (SELECT id FROM gone)
+          AND ${notRemovedWithOwnerSql('b.meta')} AND ${unlessHeld}
+      )
+      SELECT 1`;
     const owned = (table: string) =>
       Prisma.sql`SELECT o.id FROM ${Prisma.raw(
         `"${table}"`
@@ -1743,7 +1837,8 @@ export const removeAllContent = async ({
       WITH ${detach({ answerId: owned('Answer') })}
       DELETE FROM "Answer" WHERE id IN (${owned('Answer')})`;
     await dbWrite.$executeRaw`
-      WITH ${detach(questionThreadParents(owned('Question')))}
+      WITH ${detach(questionThreadParents(owned('Question')))},
+      ${keepHeldAnswersCte(answersToQuestionsSql(owned('Question')), markerView)}
       DELETE FROM "Question" WHERE id IN (${owned('Question')})`;
     await dbWrite.$executeRaw`
       WITH ${detach({ reviewId: owned('ResourceReview') })}
@@ -1791,7 +1886,8 @@ export const removeAllContent = async ({
       AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('o.id'), markerView)}
       AND o.id NOT IN (${formerOwnerHeld})`;
     await dbWrite.$executeRaw`
-      WITH ${detach(modelThreadParents(doomedModels))}
+      WITH ${detach(modelThreadParents(doomedModels))},
+      ${keepHeldReviewsCte(reviewsOnModelsSql(doomedModels), markerView)}
       DELETE FROM "Model" WHERE id IN (${doomedModels})`;
     // Status only: the unpublish flow stamps meta.unpublishedAt, which notifies the owner.
     await dbWrite.$executeRaw`
@@ -1855,6 +1951,11 @@ export const removeAllContent = async ({
       [bountiesSearchIndex, 'Bounty', bounties],
     ])
       .then(async () => {
+        const hidden = await hiddenKeptBounties([...keptBountyIds, ...bounties.map((b) => b.id)]);
+        if (hidden.length)
+          await bountiesSearchIndex.queueUpdate(
+            hidden.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+          );
         // A stop after the hide leaves hidden models: they leave search with the deleted ones.
         const offSite = await modelsOffSite(models.map((m) => m.id));
         if (offSite.length)
@@ -1943,6 +2044,13 @@ export const removeAllContent = async ({
   await unindex('index-articles', articlesSearchIndex, articles);
   await unindex('index-collections', collectionsSearchIndex, collections);
   await unindex('index-bounties', bountiesSearchIndex, bounties);
+  await runStep('index-kept-bounties', async () => {
+    const hidden = await hiddenKeptBounties([...keptBountyIds, ...bounties.map((b) => b.id)]);
+    if (hidden.length)
+      await bountiesSearchIndex.queueUpdate(
+        hidden.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+      );
+  });
   await unindex('index-user', usersSearchIndex, [{ id }]);
 
   await runStep('user-metrics', () => userMetrics.queueUpdate(id));
@@ -3286,7 +3394,8 @@ export async function toggleReview({
       }`;
     const markerView = await holdMarkerViewExists();
     await dbWrite.$executeRaw`
-      WITH ${detachHeldThreadsCte({ reviewId: doomed }, markerView)}
+      WITH ${detachHeldThreadsCte({ reviewId: doomed }, markerView)},
+      ${keepHeldReviewsCte(doomed, markerView)}
       DELETE FROM "ResourceReview" WHERE id IN (${doomed})`;
     modelMetrics.queueUpdate(modelId);
     // Use the actual modelVersionId from the existing review row when input was

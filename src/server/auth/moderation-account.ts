@@ -1,6 +1,7 @@
 import { isModerationAccountUser, MODERATION_ACCOUNT_USERNAME } from '@civitai/auth';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
+import { isUsernameBlocked } from '~/server/utils/username-blocklist';
 
 /** The shared "Civitai Moderation" account, or null when the feature is not configured. */
 export function getModerationAccountId(): number | null {
@@ -11,6 +12,14 @@ export function getModerationAccountId(): number | null {
 /** Whether a username is the shared account's reserved one, in any casing. */
 export function isReservedModerationUsername(username: string): boolean {
   return username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase();
+}
+
+/**
+ * Whether a username is the reserved one or a lookalike of it (homoglyphs, invisible characters, the
+ * ASCII stand-ins for `i`, underscores), by the same fold the username blocklist uses.
+ */
+export function resemblesReservedModerationUsername(username: string): boolean {
+  return isUsernameBlocked(username, { exact: [MODERATION_ACCOUNT_USERNAME], partial: [] });
 }
 
 /**

@@ -82,6 +82,10 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mocks.createNotification,
 }));
+const recordShopTakedownArtwork = vi.hoisted(() =>
+  vi.fn(async (_id: number) => ({ queued: 1, unproven: 0, otherOwner: 0, inUse: 0 }))
+);
+vi.mock('~/server/services/cdn-access.service', () => ({ recordShopTakedownArtwork }));
 vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorShopLabels>()),
   recordShopTakedownLabel: vi.fn(async () => undefined),
@@ -429,6 +433,61 @@ describe('takedownCosmeticShopItem', () => {
         at: archivedAt.toISOString(),
         note: 'IP infringement',
         statusAfter: 'Archived',
+      })
+    );
+  });
+
+  it('records the artwork for the CDN once the archive is written, before any refund', async () => {
+    const order: string[] = [];
+    const update = mocks.shopItemUpdate.getMockImplementation();
+    mocks.shopItemUpdate.mockImplementationOnce(async (...args: unknown[]) => {
+      order.push('archive');
+      return update?.(...args);
+    });
+    const refund = mocks.refundTransaction.getMockImplementation();
+    mocks.refundTransaction.mockImplementation(async (...args: unknown[]) => {
+      order.push('refund');
+      return refund?.(...args);
+    });
+    recordShopTakedownArtwork.mockClear().mockImplementationOnce(async () => {
+      order.push('cdn');
+      return { queued: 1, unproven: 0, otherOwner: 0, inUse: 0 };
+    });
+
+    await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
+
+    expect(recordShopTakedownArtwork).toHaveBeenCalledExactlyOnceWith(42);
+    expect(order.slice(0, 3)).toEqual(['archive', 'cdn', 'refund']);
+  });
+
+  it('reports the artwork keys it left for a moderator', async () => {
+    recordShopTakedownArtwork
+      .mockClear()
+      .mockResolvedValueOnce({ queued: 1, unproven: 1, otherOwner: 1, inUse: 1 });
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(result.artworkLeftServing).toBe(3);
+    expect(result.failures).toEqual([]);
+  });
+
+  it('finishes the takedown, and reports it as a failure, when its artwork cannot be recorded', async () => {
+    recordShopTakedownArtwork.mockClear().mockRejectedValueOnce(new Error('table missing'));
+
+    const result = await takedownCosmeticShopItem({
+      id: 42,
+      reason: 'IP infringement',
+      moderatorId: 999,
+    });
+
+    expect(mocks.refundTransaction).toHaveBeenCalled();
+    expect(result.failures).toEqual([{ stage: 'cdn', userId: 0, error: 'table missing' }]);
+    expect(mocks.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'error',
+        name: 'cosmetic-takedown',
+        message: 'Takedown finished',
+        data: expect.objectContaining({ shopItemId: 42 }),
       })
     );
   });

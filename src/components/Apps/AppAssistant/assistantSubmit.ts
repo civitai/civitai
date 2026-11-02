@@ -1,5 +1,14 @@
 import type { ChatToolCall, ChatToolResult } from '@civitai/components-chat/civitai-chat';
 import { submitOfferOf } from '@civitai/app-assistant';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
+import {
+  unjustifiedSensitiveScopes,
+  type SensitiveScopeManifestInput,
+} from '~/shared/constants/block-scope.constants';
+import { getBase64 } from '~/utils/file-utils';
+import type { SubmitListingReadiness } from '~/server/services/blocks/publish-request.service';
+import { FLOOR_PROBLEM_CODES } from '~/shared/utils/listing-publish-floor';
+import { BUTTON_STYLE, CARD_STYLE, line } from '~/components/Apps/AppAssistant/assistantCards';
 
 /**
  * Submit for review from App Assistant: the user's press on the card a `submit_for_review` call shows
@@ -28,6 +37,44 @@ export interface SubmitReceipt {
   publishRequestId: string;
   slug: string;
   version: string;
+  /** What the submit route said about the app's store listing; absent when it said nothing. */
+  listing?: SubmitListingNotice;
+}
+
+/**
+ * The store-listing half of a submit's answer (the route's `listing`), reduced to what the card
+ * says: the route's `approvalBlocked` and `nextStep`, and what else the listing should have.
+ */
+export type SubmitListingNotice = Pick<SubmitListingReadiness, 'approvalBlocked' | 'nextStep'> & {
+  /** Labels of the other problems that keep the listing from going live (e.g. a blocked image). */
+  required: string[];
+  /** Labels of the recommended-but-optional problems. */
+  recommended: string[];
+};
+
+/** `value` (the route's `listing`) as a notice, or `undefined` when it is absent or malformed. */
+export function listingNoticeOf(value: unknown): SubmitListingNotice | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const problems = Array.isArray(v.problems)
+    ? (v.problems as unknown[]).filter(
+        (p): p is { code: string; label: string; severity?: unknown } =>
+          !!p &&
+          typeof (p as { code?: unknown }).code === 'string' &&
+          typeof (p as { label?: unknown }).label === 'string'
+      )
+    : [];
+  const approvalBlocked = v.approvalBlocked === true;
+  const nextStep = typeof v.nextStep === 'string' && v.nextStep ? v.nextStep : null;
+  // Drop the floor problems only when nextStep words them; an update to a live listing has no nextStep.
+  return {
+    approvalBlocked,
+    nextStep,
+    required: problems
+      .filter((p) => p.severity === 'blocking' && !(nextStep && FLOOR_PROBLEM_CODES.has(p.code)))
+      .map((p) => p.label),
+    recommended: problems.filter((p) => p.severity !== 'blocking').map((p) => p.label),
+  };
 }
 
 /** A submit that did not go through: `status` is the route's (0 when it could not be reached). */
@@ -77,9 +124,9 @@ export async function submitBundleFromExport(exported: Blob, app: string): Promi
       `Your app has no ${MANIFEST_FILE}, so it cannot be submitted. Ask App Assistant to add it.`,
       0
     );
-  let manifest: Partial<SubmitManifest>;
+  let manifest: Partial<SubmitManifest> & SensitiveScopeManifestInput;
   try {
-    manifest = JSON.parse(manifestText) as Partial<SubmitManifest>;
+    manifest = JSON.parse(manifestText) as Partial<SubmitManifest> & SensitiveScopeManifestInput;
   } catch {
     throw new SubmitError(
       `Your app's ${MANIFEST_FILE} is not valid JSON. Ask App Assistant to fix it.`,
@@ -98,23 +145,25 @@ export async function submitBundleFromExport(exported: Blob, app: string): Promi
       `Your app's ${MANIFEST_FILE} names its blockId "${blockId}", not "${app}". Ask App Assistant to fix it.`,
       0
     );
+  const unjustified = unjustifiedSensitiveScopes(manifest);
+  if (unjustified.length) throw new SubmitError(unjustifiedScopesMessage(unjustified), 0);
   const bundle = await out.generateAsync({ type: 'blob', compression: 'DEFLATE' });
   return { bundle, manifest: { blockId, name, version } };
 }
 
+/** Why the card offers no button for a manifest the submit would refuse for its sensitive scopes. */
+export const unjustifiedScopesMessage = (scopes: readonly string[]) =>
+  `Your app asks for ${scopes.join(', ')} without saying why it needs ${
+    scopes.length === 1 ? 'it' : 'them'
+  }. Ask App Assistant to add a reason for ${
+    scopes.length === 1 ? 'it' : 'each'
+  } to ${MANIFEST_FILE}, then submit again.`;
+
 /** `blob` as base64, without the `data:` prefix. */
 async function base64Of(blob: Blob): Promise<string> {
-  const url = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
+  const url = await getBase64(blob);
   return url.slice(url.indexOf(',') + 1);
 }
-
-/** Both submit routes' refusal of a user without the authoring capability, word for word. */
-const NOT_AN_AUTHOR = 'Apps are restricted to the Civitai team';
 
 /** The user's own submission for this app still waits for review (`submitVersion`'s refusal). */
 const OWN_PENDING = /^you already have a pending submission for slug /;
@@ -135,8 +184,8 @@ function refusalMessage(status: number, message: string | null): string {
   // The service's messages are written for the CLI too; the card never shows a command to run.
   if (message && /\bcivitai app\b/.test(message)) return REFUSED_PLAINLY;
   if (status === 401) return 'You are signed out. Sign in again, then press Submit for review.';
-  if (status === 403 && (message === null || message === NOT_AN_AUTHOR))
-    return `Not submitted: ${NOT_AN_AUTHOR}. Your account cannot submit apps for review.`;
+  if (status === 403 && (message === null || message === APPS_RESTRICTED_MESSAGE))
+    return `Not submitted: ${APPS_RESTRICTED_MESSAGE}. Your account cannot submit apps for review.`;
   // Refused for how the request came (another site, a token without full access), not who sent it.
   if (status === 403) return `Submitting was refused: ${message}`;
   if (status === 413) return 'Not submitted: this app is too large to submit.';
@@ -177,6 +226,7 @@ export async function sendForReview(
     publishRequestId: data.publishRequestId,
     slug: typeof data.slug === 'string' ? data.slug : prepared.manifest.blockId,
     version: typeof data.version === 'string' ? data.version : prepared.manifest.version,
+    listing: listingNoticeOf(data.listing),
   };
 }
 
@@ -191,6 +241,9 @@ export interface SubmitCardsDeps {
   prepare(sandbox: string): Promise<PreparedSubmit>;
   send(prepared: PreparedSubmit): Promise<SubmitReceipt>;
 }
+
+/** The heading over the recommended listing items on a sent card. */
+export const LISTING_RECOMMENDED_HEADING = 'Recommended for your store listing:';
 
 export interface SubmitCards {
   /** The card for a `submit_for_review` call; the default card for one that offered nothing. */
@@ -213,11 +266,6 @@ interface Card {
   withdrawn?: true;
 }
 
-const CARD_STYLE =
-  'border:1px solid var(--civitai-color-border, #8884);border-radius:8px;padding:8px 12px;margin:4px 0';
-const BUTTON_STYLE =
-  'min-height:44px;margin-top:8px;padding:0 16px;border-radius:6px;border:0;cursor:pointer;font:inherit;font-weight:600;color:#fff;background:var(--civitai-color-primary, #228be6)';
-
 /**
  * The Submit for review cards. Only the offer the latest `submit_for_review` made gets a button, and
  * only until anything else happens in the conversation: the checks it passed were of the app as it
@@ -226,13 +274,6 @@ const BUTTON_STYLE =
 export function createSubmitCards({ prepare, send }: SubmitCardsDeps): SubmitCards {
   const cards = new Map<string, Card>();
   let open: { id: string; sandbox: string } | null = null;
-
-  const line = (text: string, role: 'status' | 'alert' | null = null) => {
-    const el = document.createElement('div');
-    el.textContent = text;
-    if (role) el.setAttribute('role', role);
-    return el;
-  };
 
   const show = (card: Card, ...children: HTMLElement[]) => {
     const title = document.createElement('div');
@@ -246,6 +287,36 @@ export function createSubmitCards({ prepare, send }: SubmitCardsDeps): SubmitCar
     if (card.phase !== 'preparing' && card.phase !== 'ready') return;
     card.phase = 'closed';
     show(card, line(OFFER_CLOSED));
+  };
+
+  /**
+   * What a sent card says about the store listing: the step approval waits on (icon + cover),
+   * anything else that keeps it from going live, then what is recommended. The submit itself
+   * stands either way: the developer can add art while it waits for review.
+   */
+  const listingLines = (notice: SubmitListingNotice | undefined): HTMLElement[] => {
+    if (!notice) return [];
+    const out: HTMLElement[] = [];
+    if (notice.nextStep) {
+      const next = line(notice.nextStep, 'alert');
+      next.setAttribute('data-testid', 'app-assistant-submit-listing-next-step');
+      out.push(next);
+    }
+    for (const label of notice.required) out.push(line(label, 'alert'));
+    if (notice.recommended.length) {
+      const box = document.createElement('div');
+      box.setAttribute('data-testid', 'app-assistant-submit-listing-recommended');
+      const list = document.createElement('ul');
+      list.style.cssText = 'margin:4px 0 0;padding-left:20px';
+      for (const label of notice.recommended) {
+        const item = document.createElement('li');
+        item.textContent = label;
+        list.append(item);
+      }
+      box.append(line(LISTING_RECOMMENDED_HEADING), list);
+      out.push(box);
+    }
+    return out;
   };
 
   const offerButton = (card: Card, prepared: PreparedSubmit, error?: string) => {
@@ -267,9 +338,13 @@ export function createSubmitCards({ prepare, send }: SubmitCardsDeps): SubmitCar
     button.disabled = true;
     button.textContent = 'Submitting…';
     try {
-      await send(prepared);
+      const receipt = await send(prepared);
       card.phase = 'sent';
-      show(card, line(submittedText(prepared.manifest), 'status'));
+      show(
+        card,
+        line(submittedText(prepared.manifest), 'status'),
+        ...listingLines(receipt?.listing)
+      );
     } catch (error) {
       const message = error instanceof SubmitError ? error.message : SUBMIT_UNREACHABLE;
       // Refused for who the user is or how the request came: pressing again changes nothing.

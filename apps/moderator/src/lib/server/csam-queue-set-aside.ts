@@ -1,24 +1,10 @@
 import { sql } from '@civitai/db/kysely';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { setAsideCounts, type SetAsideState } from '@civitai/db-queries/csam-queue';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 
-const SET_ASIDE_TABLE = 'CsamQueueSetAside';
-
-/** Whether set-aside rows can be read (`table`) and written (`writable`): the table exists and this
- *  role may. A row that cannot be read never counts, so the queue shows the image. */
-export type SetAsideState = { table: boolean; writable: boolean };
-
-export async function setAsideState(db: Kysely<DB>): Promise<SetAsideState> {
-  const table = sql`to_regclass(${`"${SET_ASIDE_TABLE}"`})`;
-  // A dismissal inserts and reads back what it inserted, so writing takes both.
-  const { rows } = await sql<{ table: boolean | null; writable: boolean | null }>`
-    SELECT has_table_privilege(${table}, 'SELECT') AS table,
-      has_table_privilege(${table}, 'SELECT') AND has_table_privilege(${table}, 'INSERT') AS writable`.execute(
-    db
-  );
-  return { table: rows[0]?.table === true, writable: rows[0]?.writable === true };
-}
+export { setAsideCounts, setAsideState, type SetAsideState } from '@civitai/db-queries/csam-queue';
 
 /** The image row's version: any write to it changes this, a report's same-value flag write included.
  *  A dismissal is taken only against the version the moderator was shown. */
@@ -41,19 +27,4 @@ export function removedNotDismissed(db: Kysely<DB>, state: SetAsideState) {
     .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('i.ingestion', '=', 'Blocked')
     .where(sql<boolean>`not ${setAsideCounts('i', state)}`);
-}
-
-/**
- * The image (`image` is the table or alias it is read as) was dismissed and is still removed. False
- * when `state` has no table.
- */
-export function setAsideCounts(image: string, state: SetAsideState) {
-  if (!state.table) return sql<boolean>`false`;
-  const col = (name: string) => sql.ref(`${image}.${name}`);
-  return sql<boolean>`(${col('ingestion')} = 'Blocked' and exists (
-    select 1
-    from "CsamQueueSetAside" s
-    where s."imageId" = ${col('id')}
-      and s.outcome = 'Dismissed'
-  ))`;
 }

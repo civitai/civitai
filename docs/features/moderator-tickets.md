@@ -65,6 +65,33 @@ is its own page grant. Acting on a ticket is a separate permission:
   newest 10, pending first; a pending one is ruled from the card by picking a level and confirming, through the
   queue's `resolveRatingReviewAction`. The action re-checks that the dispute is the linked user's and
   still pending, decides with the row's id, and adds a private note naming the moderator.
+- A support ticket that links to a Civitai user shows one card for its Feature. Each section reads under its
+  source page's grant and is hidden without it:
+
+  - **Content Related Issue** (read-only): open reports filed against the user's content, human reasons
+    only (`/reports`), and image removals (`/retool/user-lookup`, CSAM reasons dropped).
+  - **Image Generator**: the user's `generation` restrictions (`/audit/generator-restrictions`), where a pending
+    one is upheld or overturned through the shared restriction ruling. Also blocked prompts (`/retool/user-lookup`).
+    No generated media is shown.
+  - **Account Login** and **Email Change**: the Account card, read-only (`/retool/user-lookup`), with the
+    account's email (only for a viewer holding `decisions.support.pii`) and when it was verified. No ban, mute or ruling actions: those stay moderation-only.
+  - **LoRA Trainer**: recent training runs with their publish block (`/audit/training-models`), where Block /
+    Allow publishing posts the intended state and is refused if the model is someone else's or already in that
+    state. Runs of deleted models are not listed. Buzz charges are not shown.
+  - **Billing or Membership** (read-only): the user's current subscription (`/retool/user-lookup`): plan, provider,
+    status, cancel-at-period-end, period end and price (none on a Buzz-bought or referral grant). No membership codes, payment method or
+    provider ids.
+  - **Cosmetic Shop** (read-only): the user's newest 10 shop purchases (`/retool/user-lookup`): item, Buzz paid, date
+    and whether it was refunded.
+  - **Buzz (Receiving)** (read-only): the user's newest 10 payout and withdrawal requests (`/retool/user-lookup`):
+    date, status, requested against transferred, and the provider's name. Bank or account details, provider
+    account ids, contacts and request notes are never carried.
+  - **Bounty System** (read-only): the bounties the user funded and the entries they submitted, newest 10 each
+    (`/retool/user-lookup`): name, type, status, pledged Buzz and dates. Descriptions are not shown.
+
+  Support actions are registered only on the support page. Every panel action re-reads the ticket and is refused
+  when its panel would be hidden in the ticket's current view.
+
 - Both views read one shared Redis snapshot of every live ticket (subject, status, Feature, tags, dates,
   requester name; never a body or an email address), not Freshdesk, so a page load costs no Freshdesk calls. The snapshot
   is rebuilt in full from the status searches when missing or six hours old (Freshdesk search returns at most

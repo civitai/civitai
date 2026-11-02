@@ -42,6 +42,7 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   STICKER_COMMENT_MAX_LENGTH,
   STICKER_PLACEMENT_MIN_OPACITY,
+  snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -147,6 +148,7 @@ export function DraftSticker({
   selected,
   dressed,
   price,
+  creatorMaxScale,
   freeOffer,
   ownerShare,
   ownerUsername,
@@ -160,6 +162,7 @@ export function DraftSticker({
   selected: boolean;
   dressed: StickerTreatment;
   price: number;
+  creatorMaxScale: number;
   /**
    * The free option, when this creator has a slot open and the placer still has
    * their day. `null` means paid is the only offer — including while the
@@ -563,7 +566,7 @@ export function DraftSticker({
       cosmeticId: draft.cosmeticId,
       x: draft.x,
       y: draft.y,
-      scale: draft.scale,
+      scale: snapScaleOvershoot(draft.scale, creatorMaxScale),
       rotation: draft.rotation,
       flip: draft.flip,
       opacity: draft.opacity,

@@ -270,7 +270,7 @@ export const strikeRouter = router({
 
 ### 6. Router Registration — `src/server/routers/index.ts`
 
-Add `strike: strikeRouter` to the `appRouter`.
+Add `strike: () => import('~/server/routers/strike.router').then((m) => m.strikeRouter),` to the `routers` map in `index.ts`; `lazyRouters()` wraps it in `lazy()`.
 
 ### 7. Notifications — `src/server/notifications/strike.notifications.ts` (NEW)
 

@@ -42,16 +42,16 @@ type Decision =
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
   'src/server/services/model.service.ts': {
-    lockWrites: 12,
+    lockWrites: 17,
     decision: {
       kind: 'clears',
       except:
-        'setModelMinor / setModelSfwOnly / setModelPoi: each logs an activity the dispute reader treats as a moderator ruling',
+        'setModelMinor / setModelSfwOnly / setModelPoi: each logs an activity the dispute reader treats as a moderator ruling; a lift that restores a recorded nsfw ruling puts back its lock with the marker as the row holds it; a dispute after any moderator nsfw activity is refused regardless',
     },
   },
   'src/server/services/auto-nsfw.ts': { lockWrites: 2, decision: { kind: 'sets' } },
-  'src/server/services/poi-hash.service.ts': { lockWrites: 4, decision: { kind: 'clears' } },
-  'src/server/services/minor-hash.service.ts': { lockWrites: 1, decision: { kind: 'clears' } },
+  'src/server/services/poi-hash.service.ts': { lockWrites: 2, decision: { kind: 'clears' } },
+  'src/server/services/minor-hash.service.ts': { lockWrites: 2, decision: { kind: 'clears' } },
   'apps/moderator/src/lib/server/rating-reviews.service.ts': {
     lockWrites: 6,
     decision: { kind: 'clears' },
@@ -87,7 +87,8 @@ function sourceFiles(): string[] {
     }
     for (const entry of entries) {
       const full = path.join(dir, entry);
-      const rel = path.relative(repoRoot, full);
+      // LEDGER keys and SKIP use forward slashes; Windows paths come back with backslashes.
+      const rel = path.relative(repoRoot, full).split(path.sep).join('/');
       if (SKIP.test(rel)) continue;
       if (statSync(full).isDirectory()) walk(full);
       else if (/\.(ts|tsx|mjs|js)$/.test(entry)) out.push(rel);

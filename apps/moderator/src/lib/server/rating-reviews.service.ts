@@ -13,6 +13,7 @@ import {
   collectionRatingLevel,
   isRatingReviewEntityType,
   ratingReviewEntityPath,
+  ratingReviewLevelLabel,
   ratingReviewModeratorLevels,
   SYSTEM_NSFW_LOCK_META_KEY,
   textScanNsfwReason,
@@ -73,6 +74,19 @@ function moderatorLevelsFor(
   const live = entityType === 'Challenge' || entityType === 'Crucible' ? liveLevel : undefined;
   const level = live != null ? getHighestBrowsingLevelBit(ratingBits(live)) : snapshotLevel;
   return ratingReviewModeratorLevels(entityType, level);
+}
+
+// The owner's notice compares labels against the snapshot (two NSFW levels on a model both read NSFW),
+// and a challenge or crucible can already sit at the applied level live.
+function keepsRating(
+  entityType: RatingReviewEntityType,
+  snapshotLevel: number,
+  liveLevel: number | undefined,
+  appliedLevel: number
+): boolean {
+  const label = ratingReviewLevelLabel(entityType, appliedLevel);
+  if (label === ratingReviewLevelLabel(entityType, snapshotLevel)) return true;
+  return liveLevel != null && getHighestBrowsingLevelBit(ratingBits(liveLevel)) === appliedLevel;
 }
 
 type Summary = Omit<RatingReviewEntitySummary, 'path'> & { parentId: number | null };
@@ -1018,6 +1032,12 @@ export async function resolveRatingReview(input: {
       throw new RatingReviewResolveError(
         "This crucible has started; its allowed levels can't change."
       );
+    if (
+      exists &&
+      !modComment?.trim() &&
+      keepsRating(entityType, review.currentLevel, liveLevel, appliedLevel)
+    )
+      throw new RatingReviewResolveError('Add a reason when keeping the rating as it is');
 
     const basis =
       exists &&

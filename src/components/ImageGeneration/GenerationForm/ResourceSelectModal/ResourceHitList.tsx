@@ -179,8 +179,13 @@ export function ResourceHitList({ query }: { query: string }) {
   // apply, through the same filter as the grid below.
   // Filter by resource types AND baseModels to match the current ecosystem's auction.
   const resourceTypes = useMemo(() => resources.map((r) => r.type), [resources]);
-  const resourceBaseModels = useMemo(
-    () => new Set(resources.flatMap((r) => r.baseModels)),
+  // Per type: an empty list for one type (e.g. Advanced Mode's any-family Checkpoint) must not be
+  // narrowed by another type's base models.
+  const matchesTypeBaseModel = useCallback(
+    (type: string, baseModel: string) =>
+      resources.some(
+        (r) => r.type === type && (r.baseModels.length === 0 || r.baseModels.includes(baseModel))
+      ),
     [resources]
   );
   // A model can be featured in several ecosystems: the first entry in this ecosystem, else the
@@ -191,12 +196,12 @@ export function ResourceHitList({ query }: { query: string }) {
     const inEcosystem = new Set<number>();
     for (const fm of featured ?? []) {
       if (!fm.modelVersionId || inEcosystem.has(fm.modelId)) continue;
-      const matches = resourceBaseModels.has(fm.baseModel);
+      const matches = matchesTypeBaseModel(fm.type, fm.baseModel);
       if (matches || !ids.has(fm.modelId)) ids.set(fm.modelId, fm.modelVersionId);
       if (matches) inEcosystem.add(fm.modelId);
     }
     return ids;
-  }, [tab, featured, resourceBaseModels]);
+  }, [tab, featured, matchesTypeBaseModel]);
 
   const topItems = useMemo(() => {
     if (tab !== 'featured' || !featured?.length) return [];
@@ -207,7 +212,7 @@ export function ResourceHitList({ query }: { query: string }) {
     const relevantFeatured = featured.filter(
       (fm) =>
         resourceTypes.includes(fm.type) &&
-        (isCheckpointOnly || resourceBaseModels.size === 0 || resourceBaseModels.has(fm.baseModel))
+        (isCheckpointOnly || matchesTypeBaseModel(fm.type, fm.baseModel))
     );
     const podiumEntries = relevantFeatured.filter((fm) => fm.position >= 1 && fm.position <= 3);
     const podiumIds = new Set(podiumEntries.map((fm) => fm.modelId));
@@ -248,7 +253,7 @@ export function ResourceHitList({ query }: { query: string }) {
     items,
     filterVersions,
     resourceTypes,
-    resourceBaseModels,
+    matchesTypeBaseModel,
     browsingLevel,
     currentUser,
     canViewNsfw,

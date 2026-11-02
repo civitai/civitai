@@ -1,6 +1,7 @@
 import { createAssistantModel, FreeTier, freeTierFetch } from '@civitai/components-chat/core';
 import type { LanguageModel } from 'ai';
 
+import { chargeTap } from './charge';
 import type { Logger, ModelContext, ModelProvider } from './core/interfaces';
 import { MintRefusedError, type TokenSource } from './minter';
 import { ModelCalls, type ModelCallLedger } from './model-calls';
@@ -75,6 +76,9 @@ export class OrchestrationModels implements ModelProvider {
             tokens
           )
         : refusalsAsAnswers(signed);
+    // What each call was charged goes to the reply's saved turn, which the page's spend readout sums.
+    const charged = (signed: typeof fetch) =>
+      context.onCharge ? chargeTap(send(signed), context.onCharge) : send(signed);
     return createAssistantModel(
       // A Stop stops waiting for a mint at once, rather than after its timeout.
       {
@@ -86,7 +90,7 @@ export class OrchestrationModels implements ModelProvider {
         model: context.model,
         ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
         wrap: (signed) =>
-          freeTierFetch(send(signed), context.model, freeTier, () => ({
+          freeTierFetch(charged(signed), context.model, freeTier, () => ({
             useFree: tier !== 'paid',
             payWhenOut: tier !== 'free',
           })),

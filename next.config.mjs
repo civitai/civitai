@@ -2,6 +2,7 @@
 import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import { createRequire } from 'module';
+import { STATIC_ASSET_CACHE_RULES } from './src/shared/constants/static-asset-cache-rules.mjs';
 const require = createRequire(import.meta.url);
 const packageJson = require('./package.json');
 
@@ -26,6 +27,10 @@ const analyze = process.env.ANALYZE === 'true';
  * `next build` no longer runs ESLint (Next 16), so there is no lint equivalent to switch.
  */
 const skipBuildTypecheck = process.env.CIVITAI_SKIP_BUILD_TYPECHECK === '1';
+
+// Production only (like the dev-only X-Robots-Tag rule below), so a rebuilt worker shows up at once
+// under `next dev`. The rules, their TTLs and the page-render hazard they carry are documented in
+// the shared module; `static-asset-cache-headers.test.ts` reads them through Next's route compiler.
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
@@ -383,6 +388,12 @@ export default defineNextConfig(
         source: '/((?!gift-cards).*)',
         headers: [{ key: 'X-Frame-Options', value: 'DENY' }],
       });
+
+      if (process.env.NODE_ENV === 'production') {
+        for (const { source, cacheControl } of STATIC_ASSET_CACHE_RULES) {
+          headers.push({ source, headers: [{ key: 'Cache-Control', value: cacheControl }] });
+        }
+      }
 
       return headers;
     },

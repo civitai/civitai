@@ -2,14 +2,29 @@ import { ACCOUNT_APPEALS_PATH } from '$lib/tickets/appeals';
 import { PANELS, type PanelContext, type PanelKey } from '$lib/tickets/panels';
 import { accountSectionFor, type TicketAccount } from './account';
 import { appealsSectionFor, type TicketAppeals } from './appeals';
+import { bountiesSectionFor, type TicketBounties } from './bounties';
+import { contentIssueSectionFor, type TicketContentIssue } from './content-reports';
+import { generatorSectionFor, type TicketGenerator } from './generator-restrictions';
 import { historySectionFor, type TicketHistory } from './history';
+import { loraSectionFor, type TicketLora } from './lora-runs';
+import { membershipSectionFor, type TicketMembership } from './membership';
+import { payoutsSectionFor, type TicketPayouts } from './payouts';
 import { ratingDisputesSectionFor, type TicketRatingDisputes } from './rating-disputes';
+import { shopSectionFor, type TicketShop } from './shop-purchases';
 
 export type PanelSections = {
   account: TicketAccount;
   appeals: TicketAppeals;
   history: TicketHistory;
   ratingDisputes: TicketRatingDisputes;
+  contentIssue: TicketContentIssue;
+  generator: TicketGenerator;
+  lora: TicketLora;
+  supportAccount: TicketAccount;
+  membership: TicketMembership;
+  shop: TicketShop;
+  payouts: TicketPayouts;
+  bounties: TicketBounties;
 };
 
 export type CanRead = (path: string) => boolean;
@@ -23,7 +38,8 @@ type Loaders = {
   ) => Promise<PanelSections[K] | undefined>;
 };
 
-export const liveLoaders: Loaders = {
+/** The live loaders; `canSeeEmail` is the viewer's PII grant, which gates the support Account card's address. */
+export const loadersFor = ({ canSeeEmail }: { canSeeEmail: boolean }): Loaders => ({
   account: ({ view, cfFeature, routerTopic, civitaiUserId }, canRead) =>
     accountSectionFor({
       view,
@@ -37,7 +53,28 @@ export const liveLoaders: Loaders = {
     appealsSectionFor({ userId: ticket.civitaiUserId, text: ticket.text ?? '', canRead }),
   history: ({ civitaiUserId }) => historySectionFor({ userId: civitaiUserId }),
   ratingDisputes: ({ civitaiUserId }) => ratingDisputesSectionFor({ userId: civitaiUserId }),
-};
+  contentIssue: ({ civitaiUserId }, canRead) =>
+    contentIssueSectionFor({ userId: civitaiUserId, canRead }),
+  generator: ({ civitaiUserId }, canRead) =>
+    generatorSectionFor({ userId: civitaiUserId, canRead }),
+  lora: ({ civitaiUserId }) => loraSectionFor({ userId: civitaiUserId }),
+  supportAccount: ({ view, cfFeature, routerTopic, civitaiUserId }) =>
+    accountSectionFor({
+      view,
+      cfFeature: cfFeature ?? null,
+      routerTopic: routerTopic ?? null,
+      civitaiUserId,
+      canView: true,
+      readOnly: true,
+      canSeeEmail,
+    }),
+  membership: ({ civitaiUserId }) => membershipSectionFor({ userId: civitaiUserId }),
+  shop: ({ civitaiUserId }) => shopSectionFor({ userId: civitaiUserId }),
+  payouts: ({ civitaiUserId }) => payoutsSectionFor({ userId: civitaiUserId }),
+  bounties: ({ civitaiUserId }) => bountiesSectionFor({ userId: civitaiUserId }),
+});
+
+export const liveLoaders: Loaders = loadersFor({ canSeeEmail: false });
 
 /**
  * One panel's section: absent when it does not apply or the viewer holds none of its grants, `unlinked`

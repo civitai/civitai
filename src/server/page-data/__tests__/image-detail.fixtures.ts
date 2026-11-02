@@ -198,13 +198,25 @@ export const renderSeedFor = (user: FixtureUser | null) =>
 
 export const jsonRoundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-/** A response double that behaves like Node's: headers are case-insensitive and frozen once sent. */
+/**
+ * A response double that behaves like Node's: headers are case-insensitive and frozen once sent
+ * (`json`, `end` or `flushHeaders`), and the status with them.
+ *
+ * `wire` is the body as the client receives it (`undefined`: none); `body` is that parsed, as
+ * the client's `res.json()` would, or `undefined` when it is not JSON. `events` records, in order,
+ * when the headers went out (`'flush'`) and when the response ended (`'end'`), for tests to order
+ * other work against; `flushed` is the status and headers as they were at the flush.
+ */
 export function fakeResponse() {
   const headers = new Map<string, unknown>();
   const res = {
     statusCode: 200,
     body: undefined as unknown,
+    wire: undefined as string | undefined,
     headersSent: false,
+    writableEnded: false,
+    events: [] as string[],
+    flushed: undefined as { statusCode: number; headers: Record<string, unknown> } | undefined,
     /** Every header write, in order, including ones later overwritten. */
     headerWrites: [] as [string, unknown][],
     setHeader(name: string, value: unknown) {
@@ -215,18 +227,37 @@ export function fakeResponse() {
     },
     getHeader: (name: string) => headers.get(name.toLowerCase()),
     getHeaders: () => Object.fromEntries(headers),
-    removeHeader: (name: string) => headers.delete(name.toLowerCase()),
+    removeHeader(name: string) {
+      if (res.headersSent) throw new Error('ERR_HTTP_HEADERS_SENT');
+      headers.delete(name.toLowerCase());
+    },
     status(code: number) {
       res.statusCode = code;
       return res;
     },
-    json(body: unknown) {
-      res.body = body;
+    flushHeaders() {
+      if (res.headersSent) return;
       res.headersSent = true;
-      return res;
+      res.flushed = { statusCode: res.statusCode, headers: Object.fromEntries(headers) };
+      res.events.push('flush');
     },
-    end() {
+    json(body: unknown) {
+      if (res.headersSent) throw new Error('ERR_HTTP_HEADERS_SENT');
+      return res.end(JSON.stringify(body));
+    },
+    end(chunk?: string) {
+      if (res.writableEnded) throw new Error('ERR_STREAM_WRITE_AFTER_END');
       res.headersSent = true;
+      res.writableEnded = true;
+      if (chunk !== undefined) {
+        res.wire = String(chunk);
+        try {
+          res.body = JSON.parse(res.wire);
+        } catch {
+          res.body = undefined;
+        }
+      }
+      res.events.push('end');
       return res;
     },
   };

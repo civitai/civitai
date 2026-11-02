@@ -5,6 +5,7 @@ import { delistGame, delistReason } from '$lib/server/game-frame';
 import {
   getReportedStorylines,
   getReportStorylineId,
+  getStorylineReportHolds,
   setStorylineTakedown,
 } from '$lib/server/storyline-takedown.service';
 import { liftStorylineScanTakedown } from '$lib/server/storyline-scan-lift.service';
@@ -30,13 +31,14 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
   const queue = await loadReportQueue(type, url);
   const entityIds = queue.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
-  const [games, storylines, serviceOfferings] = await Promise.all([
+  const [games, storylines, storylineHolds, serviceOfferings] = await Promise.all([
     type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
     type === 'storyline' ? getReportedStorylines(entityIds) : [],
+    type === 'storyline' ? getStorylineReportHolds(queue.items.map((r) => r.id)) : [],
     type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
   ]);
 
-  return { ...queue, wide: true, games, storylines, serviceOfferings };
+  return { ...queue, wide: true, games, storylines, storylineHolds, serviceOfferings };
 };
 
 // The page's route tier is gated in hooks.server.ts; actions on a type with its own tier re-check it here with canAccess.

@@ -210,6 +210,7 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'routes/text-scan/model-rules/SuggestAliases.svelte',
     'routes/tickets/TicketAccountAction.svelte',
     'routes/tickets/TicketEscalate.svelte',
+    'routes/tickets/TicketPublishBlock.svelte',
     'routes/tickets/TicketRatingRuling.svelte',
     'routes/tickets/TicketReply.svelte',
     'routes/tickets/TicketRestrictionRuling.svelte',

@@ -16,6 +16,8 @@ import { IconApps, IconEyeOff, IconPlayerPlay, IconThumbUp } from '@tabler/icons
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import {
   getListingCta,
@@ -225,12 +227,26 @@ export interface AppListingCardProps {
    * `appListingDetailModActions.detailListingStatus`.
    */
   preview?: boolean;
+  /**
+   * The card as a sidebar panel (the post and image detail pages), not a store grid cell: the
+   * divider runs edge to edge, the footer is tighter, the title and Open sit lower under the
+   * cover, and the creator is a `UserAvatar` (hover card) like everywhere else on the site.
+   * The grid never sets it, so the skeleton's geometry (`appListingCardGeometry`) still holds there.
+   */
+  embedded?: boolean;
+  /** A label pinned over the cover's top-left corner, opposite the `⋮` menu. */
+  coverBadge?: ReactNode;
 }
+
+/** How far an embedded card drops its title and Open below the icon-centred line. */
+const EMBEDDED_HEADER_NUDGE_PX = 8;
 
 export function AppListingCard({
   card,
   canOpenPage = false,
   preview = false,
+  embedded = false,
+  coverBadge,
 }: AppListingCardProps) {
   const currentUser = useCurrentUser();
   const cta = getListingCta(card, { canOpenPage });
@@ -300,6 +316,7 @@ export function AppListingCard({
   // The whole card is one click target: the title link is stretched over it (`after:inset-0`),
   // and every other control (Open, `⋮`, creator link) sits above that layer (`relative z-10`).
   const creator = card.creator;
+  const headerNudge = embedded ? EMBEDDED_HEADER_NUDGE_PX : 0;
   return (
     <Card padding={0} radius={0} className="h-full rounded-md">
       <ListingCover
@@ -323,7 +340,15 @@ export function AppListingCard({
           stopPropagation
         />
       </div>
-      <Stack gap="xs" h="100%" px="md" pb="sm">
+      {coverBadge && (
+        <div
+          className="pointer-events-none absolute left-2 top-2 z-10 max-w-[70%]"
+          data-testid="apps-listing-card-cover-badge"
+        >
+          {coverBadge}
+        </div>
+      )}
+      <Stack gap="xs" h="100%" px="md" pb={embedded ? 'xs' : 'sm'}>
         {/* HEADER ROW: icon (overlapping the cover), title, Open. The icon is pulled up over the
             cover by `LISTING_CARD_ICON_OVERLAP_PX`; the title and the button are centred on the
             ICON's centre, not the row's, which is why they carry their own top margin. */}
@@ -377,7 +402,8 @@ export function AppListingCard({
               minWidth: 0,
               flex: 1,
               marginTop:
-                LISTING_CARD_HEADER_CENTER_PX -
+                LISTING_CARD_HEADER_CENTER_PX +
+                headerNudge -
                 (LISTING_CARD_TITLE_FONT_PX * LISTING_CARD_TITLE_LINE_HEIGHT) / 2,
             }}
           >
@@ -413,7 +439,7 @@ export function AppListingCard({
               className="relative z-10"
               style={{
                 flexShrink: 0,
-                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
+                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX + headerNudge}px - ${
                   LISTING_CARD_CTA_HEIGHT_PX / 2
                 }px)`,
               }}
@@ -438,7 +464,7 @@ export function AppListingCard({
               className="relative z-10"
               style={{
                 flexShrink: 0,
-                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
+                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX + headerNudge}px - ${
                   LISTING_CARD_CTA_HEIGHT_PX / 2
                 }px)`,
               }}
@@ -533,12 +559,16 @@ export function AppListingCard({
             🔴 `wrap="nowrap"` is load-bearing: a wrapped footer is a second line, i.e. a card
             taller than its skeleton on every card in that grid row. The rollup and the creator
             name truncate (`minWidth: 0`); the play count is short and `flexShrink: 0`. */}
-        <Divider mt="auto" />
+        <Divider
+          mt="auto"
+          style={embedded ? { marginInline: 'calc(var(--mantine-spacing-md) * -1)' } : undefined}
+          data-testid="apps-listing-card-divider"
+        />
         <Group
-          gap="sm"
+          gap={embedded ? 'xs' : 'sm'}
           wrap="nowrap"
           justify="space-between"
-          mih={LISTING_CARD_FOOTER_HEIGHT_PX}
+          mih={embedded ? undefined : LISTING_CARD_FOOTER_HEIGHT_PX}
           data-testid="apps-listing-card-footer"
         >
           <Group
@@ -576,7 +606,25 @@ export function AppListingCard({
               </Group>
             )}
           </Group>
-          {creator?.username && (
+          {embedded && creator?.username && (
+            // The card fill is dark in both themes and Paper takes its text colour from the root
+            // scheme, so the name states its own light colour.
+            <div
+              className="relative z-10 min-w-0 shrink"
+              style={{ color: 'var(--mantine-color-dark-0)' }}
+              data-testid="apps-listing-card-creator"
+            >
+              <UserAvatar
+                user={{ id: creator.id, username: creator.username, image: creator.image }}
+                withUsername
+                linkToProfile
+                size="xs"
+                avatarSize={LISTING_CARD_CREATOR_AVATAR_PX}
+                textSize="xs"
+              />
+            </div>
+          )}
+          {!embedded && creator?.username && (
             <Anchor
               component={Link}
               href={`/user/${encodeURIComponent(creator.username)}`}

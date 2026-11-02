@@ -73,6 +73,7 @@ const renderDraft = (scale: number) =>
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
         price={PRICE}
+        creatorMaxScale={0.4}
         freeOffer={null}
         ownerShare={undefined}
         ownerUsername="creator"

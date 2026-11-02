@@ -234,6 +234,54 @@ describe('idempotency', () => {
     expect((await pending())[0].users.length).toBe(before[0].users.length + 1);
   });
 
+  describe('through the fan-out worker', () => {
+    const teamNotice = {
+      ...base,
+      type: 'system-announcement',
+      message: 'Team {team}',
+      mode: 'send',
+      recipients: [{ userId: 1, params: { team: 'Pink' } }],
+    };
+
+    // The worker's own per-row handler, run against the same PGlite (whose query() returns { rows }
+    // like a pg client) for every queued row.
+    async function fanOut() {
+      const { handleNormal } = await import('../../worker/poll-loop');
+      const rows = (await h.notif.query(`SELECT * FROM "PendingNotification" ORDER BY id`)).rows;
+      for (const row of rows) await handleNormal(row as never, h.notif as never);
+      return rows;
+    }
+    async function userNotifications() {
+      return (
+        await h.notif.query<{ userId: number; viewed: boolean }>(
+          `SELECT "userId", viewed FROM "UserNotification" ORDER BY id`
+        )
+      ).rows;
+    }
+
+    it('a second send after delivery leaves one UserNotification, still read', async () => {
+      expect((await post(teamNotice)).json().counts).toMatchObject({ queued: 1 });
+      await fanOut();
+      await h.notif.exec(`UPDATE "UserNotification" SET viewed = true`);
+
+      expect((await post(teamNotice)).json().counts).toMatchObject({ queued: 0, alreadySent: 1 });
+      await fanOut();
+
+      expect(await userNotifications()).toEqual([{ userId: 1, viewed: true }]);
+    });
+
+    it('the worker replaying the same queued row adds no second row and keeps it read', async () => {
+      await post(teamNotice);
+      const [row] = await fanOut();
+      await h.notif.exec(`UPDATE "UserNotification" SET viewed = true`);
+
+      const { handleNormal } = await import('../../worker/poll-loop');
+      await handleNormal(row as never, h.notif as never);
+
+      expect(await userNotifications()).toEqual([{ userId: 1, viewed: true }]);
+    });
+  });
+
   it('counts a delivered UserNotification carrying the dedupeKey as alreadySent', async () => {
     await h.notif.exec(`
       INSERT INTO "Notification" (id, type, key, category, details)

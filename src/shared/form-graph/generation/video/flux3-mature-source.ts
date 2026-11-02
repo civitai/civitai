@@ -1,4 +1,6 @@
-import type { NsfwLevel } from '@civitai/orchestration-client';
+import { NsfwLevel } from '@civitai/orchestration-client';
+import { NsfwLevel as BrowsingNsfwLevel } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import { FLUX3_KEYFRAMES_WORKFLOW } from './flux3-video.graph';
@@ -25,4 +27,18 @@ export function hasMatureSource(
   ratingOf: (url: string) => NsfwLevel | null | undefined
 ): boolean {
   return urls.some((url) => !!isMature(ratingOf(url) ?? undefined));
+}
+
+const galleryRatings: [BrowsingNsfwLevel, NsfwLevel][] = [
+  [BrowsingNsfwLevel.Blocked, NsfwLevel.XXX],
+  [BrowsingNsfwLevel.XXX, NsfwLevel.XXX],
+  [BrowsingNsfwLevel.X, NsfwLevel.X],
+  [BrowsingNsfwLevel.R, NsfwLevel.R],
+  [BrowsingNsfwLevel.PG13, NsfwLevel.PG13],
+  [BrowsingNsfwLevel.PG, NsfwLevel.PG],
+];
+
+/** A gallery image's level in the orchestrator's terms, by its most severe flag; 0 is unrated. */
+export function galleryRatingToSourceRating(nsfwLevel: number): NsfwLevel | undefined {
+  return galleryRatings.find(([flag]) => Flags.hasFlag(nsfwLevel, flag))?.[1];
 }

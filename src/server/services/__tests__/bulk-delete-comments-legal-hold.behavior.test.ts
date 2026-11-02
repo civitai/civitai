@@ -612,7 +612,7 @@ describe('a member deleting their own CommentV2', () => {
     ],
   ])(
     'and a ToS restore after the hold no longer covers it %s',
-    async (_, byAuthor, metadata, count, retainedHidden, after) => {
+    async (_, byAuthor, metadata, count, failed, after) => {
       await holder.db.exec(`
         INSERT INTO "Thread" (id, "commentId") VALUES (500, 11);
         INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (51, ${HELD}, 500, 'zzfixture');
@@ -624,7 +624,8 @@ describe('a member deleting their own CommentV2', () => {
       await holder.db.exec(`DELETE FROM "CommentV2" WHERE id = 51`);
       await expect(bulkClearCommentV2TosViolation({ ids: [11] })).resolves.toMatchObject({
         count,
-        retainedHidden,
+        retainedHidden: 0,
+        failed,
       });
       expect(await state('CommentV2')).toMatchObject({ 11: after });
     }
@@ -907,6 +908,7 @@ describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable
       count: 2,
       reopenedReports: 2,
       retainedHidden: 0,
+      failed: 0,
     });
     expect(await state(table)).toMatchObject({ 11: 'public', 12: 'public' });
     expect(await reports()).toMatchObject({ 11: 'Pending', 12: 'Pending' });
@@ -919,6 +921,7 @@ describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable
       count: 2,
       reopenedReports: 2,
       retainedHidden: 4,
+      failed: 0,
     });
     expect(await state(table)).toEqual({
       11: 'public',
@@ -964,11 +967,12 @@ describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable
       count: 0,
       reopenedReports: 0,
       retainedHidden: 0,
+      failed: 0,
     });
     expect(await reports()).toMatchObject({ 11: 'Actioned', 21: 'Actioned' });
   });
 
-  it('keeps a comment hidden when its statement fails, and clears the rest', async () => {
+  it('keeps a comment hidden when its statement fails, reports it failed, and clears the rest', async () => {
     hook = {
       on: 'WITH target AS',
       run: async () => {
@@ -978,9 +982,28 @@ describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable
 
     await expect(clear({ ids: ids(CLEAN) })).resolves.toMatchObject({
       count: 1,
-      retainedHidden: 1,
+      retainedHidden: 0,
+      failed: 1,
     });
     expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'public' });
+  });
+
+  it('leaves the comment hidden and its report as it was, reporting it failed, when the reopen fails', async () => {
+    await holder.db.exec(
+      `ALTER TABLE "Report" ADD CONSTRAINT no_reopen CHECK (status <> 'Pending') NOT VALID`
+    );
+    try {
+      await expect(clear({ ids: [11] })).resolves.toEqual({
+        count: 0,
+        reopenedReports: 0,
+        retainedHidden: 0,
+        failed: 1,
+      });
+      expect(await state(table)).toMatchObject({ 11: 'hidden' });
+      expect(await reports()).toMatchObject({ 11: 'Actioned' });
+    } finally {
+      await holder.db.exec(`ALTER TABLE "Report" DROP CONSTRAINT no_reopen`);
+    }
   });
 
   it('counts a missing comment as neither cleared nor kept', async () => {
@@ -988,6 +1011,7 @@ describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable
       count: 0,
       reopenedReports: 0,
       retainedHidden: 0,
+      failed: 0,
     });
   });
 });

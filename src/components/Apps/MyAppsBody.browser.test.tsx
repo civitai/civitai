@@ -1076,6 +1076,87 @@ describe('🔴 the listing-completeness advisory has a home', () => {
       .toBeInTheDocument();
   });
 
+  /**
+   * 🔴 ONLY THE BLOCKING PROBLEMS SIT UNDER "Required before publishing". The publish floor
+   * is icon + cover (enforced at approve); description, tagline, category and screenshots are
+   * recommended. The popover used to print ONE heading over every item, so a listing missing
+   * its cover listed "Missing tagline" as required before publishing.
+   */
+  test('🔴 blocking problems are listed as required, advisory ones as recommended', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({
+            appListingId: 'apl_mixed',
+            status: 'draft',
+            problems: [
+              {
+                code: 'missing-icon',
+                label: 'Missing icon (required before publishing)',
+                severity: 'blocking',
+              },
+              {
+                code: 'missing-cover',
+                label: 'Missing cover image (required before publishing)',
+                severity: 'blocking',
+              },
+              {
+                code: 'no-screenshots',
+                label: 'No screenshots (recommended, optional)',
+                severity: 'advisory',
+              },
+              { code: 'empty-tagline', label: 'Missing tagline', severity: 'advisory' },
+            ],
+          }),
+        ]}
+      />
+    );
+    const holder = page.getByTestId('apps-mine-problems-apl_mixed');
+    await expect.element(holder).toBeInTheDocument();
+    const indicator = holder.element().querySelector('[data-testid="apps-submission-problems"]');
+    expect(indicator).not.toBeNull();
+    await userEvent.hover(indicator as HTMLElement);
+
+    const required = page.getByTestId('apps-submission-problems-required');
+    const advisory = page.getByTestId('apps-submission-problems-advisory');
+    await expect.element(required).toBeInTheDocument();
+    await expect.element(advisory).toBeInTheDocument();
+    const requiredText = required.element().textContent ?? '';
+    const advisoryText = advisory.element().textContent ?? '';
+    expect(requiredText).toContain('Required before publishing');
+    expect(requiredText).toContain('Missing icon (required before publishing)');
+    expect(requiredText).toContain('Missing cover image (required before publishing)');
+    expect(requiredText).not.toContain('Missing tagline');
+    expect(requiredText).not.toContain('No screenshots');
+    expect(advisoryText).toContain('Recommended');
+    expect(advisoryText).toContain('Missing tagline');
+    expect(advisoryText).toContain('No screenshots (recommended, optional)');
+    expect(advisoryText).not.toContain('Missing icon');
+  });
+
+  test('advisory-only problems get no "Required" heading at all', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({
+            appListingId: 'apl_advisory',
+            status: 'draft',
+            problems: [{ code: 'empty-tagline', label: 'Missing tagline', severity: 'advisory' }],
+          }),
+        ]}
+      />
+    );
+    const holder = page.getByTestId('apps-mine-problems-apl_advisory');
+    await expect.element(holder).toBeInTheDocument();
+    const indicator = holder.element().querySelector('[data-testid="apps-submission-problems"]');
+    await userEvent.hover(indicator as HTMLElement);
+    await expect.element(page.getByText('Missing tagline')).toBeInTheDocument();
+    await expect.element(page.getByText('Recommended', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Required before publishing', { exact: true }).elements()).toHaveLength(
+      0
+    );
+  });
+
   test('a live listing hidden by its rating says so, under a heading that is not "Recommended"', async () => {
     const label =
       'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images';

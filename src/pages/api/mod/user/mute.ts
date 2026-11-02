@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { setUserMuted } from '~/server/services/user.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -19,7 +20,17 @@ export default defineModeratorEndpoint('user.mute', {
     // `?? null`, never a pass-through: `setUserMuted` writes the column only when the caller names a
     // value, and the account may already carry a `muteExpiresAt` from a strike. Omitting it would
     // leave that date in place, so `processTimedUnmutes` would lift this indefinite mute on it.
-    await setUserMuted({ userId: input.userId, muted: true, expiresAt: input.expiresAt ?? null });
+    const { sessionInvalidated } = await setUserMuted({
+      userId: input.userId,
+      muted: true,
+      expiresAt: input.expiresAt ?? null,
+    });
+    // Repeating this mute is harmless, so a caller can be told to retry the session step.
+    if (!sessionInvalidated)
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'The account is muted but its sessions could not be ended; retry',
+      });
     return {
       muted: true,
       expiresAt: input.expiresAt ?? null,

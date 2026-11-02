@@ -8,6 +8,8 @@ import StorylineContinueModal from '~/components/Storyline/continue/StorylineCon
 const mocks = vi.hoisted(() => ({
   insert: vi.fn(),
   addOwn: vi.fn(),
+  addAtEnd: vi.fn(),
+  link: vi.fn(),
   refusal: null as string | null,
   invalidate: vi.fn(),
   currentUser: { id: 10, username: 'owner' } as {
@@ -16,6 +18,13 @@ const mocks = vi.hoisted(() => ({
     isModerator?: boolean;
   },
   postsOf: undefined as string | undefined,
+}));
+
+const { forPosts } = vi.hoisted(() => ({
+  forPosts: (input: { postIds: number[] }) => ({
+    data: input.postIds.includes(502) ? { 502: { storylineId: 2, depth: 1 } } : {},
+    isLoading: false,
+  }),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -27,10 +36,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       return {
         isPending: false,
         error,
-        mutate: (input: unknown, options?: { onSuccess?: () => void }) => {
+        mutate: (input: unknown, options?: { onSuccess?: () => void; onError?: () => void }) => {
           spy(input);
-          if (mocks.refusal) setError({ message: mocks.refusal });
-          else options?.onSuccess?.();
+          if (mocks.refusal) {
+            setError({ message: mocks.refusal });
+            options?.onError?.();
+          } else options?.onSuccess?.();
         },
       };
     },
@@ -40,12 +51,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     trpc: makeTrpcProxy(
       {
         // The parent chapter's membership, then which of the owner's posts are chapters already.
-        'storyline.getForPosts': {
-          useQuery: (input: { postIds: number[] }) => ({
-            data: input.postIds.includes(502) ? { 502: { storylineId: 2, depth: 1 } } : {},
-            isLoading: false,
-          }),
-        },
         'storyline.getById': {
           useQuery: () => ({
             data: {
@@ -61,6 +66,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             isLoading: false,
           }),
         },
+        'storyline.getForPosts': { useQuery: forPosts },
         'post.getInfinite': {
           useInfiniteQuery: (input: { username?: string }) => {
             mocks.postsOf = input.username;
@@ -95,8 +101,29 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
         'storyline.insertChapter': mutation(mocks.insert),
         'storyline.addChapter': mutation(mocks.addOwn),
+        'storyline.addChapterAtEnd': mutation(mocks.addAtEnd),
+        'storyline.linkChapter': mutation(mocks.link),
+        'storyline.getLinkTargets': {
+          useQuery: () => ({
+            data: [
+              {
+                chapterId: 300,
+                depth: 2,
+                firstImage: null,
+                tombstone: null,
+                post: { id: 3000, title: 'Over the river' },
+              },
+            ],
+            isLoading: false,
+            isError: false,
+          }),
+        },
       },
-      { useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }) }
+      {
+        useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }),
+        useQueries: (build: (t: unknown) => unknown[]) =>
+          build({ storyline: { getForPosts: forPosts } }),
+      }
     ),
   };
 });
@@ -120,7 +147,8 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
 vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => <div /> }));
 
 beforeEach(() => {
-  for (const fn of [mocks.insert, mocks.addOwn, mocks.invalidate]) fn.mockReset();
+  for (const fn of [mocks.insert, mocks.addOwn, mocks.addAtEnd, mocks.link, mocks.invalidate])
+    fn.mockReset();
   mocks.refusal = null;
   mocks.currentUser = { id: 10, username: 'owner' };
 });
@@ -187,5 +215,65 @@ describe('inserting a chapter from the map', () => {
 
     expect(mocks.addOwn).toHaveBeenCalledWith({ parentChapterId: 104, postId: 900 });
     expect(mocks.insert).not.toHaveBeenCalled();
+    expect(mocks.addAtEnd).not.toHaveBeenCalled();
+  });
+});
+
+// The end-of-chapter card's main-path "use a post": the end the card read (104) may no longer be
+// the end, so the server finds it when it adds the post.
+describe('adding at the end of the main path', () => {
+  test('sends the storyline, never the chapter the card read as the end', async () => {
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Add chapter' }).click();
+
+    expect(mocks.addAtEnd).toHaveBeenCalledWith({ storylineId: 2, postId: 900 });
+    expect(mocks.addOwn).not.toHaveBeenCalled();
+    await expect
+      .element(page.getByText('Added to your storyline as the next chapter.'))
+      .toBeVisible();
+  });
+
+  test("the server's refusal is shown and the dialog stays", async () => {
+    mocks.refusal = 'This storyline is complete';
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Add chapter' }).click();
+
+    await expect.element(page.getByText('This storyline is complete')).toBeVisible();
+    expect(page.getByText('Added to your storyline as the next chapter.').query()).toBeNull();
+  });
+});
+
+// The same card's "Join an existing chapter": the server refuses it if 104 is no longer the end.
+describe('joining at the end of the main path', () => {
+  test('sends the end check with the chapter the card read', async () => {
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByText('Join an existing chapter').click();
+    await page.getByRole('radio', { name: 'Over the river' }).click();
+    await page.getByRole('button', { name: 'Join this chapter' }).click();
+
+    expect(mocks.link).toHaveBeenCalledWith({ parentChapterId: 104, chapterId: 300, atEnd: true });
+  });
+
+  test('a refusal is shown, and the storyline is read again so the card shows the new end', async () => {
+    mocks.refusal = 'The story has a new last chapter since you opened this.';
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByText('Join an existing chapter').click();
+    await page.getByRole('radio', { name: 'Over the river' }).click();
+    await page.getByRole('button', { name: 'Join this chapter' }).click();
+
+    await expect.element(page.getByText(mocks.refusal)).toBeVisible();
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  // Joins from anywhere else are branches by choice, and must not be checked against the end.
+  test('sends no end check when the modal was not opened at the end', async () => {
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} />);
+    await page.getByText('Join an existing chapter').click();
+    await page.getByRole('radio', { name: 'Over the river' }).click();
+    await page.getByRole('button', { name: 'Join this chapter' }).click();
+
+    expect(mocks.link).toHaveBeenCalledWith({ parentChapterId: 104, chapterId: 300, atEnd: false });
   });
 });

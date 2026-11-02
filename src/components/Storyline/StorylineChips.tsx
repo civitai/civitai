@@ -4,6 +4,7 @@ import {
   IconBolt,
   IconCircleCheck,
   IconCrown,
+  IconEyeOff,
   IconLock,
   IconRosetteDiscountCheck,
   IconRoute,
@@ -12,6 +13,7 @@ import {
 import type { Icon as TablerIcon } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { numberWithCommas } from '~/utils/number-helpers';
+import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
 
 export const storylineCardClass =
   'rounded-xl border border-solid border-gray-3 bg-gray-0 shadow-sm dark:border-dark-4 dark:bg-dark-6';
@@ -82,6 +84,38 @@ export function StorylineClosedChip({
       data-testid="storyline-closed-chip"
     >
       {label}
+    </Chip>
+  );
+}
+
+const rootHiddenLabels: Record<StorylineRootHiddenReason, string> = {
+  removed: 'Removed',
+  unpublished: 'Unpublished',
+  pendingRating: 'Pending rating',
+};
+
+/**
+ * Shown to the owner, participants and moderators of a storyline the public cannot see because of
+ * its chapter 1. Names the state, never a moderation reason.
+ */
+export function StorylineRootHiddenChip({
+  reason,
+  onImage,
+  className,
+}: {
+  reason: StorylineRootHiddenReason;
+  onImage?: boolean;
+  className?: string;
+}) {
+  return (
+    <Chip
+      onImage={onImage}
+      className={className}
+      color="gray"
+      leftSection={<IconEyeOff size={12} />}
+      data-testid="storyline-root-hidden-chip"
+    >
+      {rootHiddenLabels[reason]}
     </Chip>
   );
 }

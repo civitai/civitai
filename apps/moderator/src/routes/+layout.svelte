@@ -16,6 +16,7 @@
     IconScanLetterT,
     IconChartBar,
     IconScale,
+    IconTicket,
     IconCircle,
     IconChevronRight,
     IconLogout,
@@ -87,7 +88,11 @@
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };
-  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto, Users: IconUsers };
+  const groupIcons: Record<string, typeof IconPhoto> = {
+    Images: IconPhoto,
+    Users: IconUsers,
+    Tickets: IconTicket,
+  };
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 

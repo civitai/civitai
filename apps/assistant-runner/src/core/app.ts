@@ -49,12 +49,21 @@ export interface RunAppOptions {
    * refused with (403), or `undefined` for an error the runner answers 503.
    */
   patchRefusal?(error: unknown): string | undefined;
+  /**
+   * Whether a start (or a patch) may name this model. A start naming any other is refused (400) before
+   * it reaches the service, and so is a patch setting it. Without one any model is taken.
+   */
+  acceptsModel?(model: string): boolean;
   /** The path the run API is served under (`RUNNER_BASE_PATH`); `''` for the root. */
   basePath?: string;
   logger?: FastifyServerOptions['logger'];
   /** How often an open event stream gets a comment, so the client can tell a quiet run from a dead connection. */
   keepaliveMs?: number;
 }
+
+/** What a start or patch naming a model the runner does not offer (`acceptsModel`) is refused with. */
+export const MODEL_REFUSAL =
+  'This runner does not offer that model. Pick one of the listed models.';
 
 const STATUS: Record<RunErrorCode, number> = {
   'run-active': 409,
@@ -166,6 +175,7 @@ export function buildRunApp(options: RunAppOptions): FastifyInstance {
   const authenticator = options.authenticator ?? refuseAll;
   const grants = options.grants ?? refuseGrants;
   const keepaliveMs = options.keepaliveMs ?? Math.floor((RUN_KEEPALIVE_MS * 2) / 3);
+  const acceptsModel = options.acceptsModel ?? (() => true);
   const app = Fastify({ logger: options.logger ?? false });
   const streams = new Set<AbortController>();
 
@@ -241,6 +251,7 @@ export function buildRunApp(options: RunAppOptions): FastifyInstance {
           'refused',
           `This start needs a current run grant for this chat in ${GRANT_HEADER}.`
         );
+      if (!acceptsModel(body.data.model)) return refuse(reply, 'bad-request', MODEL_REFUSAL);
       const outcome = await service.start(request.userId, body.data, grant);
       if (!outcome.ok) return refuse(reply, outcome.error, outcome.message, outcome.runId);
       return reply.code(201).send({ ...outcome.response, features: [...RUNNER_FEATURES] });
@@ -284,6 +295,9 @@ export function buildRunApp(options: RunAppOptions): FastifyInstance {
         const body = patchBody.safeParse(request.body);
         if (!body.success)
           return refuse(reply, 'bad-request', 'The patch is not one this runner reads.');
+        // `null` (follow the default) is always taken.
+        if (typeof body.data.model === 'string' && !acceptsModel(body.data.model))
+          return refuse(reply, 'bad-request', MODEL_REFUSAL);
         // Optional here: without one the store acts with a live run's grant for this chat.
         let grant: RunGrant | undefined;
         if (grantHeader(request.headers)) {

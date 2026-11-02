@@ -172,6 +172,9 @@ export const abuseReportInput = z
     // union here would make adding a counter a cross-repo change.
     counters: z.record(z.string().max(64), z.number()).nullish(),
     findings: z.array(abuseFinding).max(MAX_FINDINGS_PER_REPORT),
+    // Refuse the whole report rather than store its findings ungrouped, for a producer whose
+    // findings are unreviewable one row at a time.
+    requireGroupKey: z.boolean().optional(),
   })
   .superRefine((r, ctx) => {
     // A transposed pair renders as a negative duration on a board whose entire claim is when things

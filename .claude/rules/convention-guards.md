@@ -16,4 +16,4 @@ Several repo conventions are enforced by tests in `src/server/services/__tests__
 
 **Adding a guard:** in the same commit, add it to the `test:lint-rules` file list in `package.json` (a hand-maintained list, not a glob) and to the list and both counts in `docs/dev/convention-guards.md`. `no-lint-rules-script-drift` fails until all three agree. A green `test:lint-rules` doesn't mean every guard passed unless the script matches the directory.
 
-`test:lint-rules` is a convenience selector: the guards match the `unit` project's `include`, so `pnpm run test:unit:run` and CI's `Unit tests` job already run them.
+`test:lint-rules` is a convenience selector: the guards match the `unit` project's `include`, so `pnpm run test:unit:run` already runs them, and so does CI's `Unit tests` job on pushes to `main` (it does not run on pull requests).

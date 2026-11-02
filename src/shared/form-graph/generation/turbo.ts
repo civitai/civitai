@@ -54,6 +54,9 @@ export const turboLoraValue = (id: number, strength?: number): ResourceData => (
   ...(strength != null ? { strength } : {}),
 });
 
+const turboLoraInput = resourceInputSchema.optional();
+const turboLoraOutput = resourceSchema.optional();
+
 /**
  * Not cached: `model` is request-supplied, so a cache keyed on it would grow without bound.
  * `toOutput` drops the pick; the request carries the LoRA in `resources`.
@@ -61,8 +64,8 @@ export const turboLoraValue = (id: number, strength?: number): ResourceData => (
 function turboLoraDef(opts: { ecosystem: string; turbo: TurboOption; model: unknown }) {
   const options = turboLoraOptions(opts.ecosystem);
   return {
-    input: resourceInputSchema.optional(),
-    output: resourceSchema.optional(),
+    input: turboLoraInput,
+    output: turboLoraOutput,
     default: defaultTurboLora(opts.turbo, opts.model),
     toOutput: () => undefined,
     meta: (value) => ({

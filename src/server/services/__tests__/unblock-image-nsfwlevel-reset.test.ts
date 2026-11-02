@@ -332,6 +332,7 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     expect(createNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         key: `entity-appeal-resolved:Image:128489949:555:${Date.parse('2026-01-01T00:00:00Z')}`,
+        category: 'Moderation',
       })
     );
   });

@@ -12,8 +12,10 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   getImageUploadIpEvents,
+  recordMintedUploadKey,
   trackImageUpload,
 } from '~/server/services/image-upload-action.service';
 
@@ -99,5 +101,49 @@ describe('trackImageUpload', () => {
         expect.objectContaining({ name: 'image-upload-action', error: 'tracker down' })
       )
     );
+  });
+});
+
+describe('recordMintedUploadKey', () => {
+  it('records the key for the user in the issue record and in the upload request log', async () => {
+    await recordMintedUploadKey('Server-Key', OWNER);
+
+    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+      expect.stringContaining('server-key'),
+      String(OWNER),
+      expect.anything()
+    );
+    expect(ch.request).toHaveBeenCalledExactlyOnceWith('Server-Key', OWNER);
+  });
+
+  it("logs through the request's tracker when it has one, so the row keeps its IP", async () => {
+    const request = vi.fn(async () => true);
+    await recordMintedUploadKey('server-key', OWNER, { imageUploadRequest: request } as never);
+
+    expect(request).toHaveBeenCalledExactlyOnceWith('server-key', OWNER);
+    expect(ch.request).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the request log fails, and logs it', async () => {
+    ch.request.mockRejectedValue(new Error('tracker down'));
+
+    await expect(recordMintedUploadKey('server-key', OWNER)).resolves.toBeUndefined();
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'image-upload-action', error: 'tracker down' })
+      )
+    );
+  });
+
+  it('never throws when the tracker throws as it is called', async () => {
+    const tracker = {
+      imageUploadRequest: () => {
+        throw new Error('no tracker');
+      },
+    };
+
+    await expect(
+      recordMintedUploadKey('server-key', OWNER, tracker as never)
+    ).resolves.toBeUndefined();
   });
 });

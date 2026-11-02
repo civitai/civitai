@@ -162,6 +162,9 @@ export const postsQuerySchema = baseQuerySchema.merge(
       .string()
       .transform((data) => postgresSlugify(data))
       .nullish(),
+    // Scopes to this account and wins over `username`: some older usernames hold characters the
+    // slug above strips, so their profile can only name them by id.
+    userId: z.number().int().positive().max(2147483647).optional(),
     modelVersionId: z.number().optional(),
     ids: z.array(z.number()).optional(),
     collectionId: z.number().optional(),
@@ -426,6 +429,12 @@ export const scheduleBatchPostSchema = z.object({
   title: z.string().trim().max(255).nullish(),
   publishedAt: z.coerce.date(),
   images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
+});
+
+/** The upload keys a restored batch draft holds; at most the key-check cap (`MAX_KEYS`) at once. */
+export const BATCH_DRAFT_KEYS_PER_CHECK = 64;
+export const checkBatchDraftKeysSchema = z.object({
+  keys: z.array(z.string().uuid()).min(1).max(BATCH_DRAFT_KEYS_PER_CHECK),
 });
 
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;

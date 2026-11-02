@@ -1097,12 +1097,10 @@ export async function getRetoolActivity(userId: number, limit = 25): Promise<Ret
     .selectFrom('ReToolActions')
     .select(['id', 'Event as at', 'User as moderator', 'App as app', 'ActionType as action'])
     // 🔴 The id must follow a SUBJECT LABEL, not merely be a standalone number. `ActionType` is free
-    // text and 56% of rows carry more than one — `ToS 5 images from <id>`, `Strike 2 on user <id>`,
+    // text and many rows carry more than one — `ToS 5 images from <id>`, `Strike 2 on user <id>`,
     // `Banned 47 accounts` — so a bare word-boundary match attributed every image COUNT and strike
-    // number to whichever account shares that value. Measured against the moderator database: id 1
-    // matched 22,130 unrelated rows, id 2 matched 7,289, id 5 matched 2,331 (2,204 of them
-    // `ToS 5 images…`), and 101 accounts have an id under 100. Anchoring costs nothing — on real
-    // 6-7 digit subject ids both forms return identical rows.
+    // number to whichever account shares that value: a low id matched thousands of unrelated rows.
+    // Anchoring costs nothing — on real subject ids both forms return identical rows.
     //
     // `from ` requires digits immediately after, which is what excludes `ToS N images from modelId
     // <id>` — that number is a MODEL id, not this account.
@@ -1268,7 +1266,8 @@ export type TrainingRun = {
 
 export async function getTrainingRuns(
   userId: number,
-  limit = 25
+  limit = 25,
+  { charges = true }: { charges?: boolean } = {}
 ): Promise<{ runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null }> {
   const rows = await dbRead
     .selectFrom('Model as m')
@@ -1369,7 +1368,7 @@ export async function getTrainingRuns(
     params: r.params,
   }));
 
-  return { runs, truncated, charges: await getTrainingCharges(userId, runs) };
+  return { runs, truncated, charges: charges ? await getTrainingCharges(userId, runs) : null };
 }
 
 export type TrainingChargeRow = {
@@ -1453,9 +1452,12 @@ async function getTrainingCharges(
         JSONExtractString(details, 'workflowId') AS workflowId
       FROM buzzTransactions
       WHERE type = 'training' AND fromAccountId = ${Math.trunc(userId)}
-      ORDER BY date DESC
     `);
     if (!rows.length) return null;
+    // Sorted here, not in the query: `ORDER BY date DESC` on this 1.5B-row table measured 13-30s+
+    // against 0.4-0.55s without it. There was no LIMIT, so only the order moves.
+    const at = (date: string) => utcMs(date) || 0;
+    rows.sort((a, b) => at(b.date) - at(a.date));
 
     // A retrain reuses the version, so one run can account for several charges — every `Submitted` in
     // its history is one. `submittedAt` covers the ~8% of files with no history array.

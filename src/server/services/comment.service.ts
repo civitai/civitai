@@ -666,10 +666,8 @@ async function afterLegacyCommentsDeleted({
  * puts them back in the queue. Reopening is only ever correct for the ones this flag actioned.
  */
 export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) => {
-  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0 };
+  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 };
 
-  const ReportReason = (await import('~/shared/utils/prisma/enums')).ReportReason;
-  const ReportStatus = (await import('~/shared/utils/prisma/enums')).ReportStatus;
   const { clearTosOrKeep } = await import('~/server/services/commentsv2.service');
   const markerView = await holdMarkerViewExists();
 
@@ -677,28 +675,20 @@ export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) =
   let count = 0;
   const retained: number[] = [];
   let retainedHidden = 0;
+  let failed = 0;
 
   for (const id of ids) {
     const outcome = await clearTosOrKeep('Comment', id, markerView);
+    if (outcome?.failed) failed += 1;
     if (outcome?.held) {
       retainedHidden += 1;
       if (outcome.userId !== null) retained.push(outcome.userId);
     }
     if (!outcome?.cleared) continue;
     count += 1;
-
-    const reports = await dbWrite.$queryRaw<{ id: number }[]>`
-      UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
-      FROM "CommentReport" c
-      WHERE c."reportId" = r.id
-        AND c."commentId" = ${id}
-        AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
-        AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
-      RETURNING id
-    `;
-    reopenedReports += reports.length;
+    reopenedReports += outcome.reopened;
   }
 
   if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
-  return { count, reopenedReports, retainedHidden };
+  return { count, reopenedReports, retainedHidden, failed };
 };

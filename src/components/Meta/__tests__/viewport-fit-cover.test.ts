@@ -94,7 +94,6 @@ const INSET_CONSUMERS = [
   // inset (the open form sheet starts below it) and its closed form bar by the home indicator's.
   'src/components/ImageGeneration/MobileGenerator.module.scss',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
-  'src/components/Post/Detail/PostDetail.tsx',
   // The ONE node_modules viewport-edge surface paid at its call site rather
   // than at the `@layer mantine` seam: `@mantine/nprogress` renders a
   // `<Progress>`, so its static class is `mantine-Progress-root` — shared with

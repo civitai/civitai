@@ -12,16 +12,19 @@
   let {
     ticketId,
     account,
-    canAct,
-    canUnban,
+    canAct = false,
+    canUnban = false,
+    readOnly = false,
     ondone,
   }: {
     ticketId: string;
     account: TicketAccount;
     /** The `/users` page grant, which mutes and restriction rulings need in User Lookup too. */
-    canAct: boolean;
+    canAct?: boolean;
     /** The `user.ban` permission, which an unban needs in User Lookup too. */
-    canUnban: boolean;
+    canUnban?: boolean;
+    /** The support card: status only, no appeal ruling and no actions. */
+    readOnly?: boolean;
     ondone: (what: string, data: Record<string, unknown> | undefined) => void;
   } = $props();
 
@@ -54,6 +57,20 @@
           {account.username ?? 'No username'} (#{account.userId})
         </a>
       </dd>
+      {#if account.email !== undefined}
+        <dt class="text-dark-2">Email</dt>
+        <dd class="m-0 min-w-0 break-all text-white">{account.email ?? '—'}</dd>
+      {/if}
+      {#if account.emailVerified !== undefined}
+        <dt class="text-dark-2">Verified</dt>
+        <dd class="m-0 min-w-0 break-words text-white">
+          {#if account.emailVerified}
+            <span title={dateTime(account.emailVerified)}>{dateTime(account.emailVerified)}</span>
+          {:else}
+            Not verified
+          {/if}
+        </dd>
+      {/if}
       <dt class="text-dark-2">Banned</dt>
       <dd class="m-0 min-w-0 break-words text-white">
         {#if account.banned}
@@ -92,7 +109,7 @@
       </ul>
     {/if}
 
-    {#if account.pendingAppeal}
+    {#if account.pendingAppeal && !readOnly}
       {@const appeal = account.pendingAppeal}
       <div class="mt-2 flex flex-col gap-1.5 border-t border-dark-4 pt-2">
         <h4 class="m-0 text-[11px] font-semibold tracking-[0.5px] text-dark-2 uppercase">
@@ -114,7 +131,7 @@
       </div>
     {/if}
 
-    {#if account.banned || account.muted || account.restrictions.some((r) => r.rulable)}
+    {#if !readOnly && (account.banned || account.muted || account.restrictions.some((r) => r.rulable))}
       <div class="mt-2 flex flex-col gap-2 border-t border-dark-4 pt-2">
         {#if account.banned}
           <TicketAccountAction

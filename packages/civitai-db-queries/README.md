@@ -29,25 +29,25 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
 
   `placement.db.ts` is the placement/sticker read family: the space resolution behind every placement
   surface, the price range's score, `getCapTier`'s subscriptions, the free-placement display counts,
-  the pending-badge counts and the sticker listing. It is served behind the default-off server Flipt
-  flag `kysely-placement-reads`; off, the original Prisma reads run. Each read keeps its database
-  (`dbWrite` reads move to `kyselyWrite`, `dbRead` reads to `kyselyRead`), and the counts inside the
-  free-placement claim transaction never move. Row parity is written in
-  `<civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts`, which is opt-in
-  (`KYSELY_PARITY_DATABASE_URL`) and does **not** run in CI. The free-slot and allowance counts take
-  the same where-object builders as their Prisma originals (`countPlacements`).
+  the pending-badge counts and the sticker listing. It replaced the Prisma reads (formerly behind the
+  `kysely-placement-reads` flag). Each read kept its database (`dbWrite` reads moved to `kyselyWrite`,
+  `dbRead` reads to `kyselyRead`), and the counts inside the free-placement claim transaction stay on
+  Prisma. `<civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts` pins the
+  rows to the values the Prisma reads returned, and runs in CI (the `unit` job wires it to its
+  Postgres service). The free-slot and allowance counts take the same where-object builders as the
+  claim's Prisma counts (`countPlacements`).
 
   `hot-reads.db.ts` holds two nested reads that Prisma fans out into one query per relation: the model
   page's `modelWithDetailsSelect` read (up to four statements) and the creator card (two statements),
   each run sequentially on ONE pooled connection; plus the image tags and an image's thread. Every
   VIEW (`UserStat`, `ModelReportStat`, `GenerationCoverage`, `ImageTag`) is filtered by its key as a
   parameter, never joined: a join key cannot reach through the view's aggregation, so the view would
-  be computed for every row. They are served behind the default-off server Flipt flag `kysely-hot-reads-2`; off, the
-  original Prisma reads run. Each keeps its database (the model read follows `getKyselyWithoutLag`, the
-  creator card reads `kyselyRead`). Nested relations use `jsonArrayFrom`/`jsonObjectFrom` only where
-  every nested column survives JSON unchanged. Parity is pinned by
-  `<civitai>/src/server/services/__tests__/hot-reads-2.kysely-parity.test.ts`, which **does** run in CI
-  (the `unit` job wires it to its Postgres service). Its fixture builds the four views from their
+  be computed for every row. They replaced the Prisma reads (formerly behind the `kysely-hot-reads-2`
+  flag). Each kept its database (the model read follows `getKyselyWithoutLag`, the creator card reads
+  `kyselyRead`). Nested relations use `jsonArrayFrom`/`jsonObjectFrom` only where every nested column
+  survives JSON unchanged. `<civitai>/src/server/services/__tests__/hot-reads-2.kysely-parity.test.ts`
+  pins them to the values the Prisma reads returned, and runs in CI (the `unit` job wires it to its
+  Postgres service). Its fixture builds the four views from their
   production definitions, and it EXPLAINs every statement that reads one and asserts the view's base
   scan carries the key.
 
@@ -84,6 +84,13 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   list). They are served behind the default-off server Flipt flag `kysely-hot-reads-6` and read
   base tables only. Parity is pinned by
   `<civitai>/src/server/services/__tests__/hot-reads-6.kysely-parity.test.ts`, on the same Postgres
+  service, with the same no-view check.
+
+  `hot-reads-7.db.ts` holds three feed-path lookups (the .com titles of a set of models; a set of
+  posts' model versions; a user's held items counted by definition, for one definition type and set
+  of statuses). They are served behind the
+  default-off server Flipt flag `kysely-hot-reads-7` and read base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-7.kysely-parity.test.ts`, on the same Postgres
   service, with the same no-view check.
 
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data

@@ -1,6 +1,8 @@
-import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { keepHeldReviewsCte } from '~/server/services/held-review.service';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
+import type { ResourceReview } from '@prisma/client';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
@@ -448,17 +450,24 @@ export const upsertResourceReview = async ({
   }
 };
 
-export const deleteResourceReview = async ({ id }: GetByIdInput) => {
-  // Prisma .delete() returns the full deleted row by default — caller in
-  // resourceReview.controller.ts already relies on this — so we use modelId
-  // and modelVersionId from the returned row rather than pre-fetching.
+/**
+ * Deletes the reviews `reviews` selects, copying a held author's into "HeldResourceReview" and
+ * detaching held threads in the same statement. Returns the deleted rows.
+ */
+async function deleteReviews(reviews: Prisma.Sql) {
   const markerView = await holdMarkerViewExists();
-  const [, ret] = await dbWrite.$transaction([
-    dbWrite.$executeRaw(
-      detachHeldThreadsSql({ reviewId: Prisma.sql`SELECT ${id}::int` }, markerView)
-    ),
-    dbWrite.resourceReview.delete({ where: { id } }),
-  ]);
+  return dbWrite.$queryRaw<ResourceReview[]>`
+    WITH ${detachHeldThreadsCte({ reviewId: reviews }, markerView)},
+    ${keepHeldReviewsCte(reviews, markerView)}
+    DELETE FROM "ResourceReview" WHERE id IN (${reviews})
+    RETURNING id, "modelId", "modelVersionId", rating, recommended, details, "userId", "createdAt",
+      "updatedAt", exclude, nsfw, "tosViolation", metadata`;
+}
+
+export const deleteResourceReview = async ({ id }: GetByIdInput) => {
+  // resourceReview.controller.ts and the client read the deleted row.
+  const [ret] = await deleteReviews(Prisma.sql`SELECT ${id}::int`);
+  if (!ret) throw throwNotFoundError(`No review with id ${id}`);
   void onModelReviewsChanged([ret]);
   await bustRatingTotalsCache({
     modelId: ret.modelId,
@@ -492,23 +501,10 @@ export async function setExcludeResourceReviews({
 
 export async function deleteResourceReviews({ ids }: { ids: number[] }) {
   if (ids.length === 0) return { count: 0 };
-  // Fetch model/version ids BEFORE the delete so we can bust the rating-totals
-  // cache and send event point removals after. From the primary: a review too new
-  // to have replicated would otherwise be missed and keep its point.
-  const affected = await dbWrite.resourceReview.findMany({
-    where: { id: { in: ids } },
-    select: { modelId: true, modelVersionId: true, userId: true },
-  });
-  const markerView = await holdMarkerViewExists();
-  const [, result] = await dbWrite.$transaction([
-    dbWrite.$executeRaw(
-      detachHeldThreadsSql({ reviewId: Prisma.sql`SELECT unnest(${ids}::int[])` }, markerView)
-    ),
-    dbWrite.resourceReview.deleteMany({ where: { id: { in: ids } } }),
-  ]);
-  void onModelReviewsChanged(affected);
-  await bustRatingTotalsForRows(affected).catch();
-  return { count: result.count };
+  const deleted = await deleteReviews(Prisma.sql`SELECT unnest(${ids}::int[])`);
+  void onModelReviewsChanged(deleted);
+  await bustRatingTotalsForRows(deleted).catch();
+  return { count: deleted.length };
 }
 
 export const createResourceReview = async ({

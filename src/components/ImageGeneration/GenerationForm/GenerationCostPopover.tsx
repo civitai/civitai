@@ -1,9 +1,10 @@
 import type { TransactionInfo, WorkflowCost } from '@civitai/orchestration-client';
 import type { PopoverProps } from '@mantine/core';
-import { Anchor, Group, Loader, NumberInput, Text, UnstyledButton } from '@mantine/core';
+import { Anchor, Group, Loader, NumberInput, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
+import type { RefundSummary } from '~/components/ImageGeneration/refund-summary';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
@@ -37,11 +38,12 @@ export function GenerationCostPopover({
   hideCivitaiTip,
   variant = 'info-circle',
   transactions,
+  refund,
   ...popoverProps
 }: Omit<PopoverProps, 'children'> & Props) {
   const [opened, setOpened] = useState(false);
   const totalCost = workflowCost.total ?? 0;
-  const disabled = totalCost > 0 ? popoverProps.disabled : true;
+  const disabled = totalCost > 0 || refund ? popoverProps.disabled : true;
 
   // Use the user-selected buzz type for the cost badge color
   const availableBuzzTypes = useAvailableBuzz(['blue']);
@@ -76,13 +78,15 @@ export function GenerationCostPopover({
               </Text>
             </div>
           ) : (
-            <CurrencyBadge
-              unitAmount={totalCost}
-              currency={Currency.BUZZ}
-              size="xs"
-              className="cursor-pointer"
-              type={mainBuzzAccountType as BuzzSpendType}
-            />
+            <Tooltip label={refund?.text} disabled={!refund} withinPortal>
+              <CurrencyBadge
+                unitAmount={refund ? refund.net : totalCost}
+                currency={Currency.BUZZ}
+                size="xs"
+                className="cursor-pointer"
+                type={mainBuzzAccountType as BuzzSpendType}
+              />
+            </Tooltip>
           )}
         </UnstyledButton>
       }
@@ -95,6 +99,7 @@ export function GenerationCostPopover({
         hideCivitaiTip={hideCivitaiTip}
         buzzAccountType={mainBuzzAccountType as BuzzSpendType}
         transactions={transactions}
+        refund={refund}
       />
     </PopoverOrSheet>
   );
@@ -218,6 +223,7 @@ export function GenerationCostPopoverDetail({
   hideCivitaiTip,
   buzzAccountType,
   transactions,
+  refund,
   withTotal = true,
 }: Props & { withTotal?: boolean }) {
   const { creatorTip, civitaiTip } = useTipStore((state) => ({
@@ -386,18 +392,32 @@ export function GenerationCostPopoverDetail({
         />
       )}
 
+      {refund && (
+        <>
+          <CostRow
+            label="Refunded"
+            value={<BuzzValue amount={refund.amount} type={buzzAccountType} />}
+          />
+          <CostRow
+            variant="total"
+            label="Charged"
+            value={<BuzzValue amount={refund.net} type={buzzAccountType} />}
+          />
+        </>
+      )}
+
       {!!transactions?.length && (
         <>
           <SectionHeader>Paid With</SectionHeader>
           {transactions.map((transaction, i) => {
             const type = transactionBuzzType(transaction.accountType);
-            const refund = transaction.type !== 'debit';
+            const refunded = transaction.type !== 'debit';
             return (
               <CostRow
                 key={transaction.id ?? i}
-                label={`${capitalize(type)} Buzz${refund ? ' (refunded)' : ''}`}
+                label={`${capitalize(type)} Buzz${refunded ? ' (refunded)' : ''}`}
                 value={
-                  <span className={refund ? 'text-green-6' : undefined}>
+                  <span className={refunded ? 'text-green-6' : undefined}>
                     <BuzzValue amount={transaction.amount} type={type} />
                   </span>
                 }
@@ -561,4 +581,6 @@ type Props = {
   variant?: 'info-circle' | 'badge';
   buzzAccountType?: BuzzSpendType;
   transactions?: TransactionInfo[];
+  /** Failed workflow that was refunded: the badge shows `refund.net` and the popover itemises it. */
+  refund?: RefundSummary | null;
 };

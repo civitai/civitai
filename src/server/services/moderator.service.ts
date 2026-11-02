@@ -160,7 +160,13 @@ export type StorylineModActivity = {
     | 'linkChapter'
     | 'setCanon'
     | 'removeCollaborator'
+    | 'removeChapter'
     | 'delete';
+};
+
+type CrucibleModActivity = {
+  entityType: 'crucible';
+  activity: 'takeDown';
 };
 
 type SiteAlertModActivity = {
@@ -180,6 +186,7 @@ type ModActivity = {
   | ImpersonateModActivity
   | UserModActivity
   | ComicProjectModActivity
+  | CrucibleModActivity
   | PlacementModActivity
   | FeedbackModActivity
   | BountyEntryModActivity

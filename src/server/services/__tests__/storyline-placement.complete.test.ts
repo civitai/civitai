@@ -6,6 +6,10 @@ import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const assertCanPlace = vi.fn();
 
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/placement-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementModeration>()),
   assertCanPlace,
@@ -35,6 +39,19 @@ const givenStoryline = (status: 'Ongoing' | 'Complete') =>
       maxNsfwLevel: 4,
       whoCanContinue: 'Anyone',
       user: { username: 'o' },
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: 1,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     },
   });
 

@@ -3,6 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import {
   isModerationAccountRow,
   isReservedModerationUsername,
+  resemblesReservedModerationUsername,
 } from '~/server/auth/moderation-account';
 import { forceUpdateUserIdentity } from '~/server/services/user.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -33,10 +34,11 @@ export default defineModeratorEndpoint('user.updateIdentity', {
         select: { id: true, username: true },
       });
       const isShared = !!current && isModerationAccountRow(current);
-      const reserved = isReservedModerationUsername(input.username);
-      if (isShared && !reserved)
+      if (isShared && !isReservedModerationUsername(input.username))
         throw throwBadRequestError("The shared moderation account's username cannot be changed.");
-      if (!isShared && reserved) throw throwBadRequestError('This username is reserved.');
+      const unchanged = current?.username?.toLowerCase() === input.username.toLowerCase();
+      if (!isShared && !unchanged && resemblesReservedModerationUsername(input.username))
+        throw throwBadRequestError('This username is reserved.');
     }
     const result = await forceUpdateUserIdentity({
       userId: input.userId,

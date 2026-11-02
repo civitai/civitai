@@ -35,6 +35,15 @@
         )
   );
 
+  // Must match the resolve action, which refuses to keep the rating the owner sees without a reason.
+  // A lower-only type's top option is its live level.
+  const needsReason = $derived(
+    chosen !== null &&
+      row.entity !== null &&
+      (levelLabel(chosen) === levelLabel(row.currentLevel) ||
+        (isLowerOnly(row.entityType) && chosen === Math.max(...row.levelOptions)))
+  );
+
   let confirmButton = $state<HTMLElement | null>(null);
 
   // Enter then confirms natively, whichever way the level was picked.
@@ -89,6 +98,7 @@
       selected={chosen === level}
       name="appliedLevel"
       value={level}
+      formnovalidate
     >
       {levelLabel(level)}
       {#if level === row.suggestedLevel}
@@ -117,7 +127,10 @@
         name="modComment"
         rows={2}
         maxlength={1000}
-        placeholder="Note to owner (optional, they see this)"
+        required={needsReason}
+        placeholder={needsReason
+          ? 'Reason for keeping this rating (required, the owner sees this)'
+          : 'Note to owner (optional, they see this)'}
         aria-label="Note to owner"
         class="rounded-md border-dark-4 bg-dark-7 text-[13px] dark:bg-dark-7"
       />

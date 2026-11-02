@@ -3,6 +3,8 @@ import { z } from 'zod';
 import type { WriteResult } from '../freshdesk-write.service';
 import { int4Id, parseForm } from '../query';
 
+export const NOT_PERMITTED = 'Not permitted.';
+
 export type LinkedUser =
   | { status: 'ok'; userId: number | null }
   | { status: 'refused'; code: number; message: string };

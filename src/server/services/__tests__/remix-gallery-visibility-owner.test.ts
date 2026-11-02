@@ -13,9 +13,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const ownerLookup = dbMock.dbRead.user.findUnique;
 const hostImageRead = dbMock.dbWrite.image.findUnique;
 
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTier: async () => null,
+  getCapTierViaKysely: async () => null,
 }));
 
 // Stubbed rather than spread, as in remix-gallery.service.test.ts: each pulls

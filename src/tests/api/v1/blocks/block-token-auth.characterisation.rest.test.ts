@@ -666,6 +666,15 @@ beforeEach(() => {
   });
   dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: SUBJECT_ID });
   dbMock.dbRead.user.findUnique.mockReset().mockResolvedValue({ id: 77, deletedAt: null });
+  // Only the submit's restriction read gets a row; every other route's user read stays empty.
+  dbMock.dbWrite.user.findUnique.mockReset().mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : null) as never);
   h.grantedScopes = [];
   env.APP_BLOCK_OAUTH_TOKENS_ENABLED = false;
 });
@@ -6580,7 +6589,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       401,
       { message: 'workflow submit requires authenticated viewer' },
       true,
-      [],
+      ['checkBlockSubmitRateLimit("bki_char", "anon")', 'checkBlockSubmitUserRateLimit("anon")'],
       [],
       ['ai:write:budgeted']
     ),
@@ -6593,14 +6602,13 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       null
     ),
     'rate limited': X(
-      404,
-      { message: 'model version not found' },
+      429,
+      { message: 'Rate limit exceeded, please retry shortly.' },
       true,
-      [],
+      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
-        'hydrate:42',
       ],
       ['ai:write:budgeted']
     ),
@@ -6665,7 +6673,10 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       404,
       { message: 'model version not found' },
       true,
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
@@ -6677,7 +6688,10 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       404,
       { message: 'model version not found' },
       true,
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',

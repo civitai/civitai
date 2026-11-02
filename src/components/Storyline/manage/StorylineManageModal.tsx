@@ -42,7 +42,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
   });
   const addCollaborator = trpc.storyline.addCollaborator.useMutation({
     onSuccess: invalidate,
-    onError: showError("Couldn't endorse them"),
+    onError: showError("Couldn't invite them"),
   });
   const removeCollaborator = trpc.storyline.removeCollaborator.useMutation({
     onSuccess: invalidate,
@@ -121,6 +121,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
             <StorylineCollaboratorsPanel
               ownerId={storyline.userId}
               collaborators={storyline.collaborators}
+              pending={storyline.pendingCollaborators}
               canEndorse={isOwner}
               adding={addCollaborator.isPending}
               removingId={

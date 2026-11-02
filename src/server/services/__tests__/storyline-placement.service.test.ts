@@ -14,6 +14,10 @@ const holdPlacementEscrow = vi.fn();
 const settlePlacement = vi.fn();
 const assertCanContinueStoryline = vi.fn();
 
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   resolvePlacementSpaceFor: resolveSpace,
@@ -623,6 +627,7 @@ describe('createStorylinePlacement — who may continue', () => {
 });
 
 describe('createStorylinePlacement — the continuation post', () => {
+  // One message for every verdict on purpose: saying which one would let anyone probe the scans.
   it.each([
     ['taken down', { tosViolation: true }],
     ['with a taken-down image', { images: [{ ...SCANNED, tosViolation: true }] }],
@@ -643,7 +648,17 @@ describe('createStorylinePlacement — the continuation post', () => {
   it('refuses a post rated above the storyline', async () => {
     givenAccess({ maxNsfwLevel: 1 });
     givenPost({ nsfwLevel: 4 });
-    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.aboveRating);
+    await expect(submit()).rejects.toThrow(
+      `${STORYLINE_REFUSALS.aboveRating}. This storyline allows up to PG; this post is R`
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  // Blocked is a moderation verdict, not a rating: it is refused like the other verdicts.
+  it('refuses a post at the Blocked level without naming it', async () => {
+    givenAccess({ maxNsfwLevel: 1 });
+    givenPost({ nsfwLevel: 4 | 32 });
+    await expect(submit()).rejects.toThrow(new RegExp(`^${STORYLINE_REFUSALS.cannotSubmit}$`));
     expect(rows).toHaveLength(0);
   });
 

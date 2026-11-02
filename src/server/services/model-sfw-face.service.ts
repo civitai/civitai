@@ -2,6 +2,12 @@ import type { ChatCompletionStepTemplate } from '@civitai/orchestration-client';
 import { submitWorkflow } from '@civitai/orchestration-client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readSfwModelNamesViaKysely,
+  readSfwModelNamesViaPrisma,
+} from '~/server/services/hot-reads-7.reads';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { previewTextScanNsfw } from '~/server/services/text-scan/preview';
@@ -21,11 +27,9 @@ const SFW_FACE_CHECK_WAIT_SECONDS = 10;
 export async function getSfwModelNames(modelIds: number[], showSfwFace: boolean) {
   const ids = [...new Set(modelIds)];
   if (!showSfwFace || !ids.length) return new Map<number, string>();
-  const models = await dbRead.model.findMany({
-    where: { id: { in: ids }, sfwName: { not: null } },
-    select: { id: true, sfwName: true },
-  });
-  return new Map(models.map((model) => [model.id, model.sfwName as string]));
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_7))
+    return readSfwModelNamesViaKysely((await loadKyselyDb()).kyselyRead, ids);
+  return readSfwModelNamesViaPrisma(dbRead, ids);
 }
 
 export type SfwFaceVerdict =

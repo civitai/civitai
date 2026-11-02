@@ -12,7 +12,7 @@ export const NO_APP_REFUSAL =
   'There is no app yet to plan features for. Start the app the user described first, then list its features.';
 export const APPS_LOADING = 'Your apps are still loading. Try again in a moment.';
 export const KEEP_LIMIT =
-  'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.';
+  'You already have as many apps as you can keep. Choose one to delete in the card under the chat; your request then continues automatically.';
 /**
  * Every wording of KEEP_LIMIT a released server runner sends. The runner bundles this package when it
  * is released, and the page ships on its own schedule, so the page reads what a deployed runner says,
@@ -21,6 +21,8 @@ export const KEEP_LIMIT =
  */
 const KEEP_LIMIT_WORDINGS: ReadonlySet<string> = new Set([
   KEEP_LIMIT,
+  // assistant-runner v0.0.10 to v0.0.15.
+  'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.',
   // assistant-runner v0.0.2 to v0.0.9.
   'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.',
 ]);
@@ -71,13 +73,36 @@ export interface AppToolsOptions {
   current: () => Sandbox | null;
   /** Creates (or, when it exists after all, resumes) the app's sandbox and makes it the open app. */
   open: (app: string) => Promise<{ sandbox: Sandbox; created: boolean }>;
+  /**
+   * Resolves `true` once the reply can be given a new app's own tools by building its tools again
+   * (`reopenTools`): the page, once the app runs and its tools are handed to the chat; the server
+   * runner at once, as it opens the app the reply chose when it builds them. `false` (or unset): they
+   * arrive with the next reply.
+   */
+  toolsReady?: (app: string) => Promise<boolean>;
 }
+
+/** A new app whose tools the reply gets now (`reopenTools`): it goes straight on to plan and build. */
+const newAppReady = (app: string, intro: string) =>
+  `${intro} ${app} is also its blockId. Its tools are ready for this reply: call set_checklist with the features the user asked for, as your plan, then build it straight away. Ask the user only if their request is ambiguous or needs a decision from them.`;
+/** A new app whose tools come only with the next reply: this reply ends here (`awaitsUser`). */
+const newAppNotReady = (app: string, intro: string) =>
+  `${intro} ${app} is also its blockId. It is still starting, so its tools arrive with your next reply, and this reply ends here: the user sees their app is starting, and you plan and build it (set_checklist first) as soon as they reply.`;
 
 /** What a create_app that made no new app adds: it does not choose the app for the chat. */
 const CHOOSE_FIRST =
   'Changes to it are refused until it is chosen: call use_open_app first if this chat has not, and only if the user asked to change it.';
 
-type CreateResult = { app: string; state: Sandbox['state']; existed?: true; note: string };
+type CreateResult = {
+  app: string;
+  state: Sandbox['state'];
+  existed?: true;
+  note: string;
+  /** The reply carries on with its tools built again, the new app's included (components-chat). */
+  reopenTools?: true;
+  /** The reply ends here (components-chat): the new app's tools come only with the next reply. */
+  awaitsUser?: true;
+};
 
 export interface AppTools {
   tools: Record<string, AssistantTool>;
@@ -92,10 +117,12 @@ export interface AppTools {
   forget(name: string): void;
 }
 
-export function createAppTools({ apps, current, open }: AppToolsOptions): AppTools {
-  // The chat runs a step's calls together; a second create must not race the first to the service,
-  // which would make two apps under one name.
-  let pending: Promise<CreateResult> | null = null;
+export function createAppTools({ apps, current, open, toolsReady }: AppToolsOptions): AppTools {
+  // The chat runs a step's calls together; a second create of the same name must not race the first
+  // to the service, which would make two apps under one name. Only that one joins it, and only until
+  // its app exists (`release`): never a create of another name, nor one after a Stop or in another
+  // chat while the first still waits for its app's tools.
+  let pending: { base: string; result: Promise<CreateResult> } | null = null;
   // Retrying cannot clear a limit within a reply, and a running-limit retry pauses the user's apps again.
   let limited: string | null = null;
   // A create_app of this reply failed: the open app must not be chosen in its place.
@@ -112,6 +139,21 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
     return record && record.createdAt === sandbox.createdAt ? record.base : undefined;
   };
 
+  /** What a new app's create_app answers: its tools now (`reopenTools`) when they are ready. */
+  const madeNew = async (
+    app: string,
+    state: Sandbox['state'],
+    intro: string,
+    release: () => void
+  ): Promise<CreateResult> => {
+    // The app exists: a later create_app no longer joins this one while it waits for the tools.
+    release();
+    const ready = (await toolsReady?.(app).catch(() => false)) === true;
+    return ready
+      ? { app, state, note: newAppReady(app, intro), reopenTools: true }
+      : { app, state, note: newAppNotReady(app, intro), awaitsUser: true };
+  };
+
   const openOrExplain = async (app: string) => {
     try {
       return await open(app);
@@ -122,7 +164,7 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
     }
   };
 
-  const create = async (name: string): Promise<CreateResult> => {
+  const create = async (name: string, release: () => void): Promise<CreateResult> => {
     const list = apps();
     if (!list) throw new Error(APPS_LOADING);
     const openNow = current();
@@ -144,11 +186,12 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
       // The list can be a minute old; a paused app it still showed may have been deleted since.
       if (resumed.created) {
         recordCreated(resumed.sandbox, base);
-        return {
-          app: openNow.app,
-          state: resumed.sandbox.state,
-          note: `The app ${openNow.app} had been deleted after it was paused, so a new, empty app was made under the same name. Tell the user its files are gone and ask them to tap Build it or say what to change, then call set_checklist with the features they asked for; its tools arrive with your next reply.`,
-        };
+        return madeNew(
+          openNow.app,
+          resumed.sandbox.state,
+          `The app ${openNow.app} had been deleted after it was paused, so a new, empty app was made under the same name: tell the user its files are gone.`,
+          release
+        );
       }
       return {
         app: openNow.app,
@@ -173,11 +216,7 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
         existed: true,
         note: `The user already had an app called ${app}, made somewhere else after this page last listed their apps, and it is now open instead of a new one. Ask the user whether to keep working on it; do not build over it before they answer, and call use_open_app only if they say yes.`,
       };
-    return {
-      app,
-      state: sandbox.state,
-      note: `The app ${app} is starting, and ${app} is also its blockId. Its tools arrive with your next reply, so now write one short sentence asking the user to tap Build it or say what to change, then call set_checklist with the features they asked for; that ends this reply.`,
-    };
+    return madeNew(app, sandbox.state, `The app ${app} was made.`, release);
   };
 
   const create_app: AssistantTool = {
@@ -195,16 +234,24 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
       required: ['name'],
     },
     execute(input) {
-      if (pending) return pending;
-      pending = create(typeof input.name === 'string' ? input.name : '')
+      const name = typeof input.name === 'string' ? input.name : '';
+      const base = appKeyBase(name);
+      if (pending?.base === base) return pending.result;
+      const entry: { base: string; result: Promise<CreateResult> } = {
+        base,
+        result: Promise.resolve(null as never),
+      };
+      const release = () => {
+        if (pending === entry) pending = null;
+      };
+      entry.result = create(name, release)
         .catch((error: unknown) => {
           createFailed = true;
           throw error;
         })
-        .finally(() => {
-          pending = null;
-        });
-      return pending;
+        .finally(release);
+      pending = entry;
+      return entry.result;
     },
   };
   // The gate (`createGateCore`'s `openApp`) refuses every change to the open app in a chat that did

@@ -63,6 +63,8 @@ import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers
 import type { ShownRendition } from '@civitai/shared/held-media';
 import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
+import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
+import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
@@ -143,6 +145,7 @@ type CsamReportDetails = CsamReportFormOutput & {
   readFailures?: Record<string, number>;
   /** CyberTips opened for this report and cancelled before it was sent. */
   cancelledReportIds?: number[];
+  supplemental?: CsamSupplementalDetails;
   /** CyberTips opened for this report that could not be cancelled, so may have reached NCMEC. */
   possibleDuplicateReportIds?: number[];
 };
@@ -1177,6 +1180,15 @@ async function reportImages(claim: SendClaim) {
   } catch (e) {
     return logSendFailure(report, e, 'send-view-check');
   }
+  // A supplemental report attaches only images a reviewer confirmed, so it is not sent short of one.
+  const supplemental = report.details?.supplemental;
+  const unviewed = supplemental ? images.filter((image) => !viewed.has(image.id)).length : 0;
+  if (unviewed > 0)
+    return logSendFailure(
+      report,
+      new Error(`${unviewed} file(s) of this supplemental report have no view record`),
+      'supplemental-unviewed'
+    );
 
   // Known before the CyberTip is opened, so NCMEC is told in the report itself what it lacks.
   const noLongerStored =
@@ -1309,7 +1321,23 @@ async function reportImages(claim: SendClaim) {
 
   const sent = await sendCyberTip(
     claim,
-    { ...initialReport, ...(omitted.length > 0 && { additionalInfo: omitted.join('\n') }) },
+    {
+      ...initialReport,
+      ...(supplemental && {
+        personOrUserReported: {
+          ...initialReport.personOrUserReported,
+          priorCTReports: supplemental.priorReportNumbers,
+        },
+      }),
+      ...((supplemental || omitted.length > 0) && {
+        additionalInfo: [
+          supplemental && supplementalReportText(supplemental.unreviewedImageIds.length),
+          ...omitted,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      }),
+    },
     {
       sendFiles,
       // A file already being sent finishes before the cancel, so its read failure is counted too.
@@ -1336,13 +1364,13 @@ async function reportImages(claim: SendClaim) {
 }
 
 /** The rows that count as a moderator having seen an image: opened or selected once on screen. */
-const shownActivities = (rendition: ShownRendition) =>
+export const shownActivities = (rendition: ShownRendition) =>
   SHOWN_ACTIONS.map((action) => shownActivity(action, rendition));
 
 /** Each image's earliest counted row stamped before now, by the database's own clock, as the
  *  rendition it records. A CDN row counts only when the report's filer wrote it, from a day before
  *  the filing on. `createdAt` is zoneless and in UTC. */
-async function getViewedImageIds(
+export async function getViewedImageIds(
   imageIds: number[],
   report: Pick<CsamReportProps, 'reportedById' | 'createdAt'>
 ) {
@@ -2519,7 +2547,11 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const hoursSinceSent = report.reportSentAt
           ? (Date.now() - report.reportSentAt.getTime()) / 3_600_000
           : 0;
-        const manifest: ({ imageId: number } & EvidenceFileRecord)[] = [];
+        // A supplemental report's unreviewed images are kept as evidence it did not send.
+        const notSent = new Set(report.details?.supplemental?.unreviewedImageIds);
+        const manifest: ({ imageId: number; preservedNotSent?: true } & EvidenceFileRecord)[] = [];
+        const record = (entry: { imageId: number } & EvidenceFileRecord) =>
+          manifest.push(notSent.has(entry.imageId) ? { ...entry, preservedNotSent: true } : entry);
         const archiveImage = async (
           image: Parameters<typeof readOriginalImage>[0] & { id: number }
         ) => {
@@ -2537,7 +2569,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             original = { source: 'missing', reason: 'full url unreadable' };
           }
           if (original.source === 'missing') {
-            manifest.push({ imageId: image.id, source: 'missing', reason: original.reason });
+            record({ imageId: image.id, source: 'missing', reason: original.reason });
             return;
           }
           // Named by id: Image.name is user input.
@@ -2552,7 +2584,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           // An edge copy counts only if it is image or video: an error page must not mark the image archived.
           if (original.source === 'original' || /^(image|video)\//.test(original.contentType))
             appendedIds.add(image.id);
-          manifest.push({
+          record({
             imageId: image.id,
             source: original.source,
             sha256: original.sha256,
@@ -2580,6 +2612,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           throw e;
         }
 
+        const scanned = new Set(manifest.map((entry) => entry.imageId));
+        for (const imageId of notSent)
+          if (!scanned.has(imageId)) record({ imageId, source: 'missing', reason: 'no image row' });
         manifest.sort((a, b) => a.imageId - b.imageId);
         await boundedArchive.append(Buffer.from(JSON.stringify({ images: manifest }, null, 2)), {
           name: IMAGES_ARCHIVE_MANIFEST_NAME,

@@ -16,12 +16,18 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 const COSMETIC_ID = 31;
 let ownedIds: number[] = [];
+let hatIds: number[] = [];
+const push = vi.fn();
 let balances: { cosmeticId: number; remaining: number | null }[] = [];
 
 vi.mock('~/components/Cosmetics/cosmetics.util', async (importOriginal) => ({
   ...(await importOriginal<typeof CosmeticsUtil>()),
   useQueryUserCosmetics: () => ({
-    data: { sticker: ownedIds.map((id) => ({ id })), badges: ownedIds.map((id) => ({ id })) },
+    data: {
+      sticker: ownedIds.map((id) => ({ id })),
+      badges: ownedIds.map((id) => ({ id })),
+      contentDecorations: hatIds.map((id) => ({ id })),
+    },
     isLoading: false,
   }),
   useQueryStickerBalances: () => ({ data: balances, isLoading: false }),
@@ -31,6 +37,8 @@ vi.mock('~/components/CosmeticShop/cosmetic-shop.util', async (importOriginal) =
   ...(await importOriginal<typeof CosmeticShopUtil>()),
   useMutateCosmeticShop: () => ({ purchaseShopItem: vi.fn(), purchasingShopItem: false }),
 }));
+vi.mock('next/router', () => ({ useRouter: () => ({ push }) }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ username: 'someone' }) }));
 vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
 vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: vi.fn() }),
@@ -93,7 +101,9 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   ownedIds = [];
+  hatIds = [];
   balances = [];
+  push.mockClear();
 });
 
 afterEach(async () => {
@@ -127,5 +137,43 @@ describe('CosmeticShopItemPreviewModal purchase button', () => {
   it('hides it for a badge already held', async () => {
     ownedIds = [COSMETIC_ID];
     expect(await hasPurchaseButton(CosmeticType.Badge)).toBe(false);
+  });
+});
+
+describe('CosmeticShopItemPreviewModal owned content decoration', () => {
+  const text = () => document.body.textContent ?? '';
+
+  it('says how many copies are held and still sells another', async () => {
+    hatIds = [COSMETIC_ID, COSMETIC_ID, 999];
+    expect(await hasPurchaseButton(CosmeticType.ContentDecoration)).toBe(true);
+    expect(text()).toContain('You own 2 of these.');
+    expect(text()).toContain('Buying another lets you wear it on one more piece of content.');
+  });
+
+  it('sends the owner to their profile to place a copy', async () => {
+    hatIds = [COSMETIC_ID];
+    await hasPurchaseButton(CosmeticType.ContentDecoration);
+    const place = [...document.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Place on my content')
+    );
+    expect(place).toBeTruthy();
+    await act(async () => place!.click());
+    expect(push).toHaveBeenCalledWith('/user/someone');
+  });
+
+  it('shows no ownership line for a hat the user does not hold', async () => {
+    hatIds = [999];
+    expect(await hasPurchaseButton(CosmeticType.ContentDecoration)).toBe(true);
+    expect(text()).not.toContain('You own');
+    expect(text()).not.toContain('Place on my content');
+  });
+
+  it('leaves a single-purchase type unchanged', async () => {
+    ownedIds = [COSMETIC_ID];
+    hatIds = [COSMETIC_ID];
+    await hasPurchaseButton(CosmeticType.Badge);
+    expect(text()).toContain('You already own this cosmetic');
+    expect(text()).not.toContain('You own');
+    expect(text()).not.toContain('Place on my content');
   });
 });

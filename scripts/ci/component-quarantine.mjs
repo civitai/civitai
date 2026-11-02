@@ -1,6 +1,7 @@
 /**
- * Component test files held OUT of the blocking `component` run and run by the non-blocking
- * `component-quarantine` job (`.github/workflows/lint.yml`) instead.
+ * Component test files held OUT of the blocking `component` run and run instead by the
+ * `Quarantined component tests` step of the `component` job (`.github/workflows/lint.yml`), on
+ * pushes to `main` and on dispatch only — not on pull requests.
  *
  * Read by `vitest.config.mts` (the `component` project excludes them, the `component-quarantine`
  * project includes exactly them) and by `assert-component-suite-ran.mjs` (its on-disk ledger does
@@ -15,4 +16,7 @@
  */
 export const QUARANTINED_COMPONENT_FILES = [
   'src/components/Apps/AppAssistant/AppAssistantWorkspace.browser.test.tsx',
+  // Added 2026-10-31: random "Test timed out in 15000ms" on main and PR runs (a different test each
+  // time, e.g. main run 41230744040), all 62 tests pass locally. Same exit rule as above.
+  'src/components/Apps/ScopeRevoke.browser.test.tsx',
 ];

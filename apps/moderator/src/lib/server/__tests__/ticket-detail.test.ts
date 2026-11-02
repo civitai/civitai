@@ -114,6 +114,22 @@ describe('loadTicketPayload', () => {
     );
   });
 
+  it("hands the support Account card the viewer's PII grant, so the address stays behind it", async () => {
+    getTicketDetail.mockResolvedValue({
+      status: 'found',
+      ticket: ticket({ cfFeature: 'Account Login' }),
+    });
+    accountSectionFor.mockResolvedValue({ status: 'ok', userId: 99 });
+    await loadTicketPayload('support', '5', { canSeeEmail: false, canRead: all });
+    expect(accountSectionFor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ readOnly: true, canSeeEmail: false })
+    );
+    await loadTicketPayload('support', '5', { canSeeEmail: true, canRead: all });
+    expect(accountSectionFor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ readOnly: true, canSeeEmail: true })
+    );
+  });
+
   it('asks the router live when the snapshot holds a router answer with no linked account', async () => {
     patch.mockResolvedValueOnce({
       id: '5',

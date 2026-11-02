@@ -20,6 +20,8 @@ const state = vi.hoisted(() => ({
   hiddenTags: new Map<number, boolean>(),
   hiddenModels: new Map<number, boolean>(),
   hiddenImages: new Map<number, boolean>(),
+  resources: [{ type: 'Checkpoint', baseModels: [] as string[] }],
+  selectSource: 'generation',
 }));
 
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
@@ -75,7 +77,7 @@ vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectProvider', ()
   useResourceSelectContext: () => ({
     canGenerate: undefined,
     resources: state.resources,
-    selectSource: 'generation',
+    selectSource: state.selectSource,
     excludedIds: [],
     tab: 'featured',
     filters: { loadedOnly: false },
@@ -135,8 +137,8 @@ const model = (id: number, images: Img[], over: Record<string, unknown> = {}) =>
   user: { id: 900 + id },
   tags: [],
   images,
-  ...over,
   versions: [{ id: id * 10, baseModel: 'SDXL 1.0', canGenerate: true }],
+  ...over,
 });
 const WINNER = 1;
 const GRID_MODEL = model(2, [{ id: 20, nsfwLevel: PG }]);
@@ -166,11 +168,17 @@ function renderList(
   return card;
 }
 
-function renderPodium(winnerImages: Img[], over: Record<string, unknown> = {}) {
-  return renderList([featuredRow(WINNER, 15, 'SDXL 1.0')], WINNER, winnerImages, over);
+function renderPodium(
+  winnerImages: Img[],
+  over: Record<string, unknown> = {},
+  winnerBaseModel = 'SDXL 1.0'
+) {
+  return renderList([featuredRow(WINNER, 15, winnerBaseModel)], WINNER, winnerImages, over);
 }
 
 beforeEach(() => {
+  state.resources = [{ type: 'Checkpoint', baseModels: [] }];
+  state.selectSource = 'generation';
   state.browsingLevel = PG;
   state.canViewNsfw = true;
   state.disablePoi = false;
@@ -268,5 +276,27 @@ describe('ResourceHitList featured podium', () => {
     state.hiddenUsers = new Map([[900 + WINNER, true]]);
     state.blockRelations = new Map([[900 + WINNER, true]]);
     expect(renderPodium([{ id: 12, nsfwLevel: PG }])).toBeNull();
+  });
+
+  // The post editor's Advanced Mode picker: a second checkpoint from any family, LoRAs on the
+  // first checkpoint's family.
+  it('shows an other-family checkpoint winner when Checkpoint allows any base model', () => {
+    state.selectSource = 'addResource';
+    state.resources = [
+      { type: 'Checkpoint', baseModels: [] },
+      { type: 'LORA', baseModels: ['SDXL 1.0'] },
+    ];
+    const versions = [{ id: WINNER * 10, baseModel: 'Nano Banana', canGenerate: true }];
+    const card = renderPodium([{ id: 11, nsfwLevel: PG }], { versions }, 'Nano Banana');
+    expect(card).not.toBeNull();
+  });
+
+  it('still drops a checkpoint winner outside the base models Checkpoint is limited to', () => {
+    state.resources = [
+      { type: 'Checkpoint', baseModels: ['SDXL 1.0'] },
+      { type: 'LORA', baseModels: ['Nano Banana'] },
+    ];
+    const versions = [{ id: WINNER * 10, baseModel: 'Nano Banana', canGenerate: true }];
+    expect(renderPodium([{ id: 11, nsfwLevel: PG }], { versions }, 'Nano Banana')).toBeNull();
   });
 });

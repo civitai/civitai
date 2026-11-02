@@ -32,6 +32,7 @@ import {
   type TrainingBaseModelType,
 } from '~/utils/training';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { truncateModelName } from '~/shared/constants/model-name.constants';
 import {
   ModelFileVisibility,
   ModelStatus,
@@ -353,12 +354,13 @@ export async function createDraftModelFromWorkflow({
   const meta = (workflow.metadata ?? {}) as TrainingStudioMeta;
 
   const trigger = meta.trigger || input.triggerWord || undefined;
-  const modelName =
+  const modelName = truncateModelName(
     name?.trim() ||
-    meta.name?.trim() ||
-    workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length) ||
-    trigger ||
-    'Trained LoRA';
+      meta.name?.trim() ||
+      workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length) ||
+      trigger ||
+      'Trained LoRA'
+  );
 
   // Best-effort params so the version's trainingDetails is complete for the wizard. The load-bearing
   // fields are `baseModel`/`type`; the rest are defaulted (the run's real hyperparameters live on the

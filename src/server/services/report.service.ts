@@ -363,6 +363,8 @@ type CreateReportProps = CreateReportInput & {
    * re-appends the reporter to `alsoReportedBy` and pays them twice.
    */
   tx?: Prisma.TransactionClient;
+  /** Fold only into a report still waiting for a moderator, never one already closed. */
+  foldIntoPendingOnly?: boolean;
 };
 /**
  * A sticker report names the placement it is about, and the placement has to be
@@ -408,6 +410,7 @@ export const createReport = async ({
   emailVerificationRequired,
   type,
   tx: callerTx,
+  foldIntoPendingOnly,
   ...data
 }: CreateReportProps) => {
   // Add report type to details for notifications
@@ -470,7 +473,14 @@ export const createReport = async ({
     !!emailVerificationRequired &&
     data.reason === ReportReason.NSFW &&
     (type === ReportEntity.Image || type === ReportEntity.Model);
+  // Filed Actioned, a post's mature-content report only flags the post; a chapter's must reach the
+  // queue, where a moderator sees the storyline around it.
+  const reportsStorylineChapter =
+    type === ReportEntity.Post &&
+    data.reason === ReportReason.NSFW &&
+    !!(await dbWrite.storylineChapter.findUnique({ where: { postId: id }, select: { id: true } }));
   const awaitsModerator =
+    reportsStorylineChapter ||
     type === ReportEntity.Crucible ||
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
@@ -489,7 +499,8 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          pendingOnly: castsNoTagVotes,
+          // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
+          pendingOnly: castsNoTagVotes || reportsStorylineChapter || foldIntoPendingOnly,
           tx: callerTx,
         })
       : null;
@@ -1288,7 +1299,7 @@ export function notifyOrphanedAppeal(
   return createNotification({
     userId: appeal.userId,
     type: 'entity-appeal-content-removed',
-    category: NotificationCategory.Other,
+    category: NotificationCategory.Moderation,
     // The worker drops a repeated key, so the outcome is part of it: a closing notice after
     // "under-review" would never arrive.
     key: `entity-appeal-content-removed:${appeal.id}:${outcome}`,
@@ -1585,7 +1596,7 @@ export async function resolveEntityAppeal({
     await createNotification({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
+      category: NotificationCategory.Moderation,
       // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
       // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
       key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${

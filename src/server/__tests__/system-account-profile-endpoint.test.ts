@@ -241,15 +241,15 @@ describe('POST /api/admin/system-account-profile', () => {
     });
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'error',
+        type: 'info',
         name: 'system-account-profile-set',
         details: {
           userId: SYSTEM_ID,
           changed: ['name', 'settings.chat.dmPolicy'],
           asserted_actor: 9,
+          auditRecorded: true,
         },
-      }),
-      'moderation'
+      })
     );
     expect(JSON.stringify(logToAxiom.mock.calls)).not.toContain(name);
   });
@@ -309,6 +309,13 @@ describe('POST /api/admin/system-account-profile', () => {
     const { status, body } = await call({ userId: SYSTEM_ID, name: 'Agent' });
     expect(status).toBe(200);
     expect(body).toEqual({ userId: SYSTEM_ID, changed: ['name'], auditRecorded: false });
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'system-account-profile-set',
+        details: expect.objectContaining({ auditRecorded: false }),
+      })
+    );
   });
 
   it('audits a write that succeeded before a later one failed', async () => {
@@ -323,15 +330,16 @@ describe('POST /api/admin/system-account-profile', () => {
     expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
+        type: 'error',
         name: 'system-account-profile-set-failed',
         details: {
           userId: SYSTEM_ID,
           changed: ['name'],
           failed: { fields: ['settings.chat.dmPolicy'], error: 'Error' },
           asserted_actor: 9,
+          auditRecorded: true,
         },
-      }),
-      'moderation'
+      })
     );
   });
 

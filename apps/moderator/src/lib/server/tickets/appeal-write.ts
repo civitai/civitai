@@ -2,7 +2,12 @@ import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { int4Id, parseForm } from '../query';
 import { classifyAppeal } from '$lib/tickets/appeals';
-import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
+import {
+  NOT_PERMITTED,
+  addTicketNote,
+  checkTicketTarget,
+  type TicketActionDeps,
+} from './panel-write';
 
 export type AppealWriteRow = {
   userId: number;
@@ -38,7 +43,6 @@ export type AppealWriteDeps = TicketActionDeps & {
 
 const ruling = z.object({ appealId: int4Id, status: z.enum(['Approved', 'Rejected']) });
 
-export const NOT_PERMITTED = 'Not permitted.';
 export const DECIDED = 'That appeal has already been decided — nothing was changed.';
 
 /**

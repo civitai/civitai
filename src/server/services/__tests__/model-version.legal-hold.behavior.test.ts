@@ -66,10 +66,12 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
+const { mockBustPostVersionCache } = vi.hoisted(() => ({ mockBustPostVersionCache: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
   dataForModelsCache: { bust: vi.fn(), refresh: vi.fn() },
   bustMvCache: vi.fn(),
+  bustPostVersionCache: mockBustPostVersionCache,
 }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: vi.fn(async () => ({})),
@@ -277,6 +279,22 @@ describe('mergeVersions', () => {
     expect(mockDeleteModelFileObjects).toHaveBeenCalledWith([STRAGGLER]);
   });
 
+  it('forgets which version its re-pointed posts were on', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    dbMock.dbWrite.post.findMany.mockResolvedValueOnce([{ id: 77 }] as never);
+
+    await merge(CLEAN);
+
+    expect(dbMock.dbWrite.post.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { modelVersionId: { in: sourceVersionIds } } })
+    );
+    expect(mockBustPostVersionCache).toHaveBeenCalledWith([77]);
+    // Read while the posts are still on the merged-away versions, before they are re-pointed.
+    const [read] = dbMock.dbWrite.post.findMany.mock.invocationCallOrder;
+    const [moved] = dbMock.dbWrite.post.updateMany.mock.invocationCallOrder;
+    expect(read).toBeLessThan(moved);
+  });
+
   it.each([
     ['named on a pending report', REPORTED],
     ['under a hold marker', MARKED],
@@ -478,5 +496,88 @@ describe("a held author's comment on a review the version takes with it", () => 
     await merge(CLEAN);
 
     expect((await commentsLeft(db)).map((c) => c.id)).not.toContain(1);
+  });
+});
+
+describe("a held author's review the version takes with it", () => {
+  beforeEach(() => {
+    vi.mocked(dbMock.dbWrite.resourceReview.updateMany).mockImplementation((async (args: {
+      where: { modelVersionId: { in: number[] } };
+      data: { modelVersionId: number };
+    }) => ({
+      count: (
+        await db.query(
+          `UPDATE "ResourceReview" SET "modelVersionId" = $1 WHERE "modelVersionId" = ANY($2::int[])`,
+          [args.data.modelVersionId, args.where.modelVersionId.in]
+        )
+      ).affectedRows,
+    })) as never);
+  });
+  const review = (id: number, reviewer: number, versionId: number) =>
+    db.query(
+      `INSERT INTO "ResourceReview" (id, "userId", "modelVersionId", "modelId") VALUES ($1, $2, $3, $4)`,
+      [id, reviewer, versionId, modelOf(CLEAN)]
+    );
+  const copies = async () =>
+    (await db.query(`SELECT id, "userId", "holdReasons" FROM "HeldResourceReview" ORDER BY id`))
+      .rows;
+  const reviewIds = async () =>
+    (await db.query<{ id: number }>(`SELECT id FROM "ResourceReview" ORDER BY id`)).rows.map(
+      (r) => r.id
+    );
+
+  it('copies a held reviewer’s review of a deleted version, and not an unheld one’s', async () => {
+    const id = stubVersion(CLEAN);
+    await review(1, REPORTED, id);
+    await review(2, FORMER_CLEAN, id);
+
+    await deleteVersionById({ id, isModerator: false });
+
+    expect(await reviewIds()).toEqual([]);
+    expect(await copies()).toEqual([{ id: 1, userId: REPORTED, holdReasons: ['report'] }]);
+  });
+
+  it.each([
+    ['the target', 0, REPORTED, ['report']],
+    ['a later source', 2, MARKED, ['hold-marker']],
+  ])(
+    'copies a held reviewer’s review a merge drops as superseded by one on %s, and not an unheld one’s',
+    async (_, n, reviewer, holdReasons) => {
+      const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
+      const keeper = n === 0 ? targetVersionId : sourceVersionIds[1];
+      await review(1, reviewer, sourceVersionIds[0]);
+      await review(2, reviewer, keeper);
+      await review(3, FORMER_CLEAN, sourceVersionIds[0]);
+      await review(4, FORMER_CLEAN, keeper);
+
+      await merge(CLEAN);
+
+      expect(await reviewIds()).toEqual([2, 4]);
+      expect(await copies()).toEqual([{ id: 1, userId: reviewer, holdReasons }]);
+    }
+  );
+
+  it('moves the reviews on its sources to the target, and copies none', async () => {
+    const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
+    await review(1, REPORTED, sourceVersionIds[0]);
+
+    await merge(CLEAN);
+
+    const moved = await db.query(`SELECT "modelVersionId" FROM "ResourceReview" WHERE id = 1`);
+    expect(moved.rows).toEqual([{ modelVersionId: targetVersionId }]);
+    expect(await copies()).toEqual([]);
+  });
+
+  it('copies a held reviewer’s review written on a source version after the re-point', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    routeToDb(db, async (sql) => {
+      if (sql.includes('DELETE FROM "ModelVersion"'))
+        await review(1, REPORTED, sourceVersionIds[0]).catch(() => undefined);
+    });
+
+    await merge(CLEAN);
+
+    expect(await reviewIds()).toEqual([]);
+    expect(await copies()).toEqual([{ id: 1, userId: REPORTED, holdReasons: ['report'] }]);
   });
 });

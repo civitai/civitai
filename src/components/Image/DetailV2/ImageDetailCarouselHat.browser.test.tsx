@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { userEvent } from 'vitest/browser';
+import { cdp, page, userEvent } from 'vitest/browser';
 import type * as TrpcUtils from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as ImageGuardModule from '~/components/ImageGuard/ImageGuard2';
@@ -96,6 +96,7 @@ const onClose = vi.fn();
 let setSlot: (size: { width: number; height: number }) => void = () => undefined;
 
 let goNext: () => void = () => undefined;
+let goPrev: () => void = () => undefined;
 
 function Viewer({
   image,
@@ -109,6 +110,7 @@ function Viewer({
   const [slot, set] = useState({ width: 800, height: 600 });
   const [index, setIndex] = useState(0);
   goNext = () => setIndex(1);
+  goPrev = () => setIndex(0);
   setSlot = set;
   const stage = (
     <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
@@ -275,56 +277,181 @@ describe('the image detail wears the image hat on the picture', () => {
     expect([...hits].sort()).toEqual(['hat', 'sticker']);
   });
 
-  test('the hat is out of sight while the carousel moves and is back on the next picture', async () => {
-    renderWithProviders(
-      <Viewer image={mocks.image(true)} second={mocks.image(true, 2000, 1000, 2)} />
-    );
-    await vi.waitFor(() => expect(hat()).not.toBeNull());
-    // Sampled every frame from before the swipe, so a hat left behind by a moving slide is recorded
-    // rather than polled for: a hat more than 50px from every picture's left edge is off its picture.
-    const strays: number[] = [];
-    let shownBefore = 0;
-    let travel = 0;
-    let swiping = false;
-    let sampling = true;
-    // The first picture is as wide as the slot, so its left is the slot's.
-    const slotLeft = rect(document.querySelector('[data-testid="picture"]')).left;
-    const sample = () => {
-      const h = hat();
-      const pictures = [...document.querySelectorAll('[data-testid="picture"]')];
-      if (h) {
-        if (!swiping) shownBefore++;
-        const off = Math.min(...pictures.map((p) => Math.abs(rect(h).left - rect(p).left)));
-        if (off > 50) strays.push(off);
-      }
-      // One frame can land after the test has unmounted the carousel.
-      if (pictures[0]) travel = Math.max(travel, Math.abs(rect(pictures[0]).left - slotLeft));
-      if (sampling) requestAnimationFrame(sample);
-    };
-    try {
-      sample();
-      await vi.waitFor(() => expect(shownBefore).toBeGreaterThan(2));
-      swiping = true;
-      goNext();
+  describe('while the carousel moves', () => {
+    const hatEls = () => [...document.querySelectorAll('button[data-event-decoration="hat"]')];
+    const pictures = () => [...document.querySelectorAll('[data-testid="picture"]')];
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const twoPictures = (bare?: boolean) =>
+      renderWithProviders(
+        <Viewer bare={bare} image={mocks.image(true)} second={mocks.image(true, 2000, 1000, 2)} />
+      );
 
-      // Settled on the second picture, which is flush with the slot again: the hat is on its corner.
-      await vi.waitFor(
+    // Sampled once every frame, after the frame's other callbacks, so each hat is compared with the
+    // pictures as painted: how far it is from the corner a picture would put it. A frame with a
+    // moving picture and no hat counts as 99; `bare` counts every frame with no hat at all.
+    function recordFrames() {
+      const resting = rect(pictures()[0]).left - rect(hat()).left;
+      const frames = {
+        moving: [] as number[],
+        bare: 0,
+        mostHats: 0,
+        stop: () => undefined as void,
+      };
+      let last = NaN;
+      let sampling = true;
+      const sample = () =>
+        requestAnimationFrame(() =>
+          setTimeout(() => {
+            const first = pictures()[0];
+            if (first) {
+              const hats = hatEls();
+              frames.mostHats = Math.max(frames.mostHats, hats.length);
+              if (!hats.length) frames.bare++;
+              const at = rect(first).left;
+              if (at !== last && !Number.isNaN(last)) {
+                frames.moving.push(
+                  hats.length
+                    ? Math.max(
+                        ...hats.map((h) =>
+                          Math.min(
+                            ...pictures().map((p) =>
+                              Math.abs(rect(h).left - rect(p).left + resting)
+                            )
+                          )
+                        )
+                      )
+                    : 99
+                );
+              }
+              last = at;
+            }
+            if (sampling) sample();
+          }, 0)
+        );
+      sample();
+      frames.stop = () => {
+        sampling = false;
+      };
+      return frames;
+    }
+
+    const settledOn = (n: number) => {
+      const slotLeft = rect(document.querySelector('[data-testid="slot"]') ?? pictures()[0]).left;
+      return vi.waitFor(
         () => {
-          const second = rect(document.querySelectorAll('[data-testid="picture"]')[1]);
-          expect(Math.abs(second.left - slotLeft)).toBeLessThan(1);
+          const picture = rect(pictures()[n]);
+          expect(Math.abs(picture.left - slotLeft)).toBeLessThan(1);
           expect(hat()).not.toBeNull();
-          expect(rect(hat()).bottom).toBeGreaterThan(second.top + 4);
-          expect(rect(hat()).top).toBeLessThan(second.top - 4);
+          expect(rect(hat()).bottom).toBeGreaterThan(picture.top + 4);
+          expect(rect(hat()).top).toBeLessThan(picture.top - 4);
         },
         { timeout: 3000 }
       );
-    } finally {
-      sampling = false;
-    }
-    // The samples saw a hat before the swipe and the pictures really travelling, so no strays means
-    // something.
-    expect(travel).toBeGreaterThan(100);
-    expect(strays).toEqual([]);
+    };
+
+    test('the hat rides its picture both ways, and the next picture brings its own', async () => {
+      twoPictures();
+      await vi.waitFor(() => expect(hat()).not.toBeNull());
+      const frames = recordFrames();
+      try {
+        goNext();
+        await settledOn(1);
+        goPrev();
+        await settledOn(0);
+      } finally {
+        frames.stop();
+      }
+      // The pictures really travelled, and a hat sat on a picture's corner for every frame of it,
+      // never more than one per visible picture.
+      expect(frames.moving.length).toBeGreaterThan(20);
+      // The first frame's `scroll` can trail the slide's first step by a frame.
+      expect(Math.max(...frames.moving.slice(1))).toBeLessThanOrEqual(1);
+      expect(frames.bare).toBe(0);
+      expect(frames.mostHats).toBeLessThanOrEqual(2);
+    });
+
+    test('a swipe that snaps back keeps its hat, and it is not waiting on embla to settle', async () => {
+      await page.viewport(900, 700);
+      // Bare: the modal in this harness takes the touch before the carousel does.
+      twoPictures(true);
+      await vi.waitFor(() => expect(hat()).not.toBeNull());
+      // Embla attaches its drag handlers a moment after the first paint.
+      await sleep(300);
+      // The carousel's drag is touch-only.
+      // vitest types the session empty unless a provider's types are loaded; Chromium's has `send`.
+      const client = cdp() as unknown as {
+        send: (method: string, params?: object) => Promise<unknown>;
+      };
+      await client.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+      const at = rect(pictures()[0]);
+      const y = at.top + at.height / 2;
+      const x = at.left + at.width * 0.8;
+      const touch = (type: string, px: number) =>
+        client.send('Input.dispatchTouchEvent', {
+          type,
+          touchPoints: type === 'touchEnd' ? [] : [{ x: px, y, id: 1 }],
+        });
+      const frames = recordFrames();
+      try {
+        await touch('touchStart', x);
+        for (let i = 1; i <= 8; i++) {
+          await touch('touchMove', x - i * 35);
+          await sleep(30);
+        }
+        // Held mid-drag: both pictures on screen. The first one's corner has left the view, so the
+        // hat on screen is the incoming picture's, on its corner.
+        await vi.waitFor(() => expect(rect(pictures()[0]).left).toBeLessThan(-100));
+        await vi.waitFor(() => expect(hatEls().length).toBe(1));
+        expect(Math.abs(rect(hat()).left - rect(pictures()[1]).left)).toBeLessThan(60);
+        // Held still before letting go, so the slide has no flick and falls back.
+        await sleep(250);
+        await touch('touchEnd', 0);
+        await vi.waitFor(() => expect(Math.abs(rect(pictures()[0]).left)).toBeLessThan(1), {
+          timeout: 3000,
+        });
+        await sleep(100);
+      } finally {
+        frames.stop();
+        await client.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+      }
+      expect(frames.moving.length).toBeGreaterThan(20);
+      expect(Math.max(...frames.moving.slice(1))).toBeLessThanOrEqual(1);
+      expect(frames.bare).toBe(0);
+    });
+
+    test('nothing is measured between moves', async () => {
+      twoPictures();
+      await vi.waitFor(() => expect(hat()).not.toBeNull());
+      // The reads the hat makes: the layer it is drawn in and each picture's host.
+      const layer = document.querySelector<HTMLElement>('.isolate.inset-0')!;
+      const measure = vi.fn();
+      const watch = (el: HTMLElement) => {
+        const read = el.getBoundingClientRect.bind(el);
+        el.getBoundingClientRect = () => {
+          measure();
+          return read();
+        };
+      };
+      watch(layer);
+      document.querySelectorAll<HTMLElement>('[data-testid="drawn-media-hat"]').forEach(watch);
+      await sleep(700);
+      expect(measure).not.toHaveBeenCalled();
+      // The same count sees the move, so zero at rest is not a spy that cannot count.
+      goNext();
+      await settledOn(1);
+      expect(measure.mock.calls.length).toBeGreaterThan(10);
+      // And it stops once the slide has: a quiet stretch comes, and then nothing is read.
+      await vi.waitFor(
+        async () => {
+          measure.mockClear();
+          await sleep(300);
+          expect(measure).not.toHaveBeenCalled();
+        },
+        { timeout: 4000, interval: 50 }
+      );
+      await sleep(700);
+      expect(measure).not.toHaveBeenCalled();
+    });
   });
 
   test('gate: no hat when the image carries none', async () => {

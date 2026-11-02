@@ -355,7 +355,7 @@ describe('report_ready and the app’s data', () => {
     const items = [{ label: 'Search models' }];
     expect(
       await gate.tools[SET_CHECKLIST].execute({ items, data: 'civitai' }, toolCtx)
-    ).toMatchObject({ awaitsUser: true });
+    ).not.toHaveProperty('awaitsUser');
     expect(
       await gate.tools[SET_CHECKLIST].execute({ items, data: 'sample' }, toolCtx)
     ).toMatchObject({ awaitsUser: true });
@@ -381,28 +381,29 @@ describe('report_ready and the app’s data', () => {
 });
 
 describe('set_checklist', () => {
-  it('ends the reply for the user to confirm when the list is new or its labels change', async () => {
+  it('never ends the reply for the user to confirm: a new list, ticked items or new labels', async () => {
     const gate = gateInConversation();
     expect(await setChecklist(gate, [{ label: 'a' }, { label: 'b' }])).toMatchObject({
-      awaitsUser: true,
+      shown: true,
     });
+    expect(await setChecklist(gate, [{ label: 'a' }, { label: 'b' }])).not.toHaveProperty(
+      'awaitsUser'
+    );
     expect(await setChecklist(gate, [{ label: 'a', done: true }, { label: 'b' }])).toEqual({
       updated: true,
       open: 1,
     });
-    expect(await setChecklist(gate, [{ label: 'a' }])).toMatchObject({
-      awaitsUser: true,
-    });
+    expect(await setChecklist(gate, [{ label: 'a' }])).toEqual({ updated: true, open: 1 });
   });
 
   it('takes 1-30 items of up to 200 characters, as objects or plain labels', async () => {
     const gate = gateInConversation();
     const execute = (items: unknown) => gate.tools[SET_CHECKLIST].execute({ items }, toolCtx);
-    expect(await execute(['a', 'b'])).toMatchObject({ awaitsUser: true });
+    expect(await execute(['a', 'b'])).toMatchObject({ shown: true });
     expect(await execute(Array.from({ length: 30 }, (_, i) => `f${i}`))).toMatchObject({
-      awaitsUser: true,
+      updated: true,
     });
-    expect(await execute(['x'.repeat(200)])).toMatchObject({ awaitsUser: true });
+    expect(await execute(['x'.repeat(200)])).toMatchObject({ updated: true });
     expect(() => execute(Array.from({ length: 31 }, (_, i) => `f${i}`))).toThrow(
       /items must be an array/
     );
@@ -414,7 +415,7 @@ describe('set_checklist', () => {
     const gate = gateInConversation();
     expect(
       await gate.tools[SET_CHECKLIST].execute({ items: '[{"label":"a"}]' }, toolCtx)
-    ).toMatchObject({ awaitsUser: true });
+    ).toMatchObject({ shown: true });
     for (const items of [[], 'not json', [{ label: '' }], [{}], undefined])
       expect(() => gate.tools[SET_CHECKLIST].execute({ items }, toolCtx)).toThrow(
         /items must be an array/

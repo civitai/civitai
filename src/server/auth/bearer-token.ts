@@ -4,10 +4,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { Subject } from '~/server/http/orchestrator/api-key-spend';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
-import { isSystemAccountMeta } from '@civitai/auth';
 import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
-import { userHoldsModeratorAccess } from '~/server/auth/moderator-access';
-import { logToAxiom } from '~/server/logging/client';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { CLIENT_CREDENTIALS_ONLY_SCOPES } from '~/shared/constants/token-scope.constants';
 import {
@@ -85,18 +82,6 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
   if (user.bannedAt) return null;
   if (refuseModerationAccountSession(user, 'bearer-token')) return null;
-  if (isSystemAccountMeta(user.meta) && (await userHoldsModeratorAccess(user.id, user))) {
-    logToAxiom(
-      {
-        name: 'system-account-bearer-refused',
-        type: 'error',
-        userId: user.id,
-        apiKeyId: apiKey.id,
-      },
-      'auth'
-    ).catch(() => undefined);
-    return null;
-  }
 
   // OAuth-issued tokens key their subject on clientId (stable across access-token
   // rotations) and read their limit from the user's OauthConsent. Other keys use

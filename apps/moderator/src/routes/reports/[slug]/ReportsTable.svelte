@@ -1,5 +1,6 @@
 <script lang="ts">
   import { dateTime } from '$lib/format';
+  import { entityUrl } from '$lib/entity-url';
   import { enhance } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -534,6 +535,16 @@
             {#if storylineForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{storylineForm.error}</p>
             {/if}
+            {#each data.storylineHolds.filter((h) => h.reportIds.includes(selected.id)) as hold}
+              {@const postUrl = entityUrl(data.civitaiUrl, 'post', hold.postId)}
+              <p class="mt-3 text-sm" title={fmtDate(hold.createdAt)}>
+                Chapter {hold.number} ({hold.storylineTitle}) removed by its {hold.removedByRole} while this report
+                was open.
+                {#if postUrl}
+                  <a href={postUrl} target="_blank" rel="noopener" class="underline">View post</a>
+                {/if}
+              </p>
+            {/each}
           </div>
         {/if}
 

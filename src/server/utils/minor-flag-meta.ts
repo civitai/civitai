@@ -60,6 +60,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
 
   const {
     minorFlagSnapshot: _snapshot,
+    ownerFlagOverride: _ownerFlagOverride,
     minorHashDismissed: _dismissed,
     minorHashCleared: _cleared,
     minorHashAccepted: _accepted,
@@ -90,6 +91,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
  */
 const MODERATION_OWNED_META_KEYS = [
   'minorFlagSnapshot',
+  'ownerFlagOverride',
   'minorHashDismissed',
   'minorHashCleared',
   'minorHashAccepted',

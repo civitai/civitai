@@ -44,6 +44,13 @@ function call(body: Record<string, unknown>) {
   return (handler as (req: unknown, res: unknown) => Promise<unknown>)(req, res).then(() => status);
 }
 
+const LOOKALIKES = [
+  'Civ1taiModeration',
+  'Civitai_Moderation',
+  'CivitaiModerat\u0456on',
+  'Civitai\u200bModeration',
+];
+
 const usernames: Record<number, string> = {
   [SHARED]: 'CivitaiModeration',
   [OTHER]: 'someone',
@@ -74,6 +81,23 @@ describe('POST /api/mod/user/update-identity and the reserved username', () => {
       expect(h.update).not.toHaveBeenCalled();
     }
   );
+
+  it.each(LOOKALIKES)('refuses giving another account the lookalike %j', async (username) => {
+    expect(await call({ userId: OTHER, username })).toBe(400);
+    expect(h.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses renaming the shared account to a lookalike of its name', async () => {
+    expect(await call({ userId: SHARED, username: LOOKALIKES[0] })).toBe(400);
+    expect(h.update).not.toHaveBeenCalled();
+  });
+
+  it('lets another account holding the name keep it through an email or name edit', async () => {
+    expect(await call({ userId: SQUATTER, username: 'CivitaiModeration', name: 'Squat' })).toBe(
+      200
+    );
+    expect(h.update).toHaveBeenCalledOnce();
+  });
 
   it('refuses renaming the shared account away from the reserved name', async () => {
     expect(await call({ userId: SHARED, username: 'someone-new' })).toBe(400);

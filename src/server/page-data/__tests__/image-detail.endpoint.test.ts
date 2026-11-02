@@ -13,9 +13,14 @@ import {
   USERS,
   type Fixture,
 } from '~/server/page-data/__tests__/image-detail.fixtures';
-import { SHELL_PAGE_DATA_REQUIRED_KEYS } from '~/components/Shell/shell-page-data';
+import {
+  adoptShellPageData,
+  SHELL_MAIN_IMAGE_HEADER,
+  SHELL_PAGE_DATA_REQUIRED_KEYS,
+} from '~/components/Shell/shell-page-data';
 import { imageDetailMainImageUrl } from '~/components/Image/DetailV2/image-detail-main-media';
 import { env } from '~/env/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `GET /api/page-data/images/[imageId]` is what a static shell of `/images/[imageId]` will fetch
@@ -100,6 +105,7 @@ afterAll(() => {
 });
 beforeEach(() => {
   procedureCalls.length = 0;
+  loggingMock.logToAxiom.mockClear();
   h.flagOn.current = true;
   h.bootstrapFails.current = false;
   h.seeds.mockReset();
@@ -108,13 +114,15 @@ beforeEach(() => {
     const user = session?.user;
     return {
       settings: user ? SETTINGS : undefined,
-      tosMeta: undefined,
-      announcements: undefined,
+      // `null`, not `undefined`: the body is JSON on the wire, where an undefined member is
+      // dropped, and the keys test below checks the endpoint names every seed.
+      tosMeta: null,
+      announcements: null,
       following: user ? [1, 2] : undefined,
-      browsingSettingsAddons: undefined,
+      browsingSettingsAddons: null,
       liveNow: false,
-      navBanners: undefined,
-      siteAlerts: undefined,
+      navBanners: null,
+      siteAlerts: null,
       session,
     };
   });
@@ -136,7 +144,7 @@ function renderPage({ user, imageId, host }: Fixture) {
   } as unknown as GetServerSidePropsContext);
 }
 
-async function fetchPageData(
+function startPageData(
   { user, imageId, host }: Fixture,
   {
     method = 'GET',
@@ -155,7 +163,13 @@ async function fetchPageData(
     query: { imageId: String(imageId), ...query },
   };
   const res = fakeResponse();
-  await handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
+  const done = handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
+  return { req, res, done };
+}
+
+async function fetchPageData(...args: Parameters<typeof startPageData>) {
+  const { req, res, done } = startPageData(...args);
+  await done;
   return { req, res, body: res.body as Record<string, unknown> | undefined };
 }
 
@@ -193,7 +207,6 @@ describe('page-data parity with getServerSideProps', () => {
         'flags',
         'following',
         'liveNow',
-        'mainImageUrl',
         'navBanners',
         'region',
         'session',
@@ -345,19 +358,38 @@ describe('page-data keeps the shell route cookie in step with shell-images', () 
  * `EdgeImage` → `useEdgeUrl`) is what is under test. That the rendered `<img>` requests the same
  * URL is pinned by `ImageDetailCarousel.mainImageUrl.browser.test.tsx`.
  */
+/** The main image URL the response names, decoded as the head script decodes it. */
+function mainImageUrlOf(res: ReturnType<typeof fakeResponse>) {
+  const value = res.getHeader(SHELL_MAIN_IMAGE_HEADER.toLowerCase());
+  return value === undefined ? undefined : decodeURIComponent(String(value));
+}
+
 describe('page-data main image preload URL', () => {
-  const edge = (...segments: string[]) =>
-    [env.NEXT_PUBLIC_IMAGE_LOCATION, ...segments].filter(Boolean).join('/');
-  it('a PG image: the URL of its original, under its own name, as the `<img>` asks for it', async () => {
+  it('is a header, header-safe, and not in the body', async () => {
     const { res, body } = await fetchPageData({
       user: USERS.viewer,
       imageId: 106,
       host: 'civitai.com',
     });
+    const raw = String(res.getHeader(SHELL_MAIN_IMAGE_HEADER.toLowerCase()));
+    // The name has spaces; the raw value must still be a legal header value, whatever it holds.
+    expect(raw).toMatch(/^[\x21-\x7e]+$/);
+    expect(raw).toContain('Sunset%20Over%20Hills.jpeg');
+    expect(jsonRoundTrip(body)).not.toHaveProperty('mainImageUrl');
+  });
+
+  const edge = (...segments: string[]) =>
+    [env.NEXT_PUBLIC_IMAGE_LOCATION, ...segments].filter(Boolean).join('/');
+  it('a PG image: the URL of its original, under its own name, as the `<img>` asks for it', async () => {
+    const { res } = await fetchPageData({
+      user: USERS.viewer,
+      imageId: 106,
+      host: 'civitai.com',
+    });
     expect(res.statusCode).toBe(200);
-    expect(body?.mainImageUrl).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
+    expect(mainImageUrlOf(res)).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
     // And it is what the page's own builder gives that image (the fixture's `image.get` answer).
-    expect(body?.mainImageUrl).toBe(
+    expect(mainImageUrlOf(res)).toBe(
       imageDetailMainImageUrl({
         id: 106,
         url: 'media-106',
@@ -368,25 +400,25 @@ describe('page-data main image preload URL', () => {
   });
 
   it('a PG image with no name is named by its id', async () => {
-    const { body } = await fetchPageData({ user: USERS.viewer, imageId: 103, host: 'civitai.com' });
-    expect(body?.mainImageUrl).toBe(edge('media-103', 'original=true', '103.jpeg'));
+    const { res } = await fetchPageData({ user: USERS.viewer, imageId: 103, host: 'civitai.com' });
+    expect(mainImageUrlOf(res)).toBe(edge('media-103', 'original=true', '103.jpeg'));
   });
 
   it('a PG image for a signed-out viewer (the gate shows PG to everyone)', async () => {
-    const { body } = await fetchPageData({ user: null, imageId: 106, host: 'civitai.com' });
-    expect(body?.mainImageUrl).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
+    const { res } = await fetchPageData({ user: null, imageId: 106, host: 'civitai.com' });
+    expect(mainImageUrlOf(res)).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
   });
 
   it('a video: no URL, as the page renders a <video> and no <img>', async () => {
-    const { res, body } = await fetchPageData({
+    const { res } = await fetchPageData({
       user: USERS.viewer,
       imageId: 107,
       host: 'civitai.com',
     });
     expect(res.statusCode).toBe(200);
     // The same rating as 106, which has a URL: only the media type differs.
-    expect(body?.mainImageUrl).toBeUndefined();
-    expect(jsonRoundTrip(body)).not.toHaveProperty('mainImageUrl');
+    expect(mainImageUrlOf(res)).toBeUndefined();
+    expect(res.getHeader(SHELL_MAIN_IMAGE_HEADER.toLowerCase())).toBeUndefined();
   });
 
   it.each([
@@ -397,17 +429,17 @@ describe('page-data main image preload URL', () => {
     ['an image the viewer cannot get (blocked)', { user: USERS.blockedByOwner, imageId: 103 }],
     ['a PG image a contest forces to R, signed in', { user: USERS.viewer, imageId: 108 }],
   ] as const)('none for %s', async (_, fixture) => {
-    const { res, body } = await fetchPageData({ ...fixture, host: 'civitai.com' });
+    const { res } = await fetchPageData({ ...fixture, host: 'civitai.com' });
     expect(res.statusCode).toBe(200);
-    expect(body?.mainImageUrl).toBeUndefined();
+    expect(mainImageUrlOf(res)).toBeUndefined();
   });
 
   it('none for an R image on .red: the viewer’s blur settings decide, and they are not known', async () => {
-    const { body } = await fetchPageData({ user: USERS.viewer, imageId: 101, host: 'civitai.red' });
-    expect(body?.mainImageUrl).toBeUndefined();
+    const { res } = await fetchPageData({ user: USERS.viewer, imageId: 101, host: 'civitai.red' });
+    expect(mainImageUrlOf(res)).toBeUndefined();
     // Control: on .red a safe image does get one.
     const safe = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.red' });
-    expect(safe.body?.mainImageUrl).toBe(
+    expect(mainImageUrlOf(safe.res)).toBe(
       edge('media-106', 'original=true', 'Sunset Over Hills.jpeg')
     );
   });
@@ -430,8 +462,8 @@ describe('page-data main image preload URL', () => {
       'media-108',
     ],
   ] as const)('a URL for %s', async (_, fixture, name, key) => {
-    const { body } = await fetchPageData({ ...fixture, host: 'civitai.com' });
-    expect(body?.mainImageUrl).toBe(edge(key, 'original=true', name));
+    const { res } = await fetchPageData({ ...fixture, host: 'civitai.com' });
+    expect(mainImageUrlOf(res)).toBe(edge(key, 'original=true', name));
   });
 });
 
@@ -453,8 +485,8 @@ describe('page-data main image preload URL and the page query', () => {
     .join('/');
 
   it('control: no query, a URL', async () => {
-    const { body } = await fetchPageData(viewer106);
-    expect(body?.mainImageUrl).toBe(URL_106);
+    const { res } = await fetchPageData(viewer106);
+    expect(mainImageUrlOf(res)).toBe(URL_106);
   });
 
   it.each([
@@ -463,9 +495,9 @@ describe('page-data main image preload URL and the page query', () => {
     ['a sort (?sort=Newest)', { sort: 'Newest' }],
     ['storyline mode (?storylineChapter=3)', { storylineChapter: '3' }],
   ])('none for %s', async (_, query) => {
-    const { res, body } = await fetchPageData(viewer106, { query });
+    const { res } = await fetchPageData(viewer106, { query });
     expect(res.statusCode).toBe(200);
-    expect(body?.mainImageUrl).toBeUndefined();
+    expect(mainImageUrlOf(res)).toBeUndefined();
   });
 
   it.each([
@@ -473,7 +505,186 @@ describe('page-data main image preload URL and the page query', () => {
     ['a junk postId (?postId=null)', { postId: 'null' }],
     ['a param the feed does not read (?active=true)', { active: 'true' }],
   ])('a URL for %s, as the page shows the image.get row', async (_, query) => {
-    const { body } = await fetchPageData(viewer106, { query });
-    expect(body?.mainImageUrl).toBe(URL_106);
+    const { res } = await fetchPageData(viewer106, { query });
+    expect(mainImageUrlOf(res)).toBe(URL_106);
+  });
+});
+
+/**
+ * EARLY HEADERS: the main-image URL is in headers the endpoint FLUSHES as soon as the main image
+ * is decided — before the rest of the work (here: the bootstrap seeds, held open) is done — so
+ * the shell's head script can start the image while the body is still being computed. These hold
+ * the seeds back and look at the response at the moment its headers went out.
+ */
+describe('page-data flushes its headers before the body', () => {
+  const URL_106 = [
+    env.NEXT_PUBLIC_IMAGE_LOCATION,
+    'media-106',
+    'original=true',
+    'Sunset Over Hills.jpeg',
+  ]
+    .filter(Boolean)
+    .join('/');
+
+  /** The bootstrap seeds answer only once `release`d (or fail on `fail`). */
+  function holdSeeds() {
+    let release!: () => void;
+    let fail!: (e: Error) => void;
+    const gate = new Promise<void>((resolve, reject) => {
+      release = resolve;
+      fail = reject;
+    });
+    const answer = h.seeds.getMockImplementation();
+    if (!answer) throw new Error('no seeds implementation to hold');
+    h.seeds.mockImplementationOnce(async (...args: unknown[]) => {
+      await gate;
+      return answer(...args);
+    });
+    return { release, fail };
+  }
+
+  const flushedHeader = (res: ReturnType<typeof fakeResponse>, name: string) =>
+    res.flushed?.headers[name.toLowerCase()];
+
+  /**
+   * Waits on REAL timers (only `Date` is faked here). Not `vi.waitFor`: under fake timers it
+   * advances them, which moves the faked clock and so every `dataUpdatedAt` in `trpcState`.
+   */
+  async function untilFlushed(res: ReturnType<typeof fakeResponse>) {
+    for (let i = 0; i < 200 && !res.events.includes('flush'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(res.events).toContain('flush');
+  }
+
+  it('flushes the main image URL, private no-store and the route cookie while the seeds are still pending', async () => {
+    const seeds = holdSeeds();
+    const fixture = { user: USERS.viewer, imageId: 106, host: 'civitai.com' } as const;
+    const { res, done } = startPageData(fixture, { cookies: { 'civ-shell-images': '1' } });
+    await untilFlushed(res);
+
+    // The seeds were asked for and have not answered: the flush did not wait for them.
+    expect(h.seeds).toHaveBeenCalledTimes(1);
+    expect(res.writableEnded).toBe(false);
+    expect(res.flushed?.statusCode).toBe(200);
+    expect(decodeURIComponent(String(flushedHeader(res, SHELL_MAIN_IMAGE_HEADER)))).toBe(URL_106);
+    expect(flushedHeader(res, 'cache-control')).toBe(NO_STORE);
+    expect(String(flushedHeader(res, 'content-type'))).toMatch(/^application\/json/);
+    expect(([] as unknown[]).concat(flushedHeader(res, 'set-cookie') ?? []).map(String)).toContain(
+      'civ-shell-images=1; Path=/; Max-Age=604800; Secure; SameSite=Lax'
+    );
+
+    seeds.release();
+    await done;
+    expect(res.events).toEqual(['flush', 'end']);
+    const ssr = await renderPage(fixture);
+    expect(jsonRoundTrip((res.body as Record<string, unknown>)?.trpcState)).toEqual(
+      jsonRoundTrip(ssr.props?.trpcState)
+    );
+    expect(SHELL_PAGE_DATA_REQUIRED_KEYS.filter((key) => !(key in (res.body as object)))).toEqual(
+      []
+    );
+  });
+
+  it('a shared-cache header a procedure wrote before the flush does not go out with it', async () => {
+    const seeds = holdSeeds();
+    const { res, done } = startPageData({ ...ownerFixture, imageId: CDN_HEADER_IMAGE_ID });
+    await untilFlushed(res);
+    // Positive control: the procedure ran before the flush and wrote it onto this response.
+    expect(res.headerWrites).toContainEqual(['cache-control', 'public, s-maxage=300']);
+    expect(flushedHeader(res, 'cache-control')).toBe(NO_STORE);
+    seeds.release();
+    await done;
+  });
+
+  it.each([
+    ['a feed filter (?postId=5)', { postId: '5' }],
+    ['storyline mode (?storylineChapter=3)', { storylineChapter: '3' }],
+  ])('flushes no main image URL for %s', async (_, query) => {
+    const seeds = holdSeeds();
+    const { res, done } = startPageData(
+      { user: USERS.viewer, imageId: 106, host: 'civitai.com' },
+      { query }
+    );
+    await untilFlushed(res);
+    expect(res.flushed?.statusCode).toBe(200);
+    expect(flushedHeader(res, 'cache-control')).toBe(NO_STORE);
+    expect(flushedHeader(res, SHELL_MAIN_IMAGE_HEADER)).toBeUndefined();
+    seeds.release();
+    await done;
+  });
+
+  it('a non-numeric id is a 404 with nothing flushed, no main image header and no seeds read', async () => {
+    const { res } = await fetchPageData({ ...ownerFixture, imageId: 'abc' as unknown as number });
+    expect(res.statusCode).toBe(404);
+    expect(res.events).toEqual(['end']);
+    expect(res.flushed).toBeUndefined();
+    expect(res.getHeader(SHELL_MAIN_IMAGE_HEADER)).toBeUndefined();
+    expect(h.seeds).not.toHaveBeenCalled();
+    expectPrivateNoStore(res);
+  });
+
+  it('the flag off is a 404 with nothing flushed and nothing read', async () => {
+    h.flagOn.current = false;
+    const { res } = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.com' });
+    expect(res.statusCode).toBe(404);
+    expect(res.events).toEqual(['end']);
+    expect(res.flushed).toBeUndefined();
+    expect(res.getHeader(SHELL_MAIN_IMAGE_HEADER)).toBeUndefined();
+    expect(procedureCalls).toEqual([]);
+  });
+
+  it('a failure after the flush ends the 200 with no body, which the shell client does not adopt', async () => {
+    const seeds = holdSeeds();
+    const { res, done } = startPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.com' });
+    await untilFlushed(res);
+    seeds.fail(new Error('bootstrap seeds failed late'));
+    await done;
+
+    expect(res.flushed?.statusCode).toBe(200);
+    expect(res.events).toEqual(['flush', 'end']);
+    expect(res.wire).toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        message: 'bootstrap seeds failed late',
+        afterFlush: true,
+      })
+    );
+
+    // Control, fetched before `window` is stubbed (server code reads `window` to tell where it
+    // runs): a 200 the endpoint completed.
+    const whole = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.com' });
+    expect(whole.res.wire).toBeDefined();
+
+    // The client's verdict on exactly that answer: not adopted (so the page falls back to a full
+    // render), while the same client adopts the completed one.
+    const adopt = (response: Response) => {
+      vi.stubGlobal('window', { __civShell: Promise.resolve(response) });
+      return adoptShellPageData();
+    };
+    try {
+      const failed = await adopt(
+        new Response(res.wire ?? null, { status: res.flushed?.statusCode })
+      );
+      expect(failed).toEqual({ ok: false, status: 500 });
+      const adopted = await adopt(new Response(whole.res.wire ?? null, { status: 200 }));
+      expect(adopted.ok).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('a failure before the flush is still a 500 with nothing flushed', async () => {
+    h.bootstrapFails.current = true;
+    const { res, body } = await fetchPageData({
+      user: USERS.viewer,
+      imageId: 106,
+      host: 'civitai.com',
+    });
+    expect(res.statusCode).toBe(500);
+    expect(res.flushed).toBeUndefined();
+    expect(body).toEqual({ error: 'Page data unavailable' });
+    expectPrivateNoStore(res);
   });
 });

@@ -326,7 +326,7 @@ describe('the on-disk ledger — a file that stops being COLLECTED', () => {
   });
 
   it('does not demand a QUARANTINED file from the blocking run, and still names any other', () => {
-    // The quarantined file is run by the `component-quarantine` job, so its absence from this
+    // The quarantined file is run by the separate quarantine step, so its absence from this
     // report is expected; one of its neighbours missing is not. 1502 executed clears the floor,
     // so the on-disk check is what decides both outcomes.
     const q = mkdtempSync(join(tmpdir(), 'component-ondisk-quarantine-'));

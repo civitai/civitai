@@ -80,7 +80,6 @@ const LOKI_ONLY: Record<string, string> = {
   'db-logs': 'Slow-query reports from the Prisma client. Latent — it has never had a dataset.',
   'eventloop-longtask':
     'Event-loop long tasks. The aggregate lives in metrics and the per-event payload in the log store; both are what every existing dashboard and alert already read.',
-  moderation: 'Mod-activity tracking failures; a non-fatal catch path.',
   'moderator-app':
     'Moderator-app request failures; the caller rethrows, so the throw is the signal.',
   settings:

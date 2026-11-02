@@ -82,7 +82,7 @@ export type CrucibleEntryGridProps = {
    * viewer instead of the image detail.
    */
   status: CrucibleStatus;
-  /** Moderators only, while the crucible runs. */
+  /** Moderators and the crucible's owner, while it runs. */
   onRemoveEntry?: (entry: CrucibleEntryData) => void;
   /** The viewer taking back one of their own entries, while the crucible runs. */
   onWithdrawEntry?: (entry: CrucibleEntryData) => void;

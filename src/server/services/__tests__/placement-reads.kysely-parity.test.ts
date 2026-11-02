@@ -17,27 +17,27 @@ import {
 } from '@civitai/db-queries/placement';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
+import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
 
 /**
- * Parity gate for the placement/sticker read family behind `kysely-placement-reads`.
- *
- * Each Prisma read below is copied VERBATIM from the service it came from, and runs against the
- * same rows in the same database as its Kysely port. Where the service maps the row before using
- * it, both sides are compared after the SAME mapping, written once here, so what is pinned is the
- * value each consumer reads: counts as numbers, timestamps as UTC Dates, enums and JSON as decoded.
- * Which client each call site passes, and that the flag routes between them, is pinned in CI by
+ * The Kysely placement/sticker reads that replaced the Prisma ones behind the retired
+ * `kysely-placement-reads` flag. Each must return, `toStrictEqual`, the value the Prisma read
+ * returned for the same rows, after the SAME mapping the service applies: counts as numbers,
+ * timestamps as UTC Dates, enums and JSON as decoded. Which client each call site passes is pinned by
  * the placement-reads / sticker-placement-reads / free-placement-reads `.kysely-flag` tests.
  *
- * Opt-in via `KYSELY_PARITY_DATABASE_URL`, which must point at a THROWAWAY database: the suite
- * drops and recreates the `placement_parity` schema. It deliberately does NOT fall back to
- * `DATABASE_URL`.
+ * Those values are fixtures/placement-reads-golden.json, printed by the Prisma reads (copied
+ * verbatim from the services) against these same fixture rows in CI, before they were deleted. The
+ * counts, scores and badge counts are small enough to be pinned inline. A change to the fixture rows
+ * needs the golden re-derived by hand.
  *
- *   docker run -d --rm --name pg-parity -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=parity \
- *     -p 54329:5432 postgres:17
- *   KYSELY_PARITY_DATABASE_URL=postgresql://postgres:postgres@localhost:54329/parity \
- *     pnpm vitest run --project unit src/server/services/__tests__/placement-reads.kysely-parity.test.ts
+ * Runs in CI: the `unit` job points KYSELY_HOT_READS_2_PARITY_DATABASE_URL at its throwaway Postgres
+ * service, and the last test below fails if that wiring is lost. Locally, KYSELY_PARITY_DATABASE_URL
+ * works too, and must point at a THROWAWAY database: the suite drops and recreates the
+ * `placement_parity` schema. It deliberately does NOT fall back to `DATABASE_URL`.
  */
-const parityUrl = process.env.KYSELY_PARITY_DATABASE_URL;
+const parityUrl =
+  process.env.KYSELY_HOT_READS_2_PARITY_DATABASE_URL ?? process.env.KYSELY_PARITY_DATABASE_URL;
 const SCHEMA = 'placement_parity';
 
 const schemaStatements = loadParitySchema(
@@ -76,6 +76,10 @@ const TARGET = 701;
 const OTHER_TARGET = 702;
 const MISSING = 999;
 const DAY = new Date(Date.UTC(2026, 9, 23));
+
+const golden = readTaggedGolden(
+  resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/placement-reads-golden.json')
+);
 
 describe.skipIf(!parityUrl)('placement reads: Kysely returns exactly what Prisma returned', () => {
   const prisma = new PrismaClient({ datasourceUrl: parityUrl && withSchema(parityUrl) });
@@ -169,86 +173,38 @@ describe.skipIf(!parityUrl)('placement reads: Kysely returns exactly what Prisma
   });
 
   describe('target lookups (placement-space.service resolve*Target)', () => {
-    const viaPrismaImage = (imageId: number) =>
-      prisma.image.findUnique({
-        where: { id: imageId },
-        select: {
-          id: true,
-          userId: true,
-          postId: true,
-          type: true,
-          user: { select: { username: true } },
-        },
-      });
-
     it.each([
       ['with a post and a named owner', IMAGE],
       ['with no post and a nameless owner', IMAGE_NAMELESS_NO_POST],
-    ])('an image %s maps to the same owner, post, media type and username', async (_, id) => {
-      const [k, p] = await Promise.all([getImagePlacementTarget(kysely, id), viaPrismaImage(id)]);
-      expect(p).not.toBeNull(); // positive control
+    ])('an image %s maps to the captured owner, post, media type and username', async (_, id) => {
+      const k = await getImagePlacementTarget(kysely, id);
       expect({
         ownerId: k!.userId,
         postId: k!.postId,
         type: k!.type,
         ownerUsername: k!.username ?? null,
-      }).toStrictEqual({
-        ownerId: p!.userId,
-        postId: p!.postId,
-        type: p!.type,
-        ownerUsername: p!.user?.username ?? null,
-      });
+      }).toStrictEqual(golden.take(`image:${id}`));
     });
 
-    it('a missing image is absent on both', async () => {
+    it('a missing image is absent', async () => {
       expect(await getImagePlacementTarget(kysely, MISSING)).toBeUndefined();
-      expect(await viaPrismaImage(MISSING)).toBeNull();
     });
 
-    it('a model maps to the same owner and username, and a missing one is absent on both', async () => {
-      const viaPrisma = (modelId: number) =>
-        prisma.model.findUnique({
-          where: { id: modelId },
-          select: { userId: true, user: { select: { username: true } } },
-        });
-      const [k, p] = await Promise.all([getModelPlacementTarget(kysely, MODEL), viaPrisma(MODEL)]);
-      expect(p).not.toBeNull();
-      expect({ ownerId: k!.userId, ownerUsername: k!.username ?? null }).toStrictEqual({
-        ownerId: p!.userId,
-        ownerUsername: p!.user?.username ?? null,
-      });
+    it('a model maps to the captured owner and username, and a missing one is absent', async () => {
+      const k = await getModelPlacementTarget(kysely, MODEL);
+      expect({ ownerId: k!.userId, ownerUsername: k!.username ?? null }).toStrictEqual(
+        golden.take(`model:${MODEL}`)
+      );
       expect(await getModelPlacementTarget(kysely, MISSING)).toBeUndefined();
-      expect(await viaPrisma(MISSING)).toBeNull();
     });
-
-    const viaPrismaChapter = (postId: number) =>
-      prisma.storylineChapter.findUnique({
-        where: { postId },
-        select: {
-          removedAt: true,
-          storyline: {
-            select: {
-              id: true,
-              userId: true,
-              status: true,
-              tosViolation: true,
-              user: { select: { username: true } },
-            },
-          },
-        },
-      });
 
     it.each([
       ['open', CHAPTER_POST_OPEN],
       ['removed (a UTC timestamp)', CHAPTER_POST_REMOVED],
       ['on a completed storyline with a nameless creator', CHAPTER_POST_DONE],
       ['on a taken-down storyline', CHAPTER_POST_TAKEN_DOWN],
-    ])('a chapter %s reads the same storyline facts', async (_, postId) => {
-      const [k, p] = await Promise.all([
-        getChapterPlacementTarget(kysely, postId),
-        viaPrismaChapter(postId),
-      ]);
-      expect(p).not.toBeNull();
+    ])('a chapter %s reads the captured storyline facts', async (_, postId) => {
+      const k = await getChapterPlacementTarget(kysely, postId);
       expect({
         removedAt: k!.removedAt,
         storyline: {
@@ -258,7 +214,7 @@ describe.skipIf(!parityUrl)('placement reads: Kysely returns exactly what Prisma
           tosViolation: k!.storylineTosViolation,
           user: { username: k!.username },
         },
-      }).toStrictEqual(p);
+      }).toStrictEqual(golden.take(`chapter:${postId}`));
     });
 
     it('a removed chapter carries its removedAt as the same UTC instant', async () => {
@@ -266,18 +222,12 @@ describe.skipIf(!parityUrl)('placement reads: Kysely returns exactly what Prisma
       expect(k!.removedAt).toEqual(new Date('2026-10-20T13:14:15.678Z'));
     });
 
-    it('a post that is not a chapter is absent on both', async () => {
+    it('a post that is not a chapter is absent', async () => {
       expect(await getChapterPlacementTarget(kysely, MISSING)).toBeUndefined();
-      expect(await viaPrismaChapter(MISSING)).toBeNull();
     });
   });
 
   describe('listPlacementSpacesFor (resolvePlacementSpaceFor space rows)', () => {
-    const viaPrisma = (surface: string, levels: { entityType: string; entityId: number }[]) =>
-      prisma.placementSpace.findMany({
-        where: { surface, OR: levels },
-        select: { entityType: true, mode: true, price: true, freeSlots: true, settings: true },
-      });
     const sorted = byKey((row: { entityType: string }) => row.entityType);
 
     it.each([
@@ -299,82 +249,60 @@ describe.skipIf(!parityUrl)('placement reads: Kysely returns exactly what Prisma
       ],
       ['levels with no row', 'sticker', [{ entityType: 'user', entityId: STRANGER }], 0],
     ])('%s', async (_, surface, levels, expected) => {
-      const [k, p] = await Promise.all([
-        listPlacementSpacesFor(kysely, { surface, levels }),
-        viaPrisma(surface, levels),
-      ]);
-      expect(p).toHaveLength(expected);
-      expect(sorted(k)).toStrictEqual(sorted(p));
+      const k = await listPlacementSpacesFor(kysely, { surface, levels });
+      expect(k).toHaveLength(expected);
+      expect(sorted(k)).toStrictEqual(golden.take(`spaces:${_}`));
     });
   });
 
   describe('the counts', () => {
-    // countPlacements is handed the SAME where object as Prisma, as the services do (one builder
-    // per predicate), so what is compared is the translation, on real rows.
-    const both = (where: Parameters<typeof countPlacements>[1]) =>
-      Promise.all([
-        countPlacements(kysely, where),
-        prisma.placement.count({ where: where as never }),
-      ]);
+    // countPlacements is handed the Prisma-style where object the services build (one builder per
+    // predicate, shared with the claim's in-lock Prisma counts), so what is pinned is the
+    // translation, on real rows.
+    const count = (where: Parameters<typeof countPlacements>[1]) => countPlacements(kysely, where);
 
-    it('the reserved-slot predicate counts the same, as a number', async () => {
-      const [k, p] = await both({
+    it('the reserved-slot predicate counts, as a number', async () => {
+      const k = await count({
         surface: 'sticker',
         targetType: 'image',
         targetId: TARGET,
         free: true,
         status: { in: ['pending', 'approved'] },
       });
-      expect(p).toBe(3); // rows 2, 3, 6: pending and approved free rows on TARGET, not 4 (declined)
-      expect(k).toBe(p);
+      expect(k).toBe(3); // rows 2, 3, 6: pending and approved free rows on TARGET, not 4 (declined)
     });
 
-    it('the daily-allowance predicate counts the same on both sides of the UTC midnight', async () => {
+    it('the daily-allowance predicate counts on both sides of the UTC midnight', async () => {
       const counts: number[] = [];
       for (const [placerId, since] of [
         [PLACER, DAY],
         [PLACER, new Date(DAY.getTime() - 1)],
         [STRANGER, DAY],
       ] as const) {
-        const [k, p] = await both({ placerId, free: true, createdAt: { gte: since } });
-        expect(k).toBe(p);
-        counts.push(k);
+        counts.push(await count({ placerId, free: true, createdAt: { gte: since } }));
       }
       // Positive control that the boundary is seen: 23:59:59.999 is in the second window only, and
       // the 00:00:00.000 row is inside the third (gte).
       expect(counts).toEqual([1, 2, 1]);
     });
 
-    it('the never-twice-here predicate counts the same, every status', async () => {
-      const [k, p] = await both({
+    it('the never-twice-here predicate counts every status', async () => {
+      const k = await count({
         placerId: PLACER,
         free: true,
         surface: 'sticker',
         targetType: 'image',
         targetId: TARGET,
       });
-      expect(p).toBe(3); // rows 2, 4, 6
-      expect(k).toBe(p);
+      expect(k).toBe(3); // rows 2, 4, 6
     });
 
-    it('an empty `in` counts 0 on both', async () => {
-      const [k, p] = await both({ placerId: PLACER, status: { in: [] } });
-      expect(p).toBe(0);
-      expect(k).toBe(p);
+    it('an empty `in` counts 0', async () => {
+      expect(await count({ placerId: PLACER, status: { in: [] } })).toBe(0);
     });
-    it('countPendingPlacementsBySurface matches the pending-badge groupBy', async () => {
-      const [k, p] = await Promise.all([
-        countPendingPlacementsBySurface(kysely, OWNER),
-        prisma.placement.groupBy({
-          by: ['surface'],
-          where: { ownerId: OWNER, status: 'pending' },
-          _count: { _all: true },
-        }),
-      ]);
+    it('countPendingPlacementsBySurface counts the pending badges per surface', async () => {
+      const k = await countPendingPlacementsBySurface(kysely, OWNER);
       const sorted = byKey((row: { surface: string }) => row.surface);
-      expect(sorted(k)).toStrictEqual(
-        sorted(p.map((row) => ({ surface: row.surface, count: row._count._all })))
-      );
       expect(sorted(k)).toStrictEqual([
         { surface: 'remixGallery', count: 1 },
         { surface: 'sticker', count: 2 },
@@ -383,180 +311,80 @@ describe.skipIf(!parityUrl)('placement reads: Kysely returns exactly what Prisma
   });
 
   describe('getUserPlacementScore (placementPriceRange user score)', () => {
-    const viaPrisma = (userId: number) =>
-      prisma.$queryRawUnsafe<{ score: number | null }[]>(
-        `SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score FROM ${t(
-          'User'
-        )} WHERE id = $1`,
-        userId
-      );
-
     it.each([
       ['a fractional total, floored', ALICE, 26000],
       ['a negative fractional total, floored down', NAMELESS, -4],
       ['no score', PLACER, null],
       ['a NULL meta', OWNER, null],
     ])('%s', async (_, userId, expected) => {
-      const [k, p] = await Promise.all([getUserPlacementScore(kysely, userId), viaPrisma(userId)]);
-      expect(k).toStrictEqual([{ score: expected }]);
-      expect(k).toStrictEqual(p);
+      expect(await getUserPlacementScore(kysely, userId)).toStrictEqual([{ score: expected }]);
     });
 
-    it('an unknown user is no row on both', async () => {
+    it('an unknown user is no row', async () => {
       expect(await getUserPlacementScore(kysely, MISSING)).toStrictEqual([]);
-      expect(await viaPrisma(MISSING)).toStrictEqual([]);
     });
 
-    it('a total that is not a number raises on both', async () => {
+    it('a total that is not a number raises, as the Prisma raw query did', async () => {
       await expect(getUserPlacementScore(kysely, STRANGER)).rejects.toThrow();
-      await expect(viaPrisma(STRANGER)).rejects.toThrow();
     });
   });
 
   describe('listUserSubscriptionRows (getCapTier subscriptions)', () => {
-    // userSubscriptionSelect and activeSubscriptionStatuses, verbatim from subscriptions.service.ts.
-    const viaPrisma = (userId: number) =>
-      prisma.customerSubscription.findMany({
-        where: {
-          userId,
-          status: { notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'] },
-        },
-        select: {
-          id: true,
-          status: true,
-          cancelAtPeriodEnd: true,
-          cancelAt: true,
-          canceledAt: true,
-          currentPeriodStart: true,
-          currentPeriodEnd: true,
-          createdAt: true,
-          endedAt: true,
-          metadata: true,
-          buzzType: true,
-          product: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              metadata: true,
-              provider: true,
-              active: true,
-            },
-          },
-          price: {
-            select: {
-              id: true,
-              unitAmount: true,
-              interval: true,
-              intervalCount: true,
-              currency: true,
-              active: true,
-            },
-          },
-        },
-      });
     const sorted = byKey((row: { id: string }) => row.id);
 
-    it('returns the same nested rows, dates, JSON, enum and nulls included, and drops the same statuses', async () => {
-      const [k, p] = await Promise.all([
-        listUserSubscriptionRows(kysely, {
-          userId: ALICE,
-          excludedStatuses: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'],
-        }),
-        viaPrisma(ALICE),
-      ]);
-      expect(sorted(p).map((row) => row.id)).toEqual(['sub-active', 'sub-incomplete']);
-      expect(sorted(k)).toStrictEqual(sorted(p));
+    // activeSubscriptionStatuses.notIn, as getCapTier passes it.
+    const excludedStatuses = ['canceled', 'incomplete_expired', 'past_due', 'unpaid'];
+
+    it('returns the captured nested rows, dates, JSON, enum and nulls included, and drops the same statuses', async () => {
+      const k = await listUserSubscriptionRows(kysely, { userId: ALICE, excludedStatuses });
+      expect(sorted(k).map((row) => row.id)).toEqual(['sub-active', 'sub-incomplete']);
+      expect(sorted(k)).toStrictEqual(golden.take(`subscriptions:${ALICE}`));
     });
 
     it('reads no other user rows', async () => {
-      const [k, p] = await Promise.all([
-        listUserSubscriptionRows(kysely, {
-          userId: PLACER,
-          excludedStatuses: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'],
-        }),
-        viaPrisma(PLACER),
-      ]);
+      const k = await listUserSubscriptionRows(kysely, { userId: PLACER, excludedStatuses });
       expect(k.map((row) => row.id)).toEqual(['sub-other-user']);
-      expect(k).toStrictEqual(p);
+      expect(k).toStrictEqual(golden.take(`subscriptions:${PLACER}`));
     });
   });
 
   describe('sticker listing reads (sticker-placement.service)', () => {
-    // readStickerPlacementRows, verbatim.
-    const viaPrismaListing = (imageIds: number[], viewerId?: number) =>
-      prisma.placement.findMany({
-        where: {
-          surface: 'sticker',
-          targetType: 'image',
-          targetId: { in: imageIds },
-          OR: [
-            { status: 'approved' },
-            ...(viewerId
-              ? [
-                  { status: 'pending' as const, placerId: viewerId },
-                  { status: 'pending' as const, ownerId: viewerId },
-                ]
-              : []),
-          ],
-        },
-        select: {
-          id: true,
-          targetId: true,
-          placerId: true,
-          ownerId: true,
-          status: true,
-          amount: true,
-          free: true,
-          data: true,
-          createdAt: true,
-        },
-        orderBy: { createdAt: 'asc' },
-      });
-
     it.each([
       ['the placer', PLACER, [5, 1, 6, 2]],
       ['the owner', OWNER, [5, 1, 6, 8, 2, 3]],
       ['a stranger to the pending rows', ALICE, [5, 1, 6]],
       ['signed out', undefined, [5, 1, 6]],
-    ])('lists the same rows in the same order for %s', async (_, viewerId, ids) => {
-      const input = {
+    ])('lists the captured rows in the captured order for %s', async (_, viewerId, ids) => {
+      const k = await listStickerPlacementRows(kysely, {
         surface: 'sticker',
         targetType: 'image',
         targetIds: [TARGET, OTHER_TARGET],
         viewerId,
-      };
-      const [k, p] = await Promise.all([
-        listStickerPlacementRows(kysely, input),
-        viaPrismaListing([TARGET, OTHER_TARGET], viewerId),
-      ]);
-      expect(p.map((row) => row.id)).toEqual(ids);
+      });
+      expect(k.map((row) => row.id)).toEqual(ids);
       // Not sorted: the ORDER BY is part of the contract.
-      expect(k).toStrictEqual(p);
+      expect(k).toStrictEqual(golden.take(`stickers:${_}`));
     });
 
     it('the approved rows for the counts match, a JSON null data included', async () => {
-      const viaPrisma = () =>
-        prisma.placement.findMany({
-          where: {
-            surface: 'sticker',
-            targetType: 'image',
-            targetId: { in: [TARGET, OTHER_TARGET] },
-            status: 'approved',
-          },
-          select: { id: true, targetId: true, status: true, data: true },
-        });
-      const [k, p] = await Promise.all([
-        listApprovedPlacementRows(kysely, {
-          surface: 'sticker',
-          targetType: 'image',
-          targetIds: [TARGET, OTHER_TARGET],
-        }),
-        viaPrisma(),
-      ]);
+      const k = await listApprovedPlacementRows(kysely, {
+        surface: 'sticker',
+        targetType: 'image',
+        targetIds: [TARGET, OTHER_TARGET],
+      });
       const sorted = byKey((row: { id: number }) => row.id);
-      expect(sorted(p).map((row) => row.id)).toEqual([1, 5, 6]);
-      expect(sorted(k)).toStrictEqual(sorted(p));
+      expect(sorted(k).map((row) => row.id)).toEqual([1, 5, 6]);
+      expect(sorted(k)).toStrictEqual(golden.take('approved'));
     });
   });
+
+  // Last in the suite: every captured case is still asserted above, so none can be dropped quietly.
+  it('every golden case is asserted', () => {
+    expect(golden.unused()).toEqual([]);
+  });
+});
+
+// GitHub Actions only: the `unit` job there is the one wired with the database.
+it.runIf(process.env.GITHUB_ACTIONS === 'true')('runs in CI: the parity database is wired', () => {
+  expect(parityUrl).toBeTruthy();
 });

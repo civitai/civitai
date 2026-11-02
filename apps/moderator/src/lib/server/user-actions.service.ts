@@ -21,8 +21,9 @@ import {
   MOD_GRANT_SOURCE_PREFIX,
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
+import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { getBuzz } from './buzz';
-import { bustUserCosmeticCaches } from './cache';
+import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
 import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import { getModeratorDb } from './moderator-db';
@@ -48,7 +49,11 @@ import type { HeldSummary } from './removal-hold';
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 
 export type ActionResult =
-  | { ok: true; warning?: string }
+  | {
+      ok: true;
+      warning?: string;
+      /** A minor revert undid the automation; the model stays minor. */ keptMinor?: true;
+    }
   | { ok: false; error: string; retryAfterSeconds?: number };
 
 /** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach
@@ -235,6 +240,7 @@ export type ModEndpoint =
   | 'bounty-entry-file/clear-check'
   | 'bounty-entry-file/reblock-check'
   | 'bounty-poi/resolve-appeal'
+  | 'bounty-unpaid-award/resolve'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
@@ -259,6 +265,7 @@ export type ModEndpoint =
   | 'model/unpublish'
   | 'poi-flag/confirm'
   | 'poi-flag/dismiss'
+  | 'poi-flag/flag-match'
   | 'poi-flag/revert'
   | 'restriction/resolve'
   | 'review/delete'
@@ -468,8 +475,13 @@ export async function bulkCommentAction(input: {
       ? nested('comment', 'retainedHidden') + nested('commentV2', 'retainedHidden')
       : 0;
 
+  const failed =
+    input.action === 'restoreFromTos'
+      ? nested('comment', 'failed') + nested('commentV2', 'failed')
+      : 0;
+
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
-  if (affected === 0 && retainedHidden === 0)
+  if (affected === 0 && retainedHidden === 0 && failed === 0)
     return {
       ok: false,
       error:
@@ -486,6 +498,11 @@ export async function bulkCommentAction(input: {
       input.userId,
       input.moderatorId
     );
+  if (failed)
+    return {
+      ok: false,
+      error: `${failed} could not be restored and stay hidden. Restored ${affected}, kept hidden ${retainedHidden}.`,
+    };
   // Both endpoints count rows they actually wrote, so a short count is real.
   return { ok: true, affected, retainedHidden };
 }
@@ -617,8 +634,29 @@ export async function setMuted(input: {
 
   if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
 
-  // Without this the mute does not take effect until the user's session refreshes.
-  await invalidateUserSessions(input.userId);
+  // The main app's `afterAccountStandingChanged`, which this write cannot reach. The revoke comes
+  // last because the orchestrator re-validates against the session's standing.
+  const bustStanding = () =>
+    bustKeyBestEffort(
+      `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${input.userId}` as RedisKeyTemplateCache,
+      {
+        logName: 'account-standing.cache-bust-failed',
+        message: 'Could not drop the cached account standing after a mute',
+        details: { userId: input.userId },
+      }
+    );
+  await bustStanding();
+  try {
+    await invalidateUserSessions(input.userId);
+  } finally {
+    // Imported here: the orchestrator client does not load under the unit suites that import this
+    // file for its other actions.
+    const { revokeOrchestratorUserTokens } = await import('./orchestrator');
+    await revokeOrchestratorUserTokens(input.userId);
+    setTimeout(() => {
+      void bustStanding().finally(() => revokeOrchestratorUserTokens(input.userId));
+    }, ACCOUNT_STANDING_REBUST_MS).unref?.();
+  }
   await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);
   await recordUserActivity('Muted', input.userId, input.moderatorId);
   return { ok: true };

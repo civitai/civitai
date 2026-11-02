@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -111,6 +112,7 @@ export async function createModelHoldDb() {
   await db.exec(BASE_SCHEMA);
   await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
+  await db.exec(heldCopiesSchemaSql());
   return db;
 }
 
@@ -123,7 +125,7 @@ export async function seedModelHoldDb(db: PGlite) {
     -- The hold tables refuse TRUNCATE, so the reset runs with triggers off.
     SET session_replication_role = replica;
     TRUNCATE "CsamReport", "Image", "Model", "EntityAccess", "PaidAccess", "EvidenceHold",
-      "EvidenceHoldImage", "EvidenceHoldPost", "Thread", "ModelOwnership" CASCADE;
+      "EvidenceHoldImage", "EvidenceHoldPost", "Thread", "ModelOwnership", "HeldResourceReview" CASCADE;
     SET session_replication_role = DEFAULT;
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});

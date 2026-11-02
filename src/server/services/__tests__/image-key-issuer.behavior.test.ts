@@ -1,6 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
+import type { Mock } from 'vitest';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as prom from '~/server/prom/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -39,9 +41,13 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
 const {
+  assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  assertShopArtworkKeysIssued,
+  keyIssueRecords,
   keyIssuers,
   recordUploadKeyOwner,
+  UNFINISHED_UPLOAD_MESSAGE,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
 } = await import('~/server/services/image-url-ownership');
 
@@ -53,15 +59,26 @@ const AFTER = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() + 60_000);
 
 const redis = new Map<string, string>();
 
+// The setup file stubs every registered metric; this is the stub the module built for its counter.
+const counterAt = vi
+  .mocked(prom.registerCounterWithLabels)
+  .mock.calls.findIndex(([opts]) => opts.name === 'upload_key_owner_total');
+const ownerCounter = vi.mocked(prom.registerCounterWithLabels).mock.results[counterAt].value as {
+  inc: Mock;
+};
+const outcomeCount = (name: string) =>
+  ownerCounter.inc.mock.calls.filter(([labels]) => labels.outcome === name).length;
+
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "Image" ("id" serial PRIMARY KEY, "userId" integer NOT NULL, "url" text NOT NULL);
+    CREATE TABLE "ShopArtworkKeyOwner" (key text PRIMARY KEY, "userId" integer NOT NULL);
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image"`);
+  await holder.db.exec(`TRUNCATE "Image", "ShopArtworkKeyOwner"`);
   holder.issued = [];
   holder.logDown = false;
   holder.logHangs = false;
@@ -85,6 +102,13 @@ const outcome = (url: string, now = AFTER) =>
   );
 
 describe('assertClientKeysIssuedToCaller', () => {
+  it('accepts a key with no record and no row through 2026-11-18 15:59Z, and refuses it from 16:00Z', async () => {
+    expect(await outcome(KEY, new Date('2026-11-18T15:59:59.999Z'))).toBe('accepted');
+    const refused = outcomeCount('unrecorded_refused');
+    expect(await outcome(KEY, new Date('2026-11-18T16:00:00Z'))).toBe('refused');
+    expect(outcomeCount('unrecorded_refused')).toBe(refused + 1);
+  });
+
   it('accepts a key issued to the caller', async () => {
     await recordUploadKeyOwner(KEY, CALLER);
     expect(await outcome(KEY)).toBe('accepted');
@@ -180,31 +204,99 @@ describe('assertClientKeysIssuedToCaller', () => {
     expect(await outcome(KEY, BEFORE)).toBe('accepted');
   });
 
-  it('refuses a key with no record when the upload request log cannot be read', async () => {
+  it('accepts a key with no record before the cutoff when the upload request log cannot be read, and says so', async () => {
     holder.logDown = true;
-    expect(await outcome(KEY, BEFORE)).toBe('refused');
+    const before = outcomeCount('request_log_unavailable_accepted');
+    loggingMock.logToAxiom.mockClear();
+
+    expect(await outcome(KEY, BEFORE)).toBe('accepted');
+
+    expect(outcomeCount('request_log_unavailable_accepted')).toBe(before + 1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'upload-key-unrecorded',
+        keys: KEY,
+        reason: 'request_log_unavailable',
+      })
+    );
+  });
+
+  it('refuses a key before the cutoff when neither the issue record nor the request log can be read', async () => {
+    holder.logDown = true;
     redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
+    const accepted = outcomeCount('request_log_unavailable_accepted');
+    const refused = outcomeCount('request_log_unavailable');
+
     expect(await outcome(KEY, BEFORE)).toBe('refused');
+
+    expect(outcomeCount('request_log_unavailable_accepted')).toBe(accepted);
+    expect(outcomeCount('request_log_unavailable')).toBe(refused + 1);
+  });
+
+  it('refuses a key recorded to another user while the request log is down, beside an unrecorded one', async () => {
+    holder.logDown = true;
+    const OTHER_KEY = 'ff12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+    await recordUploadKeyOwner(OTHER_KEY, OTHER);
+    const refusal = await assertClientKeysIssuedToCaller({
+      urls: [KEY, OTHER_KEY],
+      userId: CALLER,
+      now: BEFORE,
+    }).then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(refusal).toBeInstanceOf(TRPCError);
+  });
+
+  it('refuses a key with no record after the cutoff when the upload request log cannot be read', async () => {
+    holder.logDown = true;
+    const before = outcomeCount('request_log_unavailable');
+    expect(await outcome(KEY, AFTER)).toBe('refused');
+    expect(outcomeCount('request_log_unavailable')).toBe(before + 1);
+    redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
+    expect(await outcome(KEY, AFTER)).toBe('refused');
+  });
+
+  it('counts and logs an unrecorded key as such while the upload request log answers', async () => {
+    const counts = () =>
+      [
+        'unrecorded_accepted',
+        'unrecorded_refused',
+        'request_log_unavailable_accepted',
+        'request_log_unavailable',
+      ].map(outcomeCount);
+    const [accepted, refused, logAccepted, logRefused] = counts();
+    loggingMock.logToAxiom.mockClear();
+
+    expect(await outcome(KEY, BEFORE)).toBe('accepted');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
+      expect.not.objectContaining({ reason: expect.anything() })
+    );
+    expect(await outcome(KEY, AFTER)).toBe('refused');
+
+    expect(counts()).toEqual([accepted + 1, refused + 1, logAccepted, logRefused]);
   });
 
   it('logs why the upload request log could not be read', async () => {
     holder.logDown = true;
     loggingMock.logToAxiom.mockClear();
 
-    await outcome(KEY, BEFORE);
+    await outcome(KEY, AFTER);
 
     expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ type: 'error', name: 'upload-key-owner', error: 'unavailable' })
     );
   });
 
-  it('refuses a key with no record when the upload request log does not answer in 2s', async () => {
+  it('treats an upload request log that does not answer in 2s as unreadable', async () => {
     holder.logHangs = true;
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      const result = outcome(KEY, BEFORE);
+      const before = outcome(KEY, BEFORE);
+      const after = outcome(KEY, AFTER);
       await vi.advanceTimersByTimeAsync(2_000);
-      expect(await result).toBe('refused');
+      expect(await before).toBe('accepted');
+      expect(await after).toBe('refused');
     } finally {
       vi.useRealTimers();
     }
@@ -281,6 +373,57 @@ describe('assertClientKeysIssuedToCaller', () => {
   });
 });
 
+describe('an image url that names no stored object', () => {
+  // The browser's url for a file whose upload has not finished; its id is not an upload key.
+  const BLOB = `blob:https://civitai.red/${KEY}`;
+  const message = (check: Promise<unknown>) =>
+    check.then(
+      () => 'accepted',
+      (e: Error) => e.message
+    );
+
+  beforeEach(() => recordUploadKeyOwner(KEY, CALLER));
+
+  it('is refused by each client url check with a message to add the image again', async () => {
+    expect(await message(assertClientImageUrlsUsable({ urls: [BLOB], userId: CALLER }))).toBe(
+      UNFINISHED_UPLOAD_MESSAGE
+    );
+    expect(
+      await message(assertClientKeysIssuedToCaller({ urls: [BLOB], userId: CALLER, now: BEFORE }))
+    ).toBe(UNFINISHED_UPLOAD_MESSAGE);
+    expect(await message(assertShopArtworkKeysIssued({ urls: [BLOB], userId: CALLER }))).toBe(
+      UNFINISHED_UPLOAD_MESSAGE
+    );
+  });
+
+  it('is refused in any scheme but http(s), however it is spelled', async () => {
+    for (const url of [
+      `data:image/png;base64,${KEY}`,
+      ` BLOB:${KEY}`,
+      `bl\tob:${KEY}`,
+      `${String.fromCharCode(1)}blob:${KEY}`,
+    ])
+      expect(await message(assertClientImageUrlsUsable({ urls: [url], userId: CALLER })), url).toBe(
+        UNFINISHED_UPLOAD_MESSAGE
+      );
+  });
+
+  it('holds no upload key', async () => {
+    expect(await keyIssuers({ urls: [BLOB], userId: OTHER })).toMatchObject({
+      issuedToOthers: [],
+      unrecorded: [],
+    });
+    expect((await keyIssuers({ urls: [KEY], userId: OTHER })).issuedToOthers).toEqual([KEY]);
+  });
+
+  it('leaves the same key over https to the key checks', async () => {
+    const url = `https://image.civitai.com/x/${KEY}/original=true/a.jpeg`;
+    const usable = assertClientImageUrlsUsable({ urls: [url], userId: CALLER, shopArtwork: false });
+    expect(await message(usable)).toBe('accepted');
+    expect(await outcome(url)).toBe('accepted');
+  });
+});
+
 describe('keyIssuers', () => {
   it('reports keys issued to another user and keys with no record, without refusing', async () => {
     const UNRECORDED = 'cd34ab12-ef56-4a7b-8c9d-0e1f2a3b4c5e';
@@ -293,6 +436,38 @@ describe('keyIssuers', () => {
       recordReadFailed: false,
       requestLogReadFailed: false,
     });
+  });
+});
+
+describe('keyIssueRecords', () => {
+  it('names the owner from the record, or the upload request log', async () => {
+    const LOGGED = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5e';
+    await recordUploadKeyOwner(KEY, OTHER);
+    // The log disagrees about KEY: the record wins.
+    holder.issued = [
+      { key: LOGGED, userId: CALLER },
+      { key: KEY, userId: CALLER },
+    ];
+    expect(await keyIssueRecords([KEY, LOGGED])).toEqual({
+      owners: new Map([
+        [KEY, OTHER],
+        [LOGGED, CALLER],
+      ]),
+      failed: false,
+    });
+  });
+
+  it('takes no row as a record', async () => {
+    await holder.db.query(`INSERT INTO "Image" ("userId", url) VALUES ($1, $2)`, [CALLER, KEY]);
+    expect(await keyIssueRecords([KEY])).toEqual({ owners: new Map(), failed: false });
+  });
+
+  it('says when either read failed', async () => {
+    holder.logDown = true;
+    expect((await keyIssueRecords([KEY])).failed).toBe(true);
+    holder.logDown = false;
+    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('down'));
+    expect((await keyIssueRecords([KEY])).failed).toBe(true);
   });
 });
 

@@ -224,6 +224,12 @@ their named exports (the `lazy()` overload accepts `() => Promise<TRouter>`). **
 clean**: `lazy()` preserves the `AppRouter` type inference via `DecorateCreateRouterOptions`'
 `Lazy<Router<…>>` branch, so the client types don't collapse.
 
+**Since then:** each entry is a bare `() => import('<path>').then((m) => m.<router>)` loader in a
+`routers` map that `lazyRouters()` wraps in `lazy()`, and `AppRouter` is **declared** from that map
+rather than inferred from `router({...})`: inferring it built every router's types at once, so any
+`trpc.x` call or `RouterOutput` alias cost the editor all of them. Adding a router is one line in
+`routers`.
+
 ### Cycle audit (the documented hazard)
 Lazy loading reorders module evaluation and can surface latent circular deps as runtime
 `TypeError: Cannot read properties of undefined`. The former (commented-out, since removed)

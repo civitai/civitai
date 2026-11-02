@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
@@ -40,6 +41,36 @@ const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.ho
   docStore: {
     wipeAccount: vi.fn(async (_userId: number) => ({ namespaces: [], failures: [] })),
   },
+}));
+
+const { payout, searchQueue } = vi.hoisted(() => ({
+  payout: { settles: false as boolean | 'throws', claimed: [] as number[] },
+  searchQueue: vi.fn(async (_args: { indexName: string; items: unknown[] }) => undefined),
+}));
+vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  // Each writes the payout columns as the real one does, so a re-run reads the state it left.
+  settleBountyPayout: vi.fn(async (id: number) => {
+    if (payout.settles === 'throws') throw new Error('buzz down');
+    if (payout.settles)
+      await holder.db.query(
+        `UPDATE "Bounty" SET "payoutSettledAt" = "payoutRecordedAt" WHERE id = $1`,
+        [id]
+      );
+    return payout.settles;
+  }),
+  refundUnpayableBountyAward: vi.fn(async () => false),
+  claimBountyRefundForDelete: vi.fn(async (id: number) => {
+    payout.claimed.push(id);
+    await holder.db.query(
+      `UPDATE "Bounty" SET complete = true, refunded = true, "payoutRecordedAt" = now() WHERE id = $1`,
+      [id]
+    );
+    return { owed: true, firstAttempt: true };
+  }),
+}));
+vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
+  SearchIndexUpdate: { queueUpdate: searchQueue },
 }));
 
 const { bustMvCache, contentCounts } = vi.hoisted(() => ({
@@ -139,6 +170,10 @@ import {
   LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
+import {
+  deleteSettledKeptBounties,
+  retryUnsettledBountyPayouts,
+} from '~/server/services/bounty.service';
 import { bulkClearCommentTosViolation } from '~/server/services/comment.service';
 import { deleteImages } from '~/server/services/image.service';
 import { refundBidsForVersions } from '~/server/services/auction.service';
@@ -208,10 +243,25 @@ beforeAll(async () => {
       (t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`
     ).join('\n')}
     CREATE TABLE "BountyBenefactor" ("awardedToId" int REFERENCES "BountyEntry"(id) ON DELETE SET NULL);
+    ALTER TABLE "BountyBenefactor" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
     ALTER TABLE "BountyEntry" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
     ALTER TABLE "Answer" ADD COLUMN "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE;
     ALTER TABLE "ResourceReview" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE;
     ALTER TABLE "Model" ADD COLUMN "deletedAt" timestamp(3), ADD COLUMN "updatedAt" timestamp(3);
+    CREATE DOMAIN "Availability" AS text;
+    ALTER TABLE "Bounty" ADD COLUMN availability "Availability" NOT NULL DEFAULT 'Public',
+      ADD COLUMN meta jsonb, ADD COLUMN "payoutSettledAt" timestamp(3),
+      ADD COLUMN "payoutRecordedAt" timestamp(3), ADD COLUMN "payoutWinnerUserId" int,
+      ADD COLUMN complete boolean NOT NULL DEFAULT false,
+      ADD COLUMN refunded boolean NOT NULL DEFAULT false;
+    CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    ALTER TABLE "BountyBenefactor" ADD COLUMN "userId" int,
+      ADD COLUMN "unitAmount" int NOT NULL DEFAULT 0,
+      ADD COLUMN "buzzTransactionId" text[] NOT NULL DEFAULT '{}';
     ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
       ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
       ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
@@ -254,11 +304,21 @@ beforeAll(async () => {
     readFileSync(
       path.resolve(
         __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20261217120000_bounty_unpaid_award/migration.sql'
+      ),
+      'utf8'
+    )
+  );
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
         '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
       ),
       'utf8'
     )
   );
+  await holder.db.exec(heldCopiesSchemaSql());
   // Append-only, so set once: two models CLEAN was given, one by a held owner.
   await holder.db.exec(`
     INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
@@ -281,7 +341,10 @@ beforeEach(async () => {
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection", "ModelVersion",
-      ${EVIDENCE.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
+      "ModActivity", "BountyUnpaidAward",
+      "HeldResourceReview", "HeldAnswer", ${EVIDENCE.map((t) => `"${t}"`).join(
+        ', '
+      )} RESTART IDENTITY;
     ALTER SEQUENCE "Collection_id_seq" RESTART ${COLLECTION};
     ALTER SEQUENCE "Article_id_seq" RESTART ${ARTICLE};
     ALTER SEQUENCE "Model_id_seq" RESTART ${MODEL};
@@ -363,11 +426,12 @@ beforeEach(async () => {
       await holder.db.query(`DELETE FROM "Collection" WHERE "userId" = $1`, [args.where.userId])
     ).affectedRows,
   })) as never);
-  // The account's bounties, less any kept; no payout is pending here.
+  // The account's bounties, less any kept.
+  payout.settles = false;
+  payout.claimed = [];
   vi.mocked(dbMock.dbWrite.bounty.findMany).mockImplementation((async (args: {
-    where: { userId: number; payoutRecordedAt?: unknown; id?: { notIn: number[] } };
+    where: { userId: number; id?: { notIn: number[] } };
   }) => {
-    if ('payoutRecordedAt' in args.where) return [];
     const kept = args.where.id?.notIn ?? [];
     return (
       await holder.db.query(
@@ -586,6 +650,122 @@ describe('removeAllContent', () => {
     `);
     await removeAllContent({ id: CLEAN });
     expect((await remaining(BYSTANDER)).CommentV2).toBe(1);
+  });
+
+  describe('a held author’s rows under the wiped account’s own', () => {
+    const rows = async (sql: string) => (await holder.db.query(sql)).rows;
+
+    it('copies a held author’s review of its model, and not a bystander’s', async () => {
+      await holder.db.exec(`
+        INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId", details) VALUES
+          (${HELD}, ${MODEL}, ${MODEL_VERSION(MODEL)}, 'held'),
+          (${BYSTANDER}, ${MODEL}, ${MODEL_VERSION(MODEL)}, 'bystander');
+      `);
+
+      expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [], keptModelIds: [] });
+
+      expect(await rows(`SELECT id FROM "ResourceReview" WHERE "modelId" = ${MODEL}`)).toEqual([]);
+      expect(
+        await rows(`SELECT "userId", "modelId", details, "holdReasons" FROM "HeldResourceReview"`)
+      ).toEqual([{ userId: HELD, modelId: MODEL, details: 'held', holdReasons: ['report'] }]);
+    });
+
+    it('copies a held author’s answer to its question, and not a bystander’s', async () => {
+      const [{ id: question }] = (await rows(
+        `SELECT id FROM "Question" WHERE "userId" = ${CLEAN}`
+      )) as { id: number }[];
+      await holder.db.exec(`
+        INSERT INTO "Answer" ("userId", "questionId", content) VALUES
+          (${HELD}, ${question}, 'held'), (${BYSTANDER}, ${question}, 'bystander');
+      `);
+
+      await removeAllContent({ id: CLEAN });
+
+      expect(await rows(`SELECT id FROM "Answer" WHERE "questionId" = ${question}`)).toEqual([]);
+      expect(
+        await rows(`SELECT "userId", "questionId", content, "holdReasons" FROM "HeldAnswer"`)
+      ).toEqual([{ userId: HELD, questionId: question, content: 'held', holdReasons: ['report'] }]);
+    });
+
+    it('keeps, hidden, a bounty a held author entered, and deletes one only a bystander entered', async () => {
+      const [{ id: bystanders }] = (await rows(
+        `INSERT INTO "Bounty" ("userId") VALUES (${CLEAN}) RETURNING id`
+      )) as { id: number }[];
+      await holder.db.exec(`
+        INSERT INTO "BountyEntry" ("userId", "bountyId") VALUES
+          (${HELD}, ${BOUNTY}), (${BYSTANDER}, ${bystanders});
+      `);
+
+      await removeAllContent({ id: CLEAN });
+
+      expect(
+        await rows(`SELECT id, availability, meta->>'removedWithOwner' AS removed FROM "Bounty"
+          WHERE id IN (${BOUNTY}, ${bystanders})`)
+      ).toEqual([{ id: BOUNTY, availability: 'Private', removed: 'true' }]);
+      expect(await rows(`SELECT "userId" FROM "BountyEntry" WHERE "bountyId" IS NOT NULL`)).toEqual(
+        [{ userId: HELD }]
+      );
+    });
+
+    it('copies a held author’s review of one of its versions that names another model', async () => {
+      const [{ id: other }] = (await rows(
+        `SELECT id FROM "Model" WHERE "userId" = ${BYSTANDER}`
+      )) as { id: number }[];
+      await holder.db.exec(`
+        INSERT INTO "ModelVersion" (id, "modelId") VALUES (${MODEL_VERSION(MODEL)}, ${MODEL});
+        INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId", details) VALUES
+          (${HELD}, ${other}, ${MODEL_VERSION(MODEL)}, 'by version');
+      `);
+
+      await removeAllContent({ id: CLEAN });
+
+      expect(await rows(`SELECT "userId", details FROM "HeldResourceReview"`)).toEqual([
+        { userId: HELD, details: 'by version' },
+      ]);
+    });
+
+    it('drops a bounty kept for a held entry from search when a hold stops the wipe after it', async () => {
+      await holder.db.exec(
+        `INSERT INTO "BountyEntry" ("userId", "bountyId") VALUES (${HELD}, ${BOUNTY})`
+      );
+      landsBefore = 'Answer';
+      beforeEvidence = () =>
+        holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+      expect(await rows(`SELECT availability FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([
+        { availability: 'Private' },
+      ]);
+      expect(dropped().bounties).toContain(BOUNTY);
+    });
+
+    it('leaves a kept bounty whose supporters are not refunded yet', async () => {
+      await holder.db.exec(`
+        UPDATE "Bounty" SET availability = 'Private', meta = '{"removedWithOwner": true}'
+          WHERE id = ${BOUNTY};
+        INSERT INTO "BountyBenefactor" ("bountyId") VALUES (${BOUNTY});
+      `);
+      await createMarkerView();
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([{ id: BOUNTY }]);
+    });
+
+    it('deletes the kept bounty once the entrant’s hold ends, and not before', async () => {
+      await holder.db.exec(
+        `INSERT INTO "BountyEntry" ("userId", "bountyId") VALUES (${HELD}, ${BOUNTY})`
+      );
+      await removeAllContent({ id: CLEAN });
+      await createMarkerView();
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([{ id: BOUNTY }]);
+
+      await holder.db.exec(`DELETE FROM "CsamReport" WHERE "userId" = ${HELD}`);
+      expect(await deleteSettledKeptBounties()).toBe(1);
+      expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([]);
+    });
   });
 
   it('stops before the App Blocks stores when a hold lands after the deletes', async () => {
@@ -1686,5 +1866,298 @@ describe('/api/mod/delete-user-images', () => {
     const res = await call(CLEAN, { batchSize: '0' });
     expect(res.statusCode).not.toBe(200);
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+  });
+});
+
+describe('a bounty a content wipe kept for its unsettled payout', () => {
+  const bounty = async (id = BOUNTY) =>
+    (
+      await holder.db.query<{ availability: string; meta: unknown }>(
+        `SELECT availability, meta FROM "Bounty" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0];
+  const RECORD = { removedWithOwner: true, availabilityBeforeRemoval: 'Public' };
+  const settle = (complete = true) =>
+    holder.db.exec(
+      `UPDATE "Bounty" SET "payoutSettledAt" = now(), complete = ${complete} WHERE id = ${BOUNTY}`
+    );
+  const searchDeletes = () => [
+    ...indexes.bounties.queueUpdate.mock.calls.flatMap(([rows]) => rows),
+    ...searchQueue.mock.calls.flatMap(([{ items }]) => items),
+  ];
+
+  beforeEach(async () => {
+    await holder.db.exec(
+      `UPDATE "Bounty" SET "payoutRecordedAt" = now() - interval '1 hour' WHERE id = ${BOUNTY}`
+    );
+  });
+
+  it('is hidden, with where it was recorded, and taken out of search', async () => {
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
+    expect(searchDeletes()).toContainEqual({ id: BOUNTY, action: 'Delete' });
+  });
+
+  it('keeps the first record through a second wipe', async () => {
+    await removeAllContent({ id: CLEAN });
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
+  });
+
+  it.each([
+    ['after it was hidden, leaves it hidden and out of search', 'Answer', RECORD, 'Private'],
+    ['before it was hidden, leaves it as it was', 'Bounty', null, 'Public'],
+  ])('a hold landing mid-wipe %s', async (_, before, meta, availability) => {
+    landsBefore = before;
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect(await bounty()).toEqual({ availability, meta });
+    expect(searchDeletes().some((r) => (r as { id: number }).id === BOUNTY)).toBe(!!meta);
+  });
+
+  it('is deleted by the wipe when its payout settles there (control)', async () => {
+    payout.settles = true;
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bounty()).toBeUndefined();
+  });
+
+  describe('and the payout retry after it', () => {
+    beforeEach(async () => {
+      await removeAllContent({ id: CLEAN });
+      await createMarkerView();
+      vi.clearAllMocks();
+    });
+
+    it('deletes it once its payout settles, with its files, and drops it from search', async () => {
+      await holder.db.exec(`
+        TRUNCATE "File";
+        INSERT INTO "File" ("entityType", "entityId") VALUES
+          ('Bounty', ${BOUNTY}), ('BountyEntry', ${BOUNTY}), ('Bounty', ${BOUNTY + 3});
+      `);
+      await settle();
+
+      expect(await deleteSettledKeptBounties()).toBe(1);
+      expect(await bounty()).toBeUndefined();
+      expect(searchDeletes()).toEqual([{ id: BOUNTY, action: 'Delete' }]);
+      expect(
+        (await holder.db.query(`SELECT "entityType", "entityId" FROM "File" ORDER BY id`)).rows
+      ).toEqual([
+        { entityType: 'BountyEntry', entityId: BOUNTY },
+        { entityType: 'Bounty', entityId: BOUNTY + 3 },
+      ]);
+    });
+
+    it('leaves it hidden while it is open: a settled award does not settle its other supporters', async () => {
+      await settle(false);
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
+    });
+
+    it('leaves it hidden when a payout was recorded after the one that settled', async () => {
+      await settle();
+      await holder.db.exec(
+        `UPDATE "Bounty" SET "payoutRecordedAt" = now() + interval '1 minute' WHERE id = ${BOUNTY}`
+      );
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
+    });
+
+    // The retry's own settle runs here, not the mock: a refund with no supporters left to pay,
+    // reading and stamping the real row.
+    it('retries a refund recorded after the payout that settled, then deletes it', async () => {
+      await holder.db.exec(`UPDATE "Bounty" SET complete = true, refunded = true,
+        "payoutSettledAt" = now() - interval '2 hours', "payoutRecordedAt" = now() - interval '1 hour'
+        WHERE id = ${BOUNTY}`);
+      vi.mocked(dbMock.dbWrite.bounty.findUnique).mockImplementationOnce(
+        (async () =>
+          (await holder.db.query(`SELECT * FROM "Bounty" WHERE id = ${BOUNTY}`)).rows[0]) as never
+      );
+      vi.mocked(dbMock.dbWrite.bounty.updateMany).mockImplementationOnce((async (args: {
+        where: { id: number; payoutRecordedAt: Date };
+        data: { payoutSettledAt: Date };
+      }) => ({
+        count: (
+          await holder.db.query(
+            `UPDATE "Bounty" SET "payoutSettledAt" = $1 WHERE id = $2 AND "payoutRecordedAt" = $3`,
+            [args.data.payoutSettledAt, args.where.id, args.where.payoutRecordedAt]
+          )
+        ).affectedRows,
+      })) as never);
+
+      expect(await retryUnsettledBountyPayouts()).toEqual({ settled: 1 });
+      expect(await deleteSettledKeptBounties()).toBe(1);
+      expect(await bounty()).toBeUndefined();
+    });
+
+    it('leaves a payout recorded in the last ten minutes to the attempt still making it', async () => {
+      await holder.db.exec(`UPDATE "Bounty" SET complete = true, refunded = true,
+        "payoutSettledAt" = NULL, "payoutRecordedAt" = now() - interval '1 minute'
+        WHERE id = ${BOUNTY}`);
+
+      expect(await retryUnsettledBountyPayouts()).toEqual({ settled: 0 });
+    });
+
+    it('retries nothing settled at or after its last record (control)', async () => {
+      await holder.db.exec(`UPDATE "Bounty" SET complete = true,
+        "payoutRecordedAt" = now() - interval '1 hour', "payoutSettledAt" = now() - interval '1 hour'
+        WHERE id = ${BOUNTY}`);
+
+      expect(await retryUnsettledBountyPayouts()).toEqual({ settled: 0 });
+    });
+
+    it('leaves it hidden while its payout is still pending', async () => {
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
+    });
+
+    it('leaves it hidden while its owner is held, and deletes it once the hold ends', async () => {
+      await settle();
+      await holder.db.exec(`INSERT INTO "EvidenceHold" VALUES (${CLEAN}, NULL)`);
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
+
+      await holder.db.exec(
+        `UPDATE "EvidenceHold" SET "releasedAt" = now() WHERE "userId" = ${CLEAN}`
+      );
+      expect(await deleteSettledKeptBounties()).toBe(1);
+    });
+
+    it('keeps a held author’s comment on it', async () => {
+      await settle();
+      await holder.db.exec(`
+        INSERT INTO "Thread" (id, "bountyId") VALUES (5000, ${BOUNTY});
+        INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${HELD}, 5000);
+      `);
+
+      expect(await deleteSettledKeptBounties()).toBe(1);
+      expect(
+        (await holder.db.query(`SELECT id FROM "CommentV2" WHERE id = 5000`)).rows
+      ).toHaveLength(1);
+    });
+
+    it('leaves a settled bounty no wipe kept alone (control)', async () => {
+      await holder.db.exec(`
+        UPDATE "Bounty" SET "payoutSettledAt" = now(), complete = true WHERE "userId" = ${BYSTANDER};
+      `);
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(
+        (await holder.db.query(`SELECT id FROM "Bounty" WHERE "userId" = ${BYSTANDER}`)).rows
+      ).toHaveLength(1);
+    });
+  });
+});
+
+describe('an open bounty with supporters, in a content wipe', () => {
+  const bountyRow = async () =>
+    (
+      await holder.db.query<{ availability: string; meta: unknown }>(
+        `SELECT availability, meta FROM "Bounty" WHERE id = ${BOUNTY}`
+      )
+    ).rows[0];
+
+  beforeEach(async () => {
+    await holder.db.exec(`INSERT INTO "BountyBenefactor" ("bountyId") VALUES (${BOUNTY})`);
+  });
+
+  it('refunds its supporters, then deletes it', async () => {
+    payout.settles = true;
+    await removeAllContent({ id: CLEAN });
+
+    expect(payout.claimed).toEqual([BOUNTY]);
+    expect(await bountyRow()).toBeUndefined();
+  });
+
+  it('keeps a bounty whose payout was recorded again after it settled, until that settles', async () => {
+    await holder.db.exec(`UPDATE "Bounty" SET complete = true,
+      "payoutSettledAt" = now() - interval '2 hours', "payoutRecordedAt" = now() - interval '1 hour'
+      WHERE id = ${BOUNTY}`);
+    await removeAllContent({ id: CLEAN });
+
+    expect(payout.claimed).toEqual([]);
+    expect((await bountyRow())?.availability).toBe('Private');
+  });
+
+  it('claims no bounty without supporters (control)', async () => {
+    await holder.db.exec(`TRUNCATE "BountyBenefactor"`);
+    await removeAllContent({ id: CLEAN });
+
+    expect(payout.claimed).toEqual([]);
+    expect(await bountyRow()).toBeUndefined();
+  });
+
+  it('keeps it, hidden, while an award on it is recorded for manual resolution', async () => {
+    await holder.db.exec(`
+      TRUNCATE "BountyBenefactor";
+      INSERT INTO "BountyUnpaidAward" ("bountyId", "userId", "unitAmount", "recordedById")
+        VALUES (${BOUNTY}, ${BYSTANDER}, 100, 1);`);
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bountyRow()).toEqual({
+      availability: 'Private',
+      meta: { removedWithOwner: true, availabilityBeforeRemoval: 'Public' },
+    });
+  });
+
+  it('keeps it, hidden, for an award recorded only before the table existed', async () => {
+    await holder.db.exec(`
+      TRUNCATE "BountyBenefactor";
+      INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId")
+        VALUES (${BYSTANDER}, 'bountyAwardUnpaid', 'bounty', ${BOUNTY});`);
+    await removeAllContent({ id: CLEAN });
+
+    expect((await bountyRow())?.availability).toBe('Private');
+  });
+
+  it('deletes it once that award is resolved', async () => {
+    await holder.db.exec(`
+      TRUNCATE "BountyBenefactor";
+      INSERT INTO "BountyUnpaidAward" ("bountyId", "userId", "unitAmount", "recordedById",
+        "resolvedAt") VALUES (${BOUNTY}, ${BYSTANDER}, 100, 1, now());`);
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bountyRow()).toBeUndefined();
+  });
+
+  it('keeps it, hidden, when its refund throws, and finishes the wipe', async () => {
+    payout.settles = 'throws';
+    await removeAllContent({ id: CLEAN });
+
+    expect(await bountyRow()).toEqual({
+      availability: 'Private',
+      meta: { removedWithOwner: true, availabilityBeforeRemoval: 'Public' },
+    });
+    expect((await remaining(CLEAN)).Image).toBe(0);
+  });
+
+  it('settles a refund a failed wipe claimed on the next wipe, without claiming it again', async () => {
+    payout.settles = 'throws';
+    await removeAllContent({ id: CLEAN });
+    payout.settles = true;
+    await removeAllContent({ id: CLEAN });
+
+    expect(payout.claimed).toEqual([BOUNTY]);
+    expect(await bountyRow()).toBeUndefined();
+  });
+
+  it.each([
+    ['refund settles', true],
+    ['refund throws', 'throws'],
+  ] as const)('is kept for a hold landing mid-wipe after its %s', async (_, settles) => {
+    payout.settles = settles;
+    landsBefore = 'Bounty';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+    expect(payout.claimed).toEqual([BOUNTY]);
+    expect((await remaining(CLEAN)).Bounty).toBe(1);
   });
 });

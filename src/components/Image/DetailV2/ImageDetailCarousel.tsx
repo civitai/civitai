@@ -172,9 +172,8 @@ export function ImageDetailCarousel({
   // what makes the swipe stutter on mobile. Embla emits 'settle' once the
   // animation is done AND the finger is up.
   const [settledIndex, setSettledIndex] = useState(index);
-  // The hat is drawn in a layer outside embla's clipping viewport, so it cannot ride a moving slide.
+  // The hat is drawn in a layer outside embla's clipping viewport, and follows its slide from there.
   const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
-  const [moving, setMoving] = useState(false);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
 
@@ -188,7 +187,6 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
-      setMoving(false);
       setSettledIndex(current);
       onSettleRef.current?.(current);
     };
@@ -202,20 +200,10 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    const startMoving = () => setMoving(true);
-
-    embla
-      .on('settle', commit)
-      .on('reInit', commit)
-      .on('select', armFallback)
-      .on('scroll', startMoving);
+    embla.on('settle', commit).on('reInit', commit).on('select', armFallback);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla
-        .off('settle', commit)
-        .off('reInit', commit)
-        .off('select', armFallback)
-        .off('scroll', startMoving);
+      embla.off('settle', commit).off('reInit', commit).off('select', armFallback);
     };
   }, [embla]);
 
@@ -253,8 +241,8 @@ export function ImageDetailCarousel({
                     <ImageContent
                       image={image}
                       active={index === i}
-                      hatLayer={index === i ? hatLayer : null}
-                      hatHidden={moving}
+                      hatLayer={hatLayer}
+                      embla={embla}
                       {...connect}
                       videoRef={index === i ? videoRef : undefined}
                     />
@@ -276,13 +264,13 @@ function ImageContent({
   videoRef,
   active = true,
   hatLayer,
-  hatHidden,
+  embla,
   ...connect
 }: {
   image: ImageProps;
   active?: boolean;
   hatLayer: HTMLElement | null;
-  hatHidden: boolean;
+  embla: EmblaCarouselType | null;
 } & ConnectProps &
   ImageDetailCarouselProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
@@ -389,7 +377,7 @@ function ImageContent({
             imageId={image.id}
             decoration={image.eventDecoration}
             layer={hatLayer}
-            hidden={hatHidden}
+            embla={embla}
           />
           {safe && <ImageStickerOverlay imageId={image.id} />}
         </div>

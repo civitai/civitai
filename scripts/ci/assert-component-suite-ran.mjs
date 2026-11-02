@@ -162,7 +162,7 @@ export function browserTestFilesOnDisk(root) {
         if (entry.name === 'node_modules' || entry.name === '.next') continue;
         walk(p);
       } else if (entry.name.endsWith('.browser.test.tsx')) {
-        // Quarantined files are run by the `component-quarantine` job, not by this run, so the
+        // Quarantined files are run by the separate quarantine step, not by this run, so the
         // ledger must not demand them from it.
         if (QUARANTINED_COMPONENT_FILES.includes(relative(root, p).replace(/\\/g, '/'))) continue;
         out.push(p);

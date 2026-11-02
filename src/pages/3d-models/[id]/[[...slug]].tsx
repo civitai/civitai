@@ -77,6 +77,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { getModel3dDetailRows } from '~/shared/form-graph/generation/model3d/model3d-params';
 
 // Dynamic, ssr-disabled import — three.js needs WebGL which only exists in the browser.
 const Model3DVariantViewer = dynamic(
@@ -259,45 +260,19 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   // (model3d goes from undefined → defined across the loading transition).
   const generationDetailItems = useMemo(() => {
     const params = (model3d?.generationParams ?? null) as Record<string, unknown> | null;
-    const surfaced: Array<[string, string]> = [];
-    const push = (label: string, value: unknown) => {
-      if (value === undefined || value === null || value === '') return;
-      if (typeof value === 'boolean') surfaced.push([label, value ? 'Yes' : 'No']);
-      else if (typeof value === 'number') surfaced.push([label, value.toLocaleString()]);
-      else surfaced.push([label, String(value)]);
-    };
-    if (params) {
-      push('Prompt', params.prompt);
-      push('Topology', params.topology);
-      push('Target polycount', params.targetPolycount);
-      push('Symmetry', params.symmetryMode);
-      push('PBR materials', params.enablePbr);
-      push('Mode', params.mode);
-      push('Seed', params.seed);
-      // `enableAnimation` reliably records whether the user *requested*
-      // animation, but Meshy can silently fail to animate a mesh — the
-      // request succeeds and returns only the base model, no animated /
-      // walking / running variants (observed on model 56). So when
-      // animation was requested we confirm against the actual output
-      // files and, if none arrived, say so rather than printing a
-      // misleading "Yes". `enableRigging` is intentionally not surfaced —
-      // it's derived from `enableAnimation` at submit time and never
-      // persisted with a real value in the params snapshot.
-      if (params.enableAnimation === true) {
+    if (!params) return [];
+    return getModel3dDetailRows(params).map(({ field, label, value }): [string, string] => {
+      // Meshy can accept an animation request and return only the base mesh,
+      // so confirm a requested animation against the output files.
+      if (field === 'enableAnimation' && params.enableAnimation === true) {
         const hasAnimationOutput = files.some((f) => {
           const variant = (f.variant ?? 'primary').replace(/-armature$/, '');
           return variant === 'animated' || variant === 'walking' || variant === 'running';
         });
-        surfaced.push([
-          'Animation',
-          hasAnimationOutput ? 'Yes' : 'Requested — Unable to animate model',
-        ]);
-      } else {
-        push('Animation', params.enableAnimation);
+        return [label, hasAnimationOutput ? 'Yes' : 'Requested — Unable to animate model'];
       }
-      push('Texture prompt', params.texturePrompt);
-    }
-    return surfaced;
+      return [label, value];
+    });
   }, [model3d?.generationParams, files]);
 
   if (isLoading) return <PageLoader />;

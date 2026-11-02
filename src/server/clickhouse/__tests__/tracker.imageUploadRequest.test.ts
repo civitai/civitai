@@ -41,6 +41,14 @@ describe('Tracker.imageUploadRequest', () => {
     });
   });
 
+  it('writes a key minted outside a request under the user it was minted for', async () => {
+    await new Tracker().imageUploadRequest('job-key', 77);
+    await new Promise((r) => setImmediate(r));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+    expect(JSON.parse(init.body)).toMatchObject({ userId: 77, key: 'job-key' });
+  });
+
   // A payload column the table lacks is dropped on insert; one the table has but the payload
   // lacks is written as its default.
   it('sends exactly the columns of the table it names, which keeps rows for 12 months', async () => {

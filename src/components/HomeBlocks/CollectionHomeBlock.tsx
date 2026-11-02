@@ -115,7 +115,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   // useEffect(() => console.log('items'), [items]);
 
-  if (!metadata.link) metadata.link = `/collections/${collection?.id ?? metadata.collection?.id}`;
+  const link = metadata.link || `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
 
@@ -153,8 +153,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
                     </CustomMarkdown>
                   </div>
                 )}
-                {metadata.link && (
-                  <Link legacyBehavior href={metadata.link} passHref>
+                {link && (
+                  <Link legacyBehavior href={link} passHref>
                     <Anchor size="sm">
                       <Group gap={4}>
                         <Text inherit>{metadata.linkText ?? 'View All'} </Text>
@@ -168,8 +168,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
             </Popover>
           )}
         </Group>
-        {metadata.link && (
-          <Link legacyBehavior href={metadata.link} passHref>
+        {link && (
+          <Link legacyBehavior href={link} passHref>
             <Button
               className={classes.expandButton}
               component="a"
@@ -210,9 +210,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           </CustomMarkdown>
         </div>
       )}
-      {metadata.link && (
+      {link && (
         <div>
-          <Link legacyBehavior href={metadata.link} passHref>
+          <Link legacyBehavior href={link} passHref>
             <Button
               size="md"
               component="a"

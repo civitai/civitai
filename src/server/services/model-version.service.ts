@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
 import {
   contentKeptError,
   deleteUnlessHeld,
@@ -181,7 +182,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { updateModelLastVersionAt } from './model.service';
+import { bustPostVersionCache, updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, deleteFilesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -1618,7 +1619,8 @@ export const deleteVersionById = async ({
     const reviews = Prisma.sql`SELECT r.id FROM "ResourceReview" r WHERE r."modelVersionId" = ${id}`;
     const outcome = await deleteUnlessHeld(
       tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: reviews }, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: reviews }, true)},
+        ${keepHeldReviewsCte(reviews, true)}
         DELETE FROM "ModelVersion" mv
         USING "Model" m
         WHERE mv.id = ${id}
@@ -3644,6 +3646,7 @@ export const mergeVersions = async ({
   // file row that slipped past the move and would be orphaned by the cascade.
   let sourceFileUrls: string[] = [];
 
+  let movedPostIds: number[] = [];
   await dbWrite.$transaction(
     async (tx) => {
       // 0. Lock the rows, in id order, so a run can't change status under these checks.
@@ -3834,6 +3837,11 @@ export const mergeVersions = async ({
       });
 
       // 6. Re-point Posts
+      const movedPosts = await tx.post.findMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        select: { id: true },
+      });
+      movedPostIds = movedPosts.map((post) => post.id);
       await tx.post.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
@@ -3880,7 +3888,8 @@ export const mergeVersions = async ({
             WHERE "modelVersionId" = ${targetVersionId}
           )`;
       await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: supersededByTarget }, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: supersededByTarget }, true)},
+        ${keepHeldReviewsCte(supersededByTarget, true)}
         DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})
       `);
       const supersededBySource = Prisma.sql`SELECT a.id FROM "ResourceReview" a
@@ -3888,7 +3897,8 @@ export const mergeVersions = async ({
         WHERE a."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
           AND b."modelVersionId" IN (${Prisma.join(sourceVersionIds)})`;
       await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: supersededBySource }, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: supersededBySource }, true)},
+        ${keepHeldReviewsCte(supersededBySource, true)}
         DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})
       `);
       await tx.resourceReview.updateMany({
@@ -3943,6 +3953,10 @@ export const mergeVersions = async ({
       // A held owner's merge is refused, and the throw rolls back the whole merge.
       const outcome = await deleteUnlessHeld(
         tx.$executeRaw`
+          WITH ${keepHeldReviewsCte(
+            reviewsOnVersionsSql(Prisma.sql`SELECT unnest(${sourceVersionIds}::int[])`),
+            true
+          )}
           DELETE FROM "ModelVersion" mv
           USING "Model" m
           WHERE mv.id = ANY(${sourceVersionIds}::int[])
@@ -3972,6 +3986,7 @@ export const mergeVersions = async ({
   await Promise.all([
     bustMvCache(allVersionIds2, modelId, userId),
     dataForModelsCache.bust(modelId),
+    bustPostVersionCache(movedPostIds),
     deleteFilesForModelVersionCache(targetVersionId),
     ...sourceVersionIds.map((id) => deleteFilesForModelVersionCache(id)),
     preventReplicationLag('model', modelId),

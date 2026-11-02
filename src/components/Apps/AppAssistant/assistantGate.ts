@@ -6,21 +6,31 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import {
   CREATE_APP,
+  GENERATE_APP_COVER,
   REPORT_READY,
+  SET_FEEDBACK_STATUS,
   SET_CHECKLIST,
   SUBMIT_FOR_REVIEW,
   USE_OPEN_APP,
+  createCoverArt,
+  createFeedbackTools,
   createGateCore,
+  makeOfferedCover,
   normalizeChecklist,
+  type AppFeedbackSource,
+  type CoverArtDeps,
+  type CoverPressDeps,
 } from '@civitai/app-assistant';
+import { createCoverCards } from '~/components/Apps/AppAssistant/assistantCover';
+import type { SetFeedbackStatus } from '~/components/Apps/AppAssistant/assistantFeedback';
+import { createFeedbackStatusCards } from '~/components/Apps/AppAssistant/assistantFeedback';
 import type { SubmitCardsDeps } from '~/components/Apps/AppAssistant/assistantSubmit';
 import { createSubmitCards } from '~/components/Apps/AppAssistant/assistantSubmit';
 
 // The gate's rules live in `@civitai/app-assistant`, so the server runner applies the same ones; the
-// page adds what only it can do: the checklist and ready cards, and Build it.
+// page adds what only it can do: the checklist, ready, Submit for review and feedback status cards.
 export {
   APP_ASSISTANT_TURN_TOOL_CALL_LIMIT,
-  BUILD_IT_MESSAGE,
   REPORT_READY,
   SANDBOX_SERVER_ID,
   SET_CHECKLIST,
@@ -37,9 +47,9 @@ export type { CheckKind, ChecklistItem, DataSource } from '@civitai/app-assistan
 export interface AssistantGate {
   /** Forget what was verified, e.g. when another sandbox opens. */
   reset(): void;
-  /** The user answered the checklist another way (sent a message, opened another chat): remove Build it. */
+  /** The user sent a message or opened another chat: a Submit for review offer closes. */
   answered(): void;
-  /** Another app opened: a checklist shown for a different one loses its Build it. */
+  /** Another app opened: a Submit for review offer made for a different one closes. */
   appChanged(app: string | null): void;
   beforeToolCall: ChatToolGate;
   onToolResult(result: ChatToolResult): void;
@@ -62,67 +72,65 @@ export interface AssistantGate {
 export function createAssistantGate({
   refuse,
   onReply,
-  onBuild,
   currentApp,
   submit,
   openApp,
+  feedback,
+  cover,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
   /** Told when a new reply makes its first tool call, before that call's refusal is asked. */
   onReply?: () => void;
-  /** The user pressed Build it under a checklist that waits for them. */
-  onBuild?: () => void;
-  /** The app open now; a checklist belongs to the app it was shown for. */
+  /** The app open now; a Submit for review offer belongs to the app it was made for. */
   currentApp?: () => string | null;
   /** What the Submit for review button does; without it, a submit_for_review call shows no button. */
   submit?: SubmitCardsDeps;
   /** The open app's key: a chat may change it only once it made or chose it (`createGateCore`). */
   openApp?: () => string | null;
+  /**
+   * The open app's feedback: where it is read (the page's own author reads, as the user), and what
+   * a press on a status card does. Without it, no feedback tools.
+   */
+  feedback?: { source: AppFeedbackSource; setStatus: SetFeedbackStatus };
+  /** The store cover: what its offer reads and what its card's press does. Without it, no tool. */
+  cover?: { offer: Omit<CoverArtDeps, 'nextId'>; press: CoverPressDeps };
 } = {}): AssistantGate {
   const submitCards = submit ? createSubmitCards(submit) : null;
-  let buildButtons: HTMLButtonElement[] = [];
-  const removeButtons = () => {
-    for (const button of buildButtons) button.remove();
-    buildButtons = [];
-  };
-  // Checklist ids are per page load, so a card restored from an earlier visit never matches.
+  const feedbackCards = feedback ? createFeedbackStatusCards(feedback) : null;
+  let feedbackOffers = 0;
+  const feedbackPrefix = Math.random().toString(36).slice(2, 10);
+  const feedbackSet = feedback
+    ? createFeedbackTools({
+        current: () => openApp?.() ?? null,
+        source: feedback.source,
+        nextId: () => `${feedbackPrefix}-feedback-${++feedbackOffers}`,
+      })
+    : null;
+  const feedbackTools: Record<string, ChatTool> = feedbackSet?.tools ?? {};
+  // In runner mode the runner's tool offers; this card (told by `onToolResult`) takes the press.
+  let coverOffers = 0;
+  const coverCards = cover
+    ? createCoverCards({ make: (offer, signal) => makeOfferedCover(cover.press, offer, signal) })
+    : null;
+  const coverTool: ChatTool | null = cover
+    ? createCoverArt({
+        ...cover.offer,
+        nextId: () => `${feedbackPrefix}-cover-${++coverOffers}`,
+      })[GENERATE_APP_COVER]!
+    : null;
   const core = createGateCore({
     refuse,
     onReply: () => {
-      removeButtons();
       submitCards?.withdraw();
+      // A status offer names only items read in this reply, as on the runner.
+      feedbackSet?.newReply();
       onReply?.();
     },
-    currentApp,
     openApp,
   });
 
-  const answered = () => {
-    core.clearAwaiting();
-    removeButtons();
-    submitCards?.withdraw();
-  };
-
-  const set_checklist: ChatTool = {
-    ...core.tools[SET_CHECKLIST],
-    render(call) {
-      const card = renderChecklist(call);
-      const shownAs = (call.output as { checklist?: unknown } | null | undefined)?.checklist;
-      const awaiting = core.awaiting();
-      if (!card || !onBuild || !awaiting || shownAs !== awaiting.id) return card;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = 'Build it';
-      button.style.cssText =
-        'min-height:44px;margin-top:8px;padding:0 16px;border-radius:6px;border:0;cursor:pointer;font:inherit;font-weight:600;color:#fff;background:var(--civitai-color-primary, #228be6)';
-      // The page removes it (`answered`) once the message goes, or once it puts it in the message box.
-      button.addEventListener('click', onBuild);
-      buildButtons.push(button);
-      card.append(button);
-      return card;
-    },
-  };
+  const set_checklist: ChatTool = { ...core.tools[SET_CHECKLIST], render: renderChecklist };
 
   const report_ready: ChatTool = { ...core.tools[REPORT_READY], render: renderReady };
   const submit_for_review: ChatTool = {
@@ -132,21 +140,31 @@ export function createAssistantGate({
 
   return {
     reset: core.reset,
-    answered,
-    appChanged: (app) => {
-      const awaiting = core.awaiting();
-      if (awaiting && app !== awaiting.app) answered();
-      submitCards?.appChanged(app);
-    },
+    answered: () => submitCards?.withdraw(),
+    appChanged: (app) => submitCards?.appChanged(app),
     beforeToolCall: core.beforeToolCall,
     onToolResult: (result) => {
       core.onToolResult(result);
       submitCards?.onToolResult(result, currentApp?.() ?? null);
+      feedbackCards?.onToolResult(result);
+      coverCards?.onToolResult(result);
     },
     tools: {
       [SET_CHECKLIST]: set_checklist,
       [REPORT_READY]: report_ready,
       [SUBMIT_FOR_REVIEW]: submit_for_review,
+      ...feedbackTools,
+      ...(feedbackCards
+        ? {
+            [SET_FEEDBACK_STATUS]: {
+              ...feedbackTools[SET_FEEDBACK_STATUS]!,
+              render: feedbackCards.render,
+            },
+          }
+        : {}),
+      ...(coverTool && coverCards
+        ? { [GENERATE_APP_COVER]: { ...coverTool, render: coverCards.render } }
+        : {}),
     },
     restoringChoices: (tools, chatId) => {
       const out = { ...tools };
@@ -202,7 +220,10 @@ export function renderChecklist(call: ChatToolCall): HTMLElement | undefined {
   return card;
 }
 
-/** What a checklist that plans sample data tells the user, so Build it is their agreement to it. */
+/**
+ * What a checklist that plans sample data tells the user. That checklist ends the reply, so the user's
+ * answer is their agreement to it.
+ */
 export const CHECKLIST_SAMPLE_DATA_TEXT =
   '⚠ Sample data: this app will show made-up examples, not real Civitai data.';
 

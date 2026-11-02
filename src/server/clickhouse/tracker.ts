@@ -801,8 +801,13 @@ export class Tracker {
     modelId: number;
     nsfw: boolean;
     userId?: number;
+    time?: Date;
   }) {
-    return this.track('modelEvents', { ...values, ...this.provenance });
+    return this.track('modelEvents', {
+      ...values,
+      ...this.provenance,
+      time: values.time ?? new Date(),
+    });
   }
 
   public redeemableCode(activity: string, details: { quantity?: number; code?: string }) {
@@ -836,8 +841,11 @@ export class Tracker {
     targetUserId: number;
     source?: string;
     landingPage?: string;
+    time?: Date;
   }) {
-    return this.track('userActivities', values);
+    // Replicated inserts dedupe identical blocks: with a server-filled time, the same action on
+    // the same target by the same actor (ban, unban, ban) repeats an earlier row and is dropped.
+    return this.track('userActivities', { ...values, time: values.time ?? new Date() });
   }
 
   public resourceReview(values: {
@@ -1027,9 +1035,10 @@ export class Tracker {
 
   // Exactly these four columns, in their own table with a 12-month TTL (not `actions`, which has
   // none): migrations/2026-10-28-image-upload-requests.sql.
-  public imageUploadRequest(key: string) {
+  /** `userId` names who the key was issued to when the request has no session, as in a job. */
+  public imageUploadRequest(key: string, userId?: number) {
     return this.send('imageUploadRequests', ({ actor }) => ({
-      userId: actor.userId,
+      userId: userId ?? actor.userId,
       ip: actor.ip,
       key,
       time: new Date(),
@@ -1171,6 +1180,9 @@ export class Tracker {
       errorMsg: values.errorMsg ?? '',
       payload: JSON.stringify(values.payload),
       affected: values.affected ? JSON.stringify(values.affected) : '',
+      // Replicated inserts dedupe identical blocks; a repeated call with a server-filled
+      // createdAt is byte-identical and silently dropped.
+      createdAt: new Date(),
     });
   }
 

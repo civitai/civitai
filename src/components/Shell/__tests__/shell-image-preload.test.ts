@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   adoptShellPageData,
-  SHELL_MAIN_IMAGE_URL_KEY,
+  encodeShellMainImageHeader,
+  SHELL_MAIN_IMAGE_HEADER,
   SHELL_PAGE_DATA_REQUIRED_KEYS,
   shellPageDataPrefetchScript,
 } from '~/components/Shell/shell-page-data';
@@ -11,13 +12,16 @@ import {
  * The shell's inline head script preloads the page's main image from the page-data answer
  * (`shellPageDataPrefetchScript`). Run here as `_document` ships it — the script TEXT, through
  * `new Function` — against a stubbed `fetch`. Contracts: exactly one preload, with the attributes
- * that make it the high-priority image request the `<img>` later reuses, for a 200 that names a
- * URL; none for anything else; and the app's own read of the body still works afterwards.
+ * that make it the high-priority image request the `<img>` later reuses, for a 200 whose headers
+ * name a URL; added before the body has arrived; none for anything else; and the app's own read of
+ * the body still works afterwards.
  */
 
-// Distinct from anything the script or the endpoint could produce by default, spaces included
-// (an `<img>` tolerates them, and so must the preload).
-const IMAGE_URL = 'https://image.example/abc-123/original=true/My Picture 7.jpeg';
+// Distinct from anything the script or the endpoint could produce by default, spaces and a
+// non-ASCII character included (an `<img>` tolerates them, and so must the preload; a raw header
+// value could carry neither).
+const IMAGE_URL = 'https://image.example/abc-123/original=true/My Picture 7 café.jpeg';
+const IMAGE_HEADER = { [SHELL_MAIN_IMAGE_HEADER]: encodeShellMainImageHeader(IMAGE_URL) };
 
 const pageData = (extra: Record<string, unknown> = {}) => ({
   ...Object.fromEntries(SHELL_PAGE_DATA_REQUIRED_KEYS.map((key) => [key, null])),
@@ -58,8 +62,11 @@ function stubFetch(respond: () => Promise<Response>) {
   return fetchMock;
 }
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json', ...headers },
+  });
 
 const preloads = () => Array.from(document.head.querySelectorAll('link[rel="preload"]'));
 
@@ -94,7 +101,7 @@ afterEach(() => {
 
 describe('the shell head script preloads the main image', () => {
   it('adds exactly one high-priority image preload for the URL the page data names', async () => {
-    stubFetch(async () => json(pageData({ [SHELL_MAIN_IMAGE_URL_KEY]: IMAGE_URL })));
+    stubFetch(async () => json(pageData(), 200, IMAGE_HEADER));
     runScript();
     await settle();
 
@@ -120,21 +127,41 @@ describe('the shell head script preloads the main image', () => {
     });
   });
 
+  it('adds it from the headers alone, before the body has arrived', async () => {
+    // The body never completes: a preload that waited for it would never be added. On a real
+    // load the body is the page's whole trpcState, which the app renders the `<img>` from anyway.
+    const headersOnly = {
+      status: 200,
+      headers: new Headers(IMAGE_HEADER),
+      clone: () => headersOnly,
+      json: () => new Promise<never>(() => undefined),
+      text: () => new Promise<never>(() => undefined),
+    } as unknown as Response;
+    const answer = Promise.resolve(headersOnly);
+    pending.push(answer);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => answer)
+    );
+    runScript();
+    await settle();
+
+    expect(preloads().map((link) => link.getAttribute('href'))).toEqual([IMAGE_URL]);
+  });
+
   it('leaves the body for the app: adoption still reads the whole page data', async () => {
-    stubFetch(async () => json(pageData({ [SHELL_MAIN_IMAGE_URL_KEY]: IMAGE_URL })));
+    stubFetch(async () => json(pageData({ marker: 'body-intact' }), 200, IMAGE_HEADER));
     runScript();
     await settle();
 
     const result = await adoptShellPageData();
     expect(result.ok).toBe(true);
-    expect(result.ok && result.data.mainImageUrl).toBe(IMAGE_URL);
+    expect(result.ok && (result.data as Record<string, unknown>).marker).toBe('body-intact');
     expect(preloads()).toHaveLength(1);
   });
 
   it('makes one request only: the preload rides on the page-data fetch', async () => {
-    const fetchMock = stubFetch(async () =>
-      json(pageData({ [SHELL_MAIN_IMAGE_URL_KEY]: IMAGE_URL }))
-    );
+    const fetchMock = stubFetch(async () => json(pageData(), 200, IMAGE_HEADER));
     runScript();
     await settle();
     await adoptShellPageData();
@@ -142,13 +169,18 @@ describe('the shell head script preloads the main image', () => {
   });
 
   it.each([
-    ['no URL (video, gated or blur-dependent media)', () => json(pageData())],
-    ['an empty URL', () => json(pageData({ [SHELL_MAIN_IMAGE_URL_KEY]: '' }))],
-    ['a non-string URL', () => json(pageData({ [SHELL_MAIN_IMAGE_URL_KEY]: { href: IMAGE_URL } }))],
-    ['a 404', () => json({ error: 'Not found', [SHELL_MAIN_IMAGE_URL_KEY]: IMAGE_URL }, 404)],
-    ['a 500', () => json({ [SHELL_MAIN_IMAGE_URL_KEY]: IMAGE_URL }, 500)],
-    ['a body that is not JSON', () => new Response('<html>', { status: 200 })],
-    ['a JSON null body', () => json(null)],
+    ['no header (video, gated or blur-dependent media)', () => json(pageData())],
+    ['an empty header', () => json(pageData(), 200, { [SHELL_MAIN_IMAGE_HEADER]: '' })],
+    [
+      'a header that does not decode',
+      () => json(pageData(), 200, { [SHELL_MAIN_IMAGE_HEADER]: '%E0%A4%A' }),
+    ],
+    [
+      'the URL in the body only (the old channel)',
+      () => json(pageData({ mainImageUrl: IMAGE_URL })),
+    ],
+    ['a 404', () => json({ error: 'Not found' }, 404, IMAGE_HEADER)],
+    ['a 500', () => json({}, 500, IMAGE_HEADER)],
   ])('adds nothing for %s', async (_, response) => {
     stubFetch(async () => response());
     runScript();

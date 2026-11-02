@@ -16,6 +16,7 @@ import { getSysRedis } from '../clients/redis';
 const noop: SessionRegistry = {
   async trackToken() {},
   async invalidateToken() {},
+  async invalidateFamily() {},
   async invalidateUserSessions() {},
   async invalidateAll() {},
   async markForRefresh() {},
@@ -43,6 +44,7 @@ function registry(): SessionRegistry {
 export const sessions: SessionRegistry = {
   trackToken: (tokenId, userId) => registry().trackToken(tokenId, userId),
   invalidateToken: (tokenId, userId) => registry().invalidateToken(tokenId, userId),
+  invalidateFamily: (familyId) => registry().invalidateFamily(familyId),
   invalidateUserSessions: (userId) => registry().invalidateUserSessions(userId),
   invalidateAll: () => registry().invalidateAll(),
   markForRefresh: (tokenId) => registry().markForRefresh(tokenId),

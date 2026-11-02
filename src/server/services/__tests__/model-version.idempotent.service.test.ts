@@ -81,6 +81,7 @@ vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelC
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
+  bustPostVersionCache: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),

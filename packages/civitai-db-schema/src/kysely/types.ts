@@ -816,6 +816,24 @@ export type Article = {
   isOfficial: Generated<boolean>;
   status: Generated<ArticleStatus>;
 };
+export type ArticleContentLinkHold = {
+  articleId: number;
+  deferred: Generated<string[]>;
+  refused: Generated<string[]>;
+  /**
+   * Who saved the content; their own keys count as the owner's.
+   */
+  editorId: number;
+  /**
+   * When a url was first deferred, kept while any stays deferred.
+   */
+  deferredSince: Timestamp | null;
+  /**
+   * Set once a deferral outlives the backstop and a moderator report is filed.
+   */
+  reportedAt: Timestamp | null;
+  checkedAt: Generated<Timestamp>;
+};
 export type ArticleEngagement = {
   userId: number;
   articleId: number;
@@ -1846,6 +1864,32 @@ export type BountyStat = {
   commentCountYear: number;
   commentCountAllTime: number;
 };
+export type BountyUnpaidAward = {
+  bountyId: number;
+  /**
+   * The supporter whose award is unpaid.
+   */
+  userId: number;
+  unitAmount: number;
+  buzzTransactionIds: Generated<string[]>;
+  winnerUserId: number | null;
+  /**
+   * The bounty owner when the award was recorded, before any delete detaches the bounty.
+   */
+  ownerId: number | null;
+  /**
+   * Null on a row backfilled from ModActivity, which did not record the moderator.
+   */
+  recordedById: number | null;
+  recordedAt: Generated<Timestamp>;
+  /**
+   * paid_winner | refunded_supporter | no_charge_found
+   */
+  ruling: string | null;
+  ledgerReference: string | null;
+  resolvedById: number | null;
+  resolvedAt: Timestamp | null;
+};
 export type BoxContent = {
   id: Generated<number>;
   boxDefinitionId: number;
@@ -2849,6 +2893,7 @@ export type Crucible = {
   seededPrizePool: Generated<number>;
   prizePool: Generated<number>;
   entryLimit: Generated<number>;
+  ownerRemovalCount: Generated<number>;
   freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;
   entryWarningPercent: Generated<number>;
@@ -2871,6 +2916,10 @@ export type Crucible = {
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
   eventTags: Generated<string[]>;
+  takenDownAt: Timestamp | null;
+  takenDownById: number | null;
+  takedownReason: string | null;
+  takedownRefundsCreator: Generated<boolean>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -3313,6 +3362,45 @@ export type GenerationSizePreset = {
   height: number;
   createdAt: Generated<Timestamp>;
 };
+export type HeldAnswer = {
+  /**
+   * The original Answer id.
+   */
+  id: number;
+  questionId: number;
+  userId: number;
+  content: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  heldAt: Generated<Timestamp>;
+  /**
+   * The holds on the author when it was copied.
+   */
+  holdReasons: string[];
+};
+export type HeldResourceReview = {
+  /**
+   * The original ResourceReview id.
+   */
+  id: number;
+  modelId: number;
+  modelVersionId: number;
+  userId: number;
+  rating: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  nsfw: boolean;
+  tosViolation: boolean;
+  metadata: unknown | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  heldAt: Generated<Timestamp>;
+  /**
+   * The holds on the author when it was copied.
+   */
+  holdReasons: string[];
+};
 export type HomeBlock = {
   id: Generated<number>;
   createdAt: Generated<Timestamp | null>;
@@ -3473,6 +3561,13 @@ export type ImageCdnModeratorDelete = {
   userId: number | null;
   csamReview: Generated<boolean>;
   deletedAt: Generated<Timestamp>;
+};
+export type ImageCdnShopTakedown = {
+  id: Generated<number>;
+  url: string;
+  shopItemId: number;
+  userId: number | null;
+  takenDownAt: Generated<Timestamp>;
 };
 export type ImageConnection = {
   imageId: number;
@@ -4376,7 +4471,7 @@ export type Placement = {
   data: Generated<unknown>;
   status: string;
   /**
-   * 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+   * 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
    * removals refund different amounts, so the status alone cannot settle the
    * money. Constrained by "Placement_removedBy_check" — a new value needs a
    * migration even though the column is TEXT.
@@ -5384,6 +5479,11 @@ export type ShadowTagsOnImage = {
   tagId: number;
   confidence: number;
 };
+export type ShopArtworkKeyOwner = {
+  key: string;
+  userId: number;
+  recordedAt: Generated<Timestamp>;
+};
 export type ShopifyCustomerLink = {
   id: Generated<number>;
   shopifyCustomerId: string;
@@ -5518,10 +5618,42 @@ export type StorylineChapterEdge = {
   canon: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineChapterRemovalHold = {
+  id: Generated<number>;
+  storylineId: number;
+  /**
+   * The storyline's title at removal: the hold outlives the storyline.
+   */
+  storylineTitle: string;
+  /**
+   * The removed chapter's id, its post and its author, as they were.
+   */
+  chapterId: number;
+  postId: number | null;
+  chapterUserId: number;
+  depth: number;
+  placementId: number | null;
+  parentChapterIds: number[];
+  chapterCreatedAt: Timestamp;
+  removedById: number;
+  /**
+   * 'owner' or 'author'.
+   */
+  removedByRole: string;
+  /**
+   * The reports open when it was removed.
+   */
+  reportIds: number[];
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineCollaborator = {
   storylineId: number;
   userId: number;
   createdAt: Generated<Timestamp>;
+  /**
+   * When the user accepted the invitation; null while it is pending. Declining deletes the row.
+   */
+  acceptedAt: Timestamp | null;
 };
 export type StorylineCoverUpload = {
   storylineId: number;
@@ -6314,6 +6446,7 @@ export type DB = {
   AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
   AppPageAccess: AppPageAccess;
   Article: Article;
+  ArticleContentLinkHold: ArticleContentLinkHold;
   ArticleEngagement: ArticleEngagement;
   ArticleMetric: ArticleMetric;
   ArticleRank: ArticleRank;
@@ -6352,6 +6485,7 @@ export type DB = {
   BountyRank: BountyRank;
   BountyReport: BountyReport;
   BountyStat: BountyStat;
+  BountyUnpaidAward: BountyUnpaidAward;
   BoxContent: BoxContent;
   BoxOddsSnapshot: BoxOddsSnapshot;
   BoxOpening: BoxOpening;
@@ -6475,6 +6609,8 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
+  HeldAnswer: HeldAnswer;
+  HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
@@ -6483,6 +6619,7 @@ export type DB = {
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
+  ImageCdnShopTakedown: ImageCdnShopTakedown;
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
@@ -6626,12 +6763,14 @@ export type DB = {
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;
+  ShopArtworkKeyOwner: ShopArtworkKeyOwner;
   ShopifyCustomerLink: ShopifyCustomerLink;
   ShopifyMerchOrder: ShopifyMerchOrder;
   Storyline: Storyline;
   StorylineBranchChoice: StorylineBranchChoice;
   StorylineChapter: StorylineChapter;
   StorylineChapterEdge: StorylineChapterEdge;
+  StorylineChapterRemovalHold: StorylineChapterRemovalHold;
   StorylineCollaborator: StorylineCollaborator;
   StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;

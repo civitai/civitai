@@ -50,7 +50,7 @@ CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT, "nsfwLevel" INTEGER, "type" TEXT);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
-  "images" JSONB NOT NULL DEFAULT '[]', "type" TEXT NOT NULL DEFAULT 'Image'
+  "images" JSONB NOT NULL DEFAULT '[]', "type" TEXT NOT NULL DEFAULT 'Image', "reportId" INTEGER
 );
 `;
 
@@ -90,8 +90,9 @@ beforeAll(async () => {
       (7, 105, 'csam', 'Error', 4),
       (8, 101, NULL, 'Scanned', 4),
       (9, 106, 'csam', 'Blocked', 32);
-    INSERT INTO "CsamReport" ("userId", "reportSentAt", "images") VALUES
-      (101, '2026-01-01', '[{"id": 2}]'), (101, '2026-02-01', '[]'), (102, NULL, '[]');
+    -- 101's newer report was sent with no NCMEC number recorded.
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "images", "reportId") VALUES
+      (101, '2026-01-01', '[{"id": 2}]', 900), (101, '2026-02-01', '[]', NULL), (102, NULL, '[]', NULL);
     -- Names nobody here; 106 is its secondary user.
     INSERT INTO "CsamReport" ("userId", "details") VALUES (-1, '{"secondaryUserId": "106"}');
   `);
@@ -115,6 +116,16 @@ describe('the CSAM queue by user', () => {
       { userId: 103, flagged: 1, latestImageId: 5 },
       { userId: 106, flagged: 1, latestImageId: 9 },
     ]);
+  });
+
+  it('names the newest sent image report with an NCMEC number, which a supplemental refers to', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    expect(Object.fromEntries(users.map((u) => [u.userId, u.latestSentImageReportId]))).toEqual({
+      101: 1,
+      102: null,
+      103: null,
+      106: null,
+    });
   });
 
   it('says whether each owner has a CSAM report, and when the newest was sent', async () => {

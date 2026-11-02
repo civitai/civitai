@@ -483,6 +483,29 @@ describe('a hub caps its own feed to the level the owner set', () => {
   });
 });
 
+describe('a hub is held to the level of a held model it serves', () => {
+  const heldSources = hubSources({ userIds: [10], heldBrowsingLevel: 1 | 2 });
+  const viewerWantsR = { ...input(1), browsingLevel: 1 | 2 | 4 };
+
+  it('the pre-filter builder emits only the held levels', async () => {
+    resolveHubSourcesMock.mockResolvedValue(heldSources);
+
+    await getImagesFromSearchPreFilter(viewerWantsR);
+
+    expect(emittedFilter()).toContain('nsfwLevel IN [1,2]');
+    expect(emittedFilter()).not.toContain('nsfwLevel IN [1,2,4]');
+  });
+
+  it('the post-filter builder emits only the held levels', async () => {
+    resolveHubSourcesMock.mockResolvedValue(heldSources);
+
+    await getImagesFromSearchPostFilter(viewerWantsR);
+
+    expect(emittedFilter()).toContain('nsfwLevel IN [1,2]');
+    expect(emittedFilter()).not.toContain('nsfwLevel IN [1,2,4]');
+  });
+});
+
 describe('what the builders hand resolveHubSources', () => {
   // The mock swallows these silently: delete `excludedSources` and every per-session
   // source toggle is inert; delete `isModerator` and a moderator gets an empty feed
@@ -494,6 +517,7 @@ describe('what the builders hand resolveHubSources', () => {
     await getImagesFromSearchPreFilter({
       ...input(1),
       isModerator: true,
+      holdExempt: true,
       hubExcludedSources: [{ type: UserHubSourceType.User, targetId: 11 }],
     } as Parameters<typeof getImagesFromSearchPreFilter>[0]);
 
@@ -502,6 +526,7 @@ describe('what the builders hand resolveHubSources', () => {
         hubId: 1,
         userId: 5,
         isModerator: true,
+        holdExempt: true,
         excludedSources: [{ type: UserHubSourceType.User, targetId: 11 }],
       })
     );

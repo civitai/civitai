@@ -35,6 +35,7 @@ import { GenerationDetailsTable } from '~/components/ImageGeneration/GenerationD
 import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { DurationIcon } from '~/components/ImageGeneration/DurationIcon';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
   matchesMarkerTags,
@@ -76,6 +77,7 @@ import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { getRefundSummary } from '~/components/ImageGeneration/refund-summary';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import {
@@ -169,6 +171,7 @@ export function QueueItem({
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
   const canceled = status === 'canceled';
+  const refund = getRefundSummary(status, request.transactions);
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(request.status);
 
@@ -317,16 +320,17 @@ export function QueueItem({
               </Text>
               {/* Cost and workflow wrap to the next line together. */}
               <div className="flex min-w-0 flex-nowrap items-center gap-1 empty:hidden">
-                {!!request.cost?.total && (
+                {(!!request.cost?.total || !!refund) && (
                   <GenerationCostPopover
                     workflowCost={request.cost}
                     transactions={request.transactions}
+                    refund={refund}
                     readOnly
                     variant="badge"
                   />
                 )}
                 {/* The cost badge lists them under Paid With; this is for a request with no cost. */}
-                {request.transactions.length > 0 && !request.cost?.total && (
+                {request.transactions.length > 0 && !request.cost?.total && !refund && (
                   <TransactionsPopover data={request.transactions} />
                 )}
                 {workflowDefinition && (
@@ -341,7 +345,7 @@ export function QueueItem({
                 )}
               </div>
               {!!request.duration && currentUser?.isModerator && !compact && (
-                <Badge color="yellow">Duration: {request.duration}</Badge>
+                <DurationIcon seconds={request.duration} />
               )}
               {polyGenChipLabel && !workflowDefinition && (
                 <Badge
@@ -1282,6 +1286,7 @@ function Model3DQueueCardOutputs({
       ? 'Generation canceled'
       : 'Generation failed';
   const isComplete = !pending && !processing && !isFailed;
+  const refund = getRefundSummary(status, request.transactions);
 
   // Open the model full-screen. Local (non-routed) dialog, same pattern as
   // the image lightbox; the heavy three.js viewer lives inside the dialog
@@ -1408,9 +1413,11 @@ function Model3DQueueCardOutputs({
               <Text size="sm" fw={600} c="red.4">
                 {failureLabel}
               </Text>
-              <Text size="xs" c="dimmed">
-                Your Buzz has been refunded.
-              </Text>
+              {refund && (
+                <Text size="xs" c="dimmed">
+                  {refund.text}
+                </Text>
+              )}
             </div>
           ) : (
             <Text c="dimmed" size="xs" align="center">

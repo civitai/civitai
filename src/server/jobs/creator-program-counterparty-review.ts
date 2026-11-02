@@ -105,10 +105,11 @@ export const creatorProgramCounterpartyReview = createJob(
       sendReport: (report) => moderatorApp.abuseReport(report),
       now: () => new Date(),
       log: (name, data) =>
-        void logToAxiom(
-          { type: name.endsWith('-reported') ? 'info' : 'warning', name, ...data },
-          'moderation'
-        ).catch(() => undefined),
+        void logToAxiom({
+          type: name.endsWith('-reported') ? 'info' : 'warning',
+          name,
+          ...data,
+        }).catch(() => undefined),
     }),
   { lockExpiration: 10 * 60 }
 );
