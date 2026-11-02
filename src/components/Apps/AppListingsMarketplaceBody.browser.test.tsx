@@ -259,8 +259,11 @@ describe('AppListingsMarketplaceBody', () => {
     // Kind filter is now inside the dropdown, defaulting to All.
     await openFilters();
     await expect
-      .element(page.getByRole('button', { name: 'All apps' }))
-      .toHaveAttribute('aria-pressed', 'true');
+      .element(page.getByRole('checkbox', { name: 'Embedded', exact: true }))
+      .toBeChecked();
+    await expect
+      .element(page.getByRole('checkbox', { name: 'Standalone', exact: true }))
+      .toBeChecked();
     // Query fired with kind=all default. `limit: 48` (was 24) — the column ladder now
     // reaches FIVE columns on a 2560 container, where 24 is under five rows; the page
     // size and its relationship to the server's `max(50)` cap are pinned in the blocking
@@ -274,7 +277,10 @@ describe('AppListingsMarketplaceBody', () => {
   test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
     renderWithProviders(<StoreWithControls />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
+    // Staged: turning Embedded off narrows to standalone, but nothing is written until Apply.
+    await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
+    expect(router.replace).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
 
     expect(router.replace).toHaveBeenCalled();
     const [url, , options] = vi.mocked(router.replace).mock.calls.at(-1)!;
@@ -385,7 +391,8 @@ describe('AppListingsMarketplaceBody', () => {
     router.query = { kind: 'offsite' };
     renderWithProviders(<StoreWithControls />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'All apps' }));
+    await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
     // `?kind=all` is the default view — a nav that lands on
     // `/apps?kind=all&sort=popular` looks like state you have to clear.
     expect(replacedQueries().at(-1)).not.toHaveProperty('kind');
