@@ -36,7 +36,7 @@ import { booleanString } from '~/utils/zod-helpers';
  *   then GET /api/admin/temp/backfill-creator-milestones?token=$WEBHOOK_TOKEN&dryRun=false
  *
  *   &direction=all also writes owners whose score falls (default `up`: increases only)
- *   &limit=N owners per page (default 5000, max 20000)
+ *   &limit=N owners per page (default 5000, max 10000)
  */
 
 const schema = z.object({
@@ -44,7 +44,7 @@ const schema = z.object({
   direction: z.enum(['up', 'all']).default('up'),
   scope: z.enum(['reversed', 'all']).default('reversed'),
   cursor: z.coerce.number().int().min(0).default(0),
-  limit: z.coerce.number().int().min(1).max(20_000).default(5000),
+  limit: z.coerce.number().int().min(1).max(10_000).default(5000),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {

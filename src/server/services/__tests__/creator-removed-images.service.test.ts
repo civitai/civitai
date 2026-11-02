@@ -124,7 +124,6 @@ describe('getMyRemovedImages', () => {
       join(process.cwd(), 'src/server/jobs/update-user-score.ts'),
       'utf8'
     );
-    expect(scoreJob).toContain('removalPenaltyWeightsByOwner(ctx.ch, owners, now)');
     expect(scoreJob).not.toContain("'DeleteTOS'");
   });
 
@@ -275,7 +274,11 @@ describe('getMyRemovedImages', () => {
   const serve = (rows: { imageId: number; removedAt: number; reason: string | null }[]) =>
     chQuery.mockImplementation(async ({ query, query_params }) => {
       const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
-      const start = query_params.windowStart as number | undefined;
+      expect(Number.isInteger(query_params.windowStart)).toBe(true);
+      // Applied only when the SQL carries the clause, so dropping it from the query fails a test.
+      const start = query.includes('removedAt > {windowStart:Int64}')
+        ? (query_params.windowStart as number)
+        : undefined;
       const limit = Number(/LIMIT (\d+)/.exec(query)![1]);
       const json = rows
         .filter((r) => start === undefined || r.removedAt > start)

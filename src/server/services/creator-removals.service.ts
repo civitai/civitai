@@ -21,16 +21,19 @@ export type CreatorRemoval = {
   reason?: string | null;
 };
 
+/** The reason the score weighs a removal by: its latest `violationType`, else its `tosReason`. */
+export const REMOVAL_REASON_SQL = `coalesce(
+      nullIf(argMaxIf(violationType, time, type = '${REPORTS_AGAINST_EVENT}'), ''),
+      argMaxIf(tosReason, time, type = '${REPORTS_AGAINST_EVENT}')
+    )`;
+
 /**
  * ClickHouse half: one row per image of the owners `ownerFilter` selects, with its latest removal in
  * unix seconds. A removal a later restore event reversed is dropped here.
  */
 export const removalsQuery = (ownerFilter: string) => `
   SELECT ownerId, imageId, toUnixTimestamp(maxIf(time, type = '${REPORTS_AGAINST_EVENT}')) AS removedAt,
-    coalesce(
-      nullIf(argMaxIf(violationType, time, type = '${REPORTS_AGAINST_EVENT}'), ''),
-      argMaxIf(tosReason, time, type = '${REPORTS_AGAINST_EVENT}')
-    ) AS reason
+    ${REMOVAL_REASON_SQL} AS reason
   FROM images
   WHERE type IN ('${REPORTS_AGAINST_EVENT}', '${REMOVAL_RESTORED_EVENT}') AND ${ownerFilter}
   GROUP BY ownerId, imageId
@@ -140,6 +143,8 @@ export async function getOwnersWithReversalsSince(ch: CustomClickHouseClient, si
  * `since` minus the window and up to `now` minus it. The nightly job re-scores them, as nothing new
  * happened to them since its last run.
  */
+// Relies on the job's checkpoint being taken before this run's `now`, so consecutive ranges
+// overlap rather than skip.
 export async function getOwnersWithRemovalsAgedOutSince(
   ch: CustomClickHouseClient,
   since: Date,

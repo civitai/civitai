@@ -2,7 +2,7 @@ import { chunk } from 'lodash-es';
 import * as z from 'zod';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { AugmentedPool } from '~/server/db/db-helpers';
-import { withoutReversed } from '~/server/services/creator-removals.service';
+import { REMOVAL_REASON_SQL, withoutReversed } from '~/server/services/creator-removals.service';
 import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import {
   REMOVAL_RESTORED_EVENT,
@@ -57,6 +57,8 @@ export type RemovalHistory = {
   firstNsfw: string;
   firstReason: string;
   lastReason: string;
+  /** The reason the score weighs the removal by (`REMOVAL_REASON_SQL`), unlike `lastReason`. */
+  scoreReason?: string | null;
   resourceIds: number[];
   minorRemovals: number;
 };
@@ -81,6 +83,7 @@ export const policyChangeCandidatesQuery = (rule: PolicyChangeRule) => `
     toString(argMinIf(nsfw, time, type = '${REPORTS_AGAINST_EVENT}')) AS firstNsfw,
     argMinIf(ifNull(tosReason, ''), time, type = '${REPORTS_AGAINST_EVENT}') AS firstReason,
     argMaxIf(ifNull(tosReason, ''), time, type = '${REPORTS_AGAINST_EVENT}') AS lastReason,
+    ${REMOVAL_REASON_SQL} AS scoreReason,
     groupUniqArrayArrayIf(resources, type = '${REPORTS_AGAINST_EVENT}') AS resourceIds,
     countIf(type = '${REPORTS_AGAINST_EVENT}' AND tosReason = 'minor') AS minorRemovals
   FROM images

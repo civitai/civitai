@@ -31,6 +31,7 @@ import type * as PgDb from '~/server/db/pgDb';
 import type * as UpdateUserScore from '~/server/jobs/update-user-score';
 import type * as Exemptions from '~/server/services/removal-score-exemption.service';
 import handler from '~/pages/api/admin/temp/backfill-removal-score-exemptions';
+import { removalWeight } from '~/shared/utils/creator-removal-weights';
 import { REMOVAL_SCORE_WINDOW_DAYS } from '~/shared/constants/creator-journey.constants';
 
 const NOW = new Date('2026-06-01T00:00:00Z');
@@ -51,11 +52,12 @@ function call(query: Record<string, string>) {
   return (handler as (req: unknown, res: unknown) => Promise<unknown>)(req, res).then(() => body);
 }
 
-const removal = (ownerId: number, imageId: number, daysAgo: number, lastReason = 'poi') => ({
+const removal = (ownerId: number, imageId: number, daysAgo: number, scoreReason = 'poi') => ({
   ownerId,
   imageId,
   removedAt: seconds(daysAgo),
-  lastReason,
+  lastReason: 'poi', // what exemption matching reads; the score weighs `scoreReason`
+  scoreReason,
 });
 
 beforeEach(() => {
@@ -87,6 +89,17 @@ describe('backfill-removal-score-exemptions preview', () => {
       ]),
       1000
     );
+  });
+
+  it('weighs a removal by the reason the score reads: violationType first, then tosReason', async () => {
+    mocks.findPolicyChangeRemovals.mockResolvedValue([
+      { ...removal(1, 10, 5, 'spam'), lastReason: 'manual' }, // violationType spam, tosReason manual
+    ]);
+
+    const body = await call({});
+
+    expect(removalWeight('spam')).toBe(0.5);
+    expect(body).toMatchObject({ pointsRestored: 500 });
   });
 
   it('still exempts every covered image, aged out or not', async () => {

@@ -23,9 +23,8 @@ const { getMyRemovedImages, REMOVED_IMAGES_LIMIT } = await import(
   '~/server/services/creator-removed-images.service'
 );
 const { getReportAgainstScore } = await import('~/server/jobs/update-user-score');
-const { getOwnersWithRemovalsAgedOutSince, removalsQuery, withoutReversed } = await import(
-  '~/server/services/creator-removals.service'
-);
+const { getOwnersWithRemovals, getOwnersWithRemovalsAgedOutSince, removalsQuery, withoutReversed } =
+  await import('~/server/services/creator-removals.service');
 const { findPolicyChangeRemovals, insertRemovalScoreExemptions } = await import(
   '~/server/services/removal-score-exemption.service'
 );
@@ -352,6 +351,23 @@ describe('a removal score exemption', () => {
   });
 });
 
+describe('the owners page of the retroactive pass', () => {
+  it('asks for owners after the cursor, in id order, up to the limit, as whole numbers', async () => {
+    const asked: string[] = [];
+    const $query = async (sql: string) => {
+      asked.push(sql);
+      return [{ ownerId: 11 }];
+    };
+
+    const owners = await getOwnersWithRemovals({ $query } as never, 10.9, 2.7);
+
+    expect(owners).toEqual([11]);
+    const sql = flat(asked[0]);
+    expect(sql).toContain('ownerId > 10 ORDER BY ownerId LIMIT 2');
+    expect(sql).toContain("type = 'DeleteTOS'");
+  });
+});
+
 describe('the nightly aged-out range', () => {
   const rangeOf = async (since: Date, now: Date) => {
     const asked: Date[][] = [];
@@ -489,7 +505,11 @@ describe('the Removed content score', () => {
       const trims = query.includes("trimBoth(ifNull(reason, ''))");
       const json = own.filter((r) => {
         const reason = trims ? (r.reason ?? '').trim() : r.reason ?? '';
-        return r.removedAt > query_params.windowStart && !excluded.includes(reason);
+        expect(Number.isInteger(query_params.windowStart)).toBe(true);
+        const inWindow =
+          !query.includes('removedAt > {windowStart:Int64}') ||
+          r.removedAt > query_params.windowStart;
+        return inWindow && !excluded.includes(reason);
       });
       return { json: async () => json };
     });

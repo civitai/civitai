@@ -51,7 +51,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   for (const removal of removals) {
     if (!isWithinRemovalWindow(removal.removedAt, now)) continue;
     const owner = Number(removal.ownerId);
-    const weight = removalWeight(removal.lastReason);
+    const weight = removalWeight(removal.scoreReason);
     weightedRemovals += weight;
     byOwner.set(owner, (byOwner.get(owner) ?? 0) + weight);
   }
