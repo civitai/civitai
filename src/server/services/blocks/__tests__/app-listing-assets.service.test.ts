@@ -82,6 +82,13 @@ vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) =>
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingScreenshotId: () => `apls_test_${++ids.n}`,
 }));
+const { recordModeratorEdit } = vi.hoisted(() => ({
+  recordModeratorEdit: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-moderator-edit', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  recordModeratorListingEdit: (...a: unknown[]) => recordModeratorEdit(...a),
+}));
 
 const owner = { id: 42, isModerator: false } as never;
 
@@ -814,11 +821,51 @@ describe('screenshot CRUD', () => {
       revisionOfId: null,
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    recordModeratorEdit.mockClear();
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, mod);
     expect(res.removed).toBe('b');
     // A mod's edit is NOT staged on a shadow — nothing was cloned.
     expect(mockDb.appListing.create).not.toHaveBeenCalled();
+    expect(recordModeratorEdit).toHaveBeenCalledWith({
+      appListingId: 'apl_live',
+      actorUserId: 7,
+      surface: 'media',
+    });
+  });
+
+  it("a moderator's media edit is audited before the write, and refused if the audit fails", async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_live',
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_live',
+      status: 'approved',
+      revisionOfId: null,
+    });
+    recordModeratorEdit.mockClear().mockRejectedValueOnce(new Error('check constraint'));
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    await expect(removeListingScreenshot({ screenshotId: 'b' }, mod)).rejects.toThrow(
+      'check constraint'
+    );
+    expect(mockDb.appListingScreenshot.delete).not.toHaveBeenCalled();
+    expect(mockDb.appListingScreenshot.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('an owner who is also a moderator is not audited as a moderator edit', async () => {
+    mockDb.appListingScreenshot.findUnique.mockResolvedValue({
+      id: 'b',
+      appListingId: 'apl_1',
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, status: 'draft' });
+    recordModeratorEdit.mockClear();
+    const { removeListingScreenshot } = await import('../app-listing-assets.service');
+    await removeListingScreenshot({ screenshotId: 'b' }, { id: 42, isModerator: true } as never);
+    expect(recordModeratorEdit).not.toHaveBeenCalled();
   });
 
   it('🔴 setIcon STILL REFUSES when the resolve yields the LIVE listing (fail-closed)', async () => {

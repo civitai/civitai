@@ -930,7 +930,11 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       try {
-        return await getMyListingForEdit({ listingId: input.listingId, userId: ctx.user.id });
+        return await getMyListingForEdit({
+          listingId: input.listingId,
+          userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+        });
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -1035,6 +1039,7 @@ export const appListingsRouter = router({
           appBlockId: input.appBlockId,
           slug: input.slug,
           userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1057,7 +1062,11 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       try {
-        return await beginListingRevision({ listingId: input.listingId, userId: ctx.user.id });
+        return await beginListingRevision({
+          listingId: input.listingId,
+          userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+        });
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -1089,6 +1098,7 @@ export const appListingsRouter = router({
         return await submitListingRevision({
           shadowId: input.shadowId,
           userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
           changelog: input.changelog,
         });
       } catch (err) {
@@ -1271,6 +1281,7 @@ export const appListingsRouter = router({
       return getAppListingAuthoringContext({
         appListingId: input.appListingId,
         userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
       });
     }),
 
@@ -1302,7 +1313,11 @@ export const appListingsRouter = router({
       const { listListingHistory } = await import(
         '~/server/services/blocks/app-listing-history.service'
       );
-      return listListingHistory({ appListingId: input.appListingId, userId: ctx.user.id });
+      return listListingHistory({
+        appListingId: input.appListingId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
     }),
 
   /**

@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import { recordModeratorListingEdit } from '~/server/services/blocks/app-listing-moderator-edit';
 import {
   readListingMediaSplit,
   readListingMediaSplitState,
@@ -439,6 +440,16 @@ async function resolveListingRole(
   const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
   const access = await resolveListingAccess(listingId, userId, db);
   return access?.role ?? null;
+}
+
+async function auditModeratorAssetEdit(listing: OwnedListing, user: SessionUser): Promise<void> {
+  if (!user.isModerator) return;
+  if ((await resolveListingRole(listing.id, user.id, dbWrite)) !== null) return;
+  await recordModeratorListingEdit({
+    appListingId: listing.id,
+    actorUserId: user.id,
+    surface: 'media',
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1329,6 +1340,7 @@ export async function setListingIcon(
     user
   );
   assertOwnerAssetEditable(listing, user);
+  await auditModeratorAssetEdit(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   const raised = await dbWrite.$transaction(async (tx) => {
@@ -1365,6 +1377,7 @@ export async function setListingCover(
     user
   );
   assertOwnerAssetEditable(listing, user);
+  await auditModeratorAssetEdit(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   const raised = await dbWrite.$transaction(async (tx) => {
@@ -1397,6 +1410,7 @@ export async function addListingScreenshot(
     user
   );
   assertOwnerAssetEditable(listing, user);
+  await auditModeratorAssetEdit(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'screenshot', user, {
     allowPending: true,
   });
@@ -1478,6 +1492,7 @@ export async function setListingRedMedia(
     user
   );
   assertOwnerAssetEditable(listing, user);
+  await auditModeratorAssetEdit(listing, user);
   let imageId: number | null = null;
   let scanPending: boolean | undefined;
   if (args.imageId != null) {
@@ -1523,6 +1538,7 @@ export async function reorderListingScreenshots(
     user
   );
   assertOwnerAssetEditable(listing, user);
+  await auditModeratorAssetEdit(listing, user);
   // 🔴 `orderedIds` are PARENT row ids whenever the mint above just happened. Re-key
   // them onto the shadow's clones BEFORE the permutation check — otherwise the check
   // fails (parent ids aren't in the shadow's set) or, worse without the retarget,
@@ -1660,6 +1676,7 @@ export async function updateListingScreenshotCaption(
   });
   const { screenshotId, listing } = await resolveOwnerScreenshotTarget(args.screenshotId, user);
   assertOwnerAssetEditable(listing, user);
+  await auditModeratorAssetEdit(listing, user);
   // 🔴 LISTING-SCOPED write — see `throwScreenshotNoLongerOnRevision`.
   const { count } = await dbWrite.appListingScreenshot.updateMany({
     where: { id: screenshotId, appListingId: listing.id },
@@ -1695,6 +1712,7 @@ export async function removeListingScreenshot(
   // review) — edits go through a shadow revision. Mods bypass (curation). Evaluated
   // on the RESOLVED target, so a re-map that failed to leave the parent throws here.
   assertOwnerAssetEditable(listing, user);
+  await auditModeratorAssetEdit(listing, user);
   // 🔴 LISTING-SCOPED delete — see `throwScreenshotNoLongerOnRevision`. This is the
   // one write where the reparent race is destructive: an unscoped
   // `delete({ where: { id } })` would remove the row from the LIVE listing it had just
