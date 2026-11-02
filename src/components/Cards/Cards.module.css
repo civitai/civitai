@@ -316,8 +316,7 @@
 /* The image card's action row. A container so the reaction counts can pick their form from the
    row's own width (ImageCard sets data-count-len to the characters in its longest full count).
    Each step below is the row width that fits four counts of that length, about 41px per extra
-   character, with some slack. Narrower rows abbreviate and give the reactions the whole row, which
-   wraps the Buzz tip and sticker badges to the next line. */
+   character, with some slack. Narrower rows abbreviate. */
 .actionRow {
   container-type: inline-size;
 
@@ -334,10 +333,6 @@
   .actionRow[data-count-len='5'] [data-count='abbr'] {
     display: inline;
   }
-
-  .actionRow[data-count-len='5'] .reactionsFill {
-    width: 100%;
-  }
 }
 
 @container (max-width: 340.98px) {
@@ -347,10 +342,6 @@
 
   .actionRow[data-count-len='6'] [data-count='abbr'] {
     display: inline;
-  }
-
-  .actionRow[data-count-len='6'] .reactionsFill {
-    width: 100%;
   }
 }
 
@@ -362,10 +353,6 @@
   .actionRow[data-count-len='7'] [data-count='abbr'] {
     display: inline;
   }
-
-  .actionRow[data-count-len='7'] .reactionsFill {
-    width: 100%;
-  }
 }
 
 @container (max-width: 422.98px) {
@@ -375,10 +362,6 @@
 
   .actionRow[data-count-len='8'] [data-count='abbr'] {
     display: inline;
-  }
-
-  .actionRow[data-count-len='8'] .reactionsFill {
-    width: 100%;
   }
 }
 
@@ -390,8 +373,20 @@
   .actionRow[data-count-len='9'] [data-count='abbr'] {
     display: inline;
   }
+}
 
-  .actionRow[data-count-len='9'] .reactionsFill {
-    width: 100%;
-  }
+/* The Buzz tip, sticker badge and info button, always on their own line under the reactions. Hidden
+   when none of them rendered (a card with no tip and a sticker badge that returned null), so an
+   empty line takes no height. Its display is set here, not by a utility class: this module is in a
+   lower layer, so a utility's `display` would beat the `none` below. */
+.tipRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  min-height: 28px;
+}
+
+.tipRow:not(:has(> :not(:empty))) {
+  display: none;
 }
