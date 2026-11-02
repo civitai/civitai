@@ -676,9 +676,10 @@ jobs:
     env:
       ROSTER_REDIS_URL: redis://localhost:6379/15
       APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-      # The same throwaway server for the kysely-hot-reads-2 Prisma-vs-Kysely parity suite, which
-      # drops and recreates its own `hot_reads_2_parity` schema there. That suite fails in CI if this
-      # is missing rather than skipping itself.
+      # The same throwaway server for the hot-reads-2 and placement-reads Kysely suites (pinned to
+      # the values the retired Prisma reads returned), which drop and recreate their own
+      # `hot_reads_2_parity` and `placement_parity` schemas there. Each fails in CI if this is missing
+      # rather than skipping itself.
       KYSELY_HOT_READS_2_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-3 suite (its own `hot_reads_3_parity` schema).
       KYSELY_HOT_READS_3_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres

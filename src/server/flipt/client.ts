@@ -49,61 +49,13 @@ export enum FLIPT_FEATURE_FLAGS {
   //    maps a pool timeout to TIMEOUT.
   // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
-  // Reads the placement/sticker read family (packages/civitai-db-queries/src/placement.db.ts)
-  // through Kysely-over-pg instead of the Prisma query engine: the space resolution behind every
-  // placement surface, the price range, getCapTier, the free-placement display counts, the pending
-  // badge counts and the sticker listing/counts. DEFAULT-OFF, same semantics as
-  // KYSELY_IMAGE_REACTIONS above: boolean only, evaluated with no entityId.
-  //
-  // 🔴 Each read keeps its database: a `dbWrite` read (the target/owner lookup, the space rows and
-  // getCapTier, which decide whether a placement is allowed and what it costs) moves to
-  // `kyselyWrite` over the shared `pgDbWrite` pool; a `dbRead` read moves to `kyselyRead` over
-  // `pgDbRead`. The counts inside the free-placement claim transaction never switch — they decide
-  // under advisory locks on the Prisma `tx`.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // this is evaluated on every image detail view's space resolution and every session's badge
-  // counts.
-  //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` AND `pgDbWrite`. Their acquire wait is
-  // `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), where
-  // Prisma's pool times out, so the environment must set a non-zero value before flipping. Failures
-  // surface as pg errors, not Prisma P2024/P1008, so `prismaErrorToTrpcCode` no longer maps a pool
-  // timeout to TIMEOUT. The ON window also changes contention on both pg pools, the writer's
-  // included, not only query-engine CPU.
-  KYSELY_PLACEMENT_READS = 'kysely-placement-reads',
-  // Reads two hot nested Prisma reads (packages/civitai-db-queries/src/hot-reads.db.ts) through
-  // Kysely-over-pg instead of the Prisma query engine, which fans each out into one query per
-  // relation: the model page's `modelWithDetailsSelect` read (`getModel`) and the creator card
-  // (`fetchUserCreator`); plus the image tags behind `imageTagsCache` and an image's comment-thread
-  // lookup (commentsv2.service). DEFAULT-OFF, same semantics as KYSELY_IMAGE_REACTIONS above:
-  // boolean only, evaluated with no entityId.
-  //
-  // 🔴 Each read keeps its database: the model read takes `getKyselyWithoutLag('model', id)`, the
-  // same lag decision `getDbWithoutLag('model', id)` made for Prisma; the image tags read the
-  // primary on a write-triggered refresh and the replica otherwise, as before; the creator card and
-  // the thread lookup read `kyselyRead`, as they read `dbRead`.
-  // Each read runs its statements one after another on ONE pooled connection (the model page up to
-  // four, the creator card two), and every VIEW ("UserStat", "ModelReportStat", "GenerationCoverage",
-  // "ImageTag") is filtered by its key as a parameter, never reached through a join.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // this is evaluated on every model page and every creator-card cache miss.
-  //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
-  // model). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
-  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
-  // Failures surface as pg errors, not Prisma P2024/P1008.
-  KYSELY_HOT_READS_2 = 'kysely-hot-reads-2',
   // Reads the next hot Prisma read shapes (packages/civitai-db-queries/src/hot-reads-3.db.ts) through
   // Kysely-over-pg instead of the Prisma query engine: the model page's default-version lookup
   // (`getDefaultModelVersion`, three Prisma queries, one statement here), three reads
   // `getModelHandler` makes after the model row (the suggested-resource count, the owner's settings,
   // the owner's posts on the versions), and the viewer's pending remix-gallery submissions
-  // (`getViewerPendingSubmissions`). DEFAULT-OFF, same semantics as KYSELY_HOT_READS_2 above: boolean
-  // only, evaluated with no entityId. Every statement reads base tables only, never a view.
+  // (`getViewerPendingSubmissions`). DEFAULT-OFF, same semantics as KYSELY_IMAGE_REACTIONS above:
+  // boolean only, evaluated with no entityId. Every statement reads base tables only, never a view.
   //
   // 🔴 Each read keeps its database: the default-version lookup takes
   // `getKyselyWithoutLag('model', id)`, the twin of the `getDbWithoutLag('model', id)` decision the
@@ -125,8 +77,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // `comment.getAll` (the unpinned list sorted newest or oldest first, and the pinned block), each
   // list with its author, reactions and model name in one statement where Prisma issues one query
   // per relation. A cursor page or another sort stays on Prisma. DEFAULT-OFF, same semantics as
-  // KYSELY_HOT_READS_2 above: boolean only, evaluated with no entityId. Every statement reads base
-  // tables only, never a view.
+  // KYSELY_IMAGE_REACTIONS above: boolean only, evaluated with no entityId. Every statement reads
+  // base tables only, never a view.
   //
   // 🔴 Each read keeps its database: `getKyselyWithoutLag('commentModel', modelId)`, the twin of the
   // `getDbWithoutLag('commentModel', modelId)` decision the Prisma reads make.
