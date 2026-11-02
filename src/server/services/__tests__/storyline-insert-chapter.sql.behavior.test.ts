@@ -885,6 +885,7 @@ describe('a chapter add whose parent changes after its first read', () => {
           [joinable]
         );
 
+      // The control for the refusal below: an always-refusing or inverted check fails here.
       it('extends the main path when the end is still the one the card read', async () => {
         await linkStorylineChapter({
           parentChapterId: 60,
@@ -915,6 +916,62 @@ describe('a chapter add whose parent changes after its first read', () => {
         // What the card's chapter id did before `atEnd`: a side branch off 60, not the main path.
         await linkStorylineChapter({ parentChapterId: 60, chapterId: joinable, userId: OWNER });
         expect(await joinEdge()).toEqual([{ canon: false }]);
+      });
+
+      // "Make main path" on a side child of 60 locks 60, not the storyline, so it can land between
+      // the end check and the edge: played here as landing when link reads 60's canon child.
+      it('refuses rather than branch when "Make main path" gives the end a canon child meanwhile', async () => {
+        const { chapterId: side } = await addOwnerChapter({
+          parentChapterId: 60,
+          postId: await post(),
+          userId: OWNER,
+        });
+        await db.pg.query(
+          `UPDATE "StorylineChapterEdge" SET canon = false WHERE "chapterId" = $1`,
+          [side]
+        );
+        const findCanon = w.storylineChapterEdge.findFirst.getMockImplementation()!;
+        w.storylineChapterEdge.findFirst.mockImplementationOnce((async (args: never) => {
+          await db.pg.query(
+            `UPDATE "StorylineChapterEdge" SET canon = true WHERE "chapterId" = $1`,
+            [side]
+          );
+          return findCanon(args);
+        }) as never);
+
+        await expect(
+          linkStorylineChapter({
+            parentChapterId: 60,
+            chapterId: joinable,
+            userId: OWNER,
+            atEnd: true,
+          })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(await joinEdge()).toEqual([]);
+      });
+
+      // The card reads past tombstones, so 5 is the end it shows: the check heals the route first,
+      // as the at-end add does, rather than refuse a join from the last live chapter.
+      it('joins at the last live chapter when the main path ends at tombstones', async () => {
+        await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id IN (6, 60)`);
+        const { chapterId: under40 } = await addOwnerChapter({
+          parentChapterId: 40,
+          postId: await post(),
+          userId: OWNER,
+        });
+
+        await linkStorylineChapter({
+          parentChapterId: 5,
+          chapterId: under40,
+          userId: OWNER,
+          atEnd: true,
+        });
+        expect(
+          await rows(
+            `SELECT canon FROM "StorylineChapterEdge" WHERE "chapterId" = $1 AND "parentChapterId" = 5`,
+            [under40]
+          )
+        ).toEqual([{ canon: true }]);
       });
     });
 

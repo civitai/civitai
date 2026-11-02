@@ -450,7 +450,8 @@ export function StorylineEndOfChapter({
                       parentPostId,
                       parentChapterId: chapterId,
                       mode: 'join',
-                      atEnd: onMain && !midStory,
+                      // Unread ways on are not "no main-path chapter": checked only once known.
+                      atEnd: onMain && children !== undefined && !midStory,
                     })
                   }
                   data-testid="storyline-join-existing-chapter"

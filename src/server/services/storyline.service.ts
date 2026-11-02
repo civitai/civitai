@@ -2096,6 +2096,9 @@ async function createChapterJoinable(storyline: {
     }) === null;
 }
 
+const STORYLINE_END_MOVED =
+  'The story has a new last chapter since you opened this. Close it and join from there';
+
 /**
  * The owner (or a moderator) offers an existing chapter as a way on from `parentChapterId`, so
  * two branches rejoin at it. The chapter gains a parent and keeps its depth.
@@ -2141,9 +2144,7 @@ export async function linkStorylineChapter({
           SELECT id FROM "StorylineChapter" WHERE "storylineId" = ${storylineId} AND depth = 0
         `;
         if (!root || (await lockedMainPathEnd(tx, root.id)) !== parentChapterId)
-          throw throwBadRequestError(
-            'The story has a new last chapter since you opened this. Close it and join from there'
-          );
+          throw throwBadRequestError(STORYLINE_END_MOVED);
       }
       // Before the reads below, so what they find stays true until the edge is written.
       const live = await lockLiveChapters(tx, [parentChapterId, chapterId]);
@@ -2167,13 +2168,12 @@ export async function linkStorylineChapter({
       const refusal = judge(chapterId);
       if (refusal) throw throwBadRequestError(STORYLINE_LINK_REFUSALS[refusal]);
 
+      const canon = await takesCanonSlot(tx, parentChapterId);
+      // "Make main path" locks only the parent, not the storyline, so it can still have given the
+      // end a canon child since the check above.
+      if (atEnd && !canon) throw throwBadRequestError(STORYLINE_END_MOVED);
       await tx.storylineChapterEdge.create({
-        data: {
-          storylineId,
-          chapterId,
-          parentChapterId,
-          canon: await takesCanonSlot(tx, parentChapterId),
-        },
+        data: { storylineId, chapterId, parentChapterId, canon },
       });
     });
   } catch (error) {

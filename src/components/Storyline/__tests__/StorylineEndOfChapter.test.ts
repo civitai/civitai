@@ -491,6 +491,21 @@ describe('StorylineEndOfChapter', () => {
     expect([own, join].map((sel) => noPost.querySelector(sel))).toEqual([null, null]);
   });
 
+  // Ways on not read yet are not "no main-path chapter": a join from mid-story would be refused.
+  it('sends no end check with a join opened before the ways on are read', () => {
+    mocks.isLoading = true;
+    mocks.openContinue.mockClear();
+    const view = render({ parentPostId: 15, isOwner: true });
+    act(() =>
+      view
+        .querySelector<HTMLButtonElement>('[data-testid="storyline-join-existing-chapter"]')
+        ?.click()
+    );
+    expect(mocks.openContinue.mock.calls).toEqual([
+      [{ parentPostId: 15, parentChapterId: 4, mode: 'join', atEnd: false }],
+    ]);
+  });
+
   it('offers a moderator joining for the owner, and keeps their own way of continuing', () => {
     mocks.children = [];
     mocks.terms = { open: true, price: 0, closedReason: null };

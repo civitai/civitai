@@ -16,13 +16,13 @@ const TILE_WIDTH = 140;
 export function StorylineJoinChapterForm({
   parentChapterId,
   parentName,
-  atEnd = false,
+  atEnd,
   onClose,
 }: {
   parentChapterId: number;
   parentName: string | null;
   /** `parentChapterId` was read as the main path's end; the server refuses if it no longer is. */
-  atEnd?: boolean;
+  atEnd: boolean;
   onClose: () => void;
 }) {
   const [chapterId, setChapterId] = useState<number | null>(null);
