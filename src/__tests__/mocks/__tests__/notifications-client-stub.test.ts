@@ -9,8 +9,8 @@ import {
 
 const row = { type: 'test', key: 'k', category: 'System', userId: 2, details: {} } as never;
 
-// 🔴 Do not delete. A test run from a shell holding real notifications credentials once sent
-// real notifications to fixture user ids; these pin the two setup.ts guards that stop it.
+// 🔴 Do not delete: these pin the setup.ts guards that keep a shell's real notifications
+// credentials from turning a test run into real notifications.
 describe('no unit test can reach the notifications service', () => {
   it('the app client is a stub that refuses every call unless the file mocks it', async () => {
     await expect(notifications.createNotification(row)).rejects.toBeInstanceOf(
