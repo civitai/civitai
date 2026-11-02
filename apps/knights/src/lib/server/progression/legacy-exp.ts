@@ -39,6 +39,35 @@ export const legacyExpForget =
     await client().eval(DELETE_FIELD, { keys: [LEGACY_EXP_KEY], arguments: [String(playerId)] });
   };
 
+const N = REDIS_SYS_KEYS.NEW_ORDER;
+// The original game's per-player counters its own reset clears; each is a cache the game re-reads from its source.
+const LEGACY_HASH_COUNTERS = [
+  N.EXP,
+  N.BUZZ,
+  N.PENDING_BUZZ,
+  N.RECENTLY_GRANTED_BUZZ,
+  N.SMITE,
+  N.JUDGEMENTS.ALL,
+  N.JUDGEMENTS.CORRECT,
+  N.SANITY_CHECKS.FAILURES,
+];
+const REMOVE_MEMBER = `return redis.call('ZREM', KEYS[1], ARGV[1])`;
+
+/** After a career restart: the original game rebuilds every counter for the player instead of trusting a stale one. */
+export const legacyCountersForget =
+  (client: () => EvalClient) =>
+  async (playerId: number): Promise<void> => {
+    const args = [String(playerId)];
+    const results = await Promise.allSettled([
+      ...LEGACY_HASH_COUNTERS.map((key) =>
+        client().eval(DELETE_FIELD, { keys: [key], arguments: args })
+      ),
+      client().eval(REMOVE_MEMBER, { keys: [N.FERVOR], arguments: args }),
+    ]);
+    const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed) throw failed.reason;
+  };
+
 /** Runs after the Postgres commit; a Redis failure is logged and never fails the caller. */
 export async function mirrorXp(mirror: XpMirror | undefined, deltas: XpDelta[]): Promise<void> {
   if (!mirror || deltas.length === 0) return;

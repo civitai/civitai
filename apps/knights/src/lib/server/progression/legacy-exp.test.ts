@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LEGACY_EXP_KEY, legacyExpForget, legacyExpMirror, mirrorXp } from './legacy-exp';
+import {
+  LEGACY_EXP_KEY,
+  legacyCountersForget,
+  legacyExpForget,
+  legacyExpMirror,
+  mirrorXp,
+} from './legacy-exp';
 
 describe('legacyExpMirror', () => {
   it('increments the original game hash field for the player, only when it is present', async () => {
@@ -44,5 +50,29 @@ describe('legacyExpForget', () => {
       keys: ['new-order:exp'],
       arguments: ['7'],
     });
+  });
+});
+
+describe('legacyCountersForget', () => {
+  it('clears every counter the original game resets, and still clears the rest when one call fails', async () => {
+    const evalMock = vi.fn().mockRejectedValueOnce(new Error('down')).mockResolvedValue(1);
+
+    await expect(legacyCountersForget(() => ({ eval: evalMock }))(7)).rejects.toThrow('down');
+
+    const keys = evalMock.mock.calls.map(([, options]) => options.keys[0]).sort();
+    expect(keys).toEqual(
+      [
+        'new-order:exp',
+        'new-order:fervor',
+        'new-order:blessed-buzz',
+        'new-order:pending-buzz',
+        'new-order:recently-granted-buzz',
+        'new-order:smite-progress',
+        'new-order:judgments:all',
+        'new-order:judgments:correct',
+        'new-order:sanity-failures',
+      ].sort()
+    );
+    expect(evalMock.mock.calls.every(([, options]) => options.arguments[0] === '7')).toBe(true);
   });
 });
