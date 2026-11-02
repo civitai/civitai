@@ -5,9 +5,11 @@ import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { deleteImageRows, finishImageDeletes } from './image-deletion';
+import { detachHeldArticleThreadsSqlText, heldCommentV3OnArticleSqlText } from './delete-hold-sql';
 import { syncSearchIndex } from './search-index';
 import { logToAxiom } from './axiom';
 import type { KeptImage } from '$lib/image-kept-reasons';
+import { LEGAL_HOLD_REFUSAL } from '$lib/legal-hold';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
@@ -310,6 +312,20 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
       .where('id', '=', id)
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
+
+    // The main app's article delete, in its order: CommentV3 is locked before the cascade reaches
+    // CommentV2, and a held author's comments are kept.
+    await sql`SELECT 1 FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}
+      FOR UPDATE`.execute(trx);
+    const kept = await sql<{ keptByComment: boolean }>`
+      SELECT ${sql.raw(heldCommentV3OnArticleSqlText(`${id}::int`))} AS "keptByComment"`.execute(
+      trx
+    );
+    if (kept.rows[0]?.keptByComment) throw new Error(LEGAL_HOLD_REFUSAL);
+    await sql`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`.execute(
+      trx
+    );
+    await sql.raw(detachHeldArticleThreadsSqlText(`SELECT ${id}::int`)).execute(trx);
 
     await trx
       .deleteFrom('File')
