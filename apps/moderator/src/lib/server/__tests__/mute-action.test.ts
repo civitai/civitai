@@ -47,15 +47,23 @@ beforeEach(() => {
 });
 
 describe('a moderator-app mute reaches the orchestrator and the cached standing', () => {
-  it("revokes the account's orchestrator tokens and drops its cached standing, before the logout", async () => {
+  it("drops the cached standing, ends the sessions, then revokes the account's orchestrator tokens", async () => {
     expect(await setMuted({ userId: 42, muted: true, moderatorId: 7 })).toEqual({ ok: true });
 
-    expect(revokeOrchestratorUserTokens).toHaveBeenCalledExactlyOnceWith(42);
+    expect(revokeOrchestratorUserTokens).toHaveBeenCalledWith(42);
     expect(bustKeyBestEffort).toHaveBeenCalledWith(
       expect.stringMatching(/account-standing:42$/),
       expect.anything()
     );
-    expect(order.indexOf('revoke')).toBeLessThan(order.indexOf('sessions'));
+    // The orchestrator re-validates against the session, so the revoke must follow the logout.
+    expect(order.indexOf('sessions')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('revoke')).toBeGreaterThan(order.indexOf('sessions'));
     expect(order.indexOf('bust')).toBeLessThan(order.indexOf('sessions'));
+  });
+
+  it('still revokes when ending the sessions fails', async () => {
+    invalidateUserSessions.mockRejectedValueOnce(new Error('session store down'));
+    await setMuted({ userId: 42, muted: true, moderatorId: 7 }).catch(() => undefined);
+    expect(revokeOrchestratorUserTokens).toHaveBeenCalledWith(42);
   });
 });

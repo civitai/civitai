@@ -1,3 +1,4 @@
+import type { SessionStateCaller } from '~/server/auth/session-metrics';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -91,16 +92,42 @@ async function bustStanding(userId: number) {
   }
 }
 
-/**
- * Run after a mute or unmute has committed, before anything else that can fail. Drops the cached
- * standing so `guardedProcedure` sees the change on the next request, and starts the orchestrator's
- * re-validation of the account's cached tokens without waiting on it (`revokeCivitaiUserTokens` logs
- * its own failures). Never throws.
- */
-export async function afterAccountStandingChanged(userId: number): Promise<void> {
+function startRevoke(userId: number) {
+  // Not awaited: the orchestrator call has a 5 s timeout and runs inside job loops.
+  // `revokeCivitaiUserTokens` logs its own failures.
   void Promise.resolve()
     .then(() => revokeCivitaiUserTokens({ userId }))
     .catch(() => false);
+}
+
+/** The session step the caller takes for this change; repeated here so the revoke can follow it. */
+export type StandingSessionStep = { kind: 'refresh' | 'invalidate'; caller: SessionStateCaller };
+
+/**
+ * Run after a mute or unmute has committed, before anything else that can fail. Drops the cached
+ * standing, refreshes or invalidates the account's sessions, then makes the orchestrator re-validate
+ * the account's cached tokens. The revoke must come after the session step: the orchestrator
+ * re-validates through `/api/v1/me`, which reports the session's standing, so revoking first lets it
+ * re-cache the old one. Repeats the bust and the revoke after `ACCOUNT_STANDING_REBUST_MS`, past any
+ * refill or re-validation that raced the first. Never throws.
+ */
+export async function afterAccountStandingChanged(
+  userId: number,
+  session: StandingSessionStep
+): Promise<void> {
   await bustStanding(userId);
-  setTimeout(() => void bustStanding(userId), ACCOUNT_STANDING_REBUST_MS).unref?.();
+  try {
+    const { invalidateSession, refreshSession } = await import(
+      '~/server/auth/session-invalidation'
+    );
+    if (session.kind === 'refresh') await refreshSession(userId, { caller: session.caller });
+    else await invalidateSession(userId, session.caller);
+  } catch (error) {
+    logStandingError('account-standing.session-step-failed', userId, error);
+  } finally {
+    startRevoke(userId);
+  }
+  setTimeout(() => {
+    void bustStanding(userId).finally(() => startRevoke(userId));
+  }, ACCOUNT_STANDING_REBUST_MS).unref?.();
 }

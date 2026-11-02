@@ -507,9 +507,7 @@ export async function setUserMuted(
   const { afterAccountStandingChanged } = await import(
     '~/server/services/account-standing.service'
   );
-  await afterAccountStandingChanged(args.userId);
-  const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(args.userId, 'moderation');
+  await afterAccountStandingChanged(args.userId, { kind: 'invalidate', caller: 'moderation' });
   return user;
 }
 

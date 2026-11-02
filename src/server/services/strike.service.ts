@@ -539,7 +539,10 @@ export async function evaluateStrikeEscalation(
   const { afterAccountStandingChanged } = await import(
     '~/server/services/account-standing.service'
   );
-  await afterAccountStandingChanged(userId);
+  await afterAccountStandingChanged(userId, {
+    kind: action === 'unmuted' ? 'refresh' : 'invalidate',
+    caller: 'strike',
+  });
 
   if (notify && !silent) {
     await createNotification(
@@ -655,7 +658,7 @@ export async function releaseStrikeMuteOnTosAcceptance(
   const { afterAccountStandingChanged } = await import(
     '~/server/services/account-standing.service'
   );
-  await afterAccountStandingChanged(userId);
+  await afterAccountStandingChanged(userId, { kind: 'refresh', caller: 'strike' });
   userUpdateCounter?.inc({ location: 'strike.service:acceptTosAfterMute' });
   await refreshSession(userId, { caller: 'strike' });
   return result;

@@ -1,12 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
+import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const { revokeTokens } = vi.hoisted(() => ({
+const { revokeTokens, refreshSession, invalidateSession } = vi.hoisted(() => ({
   revokeTokens: vi.fn(async (_: { userId: number | string }) => true),
+  refreshSession: vi.fn(async (_userId: number, _opts?: unknown) => undefined),
+  invalidateSession: vi.fn(async (_userId: number, _caller?: unknown) => undefined),
+}));
+vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
+  ...(await importOriginal<typeof SessionInvalidation>()),
+  refreshSession,
+  invalidateSession,
 }));
 vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorCivitai>()),
@@ -21,6 +29,7 @@ import {
 } from '~/server/services/account-standing.service';
 
 const USER = 42;
+const MUTE = { kind: 'invalidate', caller: 'moderation' } as const;
 const givenRow = (muted: boolean) =>
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted } as never);
 const logged = (name: string) =>
@@ -30,6 +39,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.user.findUnique.mockReset();
   revokeTokens.mockResolvedValue(true);
+  refreshSession.mockResolvedValue(undefined);
+  invalidateSession.mockResolvedValue(undefined);
   installFakeCacheRedis();
 });
 
@@ -50,7 +61,7 @@ describe('isAccountMuted', () => {
     givenRow(false);
     expect(await isAccountMuted(USER, false)).toBe(false);
     givenRow(true);
-    await afterAccountStandingChanged(USER);
+    await afterAccountStandingChanged(USER, MUTE);
     expect(await isAccountMuted(USER, false)).toBe(true);
   });
 
@@ -111,21 +122,42 @@ describe('isAccountMuted', () => {
 });
 
 describe('afterAccountStandingChanged', () => {
+  it('revokes only after the session step, so the orchestrator cannot re-cache the old standing', async () => {
+    await afterAccountStandingChanged(USER, MUTE);
+    expect(invalidateSession).toHaveBeenCalledWith(USER, 'moderation');
+    expect(revokeTokens).toHaveBeenCalledOnce();
+    expect(revokeTokens.mock.invocationCallOrder[0]).toBeGreaterThan(
+      invalidateSession.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('takes the session step the caller names', async () => {
+    await afterAccountStandingChanged(USER, { kind: 'refresh', caller: 'strike' });
+    expect(refreshSession).toHaveBeenCalledWith(USER, { caller: 'strike' });
+    expect(invalidateSession).not.toHaveBeenCalled();
+  });
+
+  it('still revokes, and does not throw, when the session step fails', async () => {
+    invalidateSession.mockRejectedValue(new Error('sysredis down'));
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBeUndefined();
+    expect(revokeTokens).toHaveBeenCalledOnce();
+  });
+
   it("revokes the account's cached orchestrator tokens", async () => {
-    await afterAccountStandingChanged(USER);
+    await afterAccountStandingChanged(USER, MUTE);
     expect(revokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER });
   });
 
   it('does not wait on, or throw for, a failed revocation', async () => {
     revokeTokens.mockRejectedValue(new Error('orchestrator down'));
-    await expect(afterAccountStandingChanged(USER)).resolves.toBeUndefined();
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBeUndefined();
     revokeTokens.mockImplementation(() => new Promise<boolean>(() => undefined));
-    await expect(afterAccountStandingChanged(USER)).resolves.toBeUndefined();
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBeUndefined();
   });
 
   it('does not throw when the cache bust fails', async () => {
     redisMock.redis.del.mockRejectedValue(new Error('redis down'));
-    await expect(afterAccountStandingChanged(USER)).resolves.toBeUndefined();
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBeUndefined();
     expect(revokeTokens).toHaveBeenCalledOnce();
   });
 
@@ -133,7 +165,7 @@ describe('afterAccountStandingChanged', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     try {
       givenRow(true);
-      await afterAccountStandingChanged(USER);
+      await afterAccountStandingChanged(USER, MUTE);
       // A refill that read the row before the mute committed lands after the first bust; its lock
       // lets it land for up to 10 s.
       givenRow(false);
@@ -141,8 +173,10 @@ describe('afterAccountStandingChanged', () => {
       givenRow(true);
       await vi.advanceTimersByTimeAsync(10_000);
       expect(await isAccountMuted(USER, false)).toBe(false);
+      expect(revokeTokens).toHaveBeenCalledOnce();
       await vi.advanceTimersByTimeAsync(ACCOUNT_STANDING_REBUST_MS - 10_000);
       expect(await isAccountMuted(USER, false)).toBe(true);
+      expect(revokeTokens).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
