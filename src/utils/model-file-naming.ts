@@ -241,6 +241,7 @@ export function resolveModelFileName({
       (c) =>
         c.id == null &&
         c.name === file.name &&
+        (c.overrideName ?? null) === (file.overrideName ?? null) &&
         c.type === file.type &&
         JSON.stringify(c.metadata) === JSON.stringify(file.metadata)
     );

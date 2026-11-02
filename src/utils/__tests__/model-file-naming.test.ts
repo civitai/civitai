@@ -199,6 +199,25 @@ describe('resolveModelFileName', () => {
       expect(names).toEqual(['realisticVision_v1.safetensors', 'custom.safetensors']);
     });
 
+    it('does not mistake an id-less copy for a sibling with a creator-set name', () => {
+      const renamed = {
+        name: 'model.safetensors',
+        overrideName: 'custom.safetensors',
+        type: 'Model',
+        metadata: {},
+      };
+      const plain = { name: 'model.safetensors', type: 'Model', metadata: {} };
+
+      expect(
+        resolveModelFileName({
+          model: checkpoint,
+          modelVersion: version,
+          file: { ...plain },
+          versionFiles: [renamed, plain],
+        })
+      ).toBe('realisticVision_v1.safetensors');
+    });
+
     it('keeps two collision groups apart when both fall back to the scheme', () => {
       const files = [
         { id: 1, name: 'a.safetensors', type: 'Model', metadata: {} },
