@@ -19,6 +19,7 @@ import {
   REMOVED_IMAGES_LIMIT,
 } from '~/server/services/creator-removed-images.service';
 import { removalsQuery } from '~/server/services/creator-removals.service';
+import { REMOVAL_SCORE_WINDOW_DAYS } from '~/shared/constants/creator-journey.constants';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const USER = 42;
@@ -286,7 +287,7 @@ describe('getMyRemovedImages', () => {
 
   it('lists a counted removal that more than the limit of newer, cost-free ones would crowd out', async () => {
     const WINDOW_START = 2000;
-    const now = new Date((WINDOW_START + 182 * 86_400) * 1000);
+    const now = new Date((WINDOW_START + REMOVAL_SCORE_WINDOW_DAYS * 86_400) * 1000);
     const rows = [
       ...Array.from({ length: REMOVED_IMAGES_LIMIT + 1 }, (_, i) => ({
         imageId: i + 1,
@@ -306,7 +307,7 @@ describe('getMyRemovedImages', () => {
 
   it('does not call the list truncated for rows the window drops', async () => {
     const WINDOW_START = 2000;
-    const now = new Date((WINDOW_START + 182 * 86_400) * 1000);
+    const now = new Date((WINDOW_START + REMOVAL_SCORE_WINDOW_DAYS * 86_400) * 1000);
     const rows = [
       { imageId: 1, removedAt: 5000, reason: null },
       ...Array.from({ length: REMOVED_IMAGES_LIMIT }, (_, i) => ({

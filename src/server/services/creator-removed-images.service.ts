@@ -40,7 +40,7 @@ export const REMOVALS_QUERY = `${removalsQuery('ownerId = {userId:Int32}')}
     AND removedAt > {windowStart:Int64}${
       ZERO_WEIGHT_REASONS.length
         ? `
-    AND ifNull(reason, '') NOT IN (${ZERO_WEIGHT_REASONS.map(sqlString).join(', ')})`
+    AND trimBoth(ifNull(reason, '')) NOT IN (${ZERO_WEIGHT_REASONS.map(sqlString).join(', ')})`
         : ''
     }
   ORDER BY removedAt DESC

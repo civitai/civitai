@@ -362,7 +362,9 @@ describe('the nightly aged-out range', () => {
       },
     };
     await getOwnersWithRemovalsAgedOutSince(ch as never, since, now);
-    return { from: asked[0][0], to: asked[0][2] };
+    // The query binds three dates: the range start twice (prune and lower bound), then its end.
+    const [from, , to] = asked[0];
+    return { from, to };
   };
 
   it('has no gap or overlap between consecutive runs across a month end', async () => {
@@ -478,19 +480,23 @@ describe('the Removed content score', () => {
       { ownerId: OWNER, imageId: 401, removedAt: REMOVED_AT, reason: 'spam' },
       { ownerId: OWNER, imageId: 402, removedAt: REMOVED_AT, reason: 'other' }, // costs nothing
       { ownerId: OWNER, imageId: 403, removedAt: AGED_OUT_AT, reason: 'realPerson' }, // aged out
+      { ownerId: OWNER, imageId: 404, removedAt: REMOVED_AT, reason: ' other ' }, // padded, costs nothing
     ];
     // ClickHouse leaves out the aged-out and cost-free rows itself; read its filters off the query.
     holder.chQuery.mockImplementation(async ({ query, query_params }) => {
       const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
-      const json = own.filter(
-        (r) => r.removedAt > query_params.windowStart && !excluded.includes(r.reason ?? '')
-      );
+      // The query trims the reason as `removalWeight` does; an untrimmed match would list ' other '.
+      const trims = query.includes("trimBoth(ifNull(reason, ''))");
+      const json = own.filter((r) => {
+        const reason = trims ? (r.reason ?? '').trim() : r.reason ?? '';
+        return r.removedAt > query_params.windowStart && !excluded.includes(reason);
+      });
       return { json: async () => json };
     });
     await holder.db.exec(
       `INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
         (400, ${OWNER}, 'moderated'), (401, ${OWNER}, 'moderated'),
-        (402, ${OWNER}, 'moderated'), (403, ${OWNER}, 'moderated')`
+        (402, ${OWNER}, 'moderated'), (403, ${OWNER}, 'moderated'), (404, ${OWNER}, 'moderated')`
     );
 
     const listed = await getMyRemovedImages(OWNER, NOW);
