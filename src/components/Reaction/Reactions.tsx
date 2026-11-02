@@ -22,7 +22,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { AnimatedCount } from '~/components/Metrics';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 import React from 'react';
