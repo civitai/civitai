@@ -5,7 +5,8 @@
 
   /** `seconds` is the server's remaining time, so the browser clock cannot skew it. */
   let { seconds, label }: { seconds: number; label: string } = $props();
-  let remaining = $state(0);
+  // Null until the effect runs, so the server render and first paint show `seconds`, not 0.
+  let remaining = $state<number | null>(null);
 
   // At zero, ask the server again, one request at a time, until it stops rendering this component.
   $effect(() => {
@@ -25,7 +26,7 @@
   });
 </script>
 
-<p class="countdown" role="timer" aria-label={label}>{formatWait(remaining)}</p>
+<p class="countdown" role="timer" aria-label={label}>{formatWait(remaining ?? seconds)}</p>
 
 <style>
   .countdown {
