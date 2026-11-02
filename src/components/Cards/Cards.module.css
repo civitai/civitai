@@ -313,16 +313,12 @@
   );
 }
 
-/* The image card's footer is the container the action row sizes against. A container cannot size
-   to its own content, and the one-line form below needs the row to, so the container is the
-   footer wrapper (ImageCard sets this class on it), not the row. */
+/* Must be the footer wrapper, not the row: a container can't size to its own content, and the
+   one-line form below needs the row to. */
 .footer {
   container-type: inline-size;
 }
 
-/* The action row: reactions, then the Buzz tip, sticker badge and info button. Counts are always
-   abbreviated and the controls compact, so the row takes its content's width, not the card's.
-   Narrow cards stack it as two lines (reactions, then tip and badges). */
 .actions {
   display: flex;
   flex-direction: column;
@@ -333,8 +329,6 @@
   display: flex;
 }
 
-/* Compact sizing for the reaction buttons. Mantine sets the size variables on the button root, so
-   they are overridden there. */
 .actionRow .reactions,
 .tipRow > .reactions {
   height: 22px;
@@ -351,11 +345,11 @@
   }
 
   & :global(.mantine-Button-label) {
-    gap: 2px !important;
+    gap: 2px !important; /* beats the gap-1 utility on the label */
   }
 }
 
-/* The Buzz tip, sticker badge and info button, on their own line under the reactions. Hidden when
+/* The Buzz tip, sticker badge and info button. Hidden when
    none of them rendered (a card with no tip and a sticker badge that returned null), so an empty
    line takes no height. Its display is set here, not by a utility class: this module is in a
    lower layer, so a utility's `display` would beat the `none` below. */
@@ -393,7 +387,7 @@
 
 /* A footer wide enough for everything (a 420px card has a 404px footer) puts it all on one line:
    the two wrappers dissolve so reactions, tip and badges share one wrapping row, the badges pushed
-   right. Beyond about 460px of content (six-digit counts) the badges wrap to a second line. */
+   right. Counts too long for the line wrap the badges to a second one. */
 @container (min-width: 404px) {
   .actions {
     flex-direction: row;

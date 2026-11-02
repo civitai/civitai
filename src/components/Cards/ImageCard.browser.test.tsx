@@ -159,8 +159,7 @@ describe('ImageCard info button', () => {
 });
 
 // Reported 2026-08-14 (ClickUp 868krjmvv): on the featured grid, reaction counts of four digits
-// were clipped at the card edge (a count cropped to "1,16"). Counts are spelled out in full where
-// there is room (a reader watching one tick up) and abbreviate on the narrow column.
+// were clipped at the card edge (a count cropped to "1,16").
 describe('ImageCard action row counts', () => {
   test.each([NARROW_CARD_WIDTH, CARD_WIDTH, 420, 450])(
     'abbreviates every count and fits the card at %ipx',
@@ -171,7 +170,6 @@ describe('ImageCard action row counts', () => {
     }
   );
 
-  // Four six-digit counts need ~330px of bar; the 296px column (280px footer) clips them.
   test.each([CARD_WIDTH, 420, 450])(
     'abbreviates six-digit counts and fits at %ipx',
     async (width) => {
@@ -182,8 +180,8 @@ describe('ImageCard action row counts', () => {
   );
 });
 
-// The Buzz tip is its own element in the action row, not part of the reaction bar. It always sits
-// on the line under the reactions, beside the sticker badge, so cards in one grid line up.
+// The Buzz tip is its own element in the action row, not part of the reaction bar. It sits under
+// the reactions on a narrow card and beside them on a wide one.
 describe('ImageCard Buzz tip placement', () => {
   const TIP_ROW_WIDTHS = [NARROW_CARD_WIDTH, 420];
 
@@ -209,7 +207,6 @@ describe('ImageCard Buzz tip placement', () => {
     }
   );
 
-  // A 420px card has a 404px footer: reactions, tip and badges share one line.
   test.each([7, 1455])('is beside the reactions on a 420px card, counts %i', async (counts) => {
     features.stickerPlacement = true;
     features.imageCardInfoButton = true;
@@ -225,8 +222,7 @@ describe('ImageCard Buzz tip placement', () => {
     expect(info.right).toBeLessThanOrEqual(card.right);
   });
 
-  // The old two-line row with 28px controls was 68px tall; the compact rows are 55px / 30px.
-  // Five-digit counts take the line, so the badges wrap under the bar instead of overflowing.
+  // Five-digit counts fill the line, so the badges wrap under the bar.
   test('wraps the badges under the reactions when five-digit counts fill the line', async () => {
     features.stickerPlacement = true;
     await renderCard(12345, 420);
