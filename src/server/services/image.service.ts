@@ -10,6 +10,7 @@ import {
   type MediaProbeAnswer,
   summarizeProbeError,
 } from '@civitai/shared';
+import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -8300,24 +8301,6 @@ async function probeImageMediaPresence(key: string): Promise<MediaProbeAnswer> {
   return MediaPresence.Unknown;
 }
 
-const MODERATION_BLOCK_REASONS = new Set(
-  [BlockedReason.CSAM, BlockedReason.Moderated, BlockedReason.TOS, BlockedReason.AiNotVerified].map(
-    (reason) => reason.toLowerCase()
-  )
-);
-
-/** A block only a moderator or its own re-verification may lift, never an ingestion-error resolve. */
-function hasModerationBlock({
-  blockedFor,
-  needsReview,
-}: {
-  blockedFor: string | null;
-  needsReview: string | null;
-}) {
-  if (needsReview === 'csam') return true;
-  return blockedFor != null && MODERATION_BLOCK_REASONS.has(blockedFor.trim().toLowerCase());
-}
-
 // NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in
 // the spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
 // (resolveArticleImageScan) reuses it to pin an article image's nsfwLevel.
@@ -8340,11 +8323,17 @@ export async function resolveIngestionError({
       url: true,
       blockedFor: true,
       needsReview: true,
+      user: { select: { bannedAt: true, deletedAt: true } },
     },
   });
   if (!image) throw new Error('Image not found');
-  if (hasModerationBlock(image))
-    throw throwBadRequestError('This image has a moderation block; resolve it from block review.');
+  const refusal = ingestionResolveRefusal({
+    blockedFor: image.blockedFor,
+    needsReview: image.needsReview,
+    ownerBannedAt: image.user.bannedAt,
+    ownerDeletedAt: image.user.deletedAt,
+  });
+  if (refusal) throw throwBadRequestError(refusal);
 
   /**
    * 🔴 REFUSE TO PUBLISH AN IMAGE WHOSE MEDIA IS GONE.
@@ -8407,9 +8396,14 @@ export async function resolveIngestionError({
 
   const metadata = (image.metadata as ImageMetadata) ?? {};
 
-  // Matching on the values read keeps a block that lands after the replica read from being cleared.
+  // Matched on what was read, so a block or ban landing after the replica read is not lifted.
   const { count } = await dbWrite.image.updateMany({
-    where: { id, blockedFor: image.blockedFor, needsReview: image.needsReview },
+    where: {
+      id,
+      blockedFor: image.blockedFor,
+      needsReview: image.needsReview,
+      user: { bannedAt: null, deletedAt: null },
+    },
     data: {
       nsfwLevel,
       nsfwLevelLocked: true,

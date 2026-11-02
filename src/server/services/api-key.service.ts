@@ -13,6 +13,7 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -136,6 +137,8 @@ export async function setApiKeyBuzzLimit({
   return updated;
 }
 
+const AI_SERVICES_SCOPES = TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
+
 /** Read from the primary: a ban must stop the next mint, not the one after the session cache expires. */
 async function assertAccountOpen(userId: number) {
   const user = await dbWrite.user.findUnique({
@@ -257,6 +260,36 @@ export async function forgetGenerationToken(userId: number) {
       message: (error as Error).message,
     }).catch(() => null);
   }
+}
+
+/**
+ * Expires the user's generation credentials: every System key and every app token carrying an
+ * AI Services scope. Other app tokens, personal keys and the site session are left alone. The next
+ * generation call that is allowed mints afresh.
+ */
+export async function expireGenerationCredentials(userId: number) {
+  const now = new Date();
+  const rows = await dbWrite.apiKey.findMany({
+    where: { userId, type: { in: ['System', 'Access', 'Refresh'] } },
+    select: { id: true, key: true, type: true, tokenScope: true, expiresAt: true },
+  });
+  const matched = rows.filter(
+    (row) =>
+      row.type === 'System' ||
+      ((row.type === 'Access' || row.type === 'Refresh') &&
+        (row.tokenScope & AI_SERVICES_SCOPES) !== 0)
+  );
+  const live = matched.filter((row) => !row.expiresAt || row.expiresAt > now);
+  if (live.length) {
+    await dbWrite.apiKey.updateMany({
+      where: { id: { in: live.map((row) => row.id) } },
+      data: { expiresAt: now },
+    });
+  }
+  // Every matched key, not only the live ones: a repeat call retries an eviction an earlier one missed.
+  if (matched.length) await evictCachedApiKeys(matched.map((row) => row.key));
+  await forgetGenerationToken(userId);
+  return { expired: live.length };
 }
 
 export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId: number }) {
