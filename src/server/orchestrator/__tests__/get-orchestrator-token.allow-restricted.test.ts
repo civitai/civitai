@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
 // Adding one here is a review decision, not a test fix: check both before you add it.
 const ALLOWED = {
   'src/server/routers/orchestrator.router.ts': {
-    allowRestricted: 2, // orchestratorOwnWorkProcedure, and the moderator read of another account
+    // the middleware's option, orchestratorOwnWorkProcedure, and the moderator read of another account
+    allowRestricted: 3,
     procedures: [
       'cancelWorkflow',
       'deleteWorkflow',
@@ -20,6 +21,20 @@ const ALLOWED = {
   // The retention job's read of a run, for an owner who may since have been restricted.
   'src/server/services/orchestrator/training/studio-dataset-archive.service.ts': {
     allowRestricted: 1,
+    procedures: [],
+  },
+  // Reads of the account's own training runs.
+  'src/server/services/orchestrator/training/training-state.ts': {
+    allowRestricted: 2,
+    procedures: [],
+  },
+  // Only for another account's run (callerId !== ownerId): a moderator publishing or moving it.
+  'src/server/services/orchestrator/training/approved-checkpoint.ts': {
+    allowRestricted: 1,
+    procedures: [],
+  },
+  'src/server/services/orchestrator/training/publish-from-workflow.ts': {
+    allowRestricted: 2,
     procedures: [],
   },
 } as Record<string, { allowRestricted: number; procedures: string[] }>;
@@ -36,10 +51,13 @@ function sourceFiles(dir: string): string[] {
 
 describe('generation tokens issued to restricted accounts', () => {
   const found: Record<string, { allowRestricted: number; procedures: string[] }> = {};
+  const definition = 'src/server/orchestrator/get-orchestrator-token.ts';
   for (const file of sourceFiles(join(root, 'src'))) {
+    if (relative(root, file).replaceAll('\\', '/') === definition) continue;
     const text = readFileSync(file, 'utf8');
-    const allowRestricted = text.match(/allowRestricted:\s*true/g)?.length ?? 0;
-    const procedures = [...text.matchAll(/^\s*(\w+):\s*orchestratorOwnWorkProcedure\b/gm)]
+    // Every mention, in any form (shorthand, a variable, a spread), not only `allowRestricted: true`.
+    const allowRestricted = text.match(/\ballowRestricted\b/g)?.length ?? 0;
+    const procedures = [...text.matchAll(/(\w+):\s*orchestratorOwnWorkProcedure\b/g)]
       .map((m) => m[1])
       .sort();
     if (allowRestricted || procedures.length)

@@ -173,7 +173,7 @@ export async function afterAccountStandingChanged(
 }
 
 /** A mute also ends the generation credentials already issued, so none outlives it. Never throws. */
-async function expireGenerationCredentialsIfMuted(userId: number) {
+export async function expireGenerationCredentialsIfMuted(userId: number) {
   try {
     if (!(await readMuted(userId))) return;
     const { expireGenerationCredentials } = await import('~/server/services/api-key.service');
@@ -191,5 +191,7 @@ async function repeatStandingChange(userId: number) {
   } catch (error) {
     logStandingError('account-standing.session-step-failed', userId, error);
   }
+  // Again: a key minted between the first expire and the cache settling would otherwise outlive the mute.
+  await expireGenerationCredentialsIfMuted(userId);
   startRevoke(userId);
 }

@@ -35,7 +35,10 @@ vi.mock('../cache', async (importOriginal) => ({
 }));
 vi.mock('$env/dynamic/private', () => ({ env: { CIVITAI_APP_URL: 'https://civitai.com' } }));
 vi.mock('$app/server', () => ({
-  getRequestEvent: () => ({ locals: {}, request: new Request('http://x') }),
+  getRequestEvent: () => ({
+    locals: {},
+    request: new Request('http://x', { headers: { cookie: 'civ-token=t' } }),
+  }),
 }));
 
 const { setMuted } = await import('../user-actions.service');
@@ -65,5 +68,28 @@ describe('a moderator-app mute reaches the orchestrator and the cached standing'
     invalidateUserSessions.mockRejectedValueOnce(new Error('session store down'));
     await setMuted({ userId: 42, muted: true, moderatorId: 7 }).catch(() => undefined);
     expect(revokeOrchestratorUserTokens).toHaveBeenCalledWith(42);
+  });
+
+  it("expires the account's generation credentials in the main app, and again after the cache settles", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await setMuted({ userId: 42, muted: true, moderatorId: 7 });
+      const calls = () =>
+        fetchMock.mock.calls.filter(([url]) =>
+          String(url).endsWith('/api/mod/user/expire-generation-credentials')
+        );
+      expect(calls()).toHaveLength(1);
+      const init = (i: number) =>
+        calls()[i][1] as RequestInit & { headers: Record<string, string> };
+      expect(JSON.parse(String(init(0).body))).toEqual({ userId: 42 });
+      await vi.runAllTimersAsync();
+      expect(calls()).toHaveLength(2);
+      expect(init(1).headers.cookie).toBe('civ-token=t');
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 });

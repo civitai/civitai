@@ -76,9 +76,13 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
-const { deleteApiKey, deleteApiKeys, expireUserApiKeys, setApiKeyBuzzLimit } = await import(
-  '~/server/services/api-key.service'
-);
+const {
+  deleteApiKey,
+  deleteApiKeys,
+  expireGenerationCredentials,
+  expireUserApiKeys,
+  setApiKeyBuzzLimit,
+} = await import('~/server/services/api-key.service');
 const orchestratorKeyRoute = (await import('~/pages/api/user/orchestrator-key'))
   .default as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
@@ -104,10 +108,10 @@ const LEDGER: Record<string, { count: number; why: string }> = {
     why: 'lastUsedAt only; nothing the bearer path decides on. Throttled per key per hour.',
   },
   'src/server/services/api-key.service.ts': {
-    count: 6,
+    count: 7,
     why:
       'create: a new key, and misses are never cached. setApiKeyBuzzLimit update, and the ' +
-      'deleteApiKeys and expireUserApiKeys helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
+      'deleteApiKeys, expireUserApiKeys and expireGenerationCredentials helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
       "caller's own rotated generation keys, not a revocation; the first only removes keys within " +
       '30 s of their own expiry (entries never outlive expiresAt), the second a legacy key name. ' +
       'Accepted: such a key can keep working for at most the cache TTL after the clean-up.',
@@ -306,7 +310,14 @@ beforeEach(() => {
   }) =>
     rows
       .filter((r) => matches(r, where))
-      .map(({ id, key, userId, expiresAt }) => ({ id, key, userId, expiresAt }))) as never);
+      .map(({ id, key, userId, expiresAt, type, tokenScope }) => ({
+        id,
+        key,
+        userId,
+        expiresAt,
+        type,
+        tokenScope,
+      }))) as never);
   dbMock.dbWrite.apiKey.deleteMany.mockImplementation((async ({
     where,
   }: {
@@ -387,6 +398,15 @@ describe('writes that evict the bearer cache', () => {
       [53, null],
     ]);
     expect(revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 501 });
+  });
+
+  it('expireGenerationCredentials stops the System key on the next request, not the personal key', async () => {
+    await warm('personal');
+    await warm('orchestrator');
+    await expireGenerationCredentials(501);
+    vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
+    expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
+    expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
   });
 
   it('expireUserApiKeys retries the eviction of a key an earlier pass expired', async () => {

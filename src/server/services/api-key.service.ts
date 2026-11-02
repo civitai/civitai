@@ -263,20 +263,14 @@ export async function forgetGenerationToken(userId: number) {
 }
 
 /**
- * Expires the user's generation credentials: the generation keys and every app token carrying an
+ * Expires the user's generation credentials: every System key and every app token carrying an
  * AI Services scope. Other app tokens, personal keys and the site session are left alone. The next
  * generation call that is allowed mints afresh.
  */
 export async function expireGenerationCredentials(userId: number) {
   const now = new Date();
   const rows = await dbWrite.apiKey.findMany({
-    where: {
-      userId,
-      OR: [
-        { type: 'System', name: { in: [generationServiceCookie.name, 'generation-service'] } },
-        { type: { in: ['Access', 'Refresh'] } },
-      ],
-    },
+    where: { userId, type: { in: ['System', 'Access', 'Refresh'] } },
     select: { id: true, key: true, type: true, tokenScope: true, expiresAt: true },
   });
   const targets = rows.filter(

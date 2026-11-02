@@ -32,6 +32,7 @@ const rows = [
   { id: 3, key: 'k3', type: 'Refresh', tokenScope: TokenScope.AIServicesRead, expiresAt: live },
   { id: 4, key: 'k4', type: 'Access', tokenScope: TokenScope.ModelsRead, expiresAt: live },
   { id: 5, key: 'k5', type: 'User', tokenScope: TokenScope.AIServicesWrite, expiresAt: null },
+  { id: 6, key: 'k6', type: 'System', tokenScope: TokenScope.Full, expiresAt: null },
 ];
 const expiredIds = () =>
   dbMock.dbWrite.apiKey.updateMany.mock.calls.flatMap(
@@ -55,11 +56,19 @@ describe('a mute and the generation credentials already issued', () => {
   it('expires the generation key and AI Services app tokens, and drops the cached token', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
     await afterAccountStandingChanged(USER, MUTE);
-    expect(expiredIds().sort()).toEqual([1, 2, 3]);
+    expect(expiredIds().sort()).toEqual([1, 2, 3, 6]);
     expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith(
       REDIS_KEYS.GENERATION.TOKENS_OWNED,
       String(USER)
     );
+  });
+
+  it('expires them again after the standing cache settles, catching a key minted in between', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
+    await afterAccountStandingChanged(USER, MUTE);
+    dbMock.dbWrite.apiKey.updateMany.mockClear();
+    await vi.runAllTimersAsync();
+    expect(expiredIds().sort()).toEqual([1, 2, 3, 6]);
   });
 
   it('leaves them alone on an unmute', async () => {
