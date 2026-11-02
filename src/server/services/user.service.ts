@@ -495,11 +495,16 @@ export async function setUserMuted(
     return { ...result.user, sessionInvalidated: true };
   }
 
+  // A repeated mute (the REST route's retry) keeps the moderator's original `mutedAt`.
+  const current = await dbWrite.user.findUnique({
+    where: { id: args.userId },
+    select: { muted: true, mutedAt: true },
+  });
   const user = await updateUserById({
     id: args.userId,
     data: {
       muted: true,
-      mutedAt: new Date(),
+      mutedAt: (current?.muted && current.mutedAt) || new Date(),
       ...(args.expiresAt !== undefined ? { muteExpiresAt: args.expiresAt } : {}),
     },
     updateSource: 'retool:mute',
@@ -2829,6 +2834,8 @@ export const toggleBan = async ({
     : await updateUserById({ id, data, updateSource: 'toggleBan' });
   void syncOwnerEventHats(id);
   void syncEventRosterMember(id);
+  const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
+  await afterAccountBanChanged(id);
 
   // The ban has committed: a throw here would skip every step below and fail an action that took.
   await invalidateSession(id, 'ban').catch((error) =>

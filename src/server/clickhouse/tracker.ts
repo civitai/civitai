@@ -1168,7 +1168,7 @@ export class Tracker {
   public retoolAudit(values: {
     action: string;
     privileged: boolean;
-    outcome: 'ok' | 'error';
+    outcome: 'ok' | 'error' | 'warning';
     errorMsg?: string;
     payload: Record<string, unknown>;
     affected?: Record<string, unknown>;

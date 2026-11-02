@@ -45,6 +45,8 @@ const lockedRow = (over: Record<string, unknown> = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` keeps a `mockRejectedValue` from an earlier test.
+  m.invalidateSession.mockResolvedValue(undefined);
   lockedRow();
   dbMock.dbWrite.userRestriction.findFirst.mockResolvedValue(null);
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: false });

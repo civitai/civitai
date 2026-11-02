@@ -23,6 +23,7 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
 }));
 
 const { toggleMuteHandler } = await import('~/server/controllers/user.controller');
+const { setUserMuted } = await import('~/server/services/user.service');
 
 const USER = 42;
 const ctx = () =>
@@ -33,6 +34,8 @@ const ctx = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` keeps a `mockRejectedValue` from an earlier test.
+  m.invalidateSession.mockResolvedValue(undefined);
   dbMock.dbRead.user.findUnique.mockResolvedValue({ muted: false } as never);
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: true } as never);
 });
@@ -49,5 +52,33 @@ describe('toggleMute when the muted account’s sessions cannot be ended', () =>
     );
     expect(muteWrites).toHaveLength(1);
     expect(m.trackModActivity).toHaveBeenCalled();
+  });
+});
+
+// `user.mute` answers a retryable 503 after the mute commits; the retry must not re-date the decision.
+describe('setUserMuted when the account is already muted', () => {
+  const writtenMutedAt = () =>
+    (dbMock.dbWrite.user.update.mock.calls.at(-1)?.[0] as { data: { mutedAt?: Date } }).data
+      .mutedAt;
+
+  it('keeps the original mutedAt on a repeat', async () => {
+    const original = new Date('2026-10-01T00:00:00Z');
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true, mutedAt: original } as never);
+    await setUserMuted({ userId: USER, muted: true, expiresAt: null });
+    expect(writtenMutedAt()).toEqual(original);
+  });
+
+  it.each([
+    ['a new mute', { muted: false, mutedAt: null }],
+    ['a mute over an automatic one', { muted: true, mutedAt: null }],
+    [
+      'a mute over a stale mutedAt left on an unmuted account',
+      { muted: false, mutedAt: new Date(0) },
+    ],
+  ])('dates %s now', async (_, row) => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row as never);
+    const before = Date.now();
+    await setUserMuted({ userId: USER, muted: true, expiresAt: null });
+    expect(writtenMutedAt()?.getTime()).toBeGreaterThanOrEqual(before);
   });
 });

@@ -3013,7 +3013,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
-    // `<prefix>:<userId>` — whether the account is muted. See account-standing.service.ts.
+    // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
     ACCOUNT_STANDING: 'packed:caches:account-standing',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',

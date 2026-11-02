@@ -164,7 +164,6 @@ export async function resolveUserRestriction({
         message: (error as Error).message,
       })
     );
-    await refreshSession(restriction.userId, { caller: 'moderation' });
   } else if (status === UserRestrictionStatus.Overturned) {
     // Under the account row lock a scam verdict also takes, so a case filed concurrently is either
     // seen here or files after the unmute and mutes again on its own.
@@ -205,7 +204,15 @@ export async function resolveUserRestriction({
       );
     }
     await effects.afterOverturn?.(restriction);
-    await refreshSession(restriction.userId, { caller: 'moderation' });
+    // Unchanged standing, so no `afterAccountStandingChanged` above; the ruling has committed.
+    if (stillHeld)
+      await refreshSession(restriction.userId, { caller: 'moderation' }).catch((error) =>
+        logToAxiom({
+          name: 'user-restriction-resolve-refresh-session',
+          type: 'error',
+          message: (error as Error).message,
+        })
+      );
   }
 
   // The account is still muted by another open case, so telling the user it was lifted would be false.
