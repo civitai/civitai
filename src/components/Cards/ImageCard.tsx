@@ -92,7 +92,7 @@ function ImageCardActionRow({ data }: Props) {
     <div className="flex flex-col">
       <div className={cardClasses.actionRow} data-count-len={Math.max(countLength, 5)}>
         <Reactions
-          className={cardClasses.reactions}
+          className={clsx(cardClasses.reactions, cardClasses.reactionsFill)}
           entityId={data.id}
           entityType="image"
           reactions={data.reactions}

@@ -293,6 +293,19 @@ describe('ImageCard Buzz tip placement', () => {
     }
   );
 
+  // Content-sized and left-aligned where the counts fit in full; the whole row only where they
+  // abbreviate, as before the tip moved.
+  test('the reaction bar fills the row only where the counts abbreviate', async () => {
+    await renderCard(7, 420);
+    const wide = rects();
+    expect(wide.bar.width).toBeLessThan(wide.card.width - 100);
+    await cleanup();
+
+    await renderCard(7, NARROW_CARD_WIDTH);
+    const narrow = rects();
+    expect(narrow.bar.width).toBeGreaterThan(narrow.card.width - 24);
+  });
+
   test('a card with no tip, no stickers and no info button has no second line', async () => {
     features.stickerPlacement = true;
     stickerBadge.renders = false;

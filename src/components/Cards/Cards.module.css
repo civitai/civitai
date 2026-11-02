@@ -316,8 +316,9 @@
 /* The image card's action row. A container so the reaction counts can pick their form from the
    row's own width (ImageCard sets data-count-len to the characters in its longest full count).
    Each step below is the row width that fits four counts of that length, about 41px per extra
-   character, with some slack. Narrower rows abbreviate. */
+   character, with some slack. Narrower rows abbreviate and the reactions take the whole row. */
 .actionRow {
+  display: flex;
   container-type: inline-size;
 
   & [data-count='abbr'] {
@@ -333,6 +334,10 @@
   .actionRow[data-count-len='5'] [data-count='abbr'] {
     display: inline;
   }
+
+  .actionRow[data-count-len='5'] .reactionsFill {
+    width: 100%;
+  }
 }
 
 @container (max-width: 340.98px) {
@@ -342,6 +347,10 @@
 
   .actionRow[data-count-len='6'] [data-count='abbr'] {
     display: inline;
+  }
+
+  .actionRow[data-count-len='6'] .reactionsFill {
+    width: 100%;
   }
 }
 
@@ -353,6 +362,10 @@
   .actionRow[data-count-len='7'] [data-count='abbr'] {
     display: inline;
   }
+
+  .actionRow[data-count-len='7'] .reactionsFill {
+    width: 100%;
+  }
 }
 
 @container (max-width: 422.98px) {
@@ -363,6 +376,10 @@
   .actionRow[data-count-len='8'] [data-count='abbr'] {
     display: inline;
   }
+
+  .actionRow[data-count-len='8'] .reactionsFill {
+    width: 100%;
+  }
 }
 
 @container (max-width: 463.98px) {
@@ -372,6 +389,10 @@
 
   .actionRow[data-count-len='9'] [data-count='abbr'] {
     display: inline;
+  }
+
+  .actionRow[data-count-len='9'] .reactionsFill {
+    width: 100%;
   }
 }
 
