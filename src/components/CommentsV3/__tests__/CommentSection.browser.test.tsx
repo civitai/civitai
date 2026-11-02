@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import router from 'next/router';
 import type * as TrpcModule from '~/utils/trpc';
+import { MantineProvider } from '@mantine/core';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render } from 'vitest-browser-react';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -62,7 +65,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const infinite = <I,>(path: string, answer: (input: I, cursor?: string) => unknown) => ({
     useInfiniteQuery: (
       input: I,
-      opts: { initialCursor?: string; getNextPageParam: (page: Page) => unknown; enabled?: boolean }
+      opts: {
+        initialCursor?: string;
+        getNextPageParam: (page: Page) => unknown;
+        enabled?: boolean;
+        refetchOnMount?: 'always';
+      }
     ) =>
       useInfiniteQuery({
         queryKey: [path, input],
@@ -75,6 +83,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         initialPageParam: opts.initialCursor,
         getNextPageParam: opts.getNextPageParam,
         enabled: opts.enabled,
+        refetchOnMount: opts.refetchOnMount,
         retry: false,
       }),
   });
@@ -399,5 +408,77 @@ describe('CommentSection', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(rendered()).toEqual([]);
     expect(document.body.textContent).not.toContain('Comments');
+  });
+});
+
+// The app's queries never go stale (`staleTime: Infinity`), and the tab's cache outlives the page.
+describe('CommentSection on a cache that already holds the section', () => {
+  const withReply12 = () => {
+    const before = api.section;
+    api.section = (cursor) => {
+      const page = before(cursor);
+      if (!page || cursor) return page;
+      return {
+        ...page,
+        comments: [
+          ...page.comments.map((c) => (c.id === 1 ? { ...c, replyCount: 2 } : c)),
+          comment(12, 1, 1),
+        ],
+        children: { ...page.children, 1: { ids: [11, 12], nextCursor: null } },
+      };
+    };
+  };
+  const shared = () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    return function SharedCache({ children }: { children: React.ReactNode }) {
+      return (
+        <QueryClientProvider client={client}>
+          <MantineProvider>{children}</MantineProvider>
+        </QueryClientProvider>
+      );
+    };
+  };
+
+  test('a notification link on the open page shows a reply posted since it loaded', async () => {
+    const wrapper = shared();
+    const screen = await render(<CommentSection entityType="article" entityId={10} />, { wrapper });
+    await expect.element(page.getByText('comment 11')).toBeVisible();
+
+    withReply12();
+    api.thread = ({ commentId }) =>
+      commentId === 1
+        ? {
+            entityType: 'article',
+            entityId: 10,
+            ancestorIds: [],
+            comment: comment(1, null, 0, 2),
+            replies: {
+              comments: [comment(11, 1, 1), comment(12, 1, 1)],
+              rootIds: [],
+              children: { 1: { ids: [11, 12], nextCursor: null } },
+              nextCursor: null,
+            },
+            locked: false,
+          }
+        : undefined;
+    router.query = { commentParentType: 'comment', commentParentId: '1', highlight: '12' };
+    await screen.rerender(<CommentSection entityType="article" entityId={10} />);
+    await expect.element(page.getByText('comment 12')).toBeVisible();
+
+    await page.getByRole('button', { name: 'View all comments' }).click();
+    await expect.element(page.getByText('comment 2', { exact: true })).toBeVisible();
+    expect(rendered()).toEqual([1, 11, 12, 2]);
+  });
+
+  test('coming back to the page shows a reply posted while it was away', async () => {
+    const wrapper = shared();
+    const first = await render(<CommentSection entityType="article" entityId={10} />, { wrapper });
+    await expect.element(page.getByText('comment 11')).toBeVisible();
+    await first.unmount();
+
+    withReply12();
+    await render(<CommentSection entityType="article" entityId={10} />, { wrapper });
+    await expect.element(page.getByText('comment 12')).toBeVisible();
+    expect(rendered()).toEqual([1, 11, 12, 2]);
   });
 });
