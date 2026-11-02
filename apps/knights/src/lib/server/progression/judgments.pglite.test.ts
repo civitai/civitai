@@ -99,6 +99,44 @@ describe('listJudgments', () => {
     expect((await listJudgments(db, 1, { page: 1 })).judgments[0].status).toBe('correct');
   });
 
+  describe('after a career reset', () => {
+    it('shows a vote cast before the reset as forfeited, with no gold promised, and later ones as usual', async () => {
+      const before = await judge(10, new Date('2026-12-15T09:00:00Z'));
+      const after = await judge(11, new Date('2026-12-15T11:00:00Z'));
+      await pg.exec(
+        `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-15T10:00:00Z' WHERE "userId"=1`
+      );
+
+      const byItem = new Map(
+        (await listJudgments(db, 1, { page: 1 })).judgments.map((j) => [j.itemId, j])
+      );
+
+      expect(byItem.get(before)).toMatchObject({ status: 'forfeited', gold: 0 });
+      expect(byItem.get(after)).toMatchObject({ status: 'pending', gold: PROGRESSION.baseGold });
+    });
+
+    it('keeps a settled pre-reset vote forfeited when it was graded right, but not when it was wrong', async () => {
+      const right = await judge(10, new Date('2026-12-15T08:00:00Z'));
+      const wrong = await judge(11, new Date('2026-12-15T09:00:00Z'));
+      await pg.exec(
+        `UPDATE "KnightsVote" SET verdict='correct', "settledAt"=now(), gold=0 WHERE "itemId"=${right}`
+      );
+      await pg.exec(
+        `UPDATE "KnightsVote" SET verdict='failed', "settledAt"=now(), gold=0 WHERE "itemId"=${wrong}`
+      );
+      await pg.exec(
+        `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-15T10:00:00Z' WHERE "userId"=1`
+      );
+
+      const byItem = new Map(
+        (await listJudgments(db, 1, { page: 1 })).judgments.map((j) => [j.itemId, j.status])
+      );
+
+      expect(byItem.get(right)).toBe('forfeited');
+      expect(byItem.get(wrong)).toBe('wrong');
+    });
+  });
+
   describe('yes/no answers', () => {
     const NOW2 = new Date('2026-12-15T12:00:00Z');
     async function answered(externalId: string, prompt: string) {
