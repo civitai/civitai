@@ -378,6 +378,20 @@ export function buildImageDeliveryCases(ctx) {
       counted: 'found',
     },
     {
+      // The caller's exact request shape (`?token=`, no Bearer) on a hideMeta row: the value
+      // that decides whether metadata is stripped.
+      id: 'hidemeta-query-token',
+      path: `${at(video)}?token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: 'found',
+    },
+    {
+      id: 'hidemeta-shared-url-query-token',
+      path: `${at(shared)}?token={WEBHOOK_TOKEN}`,
+      headers: {},
+      counted: 'found',
+    },
+    {
       // A repeated ?token= arrives as an array and is refused.
       id: 'auth-repeated-query-token',
       path: `${at(image)}?token={WEBHOOK_TOKEN}&token={WEBHOOK_TOKEN}`,
@@ -417,7 +431,10 @@ export function buildImageDeliveryCases(ctx) {
       counted: 'not_found',
     },
     {
-      id: 'forwarded-headers-from-the-edge',
+      // Pins that edge-sent x-forwarded-* headers do not change the answer. It does NOT cover the
+      // server's own x-forwarded-* fill: this handler reads no forwarded header, so removing the
+      // fill changes nothing here (a mutation check confirmed it survives).
+      id: 'edge-forwarded-headers-do-not-change-the-answer',
       path: at(image),
       headers: {
         ...auth,

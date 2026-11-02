@@ -395,6 +395,10 @@ jobs:
               echo "the image is not this commit's: its server.cjs differs from the checkout"; exit 1
             fi
             echo "::warning::dispatch: testing this checkout's server.cjs on top of $IMAGE"
+            # Only server.cjs is overlaid (next-compat.cjs and the route modules are the image's),
+            # so this run is NOT a verdict on the head commit: the verdict step below never posts
+            # success for it.
+            echo "PARITY_OVERLAY=1" >> "$GITHUB_ENV"
           fi
           printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/candidate/Dockerfile"
           docker build -q -t "$CANDIDATE_IMAGE" "$WORK/candidate"
@@ -507,7 +511,8 @@ jobs:
           ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
           node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
             --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)"
-          # The endpoint-health alert keys on the image-delivery request span's NAME.
+          # Pins the image-delivery request span's NAME: span-name-keyed alerting and dashboards
+          # read it, and a renamed span would read as the route having no traffic.
           node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
             --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)" \
             --span 'GET /api/internal/image-delivery/[id]'
@@ -537,6 +542,12 @@ jobs:
             failure) state=failure; desc="Parity failed: see the run" ;;
             *) state=error; desc="Run $JOB_STATUS before a verdict" ;;
           esac
+          # An overlay run tested this checkout's server.cjs on an OLDER image, not this commit's
+          # build. It must never green the head commit's status.
+          if [ "${PARITY_OVERLAY:-}" = 1 ]; then
+            state=error
+            desc="Overlay run ($JOB_STATUS): server.cjs tested on another image; not a verdict on this commit"
+          fi
           gh api "repos/${{ github.repository }}/statuses/$SHA" \
             -f state="$state" -f context="$STATUS_CONTEXT" -f description="$desc" \
             -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null
