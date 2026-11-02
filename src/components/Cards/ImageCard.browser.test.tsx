@@ -312,6 +312,17 @@ describe('ImageCard Buzz tip placement', () => {
     expect(gapBelowBar()).toBe(before);
   });
 
+  test('a card with only the info button keeps it on the second line', async () => {
+    features.imageCardInfoButton = true;
+    stickerBadge.renders = false;
+    await renderCard(7, NARROW_CARD_WIDTH, true);
+    const { bar, card } = rects();
+    const info = infoButtons()[0].getBoundingClientRect();
+
+    expect(info.top).toBeGreaterThanOrEqual(bar.bottom);
+    expect(info.right).toBeLessThanOrEqual(card.right);
+  });
+
   test('a card with only a sticker badge keeps the badge on the second line', async () => {
     features.stickerPlacement = true;
     await renderCard(7, NARROW_CARD_WIDTH, true);
