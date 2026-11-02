@@ -10,15 +10,19 @@ import type {
 import {
   addApiKey,
   deleteApiKey,
+  expireUserApiKeys,
   getApiKey,
   getUserApiKeys,
   setApiKeyBuzzLimit,
 } from '~/server/services/api-key.service';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { getBuzzSpendForSubjects, type Subject } from '~/server/http/orchestrator/api-key-spend';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { logToAxiom, safeError } from '~/server/logging/client';
 
 export async function getApiKeyHandler({
   input,
@@ -55,6 +59,16 @@ export async function getUserApiKeysHandler({
   return apiKeys;
 }
 
+// From the primary: the cached standing carries no deletedAt and may trail a ban just committed.
+async function assertAccountOpenForNewKey(userId: number) {
+  const account = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, deletedAt: true },
+  });
+  if (!account || account.bannedAt || account.deletedAt)
+    throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+}
+
 export async function addApiKeyHandler({
   ctx,
   input,
@@ -63,7 +77,26 @@ export async function addApiKeyHandler({
   input: AddAPIKeyInput;
 }) {
   const { user } = ctx;
+  await assertAccountNotRestricted(user.id, user);
+  await assertAccountOpenForNewKey(user.id);
+
   const apiKey = await addApiKey({ ...input, userId: user.id });
+  // Again after the insert: a ban or deletion committing in between expires the keys it can see,
+  // which may not include this one yet.
+  try {
+    await assertAccountOpenForNewKey(user.id);
+  } catch (refusal) {
+    if (!(refusal instanceof TRPCError)) throw refusal;
+    await expireUserApiKeys(user.id).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'add-api-key-closed-account-expire',
+        userId: user.id,
+        error: safeError(error),
+      }).catch(() => null)
+    );
+    throw refusal;
+  }
   await preventReplicationLag('userApiKeys', user.id);
 
   return apiKey;
