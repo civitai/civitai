@@ -1911,7 +1911,8 @@ export async function resolveUnpaidBountyAward({
       where: { bountyId, userId, resolvedAt: null },
       data: { ruling, ledgerReference, resolvedById: moderatorId, resolvedAt: new Date() },
     });
-    // A deleted bounty's record is unlocked, so a concurrent resolve can win; a zero count is not an error.
+    // Zero rows: a concurrent resolve won (the record of a deleted bounty is unlocked). Same ruling and
+    // reference is a no-op; anything else conflicts.
     if (!count) {
       const stored = await tx.bountyUnpaidAward.findUnique({ where: key });
       if (stored?.resolvedAt) return alreadyResolved(stored);
