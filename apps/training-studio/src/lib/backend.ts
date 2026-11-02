@@ -4,6 +4,7 @@
 import type { FromPrices, Media } from '$lib/data/trainingModels';
 import type {
   ArchiveKind,
+  DatasetItem,
   GenerationItem,
   TrainingDetail,
   TrainingRow,
@@ -43,7 +44,7 @@ export interface StudioBackend {
   /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
    *  answered by the main app. Rejects when it can't tell. */
   modelLive(modelId: number): Promise<boolean>;
-  getRunDataset(workflowId: string): Promise<{ air: string; caption: string }[]>;
+  getRunDataset(workflowId: string): Promise<DatasetItem[]>;
   /** One dataset image/video/audio blob. Blobs need auth (shell: the session-gated proxy; element: a
    *  Bearer fetch against the orchestrator), so views turn these into object URLs — a bare URL for a
    *  dataset blob is never browser-fetchable in the element. */

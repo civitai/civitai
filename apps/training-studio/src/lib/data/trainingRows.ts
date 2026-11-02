@@ -414,6 +414,9 @@ export interface TrainingDetailEpoch {
 export interface DatasetItem {
   air: string;
   caption: string;
+  /** Edit runs only: where the item sat in the pair layout — `control_1/<name>` for a starting image,
+   *  `main/<name>` for its result (see `pairItems`). */
+  path?: string;
 }
 
 /** The training-step input keys the settings export carries. `trainingData` (signed blob URLs) and
@@ -524,6 +527,10 @@ export interface TrainingDetail {
   settings: TrainingSettingsExport;
 }
 
+/** How many pairs an edit run's dataset holds: one result (`main/…`) per pair. */
+export const editPairCount = (dataset: DatasetItem[]): number =>
+  dataset.filter((i) => i.path?.startsWith('main/')).length;
+
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
 export function workflowToDetail(w: Workflow): TrainingDetail | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
@@ -569,13 +576,22 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     );
   const liveTraceUrl = traces[liveTraceIndex(traces)]?.url;
 
-  // An edit run's items are pairs, not a dataset of labeled images: offered as one, its starting images
-  // would be retrained as plain images. Reusing pairs is not supported yet.
-  const dataset: DatasetItem[] = (input.isEditTraining ? [] : input.trainingData?.items ?? [])
+  // An edit run's items keep their pair path. Without one on every item the halves can't be paired
+  // up again, and offered as plain images its starting images would be retrained as such — so none.
+  const isEdit = input.isEditTraining === true;
+  const items = input.trainingData?.items ?? [];
+  const pairable = !isEdit || items.every((i) => typeof i.path === 'string' && i.path.length > 0);
+  const dataset: DatasetItem[] = (pairable ? items : [])
     .filter(
-      (i): i is { air: string; caption?: string } => typeof i.air === 'string' && i.air.length > 0
+      (i): i is { air: string; caption?: string; path?: string } =>
+        typeof i.air === 'string' && i.air.length > 0
     )
-    .map((i) => ({ air: i.air, caption: i.caption ?? '' }));
+    .map((i) => ({
+      air: i.air,
+      caption: i.caption ?? '',
+      ...(isEdit && typeof i.path === 'string' ? { path: i.path } : {}),
+    }));
+  const trainedCount = isEdit ? editPairCount(dataset) : dataset.length;
 
   const training: TrainingSettingsExport['training'] = {};
   for (const key of SETTINGS_INPUT_KEYS) {
@@ -590,7 +606,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     ...(typeof meta.loraType === 'string' ? { loraType: meta.loraType } : {}),
     ...(typeof meta.cardType === 'string' ? { cardType: meta.cardType } : {}),
     ...(typeof meta.versionKey === 'string' ? { versionKey: meta.versionKey } : {}),
-    imageCount: dataset.length || (typeof meta.imageCount === 'number' ? meta.imageCount : 0),
+    imageCount: trainedCount || (typeof meta.imageCount === 'number' ? meta.imageCount : 0),
     samplePrompts: prompts,
     training,
   };
