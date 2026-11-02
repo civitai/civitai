@@ -49,6 +49,10 @@ import { userUpdateCounter } from '~/server/prom/client';
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 const log = createLogger('stripe', 'blue');
 
+// Stamped on `cancellation_details.comment` when a ban / restriction flow schedules a cancel, so
+// reinstateSubscription can tell our cancellation from the member's own.
+const MODERATION_CANCELLATION = 'civitai-moderation-cancel';
+
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
@@ -1373,7 +1377,14 @@ export const cancelSubscription = async ({
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   if (atPeriodEnd) {
-    await stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: true });
+    // A cancellation already scheduled is the member's own (or a gift's `cancel_at`): leave it as
+    // it is and don't stamp it, or reinstating would resume a membership they chose to end.
+    const live = await stripe.subscriptions.retrieve(subscriptionId);
+    if (live.cancel_at_period_end || live.cancel_at) return;
+    await stripe.subscriptions.update(subscriptionId, {
+      cancel_at_period_end: true,
+      cancellation_details: { comment: MODERATION_CANCELLATION },
+    });
     return;
   }
 
@@ -1392,12 +1403,17 @@ export const cancelSubscription = async ({
   if (userId) await invalidateSubscriptionCaches(userId);
 };
 
-// Reverses a cancel_at_period_end cancellation while the subscription is still
-// within its paid period (used when a ban is lifted or a restriction is
-// overturned). No-op if the user has no still-active Stripe subscription
-// pending cancellation — once the period has lapsed the subscription is gone
-// and the user must re-subscribe.
+// Reverses a cancel_at_period_end cancellation that a ban / restriction flow made, once
+// the account is no longer banned or muted. A cancellation without our stamp stays: the
+// member's own, or one we made before the stamp existed (they renew themselves rather
+// than being billed against a cancel they may have chosen).
 export const reinstateSubscription = async ({ userId }: { userId: number }) => {
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, muted: true },
+  });
+  if (!user || user.bannedAt || user.muted) return;
+
   const subscription = await dbWrite.customerSubscription.findFirst({
     where: {
       userId,
@@ -1411,6 +1427,11 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
 
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
+
+  // Decide on Stripe's copy, not our row: the row lags the webhook and does not carry the stamp.
+  const live = await stripe.subscriptions.retrieve(subscription.id);
+  if (!live.cancel_at_period_end) return;
+  if (live.cancellation_details?.comment !== MODERATION_CANCELLATION) return;
 
   await stripe.subscriptions.update(subscription.id, { cancel_at_period_end: false });
 };
