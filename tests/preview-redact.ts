@@ -62,7 +62,10 @@ export function redactSecrets(text: string): string {
     if (secret && secret.length >= 8) out = out.split(secret).join(maskSecret(secret));
   }
   out = out.replace(COMPACT_JOSE, (m) => maskSecret(m));
-  out = out.replace(NAMED_CREDENTIAL, (_m, prefix: string, value: string) => prefix + maskSecret(value));
+  out = out.replace(
+    NAMED_CREDENTIAL,
+    (_m, prefix: string, value: string) => prefix + maskSecret(value)
+  );
   out = out.replace(BEARER, (_m, prefix: string, value: string) => prefix + maskSecret(value));
   return out;
 }
@@ -71,7 +74,16 @@ const INSTALLED = Symbol.for('civitai.preview-smoke.output-redaction');
 
 type Write = NodeJS.WriteStream['write'];
 
-function wrap(stream: NodeJS.WriteStream) {
+/**
+ * Redact everything written through `stream.write`. Exported for the unit test; use
+ * `installOutputRedaction()` in the harness.
+ *
+ * The `Uint8Array` branch is live, not defensive: a test's own output is relayed from the
+ * worker as a Buffer whenever the test wrote one (`process.stdout.write(buf)`), and the
+ * list reporter writes that Buffer straight to stdout. Both tiers of
+ * scripts/__tests__/preview-smoke-log-redaction.test.ts exercise it.
+ */
+export function wrapWrite(stream: Pick<NodeJS.WriteStream, 'write'>) {
   const original = stream.write.bind(stream) as unknown as (...args: unknown[]) => boolean;
   const redacting = (chunk: unknown, ...rest: unknown[]): boolean => {
     if (typeof chunk === 'string') return original(redactSecrets(chunk), ...rest);
@@ -94,6 +106,6 @@ export function installOutputRedaction(): void {
   const g = globalThis as unknown as Record<symbol, unknown>;
   if (g[INSTALLED]) return;
   g[INSTALLED] = true;
-  wrap(process.stdout);
-  wrap(process.stderr);
+  wrapWrite(process.stdout);
+  wrapWrite(process.stderr);
 }

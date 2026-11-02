@@ -17,6 +17,11 @@ test('leak probe', async ({ request }) => {
   console.log(`probe-console __Secure-civitai-token=${FAKE}`);
   // eslint-disable-next-line no-console
   console.log(`probe-secret ${process.env.NEXTAUTH_SECRET ?? ''}`);
+  // A Buffer write: relayed from the worker as a Buffer and written to stdout as one by
+  // the list reporter, so it reaches the redactor's Uint8Array branch, not its string one.
+  process.stdout.write(
+    Buffer.from(`probe-buffer __Secure-civitai-token=${process.env.LEAK_PROBE_FAKE_BUF ?? ''}\n`)
+  );
   // Port 9 (discard) on loopback: refused immediately, so the request fails fast and
   // Playwright attaches its call log (method, URL, every request header) to the error.
   await request.get('http://127.0.0.1:9/probe', {

@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { maskSecret, redactSecrets } from '../../tests/preview-redact';
+import { PREVIEW_SESSION_MAX_AGE_S } from '../../tests/preview-fixtures';
+import { maskSecret, redactSecrets, wrapWrite } from '../../tests/preview-redact';
 
 /**
  * The preview smoke log printed a live session token. The print was Playwright's own:
@@ -38,7 +39,9 @@ describe('redactSecrets', () => {
     const out = redactSecrets(line);
     expect(out).not.toContain(jwe);
     expect(out).toBe(
-      `\u001b[2m    - cookie: __Secure-civitai-token=${jwe.slice(0, 4)}***(len=${jwe.length}); civ-trpc-pool=1; ref_landing_page=%2Fgenerate\u001b[22m`
+      `\u001b[2m    - cookie: __Secure-civitai-token=${jwe.slice(0, 4)}***(len=${
+        jwe.length
+      }); civ-trpc-pool=1; ref_landing_page=%2Fgenerate\u001b[22m`
     );
   });
 
@@ -96,7 +99,7 @@ describe('preview smoke log, end to end through the Playwright CLI', () => {
   const scratch = mkdtempSync(path.join(tmpdir(), 'smoke-log-redaction-'));
   afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-  function runProbe(config: string, fake: string, secret: string) {
+  function runProbe(config: string, fake: string, secret: string, fakeBuf: string) {
     const out = path.join(scratch, path.basename(config, '.config.ts'));
     const res = spawnSync(
       process.execPath,
@@ -110,13 +113,18 @@ describe('preview smoke log, end to end through the Playwright CLI', () => {
           PREVIEW_URL: 'http://127.0.0.1:9',
           NEXTAUTH_SECRET: secret,
           LEAK_PROBE_FAKE: fake,
+          LEAK_PROBE_FAKE_BUF: fakeBuf,
           LEAK_PROBE_OUT: path.join(out, 'results'),
           PLAYWRIGHT_JSON_OUTPUT_NAME: path.join(out, 'report.json'),
           FORCE_COLOR: '0',
         },
       }
     );
-    return { status: res.status, log: `${res.stdout ?? ''}\n${res.stderr ?? ''}`, error: res.error };
+    return {
+      status: res.status,
+      log: `${res.stdout ?? ''}\n${res.stderr ?? ''}`,
+      error: res.error,
+    };
   }
 
   const count = (hay: string, needle: string) => hay.split(needle).length - 1;
@@ -124,7 +132,8 @@ describe('preview smoke log, end to end through the Playwright CLI', () => {
   it('control: WITHOUT the preview config the probe leaks the cookie into the log', () => {
     const fake = fakeJwe();
     const secret = randomBytes(16).toString('hex');
-    const { log, error } = runProbe('unredacted.config.ts', fake, secret);
+    const fakeBuf = b64url(40);
+    const { log, error } = runProbe('unredacted.config.ts', fake, secret, fakeBuf);
     expect(error).toBeUndefined();
     // The probe ran and failed the way the smoke run did.
     expect(log).toContain('1 failed');
@@ -132,12 +141,14 @@ describe('preview smoke log, end to end through the Playwright CLI', () => {
     // ...and the instrument can see a leak.
     expect(count(log, fake)).toBeGreaterThanOrEqual(2);
     expect(log).toContain(secret);
+    expect(log).toContain(`probe-buffer __Secure-civitai-token=${fakeBuf}`);
   }, 120_000);
 
   it('through playwright.preview.config.ts no credential reaches stdout/stderr', () => {
     const fake = fakeJwe();
     const secret = randomBytes(16).toString('hex');
-    const { log, error } = runProbe('redacted.config.ts', fake, secret);
+    const fakeBuf = b64url(40);
+    const { log, error } = runProbe('redacted.config.ts', fake, secret, fakeBuf);
     expect(error).toBeUndefined();
     // Same failure, same call log — the leak PATH executed.
     expect(log).toContain('1 failed');
@@ -151,5 +162,68 @@ describe('preview smoke log, end to end through the Playwright CLI', () => {
     // The redacted form is what is printed instead: call log + console line.
     expect(count(log, maskSecret(fake))).toBeGreaterThanOrEqual(2);
     expect(log).toContain(maskSecret(secret));
+    // The probe's Buffer write, relayed to stdout as a Buffer (wrapWrite's Uint8Array branch).
+    expect(log).not.toContain(fakeBuf);
+    expect(log).toContain(`probe-buffer __Secure-civitai-token=${maskSecret(fakeBuf)}`);
   }, 120_000);
+});
+
+describe('wrapWrite', () => {
+  function capture() {
+    const writes: unknown[] = [];
+    const stream = {
+      write: (chunk: unknown) => {
+        writes.push(chunk);
+        return true;
+      },
+    } as unknown as Pick<NodeJS.WriteStream, 'write'>;
+    wrapWrite(stream);
+    return { stream, writes };
+  }
+
+  it('redacts a Buffer chunk and hands the stream the redacted TEXT', () => {
+    const { stream, writes } = capture();
+    const v = b64url(40);
+    stream.write(Buffer.from(`cookie: __Secure-civitai-token=${v}\n`));
+    expect(writes).toEqual([`cookie: __Secure-civitai-token=${maskSecret(v)}\n`]);
+  });
+
+  it('passes a Buffer with nothing to redact through untouched, as the same Buffer', () => {
+    const { stream, writes } = capture();
+    const buf = Buffer.from('  ✓  1 [preview-smoke] › ok\n');
+    stream.write(buf);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toBe(buf);
+  });
+
+  it('redacts a string chunk', () => {
+    const { stream, writes } = capture();
+    const jwe = fakeJwe();
+    stream.write(`x ${jwe} y`);
+    expect(writes).toEqual([`x ${maskSecret(jwe)} y`]);
+  });
+});
+
+describe('minted preview session lifetime', () => {
+  // Bounded to a smoke run, so a copy of the cookie that escapes masking expires quickly.
+  // The suite takes minutes (one run: 66 tests in ~3 min) and the CI run that hosts it is
+  // capped at 2h, so nothing in the suite can use the cookie past this.
+  it('is pinned at 2 hours', () => {
+    expect(PREVIEW_SESSION_MAX_AGE_S).toBe(2 * 60 * 60);
+  });
+
+  it('is what preview-auth.setup.ts uses for BOTH the JWE exp and the cookie expiry', () => {
+    const src = readFileSync(path.resolve(__dirname, '../../tests/preview-auth.setup.ts'), 'utf8');
+    // No second, local lifetime constant that could drift from the pinned one.
+    expect(src).not.toMatch(/MAX_AGE_S\s*=/);
+    expect(src).not.toMatch(/24\s*\*\s*60\s*\*\s*60/);
+    expect(
+      src.match(
+        /\.setExpirationTime\(Math\.floor\(Date\.now\(\) \/ 1000\) \+ PREVIEW_SESSION_MAX_AGE_S\)/g
+      )
+    ).toHaveLength(1);
+    expect(
+      src.match(/expires: Math\.floor\(Date\.now\(\) \/ 1000\) \+ PREVIEW_SESSION_MAX_AGE_S,/g)
+    ).toHaveLength(1);
+  });
 });
