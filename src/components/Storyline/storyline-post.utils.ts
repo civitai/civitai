@@ -10,7 +10,8 @@ export type StorylinePostParent = {
   name: string;
   /**
    * "ch 2", or "CivChan's ch 6" for a parent someone other than the storyline's owner wrote.
-   * Absent for a parent this reader may not see, whose name is already its number.
+   * Absent where the name is already the number and nothing else needs adding: a parent this
+   * reader may not see, or the owner's untitled chapter.
    */
   where?: string;
   /** The parent's post page; absent for a chapter this reader may not see. */
@@ -37,10 +38,12 @@ export function getStorylinePostParents(
       };
     const number = `ch ${chapter.depth + 1}`;
     const author = chapter.post.username;
+    const byAnother = !!author && chapter.post.userId !== ownerId;
     return {
       chapterId: chapter.chapterId,
       name: getStorylineChapterName(chapter),
-      where: author && chapter.post.userId !== ownerId ? `${author}'s ${number}` : number,
+      // An untitled chapter is already named by its number: only another author is worth adding.
+      where: byAnother ? `${author}'s ${number}` : chapter.post.title ? number : undefined,
       href: `/posts/${chapter.post.id}`,
     };
   };
