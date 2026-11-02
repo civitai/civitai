@@ -869,7 +869,7 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
     .filter(([, c]) => collectionNeedsPublishScope(c))
     .map(([name]) => name);
 
-  if (names.length === 0 && sources.length > 0 && !declared.has(APP_STORAGE_BASE_SCOPE)) {
+  if (sources.length > 0 && !declared.has(APP_STORAGE_BASE_SCOPE)) { // MUTATION (tests-first): D2 clause removed
     errors.push(
       `storage imports from ${sources.join(
         ', '
@@ -902,7 +902,7 @@ export function appStorageScopeErrors(scopes: unknown, parsed: ParsedManifestSto
       )} lets viewers write documents other users read, which requires the ${APP_STORAGE_PUBLISH_SCOPE} scope — add it to scopes with a scopeJustifications entry`
     );
   }
-  if (names.length === 0 && sources.length === 0 && declared.has(APP_STORAGE_BASE_SCOPE)) {
+  if (names.length === 0 && declared.has(APP_STORAGE_BASE_SCOPE)) { // MUTATION (tests-first): D2 clause removed
     errors.push(
       `scopes includes ${APP_STORAGE_BASE_SCOPE} but storage declares no collections — declare them under storage.collections, or remove the scope`
     );

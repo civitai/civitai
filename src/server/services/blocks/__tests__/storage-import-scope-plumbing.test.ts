@@ -95,9 +95,10 @@ describe('apps:storage:import — consent', () => {
 });
 
 describe('apps:storage:import — which mints carry it', () => {
-  // The bearer dev token: the route confines an import to the developer's own `dev:<uid>`
-  // namespace in the source app.
-  it('the bearer dev-token clamp keeps it', () => {
+  // The bearer dev token does not carry it (operator decision D1, 2026-11-02): a development
+  // token reaches no other app, and the storage route refuses `?from=` on one as well.
+  it('the bearer dev-token clamp strips it and keeps apps:storage', () => {
+    expect(DEV_TOKEN_SCOPE_ALLOWLIST.has(IMPORT)).toBe(false);
     expect(
       clampDevScopes({
         scopeSource: [BASE, IMPORT, 'user:read:self'],
@@ -106,7 +107,7 @@ describe('apps:storage:import — which mints carry it', () => {
         spendRequested: false,
         allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
       })
-    ).toEqual([BASE, IMPORT, 'user:read:self']);
+    ).toEqual([BASE, 'user:read:self']);
   });
 
   // A review token must never reach a second app's data (the route refuses it too).

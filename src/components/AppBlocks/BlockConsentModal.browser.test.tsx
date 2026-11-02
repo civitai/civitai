@@ -283,7 +283,26 @@ describe('BlockConsentModal — cross-app storage imports', () => {
     await expect
       .element(detail)
       .toHaveTextContent(
-        'Notes Fork reads and changes your notes, prefs in Notes App — as you, so entries it adds to shared lists there appear under your account'
+        'Notes Fork reads and changes your notes, prefs in Notes App — as you. Adding to lists other people see there needs your separate permission in Notes App.'
       );
+  });
+
+  test('Allow sends the imports the viewer was shown, so the grant records exactly those', async () => {
+    mutate.mockClear();
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={['apps:storage:import']}
+        onGranted={() => undefined}
+      />
+    );
+    await page.getByRole('button', { name: 'Allow' }).click();
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({
+      appBlockId: 'app-1',
+      scopes: ['apps:storage:import'],
+      storageImports: [{ from: 'notes-app', collections: ['notes', 'prefs'], access: 'readwrite' }],
+    });
   });
 });
