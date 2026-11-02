@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as Ledger from '~/server/services/scam-case-ledger';
 import type * as ModeratorService from '~/server/services/moderator.service';
@@ -48,6 +48,16 @@ beforeEach(() => {
   lockedRow();
   dbMock.dbWrite.userRestriction.findFirst.mockResolvedValue(null);
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: false });
+});
+
+// `afterAccountStandingChanged` arms a real follow-up timer; held here so one test's cannot fire
+// inside another's assertions.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+});
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
 });
 
 describe('releaseUserMute', () => {
@@ -210,6 +220,13 @@ describe('a change of standing reaches the orchestrator', () => {
   it("an unmute revokes the account's cached orchestrator tokens", async () => {
     await releaseUserMute({ userId: USER, actorId: MOD, updateSource: 't' });
     expect(m.revokeCivitaiUserTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER });
+  });
+
+  it('a moderator mute whose sessions cannot be ended fails, so the caller can retry', async () => {
+    dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: true });
+    m.invalidateSession.mockRejectedValueOnce(new Error('session store down'));
+    await expect(setUserMuted({ userId: USER, muted: true })).rejects.toThrow();
+    expect(m.revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: USER });
   });
 
   it('a moderator mute revokes them too', async () => {

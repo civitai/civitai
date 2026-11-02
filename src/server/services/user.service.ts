@@ -507,7 +507,12 @@ export async function setUserMuted(
   const { afterAccountStandingChanged } = await import(
     '~/server/services/account-standing.service'
   );
-  await afterAccountStandingChanged(args.userId, { kind: 'invalidate', caller: 'moderation' });
+  const sessionsEnded = await afterAccountStandingChanged(args.userId, {
+    kind: 'invalidate',
+    caller: 'moderation',
+  });
+  // The mute has committed, but until the sessions end it does not apply; the caller can retry.
+  if (!sessionsEnded) throw new Error(`Muted user ${args.userId} but could not end their sessions`);
   return user;
 }
 

@@ -2,7 +2,12 @@ import type { SessionStateCaller } from '~/server/auth/session-metrics';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
+import {
+  ACCOUNT_STANDING_REBUST_MS,
+  REDIS_KEYS,
+  redis,
+  type RedisKeyTemplateCache,
+} from '~/server/redis/client';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
@@ -22,11 +27,7 @@ export const ACCOUNT_STANDING_TTL = CacheTTL.xs;
 export const ACCOUNT_STANDING_CACHE_DEADLINE_MS = 300;
 const CACHE_TIMED_OUT = Symbol('account-standing-cache-timed-out');
 
-/**
- * A refill that read the row before the change committed can write the old standing after the first
- * bust. The second bust lands after any such refill: its lock expires after 10 s.
- */
-export const ACCOUNT_STANDING_REBUST_MS = 11_000;
+export { ACCOUNT_STANDING_REBUST_MS };
 
 function logStandingError(name: string, userId: number, error?: unknown) {
   // Never throws, whatever `logToAxiom` returns.
@@ -104,30 +105,41 @@ function startRevoke(userId: number) {
 export type StandingSessionStep = { kind: 'refresh' | 'invalidate'; caller: SessionStateCaller };
 
 /**
- * Run after a mute or unmute has committed, before anything else that can fail. Drops the cached
- * standing, refreshes or invalidates the account's sessions, then makes the orchestrator re-validate
- * the account's cached tokens. The revoke must come after the session step: the orchestrator
- * re-validates through `/api/v1/me`, which reports the session's standing, so revoking first lets it
- * re-cache the old one. Repeats the bust and the revoke after `ACCOUNT_STANDING_REBUST_MS`, past any
- * refill or re-validation that raced the first. Never throws.
+ * Run after a mute or unmute has committed: drops the cached standing, takes the caller's session
+ * step, then revokes the orchestrator's cached tokens, and repeats all three after
+ * `ACCOUNT_STANDING_REBUST_MS`. The revoke comes last because the orchestrator re-validates through
+ * `/api/v1/me`, which reports the session's standing. Never throws; returns whether the session step
+ * succeeded, for a caller that must report a failed one.
  */
 export async function afterAccountStandingChanged(
   userId: number,
   session: StandingSessionStep
-): Promise<void> {
+): Promise<boolean> {
   await bustStanding(userId);
+  let sessionStepped = false;
   try {
     const { invalidateSession, refreshSession } = await import(
       '~/server/auth/session-invalidation'
     );
     if (session.kind === 'refresh') await refreshSession(userId, { caller: session.caller });
     else await invalidateSession(userId, session.caller);
+    sessionStepped = true;
   } catch (error) {
     logStandingError('account-standing.session-step-failed', userId, error);
   } finally {
     startRevoke(userId);
   }
-  setTimeout(() => {
-    void bustStanding(userId).finally(() => startRevoke(userId));
-  }, ACCOUNT_STANDING_REBUST_MS).unref?.();
+  setTimeout(() => void repeatStandingChange(userId), ACCOUNT_STANDING_REBUST_MS).unref?.();
+  return sessionStepped;
+}
+
+async function repeatStandingChange(userId: number) {
+  await bustStanding(userId);
+  try {
+    const { clearSessionCache } = await import('~/server/auth/session-cache');
+    await clearSessionCache(userId);
+  } catch (error) {
+    logStandingError('account-standing.session-step-failed', userId, error);
+  }
+  startRevoke(userId);
 }

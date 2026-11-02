@@ -6,11 +6,13 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const { revokeTokens, refreshSession, invalidateSession } = vi.hoisted(() => ({
+const { revokeTokens, refreshSession, invalidateSession, clearSessionCache } = vi.hoisted(() => ({
+  clearSessionCache: vi.fn(async (_userId: number) => undefined),
   revokeTokens: vi.fn(async (_: { userId: number | string }) => true),
   refreshSession: vi.fn(async (_userId: number, _opts?: unknown) => undefined),
   invalidateSession: vi.fn(async (_userId: number, _caller?: unknown) => undefined),
 }));
+vi.mock('~/server/auth/session-cache', () => ({ clearSessionCache }));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),
   refreshSession,
@@ -137,10 +139,14 @@ describe('afterAccountStandingChanged', () => {
     expect(invalidateSession).not.toHaveBeenCalled();
   });
 
-  it('still revokes, and does not throw, when the session step fails', async () => {
+  it('still revokes when the session step fails, and reports the failure without throwing', async () => {
     invalidateSession.mockRejectedValue(new Error('sysredis down'));
-    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBeUndefined();
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBe(false);
     expect(revokeTokens).toHaveBeenCalledOnce();
+  });
+
+  it('reports a session step that succeeded', async () => {
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBe(true);
   });
 
   it("revokes the account's cached orchestrator tokens", async () => {
@@ -150,14 +156,14 @@ describe('afterAccountStandingChanged', () => {
 
   it('does not wait on, or throw for, a failed revocation', async () => {
     revokeTokens.mockRejectedValue(new Error('orchestrator down'));
-    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBeUndefined();
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBe(true);
     revokeTokens.mockImplementation(() => new Promise<boolean>(() => undefined));
-    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBeUndefined();
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBe(true);
   });
 
   it('does not throw when the cache bust fails', async () => {
     redisMock.redis.del.mockRejectedValue(new Error('redis down'));
-    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBeUndefined();
+    await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBe(true);
     expect(revokeTokens).toHaveBeenCalledOnce();
   });
 
@@ -177,6 +183,11 @@ describe('afterAccountStandingChanged', () => {
       await vi.advanceTimersByTimeAsync(ACCOUNT_STANDING_REBUST_MS - 10_000);
       expect(await isAccountMuted(USER, false)).toBe(true);
       expect(revokeTokens).toHaveBeenCalledTimes(2);
+      // The repeat also drops the cached session, before its revoke.
+      expect(clearSessionCache).toHaveBeenCalledWith(USER);
+      expect(revokeTokens.mock.invocationCallOrder[1]).toBeGreaterThan(
+        clearSessionCache.mock.invocationCallOrder[0]
+      );
     } finally {
       vi.useRealTimers();
     }

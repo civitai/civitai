@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { NextApiResponse } from 'next';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as ModeratorService from '~/server/services/moderator.service';
@@ -356,6 +356,16 @@ function recordTransactionWrites() {
   );
   return inside;
 }
+
+// `afterAccountStandingChanged` arms a real follow-up timer; held here so one test's cannot fire
+// inside another's assertions.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+});
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
 
 describe('pending-review mute', () => {
   beforeEach(seed);

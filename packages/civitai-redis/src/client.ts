@@ -3329,3 +3329,9 @@ export const REDIS_SUB_KEYS = {
     MERGING: 'merging', // sys
   },
 } as const;
+
+/**
+ * How long after a mute or unmute the account-standing cache is busted again: past the 10 s refill
+ * lock, so a refill that read the row before the change cannot leave the old standing behind.
+ */
+export const ACCOUNT_STANDING_REBUST_MS = 11_000;

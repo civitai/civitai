@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
@@ -168,6 +168,16 @@ function mockTransactionForEscalation(
 
 // Prisma tagged templates hand the raw SQL over as a TemplateStringsArray.
 const sqlOf = (call: any[]) => (call[0] as string[]).join(' ');
+
+// `afterAccountStandingChanged` arms a real follow-up timer; held here so one test's cannot fire
+// inside another's assertions.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+});
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
 
 describe('strike.service', () => {
   beforeEach(() => {
