@@ -42,7 +42,8 @@ import {
   submitBundleFromExport,
 } from '~/components/Apps/AppAssistant/assistantSubmit';
 import { setFeedbackStatusVia } from '~/components/Apps/AppAssistant/assistantFeedback';
-import { createAppFeedbackSource } from '@civitai/app-assistant';
+import { chosenAppOf, createAppFeedbackSource } from '@civitai/app-assistant';
+import { appChatOf, appOfChat, rememberAppChat } from '~/components/Apps/AppAssistant/appChats';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
 import {
@@ -221,6 +222,7 @@ export function AppAssistantWorkspace({
   sandboxUrl,
   subagents = false,
   remoteRunner = false,
+  userId = null,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
@@ -232,6 +234,8 @@ export function AppAssistantWorkspace({
    * is away. Off, they run in the browser exactly as before.
    */
   remoteRunner?: boolean;
+  /** The signed-in user: the chat each app was chosen in is kept per user (`appChats`). */
+  userId?: number | null;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -322,6 +326,41 @@ export function AppAssistantWorkspace({
     chatRef.current?.newChat();
   }, [chatReady, activeName]);
   const dismissForkSetup = fork.dismissSetup;
+
+  // CHATS FOLLOW THE APP: opening an app opens the chat it was made or chosen in (`appChats`), or a
+  // new chat when the open one is another app's. On a visit the chat opens the chat used last before
+  // the page has picked its app, so then the app's own chat is asked for as the chat starts
+  // (`chatOnReady`), or, with none known, the chat it opened is checked once its id is known
+  // (`chatCheckFor`, the app picked).
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
+  const chatOnReady = useRef<string | null>(null);
+  const chatCheckFor = useRef<string | null>(null);
+  /** Opens `app`'s chat: the one it was chosen in; else a new one, when an app was open or the chat is another app's. */
+  const followChat = useCallback((app: string, leavingApp: boolean) => {
+    chatOnReady.current = null;
+    chatCheckFor.current = null;
+    const chat = chatRef.current;
+    if (!chat) return;
+    const own = appChatOf(userIdRef.current, app);
+    // The chat opens it, unless it is the open chat.
+    if (own) chat.conversationId = own;
+    else if (leavingApp || appOfChat(userIdRef.current, chat.chatId) !== null) chat.newChat();
+  }, []);
+  /** On a visit with no chat known for the app picked: the chat the chat opened, if another app's, gives way to a new one. */
+  const checkOpenedChat = useCallback((id: string | null) => {
+    const app = chatCheckFor.current;
+    if (!app || !id) return;
+    chatCheckFor.current = null;
+    const owner = appOfChat(userIdRef.current, id);
+    if (owner !== null && owner !== app) chatRef.current?.newChat();
+  }, []);
+  useEffect(() => {
+    const own = chatOnReady.current;
+    if (!chatReady || !own || !chatRef.current) return;
+    chatOnReady.current = null;
+    chatRef.current.conversationId = own;
+  }, [chatReady, activeName]);
 
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
@@ -497,6 +536,10 @@ export function AppAssistantWorkspace({
   const onToolResult = useCallback(
     (result: ChatToolResult) => {
       gate.onToolResult(result);
+      // The chat that made or chose an app is the one the app opens with.
+      const chosen = chosenAppOf(result);
+      if (chosen && chatIdRef.current)
+        rememberAppChat(userIdRef.current, chosen, chatIdRef.current);
       // In the browser and from the runner alike: the card offering to free a slot.
       if (isKeepLimitResult(result))
         setSlot((shown) => shown ?? { message: lastSent.current, deleting: false, error: null });
@@ -838,8 +881,15 @@ export function AppAssistantWorkspace({
     pickedOnLoad.current = true;
     if (activeName || forkClaimsActiveApp) return;
     const recent = mostRecentApp(sandboxes.list.data);
-    if (recent) setActiveName(recent.name);
-  }, [sandboxes.list.data, activeName, forkClaimsActiveApp]);
+    if (!recent) return;
+    setActiveName(recent.name);
+    const own = appChatOf(userIdRef.current, recent.app);
+    if (own) chatOnReady.current = own;
+    else {
+      chatCheckFor.current = recent.app;
+      checkOpenedChat(chatRef.current?.chatId ?? null);
+    }
+  }, [sandboxes.list.data, activeName, forkClaimsActiveApp, checkOpenedChat]);
 
   const resumeRef = useRef(sandboxes.open.mutate);
   resumeRef.current = sandboxes.open.mutate;
@@ -1006,8 +1056,9 @@ export function AppAssistantWorkspace({
         lastSent.current = null;
       }
       onChatChange(id);
+      checkOpenedChat(id);
     },
-    [endResumeAsk, onChatChange]
+    [endResumeAsk, onChatChange, checkOpenedChat]
   );
 
   const starting =
@@ -1041,6 +1092,7 @@ export function AppAssistantWorkspace({
   );
   // Picking a paused app starts it, which pauses the one that runs.
   const selectApp = (sandbox: Sandbox) => {
+    if (sandbox.name !== activeName) followChat(sandbox.app, !!active);
     setActiveName(sandbox.name);
     setSwitcherOpen(false);
     if (sandbox.state === 'suspended') startByHand(sandbox);
@@ -1178,6 +1230,8 @@ export function AppAssistantWorkspace({
         pageError.kind === 'limit' &&
         !isRunningLimit(pageError)));
   const startNewApp = () => {
+    chatOnReady.current = null;
+    chatCheckFor.current = null;
     setActiveName(null);
     chatRef.current?.newChat();
     setSwitcherOpen(false);
