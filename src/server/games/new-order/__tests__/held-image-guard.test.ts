@@ -141,7 +141,7 @@ describe('New Order held-image guard', () => {
       priority: 1,
     });
 
-    expect(added).toBe(false);
+    expect(added).toEqual({ added: false, heldIds: [HELD] });
     expect(poolStub.getCount).not.toHaveBeenCalled();
   });
 

@@ -35,7 +35,7 @@ import {
 requireApiKey();
 
 const REPORT_ENTITIES = [
-  'model', 'comment', 'commentV2', 'image', 'resourceReview', 'article',
+  'model', 'comment', 'commentV2', 'commentV3', 'image', 'resourceReview', 'article',
   'post', 'reportedUser', 'collection', 'bounty', 'bountyEntry', 'chat', 'comicProject',
 ];
 

@@ -3,6 +3,7 @@ import { ColorSchemeScript, createTheme, MantineProvider, Modal, colorsTuple } f
 import { Notifications } from '@mantine/notifications';
 import { DateLocaleProvider } from '~/providers/DateLocaleProvider';
 import { buildMantineCssVariablesHtml } from '~/providers/mantine-css-variables';
+import choiceLabel from '~/providers/choice-label.module.scss';
 
 export const theme = createTheme({
   components: {
@@ -52,6 +53,7 @@ export const theme = createTheme({
       },
     },
     Radio: {
+      classNames: choiceLabel,
       styles: {
         radio: { cursor: 'pointer' },
         label: { cursor: 'pointer' },
@@ -62,6 +64,7 @@ export const theme = createTheme({
       defaultProps: { radius: 'sm', variant: 'light' },
     },
     Checkbox: {
+      classNames: choiceLabel,
       styles: {
         input: { cursor: 'pointer' },
         label: { cursor: 'pointer' },

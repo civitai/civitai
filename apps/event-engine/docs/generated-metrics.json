@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "handlers": 24,
-    "handlersWithDebug": 19,
-    "metrics": 78
+    "handlers": 25,
+    "handlersWithDebug": 20,
+    "metrics": 80
   },
   "entityTypes": {
     "Article": {
@@ -12,7 +12,7 @@
       "Laugh": "articleReactionHandler",
       "Like": "articleReactionHandler",
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
     },
@@ -103,7 +103,7 @@
     "User": {
       "articleCount": "articleHandler",
       "bountyCount": "bountyHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "followerCount": "userEngagementHandler",
       "followingCount": "userEngagementHandler",
       "hiddenCount": "userEngagementHandler",
@@ -173,13 +173,17 @@
       "Collection.followerCount"
     ],
     "Comment": [
-      "Model.commentCount"
+      "Model.commentCount",
+      "User.commentCount"
     ],
     "CommentV2": [
-      "Article.commentCount",
       "Bounty.commentCount",
       "Image.commentCount",
       "Post.commentCount",
+      "User.commentCount"
+    ],
+    "CommentV3": [
+      "Article.commentCount",
       "User.commentCount"
     ],
     "ImageResourceNew": [

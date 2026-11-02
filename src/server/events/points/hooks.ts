@@ -219,8 +219,9 @@ const commentAction = (userId: number, { entityType, entityId }: Entity, time: D
 });
 
 /**
- * A new comment. Top-level comments on an Image or Article name their entity directly; a reply
- * (`entityType: 'comment'`) is resolved through its thread to the root entity.
+ * A new comment. Top-level comments on an Image or Article name their entity directly; a v2 reply
+ * (`entityType: 'comment'`) is resolved through its thread to the root entity. A CommentV3 comment,
+ * reply or not, names its section's entity.
  */
 export async function onCommentCreated({
   userId,
@@ -231,14 +232,15 @@ export async function onCommentCreated({
   userId: number;
   entityType: string;
   entityId: number;
-  threadId: number;
+  threadId?: number;
 }): Promise<void> {
   const time = new Date();
   try {
     let target: Entity | undefined;
     if (entityType === 'image') target = { entityType: 'Image', entityId };
     else if (entityType === 'article') target = { entityType: 'Article', entityId };
-    else if (entityType === 'comment') target = (await commentRoots([threadId])).get(threadId);
+    else if (entityType === 'comment' && threadId)
+      target = (await commentRoots([threadId])).get(threadId);
     if (!target || !isHattedEntity(target.entityType, target.entityId)) return;
     await awardEventPoints([commentAction(userId, target, time)]);
   } catch (error) {
@@ -258,6 +260,31 @@ export async function onCommentsRemoved(
     const seen = new Set<string>();
     for (const { userId, threadId } of comments) {
       const root = roots.get(threadId);
+      if (!root) continue;
+      const action = commentAction(userId, root, time);
+      if (seen.has(action.sourceId)) continue;
+      seen.add(action.sourceId);
+      await removeIfLast(action, () => liveCommentsOn(userId, root));
+    }
+  } catch (error) {
+    swallow('event-points:comment')(error);
+  }
+}
+
+/** Deleted CommentV3 comments, as `{ userId, entityType, entityId }` of each removed row. */
+export async function onTopicCommentsRemoved(
+  comments: { userId: number; entityType: string; entityId: number }[]
+): Promise<void> {
+  const time = new Date();
+  try {
+    const seen = new Set<string>();
+    for (const { userId, entityType, entityId } of comments) {
+      const root: Entity | undefined =
+        entityType === 'image'
+          ? { entityType: 'Image', entityId }
+          : entityType === 'article'
+          ? { entityType: 'Article', entityId }
+          : undefined;
       if (!root) continue;
       const action = commentAction(userId, root, time);
       if (seen.has(action.sourceId)) continue;

@@ -14,14 +14,14 @@ import {
 import { familyScope, type FamilyExt } from '../shared';
 
 /**
- * PolyGen (Meshy via Fal). Both Meshy versions
+ * PolyGen (Meshy via Fal). Every Meshy version
  * behind one ecosystem — `version` is a control, flag-gated (v7 needs
- * `meshyV7Generator`) and workflow-clamped (v7 has no text-to-3D, so
- * v7-on-text clamps back to v6). Flat field set gated per version/workflow,
- * conditional on the same fields.
+ * `meshyV7Generator`, v7.1 `meshyV71Generator`) and workflow-clamped (v7 has
+ * no text-to-3D, so v7-on-text clamps back to v6). Flat field set gated per
+ * version/workflow, conditional on the same fields.
  */
 
-export const polygenVersions = ['v6', 'v7'] as const;
+export const polygenVersions = ['v6', 'v7', 'v7.1'] as const;
 export type PolygenVersion = (typeof polygenVersions)[number];
 
 export const polygenVersionOptions = [
@@ -37,6 +37,11 @@ export const polygenVersionOptions = [
     imageOnly: true,
     description:
       'Higher-fidelity geometry from 1-4 images. No text-to-3D — choosing it switches you to Image to 3D.',
+  },
+  {
+    label: 'v7.1',
+    value: 'v7.1' as const,
+    description: 'Text-to-3D or 1-4 images, with smart topology and up to 4K geometry resolution.',
   },
 ];
 
@@ -67,6 +72,19 @@ export const polygenModelTypeOptions = [
   { label: 'Low poly', value: 'lowpoly' as const },
 ];
 
+export const polygenV71ModelTypeOptions = [
+  { label: 'Standard', value: 'standard' as const },
+  { label: 'Smart topology', value: 'smart-topology' as const },
+];
+
+export const polygenGeometryResolutionOptions = [
+  { label: 'Standard', value: 'standard' as const },
+  { label: '2K', value: '2k' as const },
+  { label: '4K', value: '4k' as const },
+];
+
+const polygenMultiImageGeometryResolutionOptions = polygenGeometryResolutionOptions.slice(0, 2);
+
 const POLYGEN_MIN_POLYCOUNT = 100;
 const POLYGEN_MAX_POLYCOUNT = 300_000;
 const POLYGEN_DEFAULT_POLYCOUNT = 30_000;
@@ -81,7 +99,7 @@ const POLYGEN_MAX_RIGGING_HEIGHT = 10;
 const POLYGEN_DEFAULT_RIGGING_HEIGHT = 1.7;
 
 const POLYGEN_MIN_ANIMATION_ACTION_ID = 0;
-const POLYGEN_MAX_ANIMATION_ACTION_ID = 10_000;
+const POLYGEN_MAX_ANIMATION_ACTION_ID = 696;
 
 const polygenPolycountPresets = [
   { label: '5k', value: 5_000 },
@@ -92,18 +110,31 @@ const polygenPolycountPresets = [
 
 /** Gated only by the flag, not the workflow, so the choice stays discoverable. */
 export function getPolygenVersionOptions(flags?: Partial<FeatureAccess>) {
-  return flags?.meshyV7Generator === true ? polygenVersionOptions : [polygenVersionOptions[0]];
+  return polygenVersionOptions.filter(
+    ({ value }) =>
+      value === 'v6' ||
+      (value === 'v7' && flags?.meshyV7Generator === true) ||
+      (value === 'v7.1' && flags?.meshyV71Generator === true)
+  );
+}
+
+/** v7 and v7.1 share the multi-image input and the pose/rigging/animation controls. */
+function isV7Line(version: PolygenVersion | undefined) {
+  return version === 'v7' || version === 'v7.1';
 }
 
 /** Meshy v7 has no text-to-3D operation — v7-on-text clamps back to v6. */
 export function isPolygenVersionRunnable(version: PolygenVersion, workflow: string) {
-  return version === 'v6' || !workflow.startsWith('txt');
+  return version !== 'v7' || !workflow.startsWith('txt');
 }
 
-const polygenVersionDef = cachedFactory((workflow: string, meshyV7: boolean) => {
+const polygenVersionDef = cachedFactory((workflow: string, meshyV7: boolean, meshyV71: boolean) => {
   // options render flag-gated; the transforms validate flag- AND
   // workflow-gated, clamping anything unrunnable to v6 rather than erroring
-  const options = getPolygenVersionOptions({ meshyV7Generator: meshyV7 });
+  const options = getPolygenVersionOptions({
+    meshyV7Generator: meshyV7,
+    meshyV71Generator: meshyV71,
+  });
   const offered = new Set(options.map((o) => o.value));
   const clamp = (v?: PolygenVersion) =>
     v && offered.has(v) && isPolygenVersionRunnable(v, workflow) ? v : ('v6' as const);
@@ -113,14 +144,18 @@ const polygenVersionDef = cachedFactory((workflow: string, meshyV7: boolean) => 
     default: 'v6' as const,
     meta: {
       options,
-      info: 'v7 produces higher-fidelity geometry and accepts up to four views of the same object, but has no text-to-3D mode. v6 is the only version with a text prompt.',
+      info: 'v7 produces higher-fidelity geometry and accepts up to four views of the same object, but has no text-to-3D mode. v7.1 adds text-to-3D, smart topology and up to 4K geometry resolution.',
     },
   };
 });
 
 export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
   .field('version', ({ _ext }) =>
-    polygenVersionDef(_ext.workflow, _ext.flags?.meshyV7Generator === true)
+    polygenVersionDef(
+      _ext.workflow,
+      _ext.flags?.meshyV7Generator === true,
+      _ext.flags?.meshyV71Generator === true
+    )
   )
   // --- text-to-3D fields (v6 only; v7 has no text branch) ---
   .field('prompt', ({ _ext }) => {
@@ -156,7 +191,7 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
   // --- image-to-3D fields ---
   .field('images', ({ version, _ext }) => {
     if (_ext.workflow.startsWith('txt')) return null;
-    const max = version === 'v7' ? POLYGEN_V7_MAX_IMAGES : 1;
+    const max = isV7Line(version) ? POLYGEN_V7_MAX_IMAGES : 1;
     return {
       ...imagesDef({ min: 1, max }),
       // v7's multi-image staging truncates on a v6 switch instead of failing
@@ -201,19 +236,29 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
   .field('enableAnimation', boolDef(false))
   // --- v7-only controls ---
   .field('poseMode', ({ version }) =>
-    version === 'v7' ? enumDef({ options: polygenPoseModeOptions, default: 'none' }) : null
+    isV7Line(version) ? enumDef({ options: polygenPoseModeOptions, default: 'none' }) : null
   )
   // ultra fidelity and the low-poly preset are single-image only
   .field('ultraMode', ({ version, images }) =>
     version === 'v7' && (images?.length ?? 0) <= 1 ? boolDef(false) : null
   )
-  .field('modelType', ({ version, images }) =>
-    version === 'v7' && (images?.length ?? 0) <= 1
-      ? enumDef({ options: polygenModelTypeOptions, default: 'standard' })
-      : null
-  )
+  .field('modelType', ({ version, images }) => {
+    if ((images?.length ?? 0) > 1) return null;
+    if (version === 'v7') return enumDef({ options: polygenModelTypeOptions, default: 'standard' });
+    if (version === 'v7.1')
+      return enumDef({ options: polygenV71ModelTypeOptions, default: 'standard' });
+    return null;
+  })
+  // v7.1 only. 2K/4K need the standard model type; multi-image tops out at 2K.
+  .field('geometryResolution', ({ version, images, modelType }) => {
+    if (version !== 'v7.1') return null;
+    if ((images?.length ?? 0) > 1)
+      return enumDef({ options: polygenMultiImageGeometryResolutionOptions, default: 'standard' });
+    if (modelType === 'smart-topology') return null;
+    return enumDef({ options: polygenGeometryResolutionOptions, default: 'standard' });
+  })
   .field('riggingHeightMeters', ({ version, enableAnimation }) =>
-    version === 'v7' && enableAnimation === true
+    isV7Line(version) && enableAnimation === true
       ? sliderDef({
           min: POLYGEN_MIN_RIGGING_HEIGHT,
           max: POLYGEN_MAX_RIGGING_HEIGHT,
@@ -223,7 +268,7 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
       : null
   )
   .field('animationActionId', ({ version, enableAnimation }) =>
-    version === 'v7' && enableAnimation === true
+    isV7Line(version) && enableAnimation === true
       ? {
           input: z.coerce
             .number()
@@ -251,8 +296,10 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
         }
       : null
   )
-  // Meshy v6 takes an optional seed; v7's orchestrator type has none
-  .field('seed', ({ version }) => (version !== 'v7' ? SEED : null));
+  // v6 takes a seed on both operations, v7.1 only on text-to-3D, v7 never
+  .field('seed', ({ version, _ext }) =>
+    version === 'v6' || (version === 'v7.1' && _ext.workflow.startsWith('txt')) ? SEED : null
+  );
 
 export {
   POLYGEN_MIN_POLYCOUNT,
