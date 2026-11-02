@@ -55,10 +55,10 @@ const given = (bannedAt: Date | null) => {
   dbMock.dbRead.user.findUnique.mockResolvedValue(account(bannedAt) as never);
   dbMock.dbWrite.user.findUnique.mockResolvedValue(account(bannedAt) as never);
 };
-const admitted = () =>
+const check = () =>
   assertAccountNotRestricted(USER).then(
-    () => true,
-    () => false
+    () => 'admitted',
+    () => 'refused'
   );
 
 beforeEach(() => {
@@ -80,17 +80,17 @@ afterEach(() => {
 describe('a ban reaches the cached account standing', () => {
   it('a ban is refused on the next check, over a warm cache', async () => {
     given(null);
-    expect(await admitted()).toBe(true);
+    expect(await check()).toBe('admitted');
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
     given(new Date());
-    expect(await admitted()).toBe(false);
+    expect(await check()).toBe('refused');
   });
 
   it('an unban is admitted on the next check, over a warm cache', async () => {
     given(new Date());
-    expect(await admitted()).toBe(false);
+    expect(await check()).toBe('refused');
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
     given(null);
-    expect(await admitted()).toBe(true);
+    expect(await check()).toBe('admitted');
   });
 });

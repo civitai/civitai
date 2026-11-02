@@ -31,7 +31,8 @@ export default defineModeratorEndpoint('user.mute', {
     // Repeating this mute is harmless, so a caller can be told to retry the session step.
     if (!sessionInvalidated)
       throw new CommittedRetryableError(
-        'The account is muted but its sessions could not be ended; retry'
+        'The account is muted but its sessions could not be ended; retry',
+        { userIds: [input.userId] }
       );
     return {
       muted: true,

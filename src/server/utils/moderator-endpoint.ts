@@ -286,6 +286,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
         outcome: e instanceof CommittedRetryableError ? 'warning' : 'error',
         errorMsg: err.message ?? String(e),
         payload: auditPayload,
+        affected: e instanceof CommittedRetryableError ? e.affected : undefined,
       });
       return handleEndpointError(res, e);
     }
@@ -301,7 +302,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
  * safe. Answers 503, and is audited as a `warning` rather than an `error`: the action took.
  */
 export class CommittedRetryableError extends TRPCError {
-  constructor(message: string) {
+  constructor(message: string, readonly affected?: Record<string, unknown>) {
     super({ code: 'SERVICE_UNAVAILABLE', message });
   }
 }

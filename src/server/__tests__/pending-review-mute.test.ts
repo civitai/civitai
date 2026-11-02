@@ -1298,6 +1298,23 @@ describe('resolveUserRestriction — scam rulings', () => {
       expect(restoreScamCase).toHaveBeenCalledWith(id);
     });
 
+    // The ruling has committed; a failed session refresh must not surface as a failed ruling.
+    it('still resolves when the session refresh fails and the account stays muted', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+      refreshSession.mockRejectedValueOnce(new Error('redis down'));
+
+      await expect(
+        resolveUserRestriction({
+          userRestrictionId: id,
+          status: UserRestrictionStatus.Overturned,
+          moderatorId: MOD_ID,
+        })
+      ).resolves.toBeDefined();
+      expect(refreshSession).toHaveBeenCalledWith(USER_ID, { caller: 'moderation' });
+      expect(store.restrictions.find((r) => r.id === id)?.status).toBe('Overturned');
+    });
+
     it('tells the user nothing when the account stays muted', async () => {
       const id = fileScam();
       fileCase(2, 'generation');

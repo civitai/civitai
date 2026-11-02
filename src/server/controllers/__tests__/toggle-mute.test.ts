@@ -68,15 +68,17 @@ describe('setUserMuted when the account is already muted', () => {
     expect(writtenMutedAt()).toEqual(original);
   });
 
-  it('dates a new mute, and one over an automatic mute (no mutedAt), now', async () => {
-    for (const row of [
-      { muted: false, mutedAt: null },
-      { muted: true, mutedAt: null },
-    ]) {
-      dbMock.dbWrite.user.findUnique.mockResolvedValue(row as never);
-      const before = Date.now();
-      await setUserMuted({ userId: USER, muted: true, expiresAt: null });
-      expect(writtenMutedAt()?.getTime()).toBeGreaterThanOrEqual(before);
-    }
+  it.each([
+    ['a new mute', { muted: false, mutedAt: null }],
+    ['a mute over an automatic one', { muted: true, mutedAt: null }],
+    [
+      'a mute over a stale mutedAt left on an unmuted account',
+      { muted: false, mutedAt: new Date(0) },
+    ],
+  ])('dates %s now', async (_, row) => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row as never);
+    const before = Date.now();
+    await setUserMuted({ userId: USER, muted: true, expiresAt: null });
+    expect(writtenMutedAt()?.getTime()).toBeGreaterThanOrEqual(before);
   });
 });

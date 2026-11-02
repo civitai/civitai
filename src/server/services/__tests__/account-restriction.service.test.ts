@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
+import type * as SessionCache from '~/server/auth/session-cache';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as TosReacceptance from '~/server/services/tos-reacceptance.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -14,7 +15,10 @@ vi.mock('~/server/services/tos-reacceptance.service', async (importOriginal) => 
   ...(await importOriginal<typeof TosReacceptance>()),
   shouldOfferTosReacceptance,
 }));
-vi.mock('~/server/auth/session-cache', () => ({ clearSessionCache: vi.fn(async () => undefined) }));
+vi.mock('~/server/auth/session-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof SessionCache>()),
+  clearSessionCache: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),
   refreshSession: vi.fn(async () => undefined),
