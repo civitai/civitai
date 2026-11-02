@@ -421,6 +421,19 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag state (enabled: false is fine) before this code serves traffic, for the reason given at
   // KYSELY_IMAGE_REACTIONS.
   CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
+
+  // On: the image's entrypoint serves `/api/internal/image-delivery/[id]` by calling its compiled
+  // route module directly, without the Next router (`scripts/trpc-server/direct-routes.cjs`).
+  // Same status, headers and body either way (the parity job diffs them). Off (and unknown,
+  // unreachable or not yet initialised): Next serves it, as before.
+  //
+  // 🔴 NOT READ THROUGH THIS MODULE. direct-routes.cjs is plain CommonJS outside the bundle; it
+  // reads the pinned `globalThis.__civitaiFliptClient` with `isEnabledSync`, at most once a
+  // second per process, so this entry exists to keep the key discoverable. Its unit test pins the
+  // two spellings equal. BOOLEAN ONLY, global: evaluated with no entityId. The key must exist in
+  // flag state (enabled: false is fine) before this code serves traffic, for the reason given at
+  // KYSELY_IMAGE_REACTIONS.
+  IMAGE_DELIVERY_DIRECT_ROUTE = 'image-delivery-direct-route',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

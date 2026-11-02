@@ -2,10 +2,14 @@ name: tRPC server parity
 
 # Boots ONE production image — the one the PR-preview pipeline already built and pushed for this
 # PR's head commit, not a rebuild (a production `next build` does not fit a hosted runner) — with
-# ONE environment: once as Next (`server.js`, the default
-# CMD) and once as the standalone tRPC server (`node -- trpc-server/server.cjs`). Then it sends the
+# ONE environment: once as plain Next (`node -- server.js`) and once as the standalone tRPC server
+# (`node -- trpc-server/server.cjs`). Then it sends the
 # same requests to both and fails on any response difference that is not declared in
 # `scripts/trpc-server/parity/cases.mjs`. It also:
+#   - boots the image's own CMD (`trpc-server/next-entry.cjs`) with its direct route forced on
+#     (`NEXT_DIRECT_ROUTES=on`), seeds a few `Image` rows, and requires every image-delivery case
+#     to answer byte-for-byte as plain Next does, with the direct route's own counts proving it
+#     served the cases it should and handed the rest to Next (`--cases image-delivery`);
 #   - checks the standalone server registered instrumentation at BOOT (liveness heartbeat written
 #     and the instrumentation log lines present before it received any request);
 #   - fails if the standalone server stops emitting the request span an external latency alert
@@ -53,6 +57,8 @@ on:
       - 'src/pages/api/health.ts'
       - 'src/pages/api/ready.ts'
       - 'src/pages/api/metrics.ts'
+      - 'src/pages/api/internal/image-delivery/**'
+      - 'src/server/services/image-delivery.service.ts'
       - 'src/proxy.ts'
       - 'src/server/middleware/**'
       - 'src/instrumentation.ts'
@@ -298,6 +304,7 @@ jobs:
       # Dispatch and status runs: the commit under test, which the status is posted on.
       SHA: ${{ needs.gate.outputs.sha }}
       MUTANT_IMAGE: trpc-server-parity:mutant
+      DIRECT_IMAGE: trpc-server-parity:direct
       STATUS_CONTEXT: tRPC parity
     steps:
       # A dispatch or status run's check is not listed on the PR (a status run's is not even on
@@ -357,6 +364,7 @@ jobs:
         run: |
           nohup node scripts/trpc-server/parity/otlp-stub.mjs --port 4318 --out "$WORK/spans.json" \
             --watch 'executing api route (pages) /api/trpc/[trpc]' --watch 'test-span' \
+            --watch 'GET /api/internal/image-delivery/[id]' \
             > "$WORK/otlp-stub.log" 2>&1 &
           echo $! > "$WORK/otlp-stub.pid"
 
@@ -380,12 +388,38 @@ jobs:
           docker run --rm --entrypoint cat "$IMAGE" /app/trpc-server/server.cjs | cmp - scripts/trpc-server/server.cjs
           docker run --rm --entrypoint cat "$MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/mutant/server.cjs"
 
+      # The image's direct-route files, from this checkout. A pull_request or status run tests its
+      # own commit's image, so the files must already be the image's (checked, and the run fails
+      # if not). A dispatch run may test a branch's copies on top of an older image, which is how
+      # a deliberately broken copy is tested without an image build; it says so in the log.
+      - name: Build the direct-route image
+        run: |
+          mkdir -p "$WORK/direct"
+          changed=0
+          for f in next-entry.cjs direct-routes.cjs; do
+            cp "scripts/trpc-server/$f" "$WORK/direct/$f"
+            if ! docker run --rm --entrypoint cat "$IMAGE" "/app/trpc-server/$f" | cmp -s - "scripts/trpc-server/$f"; then
+              echo "::warning::$f in this checkout differs from the image's copy"
+              changed=1
+            fi
+          done
+          if [ "$changed" = 1 ] && [ "${{ github.event_name }}" != workflow_dispatch ]; then
+            echo "the image is not this commit's: its direct-route files differ from the checkout"; exit 1
+          fi
+          printf 'FROM %s\nCOPY --chown=1001:1001 next-entry.cjs direct-routes.cjs /app/trpc-server/\n' "$IMAGE" > "$WORK/direct/Dockerfile"
+          docker build -q -t "$DIRECT_IMAGE" "$WORK/direct"
+          # The image CMD is what production runs; the direct container below must run exactly it.
+          docker image inspect -f '{{json .Config.Cmd}}' "$DIRECT_IMAGE"
+
       - name: Start the servers
         run: |
           common=(--detach --add-host host.docker.internal:host-gateway --env-file "$WORK/parity.env")
-          docker run "${common[@]}" --name next -p 3000:3000 "$IMAGE"
+          # Plain Next, named explicitly: the image CMD is the direct-route entrypoint now.
+          docker run "${common[@]}" --name next -p 3000:3000 "$IMAGE" node -- server.js -- --expose-gc
           docker run "${common[@]}" --name trpc -p 3001:3000 "$IMAGE" node -- trpc-server/server.cjs
           docker run "${common[@]}" --name mutant -p 3002:3000 "$MUTANT_IMAGE" node -- trpc-server/server.cjs
+          # The image CMD (no command given), with the direct route forced on.
+          docker run "${common[@]}" --name direct -p 3003:3000 -e NEXT_DIRECT_ROUTES=on "$DIRECT_IMAGE"
 
       # Instrumentation must have REGISTERED on both servers, or the reference is not a control:
       #   - trpc: before ANY request reaches it (its own boot runs register() and gates requests);
@@ -431,10 +465,25 @@ jobs:
           sleep 3
           check next
 
+          # The direct-route entrypoint: Next's own boot, plus its install line (switch forced on).
+          ok=
+          for _ in $(seq 1 150); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:3003/api/live?token=$token"; then ok=1; break; fi
+            running direct || { echo "direct exited"; docker logs direct 2>&1 | tail -100; exit 1; }
+            sleep 2
+          done
+          [ -n "$ok" ] || { echo "direct never answered its warm-up request"; docker logs direct 2>&1 | tail -100; exit 1; }
+          sleep 3
+          check direct '[direct-routes] installed for /api/internal/image-delivery/[id] (switch: on)'
+          # And plain Next must not have it, or the image-delivery comparison is not against Next.
+          if docker logs next 2>&1 | grep -qF '[direct-routes]'; then
+            echo "next: plain server.js logged a [direct-routes] line"; exit 1
+          fi
+
       - name: Wait for all three to answer
         run: |
           token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
-          for port in 3000 3001 3002; do
+          for port in 3000 3001 3002 3003; do
             ok=
             for _ in $(seq 1 150); do
               if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/live?token=$token"; then ok=1; break; fi
@@ -456,7 +505,20 @@ jobs:
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/mutant.json" \
             --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
 
-      - name: The alerted span is still emitted
+      - name: Seed the image-delivery rows
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/seed-image-delivery.mjs \
+            --database-url postgresql://postgres:postgres@127.0.0.1:5432/postgres
+
+      - name: Image-delivery parity (Next vs the image CMD's direct route)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3003 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/image-delivery.json" \
+            --cases image-delivery --direct-metrics
+
+      - name: The alerted spans are still emitted
         if: ${{ !cancelled() }}
         run: |
           # The batch span processor flushes every 500ms here; give it a few cycles.
@@ -466,11 +528,15 @@ jobs:
           ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
           node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
             --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)"
+          # The endpoint-health alert keys on the image-delivery request span's NAME.
+          node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+            --reference-ip "$(ip next)" --candidate-ip "$(ip direct)" \
+            --span 'GET /api/internal/image-delivery/[id]'
 
       - name: Server logs
         if: always()
         run: |
-          for c in next trpc mutant; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
+          for c in next trpc mutant direct; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
 
       - uses: actions/upload-artifact@v7
         if: always()

@@ -11,7 +11,11 @@
  * and requires the same two from the reference (`server.js`) — the positive control that the
  * receiver and the byte count can see the span when it is there. It prints both counts.
  *
+ * `--span <name>` checks another alerted span name instead (the receiver must have been started
+ * with `--watch <name>`): the image-delivery request span, which the endpoint-health alert keys on.
+ *
  * Usage: node assert-spans.mjs --spans spans.json --reference-ip <ip> --candidate-ip <ip>
+ *          [--span <name>]
  */
 
 import { readFileSync } from 'node:fs';
@@ -25,8 +29,10 @@ const { values: args } = parseArgs({
     spans: { type: 'string' },
     'reference-ip': { type: 'string' },
     'candidate-ip': { type: 'string' },
+    span: { type: 'string', default: ALERTED_SPAN },
   },
 });
+const alertedSpan = args.span;
 if (!args.spans || !args['reference-ip'] || !args['candidate-ip']) {
   console.error('--spans, --reference-ip and --candidate-ip are required');
   process.exit(2);
@@ -42,13 +48,13 @@ const rows = [
   role,
   ip,
   traceExports: (byAddress[ip] && byAddress[ip].traceExports) || 0,
-  alerted: count(ip, ALERTED_SPAN),
+  alerted: count(ip, alertedSpan),
   boot: count(ip, BOOT_SPAN),
 }));
 
 for (const r of rows) {
   console.log(
-    `${r.role.padEnd(10)} ${r.ip.padEnd(16)} trace exports=${r.traceExports} "${ALERTED_SPAN}"=${
+    `${r.role.padEnd(10)} ${r.ip.padEnd(16)} trace exports=${r.traceExports} "${alertedSpan}"=${
       r.alerted
     } "${BOOT_SPAN}"=${r.boot}`
   );
@@ -68,7 +74,7 @@ if (cand.boot === 0) {
   process.exit(1);
 }
 if (cand.alerted === 0) {
-  console.error(`FAIL: the candidate never emitted "${ALERTED_SPAN}".`);
+  console.error(`FAIL: the candidate never emitted "${alertedSpan}".`);
   process.exit(1);
 }
 console.log('OK: the candidate emits the alerted span.');
