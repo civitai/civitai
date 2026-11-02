@@ -291,7 +291,18 @@ describe('leaving the queues after a moderator rating', () => {
     );
   });
 
+  it('takes an image out of the Inquisitor queue too', async () => {
+    knightPool.exists.mockResolvedValue(false);
+    inquisitorPool.exists.mockImplementation(async (id: number) => id === CLEAN);
+
+    await leaveQueuesAfterModeratorRating(CLEAN);
+
+    expect(inquisitorPool.reset).toHaveBeenCalledWith({ id: CLEAN });
+    expect(mockClearRatings).toHaveBeenCalledWith([CLEAN]);
+  });
+
   it('control: an image in no queue is left alone', async () => {
+    inquisitorPool.exists.mockResolvedValue(false);
     knightPool.exists.mockResolvedValue(false);
 
     await leaveQueuesAfterModeratorRating(CLEAN);

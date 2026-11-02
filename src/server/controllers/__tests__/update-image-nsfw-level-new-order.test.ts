@@ -45,10 +45,13 @@ describe('handleUpdateImageNsfwLevel and New Order', () => {
     expect(await rate(true)).toEqual({ nsfwLevel: 8, applied: true });
 
     expect(settle).toHaveBeenCalledWith({ imageId: 9, rating: 8 });
+    expect(leaveQueues).toHaveBeenCalledTimes(1);
     expect(leaveQueues).toHaveBeenCalledWith(9);
   });
 
-  it('control: a member vote leaves New Order alone', async () => {
+  it('control: a member vote leaves New Order alone, even one that raised the level', async () => {
+    raiseOwn.mockResolvedValue(true);
+
     await rate(false);
 
     expect(settle).not.toHaveBeenCalled();
