@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -34,7 +35,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 // The embedded listing card's creator is the shared `UserAvatar` (hover card), which reads user data
 // this suite's `trpc` stand-in does not serve. Stubbed to a profile link carrying the username.
 vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/components/UserAvatar/UserAvatar')>()),
+  ...(await importOriginal<typeof UserAvatarMod>()),
   UserAvatar: (props: { user?: { username?: string | null } }) => (
     <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
   ),
