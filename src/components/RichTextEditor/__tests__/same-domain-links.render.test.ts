@@ -9,10 +9,12 @@ import type * as BrowserSettingsProvider from '~/providers/BrowserSettingsProvid
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 
 // Server render only: the bug was a server-drawn .com href that hydration never corrected.
+const viewing = vi.hoisted(() => ({ host: 'civitai.red' }));
+
 vi.mock('~/providers/AppProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof AppProvider>()),
   useMaybeAppContext: () => ({
-    host: 'civitai.red',
+    host: viewing.host,
     serverDomains: {
       green: { primary: 'civitai.com', aliases: [] },
       blue: { primary: 'civitai.red', aliases: ['civitaired.com'] },
@@ -120,18 +122,6 @@ describe('content links on civitai.red, server render', () => {
     expect(hrefOf(html, 'theirs')).toBe('https://example.com/x');
   });
 
-  it('announcement action buttons keep the host they were written with', () => {
-    const html = render(
-      createElement(AnnouncementCard, {
-        title: 'Hello',
-        color: 'blue',
-        content: 'body',
-        actions: [{ link: 'https://civitai.com/pricing', linkText: 'go' }],
-      })
-    );
-    expect(html).toMatch(/<a[^>]*href="https:\/\/civitai\.com\/pricing"/);
-  });
-
   it('bare-domain links in a body keep their host', () => {
     const html = render(
       createElement(RenderHtml, {
@@ -140,5 +130,40 @@ describe('content links on civitai.red, server render', () => {
     );
     expect(hrefOf(html, 'site')).toBe('https://civitai.com');
     expect(hrefOf(html, 'deep')).toBe('https://civitai.red/models/1');
+  });
+});
+
+describe('announcement action buttons', () => {
+  const buttonHref = (link: string, host: string) => {
+    viewing.host = host;
+    try {
+      const html = render(
+        createElement(AnnouncementCard, {
+          title: 'Hello',
+          color: 'blue',
+          content: 'body',
+          actions: [{ link, linkText: 'go' }],
+        })
+      );
+      return html.match(/<a[^>]*href="([^"]*)"/)?.[1];
+    } finally {
+      viewing.host = 'civitai.red';
+    }
+  };
+
+  it('a deep link to an article on the other domain stays on the current one', () => {
+    expect(buttonHref('https://civitai.com/articles/123', 'civitai.red')).toBe(
+      'https://civitai.red/articles/123'
+    );
+  });
+
+  it('a bare-domain "visit the other site" button keeps its host', () => {
+    expect(buttonHref('https://civitai.red', 'civitai.com')).toBe('https://civitai.red');
+  });
+
+  it('an external button still goes through the leaving page', () => {
+    expect(buttonHref('https://t.me/SomeGroup', 'civitai.red')).toBe(
+      '/leaving?url=https://t.me/SomeGroup'
+    );
   });
 });
