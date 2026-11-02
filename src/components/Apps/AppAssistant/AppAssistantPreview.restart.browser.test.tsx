@@ -344,7 +344,7 @@ describe('AppAssistantPreview — a failed frame when the dev server comes back 
     m.host!.onFallbackChange!('timeout');
     await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
     screen.rerender(shown(3));
-    // A lower count (another preview's) is no new start either.
+    // A lower count is no new start either.
     screen.rerender(shown(2));
     await settle();
     expect(m.fetchFrame).toHaveBeenCalledTimes(1);

@@ -73,6 +73,7 @@ import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice'
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import {
   createPreviewTools,
+  devServerUpOf,
   runnerPreviewAction,
 } from '~/components/Apps/AppAssistant/previewTools';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
@@ -408,6 +409,9 @@ export function AppAssistantWorkspace({
   }, []);
   // Each preview the server runner starts gets its own frame, even on the same host.
   const runnerViews = useRef(0);
+  // How often the runner said the open app's dev server came back up while its preview was shown
+  // (`devServerUpOf`): the pane reloads a frame that failed on the next one.
+  const [devServerUp, setDevServerUp] = useState(0);
 
   const appTools = useMemo(
     () =>
@@ -544,6 +548,11 @@ export function AppAssistantWorkspace({
       if (preview && 'show' in preview)
         return showPreview({ ...preview.show, sessionId: null, view: ++runnerViews.current });
       if (preview) return stopPreview();
+      if (devServerUpOf(result)) {
+        // Only for a preview shown, which is always the open app's (a switch takes it down).
+        if (live.current.session) setDevServerUp((n) => n + 1);
+        return;
+      }
       if (result.name !== CREATE_APP) return;
       const app = (result.output as { app?: unknown } | null)?.app;
       if (typeof app !== 'string') return;
@@ -1428,6 +1437,7 @@ export function AppAssistantWorkspace({
               session={session}
               restart={previewRestart}
               tunnelStatus={tunnelStatus}
+              devServerUp={devServerUp}
             />
           </Paper>
         )}
