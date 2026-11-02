@@ -69,6 +69,7 @@ beforeEach(() => {
     userId: 99,
     metadata: {},
     url: IMAGE_KEY,
+    user: { bannedAt: null, deletedAt: null },
   } as never);
   dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 } as never);
 
@@ -149,6 +150,7 @@ describe('resolveArticleImageScan — the missing-media guard reaches this calle
       userId: 99,
       metadata: {},
       url: 'https://cdn.discordapp.com/avatars/123/abc.png',
+      user: { bannedAt: null, deletedAt: null },
     } as never);
     // Armed ABSENT: if the probe ran, the override would be refused.
     headObject.mockResolvedValue({ status: 'absent' });
