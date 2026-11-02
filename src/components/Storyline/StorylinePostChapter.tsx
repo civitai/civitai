@@ -154,10 +154,15 @@ export function StorylinePostNext({ postId }: { postId: number }) {
                   </Anchor>
                 ) : (
                   parent.name
-                )}{' '}
-                <Text span c="dimmed" inherit>
-                  ({parent.where})
-                </Text>
+                )}
+                {parent.where && (
+                  <>
+                    {' '}
+                    <Text span c="dimmed" inherit>
+                      ({parent.where})
+                    </Text>
+                  </>
+                )}
               </span>
             ))}
           </span>

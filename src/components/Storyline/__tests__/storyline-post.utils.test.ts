@@ -61,15 +61,14 @@ describe('getStorylinePostParents', () => {
     expect(parents.map((p) => p.where)).toEqual(["CivChan's ch 6", 'ch 6']);
   });
 
-  it('gives a parent this reader may not see no link', () => {
-    const removed = { chapterId: 11, depth: 1, tombstone: 'removed' as const, post: null };
-    const [parent] = getStorylinePostParents([removed, chapter(12, 2, null)], CIVBOT);
-    expect(parent).toEqual({
-      chapterId: 11,
-      name: 'This chapter was removed',
-      where: 'ch 2',
-      href: undefined,
-    });
+  // In "Came from: Foo (ch 2) or ___", the tombstone reason ("This chapter is hidden by your
+  // browsing level") read as nonsense, and "Chapter 2 (ch 2)" says the number twice.
+  it('names a parent this reader may not see "Chapter N" alone: no reason, no "(ch N)", no link', () => {
+    for (const tombstone of ['removed', 'browsingLevel'] as const) {
+      const hidden = { chapterId: 11, depth: 1, tombstone, post: null };
+      const [parent] = getStorylinePostParents([hidden, chapter(12, 2, null)], CIVBOT);
+      expect(parent).toEqual({ chapterId: 11, name: 'Chapter 2' });
+    }
   });
 
   it('offers nothing before chapter 1', () => {
