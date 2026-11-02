@@ -11,8 +11,9 @@ import {
 } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
+import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
-import { dismissGuide, dismissProgress, readNotices } from '$lib/server/seen';
+import { dismissGuide, dismissProgress, readNotices, type ProgressNotice } from '$lib/server/seen';
 import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
@@ -56,6 +57,22 @@ const TRIAL_REJECTION_TEXT = {
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
+type RankPerks = { levels?: string; voteWeight?: number; goldMultiplier?: number };
+
+// A rank-up notice says what the rank brings; a level-up carries nothing more.
+function withRankPerks(progress: ProgressNotice | null): (ProgressNotice & RankPerks) | null {
+  if (progress?.kind !== 'rank') return progress;
+  const perks = rankTable().find((entry) => entry.rank === progress.rank);
+  return perks
+    ? {
+        ...progress,
+        levels: perks.levels,
+        voteWeight: perks.voteWeight,
+        goldMultiplier: perks.goldMultiplier,
+      }
+    : progress;
+}
+
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
   const status = await requireMember(db, locals.user.id);
@@ -71,7 +88,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     resetNotice,
     notices,
     showGuide: seen.guide,
-    progress: seen.progress,
+    progress: withRankPerks(seen.progress),
     ratingGuide: ratingGuide(),
   };
 
