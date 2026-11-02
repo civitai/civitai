@@ -24,7 +24,7 @@ export function ApiKeyGenerationMarker({ tokenScope }: { tokenScope: number | nu
   const text = can ? 'Can generate' : 'Can\u2019t generate';
   const explanation = can
     ? `This key has the "${AIServices}" write permission (ai:write:budgeted), so it can run generation.`
-    : `This key lacks the "${AIServices}" write permission (ai:write:budgeted), so generation requests are refused. Create a key with the "${AIServices}" or "${Full}" preset to generate.`;
+    : `This key lacks the "${AIServices}" write permission (ai:write:budgeted), so generation requests may be refused. Create a key with the "${AIServices}" or "${Full}" preset to generate.`;
   return (
     <Tooltip
       multiline
