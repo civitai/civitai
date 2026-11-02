@@ -988,11 +988,29 @@ describe('a chapter add whose parent changes after its first read', () => {
       // the wait itself cannot be played; pinned as the order the locks are asked for instead.
       // Removing the storyline lock reopens civitai/civitai#7417's race.
       it('"Make main path" locks the storyline before the parent, as the at-end join relies on', async () => {
+        // Each lock with its row and whether it is held by the write's transaction: one taken
+        // before it is released at once and holds nothing off.
         const locks: string[] = [];
+        let inTransaction = false;
+        const transaction = w.$transaction.getMockImplementation()!;
+        w.$transaction.mockImplementation(((fn: (tx: unknown) => Promise<unknown>) =>
+          (transaction as (fn: (tx: unknown) => Promise<unknown>) => Promise<unknown>)(
+            async (tx) => {
+              inTransaction = true;
+              try {
+                return await fn(tx);
+              } finally {
+                inTransaction = false;
+              }
+            }
+          )) as never);
         const query = w.$queryRaw.getMockImplementation()!;
         w.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
-          const sql = strings.join('?');
-          if (sql.includes('FOR NO KEY UPDATE')) locks.push(sql.replace(/\s+/g, ' ').trim());
+          const sql = strings.join('?').replace(/\s+/g, ' ').trim();
+          if (sql.includes('FOR NO KEY UPDATE'))
+            locks.push(
+              `${inTransaction ? 'in' : 'OUTSIDE'} transaction: ${sql} [${values.join()}]`
+            );
           return query(strings, ...values);
         }) as never);
         w.storylineChapterEdge.findMany.mockResolvedValueOnce([
@@ -1012,8 +1030,8 @@ describe('a chapter add whose parent changes after its first read', () => {
 
         await setCanonChapter({ chapterId: 41, parentChapterId: 40, userId: OWNER });
         expect(locks).toEqual([
-          'SELECT id FROM "Storyline" WHERE id = ? FOR NO KEY UPDATE',
-          'SELECT id FROM "StorylineChapter" WHERE id = ? FOR NO KEY UPDATE',
+          `in transaction: SELECT id FROM "Storyline" WHERE id = ? FOR NO KEY UPDATE [${STORY}]`,
+          'in transaction: SELECT id FROM "StorylineChapter" WHERE id = ? FOR NO KEY UPDATE [40]',
         ]);
       });
 
