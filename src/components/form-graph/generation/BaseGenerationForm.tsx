@@ -9,13 +9,11 @@ import {
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { getWorkflowModes } from '~/shared/generation/config';
 import {
-  workflowConfigByKey,
   shouldShowBackButton,
   shouldReturnAfterSubmit,
 } from '~/shared/generation/config/workflows';
@@ -31,10 +29,9 @@ import {
 import { useCompatibilityInfo } from '~/components/generation_v2/hooks/useCompatibilityInfo';
 import { useGenerationTour } from '~/components/generation_v2/hooks/useGenerationTour';
 import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
-import {
-  WorkflowInput,
-  SelectedWorkflowDisplay,
-} from '~/components/generation_v2/inputs/WorkflowInput';
+import { SelectedWorkflowDisplay } from '~/components/generation_v2/inputs/WorkflowInput';
+import { WorkflowModes, WorkflowRow } from './WorkflowRow';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { ExperimentalRulesSync } from '~/components/generation_v2/Experimental';
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
@@ -64,7 +61,7 @@ import { useActiveGenerationForm } from '~/store/active-generation-form.store';
  * The BASE generation form: the entry component. Owns the store over the
  * composed root (`generationHub`) and mirrors GenerationFormV2's shell —
  * GenerationLayout chrome, preset strip, the workflow + ecosystem row,
- * SelectedWorkflowDisplay with back-nav and workflow modes, the img2meta /
+ * the workflow display (or mobile card) with back-nav and workflow modes, the img2meta /
  * prompt:enhance self-contained panels, and the footer slot. The per-output
  * bodies below all receive the SAME store — the graph is one form; only the
  * rendering splits.
@@ -210,6 +207,7 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
   const ecosystem = useField<string>(store, 'ecosystem')?.value;
   const ecosystemId = ecosystem ? ecosystemByKey.get(ecosystem)?.id : undefined;
   const compatibility = useCompatibilityInfo({ workflow, ecosystem });
+  const mobile = useGeneratorLayout() === 'mobile';
 
   // Track workflow/ecosystem history for enhancement-workflow back-nav —
   // skipping the entries created by Back itself.
@@ -234,37 +232,41 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
   return (
     <GenerationLayout>
       <PresetControl />
-      <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden sm:gap-4">
-        <Controller
-          graph={generationHub}
-          name="workflow"
-          render={({ value, onChange }) => (
-            <WorkflowInput
-              value={value}
-              ecosystemId={ecosystemId}
-              onChange={(graphKey) => onChange(graphKey)}
-              isCompatible={compatibility.isWorkflowCompatible}
-              isMember={isMember}
-            />
-          )}
-        />
-        <Controller
-          graph={generationHub}
-          name="ecosystem"
-          render={({ value, meta, onChange }) => (
-            <BaseModelInput
-              value={value}
-              onChange={onChange}
-              compatibleEcosystems={meta?.compatibleEcosystems}
-              excludeEcosystems={meta?.hiddenEcosystems}
-              ecosystemStates={meta?.ecosystemStates}
-              isCompatible={compatibility.isEcosystemKeyCompatible}
-              getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
-              outputType={meta?.mediaType}
-            />
-          )}
-        />
-      </div>
+      <Controller
+        graph={generationHub}
+        name="workflow"
+        render={({ value, onChange }) => (
+          <WorkflowRow
+            mobile={mobile}
+            workflow={value}
+            ecosystemId={ecosystemId}
+            onChange={onChange}
+            isCompatible={compatibility.isWorkflowCompatible}
+            isMember={isMember}
+            onBack={shouldShowBackButton(value) ? handleNavigationBack : undefined}
+            ecosystemInput={
+              <Controller
+                graph={generationHub}
+                name="ecosystem"
+                render={({ value: ecosystemValue, meta, onChange: onEcosystemChange }) => (
+                  <BaseModelInput
+                    value={ecosystemValue}
+                    onChange={onEcosystemChange}
+                    compatibleEcosystems={meta?.compatibleEcosystems}
+                    excludeEcosystems={meta?.hiddenEcosystems}
+                    ecosystemStates={meta?.ecosystemStates}
+                    isCompatible={compatibility.isEcosystemKeyCompatible}
+                    getTargetWorkflow={(key) =>
+                      compatibility.getTargetWorkflowForEcosystem(key).label
+                    }
+                    outputType={meta?.mediaType}
+                  />
+                )}
+              />
+            }
+          />
+        )}
+      />
 
       {/* img2meta: self-contained panel, no graph controllers */}
       {workflow === 'img2meta' && (
@@ -290,31 +292,24 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
           <Controller
             graph={generationHub}
             name="workflow"
-            render={({ value, onChange }) => {
-              const modes = ecosystem
-                ? getWorkflowModes(
-                    value,
-                    ecosystem,
-                    (store.getSnapshot().state as { model?: { id?: number } }).model?.id
-                  )
-                : [];
-              return (
-                <div className="flex flex-col gap-1">
-                  <SelectedWorkflowDisplay
-                    workflowId={value}
-                    ecosystemId={ecosystemId}
-                    onBack={shouldShowBackButton(value) ? handleNavigationBack : undefined}
-                  />
-                  {modes.length > 0 && (
-                    <ButtonGroupInput
-                      value={workflowConfigByKey.get(value)?.variantOf ?? value}
-                      onChange={(v) => onChange(v)}
-                      data={modes}
-                    />
-                  )}
-                </div>
-              );
-            }}
+            render={({ value, onChange }) => (
+              <WorkflowModes
+                mobile={mobile}
+                workflow={value}
+                ecosystemId={ecosystemId}
+                onBack={shouldShowBackButton(value) ? handleNavigationBack : undefined}
+                modes={
+                  ecosystem
+                    ? getWorkflowModes(
+                        value,
+                        ecosystem,
+                        (store.getSnapshot().state as { model?: { id?: number } }).model?.id
+                      )
+                    : []
+                }
+                onChange={onChange}
+              />
+            )}
           />
           <GrokEcosystemAlert ecosystem={ecosystem} />
           <SeedanceImg2VidAlert ecosystem={ecosystem} workflow={workflow} />
