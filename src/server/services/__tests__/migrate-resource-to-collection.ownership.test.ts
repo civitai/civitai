@@ -15,10 +15,10 @@ const OWNER = 7;
 const published = (id: number) => ({ id, name: `v${id}`, status: 'Published', nsfwLevel: 1 });
 
 /** The model 1 being split, with three published versions, and the writes the split makes. */
-function stubSplit() {
+function stubSplit(name = 'Model') {
   vi.mocked(dbMock.dbRead.model.findUnique).mockResolvedValue({
     id: 1,
-    name: 'Model',
+    name,
     userId: OWNER,
     status: 'Published',
     locked: false,
@@ -153,5 +153,33 @@ describe('migrateResourceToCollection', () => {
       { modelId: 101, userId: OWNER, reason: 'create', actorId: null },
       { modelId: 102, userId: OWNER, reason: 'create', actorId: null },
     ]);
+  });
+
+  it('keeps every name it builds within the 100-character cap', async () => {
+    installFakeCacheRedis();
+    const longName = 'm'.repeat(98);
+    stubSplit(longName);
+    vi.mocked(dbMock.dbWrite.model.create).mockClear();
+    vi.mocked(dbMock.dbWrite.model.update).mockClear();
+    vi.mocked(dbMock.dbRead.model.findFirst).mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      minor: false,
+      sfwOnly: false,
+      gallerySettings: null,
+    } as never);
+    vi.mocked(dbMock.dbWrite.model.update).mockResolvedValue({ id: 1, userId: OWNER } as never);
+
+    await migrateResourceToCollection({ id: 1, collectionName: 'c' } as never);
+
+    const names = [
+      ...vi.mocked(dbMock.dbWrite.model.create).mock.calls,
+      ...vi.mocked(dbMock.dbWrite.model.update).mock.calls,
+    ]
+      .map(([args]) => (args as { data: { name?: string } }).data.name)
+      .filter((name) => name !== undefined);
+    expect(names).toHaveLength(3);
+    expect(names.every((name) => name.length <= 100)).toBe(true);
+    expect(names[0]).toBe(`${longName} -`.slice(0, 100).trimEnd());
   });
 });

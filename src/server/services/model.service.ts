@@ -312,6 +312,11 @@ import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  isModelNameTooLong,
+  MODEL_NAME_TOO_LONG_MESSAGE,
+  truncateModelName,
+} from '~/shared/constants/model-name.constants';
 import { pgDbRead } from '~/server/db/pgDb';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
@@ -3793,6 +3798,9 @@ export const upsertModel = async (
         })
       : null;
 
+  if (data.name !== undefined && isModelNameTooLong(data.name, beforeUpdate?.name))
+    throw throwBadRequestError(MODEL_NAME_TOO_LONG_MESSAGE);
+
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
@@ -6467,7 +6475,7 @@ export async function migrateResourceToCollection({
         const newModel = await tx.model.create({
           data: {
             ...modelData,
-            name: `${modelData.name} - ${version.name}`,
+            name: truncateModelName(`${modelData.name} - ${version.name}`),
             meta: { ...((modelData.meta as ModelMeta) ?? {}), showcaseCollectionId: collection.id },
             gallerySettings:
               modelData.gallerySettings === null ? Prisma.JsonNull : modelData.gallerySettings,
@@ -6523,7 +6531,7 @@ export async function migrateResourceToCollection({
       // update the original model name to include the version
       await tx.model.update({
         where: { id: model.id },
-        data: { name: `${model.name} - ${filteredVersions[0].name}` },
+        data: { name: truncateModelName(`${model.name} - ${filteredVersions[0].name}`) },
       });
 
       return { collection, modelIds };

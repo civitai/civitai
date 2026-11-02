@@ -970,3 +970,51 @@ describe('cover gate', () => {
     );
   });
 });
+
+describe('name length cap', () => {
+  const name = (n: number) => 'n'.repeat(n);
+
+  it('refuses a new model named over 100 characters', async () => {
+    await expect(upsert({ userId: OWNER_ID, name: name(101) })).rejects.toThrow(
+      'Model name must be 100 characters or fewer.'
+    );
+    expect(mockDbWrite.model.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a model named exactly 100 characters', async () => {
+    await upsert({ userId: OWNER_ID, name: name(100) });
+    expect(createData().name).toBe(name(100));
+  });
+
+  it('saves an existing over-limit model whose name is re-sent unchanged', async () => {
+    mockStored({ name: name(150) });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: name(150) });
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+  });
+
+  it('saves an existing over-limit name stored with whitespace the schema trims off', async () => {
+    mockStored({ name: `${name(150)} ` });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: name(150) });
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+  });
+
+  it('refuses renaming a model to over 100 characters', async () => {
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, name: name(101) })).rejects.toThrow(
+      'Model name must be 100 characters or fewer.'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an edit that shortens an over-limit name but leaves it over 100', async () => {
+    mockStored({ name: name(150) });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, name: name(120) })).rejects.toThrow(
+      'Model name must be 100 characters or fewer.'
+    );
+  });
+
+  it('accepts renaming an over-limit model down to 100 characters', async () => {
+    mockStored({ name: name(150) });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: name(100) });
+    expect(updateData().name).toBe(name(100));
+  });
+});

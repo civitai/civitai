@@ -55,6 +55,11 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TagSort } from '~/server/common/enums';
 import type { ModelMeta, ModelUpsertInput } from '~/server/schema/model.schema';
 import { modelUpsertSchema } from '~/server/schema/model.schema';
+import {
+  isModelNameTooLong,
+  MODEL_NAME_MAX_LENGTH,
+  MODEL_NAME_TOO_LONG_MESSAGE,
+} from '~/shared/constants/model-name.constants';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import {
@@ -228,6 +233,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const watchedTags = form.watch('tagsOnModels') ?? [];
   const allowCommercialUse = form.watch('allowCommercialUse') as CommercialUse[] | undefined;
   const availability = form.watch('availability');
+  const nameLength = (form.watch('name') ?? '').length;
   const isPrivate = availability === Availability.Private;
   const hasPoiInNsfw = nsfw && poi === 'true';
   const hasSfwOnlyNsfw = nsfw && sfwOnly;
@@ -321,6 +327,13 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
       return form.setError(
         'attestation',
         { message: 'Required', type: 'required' },
+        { shouldFocus: true }
+      );
+
+    if (isModelNameTooLong(rest.name, model?.name))
+      return form.setError(
+        'name',
+        { message: MODEL_NAME_TOO_LONG_MESSAGE, type: 'maxLength' },
         { shouldFocus: true }
       );
 
@@ -456,7 +469,20 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const isTrained = model?.uploadType === ModelUploadType.Trained;
   const isDraft = model?.status === ModelStatus.Draft;
 
-  const nameInput = <InputText name="name" label="Name" placeholder="Name" withAsterisk />;
+  const nameInput = (
+    <InputText
+      name="name"
+      label="Name"
+      placeholder="Name"
+      withAsterisk
+      maxLength={model?.id ? undefined : MODEL_NAME_MAX_LENGTH}
+      description={
+        <Text component="span" size="xs" c={nameLength > MODEL_NAME_MAX_LENGTH ? 'red' : 'dimmed'}>
+          {nameLength}/{MODEL_NAME_MAX_LENGTH}
+        </Text>
+      }
+    />
+  );
   const descriptionInput = (
     <InputRTE
       name="description"
