@@ -562,11 +562,9 @@ describe('POST /api/admin/system-account-api-key', () => {
 
     expect(apiKeys).toHaveLength(0);
     expect(trackModActivity).toHaveBeenCalledTimes(1);
-    expect(
-      logToAxiom.mock.calls.some(
-        ([data]) => (data as { name?: string }).name === 'system-account-api-key-minted'
-      )
-    ).toBe(true);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'system-account-api-key-minted', type: 'error' })
+    );
   });
 
   it('audits and logs every mint at info, with neither the key nor its hash', async () => {
