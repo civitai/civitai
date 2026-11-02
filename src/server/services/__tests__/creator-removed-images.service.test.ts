@@ -111,7 +111,10 @@ describe('getMyRemovedImages', () => {
     await getMyRemovedImages(USER, EARLY);
 
     expect(chQuery).toHaveBeenCalledWith(
-      expect.objectContaining({ query: REMOVALS_QUERY, query_params: { userId: USER } })
+      expect.objectContaining({
+        query: REMOVALS_QUERY,
+        query_params: { userId: USER, windowStart: expect.any(Number) },
+      })
     );
     expect(REMOVALS_QUERY.startsWith(removalsQuery('ownerId = {userId:Int32}'))).toBe(true);
     expect(REMOVALS_QUERY).toMatch(/^\s*ORDER BY removedAt DESC$/m);
@@ -264,6 +267,61 @@ describe('getMyRemovedImages', () => {
     expect(result.truncated).toBe(true);
     expect(REMOVALS_QUERY).toContain(`LIMIT ${REMOVED_IMAGES_LIMIT}
 `);
+  });
+
+  // ClickHouse applies the window and the zero-weight reasons before ORDER BY and LIMIT; this stands
+  // in for it by reading the filters off the query it is sent.
+  const serve = (rows: { imageId: number; removedAt: number; reason: string | null }[]) =>
+    chQuery.mockImplementation(async ({ query, query_params }) => {
+      const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
+      const start = query_params.windowStart as number | undefined;
+      const limit = Number(/LIMIT (\d+)/.exec(query)![1]);
+      const json = rows
+        .filter((r) => start === undefined || r.removedAt > start)
+        .filter((r) => !excluded.includes(r.reason ?? ''))
+        .sort((a, b) => b.removedAt - a.removedAt)
+        .slice(0, limit);
+      return { json: async () => json };
+    });
+
+  it('lists a counted removal that more than the limit of newer, cost-free ones would crowd out', async () => {
+    const WINDOW_START = 2000;
+    const now = new Date((WINDOW_START + 182 * 86_400) * 1000);
+    const rows = [
+      ...Array.from({ length: REMOVED_IMAGES_LIMIT + 1 }, (_, i) => ({
+        imageId: i + 1,
+        removedAt: 6000 + i,
+        reason: 'other',
+      })),
+      { imageId: 5000, removedAt: 5000, reason: 'realPerson' },
+    ];
+    given({ events: [], states: rows.map((r) => ({ imageId: r.imageId })) });
+    serve(rows);
+
+    const result = await getMyRemovedImages(USER, now);
+
+    expect(result.items.map((i) => i.imageId)).toEqual([5000]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('does not call the list truncated for rows the window drops', async () => {
+    const WINDOW_START = 2000;
+    const now = new Date((WINDOW_START + 182 * 86_400) * 1000);
+    const rows = [
+      { imageId: 1, removedAt: 5000, reason: null },
+      ...Array.from({ length: REMOVED_IMAGES_LIMIT }, (_, i) => ({
+        imageId: i + 2,
+        removedAt: 1000 + i,
+        reason: 'realPerson',
+      })),
+    ];
+    given({ events: [], states: rows.map((r) => ({ imageId: r.imageId })) });
+    serve(rows);
+
+    const result = await getMyRemovedImages(USER, now);
+
+    expect(result.items.map((i) => i.imageId)).toEqual([1]);
+    expect(result.truncated).toBe(false);
   });
 
   it('still says it stopped at the limit when some of those rows are left out', async () => {

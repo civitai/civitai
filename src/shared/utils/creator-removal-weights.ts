@@ -42,3 +42,8 @@ export function removalWeight(reason: string | null | undefined) {
   const key = reason?.trim();
   return key && isViolationType(key) ? VIOLATION_WEIGHTS[key] : FULL;
 }
+
+/** The reasons whose removals cost nothing, for a query that leaves those removals out. */
+export const ZERO_WEIGHT_REASONS = Object.entries(VIOLATION_WEIGHTS)
+  .filter(([, weight]) => weight === 0)
+  .map(([reason]) => reason);

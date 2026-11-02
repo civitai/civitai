@@ -479,7 +479,14 @@ describe('the Removed content score', () => {
       { ownerId: OWNER, imageId: 402, removedAt: REMOVED_AT, reason: 'other' }, // costs nothing
       { ownerId: OWNER, imageId: 403, removedAt: AGED_OUT_AT, reason: 'realPerson' }, // aged out
     ];
-    holder.chQuery.mockResolvedValue({ json: async () => own });
+    // ClickHouse leaves out the aged-out and cost-free rows itself; read its filters off the query.
+    holder.chQuery.mockImplementation(async ({ query, query_params }) => {
+      const excluded = (/NOT IN \(([^)]*)\)/.exec(query)?.[1] ?? '').match(/[^',\s]+/g) ?? [];
+      const json = own.filter(
+        (r) => r.removedAt > query_params.windowStart && !excluded.includes(r.reason ?? '')
+      );
+      return { json: async () => json };
+    });
     await holder.db.exec(
       `INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
         (400, ${OWNER}, 'moderated'), (401, ${OWNER}, 'moderated'),

@@ -4,7 +4,7 @@ import { dbRead } from '~/server/db/client';
 import { excludedRecord } from '~/server/jobs/appeal-decision-records';
 import {
   type CreatorRemoval,
-  costsPoints,
+  removalWindowStart,
   removalsQuery,
   withoutReversed,
 } from '~/server/services/creator-removals.service';
@@ -12,6 +12,7 @@ import {
   getAppealExcludedIds,
   getHoldMarkerBlockedImageIds,
 } from '~/server/services/report.service';
+import { ZERO_WEIGHT_REASONS } from '~/shared/utils/creator-removal-weights';
 import { getAppealRefusal, isAppealableImage } from '~/shared/utils/appeal';
 import { type AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
@@ -28,12 +29,25 @@ export type RemovedImage = {
   canAppeal: boolean;
 };
 
+const sqlString = (value: string) => `'${value.replace(/['\\]/g, '\\$&')}'`;
+
+/**
+ * The owner's removals that cost points, in ClickHouse so the limit applies to those alone: made
+ * after `windowStart` (unix seconds) and of a reason that weighs something. A removal with no
+ * reason weighs the full amount.
+ */
 export const REMOVALS_QUERY = `${removalsQuery('ownerId = {userId:Int32}')}
+    AND removedAt > {windowStart:Int64}${
+      ZERO_WEIGHT_REASONS.length
+        ? `
+    AND ifNull(reason, '') NOT IN (${ZERO_WEIGHT_REASONS.map(sqlString).join(', ')})`
+        : ''
+    }
   ORDER BY removedAt DESC
   LIMIT ${REMOVED_IMAGES_LIMIT}
 `;
 
-async function getRemovalEvents(userId: number) {
+async function getRemovalEvents(userId: number, now: Date) {
   if (!clickhouse) return [];
   // The shared client waits minutes for a stalled connection; the page should not.
   const controller = new AbortController();
@@ -41,7 +55,7 @@ async function getRemovalEvents(userId: number) {
   try {
     const response = await clickhouse.query({
       query: REMOVALS_QUERY,
-      query_params: { userId },
+      query_params: { userId, windowStart: Math.floor(removalWindowStart(now).getTime() / 1000) },
       format: 'JSONEachRow',
       abort_signal: controller.signal,
       clickhouse_settings: { max_execution_time: CLICKHOUSE_TIMEOUT_SECONDS },
@@ -88,13 +102,12 @@ async function getLatestAppeals(userId: number, imageIds: number[]) {
 }
 
 /**
- * The member's own removed images that currently cost points, newest first, up to the limit: a
- * removal past the score window, or of a reason that weighs nothing, is not listed. Removals the
- * appeal flow excludes are left out too, and `total` counts only what is listed.
+ * The member's own removed images that currently cost points, newest first, up to the limit (see
+ * `REMOVALS_QUERY` for what costs points). Removals the appeal flow excludes are left out too, and `total` counts only what is listed.
  */
 export async function getMyRemovedImages(userId: number, now = new Date()) {
-  const fetched = await getRemovalEvents(userId);
-  const events = await withoutReversed(fetched.filter((e) => costsPoints(e, now)));
+  const fetched = await getRemovalEvents(userId, now);
+  const events = await withoutReversed(fetched);
   const none = { total: 0, truncated: false, items: [] as RemovedImage[] };
   if (!events.length) return none;
 
