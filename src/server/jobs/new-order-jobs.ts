@@ -13,6 +13,7 @@ import {
   getActiveSlot,
   getVotingRateLimitConfig,
   pendingBuzzCounter,
+  clearImageRatings,
   poolCounters,
   recentlyGrantedBuzzCounter,
   setActiveSlot,
@@ -381,6 +382,7 @@ const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * 
         await Promise.all(
           poolCounters[rank][slot].map((pool) => pool.reset({ id: imageIdsToRemove }))
         );
+        await clearImageRatings(imageIdsToRemove);
       }
     }
   }
@@ -490,6 +492,7 @@ const newOrderChangeRateTarget = createJob(
 
         // Clear all pools in the old slot
         await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.reset({ all: true })));
+        await clearImageRatings(imagesToPurge);
 
         log(`ChangeRateTarget :: ${rank} - Cleared all pools in slot ${currentSlot}`);
       } else {

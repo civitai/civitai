@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
+import { clearImageRatings } from '~/server/games/new-order/utils';
 import {
   isImageInQueue,
   updatePendingImageRatings,
@@ -35,7 +36,10 @@ export default WebhookEndpoint(async (req, res) => {
     imageId,
     rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
   });
-  if (valueInQueue) await valueInQueue.pool.reset({ id: imageId });
+  if (valueInQueue) {
+    await valueInQueue.pool.reset({ id: imageId });
+    await clearImageRatings([imageId]);
+  }
 
   return res.status(200).json({ ok: true, imageId });
 });

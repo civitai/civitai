@@ -34,6 +34,7 @@ import {
   smitesCounter,
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
+import { buildFinalRatingsInsert } from '~/server/games/new-order/final-ratings-sql';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import type { InfiniteQueryInput } from '~/server/schema/base.schema';
@@ -1031,44 +1032,7 @@ export async function processFinalRatings() {
     const updateEnd = new Date(updateEndString);
     if (updateStart.getTime() === updateEnd.getTime()) return { status: 'no-new-data' };
 
-    await clickhouse.$exec`
-      INSERT INTO knights_new_order_image_rating
-      WITH batch as (
-        SELECT
-            imageId,
-            argMax(rating, update_time) as rating,  -- Latest rating wins
-            max(update_time) as createdAt
-        FROM knights_rating_updates_batch
-        WHERE
-          update_time > ${updateStart}
-          AND update_time <= ${updateEnd}
-        GROUP BY imageId
-      )
-      SELECT
-          orig.userId,
-          orig.imageId as imageId,
-          orig.rating as rating,
-          orig.damnedReason,
-          CASE
-              WHEN new.rating IS NULL THEN '${NewOrderImageRatingStatus.Inconclusive}'
-              WHEN new.rating = orig.rating THEN '${NewOrderImageRatingStatus.Correct}'
-              ELSE '${NewOrderImageRatingStatus.Failed}'
-          END as status,
-          orig.grantedExp,
-          CASE
-              WHEN new.rating = orig.rating THEN 1
-              ELSE 0
-          END as multiplier,
-          new.createdAt as createdAt,
-          orig.ip,
-          orig.userAgent,
-          orig.deviceId,
-          orig.rank,
-          orig.originalLevel
-      FROM knights_new_order_image_rating orig
-      JOIN batch new ON new.imageId = orig.imageId
-      WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte';
-    `;
+    await clickhouse.$exec(buildFinalRatingsInsert({ updateStart, updateEnd }));
 
     // Update last processed time and reset pending count
     await sysRedis

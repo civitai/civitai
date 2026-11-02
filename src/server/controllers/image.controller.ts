@@ -20,6 +20,7 @@ import {
   isImageInQueue,
   updatePendingImageRatings,
 } from '~/server/services/games/new-order.service';
+import { clearImageRatings } from '~/server/games/new-order/utils';
 import {
   addBlockedImage,
   bulkRemoveBlockedImages,
@@ -1153,7 +1154,10 @@ export async function handleUpdateImageNsfwLevel({
         imageId: input.id,
         rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
       });
-      if (valueInQueue) valueInQueue.pool.reset({ id: input.id });
+      if (valueInQueue) {
+        await valueInQueue.pool.reset({ id: input.id });
+        await clearImageRatings([input.id]);
+      }
     }
 
     return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };
