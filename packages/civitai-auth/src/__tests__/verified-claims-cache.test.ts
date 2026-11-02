@@ -143,7 +143,7 @@ describe('verified claims cache — expiry', () => {
 describe('verified claims cache — revocation is still checked on every call', () => {
   it('a token revoked after it was cached is refused on the cache hit', async () => {
     let revoked = false;
-    const isRevoked = vi.fn(async () => revoked);
+    const isRevoked = vi.fn(async (_claims: SessionClaims) => revoked);
     const v = verifier({ claimsCache: on, isRevoked });
     const token = await mint(7, 'a');
 
@@ -158,7 +158,7 @@ describe('verified claims cache — revocation is still checked on every call', 
 
   it('through createSessionClient (the getSessionUser read path): a hit still runs isRevoked', async () => {
     let revoked = false;
-    const isRevoked = vi.fn(async () => revoked);
+    const isRevoked = vi.fn(async (_claims: SessionClaims) => revoked);
     const client = createSessionClient({ isRevoked, claimsCache: { enabled: () => true } });
     const token = await mint(7, 'a');
 
