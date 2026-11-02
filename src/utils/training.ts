@@ -1,4 +1,5 @@
 import type {
+  AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
@@ -141,6 +142,28 @@ export type OptimizerTypes = (typeof optimizerTypes)[number];
 
 export const loraTypes = ['lora'] as const; // LoCon Lycoris, LoHa Lycoris
 export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
+
+// AI-Toolkit's own (lowercase) enums — the single source for the submit, whatif and stored-params
+// schemas, so an optimizer can't be accepted by one and rejected or defaulted by another.
+export const aiToolkitLrSchedulerTypes = [
+  'constant',
+  'constant_with_warmup',
+  'cosine',
+  'linear',
+  'step',
+] as const satisfies readonly NonNullable<AiToolkitTrainingInput['lrScheduler']>[];
+export const aiToolkitOptimizerTypes = [
+  'adamw',
+  'adamw8bit',
+  'adam8bit',
+  'lion',
+  'lion8bit',
+  'adafactor',
+  'adagrad',
+  'prodigy',
+  'prodigy8bit',
+  'automagic',
+] as const satisfies readonly NonNullable<AiToolkitTrainingInput['optimizerType']>[];
 
 export const trainingModelInfo: {
   [key in TrainingDetailsBaseModelList]: {
