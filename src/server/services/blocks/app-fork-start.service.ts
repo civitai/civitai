@@ -119,6 +119,8 @@ const CREDENTIAL_DIRS = new Set(['.ssh', '.aws', '.docker', '.gnupg', '.kube']);
  * Why `path` is left out of a fork's seed, or `null` to keep it. Secrets (`.env*`, keys,
  * the common credential files and directories), git metadata, dependencies (`node_modules` at any
  * depth) and top-level build output. A superset of what the sandbox service itself skips.
+ * Every `.env*` file is left out; the one value {@link buildForkSeedZip} carries from one of
+ * them is {@link forkSeedFrameOriginsLine}'s.
  *
  * ⚠ A DENYLIST, SO NOT A GUARANTEE: a secret in a file with an ordinary name (a hard-coded token
  * in `src/config.ts`) is copied like any other source. What the fork receives is the parent's
@@ -138,6 +140,42 @@ export function forkSeedExclusionReason(path: string): string | null {
   return null;
 }
 
+const FRAME_ORIGINS_ENV_PATH = '.env.development';
+const FRAME_ORIGINS_KEY = 'VITE_BLOCK_ALLOWED_PARENT_ORIGINS';
+/** `https://<host>[:port]`, lowercase, no wildcard, path, query, credentials or whitespace. */
+const HTTPS_ORIGIN_RE =
+  /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::\d{1,5})?$/;
+/** A loopback dev-harness origin, port required: what the CLI scaffold writes first. */
+const LOOPBACK_ORIGIN_RE = /^http:\/\/(?:localhost|127\.0\.0\.1):\d{1,5}$/;
+
+/**
+ * The one line a fork's seed carries from the parent's env files: the ROOT `.env.development`'s
+ * `VITE_BLOCK_ALLOWED_PARENT_ORIGINS=<value>`, verbatim, or `null`. Older SDKs refuse to mount
+ * without that allowlist, so a fork that lost it could not receive its dev preview's BLOCK_INIT.
+ *
+ * Carried only when the key appears exactly once, unprefixed, and EVERY comma-separated entry of
+ * its value is an https origin or a loopback http origin with a port; anything else (quotes,
+ * `${…}`, a wildcard, a path, an empty entry) carries nothing. Nothing else in the file crosses.
+ */
+export function forkSeedFrameOriginsLine(
+  entries: Array<{ path: string; content: Buffer }>
+): string | null {
+  const file = entries.find((e) => e.path.replace(/^\/+/, '') === FRAME_ORIGINS_ENV_PATH);
+  if (!file) return null;
+  const prefix = `${FRAME_ORIGINS_KEY}=`;
+  const lines = file.content
+    .toString('utf8')
+    .split(/\r?\n/)
+    .filter((l) => l.startsWith(prefix));
+  if (lines.length !== 1) return null;
+  const value = lines[0].slice(prefix.length);
+  return value.split(',').every(isAllowedFrameOrigin) ? `${prefix}${value}\n` : null;
+}
+
+function isAllowedFrameOrigin(origin: string): boolean {
+  return HTTPS_ORIGIN_RE.test(origin) || LOOPBACK_ORIGIN_RE.test(origin);
+}
+
 export type ForkSeedZip = {
   buffer: Buffer;
   sha256: string;
@@ -150,8 +188,10 @@ export type ForkSeedZip = {
 /**
  * Build the seed archive from the parent's files: files at the archive ROOT (no wrapper
  * directory — the sandbox service extracts as-is into `/workspace/<fork slug>`), exclusions
- * dropped, and `block.manifest.json`'s `blockId` set to the fork's slug so the copy publishes as
- * a NEW app rather than as an update of the parent. Deterministic (sorted, zero timestamps).
+ * dropped (plus a `.env.development` holding only {@link forkSeedFrameOriginsLine}'s line, when
+ * it returns one), and `block.manifest.json`'s `blockId` set to the fork's slug so the copy
+ * publishes as a NEW app rather than as an update of the parent. Deterministic (sorted, zero
+ * timestamps).
  *
  * Throws {@link TRPCError} PRECONDITION_FAILED when there is no manifest to rewrite.
  */
@@ -166,6 +206,11 @@ export async function buildForkSeedZip(
     if (!path || path.endsWith('/')) continue;
     if (forkSeedExclusionReason(path)) excluded.push(path);
     else kept.push({ path, content: entry.content });
+  }
+  // The parent's `.env.development` stays in `excluded`; this is a new file holding one line of it.
+  const frameOrigins = forkSeedFrameOriginsLine(entries);
+  if (frameOrigins) {
+    kept.push({ path: FRAME_ORIGINS_ENV_PATH, content: Buffer.from(frameOrigins, 'utf8') });
   }
   const manifestIndex = kept.findIndex((f) => f.path === MANIFEST_PATH);
   if (manifestIndex < 0) {
