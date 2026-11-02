@@ -134,7 +134,6 @@ export function AppStorageCardView({
   flat?: boolean;
 }) {
   if (!data || data.status !== 'ok' || data.apps.length === 0) return null;
-  if (data) return null; // STUB: tests-first commit
   return (
     <CardOrSection
       flat={flat}

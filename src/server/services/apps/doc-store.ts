@@ -777,6 +777,43 @@ const SQL_WIPE_PRIVATE_TOMBS = `DELETE FROM appdata.doc_tomb tb
 const SQL_WIPE_USAGE_USER = `DELETE FROM appdata.usage_user u
   WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
 
+// VIEWER DATA (see `createDocStoreViewerData`).
+//
+// One user's PRODUCTION usage rows, in app order after a keyset cursor: the apps the user holds
+// documents in, for their account settings. The account-wipe enumeration's shape (read only,
+// `usage_user` only, keyed on the user) in the same `accountWipeTx`, whose policy admits that
+// one user's rows and nothing else. `usage_user_user_idx` (migration 20261102120000) serves the
+// key; every document a user owns is charged to this row (`assertUsageConsistent`), so a row
+// with no documents holds none. `'prod'` is `PUBLISHED_NS`. $1 user id, $2 app id of the cursor
+// (exclusive), $3 limit.
+const SQL_VIEWER_PROD_USAGE = `SELECT vu.app_id, vu.bytes, vu.docs FROM appdata.usage_user vu
+  WHERE vu.user_id = $1::int AND vu.ns = 'prod' AND vu.docs > 0 AND vu.app_id > $2::text
+  ORDER BY vu.app_id LIMIT $3::int`;
+
+// Emptying one viewer's data in one (app, ns), in an ordinary scoped transaction. $1 app, $2 ns,
+// $3 the viewer.
+// Their private documents (index rows go by the cascade; private documents have no tallies or
+// marks), returning what the tombstones and the refund need.
+const SQL_EMPTY_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
+    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int
+    RETURNING d.coll, d.key, d.size_bytes)
+  SELECT gone.coll, gone.key, gone.size_bytes FROM gone ORDER BY gone.coll, gone.key`;
+// The visible shared documents the viewer authored, locked in one ordered statement before
+// anything is deleted (LOCK ORDER (1)). A hidden one is left for moderation, as an author
+// delete leaves it (`remove` answers `not_found`); a counter document is nobody's to delete.
+const SQL_EMPTY_LOCK_AUTHORED = `SELECT d.coll, d.key, d.size_bytes, d.author_uid
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'user'
+    AND d.author_uid = $3::int AND ${VISIBLE}
+  ORDER BY d.coll, d.key
+  FOR UPDATE OF d`;
+// One tombstone per deleted key, all at one seq. $1 app, $2 ns, $3 scope_uid, $4 seq,
+// $5 collections, $6 keys (parallel arrays).
+const SQL_TOMBSTONE_MANY = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, scope_uid, key, seq)
+  SELECT $1, $2, g.coll, $3::int, g.key, $4::bigint FROM unnest($5::text[], $6::text[]) AS g(coll, key)
+  ON CONFLICT (app_id, ns, coll, scope_uid, key)
+  DO UPDATE SET seq = EXCLUDED.seq, deleted_at = now()`;
+
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.
 // $1 app, $2 ns, $3 coll, $4 scope_uid; `joins` are the fragments below.
@@ -1925,7 +1962,22 @@ function buildDocStore(deps: DocStoreDeps) {
    */
   async function listViewerUsage(userId: number): Promise<ViewerAppUsage[]> {
     assertWipeUserId(userId);
-    return []; // STUB: tests-first commit
+    const out: ViewerAppUsage[] = [];
+    let after = '';
+    for (;;) {
+      const page = await accountWipeTx(userId, async (c) =>
+        (
+          await c.query(SQL_VIEWER_PROD_USAGE, [userId, after, ACCOUNT_WIPE_PAGE])
+        ).rows.map((r) => ({
+          appId: r.app_id as string,
+          bytes: Number(r.bytes),
+          docs: Number(r.docs),
+        }))
+      );
+      out.push(...page);
+      if (page.length < ACCOUNT_WIPE_PAGE) return out;
+      after = page[page.length - 1].appId;
+    }
   }
 
   /**
@@ -1944,10 +1996,39 @@ function buildDocStore(deps: DocStoreDeps) {
     opts: { shared: boolean }
   ): Promise<ViewerDataEmptyResult> {
     assertWipeUserId(userId);
-    void appId;
-    void opts;
-    // STUB: tests-first commit
-    return { privateDocs: 0, privateBytes: 0, sharedDocs: 0, sharedBytes: 0 };
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: userId };
+    const args = [appId, PUBLISHED_NS, userId];
+    return withTx(ctx, async (c) => {
+      const authored = opts.shared
+        ? (await c.query(SQL_EMPTY_LOCK_AUTHORED, args)).rows.map(toLockedSharedDoc)
+        : [];
+      const priv = (await c.query(SQL_EMPTY_PRIVATE_DOCS, args)).rows;
+      const privateBytes = priv.reduce((sum, r) => sum + Number(r.size_bytes), 0);
+      await deleteLockedSharedDocs(c, ctx, charge, authored);
+      if (priv.length > 0) {
+        const seq = await charge(
+          c,
+          ctx,
+          // Their key space is `scope_uid = userId` (`SQL_EMPTY_PRIVATE_DOCS`).
+          appDelta(userId, { bytes: -privateBytes, docs: -priv.length }),
+          { uid: userId, bytes: -privateBytes, docs: -priv.length, ceiling: 'viewer' }
+        );
+        await c.query(SQL_TOMBSTONE_MANY, [
+          appId,
+          PUBLISHED_NS,
+          userId,
+          seq,
+          priv.map((r) => r.coll as string),
+          priv.map((r) => r.key as string),
+        ]);
+      }
+      return {
+        privateDocs: priv.length,
+        privateBytes,
+        sharedDocs: authored.length,
+        sharedBytes: authored.reduce((sum, d) => sum + d.sizeBytes, 0),
+      };
+    });
   }
 
   const store = {

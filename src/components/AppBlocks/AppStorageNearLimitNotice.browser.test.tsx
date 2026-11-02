@@ -51,8 +51,11 @@ describe('AppStorageNearLimitNoticeView', () => {
     expect(noticeIn(container)?.textContent).toMatch(/used 88% of your storage/);
   });
 
-  test('no notice while the figure is unknown or storage is off', async () => {
+  test('no notice while the figure is unknown', async () => {
     expect(noticeIn(await renderBeside(undefined))).toBeNull();
+  });
+
+  test('no notice with storage off', async () => {
     expect(noticeIn(await renderBeside({ status: 'disabled' }))).toBeNull();
   });
 

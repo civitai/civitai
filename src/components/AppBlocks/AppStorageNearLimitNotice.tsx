@@ -31,7 +31,6 @@ export function AppStorageNearLimitNoticeView({
   onDismiss: () => void;
 }) {
   if (!data || data.status !== 'ok' || !isNearStorageLimit(data.usage, data.limits)) return null;
-  if (data) return null; // STUB: tests-first commit
   const pct = Math.min(100, Math.floor(storageUsageRatio(data.usage, data.limits) * 100));
   return (
     <Box

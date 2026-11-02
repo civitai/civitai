@@ -28,10 +28,9 @@ describe('document-store viewer data is reachable from the account-settings serv
 
   it('the viewer-data object is exactly its two operations and the limits; neither the block-token store nor maintenance carries them', () => {
     const VIEWER_DATA = ['emptyViewerData', 'listViewerUsage'];
-    expect(Object.keys(createDocStoreViewerData({ db: null })).sort()).toEqual([
-      ...VIEWER_DATA,
-      'limits',
-    ]);
+    expect(Object.keys(createDocStoreViewerData({ db: null })).sort()).toEqual(
+      [...VIEWER_DATA, 'limits'].sort()
+    );
     for (const other of [createDocStore({ db: null }), createDocStoreMaintenance({ db: null })]) {
       expect(Object.keys(other).filter((k) => VIEWER_DATA.includes(k))).toEqual([]);
     }

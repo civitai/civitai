@@ -18,13 +18,11 @@ export function storageUsageRatio(usage: StorageFigure, limits: ViewerStorageLim
 }
 
 export function isNearStorageLimit(usage: StorageFigure, limits: ViewerStorageLimits): boolean {
-  void storageUsageRatio(usage, limits);
-  return false; // STUB: tests-first commit
+  return storageUsageRatio(usage, limits) >= APP_STORAGE_NEAR_LIMIT_RATIO;
 }
 
 /** A whole percentage for a bar, clamped to 0–100. */
 export function storagePercent(used: number, limit: number): number {
-  void used;
-  void limit;
-  return 0; // STUB: tests-first commit
+  if (limit <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
 }
