@@ -1,10 +1,10 @@
 <script lang="ts">
   import { invalidate } from '$app/navigation';
-  import { formatWait } from '$lib/format';
+  import { formatClock, formatWait } from '$lib/format';
   import { revalidateUntilStopped } from '$lib/revalidate';
 
   /** `seconds` is the server's remaining time, so the browser clock cannot skew it. */
-  let { seconds, label }: { seconds: number; label: string } = $props();
+  let { seconds, label, clock = false }: { seconds: number; label: string; clock?: boolean } = $props();
   // Null until the effect runs, so the server render and first paint show `seconds`, not 0.
   let remaining = $state<number | null>(null);
 
@@ -26,7 +26,9 @@
   });
 </script>
 
-<p class="countdown" role="timer" aria-label={label}>{formatWait(remaining ?? seconds)}</p>
+<p class="countdown" class:clock role="timer" aria-label={label}>
+  {clock ? formatClock(remaining ?? seconds) : formatWait(remaining ?? seconds)}
+</p>
 
 <style>
   .countdown {
@@ -35,5 +37,15 @@
     font-size: 1.75rem;
     font-variant-numeric: tabular-nums;
     text-align: center;
+  }
+  .countdown.clock {
+    color: var(--io-parchment);
+    font: 700 56px/1.1 var(--io-font-display);
+    letter-spacing: 0.02em;
+  }
+  @media (max-width: 40rem) {
+    .countdown.clock {
+      font-size: 44px;
+    }
   }
 </style>

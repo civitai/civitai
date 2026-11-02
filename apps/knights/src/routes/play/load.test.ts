@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getTrial = vi.hoisted(() => vi.fn());
+const getTrialSummary = vi.hoisted(() => vi.fn());
+const pending = vi.hoisted(() => ({ runId: null as number | null }));
 const getFeed = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
 const getRecap = vi.hoisted(() => vi.fn());
@@ -43,7 +45,17 @@ vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => yesNoSettings }));
 vi.mock('$lib/server/trials/runtime', () => ({ trialDeps: {} }));
-vi.mock('$lib/server/trials/trials.service', () => ({ answerTrial: vi.fn(), getTrial }));
+vi.mock('$lib/server/trials/trials.service', () => ({
+  answerTrial: vi.fn(),
+  getTrial,
+  getTrialSummary,
+}));
+vi.mock('$lib/server/trials/summary-runtime', () => ({ summaryStore: {} }));
+vi.mock('$lib/server/trials/pending-summary', () => ({
+  pendingPassedSummary: async () => pending.runId,
+  markPassedSummary: vi.fn(),
+  acknowledgePassedSummary: vi.fn(),
+}));
 
 const { load, actions } = await import('./+page.server');
 
@@ -55,6 +67,9 @@ const run = (user: Record<string, unknown> = {}) =>
 beforeEach(() => {
   getPlayerStatus.mockReset();
   getTrial.mockReset();
+  getTrialSummary.mockReset();
+  getTrialSummary.mockResolvedValue(null);
+  pending.runId = null;
   getFeed.mockReset();
   getFeed.mockResolvedValue(null);
   skipList.list.mockReset();
@@ -113,6 +128,88 @@ describe('play load', () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 2 });
     getTrial.mockResolvedValue({ kind: 'unavailable' });
     expect((await run()).mode).toBe('trials');
+  });
+
+  const summary = (result: 'passed' | 'failed', runId = 9) => ({
+    runId,
+    result,
+    scored: 8,
+    right: result === 'passed' ? 7 : 4,
+    passMark: 0.75,
+    cooldownUntil: result === 'failed' ? new Date('2026-12-16T12:00:00Z') : null,
+    items: [
+      {
+        referenceId: 1,
+        imageKey: 'k1',
+        width: 10,
+        height: 20,
+        answer: '2',
+        answerLabel: 'PG-13',
+        correctAnswer: '4',
+        correctLabel: 'R',
+        correct: false,
+        scored: true,
+        explanation: 'because',
+      },
+    ],
+  });
+
+  it('shows an Acolyte on cooldown the summary of the run that failed, without raw answers', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
+    getTrial.mockResolvedValue({ kind: 'cooldown', until: new Date('2026-12-16T12:00:00Z') });
+    getTrialSummary.mockResolvedValue(summary('failed'));
+
+    const page = await run();
+
+    expect(page.trial).toMatchObject({
+      kind: 'summary',
+      result: 'failed',
+      secondsLeft: 86400,
+      items: [{ src: 'k1', answerLabel: 'PG-13', correctLabel: 'R', explanation: 'because' }],
+    });
+    expect(JSON.stringify(page.trial)).not.toMatch(/correctAnswer|"answer"/);
+  });
+
+  it('falls back to the plain cooldown when no failed run can be summarised', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
+    getTrial.mockResolvedValue({ kind: 'cooldown', until: new Date('2026-12-16T12:00:00Z') });
+    expect((await run()).trial).toEqual({ kind: 'cooldown', until: '2026-12-16T12:00:00.000Z' });
+  });
+
+  it('never asks for a summary while a question is being served', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
+    getTrial.mockResolvedValue({
+      kind: 'question',
+      questionKey: 'q',
+      prompt: 'P',
+      options: [],
+      run: { id: 1, position: 2, total: 12 },
+      item: { referenceId: 5, imageKey: 'k', width: 1, height: 1 },
+    });
+    const page = await run();
+    expect(page.trial.kind).toBe('question');
+    expect(getTrialSummary).not.toHaveBeenCalled();
+  });
+
+  it('shows a new Knight the passed summary until they enter the Order', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 1 });
+    getTrialSummary.mockResolvedValue(summary('passed', 9));
+    pending.runId = 9;
+
+    const page = await run();
+
+    expect(page.mode).toBe('trials');
+    expect(page.trial).toMatchObject({ kind: 'summary', result: 'passed', secondsLeft: null });
+
+    pending.runId = null;
+    expect((await run()).mode).toBe('queue');
+  });
+
+  it('ignores a pending marker that is not for the latest passed run', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 1 });
+    getTrialSummary.mockResolvedValue(summary('passed', 10));
+    pending.runId = 9;
+    expect((await run()).mode).toBe('queue');
   });
 
   it('keeps Knights on the queue', async () => {

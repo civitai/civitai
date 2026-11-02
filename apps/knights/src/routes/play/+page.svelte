@@ -1,8 +1,10 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { invalidate, invalidateAll } from '$app/navigation';
+  import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import ImageStage from './ImageStage.svelte';
+  import TrialPips from './TrialPips.svelte';
+  import TrialSummary from './TrialSummary.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
   import WatchProgress from '$lib/WatchProgress.svelte';
@@ -14,11 +16,6 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let submitting = $state(false);
-  type Reveal = NonNullable<Extract<NonNullable<ActionData>, { reveal: unknown }>['reveal']>;
-  // Held here, not read back from `form`: answering the last Trial promotes the player and reloads the page as a Knight's,
-  // and the result of that answer must still be shown first.
-  let reveal = $state.raw<Reveal | null>(null);
-  let showReveal = $derived(reveal !== null);
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
   let yesNo = $derived(data.mode === 'queue' && data.question?.kind === 'bool');
@@ -51,28 +48,28 @@
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
+  // The hook for the answer sounds: called with whether the pick was right, before the next item loads. The page itself
+  // shows no verdict mid-run; the summary at the end does.
+  function onTrialAnswer(correct: boolean) {
+    void correct;
+  }
+
   const submitTrial: SubmitFunction = ({ submitter }) => {
     submitting = true;
     picked = answerOf(submitter);
     return async ({ result, update }) => {
       try {
-        if (result.type === 'success' && result.data?.reveal) {
-          reveal = result.data.reveal as Reveal;
-        } else {
-          await update();
-          if (result.type === 'failure') await invalidate('app:play');
+        if (result.type === 'success' && typeof result.data?.correct === 'boolean') {
+          onTrialAnswer(result.data.correct);
         }
+        await update();
+        if (result.type === 'failure') await invalidate('app:play');
       } finally {
         submitting = false;
         picked = null;
       }
     };
   };
-
-  async function continueFromReveal() {
-    reveal = null;
-    await invalidateAll();
-  }
 
   const submitGuide: SubmitFunction = () => {
     submitting = true;
@@ -147,14 +144,8 @@
       {hearts}
       maxHearts={data.status.maxSmites}
     />
-  {:else if data.mode === 'trials' && data.trial.kind === 'question' && !showReveal}
-    <WatchProgress
-      label="Trial {data.trial.run.position} of {data.trial.run.total}"
-      value={data.trial.run.position - 1}
-      max={data.trial.run.total}
-      {hearts}
-      maxHearts={data.status.maxSmites}
-    />
+  {:else if data.mode === 'trials' && data.trial.kind === 'question'}
+    <TrialPips position={data.trial.run.position} total={data.trial.run.total} passMark={data.trial.passMark} />
   {/if}
 
   {#if data.notices.length > 0}
@@ -210,31 +201,7 @@
     </section>
   {/if}
 
-  {#if reveal}
-    <div class="panel reveal" role="status" class:right={reveal.correct}>
-      <img src={reveal.src} alt="The subject you just judged" />
-      <p class="verdict">{reveal.correct ? 'Rightly judged.' : 'Not quite.'}</p>
-      <p>The answer: {reveal.correctLabel}</p>
-      {#if reveal.explanation}
-        <p class="explanation">{reveal.explanation}</p>
-      {/if}
-      {#if reveal.finished?.result === 'passed'}
-        <section class="promotion" aria-label="Trials passed">
-          <p class="verdict">You have passed the Trials.</p>
-          <p>You are now a Knight of New Order. Continue to begin judging.</p>
-        </section>
-      {:else if reveal.finished?.result === 'failed'}
-        <p class="verdict">Your trial is over, and it was not enough. You may try again later.</p>
-      {:else if reveal.finished}
-        <p class="verdict">
-          Some images of this trial were withdrawn, so it could not be judged. A new trial awaits.
-        </p>
-      {/if}
-      <button type="button" onclick={continueFromReveal}>
-        {reveal.finished?.result === 'passed' ? 'Enter the Order' : 'Continue'}
-      </button>
-    </div>
-  {:else if data.mode === 'trials'}
+  {#if data.mode === 'trials'}
     {#if data.trial.kind === 'question'}
       <div class="column">
         <p class="question" title={data.trial.prompt}>
@@ -263,6 +230,13 @@
           <p class="notice flat" role="alert">{formMessage}</p>
         {/if}
       </div>
+    {:else if data.trial.kind === 'summary'}
+      <TrialSummary
+        summary={data.trial}
+        message={formMessage}
+        {submitting}
+        {submit}
+      />
     {:else}
       <div class="panel">
         {#if data.trial.kind === 'cooldown'}
@@ -622,32 +596,6 @@
   .verdict {
     color: var(--gold);
   }
-  .reveal {
-    border-left: 3px solid var(--border);
-    padding-left: 1rem;
-  }
-  .reveal.right {
-    border-left-color: var(--gold);
-  }
-  .reveal img {
-    display: block;
-    max-width: 100%;
-    max-height: 60vh;
-    height: auto;
-    margin: 1rem 0;
-    border: 1px solid var(--io-gold-muted);
-    border-radius: 6px;
-    object-fit: contain;
-  }
-  .promotion {
-    margin: 1rem 0;
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--gold);
-    border-radius: 8px;
-  }
-  .explanation {
-    color: var(--muted);
-  }
 
   /* Touch and narrow screens: no key chips, 44px targets, the two quiet links on their own row. */
   @media (max-width: 40rem), (hover: none) {
@@ -713,10 +661,6 @@
     .recap {
       padding-right: 1rem;
       font-size: 0.85rem;
-    }
-    .reveal img {
-      max-height: 40vh;
-      margin: 0.5rem 0;
     }
   }
 </style>

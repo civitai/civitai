@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { count, formatDate, formatWait } from './format';
+import { count, formatClock, formatDate, formatWait } from './format';
 
 describe('formatWait', () => {
   it.each([
@@ -10,6 +10,17 @@ describe('formatWait', () => {
     [3720, '1h 02m'],
   ])('%s seconds reads %s', (seconds, text) => {
     expect(formatWait(seconds)).toBe(text);
+  });
+});
+
+describe('formatClock', () => {
+  it.each([
+    [0, '00:00:00'],
+    [-3, '00:00:00'],
+    [84067, '23:21:07'],
+    [3599.2, '01:00:00'],
+  ])('%s seconds reads %s', (seconds, text) => {
+    expect(formatClock(seconds)).toBe(text);
   });
 });
 
