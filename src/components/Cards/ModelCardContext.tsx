@@ -84,7 +84,9 @@ function flushSales() {
     // reaches the batch link inside that release and shares its request. A fetch that throws
     // synchronously still rejects this chunk's waiters instead of aborting the loop and leaving this
     // and every later chunk's cards pending forever.
-    let request: ReturnType<typeof modelSaleBatcher.fetch>;
+    // A plain Promise of the result: the tRPC client types its calls as a tagged promise, which a
+    // `Promise.reject` is not.
+    let request: Promise<Awaited<ReturnType<typeof modelSaleBatcher.fetch>>>;
     try {
       request = modelSaleBatcher.fetch(ids);
     } catch (error) {
