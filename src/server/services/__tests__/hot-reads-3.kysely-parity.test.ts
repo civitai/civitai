@@ -1,12 +1,17 @@
-import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { compileHarness } from '@civitai/db-queries/test-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
+import {
+  compiledRelations,
+  declaredViews,
+  isViewMarker,
+  relationsOf,
+  schemaLines,
+} from '~/server/db/__tests__/no-view-ledger';
 import {
   countSuggestedResourcesViaKysely,
   countSuggestedResourcesViaPrisma,
@@ -313,47 +318,6 @@ describe.skipIf(!parityUrl)('hot reads 3: Kysely returns exactly what Prisma ret
 // ---------------------------------------------------------------------------------------------
 // No statement reads a VIEW. Offline: the statements are compiled, not run.
 
-const SCHEMA_PRISMA = resolve(
-  here,
-  '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'
-);
-
-const schemaLines = () => readFileSync(SCHEMA_PRISMA, 'utf-8').split('\n');
-const isViewMarker = (line: string) => line.trim() === '/// @view';
-
-/**
- * Every model declared `/// @view` in schema.full.prisma. The marker sits above the model, in its
- * doc comment block, sometimes with a blank line between them, so the walk up from each `model`
- * line skips blank and `///` lines and stops at anything else.
- */
-function declaredViews(): Set<string> & { markersAttributed: number } {
-  const lines = schemaLines();
-  const views = new Set<string>();
-  const attributed = new Set<number>();
-  lines.forEach((line, i) => {
-    const model = /^model (\w+) \{/.exec(line);
-    if (!model) return;
-    for (let j = i - 1; j >= 0 && (lines[j].trim() === '' || lines[j].startsWith('///')); j--)
-      if (isViewMarker(lines[j])) {
-        views.add(model[1]);
-        attributed.add(j);
-      }
-  });
-  return Object.assign(views, { markersAttributed: attributed.size });
-}
-
-/** The quoted relation names a compiled statement reads FROM or JOINs. */
-function relationsOf(sqlText: string): string[] {
-  return [...sqlText.matchAll(/\b(?:from|join)\s+"(\w+)"/gi)].map((match) => match[1]);
-}
-
-async function compiledRelations(read: (db: never) => Promise<unknown>) {
-  const harness = compileHarness();
-  // The dummy driver returns no rows, so a read that requires one throws after compiling.
-  await read(harness.db as never).catch(() => undefined);
-  return harness.queries.map((query) => relationsOf(query.sql));
-}
-
 describe('hot reads 3: no statement reads a view', () => {
   it('control: the view list is read from the schema, and names the known aggregate views', () => {
     const views = declaredViews();
@@ -368,8 +332,8 @@ describe('hot reads 3: no statement reads a view', () => {
 
   it('control: the relation extractor finds a view a statement reads', () => {
     expect(relationsOf('select * from "UserStat" inner join "User" on 1 = 1')).toEqual([
-      'UserStat',
       'User',
+      'UserStat',
     ]);
   });
 
