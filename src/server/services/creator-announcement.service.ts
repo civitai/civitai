@@ -7,7 +7,10 @@ import type {
 } from '~/server/schema/announcement.schema';
 import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
-import { announcementWindowOverlapsWhere } from '~/server/services/announcement-window';
+import {
+  activeAnnouncementWhere,
+  announcementWindowOverlapsWhere,
+} from '~/server/services/announcement-window';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
@@ -151,13 +154,9 @@ export async function getCreatorAnnouncements({
       // other one. Without this the profile shows both, which is a browsing-boundary
       // leak rather than a double-render.
       ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-      ...(includeHidden
-        ? {}
-        : {
-            disabled: false,
-            OR: [{ startsAt: null }, { startsAt: { lte: now } }],
-            AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }],
-          }),
+      // The shared live window, as an AND member rather than spread: a spread brings its own
+      // `AND` key, which any later `AND` here would silently replace.
+      ...(includeHidden ? {} : { AND: [activeAnnouncementWhere(now)] }),
     },
     select: creatorAnnouncementSelect,
     orderBy: [{ startsAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
@@ -235,11 +234,15 @@ const liveAuthorIdsMemo = createKeyedTtlMemo<number[]>(
           ? { domain: { hasSome: [DomainColor.all, domainKey as DomainColor] } }
           : {}),
         // The shared "is this announcement showing" window (enabled, open-ended start and end),
-        // widened: one TTL back past `endsAt`, two ahead past `startsAt`.
-        ...announcementWindowOverlapsWhere(
-          new Date(now - LIVE_AUTHORS_LOOKBACK_MS),
-          new Date(now + LIVE_AUTHORS_LOOKAHEAD_MS)
-        ),
+        // widened: one TTL back past `endsAt`, two ahead past `startsAt`. The feed query uses
+        // the same helper at its exact `now`, so the set is a superset of it by construction.
+        // An AND member, never spread: see `followedAnnouncementsWhere`.
+        AND: [
+          announcementWindowOverlapsWhere(
+            new Date(now - LIVE_AUTHORS_LOOKBACK_MS),
+            new Date(now + LIVE_AUTHORS_LOOKAHEAD_MS)
+          ),
+        ],
       },
       select: { userId: true },
     });
@@ -316,7 +319,6 @@ function followedAnnouncementsWhere({
 }) {
   return {
     profileOnly: false,
-    disabled: false,
     userId: authorIds ? { in: authorIds } : { not: null },
     user: {
       // engagedUsers = rows where this author is the TARGET, i.e. their followers.
@@ -345,8 +347,11 @@ function followedAnnouncementsWhere({
       ],
     },
     ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-    OR: [{ startsAt: null }, { startsAt: { lte: now } }],
-    AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }],
+    // The shared live window — the same helper the live-author set widens, so the set stays a
+    // superset of this query by construction. An AND member, never spread: the helper carries
+    // its own `AND` key, and a spread followed by another `AND` here would silently drop the
+    // window. As a literal key, a second `AND` is TS1117 and does not compile.
+    AND: [activeAnnouncementWhere(now)],
   } satisfies Prisma.AnnouncementWhereInput;
 }
 

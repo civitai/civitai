@@ -160,13 +160,12 @@ describe('the live-author short-circuit', () => {
 
     await getFollowedAnnouncements({ userId: VIEWER });
 
+    // The narrowed path ran: the follow read happened.
+    expect(dbMock.dbRead.userEngagement.findMany).toHaveBeenCalledTimes(1);
     // The gauge is how an ON window sees the set's size. Deduped: three rows, two authors.
     expect(creatorFeedLiveAuthorsGauge.set).toHaveBeenCalledWith({ domain: 'any' }, 2);
-    // Negative control for the fallback test: a narrowing that worked logs no fallback.
-    expect(creatorFeedShortcircuitCounter.inc).not.toHaveBeenCalledWith({ outcome: 'fallback' });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'creator-feed-shortcircuit-fallback' })
-    );
+    // Negative control for the fallback test: a narrowing that worked logs nothing.
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it('an author who newly goes live reaches followers at the next refresh, within the TTL', async () => {
