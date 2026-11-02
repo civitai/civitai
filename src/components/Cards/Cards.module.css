@@ -335,6 +335,10 @@
 }
 
 .actionRow .reactions {
+  height: auto;
+  min-height: 22px;
+  max-width: 100%;
+  flex-wrap: wrap;
   padding-right: 0;
   gap: 2px !important; /* beats the gap-1 utility on the bar */
 

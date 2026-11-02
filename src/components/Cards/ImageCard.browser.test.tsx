@@ -170,11 +170,14 @@ describe('ImageCard action row counts', () => {
     }
   );
 
-  test.each([420, 450])('abbreviates six-digit counts and fits at %ipx', async (width) => {
-    await renderCard(123456, width);
-    expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
-    expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('123.5K')));
-  });
+  test.each([NARROW_CARD_WIDTH, 420, 450])(
+    'abbreviates six-digit counts and fits at %ipx',
+    async (width) => {
+      await renderCard(123456, width);
+      expect(reactionBarOverflow()).toBeLessThanOrEqual(0);
+      expect(reactionLabels()).toEqual(Array(4).fill(expect.stringContaining('123.5K')));
+    }
+  );
 });
 
 // The Buzz tip is its own element in the action row, not part of the reaction bar. It sits under
