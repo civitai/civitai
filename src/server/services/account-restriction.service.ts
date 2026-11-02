@@ -34,6 +34,9 @@ export async function mutedAccountRefusal(
  * stored standing through its cache, which every mute, unmute, ban and unban busts, so a restriction
  * applied moments ago is seen. A missing row refuses too, and so does a failed read.
  *
+ * A change written to `User` outside the app's mute and ban paths busts nothing, so it is seen once
+ * the cached entry ages out: within `ACCOUNT_STANDING_TTL` (60 s), at most twice that.
+ *
  * Pass `session` when the caller has the user's session: a muted account is then offered the Terms
  * where that would lift the mute. A banned or missing account never is.
  */
