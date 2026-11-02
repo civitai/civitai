@@ -52,7 +52,7 @@ const processedVideo = {
   metadata: { width: 64, height: 48, hash: 'LKO2', duration: 1, audio: false, size: 1 },
 };
 
-async function dropVideo(fileMeta?: Record<string, unknown>) {
+async function dropVideo(fileMeta?: Record<string, unknown>, generationWorkflowId?: string) {
   const onComplete = vi.fn<(props: MediaUploadOnCompleteProps) => void>();
   let upload!: ReturnType<typeof useMediaUpload>['upload'];
   function Harness() {
@@ -62,7 +62,13 @@ async function dropVideo(fileMeta?: Record<string, unknown>) {
   const root = createRoot(document.createElement('div'));
   await act(async () => root.render(React.createElement(Harness)));
   await act(async () =>
-    upload([{ file: new File([], 'clip.mp4', { type: 'video/mp4' }), meta: fileMeta }])
+    upload([
+      {
+        file: new File([], 'clip.mp4', { type: 'video/mp4' }),
+        meta: fileMeta,
+        generationWorkflowId,
+      },
+    ])
   );
   await act(async () => root.unmount());
   return onComplete;
@@ -124,6 +130,22 @@ describe('useMediaUpload with an on-site generated video', () => {
     expect(onComplete.mock.calls[0][0]).toMatchObject({ status: 'added' });
     expect(onComplete.mock.calls[0][0].meta).toEqual(generatorMeta);
     expect(auditMetaData).not.toHaveBeenCalled();
+  });
+
+  it('keeps the generator meta for a generated video with no resources', async () => {
+    // getStepMeta drops empty arrays, so a job with no LoRAs has no civitaiResources.
+    const { civitaiResources: _omit, ...noResources } = generatorMeta;
+    const onComplete = await dropVideo(noResources, 'workflow-1');
+    expect(onComplete.mock.calls[0][0]).toMatchObject({ status: 'added' });
+    expect(onComplete.mock.calls[0][0].meta).toEqual(noResources);
+    expect(auditMetaData).not.toHaveBeenCalled();
+  });
+
+  it('keeps the file meta for a ComfyUI upload with meta but no workflow id', async () => {
+    const { civitaiResources: _omit, ...noResources } = generatorMeta;
+    const onComplete = await dropVideo(noResources);
+    expect(onComplete.mock.calls[0][0].meta).toEqual({ ...noResources, ...workerTags });
+    expect(auditMetaData).toHaveBeenCalled();
   });
 
   it('still reads embedded meta from a video posted without generator meta', async () => {
