@@ -852,9 +852,9 @@ describe('publishPrivateModel', () => {
 });
 
 describe('privateModelFromTraining — name length cap', () => {
-  it('refuses renaming the model to over 100 characters', async () => {
-    await expect(privateFromTraining({ user: owner, name: 'n'.repeat(101) })).rejects.toThrow(
-      'Model name must be 100 characters or fewer.'
+  it('refuses renaming the model to over 150 characters', async () => {
+    await expect(privateFromTraining({ user: owner, name: 'n'.repeat(151) })).rejects.toThrow(
+      'Model name must be 150 characters or fewer.'
     );
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
