@@ -125,6 +125,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // environment must set a non-zero value before flipping. Failures surface as pg errors, not
   // Prisma P2024/P1008.
   KYSELY_HOT_READS_7 = 'kysely-hot-reads-7',
+  // The reads in packages/civitai-db-queries/src/hot-reads-8.db.ts, through Kysely instead of Prisma.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // the storyline read runs on most feed pages.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
+  // `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), so the
+  // environment must set a non-zero value before flipping. Failures surface as pg errors, not
+  // Prisma P2024/P1008.
+  KYSELY_HOT_READS_8 = 'kysely-hot-reads-8',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
