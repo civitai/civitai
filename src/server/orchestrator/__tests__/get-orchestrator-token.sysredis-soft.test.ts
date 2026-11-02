@@ -57,7 +57,7 @@ vi.mock('~/server/orchestrator/orchestrator-token-cache', () => ({
 vi.mock('~/server/services/api-key.service', () => ({ getTemporaryUserApiKey: mockGetTempKey }));
 // The standing check has its own tests (generation-token-restricted.test.ts); an account in good standing here.
 vi.mock('~/server/services/account-standing.service', () => ({
-  isAccountMuted: async () => false,
+  getAccountStanding: async () => ({ muted: false, banned: false, exists: true }),
 }));
 vi.mock('~/server/orchestrator/orchestrator-identity-metrics', () => ({
   observeTokenIdentityMismatch: mockObserveMismatch,

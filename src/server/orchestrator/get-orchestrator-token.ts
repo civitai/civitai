@@ -13,7 +13,7 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
-import { isAccountMuted } from '~/server/services/account-standing.service';
+import { getAccountStanding } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
@@ -61,9 +61,12 @@ export async function getOrchestratorToken(
   options: GetOrchestratorTokenOptions = {}
 ) {
   // Before any cache: a token cached before a restriction must not be served after it. The standing
-  // read is cached and falls back to the primary; when neither answers it reports restricted.
-  if (!options.allowRestricted && (await isAccountMuted(userId, true)))
-    throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+  // read is cached and falls back to the primary; when neither answers, it refuses.
+  if (!options.allowRestricted) {
+    const standing = await getAccountStanding(userId).catch(() => null);
+    if (!standing || !standing.exists || standing.muted || standing.banned)
+      throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+  }
 
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey

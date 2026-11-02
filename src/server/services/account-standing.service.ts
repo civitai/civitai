@@ -175,7 +175,7 @@ export async function afterAccountStandingChanged(
 /** A mute also ends the generation credentials already issued, so none outlives it. Never throws. */
 export async function expireGenerationCredentialsIfMuted(userId: number) {
   try {
-    if (!(await readMuted(userId))) return;
+    if (!(await readStanding(userId)).muted) return;
     const { expireGenerationCredentials } = await import('~/server/services/api-key.service');
     await expireGenerationCredentials(userId);
   } catch (error) {

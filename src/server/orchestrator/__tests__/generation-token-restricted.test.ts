@@ -25,14 +25,16 @@ const { encodeOwnedToken } = await import('~/server/orchestrator/orchestrator-to
 
 const USER = 4242;
 let muted = false;
+let bannedAt: Date | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
   perPodCache.clear();
   muted = false;
+  bannedAt = null;
   envMock.set({ ORCHESTRATOR_MODE: 'prod' });
   redisMock.redis.packed.get.mockResolvedValue(null as never);
-  dbMock.dbWrite.user.findUnique.mockImplementation((async () => ({ muted })) as never);
+  dbMock.dbWrite.user.findUnique.mockImplementation((async () => ({ muted, bannedAt })) as never);
   redisMock.sysRedis.hGet.mockResolvedValue(encodeOwnedToken(USER, 'cached-token') as never);
   getTemporaryUserApiKey.mockResolvedValue('fresh-token');
 });
@@ -53,6 +55,16 @@ describe('the generation token for a restricted account', () => {
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
   });
 
+  it('a banned account is refused, though a token is cached', async () => {
+    bannedAt = new Date();
+    await expect(getOrchestratorToken(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('an account with no row is refused', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null as never);
+    await expect(getOrchestratorToken(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
   it('a muted account is refused on a miss too, without minting', async () => {
     muted = true;
     redisMock.sysRedis.hGet.mockResolvedValue(null as never);
@@ -61,9 +73,15 @@ describe('the generation token for a restricted account', () => {
   });
 
   it('reads the standing from its cache, not the database, when the cache holds it', async () => {
-    redisMock.redis.packed.get.mockResolvedValue({ data: true, cachedAt: Date.now() } as never);
+    redisMock.redis.packed.get.mockResolvedValue({
+      data: { muted: true, banned: false, exists: true },
+      cachedAt: Date.now(),
+    } as never);
     await expect(getOrchestratorToken(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    redisMock.redis.packed.get.mockResolvedValue({ data: false, cachedAt: Date.now() } as never);
+    redisMock.redis.packed.get.mockResolvedValue({
+      data: { muted: false, banned: false, exists: true },
+      cachedAt: Date.now(),
+    } as never);
     await expect(getOrchestratorToken(USER)).resolves.toBe('cached-token');
     expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
