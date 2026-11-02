@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Real service; dbRead, redis, clickhouse, the pool counters and the Axiom logger are faked. The
 // dbRead fake honours `where.id` and `select`.
 
-const { counter, knightPool, inquisitorPool, ratingsCounter, mockCh, mockLog } = vi.hoisted(() => {
+const { counter, knightPool, inquisitorPool, ratingsCounter, mockCh } = vi.hoisted(() => {
   const counter = () => ({
     increment: vi.fn().mockResolvedValue(0),
     decrement: vi.fn().mockResolvedValue(0),
@@ -24,7 +24,6 @@ const { counter, knightPool, inquisitorPool, ratingsCounter, mockCh, mockLog } =
     inquisitorPool: counter(),
     ratingsCounter: counter(),
     mockCh: { $query: vi.fn(), $exec: vi.fn(), insert: vi.fn() },
-    mockLog: vi.fn(),
   };
 });
 
@@ -52,7 +51,6 @@ vi.mock('~/server/games/new-order/utils', () => ({
   getVotingRateLimitConfig: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockCh }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLog }));
 vi.mock('~/server/utils/errorHandling', () => ({
   handleLogError: vi.fn(),
   throwBadRequestError: vi.fn(),
@@ -87,6 +85,7 @@ vi.mock('~/utils/signal-client', () => ({
 import { addImageRating, getImagesQueue } from '~/server/services/games/new-order.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { NsfwLevel, NewOrderImageRatingStatus } from '~/server/common/enums';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
@@ -117,7 +116,7 @@ const voidedIds = () =>
       expect(v.rating).toBeNull();
       return v.imageId;
     });
-const loggedEvents = () => mockLog.mock.calls.map(([entry]) => entry.name);
+const loggedEvents = () => loggingMock.logToAxiom.mock.calls.map(([entry]) => entry.name);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -145,7 +144,6 @@ beforeEach(() => {
   mockCh.insert.mockResolvedValue(undefined);
   const chain: any = { sAdd: () => chain, expire: () => chain, exec: async () => [] };
   redisMock.redis.multi.mockReturnValue(chain);
-  mockLog.mockResolvedValue(undefined);
   knightPool.getAll.mockResolvedValue([]);
   knightPool.reset.mockResolvedValue(undefined);
 });
@@ -186,7 +184,7 @@ describe('pending votes on images New Order drops for review', () => {
     expect(voidedIds()).toEqual([HELD]);
     expect(status).toBe(NewOrderImageRatingStatus.Inconclusive);
     expect(loggedEvents()).not.toContain('new-order-down-rating-escalated');
-    const skipped = mockLog.mock.calls.find(
+    const skipped = loggingMock.logToAxiom.mock.calls.find(
       ([e]) => e.name === 'new-order-escalation-skipped'
     )?.[0];
     expect(skipped?.details).toEqual({ imageId: HELD, userId: PLAYER });
