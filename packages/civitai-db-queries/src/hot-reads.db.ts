@@ -285,6 +285,8 @@ export function getUserCreatorRow(
       'ProfilePicture.hash as profilePictureHash',
       'ProfilePicture.userId as profilePictureUserId',
       'ProfilePicture.ingestion as profilePictureIngestion',
+      'ProfilePicture.needsReview as profilePictureNeedsReview',
+      'ProfilePicture.tosViolation as profilePictureTosViolation',
       'ProfilePicture.type as profilePictureType',
       'ProfilePicture.width as profilePictureWidth',
       'ProfilePicture.height as profilePictureHeight',

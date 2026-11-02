@@ -54,6 +54,8 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
             hash: row.profilePictureHash,
             userId: row.profilePictureUserId as number,
             ingestion: row.profilePictureIngestion as ProfilePicture['ingestion'],
+            needsReview: row.profilePictureNeedsReview,
+            tosViolation: row.profilePictureTosViolation as boolean,
             type: row.profilePictureType as ProfilePicture['type'],
             width: row.profilePictureWidth,
             height: row.profilePictureHeight,

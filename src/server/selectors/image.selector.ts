@@ -42,6 +42,8 @@ export const profileImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   hash: true,
   userId: true,
   ingestion: true,
+  needsReview: true,
+  tosViolation: true,
   type: true,
   width: true,
   height: true,

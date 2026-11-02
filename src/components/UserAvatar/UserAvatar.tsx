@@ -149,11 +149,15 @@ export function UserAvatar({
     ? hasSafeBrowsingLevel(nsfwLevel)
     : hasPublicBrowsingLevel(nsfwLevel);
   // Owners always see their own picture: while it's still pending ingestion (nsfwLevel: 0), and on
-  // the NSFW-capable site even when its rating is outside their browsing level. Blocked still hides.
+  // the NSFW-capable site even when its rating is outside their browsing level. Blocked still hides,
+  // and so does a picture mods removed or held (those flags are set without flipping ingestion).
+  const pic = avatarUser.profilePicture;
+  const isFlagged = pic?.needsReview != null || pic?.tosViolation === true;
   const isOwnerPreview =
     !!currentUser &&
     currentUser.id === avatarUser.id &&
-    (avatarUser.profilePicture?.ingestion === 'Pending' || features.canViewNsfw);
+    !isFlagged &&
+    (pic?.ingestion === 'Pending' || features.canViewNsfw);
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
     (!isOwnerPreview &&

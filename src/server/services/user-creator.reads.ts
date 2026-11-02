@@ -137,6 +137,8 @@ export async function readUserCreatorViaKysely(
             hash: row.profilePictureHash,
             userId: row.profilePictureUserId,
             ingestion: row.profilePictureIngestion,
+            needsReview: row.profilePictureNeedsReview,
+            tosViolation: row.profilePictureTosViolation,
             type: row.profilePictureType,
             width: row.profilePictureWidth,
             height: row.profilePictureHeight,
