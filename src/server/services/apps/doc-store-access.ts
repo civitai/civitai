@@ -17,6 +17,15 @@
 // phased feature on: the store refuses a collection that uses a deferred feature at use, and
 // a manifest that does not parse at all answers a retryable 503, never "nothing declared".
 //
+// IMPORTS. A collection call that names another app (`from`, a blockId) is re-resolved by
+// `resolveImportAccess` into that SOURCE app's access, so everything downstream — the namespace,
+// the collection declaration, visibility, write policy, indexes, ceilings, rate limits and
+// moderation mode — is the source's, for the same viewer. It refuses unless the consumer's
+// approved manifest declares the import (`import_not_declared`), the source collection is
+// exportable (`not_exportable`) and the viewer granted it (`consent_required`). The namespace
+// boundary is kept: a production consumer reaches the source's production data, a dev token
+// only the same developer's `dev:<uid>` namespace in the source, and a review token nothing.
+//
 // The review branch is reached by the run-for-real review mint
 // (`REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`). Its namespace is per MODERATOR as well as per
 // request, so a moderator's shared collections, marks and counters are shared only with
@@ -43,11 +52,18 @@ import {
   DocStoreError,
 } from '~/server/services/apps/doc-store.types';
 import type { SessionUser } from '~/types/session';
+import { hasStorageImportGrant } from '~/server/services/apps/storage-import-grant.service';
 import {
+  APP_STORAGE_BASE_SCOPE,
   APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_IMPORT_FROM_RE,
+  APP_STORAGE_IMPORT_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+  isCollectionExportable,
   parseManifestStorage,
   type AppStorageFeature,
   type DeclaredStorageCollections,
+  type DeclaredStorageImports,
 } from '~/shared/constants/block-storage.constants';
 
 export type StorageAccess = {
@@ -57,6 +73,12 @@ export type StorageAccess = {
   /** The consent marker was unreadable, so every consent-gated scope was stripped. */
   consentUnavailable: boolean;
   collections: DeclaredStorageCollections;
+  /** The imports this app's reviewed manifest declares (source blockId → import). */
+  imports: DeclaredStorageImports;
+  /** Set when this access was resolved through an import: the source app's blockId. */
+  importedFrom?: string;
+  /** With `importedFrom`: the import's access. A `read` import refuses every write. */
+  importAccess?: 'read' | 'readwrite';
 };
 
 const notEligible = (reason: string, message: string) =>
@@ -76,10 +98,15 @@ const ALL_FEATURES = Object.fromEntries(
 
 const loggedUnparseable = new Set<string>();
 
-/** The declared collections, or a retryable 503 (logged once per app, counted every time). */
-export function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
+/** The declared storage, or a retryable 503 (logged once per app, counted every time). */
+export function declaredStorage(
+  appId: string,
+  manifest: unknown
+): { collections: DeclaredStorageCollections; imports: DeclaredStorageImports } {
   const parsed = parseManifestStorage(manifest, ALL_FEATURES);
-  if (parsed.errors.length === 0) return parsed.collections;
+  if (parsed.errors.length === 0) {
+    return { collections: parsed.collections, imports: parsed.imports };
+  }
   recordStorageManifestUnparseable();
   if (!loggedUnparseable.has(appId)) {
     loggedUnparseable.add(appId);
@@ -96,6 +123,11 @@ export function declaredCollections(appId: string, manifest: unknown): DeclaredS
   throw new DocStoreError('service_unavailable', 'storage is temporarily unavailable', {
     retryAfter: 30,
   });
+}
+
+/** The declared collections, or a retryable 503 (see {@link declaredStorage}). */
+export function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
+  return declaredStorage(appId, manifest).collections;
 }
 
 /** The verified subject as a user id, or null for an anonymous token. */
@@ -152,7 +184,7 @@ export async function resolveStorageAccess(
         ns: reviewNamespace(publishRequestId, viewerUid),
         viewerUid,
       },
-      collections: declaredCollections(publishRequestId, pr.manifest),
+      ...declaredStorage(publishRequestId, pr.manifest),
     };
   }
 
@@ -177,6 +209,134 @@ export async function resolveStorageAccess(
   return {
     ...base,
     ctx: { appId: approval.appBlockId, ns, viewerUid },
-    collections: declaredCollections(approval.appBlockId, row?.manifest),
+    ...declaredStorage(approval.appBlockId, row?.manifest),
+  };
+}
+
+/** The operations an import with `access: "read"` refuses. */
+export type ImportOp = 'read' | 'write';
+
+/**
+ * The SOURCE app's access for one collection call through an import, for the same viewer — or a
+ * refusal. `consumer` is the caller's own resolved access; `from` the source blockId from the
+ * request. Checked in this order, each before any read the next one needs:
+ *
+ *   1. a review token reaches no other app (`not_eligible`, `import_in_review`);
+ *   2. the consumer's approved manifest declares an import from `from` naming `collection`
+ *      (`import_not_declared`); writes through a `read` import are refused (`write_policy`);
+ *   3. a signed-in viewer (`sign_in_required`: a grant is per viewer);
+ *   4. the source is an approved app (`not_eligible`, `source_not_approved`), declares the
+ *      collection (`collection_not_declared`) and has not opted it out (`not_exportable`);
+ *   5. the token carries `apps:storage:import` and the viewer holds a grant for (consumer,
+ *      source) (`consent_required`, naming the scope and the source).
+ *
+ * The returned access carries the source's collections only, `apps:storage` and — for a
+ * `readwrite` import — `apps:storage:publish`: the import consent the viewer gave is what lets the
+ * consumer write as them in the source, so the consumer's own publish grant is never consulted.
+ */
+export async function resolveImportAccess(
+  consumer: StorageAccess,
+  args: { from: string; collection: string; op: ImportOp }
+): Promise<StorageAccess> {
+  const { from, collection, op } = args;
+  if (!APP_STORAGE_IMPORT_FROM_RE.test(from)) {
+    throw new DocStoreError('invalid_request', 'from must be an app blockId', { from });
+  }
+  if (consumer.ctx.ns.startsWith('rev:')) {
+    throw notEligible('import_in_review', 'a review preview cannot reach another app');
+  }
+  const declared = consumer.imports.get(from);
+  if (!declared || !declared.collections.has(collection)) {
+    throw new DocStoreError(
+      'import_not_declared',
+      `this app does not declare an import of ${collection} from ${from}`,
+      { from, collection }
+    );
+  }
+  if (op === 'write' && declared.access === 'read') {
+    throw new DocStoreError('write_policy', `the import from ${from} is read-only`, {
+      from,
+      reason: 'import_read_only',
+    });
+  }
+  const viewerUid = consumer.ctx.viewerUid;
+  if (viewerUid === null) throw new DocStoreError('sign_in_required', 'sign in required');
+
+  const source = await dependency(
+    dbRead.appBlock.findUnique({
+      where: { blockId: from },
+      select: { id: true, status: true, manifest: true },
+    })
+  );
+  if (!source || source.status !== 'approved') {
+    throw notEligible('source_not_approved', `the app ${from} is not available`);
+  }
+  if (source.id === consumer.ctx.appId) {
+    throw new DocStoreError('import_not_declared', 'an app cannot import from itself', { from });
+  }
+  const sourceStorage = declaredStorage(source.id, source.manifest);
+  const decl = sourceStorage.collections.get(collection);
+  if (!decl) {
+    throw new DocStoreError(
+      'collection_not_declared',
+      `collection ${collection} is not declared by ${from}`,
+      { collection, from }
+    );
+  }
+  if (!isCollectionExportable(decl)) {
+    throw new DocStoreError(
+      'not_exportable',
+      `${from} does not share ${collection} with other apps`,
+      {
+        collection,
+        from,
+      }
+    );
+  }
+
+  const consentRequired = () =>
+    new DocStoreError('consent_required', `${APP_STORAGE_IMPORT_SCOPE} has not been granted`, {
+      scope: APP_STORAGE_IMPORT_SCOPE,
+      from,
+    });
+  if (!consumer.scopes.includes(APP_STORAGE_IMPORT_SCOPE)) {
+    if (consumer.consentUnavailable) {
+      throw new DocStoreError(
+        'consent_unavailable',
+        'permission state is temporarily unavailable',
+        {
+          retryAfter: 1,
+        }
+      );
+    }
+    throw consentRequired();
+  }
+  const granted = await dependency(
+    hasStorageImportGrant({
+      userId: viewerUid,
+      consumerAppBlockId: consumer.ctx.appId,
+      sourceAppBlockId: source.id,
+    })
+  );
+  if (!granted) throw consentRequired();
+
+  // The namespace boundary: production → production, a developer's dev namespace → the same
+  // developer's dev namespace in the source. Never across.
+  const ns = consumer.ctx.ns === PUBLISHED_NS ? PUBLISHED_NS : `dev:${viewerUid}`;
+  if (consumer.ctx.ns !== PUBLISHED_NS && consumer.ctx.ns !== ns) {
+    throw notEligible('import_namespace', 'this token cannot reach another app');
+  }
+  return {
+    ctx: { appId: source.id, ns, viewerUid },
+    scopes:
+      declared.access === 'readwrite'
+        ? [APP_STORAGE_BASE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]
+        : [APP_STORAGE_BASE_SCOPE],
+    consentUnavailable: false,
+    collections: sourceStorage.collections,
+    // An import is one hop: a source's own imports are never followed.
+    imports: new Map(),
+    importedFrom: from,
+    importAccess: declared.access,
   };
 }

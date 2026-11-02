@@ -1292,6 +1292,14 @@ export function enforceContextBinding(
         // where the operation is known. No request-shape binding; presence is the check.
         break;
       }
+      case 'apps:storage:import': {
+        // An import acts AS the viewer in another app, under a grant that viewer gave, so an
+        // anonymous subject can never hold it. The storage route checks the grant per source.
+        if (claims.sub === ANON_SUBJECT) {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       case 'apps:storage:publish': {
         // Authoring a document in a shared collection is ALWAYS attributed to a user, so
         // an anonymous subject can never hold it (mirrors apps:storage:shared:write).
@@ -1501,7 +1509,13 @@ async function resolveHubTokenClaims(
     page?: { buzzBudgetPerGen?: unknown };
   };
   const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
-  const scopes = partitionByConsent(declared, granted).signable;
+  const { importScopeCoverage, withholdUncoveredImportScope } = await import(
+    '~/server/services/apps/storage-import-grant.service'
+  );
+  const scopes = withholdUncoveredImportScope(
+    partitionByConsent(declared, granted),
+    await importScopeCoverage(userId, block, declared)
+  ).signable;
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
   const host = req.headers.host ?? '';

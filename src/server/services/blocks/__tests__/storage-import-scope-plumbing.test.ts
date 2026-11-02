@@ -68,7 +68,9 @@ describe('apps:storage:import — registry', () => {
 });
 
 describe('apps:storage:import — consent', () => {
-  it('is consent-GATED: withheld without a grant, signed with one', () => {
+  // An unknown scope is gated too, so this holds before the scope exists; it pins that the scope
+  // never joins the exempt set.
+  it('INVARIANT GUARD: is consent-GATED: withheld without a grant, signed with one', () => {
     expect(isConsentExemptScope(IMPORT)).toBe(false);
     expect(consentGatedScopes([BASE, IMPORT])).toEqual([IMPORT]);
     expect(partitionByConsent([BASE, IMPORT], new Set())).toEqual({

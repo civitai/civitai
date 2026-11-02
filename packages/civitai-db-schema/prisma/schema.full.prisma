@@ -4934,6 +4934,25 @@ model AppUserScopeGrant {
   @@map("app_user_scope_grants")
 }
 
+// App Blocks cross-app storage imports: the per-source consent ledger. One row means the viewer
+// let the CONSUMER app reach their data in the SOURCE app through the imports the consumer's
+// approved manifest declares. Written by the prompted consent, deleted by the viewer's revoke.
+// RAW SQL ONLY (`storage-import-grant.service.ts`), which tolerates the table's absence, so the
+// model is stripped from the generated client. The three foreign keys (all ON DELETE CASCADE),
+// the not-self CHECK and the source index live in migration
+// `20261218120000_app_storage_import_grants`.
+// @no-type
+model AppStorageImportGrant {
+  userId             Int      @map("user_id")
+  consumerAppBlockId String   @map("consumer_app_block_id")
+  sourceAppBlockId   String   @map("source_app_block_id")
+  grantedAt          DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+
+  @@id([userId, consumerAppBlockId, sourceAppBlockId])
+  @@index([sourceAppBlockId], map: "app_storage_import_grants_source_idx")
+  @@map("app_storage_import_grants")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.

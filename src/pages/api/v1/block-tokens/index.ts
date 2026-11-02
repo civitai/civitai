@@ -63,6 +63,10 @@ import {
   signPrivateRunPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import type { SessionUser } from '~/types/session';
+import {
+  importScopeCoverage,
+  withholdUncoveredImportScope,
+} from '~/server/services/apps/storage-import-grant.service';
 import type { Logger } from '@civitai/next-axiom';
 
 /**
@@ -1515,7 +1519,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   let missingScopes: string[] = [];
   if (userId != null) {
     const granted = await getGrantedScopes({ userId, appBlockId: block.id, db: 'write' });
-    const { signable, missing } = partitionByConsent(requestedScopes, granted);
+    const { signable, missing } = withholdUncoveredImportScope(
+      partitionByConsent(requestedScopes, granted),
+      await importScopeCoverage(userId, block, requestedScopes)
+    );
     manifestScopes = signable;
     missingScopes = missing;
     needsConsent = missing.length > 0;

@@ -737,7 +737,7 @@ describe('the fork seed pre-fills storage imports of the parent', () => {
     });
   });
 
-  it('a parent with no exportable collection, or no storage, gets no import', async () => {
+  it('INVARIANT GUARD: a parent with no exportable collection, or no storage, gets no import', async () => {
     const none = await seedManifest({
       blockId: 'notes-app',
       name: 'Notes App',

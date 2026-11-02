@@ -19,6 +19,11 @@
 //   [c, key, 'marks', name]          PUT    mark    DELETE unmark
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
+//
+// IMPORTS. Every collection route takes an optional `?from=<source blockId>`: the call then runs
+// in that SOURCE app, as the same viewer, through an import the caller's manifest declares
+// (`resolveImportAccess` in `doc-store-access.ts`). Everything below — gates, budgets, rate
+// limits, moderation, ceilings — then reads the source's access, so it applies as the source.
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
@@ -45,7 +50,11 @@ import {
   refuseReportWithdrawal,
   type DocStore,
 } from '~/server/services/apps/doc-store';
-import { resolveStorageAccess, type StorageAccess } from '~/server/services/apps/doc-store-access';
+import {
+  resolveImportAccess,
+  resolveStorageAccess,
+  type StorageAccess,
+} from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
 import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
 import type {
@@ -185,6 +194,8 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   sign_in_required: 401,
   insufficient_scope: 403,
   consent_required: 403,
+  import_not_declared: 403,
+  not_exportable: 403,
   not_eligible: 403,
   not_author: 403,
   write_policy: 403,
@@ -372,7 +383,8 @@ const WHERE_PARAM = /^where\[([^\]]+)\]$/;
 function parseListQuery(req: NextApiRequest, decl: DeclaredStorageCollection): DocListQuery {
   const q: DocListQuery = {};
   for (const [name, raw] of Object.entries(req.query)) {
-    if (name === 'path') continue; // the catch-all's own route parameter
+    // The catch-all's own route parameter, and the import selector (read by the handler).
+    if (name === 'path' || name === FROM_PARAM) continue;
     if (Array.isArray(raw) || raw === undefined) throw invalid(`${name} must be given once`);
     const where = WHERE_PARAM.exec(name);
     if (where) {
@@ -895,10 +907,27 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
   return Number(raw);
 }
 
+/** The query parameter naming the source app of an import (its blockId). */
+const FROM_PARAM = 'from';
+
+/** The import selector, or null. Only collection routes take one; `info` refuses it as stray. */
+function importSourceOf(req: NextApiRequest): string | null {
+  const raw = req.query[FROM_PARAM];
+  if (raw === undefined) return null;
+  if (Array.isArray(raw)) throw invalid(`${FROM_PARAM} must be given once`);
+  return raw;
+}
+
+/** Whether an operation changes anything — refused through a read-only import. */
+function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): 'read' | 'write' {
+  return route.op === 'list' || route.op === 'get' || route.op === 'getMany' ? 'read' : 'write';
+}
+
 /** Query parameters other than the route's own are refused everywhere except a list. */
 function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
   if (route.op === 'list') return;
-  const allowed = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
+  const own = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
+  const allowed = route.op === 'info' ? own : [...own, FROM_PARAM];
   const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
   if (stray) throw invalid(`unknown query parameter ${stray}`);
 }
@@ -927,9 +956,19 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       const claims = (req as BlockScopedNextApiRequest).blockClaims;
       if (!claims) throw new DocStoreError('unauthenticated', 'a block token is required');
       assertNoStrayQuery(req, match.route);
-      const access = await resolveStorageAccess(claims, {
+      const own = await resolveStorageAccess(claims, {
         consentUnavailable: (req as BlockScopedNextApiRequest).blockConsentUnavailable === true,
       });
+      const route = match.route;
+      const from = route.op === 'info' ? null : importSourceOf(req);
+      const access =
+        from === null || route.op === 'info'
+          ? own
+          : await resolveImportAccess(own, {
+              from,
+              collection: route.collection,
+              op: importOpOf(route),
+            });
       const body = await readJsonBody(req);
       const reply = await run(req, body, match.route, access, deps.store());
       res.status(reply.status).json(reply.body);
