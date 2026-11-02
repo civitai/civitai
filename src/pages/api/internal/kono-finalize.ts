@@ -1,12 +1,10 @@
 import * as z from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
-import { clearImageRatings } from '~/server/games/new-order/utils';
 import {
-  isImageInQueue,
+  leaveQueuesAfterModeratorRating,
   updatePendingImageRatings,
 } from '~/server/services/games/new-order.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 const schema = z.object({
   imageId: z.coerce.number().int().positive(),
@@ -32,14 +30,7 @@ export default WebhookEndpoint(async (req, res) => {
   const { imageId, nsfwLevel } = result.data;
 
   await updatePendingImageRatings({ imageId, rating: nsfwLevel });
-  const valueInQueue = await isImageInQueue({
-    imageId,
-    rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
-  });
-  if (valueInQueue) {
-    await valueInQueue.pool.reset({ id: imageId });
-    await clearImageRatings([imageId]);
-  }
+  await leaveQueuesAfterModeratorRating(imageId);
 
   return res.status(200).json({ ok: true, imageId });
 });

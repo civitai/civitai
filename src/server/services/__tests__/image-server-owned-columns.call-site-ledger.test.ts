@@ -425,7 +425,9 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   },
   // The New Order final-ratings settle SQL: a ClickHouse JOIN condition, not an assignment.
   'src/server/games/new-order/final-ratings-sql.ts#<module>': {
-    writes: ['new.imageId = orig.imageId WHERE orig.latestCreatedAt <= new.createdAt`'],
+    writes: [
+      'new.imageId = orig.imageId WHERE orig.latestCreatedAt <= new.createdAt + INTERVAL ${SETTLE_CLOCK_MARGIN_SECONDS} SECOND`',
+    ],
     decision: 'not-a-write',
   },
   'src/server/jobs/daily-challenge-processing.ts#createChallengeFromSelection': {

@@ -28,10 +28,17 @@ export const PENDING_VOTES_CTE = `
     HAVING latestStatus = '${NewOrderImageRatingStatus.Pending}' AND rank != 'Acolyte'
   )`;
 
+/**
+ * A vote's createdAt is set by the app clock and the decision's update_time by ClickHouse now(),
+ * both to the second. The margin absorbs that skew; a later round can only start after the image
+ * is queued again, so it does not reach back into it.
+ */
+export const SETTLE_CLOCK_MARGIN_SECONDS = 5;
+
 export const PENDING_VOTES_JOIN = `
   FROM pending orig
   JOIN batch new ON new.imageId = orig.imageId
-  WHERE orig.latestCreatedAt <= new.createdAt`;
+  WHERE orig.latestCreatedAt <= new.createdAt + INTERVAL ${SETTLE_CLOCK_MARGIN_SECONDS} SECOND`;
 
 /** The INSERT that settles every pending vote in the decisions queued between the two times. */
 export function buildFinalRatingsInsert({

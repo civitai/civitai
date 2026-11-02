@@ -44,7 +44,7 @@ describe('final-ratings settle SQL', () => {
       norm(`
         FROM pending orig
         JOIN batch new ON new.imageId = orig.imageId
-        WHERE orig.latestCreatedAt <= new.createdAt`)
+        WHERE orig.latestCreatedAt <= new.createdAt + INTERVAL 5 SECOND`)
     );
   });
 

@@ -3,10 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Images taken out of the queues by the mod queue tool or by a moderator's rating lose their vote
 // tallies too.
 
-const { pool, mockClear, mockIsImageInQueue } = vi.hoisted(() => ({
+const { pool, mockClear, mockIsImageInQueue, mockLeaveQueues } = vi.hoisted(() => ({
   pool: { reset: vi.fn(), getAll: vi.fn() },
   mockClear: vi.fn(),
   mockIsImageInQueue: vi.fn(),
+  mockLeaveQueues: vi.fn(),
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -20,6 +21,7 @@ vi.mock('~/server/games/new-order/utils', () => ({
 vi.mock('~/server/services/games/new-order.service', () => ({
   addImageToQueue: vi.fn(),
   isImageInQueue: mockIsImageInQueue,
+  leaveQueuesAfterModeratorRating: mockLeaveQueues,
   updatePendingImageRatings: vi.fn(),
 }));
 
@@ -49,20 +51,18 @@ describe('removing images from the queues clears their tallies', () => {
     expect(mockClear).toHaveBeenCalledWith([5, 6]);
   });
 
-  it('kono-finalize, for an image in a queue', async () => {
-    mockIsImageInQueue.mockResolvedValue({ pool, value: 3, rank: 'Knight', slot: 'a' });
+  it('kono-finalize leaves the queues through the moderator-rating cleanup', async () => {
+    const status = await call(konoFinalize, { method: 'POST', body: { imageId: 9, nsfwLevel: 1 } });
 
-    await call(konoFinalize, { method: 'POST', body: { imageId: 9, nsfwLevel: 1 } });
-
-    expect(pool.reset).toHaveBeenCalledWith({ id: 9 });
-    expect(mockClear).toHaveBeenCalledWith([9]);
+    expect(status).toBe(200);
+    expect(mockLeaveQueues).toHaveBeenCalledTimes(1);
+    expect(mockLeaveQueues).toHaveBeenCalledWith(9);
   });
 
-  it('kono-finalize control: an image in no queue clears nothing', async () => {
-    mockIsImageInQueue.mockResolvedValue(null);
+  it('kono-finalize control: an invalid request leaves the queues alone', async () => {
+    const status = await call(konoFinalize, { method: 'POST', body: { imageId: -1 } });
 
-    await call(konoFinalize, { method: 'POST', body: { imageId: 9, nsfwLevel: 1 } });
-
-    expect(mockClear).not.toHaveBeenCalled();
+    expect(status).toBe(400);
+    expect(mockLeaveQueues).not.toHaveBeenCalled();
   });
 });
