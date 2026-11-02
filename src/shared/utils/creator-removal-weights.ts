@@ -3,6 +3,9 @@ import { ViolationType } from '~/server/common/enums';
 const FULL = 1;
 const HALF = 0.5;
 
+// Removals are a secondary signal: strikes and bans carry the severity. Low-harm and cleanup reasons
+// count half. `other` is a mixed catch-all (DMCA, impersonation and the like) too noisy for a flat
+// penalty, so it counts nothing. A reason that is not a violation type keeps the old full weight.
 // Typed on the enum so a new violation type forces a choice here.
 const VIOLATION_WEIGHTS: Record<ViolationType, number> = {
   [ViolationType.RealPerson]: FULL,

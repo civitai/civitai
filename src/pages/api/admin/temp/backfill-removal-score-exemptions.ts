@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
 import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { getScoreMultipliers } from '~/server/jobs/update-user-score';
-import { removalWindowStart } from '~/server/services/creator-removals.service';
+import { isWithinRemovalWindow } from '~/server/services/creator-removals.service';
 import {
   backfillExemptionParams,
   exemptionReason,
@@ -45,14 +45,15 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   const removals = await findPolicyChangeRemovals(clickhouse, pgDbReadLong, rule);
   // Only a removal inside the score window costs points, so only it gives any back.
-  const windowStart = removalWindowStart(new Date()).getTime();
+  const now = new Date();
   const byOwner = new Map<number, number>();
   let weightedRemovals = 0;
-  for (const { ownerId, removedAt, lastReason } of removals) {
-    if (Number(removedAt) * 1000 <= windowStart) continue;
-    const weight = removalWeight(lastReason);
+  for (const removal of removals) {
+    if (!isWithinRemovalWindow(removal.removedAt, now)) continue;
+    const owner = Number(removal.ownerId);
+    const weight = removalWeight(removal.lastReason);
     weightedRemovals += weight;
-    byOwner.set(Number(ownerId), (byOwner.get(Number(ownerId)) ?? 0) + weight);
+    byOwner.set(owner, (byOwner.get(owner) ?? 0) + weight);
   }
 
   const { reportsAgainst } = await getScoreMultipliers();

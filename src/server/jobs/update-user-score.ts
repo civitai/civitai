@@ -12,7 +12,7 @@ import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import { CREATOR_SCORE_CATEGORIES } from '~/shared/utils/creator-score';
 import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import {
-  countRemovalsByOwner,
+  removalPenaltyWeightsByOwner,
   getOwnersWithRemovalsAgedOutSince,
   getOwnersWithReversalsSince,
   reportsAgainstScore,
@@ -574,9 +574,9 @@ export async function getReportAgainstScore(
     ]),
   ];
 
-  const violations = await countRemovalsByOwner(ctx.ch, owners, now);
+  const penaltyWeights = await removalPenaltyWeightsByOwner(ctx.ch, owners, now);
   for (const id of owners) {
-    const score = reportsAgainstScore(violations.get(id), ctx.scoreMultipliers.reportsAgainst);
+    const score = reportsAgainstScore(penaltyWeights.get(id), ctx.scoreMultipliers.reportsAgainst);
     ctx.setScore(id, 'reportsAgainst', score);
   }
 }

@@ -117,7 +117,7 @@ describe('getMyRemovedImages', () => {
       join(process.cwd(), 'src/server/jobs/update-user-score.ts'),
       'utf8'
     );
-    expect(scoreJob).toContain('countRemovalsByOwner(ctx.ch, owners');
+    expect(scoreJob).toContain('removalPenaltyWeightsByOwner(ctx.ch, owners, now)');
     expect(scoreJob).not.toContain("'DeleteTOS'");
   });
 

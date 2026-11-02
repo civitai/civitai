@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   storedScores: vi.fn(),
   applyUserScoreUpdates: vi.fn(),
-  countRemovalsByOwner: vi.fn(),
+  removalPenaltyWeightsByOwner: vi.fn(),
   getOwnersWithReversalsSince: vi.fn(),
   getOwnersWithRemovals: vi.fn(),
 }));
@@ -29,7 +29,7 @@ vi.mock('~/server/jobs/update-user-score', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/creator-removals.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorRemovals>()),
-  countRemovalsByOwner: mocks.countRemovalsByOwner,
+  removalPenaltyWeightsByOwner: mocks.removalPenaltyWeightsByOwner,
   getOwnersWithReversalsSince: mocks.getOwnersWithReversalsSince,
   getOwnersWithRemovals: mocks.getOwnersWithRemovals,
 }));
@@ -73,7 +73,7 @@ const STORED = { 1: -3000, 2: -1000, 3: -2000, 4: -1000, 5: null, 6: null } as R
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getOwnersWithReversalsSince.mockResolvedValue([1, 2, 3, 4, 5, 6]);
-  mocks.countRemovalsByOwner.mockResolvedValue(
+  mocks.removalPenaltyWeightsByOwner.mockResolvedValue(
     new Map([
       [1, 2],
       [3, 2],
@@ -108,7 +108,10 @@ describe('recompute-reversed-removals', () => {
     await call({});
 
     expect(mocks.getOwnersWithReversalsSince).toHaveBeenCalledWith(expect.anything(), new Date(0));
-    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 3, 4, 5, 6]);
+    expect(mocks.removalPenaltyWeightsByOwner).toHaveBeenCalledWith(
+      expect.anything(),
+      [1, 2, 3, 4, 5, 6]
+    );
   });
 
   it('writes only increases by default and leaves a decrease owner untouched', async () => {
@@ -179,7 +182,7 @@ describe('recompute-reversed-removals', () => {
 
   it('scope=all re-scores every owner with any removal, not only those with a reversal', async () => {
     mocks.getOwnersWithRemovals.mockResolvedValue([1, 2, 7]);
-    mocks.countRemovalsByOwner.mockResolvedValue(new Map([[7, 1]]));
+    mocks.removalPenaltyWeightsByOwner.mockResolvedValue(new Map([[7, 1]]));
     mocks.storedScores.mockImplementation((ids: number[]) =>
       ids.map((id) => ({ id, score: { 1: -1000, 2: 0, 7: -3000 }[id] ?? null }))
     );
@@ -187,7 +190,7 @@ describe('recompute-reversed-removals', () => {
     const { body } = await call({ scope: 'all', direction: 'all', dryRun: 'false' });
 
     expect(mocks.getOwnersWithReversalsSince).not.toHaveBeenCalled();
-    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 7]);
+    expect(mocks.removalPenaltyWeightsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 7]);
     // Owner 1 has nothing left in the window; owner 7 has one removal of three left.
     expect(mocks.applyUserScoreUpdates.mock.lastCall![1]).toEqual([
       ['1', { reportsAgainst: 0 }],

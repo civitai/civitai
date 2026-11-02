@@ -5,7 +5,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { applyUserScoreUpdates, getScoreMultipliers } from '~/server/jobs/update-user-score';
 import {
-  countRemovalsByOwner,
+  removalPenaltyWeightsByOwner,
   getOwnersWithRemovals,
   getOwnersWithReversalsSince,
   reportsAgainstScore,
@@ -52,7 +52,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       : await getOwnersWithReversalsSince(clickhouse, new Date(0));
 
   const { reportsAgainst } = await getScoreMultipliers();
-  const violations = await countRemovalsByOwner(clickhouse, owners);
+  const penaltyWeights = await removalPenaltyWeightsByOwner(clickhouse, owners);
   const changed: [string, { reportsAgainst: number }][] = [];
   let up = 0;
   let down = 0;
@@ -65,7 +65,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       )
       .then((q) => q.result());
     for (const { id, score } of stored) {
-      const next = reportsAgainstScore(violations.get(id), reportsAgainst);
+      const next = reportsAgainstScore(penaltyWeights.get(id), reportsAgainst);
       const current = Number(score ?? 0);
       if (next === current) continue;
       if (next > current) up++;

@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import dayjs from '~/shared/utils/dayjs';
+import { REMOVAL_SCORE_WINDOW_DAYS } from '~/shared/constants/creator-journey.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
@@ -23,7 +23,7 @@ const { getMyRemovedImages, REMOVED_IMAGES_LIMIT } = await import(
   '~/server/services/creator-removed-images.service'
 );
 const { getReportAgainstScore } = await import('~/server/jobs/update-user-score');
-const { removalsQuery, withoutReversed } = await import(
+const { getOwnersWithRemovalsAgedOutSince, removalsQuery, withoutReversed } = await import(
   '~/server/services/creator-removals.service'
 );
 const { findPolicyChangeRemovals, insertRemovalScoreExemptions } = await import(
@@ -58,7 +58,7 @@ const REMOVED_AGAIN = 4; // approved, then removed again later
 const EXEMPT = 7;
 const REMOVED_AFTER_EXEMPTION = 8;
 const POI_VERSION = 500;
-const windowStart = (now: Date) => new Date(dayjs(now).subtract(6, 'month').valueOf());
+const windowStart = (now: Date) => new Date(now.getTime() - REMOVAL_SCORE_WINDOW_DAYS * DAY * 1000);
 const AGED_OUT_AT = Math.floor(windowStart(NOW).getTime() / 1000) - DAY;
 const removals = [
   { ownerId: AGING_OWNER, imageId: 60, removedAt: AGED_OUT_AT },
@@ -352,23 +352,45 @@ describe('a removal score exemption', () => {
   });
 });
 
-describe('the Removed content score', () => {
-  const sixMonthsAfter = (seconds: number) =>
-    new Date(
-      dayjs(seconds * 1000)
-        .add(6, 'month')
-        .valueOf()
-    );
+describe('the nightly aged-out range', () => {
+  const rangeOf = async (since: Date, now: Date) => {
+    const asked: Date[][] = [];
+    const ch = {
+      $query: async (_q: TemplateStringsArray, ...values: unknown[]) => {
+        asked.push(values.filter((v): v is Date => v instanceof Date));
+        return [];
+      },
+    };
+    await getOwnersWithRemovalsAgedOutSince(ch as never, since, now);
+    return { from: asked[0][0], to: asked[0][2] };
+  };
 
-  it('stops counting a removal six months after it was made', async () => {
-    const justInside = new Date(sixMonthsAfter(REMOVED_AT).getTime() - 1000);
+  it('has no gap or overlap between consecutive runs across a month end', async () => {
+    const aug30 = new Date('2024-08-30T01:00:00Z');
+    const aug31 = new Date('2024-08-31T01:00:00Z');
+    const sep1 = new Date('2024-09-01T01:00:00Z');
+
+    const first = await rangeOf(aug30, aug31);
+    const second = await rangeOf(aug31, sep1);
+
+    expect(first.to).toEqual(second.from);
+    expect(second.to.getTime() - second.from.getTime()).toBe(DAY * 1000);
+  });
+});
+
+describe('the Removed content score', () => {
+  const windowEndsAfter = (seconds: number) =>
+    new Date((seconds + REMOVAL_SCORE_WINDOW_DAYS * DAY) * 1000);
+
+  it('stops counting a removal when its window has passed', async () => {
+    const justInside = new Date(windowEndsAfter(REMOVED_AT).getTime() - 1000);
     expect((await scoreRun(undefined, justInside)).get(OWNER)).toBe(-3000);
 
     // The three removals made at REMOVED_AT age out; the one made two hours later still counts.
-    const afterFirstThree = new Date(sixMonthsAfter(REMOVED_AT).getTime() + 1000);
+    const afterFirstThree = new Date(windowEndsAfter(REMOVED_AT).getTime() + 1000);
     expect((await scoreRun(undefined, afterFirstThree)).get(OWNER)).toBe(-1000);
 
-    const afterAll = new Date(sixMonthsAfter(REMOVED_AT + 7200).getTime() + 1000);
+    const afterAll = new Date(windowEndsAfter(REMOVED_AT + 7200).getTime() + 1000);
     expect((await scoreRun(undefined, afterAll)).get(OWNER)).toBe(0);
   });
 

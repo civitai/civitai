@@ -3,11 +3,10 @@ import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   REMOVAL_RESTORED_EVENT,
-  REMOVAL_SCORE_WINDOW_MONTHS,
+  REMOVAL_SCORE_WINDOW_DAYS,
   REPORTS_AGAINST_EVENT,
 } from '~/shared/constants/creator-journey.constants';
 import { removalWeight } from '~/shared/utils/creator-removal-weights';
-import dayjs from '~/shared/utils/dayjs';
 
 /**
  * The one definition of a counted removal: an image's latest removal, unless a restore event, an
@@ -67,33 +66,39 @@ export async function withoutReversed<T extends CreatorRemoval>(
   return removals.filter((r) => !reversed.has(Number(r.imageId)));
 }
 
-/** Removals made before this no longer count towards the score. */
+const DAY_MS = 86_400_000;
+
+/** A removal made at or before this no longer counts towards the score. */
 export const removalWindowStart = (now: Date) =>
-  dayjs(now).subtract(REMOVAL_SCORE_WINDOW_MONTHS, 'month').toDate();
+  new Date(now.getTime() - REMOVAL_SCORE_WINDOW_DAYS * DAY_MS);
+
+/** Whether a removal made at `removedAt` (unix seconds) is still inside the window. */
+export const isWithinRemovalWindow = (removedAt: number | string, now: Date) =>
+  Number(removedAt) * 1000 > removalWindowStart(now).getTime();
 
 /**
- * Each owner's removal count within the last `REMOVAL_SCORE_WINDOW_MONTHS`, every removal weighed by
- * its reason; an owner with none is absent. Checks appeals on the primary, like
- * `getOwnersWithReversalsSince`, so an owner re-scored for a new approval is scored with it.
+ * Each owner's total removal weight within the last `REMOVAL_SCORE_WINDOW_DAYS`, every removal
+ * weighed by its reason (1 per fully weighted removal); an owner with none is absent. Checks
+ * appeals on the primary, like `getOwnersWithReversalsSince`, so an owner re-scored for a new
+ * approval is scored with it.
  */
-export async function countRemovalsByOwner(
+export async function removalPenaltyWeightsByOwner(
   ch: CustomClickHouseClient,
   ownerIds: number[],
   now = new Date()
 ) {
-  const windowStart = removalWindowStart(now).getTime();
-  const counts = new Map<number, number>();
+  const weights = new Map<number, number>();
   for (const owners of chunk(ownerIds, 1000)) {
     const rows = await ch.$query<CreatorRemoval>(removalsQuery(`ownerId IN (${owners.join(',')})`));
-    const inWindow = rows.filter((r) => Number(r.removedAt) * 1000 > windowStart);
+    const inWindow = rows.filter((r) => isWithinRemovalWindow(r.removedAt, now));
     for (const { ownerId, reason } of await withoutReversed(inWindow, dbWrite))
-      counts.set(Number(ownerId), (counts.get(Number(ownerId)) ?? 0) + removalWeight(reason));
+      weights.set(Number(ownerId), (weights.get(Number(ownerId)) ?? 0) + removalWeight(reason));
   }
-  return counts;
+  return weights;
 }
 
-export const reportsAgainstScore = (count: number | undefined, multiplier: number) =>
-  count ? count * multiplier : 0;
+export const reportsAgainstScore = (penaltyWeight: number | undefined, multiplier: number) =>
+  penaltyWeight ? penaltyWeight * multiplier : 0;
 
 /**
  * Owners with a removal reversed since `since`, by a restore event, an approved image appeal or a new
