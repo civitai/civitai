@@ -1,107 +1,62 @@
 <script lang="ts">
   import '../global.css';
+  import { page } from '$app/state';
+  import AppHeader from '$lib/AppHeader.svelte';
+  import type { PlayerStatus } from '$lib/server/player-status';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
-  let avatarFailed = $state(false);
+  // Pages that already load the player's status (play, gold, ranks, judgments) hand it to the header through
+  // page.data, so the stats cost no query of their own; other pages get the plain header.
+  let status = $derived(page.data.status as PlayerStatus | undefined);
+  let streak = $derived(page.data.daily as { streak: number; shields: number; maxShields: number } | undefined);
+  // /play fills the viewport exactly: the image stage takes whatever the header and the answer row leave.
+  let fit = $derived(page.route.id === '/play');
 </script>
 
-<nav aria-label="Site">
-  {#if data.player}
-    <a class="player" href={data.player.profileUrl} title={data.player.username}>
-      {#if data.player.avatarUrl && !avatarFailed}
-        <img
-          src={data.player.avatarUrl}
-          alt=""
-          width="24"
-          height="24"
-          loading="lazy"
-          onerror={() => (avatarFailed = true)}
-        />
-      {:else}
-        <span class="initial" aria-hidden="true">{data.player.username[0].toUpperCase()}</span>
-      {/if}
-      <span class="name">{data.player.username}</span>
-    </a>
-  {/if}
-  <div class="links">
-    <a href={data.civitaiUrl}>Back to Civitai</a>
-    <a href="/logout" data-sveltekit-reload>Sign out</a>
-  </div>
-</nav>
-
-<main>
-  {@render children()}
-</main>
+<div class="app" class:fit>
+  <AppHeader
+    player={data.player}
+    civitaiUrl={data.civitaiUrl}
+    conversionOpen={data.conversionOpen}
+    {status}
+    {streak}
+  />
+  <main>
+    {@render children()}
+  </main>
+</div>
 
 <style>
-  nav {
+  .app {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    max-width: 48rem;
-    margin: 0 auto;
-    padding: 0.75rem 1.5rem 0;
-    font-size: 0.85rem;
-  }
-  nav a {
-    color: var(--muted);
-  }
-  .links {
-    display: flex;
-    gap: 1rem;
-    margin-left: auto;
-    white-space: nowrap;
-  }
-  .player {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-  }
-  .player img,
-  .initial {
-    flex: none;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-  }
-  .player img {
-    object-fit: cover;
-  }
-  .initial {
-    display: grid;
-    place-items: center;
-    background: var(--border, #333);
-    color: var(--muted);
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-  .name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
   }
   main {
+    flex: 1 1 auto;
+    width: 100%;
     max-width: 48rem;
     margin: 0 auto;
     padding: 1.5rem 1.5rem 3rem;
   }
+  .fit {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .fit main {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-width: none;
+    padding: 0;
+    overflow-y: auto;
+  }
   @media (max-width: 40rem) {
-    nav {
-      gap: 0.5rem;
-      padding: 0 1rem;
-    }
-    nav a {
-      padding: 0.6rem 0;
-    }
-    .links {
-      gap: 0.75rem;
-    }
     main {
-      padding: 0 1rem 1rem;
+      padding: 1rem 1rem 1.5rem;
     }
   }
 </style>
