@@ -573,3 +573,210 @@ describe('manifest storage — scope rules', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// storage.collections.<name>.schema — the per-collection document schema
+// ---------------------------------------------------------------------------
+
+const SCHEMA_AT = 'storage.collections.prefs.schema';
+const SUPPORTED =
+  'type, properties, required, additionalProperties, items, enum, const, minLength, maxLength, pattern, minimum, maximum, minItems, maxItems, description';
+
+/** Every keyword of the subset, each used once, in a shape an app would really declare. */
+const CARD_SCHEMA = {
+  type: 'object',
+  description: 'A saved card.',
+  required: ['title', 'rating'],
+  additionalProperties: false,
+  properties: {
+    title: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[^<>]*$' },
+    rating: { type: 'integer', minimum: 1, maximum: 5 },
+    tags: { type: 'array', minItems: 0, maxItems: 6, items: { type: ['string', 'null'] } },
+    tone: { enum: ['warm', 'cool', 7, null] },
+    kind: { const: 'card' },
+    scores: { type: 'object', additionalProperties: { type: 'number' } },
+  },
+};
+
+/**
+ * A schema nested `levels` deep (the collection's own schema is level 1), stepping through
+ * `properties`, `items` and `additionalProperties` in turn so each counts as a level. Returns
+ * the schema and the manifest path of its innermost schema.
+ */
+function nested(levels: number): { schema: Record<string, unknown>; innermost: string } {
+  const steps = ['properties.n', 'items', 'additionalProperties'];
+  let schema: Record<string, unknown> = { type: 'string' };
+  const path: string[] = [];
+  for (let level = levels - 1; level >= 1; level--) {
+    const step = steps[level % steps.length];
+    path.unshift(step);
+    schema =
+      step === 'properties.n'
+        ? { type: 'object', properties: { n: schema } }
+        : step === 'items'
+        ? { type: 'array', items: schema }
+        : { type: 'object', additionalProperties: schema };
+  }
+  return { schema, innermost: [SCHEMA_AT, ...path].join('.') };
+}
+
+describe('manifest storage — collection schemas', () => {
+  it.each<[string, unknown]>([
+    ['a private collection with every supported keyword', withPrefs({ schema: CARD_SCHEMA })],
+    ['a shared "own" collection with a schema', withRequests({ schema: CARD_SCHEMA })],
+    ['an empty schema (matches anything)', withPrefs({ schema: {} })],
+    ['additionalProperties true', withPrefs({ schema: { additionalProperties: true } })],
+    ['schemas nested exactly 16 deep', withPrefs({ schema: nested(16).schema })],
+  ])('accepts %s', (_label, m) => {
+    expect(validate(m)).toEqual({ valid: true });
+  });
+
+  it.each<[string, Record<string, unknown>, string]>([
+    [
+      'a keyword outside the subset, named in the message',
+      { type: 'object', properties: { when: { type: 'string', format: 'date-time' } } },
+      `${SCHEMA_AT}.properties.when uses the schema keyword "format", which is not supported — the supported keywords are ${SUPPORTED}`,
+    ],
+    [
+      'a $ref (no references in the subset)',
+      { $ref: '#/definitions/card' },
+      `${SCHEMA_AT} uses the schema keyword "$ref", which is not supported — the supported keywords are ${SUPPORTED}`,
+    ],
+    [
+      'oneOf inside items',
+      { type: 'array', items: { oneOf: [{ type: 'string' }] } },
+      `${SCHEMA_AT}.items uses the schema keyword "oneOf", which is not supported — the supported keywords are ${SUPPORTED}`,
+    ],
+    [
+      'an unknown type name',
+      { type: 'date' },
+      `${SCHEMA_AT}.type must be one of object, array, string, number, integer, boolean, null, or a non-empty array of them without repeats`,
+    ],
+    [
+      'a repeated type',
+      { type: ['string', 'string'] },
+      `${SCHEMA_AT}.type must be one of object, array, string, number, integer, boolean, null, or a non-empty array of them without repeats`,
+    ],
+    [
+      'a boolean schema where a schema object is required',
+      { items: true },
+      `${SCHEMA_AT}.items must be a schema object`,
+    ],
+    [
+      'a pattern with no maxLength',
+      { pattern: '^[a-z]+$' },
+      `${SCHEMA_AT}.pattern needs a maxLength of at most 1000 on the same schema — a pattern only ever runs against a bounded string`,
+    ],
+    [
+      'a pattern with maxLength 1001',
+      { pattern: '^[a-z]+$', maxLength: 1001 },
+      `${SCHEMA_AT}.pattern needs a maxLength of at most 1000 on the same schema — a pattern only ever runs against a bounded string`,
+    ],
+    [
+      'a pattern that does not compile',
+      { pattern: '([a-z]', maxLength: 30 },
+      `${SCHEMA_AT}.pattern is not a valid regular expression (JavaScript syntax with the "u" flag)`,
+    ],
+    [
+      'a 257-character pattern',
+      { pattern: 'a'.repeat(257), maxLength: 300 },
+      `${SCHEMA_AT}.pattern must be a string of at most 256 characters`,
+    ],
+    [
+      'minLength above maxLength',
+      { minLength: 9, maxLength: 4 },
+      `${SCHEMA_AT}.minLength (9) is greater than maxLength (4), so nothing could match`,
+    ],
+    [
+      'a fractional maxItems',
+      { maxItems: 2.5 },
+      `${SCHEMA_AT}.maxItems must be a whole number of 0 or more`,
+    ],
+    ['an empty enum', { enum: [] }, `${SCHEMA_AT}.enum must be a non-empty array of values`],
+    [
+      'a required list with a repeat',
+      { required: ['a', 'a'] },
+      `${SCHEMA_AT}.required must be an array of distinct property names`,
+    ],
+  ])('refuses %s', (_label, schema, message) => {
+    expect(validate(isolated(withPrefs({ schema })))).toEqual(refused(message));
+  });
+
+  it('refuses schemas nested 17 deep, naming the innermost', () => {
+    const { schema, innermost } = nested(17);
+    expect(validate(isolated(withPrefs({ schema })))).toEqual(
+      refused(`${innermost} is nested too deeply — a collection schema may nest at most 16 schemas`)
+    );
+  });
+
+  it('bounds the schema at 16384 bytes of JSON, counted in UTF-8 bytes', () => {
+    // `{"type":"object","description":""}` is 34 bytes before the description.
+    const sized = (description: string) => withPrefs({ schema: { type: 'object', description } });
+    expect(validate(sized('d'.repeat(16_350)))).toEqual({ valid: true });
+    expect(validate(isolated(sized('d'.repeat(16_351))))).toEqual(
+      refused(
+        `${SCHEMA_AT} is 16385 bytes of JSON — a collection schema may be at most 16384 bytes`
+      )
+    );
+    // 9,000 characters, 18,000 bytes: a bound in characters would admit it.
+    expect(validate(isolated(sized('é'.repeat(9_000))))).toEqual(
+      refused(
+        `${SCHEMA_AT} is 18034 bytes of JSON — a collection schema may be at most 16384 bytes`
+      )
+    );
+  });
+
+  it('bounds the number of patterns in one schema at 16', () => {
+    const withPatterns = (n: number) => ({
+      type: 'object',
+      properties: Object.fromEntries(
+        Array.from({ length: n }, (_, i) => [`p${i}`, { pattern: '^x', maxLength: 5 }])
+      ),
+    });
+    expect(validate(withPrefs({ schema: withPatterns(16) }))).toEqual({ valid: true });
+    expect(validate(isolated(withPrefs({ schema: withPatterns(19) })))).toEqual(
+      refused(`${SCHEMA_AT} declares 19 patterns — a collection schema may declare at most 16`)
+    );
+  });
+
+  it('refuses a schema on a write "none" collection, which no document body is ever written to', () => {
+    const plays = manifest(
+      {
+        collections: {
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'], schema: {} },
+        },
+      },
+      [STORAGE]
+    );
+    expect(validate(isolated(plays))).toEqual(
+      refused(
+        'storage.collections.plays.schema does not apply to write "none" — no document body is ever written to that collection, so a schema would check nothing'
+      )
+    );
+  });
+
+  it('refuses a schema that is not an object', () => {
+    expect(validate(isolated(withPrefs({ schema: [CARD_SCHEMA] })))).toEqual(
+      refused(`${SCHEMA_AT} must be a schema object`)
+    );
+  });
+});
+
+describe('manifest storage — collection schema patterns at submission (ReDoS gate)', () => {
+  it('refuses a pattern that backtracks catastrophically', async () => {
+    const m = withPrefs({
+      schema: { properties: { code: { type: 'string', pattern: '^(a+)+$', maxLength: 40 } } },
+    });
+    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+      refused(
+        `${SCHEMA_AT}.properties.code.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
+      )
+    );
+  });
+
+  it('accepts a linear pattern (control: the gate is not refusing every pattern)', async () => {
+    expect(
+      await BlockManifestValidator.validateSubmission(withPrefs({ schema: CARD_SCHEMA }), APP_CTX)
+    ).toEqual({ valid: true });
+  });
+});

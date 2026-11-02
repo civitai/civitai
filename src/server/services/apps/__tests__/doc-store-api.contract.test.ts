@@ -2387,3 +2387,91 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
     expect(h.isFlipt).toHaveBeenCalledWith(ENFORCE_FLAG, A.id, undefined);
   });
 });
+
+describe('collection schemas: a violating write is refused before anything is spent on it', () => {
+  const MANIFEST_SCHEMA = {
+    scopes: contract.defaultScopes,
+    storage: {
+      collections: {
+        board: {
+          visibility: 'shared',
+          write: 'own',
+          schema: {
+            type: 'object',
+            required: ['body'],
+            properties: { body: { type: 'string', maxLength: 18 } },
+          },
+        },
+      },
+    },
+  };
+
+  async function setup() {
+    const { scanSharedData } = await import('~/server/services/apps/shared-data-moderation');
+    const { A } = freshApps('approved', MANIFEST_SCHEMA);
+    const tokenOf = (uid: number) => mint({ app: A, uid, scopes: contract.defaultScopes });
+    const scans = vi.mocked(scanSharedData);
+    const spend = async <T>(fn: () => Promise<T>) => {
+      scans.mockClear();
+      const evals = lua.calls.length;
+      const counters = [...kv.keys()].filter((k) => k.includes(':docs-')).length;
+      const result = await fn();
+      return {
+        result,
+        spent: {
+          scans: scans.mock.calls.length,
+          budgetEvals: lua.calls.length - evals,
+          rateCounters: [...kv.keys()].filter((k) => k.includes(':docs-')).length - counters,
+        },
+      };
+    };
+    return { tokenOf, spend };
+  }
+
+  const REFUSAL =
+    'document does not match the schema of collection board at "/body": must be at most 18 characters';
+
+  it('a shared create that violates the schema is a 400 with no scan, no budget and no rate counter; a conforming one lands', async () => {
+    const { tokenOf, spend } = await setup();
+    const v1 = await tokenOf(VIEWER_IDS.v1);
+    const refused = await spend(() =>
+      call({ token: v1, method: 'POST', path: '/board', body: { data: { body: 'x'.repeat(19) } } })
+    );
+    expect(refused.result.status).toBe(400);
+    expect(refused.result.body).toEqual({
+      code: 'schema_violation',
+      message: REFUSAL,
+      error: REFUSAL,
+      details: { collection: 'board', pointer: '/body', keyword: 'maxLength' },
+    });
+    expect(refused.spent).toEqual({ scans: 0, budgetEvals: 0, rateCounters: 0 });
+    // Control: the conforming body does spend, so the zeros above can move.
+    const landed = await spend(() =>
+      call({ token: v1, method: 'POST', path: '/board', body: { data: { body: 'x'.repeat(18) } } })
+    );
+    expect(landed.result.status).toBe(201);
+    expect(landed.spent.budgetEvals).toBeGreaterThan(0);
+  });
+
+  it('refuses before the trust gate: an untrusted viewer gets schema_violation, not not_eligible', async () => {
+    const { tokenOf } = await setup();
+    const newbie = await tokenOf(VIEWER_IDS.newbie);
+    const refused = await call({
+      token: newbie,
+      method: 'POST',
+      path: '/board',
+      body: { data: {} },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({ code: 'schema_violation', details: { pointer: '/body' } });
+    // Control: a conforming body from the same viewer reaches the trust gate.
+    const gated = await call({
+      token: newbie,
+      method: 'POST',
+      path: '/board',
+      body: { data: { body: 'ok' } },
+    });
+    expect(gated.status).toBe(403);
+    expect(gated.body).toMatchObject({ code: 'not_eligible' });
+  });
+});
