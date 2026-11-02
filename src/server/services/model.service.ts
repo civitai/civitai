@@ -6845,6 +6845,7 @@ export const privateModelFromTraining = async ({
   const model = await dbWrite.model.findUnique({
     where: { id },
     select: {
+      name: true,
       userId: true,
       lockedProperties: true,
       meta: true,
@@ -6857,6 +6858,9 @@ export const privateModelFromTraining = async ({
 
   const isOwner = model.userId === user.id || user.isModerator;
   if (!isOwner) return null;
+
+  if (data.name !== undefined && isModelNameTooLong(data.name, model.name))
+    throw throwBadRequestError(MODEL_NAME_TOO_LONG_MESSAGE);
 
   assertPrivateFlowPublishable({
     status: model.status,

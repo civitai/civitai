@@ -178,8 +178,7 @@ describe('migrateResourceToCollection', () => {
     ]
       .map(([args]) => (args as { data: { name?: string } }).data.name)
       .filter((name) => name !== undefined);
-    expect(names).toHaveLength(3);
-    expect(names.every((name) => name.length <= 100)).toBe(true);
-    expect(names[0]).toBe(`${longName} -`.slice(0, 100).trimEnd());
+    expect(names.map((name) => name.length)).toEqual([100, 100, 100]);
+    expect(names[0]).toBe(`${'m'.repeat(98)} -`);
   });
 });

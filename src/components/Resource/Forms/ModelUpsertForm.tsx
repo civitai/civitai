@@ -330,7 +330,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
         { shouldFocus: true }
       );
 
-    if (isModelNameTooLong(rest.name, model?.name))
+    if (isModelNameTooLong(rest.name, model?.id ? model.name : undefined))
       return form.setError(
         'name',
         { message: MODEL_NAME_TOO_LONG_MESSAGE, type: 'maxLength' },
@@ -890,6 +890,15 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                       return form.setError(
                         'attestation',
                         { message: 'Required', type: 'required' },
+                        { shouldFocus: true }
+                      );
+
+                    if (
+                      isModelNameTooLong(form.getValues('name'), model?.id ? model.name : undefined)
+                    )
+                      return form.setError(
+                        'name',
+                        { message: MODEL_NAME_TOO_LONG_MESSAGE, type: 'maxLength' },
                         { shouldFocus: true }
                       );
 
