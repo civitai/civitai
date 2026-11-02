@@ -168,6 +168,8 @@ describe('the live-author short-circuit', () => {
     await getFollowedAnnouncements({ userId: VIEWER });
 
     expect(liveAuthorReads()).toHaveLength(0); // still the cached set
+    // The cached set is empty, so only the saved author can have caused a follow read at all.
+    expect(dbMock.dbRead.userEngagement.findMany).toHaveBeenCalledTimes(1);
     const followRead = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0] as {
       where: { targetUserId: { in: number[] } };
     };
