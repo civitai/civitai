@@ -12,34 +12,69 @@
     inconclusive: 'Set aside',
     forfeited: 'Forfeited by the career reset',
   } as const;
+
+  const FILTERS = [
+    ['all', 'All'],
+    ['correct', 'Correct'],
+    ['wrong', 'Failed'],
+    ['pending', 'Pending'],
+    ['inconclusive', 'Inconclusive'],
+    ['forfeited', 'Forfeited'],
+  ] as const;
+
+  const href = (filter: string, page: number) => {
+    const params = new URLSearchParams();
+    if (filter !== 'all') params.set('status', filter);
+    if (page > 1) params.set('page', String(page));
+    const query = params.toString();
+    return query ? `/judgments?${query}` : '/judgments';
+  };
 </script>
 
 <h1>Your judgments</h1>
 
 <StatusBar status={data.status} />
 
-{#each data.judgments as judgment (`${judgment.itemId}:${judgment.at}`)}
+<nav class="filters" aria-label="Filter by status">
+  {#each FILTERS as [value, label] (value)}
+    <a
+      href={href(value, 1)}
+      aria-current={data.filter === value ? 'true' : undefined}
+      class:active={data.filter === value}>{label}</a
+    >
+  {/each}
+</nav>
+
+{#each data.judgments as judgment (`${judgment.kind}:${judgment.itemId}:${judgment.at}`)}
   <article class="judgment">
     <Thumbnail src={judgment.src} />
     <div>
       <p class="muted">{judgment.prompt}</p>
       <p>Your answer: {judgment.answerLabel}</p>
+      {#if judgment.verdictLabel}
+        <p>The verdict: {judgment.verdictLabel}</p>
+      {/if}
       <p class="muted">
-        <span class="state {judgment.status}">{STATUS_TEXT[judgment.status]}</span>
+        {#if judgment.kind === 'trial'}<span class="tag">Trial</span> · {/if}<span
+          class="state {judgment.status}">{STATUS_TEXT[judgment.status]}</span
+        >
         · {judgment.xp} XP · {judgment.gold} gold{judgment.status === 'pending' ? ' pending' : ''} · {new Date(judgment.at).toLocaleString()}
       </p>
+      {#if judgment.imageHref}
+        <p><a href={judgment.imageHref} target="_blank" rel="noopener noreferrer">Open the image on Civitai</a></p>
+      {/if}
     </div>
   </article>
 {:else}
-  <p>You have not judged anything yet.</p>
+  <p>{data.filter === 'all' ? 'You have not judged anything yet.' : 'Nothing matches this filter.'}</p>
 {/each}
 
 <nav class="pager">
   {#if data.page > 1}
-    <a href="/judgments?page={data.page - 1}">Newer</a>
+    <a href={href(data.filter, data.page - 1)}>Newer</a>
   {/if}
   {#if data.hasMore}
-    <a href="/judgments?page={data.page + 1}">Older</a>
+    <a href={href(data.filter, data.page + 1)}>Older</a>
   {/if}
 </nav>
 
@@ -54,6 +89,16 @@
   }
   p {
     margin: 0.15rem 0;
+  }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+  }
+  .filters a.active {
+    font-weight: bold;
+    text-decoration: none;
   }
   .state.correct {
     color: var(--gold);
