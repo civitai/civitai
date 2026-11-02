@@ -20,36 +20,45 @@ import { booleanString } from '~/utils/zod-helpers';
  * a reason weighting would otherwise leave the stored score as it was.
  *
  * `scope=reversed` (default) takes owners with a removal later reversed (approved image appeal,
- * restore event or score exemption). `scope=all` takes every owner with any removal, which is what
- * applying the window and reason weights retroactively needs.
+ * restore event or score exemption), a small set. `scope=all` takes every owner with any removal,
+ * which is what applying the window and reason weights retroactively needs.
  *
- * Grants nothing: run the silent tier backfill afterwards for anyone who crossed a tier.
+ * Owners are processed `limit` at a time in owner-id order, after `cursor` (exclusive). The response
+ * carries `nextCursor`, null once the last page is done. Writes are absolute, so re-running a page
+ * is safe.
  *
- * Run it dry first and read the counts, then write, then the tier backfill:
+ * Runbook: loop the pages dry (feed each `nextCursor` back as `cursor` until it is null) and read
+ * the counts, loop them again with `dryRun=false`, then run the tier backfill. Grants nothing itself.
  *
- *   GET /api/admin/temp/recompute-reversed-removals?token=$WEBHOOK_TOKEN&scope=all&direction=all   (dry run)
- *   GET /api/admin/temp/recompute-reversed-removals?token=$WEBHOOK_TOKEN&scope=all&direction=all&dryRun=false
+ *   GET /api/admin/temp/recompute-removal-scores?token=$WEBHOOK_TOKEN&scope=all&direction=all             (dry run, page 1)
+ *   GET /api/admin/temp/recompute-removal-scores?token=$WEBHOOK_TOKEN&scope=all&direction=all&cursor=N     (next page)
+ *   GET /api/admin/temp/recompute-removal-scores?token=$WEBHOOK_TOKEN&scope=all&direction=all&dryRun=false
  *   then GET /api/admin/temp/backfill-creator-milestones?token=$WEBHOOK_TOKEN&dryRun=false
  *
  *   &direction=all also writes owners whose score falls (default `up`: increases only)
- *
- * Safe to re-run.
+ *   &limit=N owners per page (default 5000, max 20000)
  */
 
 const schema = z.object({
   dryRun: booleanString().default(true),
   direction: z.enum(['up', 'all']).default('up'),
   scope: z.enum(['reversed', 'all']).default('reversed'),
+  cursor: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(20_000).default(5000),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   if (!clickhouse) return res.status(503).json({ error: 'ClickHouse is not available' });
-  const { dryRun, direction, scope } = schema.parse(req.query);
+  const { dryRun, direction, scope, cursor, limit } = schema.parse(req.query);
 
   const owners =
     scope === 'all'
-      ? await getOwnersWithRemovals(clickhouse)
-      : await getOwnersWithReversalsSince(clickhouse, new Date(0));
+      ? await getOwnersWithRemovals(clickhouse, cursor, limit)
+      : (await getOwnersWithReversalsSince(clickhouse, new Date(0)))
+          .filter((id) => id > cursor)
+          .sort((a, b) => a - b)
+          .slice(0, limit);
+  const nextCursor = owners.length === limit ? owners[owners.length - 1] : null;
 
   const { reportsAgainst } = await getScoreMultipliers();
   const penaltyWeights = await removalPenaltyWeightsByOwner(clickhouse, owners);
@@ -76,9 +85,16 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
 
   if (dryRun)
-    return res
-      .status(200)
-      .json({ dryRun, direction, scope, owners: owners.length, changed: changed.length, up, down });
+    return res.status(200).json({
+      dryRun,
+      direction,
+      scope,
+      owners: owners.length,
+      nextCursor,
+      changed: changed.length,
+      up,
+      down,
+    });
 
   let written = 0;
   for (const records of chunk(changed, 500)) {
@@ -89,6 +105,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     direction,
     scope,
     owners: owners.length,
+    nextCursor,
     changed: changed.length,
     up,
     down,

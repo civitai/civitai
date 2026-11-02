@@ -155,10 +155,19 @@ export async function getOwnersWithRemovalsAgedOutSince(
   return rows.map((r) => Number(r.ownerId));
 }
 
-/** Every owner with a removal event, whether or not it still counts. */
-export async function getOwnersWithRemovals(ch: CustomClickHouseClient) {
+/**
+ * One page of owners with a removal event, whether or not it still counts: those with an id above
+ * `after`, in id order.
+ */
+export async function getOwnersWithRemovals(
+  ch: CustomClickHouseClient,
+  after: number,
+  limit: number
+) {
   const rows = await ch.$query<{ ownerId: number }>(
-    `SELECT DISTINCT ownerId FROM images WHERE type = '${REPORTS_AGAINST_EVENT}'`
+    `SELECT DISTINCT ownerId FROM images
+     WHERE type = '${REPORTS_AGAINST_EVENT}' AND ownerId > ${Math.trunc(after)}
+     ORDER BY ownerId LIMIT ${Math.trunc(limit)}`
   );
   return rows.map((r) => Number(r.ownerId));
 }
