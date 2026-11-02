@@ -50,7 +50,6 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
-import { POST_INFO_PANEL_PIN } from '~/components/Post/Detail/postInfoPanelPin';
 import { StorylinePostNext, StorylinePostPill } from '~/components/Storyline/StorylinePostChapter';
 import { PostPublishedWithApp } from '~/components/Post/Detail/PostPublishedWithApp';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
@@ -63,7 +62,7 @@ import { toStringList } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect } from 'react';
 import clsx from 'clsx';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
@@ -172,15 +171,6 @@ export function PostDetailContent({ postId }: Props) {
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
   const sidebarEnabled = true;
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const touchStartY = useRef<number | null>(null);
-  const hasPendingInvite = postCollaborators.some(
-    (c) => c.user.id === currentUser?.id && c.status === EntityCollaboratorStatus.Pending
-  );
-  // The accept/reject buttons live in the creator block, which a collapsed phone panel hides.
-  useEffect(() => {
-    if (hasPendingInvite) setSheetOpen(true);
-  }, [hasPendingInvite]);
 
   if (postLoading) return <PageLoader />;
   if (!post || isBlocked) return <NotFound />;
@@ -275,9 +265,11 @@ export function PostDetailContent({ postId }: Props) {
   );
 
   const postCard = (
-    <div className="flex flex-col gap-2">
-      <StorylinePostPill postId={post.id} />
-      <div className="flex items-start justify-between gap-2">
+    <div className="flex flex-col gap-2 @max-lg:contents">
+      <div className="empty:hidden @max-lg:order-first">
+        <StorylinePostPill postId={post.id} />
+      </div>
+      <div className="flex items-start justify-between gap-2 @max-lg:order-first">
         {post.title ? (
           <Title order={1} lineClamp={3} size={20} className="min-w-0 break-words">
             {post.title}
@@ -287,7 +279,7 @@ export function PostDetailContent({ postId }: Props) {
         )}
         {postActions}
       </div>
-      <Text size="xs" c="dimmed">
+      <Text size="xs" c="dimmed" className="@max-lg:order-first">
         {relatedResource && relatedResource.modelId && (
           <>
             Posted to{' '}
@@ -306,8 +298,12 @@ export function PostDetailContent({ postId }: Props) {
         )}
         {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
       </Text>
-      {post.detail && <RenderHtml html={post.detail} withMentions />}
-      {postTags}
+      {post.detail && (
+        <div className="@max-lg:order-1">
+          <RenderHtml html={post.detail} withMentions />
+        </div>
+      )}
+      {postTags && <div className="@max-lg:order-first">{postTags}</div>}
     </div>
   );
 
@@ -435,8 +431,11 @@ export function PostDetailContent({ postId }: Props) {
           ),
         }}
       >
-        <div className="flex justify-center gap-8 px-3 @max-lg:flex-col @max-lg:items-center @max-lg:gap-0">
-          <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3">
+        <div className="flex justify-center gap-8 px-3 @max-lg:mx-auto @max-lg:w-full @max-lg:max-w-[752px] @max-lg:flex-col @max-lg:gap-3">
+          {/* On a phone the main column and the sidebar are `display: contents`, so their pieces
+              sit in one column and `@max-lg:order-*` sets the screen order: title, where it was
+              posted to and tags, then the images, description, creator, app card, comments. */}
+          <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3 @max-lg:contents">
             {isOwnerOrMod && post.wasPublished && !post.publishedAt && (
               <Alert
                 color="yellow"
@@ -521,42 +520,24 @@ export function PostDetailContent({ postId }: Props) {
               </>
             )}
             <StorylinePostNext postId={post.id} />
-            <Stack className="mb-20 mt-6 gap-6" id="comments" mb={90}>
+            <Stack className="mb-20 mt-6 gap-6 @max-lg:order-4" id="comments" mb={90}>
               <PostComments postId={postId} userId={post.user.id} />
             </Stack>
           </div>
           <div className="relative flex w-[336px] flex-col gap-3 @lg:my-3 @max-lg:contents">
             <div className="sticky top-3 flex flex-col gap-3 @max-lg:contents">
               <div
-                className={clsx(
-                  'flex min-w-0 flex-col gap-3',
-                  POST_INFO_PANEL_PIN,
-                  'bg-white @max-lg:rounded-t-2xl @max-lg:shadow-[0_-6px_20px_rgba(0,0,0,0.25)] dark:bg-dark-7',
-                  !sheetOpen && '@max-lg:max-h-[112px] @max-lg:overflow-hidden',
-                  sheetOpen && '@max-lg:max-h-[75dvh] @max-lg:overflow-y-auto',
-                  '@max-lg:px-3 @max-lg:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]'
-                )}
+                className="flex min-w-0 flex-col gap-3 @max-lg:contents"
                 data-testid="post-info-panel"
               >
-                <button
-                  type="button"
-                  className="mx-auto mt-2 hidden h-6 w-full shrink-0 cursor-pointer border-0 bg-transparent p-0 @max-lg:block"
-                  aria-label={sheetOpen ? 'Collapse post details' : 'Expand post details'}
-                  aria-expanded={sheetOpen}
-                  onClick={() => setSheetOpen((open) => !open)}
-                  onTouchStart={(e) => (touchStartY.current = e.touches[0].clientY)}
-                  onTouchEnd={(e) => {
-                    const dy = e.changedTouches[0].clientY - (touchStartY.current ?? 0);
-                    if (dy < -30) setSheetOpen(true);
-                    if (dy > 30) setSheetOpen(false);
-                  }}
-                >
-                  <span className="mx-auto block h-1 w-9 rounded-full bg-gray-4 dark:bg-dark-3" />
-                </button>
-                <div className={clsx(panelClass, '@max-lg:border-0 @max-lg:p-0')}>{postCard}</div>
-                <div className={clsx('flex flex-col gap-3', !sheetOpen && '@max-lg:invisible')}>
-                  <div className={panelClass}>{creatorCard}</div>
-                  <PostPublishedWithApp app={post.publishedWithApp} />
+                <div className={clsx(panelClass, '@max-lg:contents')}>{postCard}</div>
+                <div className="flex flex-col gap-3 @max-lg:contents">
+                  <div className={clsx(panelClass, '@max-lg:order-2 @max-lg:border-0 @max-lg:p-0')}>
+                    {creatorCard}
+                  </div>
+                  <div className="empty:hidden @max-lg:order-3">
+                    <PostPublishedWithApp app={post.publishedWithApp} />
+                  </div>
                 </div>
               </div>
 

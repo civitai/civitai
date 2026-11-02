@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type { StorylineChapterPost, StorylineChapterRank } from '~/shared/utils/storyline';
 import {
+  getStorylineRootHiddenReason,
   compareStorylineChildren,
   getStorylineChapterRank,
   getStorylineChapterTombstone,
@@ -305,5 +306,44 @@ describe('toStorylineForkShares', () => {
       counts: {},
       shares: {},
     });
+  });
+});
+
+// The readiness pass refunds a 'removed' one at once and holds the others, so when chapter 1 is
+// both removed and unpublished or unrated, 'removed' must win.
+describe('getStorylineRootHiddenReason', () => {
+  const now = new Date('2026-11-01T12:00:00Z');
+  const shown = {
+    nsfwLevel: NsfwLevel.PG,
+    publishedAt: new Date('2026-10-01'),
+    tosViolation: false,
+    user: { bannedAt: null, deletedAt: null },
+  };
+  const reason = (post: Partial<typeof shown> | null, removed = false) =>
+    getStorylineRootHiddenReason({ post: post && { ...shown, ...post }, removed }, now);
+
+  it('is null for a shown chapter 1', () => {
+    expect(reason({})).toBeNull();
+  });
+
+  it.each([
+    ['taken down', { tosViolation: true }, false],
+    ['by a banned author', { user: { bannedAt: now, deletedAt: null } }, false],
+    ['by a deleted author', { user: { bannedAt: null, deletedAt: now } }, false],
+    ['wholly Blocked', { nsfwLevel: NsfwLevel.Blocked }, false],
+    ['removed', {}, true],
+  ] as const)('is removed when %s, even unpublished or unrated', (_n, post, removed) => {
+    expect(reason({ ...post, publishedAt: null }, removed)).toBe('removed');
+    expect(reason({ ...post, nsfwLevel: post.nsfwLevel ?? 0 }, removed)).toBe('removed');
+  });
+
+  it('is removed when its post is deleted', () => {
+    expect(reason(null)).toBe('removed');
+  });
+
+  it('is unpublished before pending rating', () => {
+    expect(reason({ publishedAt: null, nsfwLevel: 0 })).toBe('unpublished');
+    expect(reason({ publishedAt: now })).toBe('unpublished');
+    expect(reason({ nsfwLevel: 0 })).toBe('pendingRating');
   });
 });

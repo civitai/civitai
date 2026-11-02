@@ -17,6 +17,8 @@ import {
 import {
   assertCanContinueStoryline,
   StorylineHiddenRefusal,
+  storylineParticipantSql,
+  storylineRootWaitingSql,
   continuationPostSelect,
   continuationReadiness,
   writeChapterEdgeForPlacement,
@@ -610,7 +612,10 @@ const receiptedHolds = Prisma.sql`(
  *
  * Selected in SQL so a batch holds only rows this pass can act on: a batch of
  * drafts read every tick would starve the rows behind it. A post under review
- * is left out of the selection for the same reason, and refunds at its deadline.
+ * is left out of the selection for the same reason, and refunds at its deadline;
+ * so is a row whose storyline an unpublished or unrated chapter 1 hides from the
+ * placer, which may yet open again. One a removed chapter 1 hides is selected
+ * and refunded at once: that never lifts by waiting.
  */
 export async function startReadyStorylineContinuations({ limit = 200 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -639,6 +644,24 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
           AND NOT EXISTS (
             SELECT 1 FROM "Image" i WHERE i."postId" = p.id
               AND (i.ingestion <> 'Scanned' OR i."needsReview" IS NOT NULL)
+          )
+          -- Ready, but its storyline hidden from the placer by a chapter 1 that may yet be
+          -- published or rated: it waits for its deadline. A doomed post, a taken-down
+          -- storyline or a removed parent is still selected, to be refunded at once.
+          AND NOT EXISTS (
+            SELECT 1 FROM "StorylineChapter" pc
+            JOIN "Storyline" st ON st.id = pc."storylineId"
+            JOIN "StorylineChapter" rc ON rc."storylineId" = pc."storylineId" AND rc.depth = 0
+            LEFT JOIN "Post" rp ON rp.id = rc."postId"
+            LEFT JOIN "User" ru ON ru.id = rp."userId"
+            WHERE pc."postId" = pl."targetId"
+              AND pc."removedAt" IS NULL AND st."tosViolation" = false
+              AND st."userId" <> pl."placerId"
+              AND ${storylineRootWaitingSql}
+              AND NOT ${storylineParticipantSql(
+                Prisma.sql`pl."placerId"`,
+                Prisma.sql`pc."storylineId"`
+              )}
           )
         )
       )
@@ -731,10 +754,11 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
         whoCanContinue: parent.storyline.whoCanContinue,
       });
     } catch (error) {
-      // A refusal (taken down, a block, collaborators only) does not pass by
-      // waiting. Anything else might, as may a chapter 1 that is yet to be published
-      // or rated, so the row keeps its deadline and the next tick retries.
-      if (isRefusal(error) && !(error instanceof StorylineHiddenRefusal)) await refund(row.id);
+      // A refusal (taken down, a block, collaborators only, a removed chapter 1) does
+      // not pass by waiting. Anything else might, as may a chapter 1 that is yet to be
+      // published or rated, so the row keeps its deadline and the next tick retries.
+      const mayLift = error instanceof StorylineHiddenRefusal && error.reason !== 'removed';
+      if (isRefusal(error) && !mayLift) await refund(row.id);
       continue;
     }
 

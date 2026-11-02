@@ -192,7 +192,8 @@ export type StorylineRootHiddenReason = 'removed' | 'unpublished' | 'pendingRati
 
 /**
  * Whether chapter 1 keeps the storyline out of public view, and why. `post` is null once the post
- * is deleted. The feed applies the same rule in SQL (`storylineRootVisibleSql`); change both.
+ * is deleted. Mirrored in SQL by `storylineRootVisibleSql` (the feed) and `storylineRootWaitingSql`
+ * (the readiness pass); change all three.
  */
 export function getStorylineRootHiddenReason(
   {
