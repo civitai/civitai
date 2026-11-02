@@ -2,6 +2,7 @@ import { IconEye } from '@tabler/icons-react';
 import React from 'react';
 
 import { AdContent } from '~/components/Account/AdContent';
+import { HiddenModelsSection } from '~/components/Account/HiddenModelsSection';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { HiddenUsersSection } from '~/components/Account/HiddenUsersSection';
 import { MatureContentSettings } from '~/components/Account/MatureContentSettings';
@@ -44,6 +45,7 @@ export function ContentPane() {
 
       <HiddenTagsSection flat />
       <HiddenUsersSection flat />
+      <HiddenModelsSection />
     </SettingsStack>
   );
 }
