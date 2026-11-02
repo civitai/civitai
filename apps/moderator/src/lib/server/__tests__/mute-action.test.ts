@@ -72,7 +72,10 @@ describe('a moderator-app mute reaches the orchestrator and the cached standing'
 
   it("expires the account's generation credentials in the main app, and again after the cache settles", async () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, _init?: RequestInit) =>
+        new Response('{}', { status: 200 })
+    );
     vi.stubGlobal('fetch', fetchMock);
     try {
       await setMuted({ userId: 42, muted: true, moderatorId: 7 });
@@ -82,7 +85,7 @@ describe('a moderator-app mute reaches the orchestrator and the cached standing'
         );
       expect(calls()).toHaveLength(1);
       const init = (i: number) =>
-        calls()[i][1] as RequestInit & { headers: Record<string, string> };
+        calls()[i][1] as unknown as RequestInit & { headers: Record<string, string> };
       expect(JSON.parse(String(init(0).body))).toEqual({ userId: 42 });
       await vi.runAllTimersAsync();
       expect(calls()).toHaveLength(2);
