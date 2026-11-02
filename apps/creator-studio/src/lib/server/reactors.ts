@@ -8,6 +8,7 @@ import {
 } from '@civitai/shared/reaction-privacy';
 import { dbRead } from '$lib/server/db';
 import { followersAmong } from '$lib/server/followers';
+import { getMetricExcludedUserIds } from '$lib/server/metric-excluded-users';
 import {
   assembleReactorPage,
   defaultReaction,
@@ -112,9 +113,16 @@ export async function getReactors(
 
   if (!(await ownsListableContent(db, ownerId, entity, entityId))) return null;
 
+  // Reactors the site's reaction totals leave out, left out of the counts and the list too so both match the
+  // reaction bar. In SQL, before the LIMIT, so a page still fills.
+  const notCounted = await getMetricExcludedUserIds();
+  const counted = notCounted.length
+    ? sql`AND NOT (${sql.ref('userId')} = ANY(${notCounted}::int[]))`
+    : sql``;
+
   const countRows = await sql<{ reaction: string; n: number }>`
     SELECT reaction, count(*)::int AS n FROM ${sql.table(t.reactions)}
-    WHERE ${sql.ref(t.fk)} = ${entityId}
+    WHERE ${sql.ref(t.fk)} = ${entityId} ${counted}
     GROUP BY reaction
   `.execute(db);
   const counts = emptyCounts();
@@ -144,7 +152,7 @@ export async function getReactors(
       SELECT "userId", "createdAt" FROM ${sql.table(t.reactions)}
       WHERE ${sql.ref(t.fk)} = ${entityId} AND reaction = ${reaction}
         AND ${listedToViewer(`${t.reactions}.userId`, ownerId)}
-        ${entity === 'image' ? sql`AND ${preLaunchImageReactionListed(ownerId)}` : sql``} ${bound}
+        ${entity === 'image' ? sql`AND ${preLaunchImageReactionListed(ownerId)}` : sql``} ${counted} ${bound}
       ORDER BY "userId" ${order}
       LIMIT ${REACTORS_PAGE_SIZE + 1}
     ) r
