@@ -51,6 +51,7 @@
     prices,
     enabledModelFlags = [],
     initial = null,
+    startInEdit = false,
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
@@ -60,6 +61,8 @@
     /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
      *  remount doesn't lose the chosen model(s). */
     initial?: Selection | null;
+    /** Open on the Image edit section (a reused edit dataset) when there is no selection to restore. */
+    startInEdit?: boolean;
   } = $props();
 
   // Derived so the seed and lists reflect the prop rather than a captured snapshot.
@@ -169,6 +172,11 @@
     focus = 0;
     sweepOpen = false;
   }
+
+  // The flow reads its hand-off after this step mounts, so the prop can turn on late.
+  $effect(() => {
+    if (startInEdit && !initial) untrack(() => pickSection(EDIT_SECTION));
+  });
 
   function pickMedia(m: Media) {
     if (m === media && !editSection) return;
@@ -356,6 +364,12 @@
       <p class="mt-1 text-sm text-dark-2">
         Pick what you're making — we'll recommend a base model and tune the settings later.
       </p>
+      {#if startInEdit && !initial && visibleEditCards.length === 0}
+        <p class="mt-2 text-sm text-red-400">
+          That training's before/after pairs need an Image edit model, which isn't available to you
+          yet — so they weren't added.
+        </p>
+      {/if}
     </div>
 
     <!-- Media + Type gate everything below (media always resets the model; type does until the user

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import {
     IconArchive,
@@ -13,7 +14,7 @@
   import { backend, browser, portalProps } from '$lib/host';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { pool } from '$lib/pool';
-  import { blobPreviewUrl } from '$lib/reuse';
+  import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { isAbort } from '$lib/upload';
   import type { EditGenerationItem, EditImageOption } from '$lib/edit-helpers-core';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -37,6 +38,7 @@
     nextPairId,
     pairImgs,
     pairProblem,
+    pairsFromItems,
     pollUntilDone,
     RECOMMENDED_PAIRS,
     startKey,
@@ -46,16 +48,19 @@
 
   let {
     pairs = $bindable([]),
+    reuseItems = $bindable([]),
     onContinue,
     onBack,
   }: {
     pairs: EditPair[];
+    /** A "Train again" hand-off from an edit run: added as pairs once, then emptied. */
+    reuseItems?: ReuseItem[];
     onContinue: () => void;
     onBack: () => void;
   } = $props();
 
   type Side = 'before' | 'after';
-  type Filter = 'all' | 'attention' | 'upload' | 'gen' | `zip:${string}`;
+  type Filter = 'all' | 'attention' | 'upload' | 'gen' | 'reuse' | `zip:${string}`;
 
   let view = $state<'pairs' | 'group'>('pairs');
   let filter = $state<Filter>('all');
@@ -205,6 +210,47 @@
     });
   }
 
+  // Blobs a finished run already trained on: scanned, so no upload, and each preview is read through
+  // that run afterwards.
+  function addReused(items: ReuseItem[]) {
+    const toImg = (item: ReuseItem) =>
+      blobImg({
+        name: item.name,
+        previewUrl: '',
+        blobId: item.air,
+        blobUrl: item.url,
+        sourceWorkflowId: item.workflowId,
+      });
+    const added: EditPair[] = pairsFromItems(items).map((p) => ({
+      id: nextPairId(),
+      before: toImg(p.before),
+      after: p.after ? toImg(p.after) : undefined,
+      instruction: p.instruction,
+      source: 'reuse',
+    }));
+    if (added.length === 0) return;
+    pairs = [...pairs, ...added];
+    filter = 'all';
+    notice = `${plural(added.length, 'pair')} added from your earlier training.`;
+    const previews = added.flatMap((p) => [
+      { id: p.id, side: 'before' as const, img: p.before },
+      ...(p.after ? [{ id: p.id, side: 'after' as const, img: p.after }] : []),
+    ]);
+    void pool(previews, 4, async ({ id, side, img }) => {
+      const direct = directDatasetUrl(img.blobId!);
+      const url = direct ?? (await blobPreviewUrl(img.blobId!, img.sourceWorkflowId!));
+      if (!url) return;
+      if (!pairById(id)) return direct ? undefined : URL.revokeObjectURL(url);
+      patchImg(id, side, { previewUrl: url });
+    });
+  }
+
+  onMount(() => {
+    if (reuseItems.length === 0) return;
+    addReused(reuseItems);
+    reuseItems = [];
+  });
+
   function useCreated(option: EditImageOption, prompt: string, workflowId: string) {
     const pair = createId === null ? undefined : pairById(createId);
     if (!pair) return;
@@ -309,7 +355,13 @@
   const drop = fileDrop((v) => (dragging = v), takeFiles);
 
   const sourceLabel = (p: EditPair) =>
-    p.source === 'zip' ? (p.sourceName ?? 'Imported zip') : p.source === 'gen' ? 'Generator' : 'Uploaded';
+    p.source === 'zip'
+      ? (p.sourceName ?? 'Imported zip')
+      : p.source === 'gen'
+        ? 'Generator'
+        : p.source === 'reuse'
+          ? 'Earlier training'
+          : 'Uploaded';
 
   const needsAttention = (p: EditPair) => {
     const problem = pairProblem(p);
@@ -331,6 +383,8 @@
     if (uploads) out.push({ id: 'upload', label: `Uploaded · ${uploads}` });
     const gens = pairs.filter((p) => p.source === 'gen').length;
     if (gens) out.push({ id: 'gen', label: `Generator · ${gens}` });
+    const reused = pairs.filter((p) => p.source === 'reuse').length;
+    if (reused) out.push({ id: 'reuse', label: `Earlier training · ${reused}` });
     return out;
   });
   // A filter whose last pair went away falls back to everything rather than an empty view.

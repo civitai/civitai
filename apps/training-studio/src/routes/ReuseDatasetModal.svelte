@@ -3,7 +3,7 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import type { TrainingRow } from '$lib/data/trainingRows';
   import type { Media } from '$lib/data/trainingModels';
-  import { toReuseItems } from '$lib/reuse';
+  import { isPairDataset, toReuseItems } from '$lib/reuse';
 
   // Emits items in addFromBlobs shape so the Data step can seed them with no re-upload.
   let {
@@ -42,6 +42,10 @@
       const dataset = await backend().getRunDataset(row.workflowId);
       if (dataset.length === 0) {
         error = "That run's dataset can't be reused (no per-image blobs).";
+        return;
+      }
+      if (isPairDataset(dataset)) {
+        error = 'That run trained on edit pairs — use Train again on its page with an Image edit model.';
         return;
       }
       onReuse(
