@@ -253,7 +253,7 @@ function TagPicker({
               ['Enter', handleSubmit],
               ['ArrowUp', handleUp],
               ['ArrowDown', handleDown],
-              ['Escape', handleClose],
+              ['esc', handleClose],
             ])}
             autoFocus
           />
@@ -285,9 +285,7 @@ function TagPicker({
           {showEmptyState ? (
             <Stack gap={4} px="sm" py="md" align="center" ta="center">
               <Text size="sm" c="dimmed">
-                {trimmedQuery.length
-                  ? `No tags match “${trimmedQuery}”.`
-                  : 'No trending tags yet.'}
+                {trimmedQuery.length ? `No tags match “${trimmedQuery}”.` : 'No trending tags yet.'}
               </Text>
               {trimmedQuery.length > 0 && (
                 <Text size="xs" c="dimmed">
@@ -312,9 +310,7 @@ function TagPicker({
               >
                 <Group gap={4}>
                   <Text size="sm">{tag.name}</Text>
-                  {tag.isCategory && (
-                    <IconStar size={12} className={classes.categoryIcon} />
-                  )}
+                  {tag.isCategory && <IconStar size={12} className={classes.categoryIcon} />}
                 </Group>
               </Group>
             ))}
