@@ -1,9 +1,12 @@
 -- App Blocks document store: an index on `appdata.usage_user (user_id)`. MANUAL-APPLY migration.
 --
+-- OPTIONAL: apply when usage_user grows; not required for correctness. While the table is a
+--   few pages, a scan of it costs about what the index would.
+--
 -- TARGET DATABASE: the App Blocks datastore, the same one
 --   `20261013120000_appdata_document_store.sql` was applied to (NOT the main civitai
 --   database). Apply it by hand (psql) as the role that owns the `appdata` tables, once per
---   environment. Nothing applies this automatically.
+--   environment, once it is worth it (see OPTIONAL). Nothing applies this automatically.
 --
 -- WHY: the account-settings "App storage" list reads one user's usage rows across apps
 --   (`SQL_VIEWER_PROD_USAGE` in `doc-store.ts`), keyed on `user_id`. The table's primary key is

@@ -8,7 +8,12 @@ import type {
   MyAppStorage,
   MyAppStorageApp,
 } from '~/server/services/apps/doc-store-viewer-usage.service';
-import { isNearStorageLimit, storagePercent } from '~/shared/utils/app-storage-usage';
+import {
+  clearableDocs,
+  isNearStorageLimit,
+  keptStorageNote,
+  storagePercent,
+} from '~/shared/utils/app-storage-usage';
 import type { ViewerStorageLimits } from '~/shared/utils/app-storage-usage';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
@@ -24,7 +29,9 @@ import { trpc } from '~/utils/trpc';
  *
  * Emptying deletes the viewer's PRIVATE data in that app. What they posted for other people to
  * see (shared documents they authored) is only deleted when they tick the second option in the
- * confirmation; counters they started and their votes on other people's posts always stay.
+ * confirmation; counters they started, their posts moderation hid and their votes on other
+ * people's posts always stay. The row and the confirmation say what stays (`holdings`, from the
+ * listing), and Empty is disabled on a row with nothing it could remove.
  */
 
 function barColor(pct: number): string {
@@ -48,6 +55,7 @@ export function AppStorageRow({
   const bytesPct = storagePercent(app.usage.bytes, limits.userBytes);
   const docsPct = storagePercent(app.usage.docs, limits.userDocs);
   const near = isNearStorageLimit(app.usage, limits);
+  const kept = keptStorageNote(app.holdings);
   return (
     <Paper withBorder p="md" radius="md" data-testid={`app-storage-row-${app.appBlockId}`}>
       <Stack gap="xs">
@@ -67,6 +75,7 @@ export function AppStorageRow({
             variant="subtle"
             color="red"
             loading={emptying}
+            disabled={clearableDocs(app.holdings) === 0}
             onClick={() => onEmpty(app)}
           >
             Empty
@@ -89,35 +98,55 @@ export function AppStorageRow({
               data-testid={`app-storage-bar-${app.appBlockId}`}
             />
           </Progress.Root>
+          {kept && (
+            <Text size="xs" c="dimmed" data-testid={`app-storage-kept-${app.appBlockId}`}>
+              {kept}
+            </Text>
+          )}
         </Stack>
       </Stack>
     </Paper>
   );
 }
 
-function EmptyConfirmBody({
-  appName,
+export function EmptyConfirmBody({
+  app,
   onIncludeSharedChange,
 }: {
-  appName: string;
+  app: MyAppStorageApp;
   onIncludeSharedChange: (value: boolean) => void;
 }) {
   const [includeShared, setIncludeShared] = useState(false);
+  const appName = app.name ?? 'this removed app';
+  const kept = keptStorageNote(app.holdings);
   return (
     <Stack gap="sm">
-      <Text size="sm">
-        This permanently deletes your private data in <strong>{appName}</strong>: settings, drafts
-        and anything else only you can see. It cannot be undone.
-      </Text>
-      <Checkbox
-        label="Also delete what I posted in this app for other people to see"
-        description="Your posts there disappear for everyone, along with the votes on them. Counters you started, and your votes on other people's posts, stay."
-        checked={includeShared}
-        onChange={(e) => {
-          setIncludeShared(e.currentTarget.checked);
-          onIncludeSharedChange(e.currentTarget.checked);
-        }}
-      />
+      {app.holdings.private.docs > 0 ? (
+        <Text size="sm">
+          This permanently deletes your private data in <strong>{appName}</strong>: settings, drafts
+          and anything else only you can see. It cannot be undone.
+        </Text>
+      ) : (
+        <Text size="sm">
+          You have no private data in <strong>{appName}</strong>.
+        </Text>
+      )}
+      {app.holdings.shared.docs > 0 && (
+        <Checkbox
+          label="Also delete what I posted in this app for other people to see"
+          description="Your posts there disappear for everyone, along with the votes on them. Your votes on other people's posts are kept."
+          checked={includeShared}
+          onChange={(e) => {
+            setIncludeShared(e.currentTarget.checked);
+            onIncludeSharedChange(e.currentTarget.checked);
+          }}
+        />
+      )}
+      {kept && (
+        <Text size="sm" c="dimmed">
+          {kept} Emptying does not remove them.
+        </Text>
+      )}
     </Stack>
   );
 }
@@ -185,13 +214,12 @@ export function AppStorageCard({ flat }: { flat?: boolean } = {}) {
   });
 
   const handleEmpty = (app: MyAppStorageApp) => {
-    const appName = app.name ?? 'this removed app';
     includeSharedRef.current = false;
     openConfirmModal({
       title: 'Empty your app data?',
       children: (
         <EmptyConfirmBody
-          appName={appName}
+          app={app}
           onIncludeSharedChange={(value) => {
             includeSharedRef.current = value;
           }}

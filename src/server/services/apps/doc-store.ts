@@ -87,6 +87,7 @@ import { escapeLiteral } from 'pg';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
+import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
   AccountWipeNamespaceResult,
   AccountWipeResult,
@@ -782,8 +783,8 @@ const SQL_WIPE_USAGE_USER = `DELETE FROM appdata.usage_user u
 // One user's PRODUCTION usage rows, in app order after a keyset cursor: the apps the user holds
 // documents in, for their account settings. The account-wipe enumeration's shape (read only,
 // `usage_user` only, keyed on the user) in the same `accountWipeTx`, whose policy admits that
-// one user's rows and nothing else. `usage_user_user_idx` (migration 20261102120000) serves the
-// key; every document a user owns is charged to this row (`assertUsageConsistent`), so a row
+// one user's rows and nothing else. `usage_user_user_idx` (the optional migration 20261102120000)
+// serves the key once applied; every document a user owns is charged to this row (`assertUsageConsistent`), so a row
 // with no documents holds none. `'prod'` is `PUBLISHED_NS`. $1 user id, $2 app id of the cursor
 // (exclusive), $3 limit.
 const SQL_VIEWER_PROD_USAGE = `SELECT vu.app_id, vu.bytes, vu.docs FROM appdata.usage_user vu
@@ -807,6 +808,23 @@ const SQL_EMPTY_LOCK_AUTHORED = `SELECT d.coll, d.key, d.size_bytes, d.author_ui
     AND d.author_uid = $3::int AND ${VISIBLE}
   ORDER BY d.coll, d.key
   FOR UPDATE OF d`;
+// What one viewer's usage in one (app, ns) is made of, by what an empty does with it, in an
+// ordinary scoped transaction. $1 app, $2 ns, $3 the viewer. Exactly the documents charged to
+// their usage row (`assertUsageConsistent`): their private documents (`private`, every empty
+// deletes them), the shared documents they authored (`shared` when visible, deleted on request;
+// `hidden` when moderation hid them, which an empty leaves) and the counter documents their
+// increment created (`counter`, which an empty leaves).
+const SQL_VIEWER_HOLDINGS = `SELECT
+    CASE WHEN d.scope_uid = $3::int THEN 'private'
+      WHEN d.author_kind = 'counter' THEN 'counter'
+      WHEN ${VISIBLE} THEN 'shared'
+      ELSE 'hidden' END AS part,
+    count(*)::int AS docs, COALESCE(sum(d.size_bytes), 0)::bigint AS bytes
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2
+    AND (d.scope_uid = $3::int
+      OR (d.scope_uid = 0 AND d.author_kind IN ('user', 'counter') AND d.author_uid = $3::int))
+  GROUP BY 1`;
 // One tombstone per deleted key, all at one seq. $1 app, $2 ns, $3 scope_uid, $4 seq,
 // $5 collections, $6 keys (parallel arrays).
 const SQL_TOMBSTONE_MANY = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, scope_uid, key, seq)
@@ -1059,8 +1077,8 @@ export type DocStoreLookup = ReturnType<typeof createDocStoreLookup>;
 
 /**
  * VIEWER DATA — a signed-in user's own production data across apps, for their account settings:
- * the apps they hold documents in (`listViewerUsage`) and emptying one of them
- * (`emptyViewerData`). A separate object because the listing reads one user's usage rows in
+ * the apps they hold documents in (`listViewerUsage`), what an empty would do with each app's
+ * figure (`viewerHoldings`) and emptying one of them (`emptyViewerData`). A separate object because the listing reads one user's usage rows in
  * every app (the account-wipe enumeration's setting), which nothing holding the block-token
  * routes' store may reach. The caller passes the SESSION user's id, never request input. Only
  * `doc-store-viewer-data.instance.ts` builds one in production; its importers are pinned by
@@ -1073,6 +1091,13 @@ export type DocStoreViewerData = ReturnType<typeof createDocStoreViewerData>;
 
 /** One app's stored production usage for one user (`listViewerUsage`). */
 export type ViewerAppUsage = { appId: string; bytes: number; docs: number };
+
+/**
+ * One user's figure in one app (`viewerHoldings`), split by what `emptyViewerData` does with it:
+ * `private` always goes, `shared` (visible posts they authored) goes when asked for, `hidden`
+ * (their posts moderation hid) and `counters` (counter documents their increment created) stay.
+ */
+export type ViewerAppHoldings = StorageHoldings;
 
 /** What `emptyViewerData` deleted. */
 export type ViewerDataEmptyResult = {
@@ -1981,6 +2006,30 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
+   * What `userId`'s production figure in one app is made of, by what `emptyViewerData` does with
+   * each part (`ViewerAppHoldings`). One aggregate read in a scoped transaction; the parts sum to
+   * the stored usage (`listViewerUsage`).
+   */
+  async function viewerHoldings(userId: number, appId: string): Promise<ViewerAppHoldings> {
+    assertWipeUserId(userId);
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: userId };
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_VIEWER_HOLDINGS, [appId, PUBLISHED_NS, userId])).rows
+    );
+    const part = (name: string) => {
+      const r = rows.find((row) => row.part === name);
+      return { bytes: Number(r?.bytes ?? 0), docs: Number(r?.docs ?? 0) };
+    };
+    return {
+      private: part('private'),
+      shared: part('shared'),
+      hidden: part('hidden'),
+      counters: part('counter'),
+    };
+  }
+
+  /**
    * Empty what one viewer holds in one app's PRODUCTION namespace, in ONE scoped transaction:
    *   - always: their private documents (index rows with them), each refunded to their own usage
    *     (the app's never carried them, `appDelta`) and tombstoned, as `remove` does;
@@ -2074,7 +2123,7 @@ function buildDocStore(deps: DocStoreDeps) {
     lookup: { findSharedByKey },
     moderation: createModeration({ withTx, charge }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount },
-    viewerData: { listViewerUsage, emptyViewerData, limits },
+    viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },
   };
 }
 

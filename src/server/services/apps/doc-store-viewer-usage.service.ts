@@ -9,9 +9,12 @@
 // refuses: it counts the user's private documents, the shared documents they authored, and the
 // counter documents their increment created.
 //
-// The cross-app listing is ONE indexed read of the user's own usage rows
-// (`DocStoreViewerData.listViewerUsage`) plus one read of the listings' names, never a store
-// call per app. Emptying runs the store's own delete accounting (`emptyViewerData`).
+// The cross-app listing is one indexed read of the user's own usage rows
+// (`DocStoreViewerData.listViewerUsage`), one read of the listings' names, and per app the user
+// holds data in, one aggregate read splitting that figure by what "Empty" does with it
+// (`viewerHoldings`): counters they started and posts moderation hid stay, so a row made only of
+// those has nothing to empty and says so. Emptying runs the store's own delete accounting
+// (`emptyViewerData`).
 import { dbRead } from '~/server/db/client';
 import { PUBLISHED_NS } from '~/server/services/apps/doc-store';
 import type {
@@ -22,7 +25,11 @@ import type {
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
 import { getDocStoreViewerData } from '~/server/services/apps/doc-store-viewer-data.instance';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
-import type { StorageFigure, ViewerStorageLimits } from '~/shared/utils/app-storage-usage';
+import type {
+  StorageFigure,
+  StorageHoldings,
+  ViewerStorageLimits,
+} from '~/shared/utils/app-storage-usage';
 
 export type MyAppStorageApp = {
   appBlockId: string;
@@ -31,6 +38,8 @@ export type MyAppStorageApp = {
   /** The app's slug (`AppBlock.blockId`), or null for a deleted app. */
   slug: string | null;
   usage: StorageFigure;
+  /** `usage` by what Empty does with it: what it removes and what stays. */
+  holdings: StorageHoldings;
 };
 
 export type MyAppStorage =
@@ -77,15 +86,18 @@ export async function getMyAppStorage(
   if (rows.length === 0) return { status: 'ok', limits, apps: [] };
 
   const byId = new Map((await lookup(rows.map((r) => r.appId))).map((a) => [a.id, a]));
-  const apps = rows.map((r): MyAppStorageApp => {
+  const apps: MyAppStorageApp[] = [];
+  // One app at a time: a handful of rows per user, and never more than one pooled connection.
+  for (const r of rows) {
     const app = byId.get(r.appId);
-    return {
+    apps.push({
       appBlockId: r.appId,
       name: app ? app.listingName ?? app.blockId : null,
       slug: app?.blockId ?? null,
       usage: { bytes: r.bytes, docs: r.docs },
-    };
-  });
+      holdings: await viewerData.viewerHoldings(userId, r.appId),
+    });
+  }
   // Named apps by name, then the deleted ones; ties by id so the order is stable.
   apps.sort(
     (a, b) =>

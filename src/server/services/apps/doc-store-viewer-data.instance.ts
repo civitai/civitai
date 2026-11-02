@@ -1,6 +1,6 @@
-// The process's document-store VIEWER DATA object (`listViewerUsage`, `emptyViewerData`), on the
-// same least-privilege pool as the viewer store but as a separate object, so nothing holding the
-// block-token store can reach a user's rows across apps. Imported only by the account-settings
+// The process's document-store VIEWER DATA object (`listViewerUsage`, `viewerHoldings`,
+// `emptyViewerData`), on the same least-privilege pool as the viewer store but as a separate
+// object, so nothing holding the block-token store can reach a user's rows across apps. Imported only by the account-settings
 // service (`doc-store-viewer-usage.service.ts`); pinned by
 // `__tests__/doc-store-viewer-data.ledger.test.ts`.
 import { appdataDb } from '~/server/db/appdataDb';
