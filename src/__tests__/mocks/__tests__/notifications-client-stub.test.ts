@@ -28,3 +28,10 @@ describe('no unit test can reach the notifications service', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('an un-mocked notifications call', () => {
+  // setup.ts's afterEach must turn a swallowed call into a failure; `fails` inverts that.
+  it.fails('fails the test even when the caller swallows the error', async () => {
+    await notifications.createNotification(row).catch(() => undefined);
+  });
+});

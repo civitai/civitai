@@ -296,6 +296,9 @@ const unitTestConfig = {
   globals: true,
   environment: 'node' as const,
   exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
+  // Stands in for a shell exporting real notifications credentials, so the guard on setup.ts
+  // deleting them (notifications-client-stub.test.ts) can fail in CI too.
+  env: { NOTIFICATIONS_ENDPOINT: 'http://127.0.0.1:9', NOTIFICATIONS_TOKEN: 'unit-test-sentinel' },
   // The fs tracker records which files each test reads, for the result cache. It is loaded only
   // when the queue turned the cache on (CIVITAI_TEST_CACHE) and never in CI — see scripts/test-cache.
   // Tracker FIRST, so reads made while the main setup file loads are recorded too.

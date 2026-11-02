@@ -1,5 +1,5 @@
 import promClient from 'prom-client';
-import { afterEach, vi } from 'vitest';
+import { afterAll, afterEach, vi } from 'vitest';
 import { getTestRsaKeyPair } from './rsa-test-key';
 import { dbMock } from './mocks/db.mock';
 import { redisMock } from './mocks/redis.mock';
@@ -177,10 +177,13 @@ vi.mock('~/server/notifications/client', () => ({
   notifications: createNotificationsClientStub(),
 }));
 // Callers such as createNotification swallow client errors, so the rejection alone is silent.
-afterEach(() => {
+// afterAll too: a call from a file's own afterAll has no afterEach after it.
+const failOnUnmockedNotificationCalls = () => {
   const calls = takeUnmockedNotificationCalls();
   if (calls.length) throw new UnmockedNotificationsCallError(calls.join('(), '));
-});
+};
+afterEach(failOnUnmockedNotificationCalls);
+afterAll(failOnUnmockedNotificationCalls);
 
 // The test env has no Flipt, and from 2026-11-10 an unanswered `app-blocks-legacy-stores-removed`
 // removes the legacy App Blocks stores (legacy-store-shutdown.ts). Pin it explicitly off so the
