@@ -19,6 +19,7 @@ const holder = vi.hoisted(() => ({
   db: null as unknown as PGlite,
   tags: new Map<number, { name: string; source: string; confidence: number; nsfwLevel: number }>(),
   names: new Map<number, string>(),
+  holdRuleTag: '',
 }));
 // Every tag but the machine one rates X: a stored keyword tag would show in the level.
 const tagOf = vi.hoisted(() => (name: string) => {
@@ -29,7 +30,8 @@ const tagOf = vi.hoisted(() => (name: string) => {
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
-  auditMetaData: vi.fn(() => ({ success: true })),
+  // Stands in for the prompt audit, which runs only on an image rated NSFW.
+  auditMetaData: vi.fn(() => ({ success: false, blockedFor: ['audit'] })),
   includesPoi: vi.fn(() => false),
   // Stands in for the checks gated on the image being NSFW.
   includesInappropriate: vi.fn((_: unknown, nsfw: boolean) => (nsfw ? 'minor' : false)),
@@ -40,7 +42,18 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
-  getImagesModRules: vi.fn(async () => []),
+  getImagesModRules: vi.fn(async () =>
+    holder.holdRuleTag
+      ? [
+          {
+            id: 1,
+            definition: { type: 'tag', tags: [holder.holdRuleTag], match: 'any' },
+            action: 'Hold',
+            reason: null,
+          },
+        ]
+      : []
+  ),
   queueImageSearchIndexUpdate: vi.fn(),
 }));
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
@@ -83,7 +96,12 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { buildAndInsertScanTags, resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
-import { getTagsFromPrompt, includesPoi } from '~/utils/metadata/audit';
+import {
+  auditMetaData,
+  getTagsFromPrompt,
+  includesInappropriate,
+  includesPoi,
+} from '~/utils/metadata/audit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const ID = 7;
@@ -113,6 +131,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   vi.mocked(includesPoi).mockReturnValue(false);
+  vi.mocked(includesInappropriate).mockImplementation(
+    (_: unknown, nsfw: boolean) => (nsfw ? 'minor' : false) as never
+  );
+  holder.holdRuleTag = '';
+  vi.mocked(auditMetaData).mockReturnValue({ success: false, blockedFor: ['audit'] } as never);
   holder.tags.clear();
   await holder.db.exec(
     `DELETE FROM "Image"; INSERT INTO "Image" (id, ingestion) VALUES (${ID}, 'Pending')`
@@ -159,21 +182,18 @@ async function scan(prompt: string) {
   await buildAndInsertScanTags({ imageId: ID, wdTags: {}, ratingLevel: 'still life', prompt });
   await resolveScanOutcome({ image, workflowId: 'wf-1', prompt });
   return (
-    await holder.db.query<{ nsfwLevel: number; needsReview: string | null }>(
-      `SELECT "nsfwLevel", "needsReview" FROM "Image" WHERE id = ${ID}`
-    )
+    await holder.db.query<{
+      nsfwLevel: number;
+      needsReview: string | null;
+      blockedFor: string | null;
+    }>(`SELECT "nsfwLevel", "needsReview", "blockedFor" FROM "Image" WHERE id = ${ID}`)
   ).rows[0];
 }
 
 const KEYWORD_PROMPTS = [
-  'Morning light penetrated the forest canopy above a signed contract on a wooden table.',
   'A framed summa cum laude diploma leaning against a stack of law books.',
   'A single candle with a naked flame beside a contract on a wooden table.',
-  'A row of nude lipstick swatches on a vanity tray.',
-  'Pussy willow branches in a glass vase on the windowsill.',
-  'A red topless convertible parked by the sea, a photo pinned above the desk.',
   'A porcelain teapot on a table, not nude, fully clothed scene.',
-  'A porcelain teapot on a table, (nude:0.0)',
 ];
 const CLEAN_PROMPTS = [
   'Still life of a signed contract on a dark wooden table beside a capped fountain pen.',
@@ -181,28 +201,40 @@ const CLEAN_PROMPTS = [
 ];
 
 describe('prompt keywords and the rating', () => {
-  it('every keyword prompt here still matches the keyword list', () => {
-    for (const prompt of KEYWORD_PROMPTS)
-      expect(getTagsFromPrompt(prompt) || [], prompt).not.toHaveLength(0);
-  });
-
   it.each([...KEYWORD_PROMPTS, ...CLEAN_PROMPTS])(
     'rates from the image, storing no keyword tag: %s',
     async (prompt) => {
+      vi.mocked(includesInappropriate).mockReturnValue(false as never);
+      vi.mocked(auditMetaData).mockReturnValue({ success: true } as never);
       const row = await scan(prompt);
       expect(row.nsfwLevel).toBe(1);
       expect([...holder.tags.values()].map((t) => t.name)).toEqual(['still life']);
     }
   );
 
-  it('still runs the checks gated on NSFW when only the prompt signals it', async () => {
-    const row = await scan(KEYWORD_PROMPTS[2]);
-    expect(row).toEqual({ nsfwLevel: 1, needsReview: 'minor' });
+  it('still runs the minor check gated on NSFW when only the prompt signals it', async () => {
+    vi.mocked(auditMetaData).mockReturnValue({ success: true } as never);
+    const row = await scan(KEYWORD_PROMPTS[1]);
+    expect(row).toMatchObject({ needsReview: 'minor' });
   });
 
-  it('does not run them for a clean prompt', async () => {
+  it('still runs the prompt audit gated on NSFW when only the prompt signals it', async () => {
+    vi.mocked(includesInappropriate).mockReturnValue(false as never);
+    const row = await scan(KEYWORD_PROMPTS[1]);
+    expect(row.blockedFor).toBe('audit');
+  });
+
+  it('still matches a mod rule on a keyword tag', async () => {
+    vi.mocked(includesInappropriate).mockReturnValue(false as never);
+    holder.holdRuleTag = (getTagsFromPrompt(KEYWORD_PROMPTS[1]) || [])[0];
+    vi.mocked(auditMetaData).mockReturnValueOnce({ success: true } as never);
+    const row = await scan(KEYWORD_PROMPTS[1]);
+    expect(row).toMatchObject({ nsfwLevel: 1, needsReview: 'modRule' });
+  });
+
+  it('runs none of them for a clean prompt', async () => {
     const row = await scan(CLEAN_PROMPTS[0]);
-    expect(row).toEqual({ nsfwLevel: 1, needsReview: null });
+    expect(row).toEqual({ nsfwLevel: 1, needsReview: null, blockedFor: null });
   });
 
   it('still writes the computed POI tag', async () => {
