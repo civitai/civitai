@@ -2,7 +2,8 @@ import type { Prisma } from '@prisma/client';
 
 export { ITEM_DEFINITION_STATUS, ITEM_TYPE, type ItemType } from '@civitai/shared/mystery-box';
 
-const USER_HOLDER = 'user';
+/** `Item.holderType` for an item a user holds. */
+export const USER_HOLDER = 'user';
 
 /**
  * Grants one held item to a user. `sourceKey` names what granted it (a purchase claim's transaction

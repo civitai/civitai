@@ -12,6 +12,8 @@ import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider
 import '~/styles/globals.css';
 
 const features = { stickerPlacement: false, imageCardInfoButton: false, imageGeneration: false };
+// The real badge renders null for an image with no stickers; the tip-row tests flip this.
+const stickerBadge = { renders: true };
 
 // Both provider mocks spread the real module. The card's import graph reaches other exports of
 // each (`useOptionalFeatureFlags` via the impression hook, `useAutoplayGifs` via the nameplate),
@@ -55,7 +57,12 @@ vi.mock('~/components/LoginPopover/LoginPopover', () => ({
   LoginPopover: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 vi.mock('~/components/Sticker/StickerPlacementCardBadge', () => ({
-  StickerPlacementCardBadge: () => <button data-testid="sticker-badge">stickers</button>,
+  StickerPlacementCardBadge: () =>
+    stickerBadge.renders ? (
+      <button data-testid="sticker-badge" style={{ height: 26 }}>
+        stickers
+      </button>
+    ) : null,
 }));
 vi.mock('~/components/Sticker/CardStickerOverlay', () => ({ CardStickerOverlay: () => null }));
 vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
@@ -73,11 +80,9 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 // 336px, and 296px in the three narrower rules).
 const CARD_WIDTH = 336;
 const NARROW_CARD_WIDTH = 296;
-// Wide enough for the reactions and the Buzz tip to share a row at four-digit counts.
 const WIDE_CARD_WIDTH = 400;
-const SINGLE_ROW_MAX_HEIGHT = 40;
 
-function imageData(counts: number) {
+function imageData(counts: number, poi = false) {
   return {
     id: 1,
     url: LOADABLE_IMAGE_DATA_URI,
@@ -88,6 +93,7 @@ function imageData(counts: number) {
     width: 700,
     height: 900,
     hasMeta: true,
+    poi,
     reactions: [],
     user: { id: 2, username: 'someone' },
     stats: {
@@ -103,11 +109,11 @@ function imageData(counts: number) {
 
 const onCardClick = vi.fn();
 
-async function renderCard(counts: number, width: number = CARD_WIDTH) {
+async function renderCard(counts: number, width: number = CARD_WIDTH, poi = false) {
   renderWithProviders(
     <IntersectionObserverProvider>
       <div data-testid="card-root" style={{ width }} onClick={onCardClick}>
-        <ImageCard data={imageData(counts)} />
+        <ImageCard data={imageData(counts, poi)} />
       </div>
     </IntersectionObserverProvider>
   );
@@ -120,14 +126,9 @@ function resizeCard(width: number) {
   (document.querySelector('[data-testid="card-root"]') as HTMLElement).style.width = `${width}px`;
 }
 
-function actionRowHeight() {
-  const bar = document.body.querySelector('[aria-label$="reaction"]')!.parentElement!;
-  return bar.parentElement!.getBoundingClientRect().height;
-}
-
 function reactionBarOverflow() {
   const bar = document.body.querySelector('[aria-label$="reaction"]')!.parentElement!;
-  const card = bar.parentElement!.parentElement!.parentElement!;
+  const card = document.querySelector('[data-testid="card-root"]')!;
   return bar.getBoundingClientRect().right - card.getBoundingClientRect().right;
 }
 
@@ -144,6 +145,7 @@ function infoButtons() {
 afterEach(() => {
   features.imageCardInfoButton = false;
   features.stickerPlacement = false;
+  stickerBadge.renders = true;
 });
 
 describe('ImageCard info button', () => {
@@ -217,41 +219,130 @@ describe('ImageCard action row at four-digit reaction counts', () => {
   });
 });
 
-// The Buzz tip is its own element in the action row, not part of the reaction bar, so on a narrow
-// card it wraps to the line under the reactions, beside the sticker badge.
+// The Buzz tip is its own element in the action row, not part of the reaction bar. It always sits
+// on the line under the reactions, beside the sticker badge, so cards in one grid line up.
 describe('ImageCard Buzz tip placement', () => {
-  function tipAndSticker() {
-    const tip = document.body.querySelector('.tabler-icon-bolt')!.getBoundingClientRect();
-    const sticker = document.body
-      .querySelector('[data-testid="sticker-badge"]')!
-      .getBoundingClientRect();
+  const TIP_ROW_WIDTHS = [NARROW_CARD_WIDTH, 420];
+
+  function rects() {
+    const bolt = document.body.querySelector('.tabler-icon-bolt');
     const bar = document.body
       .querySelector('[aria-label$="reaction"]')!
       .parentElement!.getBoundingClientRect();
-    return { tip, sticker, bar };
+    const sticker = document.body
+      .querySelector('[data-testid="sticker-badge"]')
+      ?.getBoundingClientRect();
+    const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
+    return { tip: bolt?.getBoundingClientRect(), sticker, bar, card };
   }
 
-  test('wraps under the reactions, on the sticker badge line, on a narrow card', async () => {
-    features.stickerPlacement = true;
-    features.imageCardInfoButton = true;
-    await renderCard(1455, NARROW_CARD_WIDTH);
-    const { tip, sticker, bar } = tipAndSticker();
-    const info = infoButtons()[0].getBoundingClientRect();
-    expect(Math.abs(info.top + info.height / 2 - (tip.top + tip.height / 2))).toBeLessThan(8);
+  test.each(TIP_ROW_WIDTHS)(
+    'is under the reactions at %ipx, whatever the count length',
+    async (width) => {
+      for (const counts of [7, 1455, 12345]) {
+        await renderCard(counts, width);
+        const { tip, bar } = rects();
+        expect(tip!.top).toBeGreaterThanOrEqual(bar.bottom);
+        expect(Math.abs(tip!.left - bar.left)).toBeLessThan(8);
+        await cleanup();
+      }
+    }
+  );
 
-    expect(tip.top).toBeGreaterThanOrEqual(bar.bottom);
-    expect(Math.abs(tip.top + tip.height / 2 - (sticker.top + sticker.height / 2))).toBeLessThan(8);
-    expect(sticker.left).toBeGreaterThan(tip.right);
+  test.each(TIP_ROW_WIDTHS)(
+    'shares its line with the sticker badge and info button at %ipx',
+    async (width) => {
+      features.stickerPlacement = true;
+      features.imageCardInfoButton = true;
+      await renderCard(7, width);
+      const { tip, sticker, bar } = rects();
+      const info = infoButtons()[0].getBoundingClientRect();
+
+      expect(tip!.top).toBeGreaterThanOrEqual(bar.bottom);
+      expect(
+        Math.abs(tip!.top + tip!.height / 2 - (sticker!.top + sticker!.height / 2))
+      ).toBeLessThan(8);
+      expect(Math.abs(info.top + info.height / 2 - (tip!.top + tip!.height / 2))).toBeLessThan(8);
+      expect(sticker!.left).toBeGreaterThan(tip!.right);
+    }
+  );
+
+  // Reported 2026-11-02: with a sticker badge on one card and not its neighbour, the reactions sat
+  // at different heights across a grid row.
+  test.each([NARROW_CARD_WIDTH, CARD_WIDTH, 380, 420])(
+    'keeps the reactions the same distance from the card bottom with or without a sticker badge at %ipx',
+    async (width) => {
+      features.stickerPlacement = true;
+      for (const counts of [7, 1455, 12345]) {
+        stickerBadge.renders = true;
+        await renderCard(counts, width);
+        const withSticker = rects();
+        expect(withSticker.sticker).toBeDefined();
+        await cleanup();
+
+        stickerBadge.renders = false;
+        await renderCard(counts, width);
+        const without = rects();
+        expect(without.sticker).toBeUndefined();
+        expect(without.card.bottom - without.bar.bottom).toBeCloseTo(
+          withSticker.card.bottom - withSticker.bar.bottom,
+          0
+        );
+        await cleanup();
+      }
+    }
+  );
+
+  // Content-sized and left-aligned where the counts fit in full; the whole row only where they
+  // abbreviate, as before the tip moved.
+  test('the reaction bar fills the row only where the counts abbreviate', async () => {
+    await renderCard(7, 420);
+    const wide = rects();
+    expect(wide.bar.width).toBeLessThan(wide.card.width - 100);
+    await cleanup();
+
+    await renderCard(7, NARROW_CARD_WIDTH);
+    const narrow = rects();
+    expect(narrow.bar.width).toBeGreaterThan(narrow.card.width - 24);
   });
 
-  test('wraps under the reactions at small counts too, so the layout does not jump between cards', async () => {
-    await renderCard(7, NARROW_CARD_WIDTH);
-    const tip = document.body.querySelector('.tabler-icon-bolt')!.getBoundingClientRect();
-    const bar = document.body
-      .querySelector('[aria-label$="reaction"]')!
-      .parentElement!.getBoundingClientRect();
+  test('a card with no tip, no stickers and no info button has no second line', async () => {
+    features.stickerPlacement = true;
+    stickerBadge.renders = false;
+    await renderCard(7, NARROW_CARD_WIDTH, true);
+    const tipRow = document.body.querySelector('[aria-label$="reaction"]')!.parentElement!
+      .parentElement!.nextElementSibling as HTMLElement;
+    const bar = document.body.querySelector('[aria-label$="reaction"]')!.parentElement!;
+    const gapBelowBar = () =>
+      document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect().bottom -
+      bar.getBoundingClientRect().bottom;
+    const before = gapBelowBar();
 
-    expect(tip.top).toBeGreaterThanOrEqual(bar.bottom);
+    expect(document.body.querySelector('.tabler-icon-bolt')).toBeNull();
+    expect(getComputedStyle(tipRow).display).toBe('none');
+    expect(tipRow.getBoundingClientRect().height).toBe(0);
+    tipRow.remove();
+    expect(gapBelowBar()).toBe(before);
+  });
+
+  test('a card with only the info button keeps it on the second line', async () => {
+    features.imageCardInfoButton = true;
+    stickerBadge.renders = false;
+    await renderCard(7, NARROW_CARD_WIDTH, true);
+    const { bar, card } = rects();
+    const info = infoButtons()[0].getBoundingClientRect();
+
+    expect(info.top).toBeGreaterThanOrEqual(bar.bottom);
+    expect(info.right).toBeLessThanOrEqual(card.right);
+  });
+
+  test('a card with only a sticker badge keeps the badge on the second line', async () => {
+    features.stickerPlacement = true;
+    await renderCard(7, NARROW_CARD_WIDTH, true);
+    const { sticker, bar, card } = rects();
+
+    expect(sticker!.top).toBeGreaterThanOrEqual(bar.bottom);
+    expect(sticker!.right).toBeLessThanOrEqual(card.right);
   });
 
   // Outside the reaction bar the tip lost the bar's click guard; without its own, a tap on the
@@ -265,16 +356,5 @@ describe('ImageCard Buzz tip placement', () => {
     );
 
     expect(onCardClick).not.toHaveBeenCalled();
-  });
-
-  test('sits beside the reactions on a card wide enough for both', async () => {
-    await renderCard(1455, WIDE_CARD_WIDTH);
-    const tip = document.body.querySelector('.tabler-icon-bolt')!.getBoundingClientRect();
-    const bar = document.body
-      .querySelector('[aria-label$="reaction"]')!
-      .parentElement!.getBoundingClientRect();
-
-    expect(actionRowHeight()).toBeLessThan(SINGLE_ROW_MAX_HEIGHT);
-    expect(tip.left).toBeGreaterThanOrEqual(bar.right);
   });
 });

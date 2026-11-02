@@ -21,8 +21,9 @@ import {
   MOD_GRANT_SOURCE_PREFIX,
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
+import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { getBuzz } from './buzz';
-import { bustUserCosmeticCaches } from './cache';
+import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
 import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import { getModeratorDb } from './moderator-db';
@@ -239,6 +240,7 @@ export type ModEndpoint =
   | 'bounty-entry-file/clear-check'
   | 'bounty-entry-file/reblock-check'
   | 'bounty-poi/resolve-appeal'
+  | 'bounty-unpaid-award/resolve'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
@@ -632,8 +634,29 @@ export async function setMuted(input: {
 
   if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
 
-  // Without this the mute does not take effect until the user's session refreshes.
-  await invalidateUserSessions(input.userId);
+  // The main app's `afterAccountStandingChanged`, which this write cannot reach. The revoke comes
+  // last because the orchestrator re-validates against the session's standing.
+  const bustStanding = () =>
+    bustKeyBestEffort(
+      `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${input.userId}` as RedisKeyTemplateCache,
+      {
+        logName: 'account-standing.cache-bust-failed',
+        message: 'Could not drop the cached account standing after a mute',
+        details: { userId: input.userId },
+      }
+    );
+  await bustStanding();
+  try {
+    await invalidateUserSessions(input.userId);
+  } finally {
+    // Imported here: the orchestrator client does not load under the unit suites that import this
+    // file for its other actions.
+    const { revokeOrchestratorUserTokens } = await import('./orchestrator');
+    await revokeOrchestratorUserTokens(input.userId);
+    setTimeout(() => {
+      void bustStanding().finally(() => revokeOrchestratorUserTokens(input.userId));
+    }, ACCOUNT_STANDING_REBUST_MS).unref?.();
+  }
   await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);
   await recordUserActivity('Muted', input.userId, input.moderatorId);
   return { ok: true };

@@ -128,7 +128,7 @@ const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
  */
 const renderDraft = async (
   freeOffer: { instant: boolean } | null,
-  { ownerShare }: { ownerShare?: number } = {}
+  { ownerShare, maxScale, scale }: { ownerShare?: number; maxScale?: number; scale?: number } = {}
 ) => {
   renderWithProviders(
     // Positioned absolutely inside the media box in the app; a plain relative
@@ -137,11 +137,12 @@ const renderDraft = async (
     // box: the cluster has to be reachable, and none of this asserts geometry.
     <div style={{ position: 'relative', width: 380, height: 600 }}>
       <DraftSticker
-        draft={draft}
+        draft={scale == null ? draft : { ...draft, scale }}
         art={art}
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
         price={PRICE}
+        creatorMaxScale={maxScale ?? 0.25}
         freeOffer={freeOffer}
         ownerShare={ownerShare}
         ownerUsername="creator"
@@ -288,6 +289,26 @@ describe('what a draft sends when it is placed', () => {
       scale: draft.scale,
       rotation: draft.rotation,
     });
+  });
+});
+
+describe('the size a draft sends against the creator limit', () => {
+  const CAP = 0.22;
+
+  test('a rounding overshoot past the limit is sent as the limit', async () => {
+    await renderDraft({ instant: true }, { maxScale: CAP, scale: CAP + 2 ** -50 });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0].data.scale).toBe(CAP);
+  });
+
+  test('a draft really over the limit is sent unchanged, for the server to refuse', async () => {
+    await renderDraft({ instant: true }, { maxScale: CAP, scale: 0.25 });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0].data.scale).toBe(0.25);
   });
 });
 
@@ -448,6 +469,7 @@ describe('the control toolbar', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -562,6 +584,7 @@ describe('the duplicate control', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -645,6 +668,7 @@ describe('alt-dragging a draft', () => {
     renderWithProviders(
       <div data-drag-host style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -742,6 +766,7 @@ describe('the pack purchase key across one session', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={gated}
           // The gate is a prop now, decided across the drafts on the image
           // rather than frozen onto one of them — so a test that wants a gated
@@ -810,6 +835,7 @@ describe('the clearance reaches the element', () => {
     renderWithProviders(
       <div className="sticker-sized" style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={{ ...draft, rotation, y: 0.4 }}
           art={art}
           selected

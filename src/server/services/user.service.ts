@@ -492,7 +492,7 @@ export async function setUserMuted(
       updateSource: 'retool:unmute',
     });
     if (!result.released) throw new Error(`No user with id ${args.userId}`);
-    return result.user;
+    return { ...result.user, sessionInvalidated: true };
   }
 
   const user = await updateUserById({
@@ -504,9 +504,15 @@ export async function setUserMuted(
     },
     updateSource: 'retool:mute',
   });
-  const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(args.userId, 'moderation');
-  return user;
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  // Never throws from here: the mute has committed, and a caller that retries a toggle would undo it.
+  const sessionInvalidated = await afterAccountStandingChanged(args.userId, {
+    kind: 'invalidate',
+    caller: 'moderation',
+  });
+  return { ...user, sessionInvalidated };
 }
 
 /**

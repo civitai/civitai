@@ -89,37 +89,36 @@ function ImageCardActionRow({ data }: Props) {
   const hasMetaButton = features.imageCardInfoButton && data.hasMeta;
 
   return (
-    <div
-      className={clsx(cardClasses.actionRow, 'flex flex-wrap items-center gap-1')}
-      data-count-len={Math.max(countLength, 5)}
-    >
-      <Reactions
-        className={clsx(cardClasses.reactions, cardClasses.reactionsFill)}
-        entityId={data.id}
-        entityType="image"
-        reactions={data.reactions}
-        metricsUnknown={data.stats?.statsUnknown}
-        metrics={{
-          likeCount: data.stats?.likeCountAllTime,
-          dislikeCount: data.stats?.dislikeCountAllTime,
-          heartCount: data.stats?.heartCountAllTime,
-          laughCount: data.stats?.laughCountAllTime,
-          cryCount: data.stats?.cryCountAllTime,
-        }}
-        targetUserId={data.user.id}
-        abbreviate="container"
-        disableBuzzTip
-      />
-      {!data.poi && (
-        <ImageBuzzTip
+    <div className="flex flex-col">
+      <div className={cardClasses.actionRow} data-count-len={Math.max(countLength, 5)}>
+        <Reactions
+          className={clsx(cardClasses.reactions, cardClasses.reactionsFill)}
           entityId={data.id}
-          targetUserId={data.user.id}
-          tippedAmountCount={data.stats?.tippedAmountCountAllTime}
+          entityType="image"
+          reactions={data.reactions}
           metricsUnknown={data.stats?.statsUnknown}
-          className={clsx(cardClasses.reactions, 'flex items-center pl-0.5')}
+          metrics={{
+            likeCount: data.stats?.likeCountAllTime,
+            dislikeCount: data.stats?.dislikeCountAllTime,
+            heartCount: data.stats?.heartCountAllTime,
+            laughCount: data.stats?.laughCountAllTime,
+            cryCount: data.stats?.cryCountAllTime,
+          }}
+          targetUserId={data.user.id}
+          abbreviate="container"
+          disableBuzzTip
         />
-      )}
-      {(features.stickerPlacement || hasMetaButton) && (
+      </div>
+      <div className={cardClasses.tipRow}>
+        {!data.poi && (
+          <ImageBuzzTip
+            entityId={data.id}
+            targetUserId={data.user.id}
+            tippedAmountCount={data.stats?.tippedAmountCountAllTime}
+            metricsUnknown={data.stats?.statsUnknown}
+            className={clsx(cardClasses.reactions, 'flex items-center pl-0.5')}
+          />
+        )}
         <div className="ml-auto flex items-center gap-1">
           {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
           {hasMetaButton && (
@@ -130,7 +129,7 @@ function ImageCardActionRow({ data }: Props) {
             </ImageMetaPopover2>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

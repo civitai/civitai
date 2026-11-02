@@ -16,6 +16,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * space has said yes, and a refusal is the one outcome that never gets there.
  */
 
+// The Kysely placement reads, answered from the shared Prisma mock this file's fixtures use.
+vi.mock('@civitai/db-queries/placement', async () =>
+  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).placementReadsOverDbMock()
+);
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),
   placementPriceRange: async () => ({

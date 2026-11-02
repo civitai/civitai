@@ -49,6 +49,11 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readPostModelVersionIdsViaKysely,
+  readPostModelVersionIdsViaPrisma,
+} from '~/server/services/hot-reads-7.reads';
 import { readDownedModel } from '~/server/services/model-takedown-lock';
 import {
   planReciprocalAssociations,
@@ -329,13 +334,10 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  // The model page's read (`getModelHandler`, the only caller passing this select). With
-  // `kysely-hot-reads-2` on it reads through Kysely, in the same shape, on the client the same lag
-  // decision picks: `getKyselyWithoutLag` is `getDbWithoutLag`'s twin. Off, the Prisma read below.
-  if (
-    (select as Prisma.ModelSelect) === modelWithDetailsSelect &&
-    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
-  ) {
+  // The model page's read (`getModelHandler`, the only caller passing this select) goes through
+  // Kysely, in the same shape, on the client the same lag decision picks: `getKyselyWithoutLag` is
+  // `getDbWithoutLag`'s twin. Every other select reads through Prisma below.
+  if ((select as Prisma.ModelSelect) === modelWithDetailsSelect) {
     const model = await readModelWithDetailsViaKysely(await getKyselyWithoutLag('model', id), id);
     return model as unknown as Awaited<ReturnType<typeof findModel<TSelect>>>;
   }
@@ -5861,6 +5863,14 @@ function createVersionModelCache() {
 let versionModelCacheInstance: ReturnType<typeof createVersionModelCache> | undefined;
 const versionModelCache = () => (versionModelCacheInstance ??= createVersionModelCache());
 
+/** The post-version cache's lookup: each post's model version id, from the replica. */
+export async function lookupPostModelVersions(ids: number[]) {
+  const posts = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_7))
+    ? await readPostModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, ids)
+    : await readPostModelVersionIdsViaPrisma(dbRead, ids);
+  return Object.fromEntries(posts.map((post) => [post.id, post]));
+}
+
 function createPostVersionCache() {
   return createCachedObject<{ id: number; modelVersionId: number | null }>({
     key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:post-version`,
@@ -5870,13 +5880,7 @@ function createPostVersionCache() {
     // As for versions: a post not yet on the replica must not be remembered as missing.
     cacheNotFound: false,
     staleWhileRevalidate: false,
-    lookupFn: async (ids) => {
-      const posts = await dbRead.post.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, modelVersionId: true },
-      });
-      return Object.fromEntries(posts.map((post) => [post.id, post]));
-    },
+    lookupFn: lookupPostModelVersions,
   });
 }
 let postVersionCacheInstance: ReturnType<typeof createPostVersionCache> | undefined;

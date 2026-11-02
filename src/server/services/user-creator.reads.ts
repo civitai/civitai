@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getUserCreatorRow, getUserStatRow } from '@civitai/db-queries/hot-reads';
@@ -8,10 +8,10 @@ import { profileImageSelect } from '~/server/selectors/image.selector';
 import { withSpan } from '~/server/utils/otel-helpers';
 
 /**
- * The two reads behind the creator card (`fetchUserCreator`): the user with its links, stats, rank,
- * equipped cosmetics and profile picture, and their published-model count. One Prisma reader and
- * its Kysely twin, both taking the client, so the parity suite
- * (__tests__/hot-reads-2.kysely-parity.test.ts) runs the very code the service runs.
+ * The read behind the creator card (`fetchUserCreator`): the user with its links, stats, rank,
+ * equipped cosmetics and profile picture, and their published-model count, in the shape the Prisma
+ * `user.findFirst` with `userCreatorSelect` returned. Taking the client lets
+ * __tests__/hot-reads-2.kysely-parity.test.ts run the very code the service runs.
  */
 export type UserCreatorWhere = { username?: string; id?: number };
 
@@ -67,45 +67,8 @@ const userCreatorSelect = {
 export type UserCreatorUser = Prisma.UserGetPayload<{ select: typeof userCreatorSelect }>;
 export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | null;
 
-/** The Prisma reads, unchanged: the user, then (when found) the published-model count. */
-export async function readUserCreatorViaPrisma(
-  db: PrismaClient,
-  where: UserCreatorWhere
-): Promise<UserCreatorRead> {
-  const user = await withSpan('user:getCreator:findUser', () =>
-    db.user.findFirst({
-      where: {
-        ...where,
-        deletedAt: null,
-        AND: [
-          { id: { not: constants.system.user.id } },
-          { username: { not: constants.system.user.username } },
-        ],
-      },
-      select: userCreatorSelect,
-    })
-  );
-  if (!user) return null;
-
-  /**
-   * TODO: seems to be deprecated, we are getting model count from the stats
-   * though it might be bugged since we are not updating stats if user deletes/unpublishes models
-   */
-  const modelCount = await withSpan('user:getCreator:countModels', () =>
-    db.model.count({
-      where: {
-        userId: user?.id,
-        status: 'Published',
-      },
-    })
-  );
-
-  return { user, modelCount };
-}
-
 /**
- * The same answer in two Kysely statements, one after the other on ONE pooled connection, mapped to
- * the Prisma shape: the user (`getUserCreatorRow`, with links, rank, cosmetics, profile picture and
+ * Two Kysely statements, one after the other on ONE pooled connection, mapped to the Prisma shape: the user (`getUserCreatorRow`, with links, rank, cosmetics, profile picture and
  * the model count), then, once its id is known, its stats (`getUserStatRow`). The stats are the
  * "UserStat" VIEW, so they are read by that id as a parameter rather than joined to "User": a join
  * cannot reach into the view's per-user aggregates, and a username lookup would compute them for
