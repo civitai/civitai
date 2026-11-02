@@ -128,7 +128,7 @@ const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
  */
 const renderDraft = async (
   freeOffer: { instant: boolean } | null,
-  { ownerShare }: { ownerShare?: number } = {}
+  { ownerShare, maxScale, scale }: { ownerShare?: number; maxScale?: number; scale?: number } = {}
 ) => {
   renderWithProviders(
     // Positioned absolutely inside the media box in the app; a plain relative
@@ -137,11 +137,12 @@ const renderDraft = async (
     // box: the cluster has to be reachable, and none of this asserts geometry.
     <div style={{ position: 'relative', width: 380, height: 600 }}>
       <DraftSticker
-        draft={draft}
+        draft={scale == null ? draft : { ...draft, scale }}
         art={art}
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
         price={PRICE}
+        maxScale={maxScale}
         freeOffer={freeOffer}
         ownerShare={ownerShare}
         ownerUsername="creator"
@@ -288,6 +289,26 @@ describe('what a draft sends when it is placed', () => {
       scale: draft.scale,
       rotation: draft.rotation,
     });
+  });
+});
+
+describe('the size a draft sends against the creator limit', () => {
+  const CAP = 0.22;
+
+  test('a rounding overshoot past the limit is sent as the limit', async () => {
+    await renderDraft({ instant: true }, { maxScale: CAP, scale: CAP + 2 ** -50 });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0].data.scale).toBe(CAP);
+  });
+
+  test('a draft really over the limit is sent unchanged, for the server to refuse', async () => {
+    await renderDraft({ instant: true }, { maxScale: CAP, scale: 0.25 });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0].data.scale).toBe(0.25);
   });
 });
 

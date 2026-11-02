@@ -117,6 +117,34 @@ export function stickerMaxScale(settings?: Record<string, unknown> | null) {
 
 export const STICKER_MAX_SCALE_KEY = 'maxScale';
 
+/**
+ * A scale derived from a pixel width, held to the creator's limit.
+ *
+ * The caller clamps the width to `maxScale * boundsWidth` and then divides back,
+ * but `(m * w) / w` is not always `m` in floating point: for a 22% limit it
+ * comes out a hair above 0.22 at some image widths, and the server refuses
+ * anything strictly above the limit. Taking the `min` here makes the handle's
+ * top stop land exactly on the limit rather than an ulp past it.
+ */
+export function scaleFromWidth(width: number, boundsWidth: number, maxScale: number) {
+  return Math.min(width / boundsWidth, maxScale);
+}
+
+/** Below this, a scale over the limit is arithmetic noise rather than a real size. */
+const SCALE_OVERSHOOT_EPSILON = 1e-9;
+
+/**
+ * Snaps a precision overshoot back onto the limit, and nothing larger.
+ *
+ * Deliberately not a clamp: a draft well over the limit (the creator lowered it
+ * mid-session) must reach the server and be refused, so the placer sees the size
+ * they are paying for rather than a quietly shrunk one. Only a draft that is
+ * over by float noise is the editor's own rounding, and is sent as the limit.
+ */
+export function snapScaleOvershoot(scale: number, maxScale: number) {
+  return scale > maxScale && scale - maxScale < SCALE_OVERSHOOT_EPSILON ? maxScale : scale;
+}
+
 /** What an image can be, as far as stickers are concerned: audio is placed like an image. */
 export const STICKER_MEDIA_TYPES = ['image', 'video'] as const;
 export type StickerMediaType = (typeof STICKER_MEDIA_TYPES)[number];
