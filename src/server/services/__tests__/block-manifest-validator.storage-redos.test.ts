@@ -43,7 +43,11 @@ const VULNERABLE =
   'is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression';
 
 describe('collection-schema ReDoS gate — one analysis per distinct pattern', () => {
-  beforeEach(() => vi.mocked(isPatternRedosVulnerable).mockClear());
+  // A block body, not an arrow expression: a function returned from beforeEach is run as a
+  // teardown, and mockClear returns the mock, which would then call the guard with no pattern.
+  beforeEach(() => {
+    vi.mocked(isPatternRedosVulnerable).mockClear();
+  });
 
   it('analyses a repeated pattern once, with "u", and still reports every place it appears', async () => {
     const m = manifest({
