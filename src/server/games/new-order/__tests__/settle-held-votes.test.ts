@@ -7,25 +7,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Real service; dbRead, redis, clickhouse, the pool counters and the Axiom logger are faked. The
 // dbRead fake honours `where.id` and `select`.
 
-const { counter, knightPool, inquisitorPool, ratingsCounter, mockCh } = vi.hoisted(() => {
-  const counter = () => ({
-    increment: vi.fn().mockResolvedValue(0),
-    decrement: vi.fn().mockResolvedValue(0),
-    reset: vi.fn().mockResolvedValue(undefined),
-    getCount: vi.fn().mockResolvedValue(0),
-    getCountBatch: vi.fn(),
-    getAll: vi.fn().mockResolvedValue([]),
-    exists: vi.fn().mockResolvedValue(false),
-    key: 'stub',
+const { counter, knightPool, inquisitorPool, ratingsCounter, mockCh, mockClearRatings } =
+  vi.hoisted(() => {
+    const counter = () => ({
+      increment: vi.fn().mockResolvedValue(0),
+      decrement: vi.fn().mockResolvedValue(0),
+      reset: vi.fn().mockResolvedValue(undefined),
+      getCount: vi.fn().mockResolvedValue(0),
+      getCountBatch: vi.fn(),
+      getAll: vi.fn().mockResolvedValue([]),
+      exists: vi.fn().mockResolvedValue(false),
+      key: 'stub',
+    });
+    return {
+      counter: counter(),
+      knightPool: counter(),
+      inquisitorPool: counter(),
+      ratingsCounter: counter(),
+      mockCh: { $query: vi.fn(), $exec: vi.fn(), insert: vi.fn() },
+      mockClearRatings: vi.fn(),
+    };
   });
-  return {
-    counter: counter(),
-    knightPool: counter(),
-    inquisitorPool: counter(),
-    ratingsCounter: counter(),
-    mockCh: { $query: vi.fn(), $exec: vi.fn(), insert: vi.fn() },
-  };
-});
 
 vi.mock('~/server/games/new-order/utils', () => ({
   acolyteFailedJudgments: counter,
@@ -46,6 +48,7 @@ vi.mock('~/server/games/new-order/utils', () => ({
   checkVotingRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
   computePoolTargets: vi.fn(),
   getActiveSlot: vi.fn().mockResolvedValue('a'),
+  clearImageRatings: mockClearRatings,
   getImageRatingsCounter: vi.fn(() => ratingsCounter),
   getVotingCooldownUntil: vi.fn().mockResolvedValue(null),
   getVotingRateLimitConfig: vi.fn().mockResolvedValue(null),
@@ -207,6 +210,7 @@ describe('pending votes on images New Order drops for review', () => {
     await getImagesQueue({ playerId: PLAYER, imageCount: 10 });
 
     expect(voidedIds()).toEqual([HELD]);
+    expect(mockClearRatings).toHaveBeenCalledWith([HELD]);
     // processFinalRatings ran (its first step counts the request).
     expect(redisMock.sysRedis.incr).toHaveBeenCalledTimes(1);
   });
@@ -222,6 +226,7 @@ describe('pending votes on images New Order drops for review', () => {
 
     expect(served.map((i) => i.id)).toEqual([CLEAN]);
     expect(voidedIds()).toEqual([]);
+    expect(mockClearRatings).not.toHaveBeenCalled();
   });
 
   it('(b) control: a queue read with nothing held voids nothing', async () => {
@@ -231,6 +236,7 @@ describe('pending votes on images New Order drops for review', () => {
 
     expect(voidedIds()).toEqual([]);
     expect(redisMock.sysRedis.incr).not.toHaveBeenCalled();
+    expect(mockClearRatings).not.toHaveBeenCalled();
   });
 
   it('(c) a failed void does not fail the queue read', async () => {

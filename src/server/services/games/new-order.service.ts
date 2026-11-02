@@ -24,6 +24,7 @@ import {
   expCounter,
   fervorCounter,
   getActiveSlot,
+  clearImageRatings,
   getImageRatingsCounter,
   getVotingCooldownUntil,
   getVotingRateLimitConfig,
@@ -1750,7 +1751,10 @@ export async function getImagesQueue({
         }
         // Out of the pool, so the daily purge can no longer settle their votes. Still in it, the
         // purge will.
-        if (removed) await voidPendingRatings(heldIds);
+        if (removed) {
+          await voidPendingRatings(heldIds);
+          await clearImageRatings(heldIds);
+        }
       }
 
       // Don't overshoot the target — pass 2 redistribution relies on
