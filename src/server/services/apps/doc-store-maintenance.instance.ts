@@ -1,8 +1,9 @@
-// The process's document-store MAINTENANCE (`purgeReview`, `listReviewAppIds`, `wipeAccount`),
-// on the same least-privilege pool as the viewer store but as a separate object, so nothing
-// holding the block-token store can reach it. Imported only by the publish-request decision
-// path (`publish-request.service.ts`), the sweep job (`jobs/sweep-review-storage.ts`) and the
-// account wipe (`user.service.ts` `removeAllContent`); pinned by
+// The process's document-store MAINTENANCE (`purgeReview`, `listReviewAppIds`, `wipeAccount`,
+// `purgeApp`), on the same least-privilege pool as the viewer store but as a separate object, so
+// nothing holding the block-token store can reach it. Imported only by the publish-request
+// decision path (`publish-request.service.ts`), the sweep job (`jobs/sweep-review-storage.ts`),
+// the account wipe (`user.service.ts` `removeAllContent`) and the purge entry point
+// (`doc-store-purge.ts`); pinned by
 // `__tests__/doc-store-maintenance.ledger.test.ts`.
 import { appdataDb } from '~/server/db/appdataDb';
 import { logToAxiom } from '~/server/logging/client';

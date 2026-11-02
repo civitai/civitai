@@ -9,18 +9,24 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
-// There are TWO exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
+// There are THREE exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
 // statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
 // on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
 // `appdata.review_maintenance` setting is what the migration's review policies
 // admit — review namespaces only, read and delete only.
 //
-// The other exception is the ACCOUNT WIPE's enumeration (`listAccountNamespaces`): one
+// The second exception is the ACCOUNT WIPE's enumeration (`listAccountNamespaces`): one
 // SELECT keyed on `user_id = $1` over `usage_user` and `doc_mark`, run only inside
 // `accountWipeTx`, whose transaction-local `appdata.account_wipe_uid` setting the
 // migration's wipe policy admits for that ONE user's rows of those two tables, read only.
 // It returns (app, ns) pairs; the wipe of each runs in an ordinary `withTx`, keyed and
 // scoped like any viewer call.
+//
+// The third is the APP PURGE's enumeration (`listAppNamespaces`): one SELECT keyed on
+// `app_id = $1` with `ns > $2` (a keyset cursor) over `usage_app` and `doc`, run only inside
+// `appPurgeTx`, whose transaction-local `appdata.app_purge_id` setting the app-purge migration's
+// policy admits for that ONE app's rows of those two tables, read only. It returns namespaces;
+// the purge of each runs in ordinary `withTx` transactions, like the account wipe.
 //
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
@@ -776,6 +782,47 @@ const SQL_WIPE_PRIVATE_TOMBS = `DELETE FROM appdata.doc_tomb tb
 const SQL_WIPE_USAGE_USER = `DELETE FROM appdata.usage_user u
   WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
 
+// APP PURGE (see the module header and `purgeApp`).
+//
+// Whether the app-purge policy (migration `20261102120000_appdata_app_purge.sql`) is installed on
+// both tables the enumeration reads. Without it the enumeration's setting matches no policy and
+// reads as "this app has no namespaces", which would let a purge report an app done while every
+// row of it is still there; `listAppNamespaces` refuses instead.
+const SQL_APP_PURGE_POLICY = `SELECT count(*)::int AS n FROM pg_catalog.pg_policies pp
+  WHERE pp.policyname = 'appdata_app_purge_read' AND pp.tablename IN ('doc', 'usage_app')`;
+// The namespaces one app has rows in, in key order after a keyset cursor. Two sources suffice for
+// the reason `SQL_REVIEW_APP_IDS` gives: every write takes its namespace's `usage_app` row, and a
+// document outlives that row only when its write overlapped a namespace delete; tallies, marks
+// and index rows exist only beside a document. Run only inside `appPurgeTx`. $1 app id, $2 ns of
+// the cursor (exclusive), $3 limit.
+const SQL_APP_NAMESPACES = `SELECT p.ns FROM (
+    SELECT pu.ns FROM appdata.usage_app pu WHERE pu.app_id = $1 AND pu.ns > $2::text
+    UNION
+    SELECT pd.ns FROM appdata.doc pd WHERE pd.app_id = $1 AND pd.ns > $2::text
+  ) p ORDER BY p.ns LIMIT $3::int`;
+// One batch of an app purge's delete of one (app, ns), in an ordinary scoped transaction: at most
+// $3 rows of one table. Documents first (their index rows go by the cascade), then the rows that
+// sit beside documents; `SQL_WIPE_NAMESPACE` then removes what is left, usage rows included, in
+// one last transaction. $1 app, $2 ns, $3 batch size.
+const SQL_APP_PURGE_BATCH = [
+  `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2
+    AND d.ctid = ANY (ARRAY(SELECT bd.ctid FROM appdata.doc bd
+      WHERE bd.app_id = $1 AND bd.ns = $2 LIMIT $3::int))
+    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2
+    AND mk.ctid = ANY (ARRAY(SELECT bm.ctid FROM appdata.doc_mark bm
+      WHERE bm.app_id = $1 AND bm.ns = $2 LIMIT $3::int))
+    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2
+    AND t.ctid = ANY (ARRAY(SELECT bt.ctid FROM appdata.doc_tally bt
+      WHERE bt.app_id = $1 AND bt.ns = $2 LIMIT $3::int))
+    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2
+    AND tb.ctid = ANY (ARRAY(SELECT bb.ctid FROM appdata.doc_tomb bb
+      WHERE bb.app_id = $1 AND bb.ns = $2 LIMIT $3::int))
+    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
+] as const;
+
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.
 // $1 app, $2 ns, $3 coll, $4 scope_uid; `joins` are the fragments below.
@@ -998,10 +1045,11 @@ export function createDocStoreModeration(deps: DocStoreDeps) {
 }
 
 /**
- * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`) and account
- * deletion (`wipeAccount`) — as a separate object from the viewer store: the first runs with the
- * setting that reaches every `rev:` row of a request, the second with the one that reads one
- * user's rows in every app, so nothing holding the block-token routes' store may reach either.
+ * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`), account deletion
+ * (`wipeAccount`) and app deletion (`purgeApp`) — as a separate object from the viewer store: the
+ * first runs with the setting that reaches every `rev:` row of a request, the second with the one
+ * that reads one user's rows in every app, the third with the one that reads one app's rows in
+ * every namespace, so nothing holding the block-token routes' store may reach any of them.
  * Only `doc-store-maintenance.instance.ts` builds one in production; its importers are pinned by
  * a ledger test (`__tests__/doc-store-maintenance.ledger.test.ts`).
  */
@@ -1117,6 +1165,22 @@ function buildDocStore(deps: DocStoreDeps) {
     assertWipeUserId(userId);
     return runTx(
       `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.account_wipe_uid', '${userId}', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  /**
+   * An APP-PURGE ENUMERATION transaction: no app or namespace bound, and `appdata.app_purge_id`
+   * set to one validated app id — which the app-purge migration's policy admits for that app's
+   * `doc` and `usage_app` rows only, read only. Transaction-local like every other setting.
+   * 🔴 Called by `listAppNamespaces` ONLY (pinned by `doc-store.sql-isolation.test.ts`).
+   */
+  async function appPurgeTx<T>(appId: string, fn: (c: DocStoreClient) => Promise<T>): Promise<T> {
+    if (!APP_ID_SHAPE.test(appId)) throw new Error('doc-store: malformed app id');
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.app_purge_id', ${escapeLiteral(
+        appId
+      )}, true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
       fn
     );
   }
@@ -1871,11 +1935,21 @@ function buildDocStore(deps: DocStoreDeps) {
    * Idempotent: a re-run finds nothing left that names the user. A namespace whose transaction
    * fails is reported in `failures` (it rolled back in full) and the rest continue; a disabled
    * store throws `storage_disabled`.
+   *
+   * With `opts.appId`, only that app's namespaces are wiped (the same per-namespace wipe); every
+   * other app keeps the user's data. `doc-store-purge.ts` is the server's one entry point to both.
    */
-  async function wipeAccount(userId: number): Promise<AccountWipeResult> {
+  async function wipeAccount(
+    userId: number,
+    opts: { appId?: string } = {}
+  ): Promise<AccountWipeResult> {
     assertWipeUserId(userId);
+    if (opts.appId !== undefined && !APP_ID_SHAPE.test(opts.appId)) {
+      throw new Error('doc-store: malformed app id');
+    }
     const result: AccountWipeResult = { userId, namespaces: [], failures: [] };
     for (const { appId, ns } of await listAccountNamespaces(userId)) {
+      if (opts.appId !== undefined && appId !== opts.appId) continue;
       try {
         result.namespaces.push(await wipeAccountNamespace(userId, appId, ns));
       } catch (err) {
@@ -1888,6 +1962,82 @@ function buildDocStore(deps: DocStoreDeps) {
       }
     }
     return result;
+  }
+
+  /** Namespaces enumerated per page by an app purge. */
+  const APP_PURGE_PAGE = 500;
+
+  /** Every namespace `appId` has rows in, in key order, all pages. Refuses without the policy. */
+  async function listAppNamespaces(appId: string): Promise<string[]> {
+    const out: string[] = [];
+    let after = '';
+    for (;;) {
+      const page = await appPurgeTx(appId, async (c) => {
+        const policies = Number((await c.query(SQL_APP_PURGE_POLICY)).rows[0]?.n ?? 0);
+        if (policies !== 2) {
+          throw new Error(
+            'doc-store: the app-purge policy is not installed (apply migration 20261102120000_appdata_app_purge.sql)'
+          );
+        }
+        return (await c.query(SQL_APP_NAMESPACES, [appId, after, APP_PURGE_PAGE])).rows.map(
+          (r) => r.ns as string
+        );
+      });
+      out.push(...page);
+      if (page.length < APP_PURGE_PAGE) return out;
+      after = page[page.length - 1];
+    }
+  }
+
+  /**
+   * APP PURGE (the deleted-app reaper, `jobs/reap-deleted-app-storage.ts`): delete every row of
+   * one app, in every namespace it has rows in, every user's data included. Namespaces come from
+   * the app-purge enumeration (`listAppNamespaces`); each is then deleted in ordinary
+   * (app, ns)-scoped transactions of at most `batchRows` rows of one table each
+   * (`SQL_APP_PURGE_BATCH`), and finished by `SQL_WIPE_NAMESPACE`, which deletes what is left,
+   * usage rows included. Until that last transaction a namespace's usage rows still count the
+   * documents a batch already deleted; the app is not served by then, and the rows go with it.
+   *
+   * `proceed` is awaited before EVERY transaction; false stops the purge where it is (`stopped`),
+   * which is how a caller re-checks, between batches, that the app is still deleted. At most
+   * `maxRows` rows are deleted per call (`done: false` when the budget ran out first).
+   * Idempotent and resumable: a re-run finds only what is left. A disabled store throws
+   * `storage_disabled`; a failed transaction throws, having rolled back only its own batch.
+   */
+  async function purgeApp(
+    appId: string,
+    opts: { batchRows?: number; maxRows?: number; proceed?: () => Promise<boolean> } = {}
+  ): Promise<{ appId: string; namespaces: number; rows: number; done: boolean; stopped: boolean }> {
+    const batchRows = opts.batchRows ?? 1000;
+    const maxRows = opts.maxRows ?? Number.POSITIVE_INFINITY;
+    if (!Number.isSafeInteger(batchRows) || batchRows < 1 || batchRows > 10_000) {
+      throw new Error('doc-store: batchRows must be 1–10000');
+    }
+    const proceed = opts.proceed ?? (async () => true);
+    const namespaces = await listAppNamespaces(appId);
+    const result = { appId, namespaces: namespaces.length, rows: 0, done: false, stopped: false };
+    const n = (res: DocStoreQueryResult) => Number(res.rows[0]?.n ?? 0);
+    for (const ns of namespaces) {
+      const ctx: DocStoreContext = { appId, ns, viewerUid: null };
+      for (const sql of SQL_APP_PURGE_BATCH) {
+        for (;;) {
+          if (result.rows >= maxRows) return result;
+          if (!(await proceed())) return { ...result, stopped: true };
+          const deleted = await withTx(ctx, async (c) =>
+            n(await c.query(sql, [appId, ns, batchRows]))
+          );
+          result.rows += deleted;
+          if (deleted < batchRows) break;
+        }
+      }
+      if (!(await proceed())) return { ...result, stopped: true };
+      result.rows += await withTx(ctx, async (c) => {
+        let rows = 0;
+        for (const sql of SQL_WIPE_NAMESPACE) rows += n(await c.query(sql, [appId, ns]));
+        return rows;
+      });
+    }
+    return { ...result, done: true };
   }
 
   const store = {
@@ -1932,7 +2082,7 @@ function buildDocStore(deps: DocStoreDeps) {
     store,
     lookup: { findSharedByKey },
     moderation: createModeration({ withTx, charge }),
-    maintenance: { purgeReview, listReviewAppIds, wipeAccount },
+    maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp },
   };
 }
 

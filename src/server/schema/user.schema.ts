@@ -211,6 +211,8 @@ export const deleteUserSchema = z.object({
   username: usernameSchema.optional(),
   removeModels: z.boolean().optional(),
   removeImages: z.boolean().optional(),
+  /** Also delete the account's App Blocks document-store data (`remove-deleted-account-app-data`). */
+  removeAppData: z.boolean().optional(),
 });
 
 export type RestoreUserInput = z.infer<typeof restoreUserSchema>;
@@ -572,6 +574,9 @@ export const userMeta = z.object({
   muteReason: z.string().optional(),
   mutedBy: z.number().optional(),
   imageRemoval: z.enum(['grace', 'immediate']).optional(),
+  // Set by a self-deletion that ticked "Also delete my data in apps"; the
+  // `remove-deleted-account-app-data` job wipes the account's document-store data and removes it.
+  appDataRemoval: z.literal('requested').optional(),
   // Stamped at onboarding when the account ends up without a verified address. Read by
   // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
   emailVerificationRequired: z.boolean().optional(),

@@ -1142,7 +1142,13 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   }
 };
 
-export const deleteUser = async ({ id, username, removeModels, removeImages }: DeleteUserInput) => {
+export const deleteUser = async ({
+  id,
+  username,
+  removeModels,
+  removeImages,
+  removeAppData,
+}: DeleteUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { username, id },
     select: { id: true, meta: true },
@@ -1159,6 +1165,10 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   const meta = {
     ...((user.meta ?? {}) as UserMeta),
     imageRemoval: imageRemovalMode(removeImages),
+    // Committed with the deletion below and acted on by the `remove-deleted-account-app-data`
+    // job, never inline: a wipe walks every app the account has data in. Rewritten on every
+    // deletion, so a re-deletion without the box does not inherit an earlier request.
+    appDataRemoval: removeAppData ? ('requested' as const) : undefined,
     tokenRevocation: undefined,
   };
 
@@ -1405,9 +1415,11 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // The scrub's retry state goes with the deletion it belonged to. Left behind, a re-deleted
   // account would inherit its old attempt count, so its first failure would already be backed off
   // for hours and it would alert as stuck long before it is.
+  // An app-data removal the job has not reached yet is withdrawn with the deletion it belonged to.
   const {
     imageRemoval: _removalChoice,
     gdprStripeScrub: _scrubState,
+    appDataRemoval: _appDataRemoval,
     ...meta
   } = (user.meta ?? {}) as UserMeta;
 
