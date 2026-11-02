@@ -679,7 +679,9 @@ Event-engine / metrics:
       Phase 6. Code built 2026-10-29: `REPLICA IDENTITY FULL` (`scripts/sql/replica-identity.sql`),
       `public.CommentV3` in `apps/event-engine/src/config/index.ts` (the Debezium manager updates
       the connector's `table.include.list`, the filtered publication and creates the topic from
-      that list), `postgres.CommentV3` in `scripts/create-kafka-topics.ts`. `REPLICA IDENTITY FULL` applied in prod 2026-10-30. Still to provision before the stage B deploy: the topic and
+      that list), `postgres.CommentV3` in `scripts/create-kafka-topics.ts`. `REPLICA IDENTITY FULL` is not live:
+      apply it with the script, which first publishes `CommentV3`'s generated columns (without
+      that, Postgres 18 refuses every write to the table). Still to provision before the stage B deploy: the topic and
       the CDC role's read access (infra owner), then the event-engine release
 - [ ] `ModelMetric.commentCount` stays **distinct commenters** — verify post-cutover
 - [ ] Comment-count event continuity verified (feeds `update-user-score.ts`, search indexes,

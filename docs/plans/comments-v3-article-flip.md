@@ -279,9 +279,12 @@ Before the deploy, in this order:
 1. ~~Apply `20261210120000_comment_v3_mirror_changed_columns` and the ClickHouse
    `2026-10-29-comment-v3-report-entity.sql`, then restart the tracker~~: applied in prod
    2026-10-30.
-2. CDC for `CommentV3`: ~~`REPLICA IDENTITY FULL`~~ (applied in prod 2026-10-30,
-   `apps/event-engine/scripts/sql/replica-identity.sql`). Still pending: the Kafka topic and read
-   access on `CommentV3` for the CDC role (ask an infra owner); then release the event engine.
+2. CDC for `CommentV3`: `REPLICA IDENTITY FULL`, through
+   `apps/event-engine/scripts/sql/replica-identity.sql` only, never the bare `ALTER TABLE`. On
+   Postgres 18 a FULL table that is published without its stored generated columns (`rootId`,
+   `depth`) refuses every UPDATE and DELETE; the script publishes them first and checks before it
+   commits. Still pending: the Kafka topic and read access on `CommentV3` for the CDC role (ask an
+   infra owner); then release the event engine.
 3. Grant moderators the new `commentV3` report queue in the moderator app.
 4. ~~Apply `20261211120000_comment_v3_moderation_trigger`~~: applied in prod 2026-10-30, with
    `trg_moderation_commentv3` in the same enabled state as `trg_moderation_commentv2`. Still
