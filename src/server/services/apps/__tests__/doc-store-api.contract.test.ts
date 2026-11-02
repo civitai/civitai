@@ -301,12 +301,20 @@ function installDb() {
     async ({
       where,
     }: {
-      where: { id?: string; appId_blockId?: { appId: string; blockId: string } };
+      where: {
+        id?: string;
+        blockId?: string;
+        appId_blockId?: { appId: string; blockId: string };
+      };
     }) => {
       const pair = where.appId_blockId;
       return (
         apps.find((a) =>
-          pair ? a.appId === pair.appId && a.blockId === pair.blockId : a.id === where.id
+          pair
+            ? a.appId === pair.appId && a.blockId === pair.blockId
+            : where.blockId !== undefined
+            ? a.blockId === where.blockId
+            : a.id === where.id
         ) ?? null
       );
     }
@@ -687,6 +695,10 @@ describe('the contract file', () => {
       internal_error: 'an unexpected fault; its own test below',
       resource_not_owned:
         'needs model-version rows the request table cannot express; the ownedModelVersions block below',
+      import_not_declared:
+        'needs two apps with different manifests, which the request table cannot express; the cross-app imports block below',
+      not_exportable:
+        'needs two apps with different manifests, which the request table cannot express; the cross-app imports block below',
     };
     const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
       (code) => !(code in UNREACHABLE_IN_PHASE_1)
@@ -2385,5 +2397,367 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
     await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: {} } });
     expect(h.isFlipt).toHaveBeenCalledWith(SHADOW_FLAG, A.id, undefined);
     expect(h.isFlipt).toHaveBeenCalledWith(ENFORCE_FLAG, A.id, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-app imports: `?from=<source blockId>` on a collection route
+// ---------------------------------------------------------------------------
+
+describe('cross-app imports: a consumer acts as the viewer in the source app', () => {
+  const IMPORT_SCOPE = 'apps:storage:import';
+  const CONSUMER_SCOPES = ['apps:storage', IMPORT_SCOPE];
+  /** (viewer, consumer app id, source app id) triples the viewer granted. */
+  let grants: Set<string>;
+  const grantKey = (uid: number, consumer: string, source: string) =>
+    `${uid}|${consumer}|${source}`;
+
+  beforeEach(() => {
+    grants = new Set();
+    // The per-source ledger is raw SQL on the primary (`storage-import-grant.service.ts`).
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = strings.join('?');
+        if (!sql.includes('app_storage_import_grants')) return [];
+        if (sql.includes('SELECT 1')) {
+          const [uid, consumer, source] = values as [number, string, string];
+          return grants.has(grantKey(uid, consumer, source)) ? [{ one: 1 }] : [];
+        }
+        return [];
+      }
+    );
+  });
+
+  let seq = 0;
+  /** A source app, a consumer importing from it, and an app that imports nothing. */
+  function importApps(access: 'read' | 'readwrite' = 'readwrite') {
+    seq += 1;
+    const row = (label: string, manifest: unknown): AppRow => {
+      const r = {
+        id: `apb_imp${label}${seq}`,
+        appId: `appblk-imp${label}${seq}`,
+        blockId: `imp-${label}-${seq}`,
+        status: 'approved',
+        manifest,
+      };
+      apps.push(r);
+      return r;
+    };
+    const S = row('src', {
+      scopes: ['apps:storage', 'apps:storage:publish'],
+      storage: {
+        collections: {
+          notes: { visibility: 'private' },
+          board: { visibility: 'shared', write: 'own' },
+          secret: { visibility: 'private', exportable: false },
+          extra: { visibility: 'private' },
+        },
+      },
+    });
+    const C = row('fork', {
+      scopes: CONSUMER_SCOPES,
+      storage: {
+        // The consumer's own `notes` is a different collection from the source's.
+        collections: { notes: { visibility: 'private' } },
+        imports: [{ from: S.blockId, collections: ['notes', 'board', 'secret'], access }],
+      },
+    });
+    const N = row('none', {
+      scopes: CONSUMER_SCOPES,
+      storage: { collections: { notes: { visibility: 'private' } } },
+    });
+    return { S, C, N };
+  }
+  const grant = (uid: number, C: AppRow, S: AppRow) => grants.add(grantKey(uid, C.id, S.id));
+  const as = (app: AppRow, uid: number, scopes = CONSUMER_SCOPES) => mint({ app, uid, scopes });
+  const sourceToken = (S: AppRow, uid: number) =>
+    mint({ app: S, uid, scopes: ['apps:storage', 'apps:storage:publish'] });
+
+  it('with a grant, a declared import reads and writes the source data as that viewer', async () => {
+    const { S, C } = importApps();
+    grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const s = await sourceToken(S, VIEWER_IDS.v1);
+
+    // The viewer's own note in the source, read through the import.
+    await call({
+      token: s,
+      method: 'PUT',
+      path: '/notes/n1',
+      body: { data: { text: 'from source' } },
+    });
+    const read = await call({
+      token: c,
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(read.status).toBe(200);
+    expect(read.body).toMatchObject({ key: 'n1', data: { text: 'from source' } });
+
+    // A write through the import lands in the SOURCE app, under the source's namespace.
+    const put = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/n2',
+      query: { from: S.blockId },
+      body: { data: { text: 'from fork' } },
+    });
+    expect(put.status).toBe(200);
+    const back = await call({ token: s, method: 'GET', path: '/notes/n2' });
+    expect(back.body).toMatchObject({ data: { text: 'from fork' } });
+    const rows = await harness.raw(`SELECT app_id, ns FROM appdata.doc WHERE key = 'n2'`);
+    expect(rows).toEqual([{ app_id: S.id, ns: 'prod' }]);
+
+    // Without `from`, the consumer's own `notes` is untouched: a different collection.
+    const own = await call({ token: c, method: 'GET', path: '/notes/n1' });
+    expect(own.status).toBe(404);
+
+    // A shared write follows the SOURCE's policy and is read by other viewers of the source.
+    const created = await call({
+      token: c,
+      method: 'PUT',
+      path: '/board/b1',
+      query: { from: S.blockId },
+      body: { data: { title: 'hello' } },
+    });
+    expect(created.status).toBe(200);
+    const other = await call({
+      token: await sourceToken(S, VIEWER_IDS.v2),
+      method: 'GET',
+      path: '/board/b1',
+    });
+    expect(other.body).toMatchObject({
+      data: { title: 'hello' },
+      author: { kind: 'user', isViewer: false },
+    });
+  });
+
+  it('without a grant: 403 consent_required naming the scope and the source', async () => {
+    const { S, C } = importApps();
+    const r = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({
+      code: 'consent_required',
+      details: { scope: IMPORT_SCOPE, from: S.blockId },
+    });
+    // A grant row without the scope on the token (the ledger withheld it) is refused the same way.
+    grant(VIEWER_IDS.v1, C, S);
+    const noScope = await call({
+      token: await as(C, VIEWER_IDS.v1, ['apps:storage']),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(noScope.status).toBe(403);
+    expect(noScope.body).toMatchObject({ code: 'consent_required' });
+  });
+
+  it('an undeclared import: 403 import_not_declared (an undeclared collection, or an app that imports nothing)', async () => {
+    const { S, C, N } = importApps();
+    grant(VIEWER_IDS.v1, C, S);
+    grant(VIEWER_IDS.v1, N, S);
+    const notListed = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/extra/e1',
+      query: { from: S.blockId },
+    });
+    expect(notListed.status).toBe(403);
+    expect(notListed.body).toMatchObject({ code: 'import_not_declared' });
+    const noImports = await call({
+      token: await as(N, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(noImports.status).toBe(403);
+    expect(noImports.body).toMatchObject({ code: 'import_not_declared' });
+  });
+
+  it('a source collection declared exportable: false: 403 not_exportable', async () => {
+    const { S, C } = importApps();
+    grant(VIEWER_IDS.v1, C, S);
+    const r = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/secret/s1',
+      query: { from: S.blockId },
+    });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ code: 'not_exportable' });
+  });
+
+  it('access: read refuses every write, and still reads', async () => {
+    const { S, C } = importApps('read');
+    grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const put = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+      body: { data: { text: 'x' } },
+    });
+    expect(put.status).toBe(403);
+    expect(put.body).toMatchObject({
+      code: 'write_policy',
+      details: { reason: 'import_read_only' },
+    });
+    const del = await call({
+      token: c,
+      method: 'DELETE',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(del.status).toBe(403);
+    expect((await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [S.id])).length).toBe(
+      0
+    );
+    const get = await call({
+      token: c,
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(get.status).toBe(404);
+    expect(get.body).toMatchObject({ code: 'not_found' });
+  });
+
+  it("viewer isolation: viewer B cannot reach viewer A's private source documents through the import", async () => {
+    const { S, C } = importApps();
+    grant(VIEWER_IDS.v1, C, S);
+    grant(VIEWER_IDS.v2, C, S);
+    await call({
+      token: await sourceToken(S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/mine',
+      body: { data: { text: 'v1 private' } },
+    });
+    const b = await as(C, VIEWER_IDS.v2);
+    const get = await call({
+      token: b,
+      method: 'GET',
+      path: '/notes/mine',
+      query: { from: S.blockId },
+    });
+    expect(get.status).toBe(404);
+    const list = await call({
+      token: b,
+      method: 'GET',
+      path: '/notes',
+      query: { from: S.blockId },
+    });
+    expect(list.status).toBe(200);
+    expect(list.body).toMatchObject({ items: [] });
+    // And B's grant does not make A's documents B's: A still reads its own.
+    const a = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/mine',
+      query: { from: S.blockId },
+    });
+    expect(a.body).toMatchObject({ data: { text: 'v1 private' } });
+  });
+
+  it("usage counts against the source app and the viewer's ceilings there, not the consumer's", async () => {
+    const { S, C } = importApps();
+    grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    for (const key of ['u1', 'u2']) {
+      const r = await call({
+        token: c,
+        method: 'PUT',
+        path: `/notes/${key}`,
+        query: { from: S.blockId },
+        body: { data: { n: key } },
+      });
+      expect(r.status).toBe(200);
+    }
+    const sourceInfo = await call({
+      token: await sourceToken(S, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '',
+    });
+    expect(sourceInfo.body).toMatchObject({ usage: { viewer: { docs: 2 } } });
+    const consumerInfo = await call({ token: c, method: 'GET', path: '' });
+    expect(consumerInfo.body).toMatchObject({ usage: { viewer: { docs: 0 } } });
+    // The source's per-viewer document ceiling binds the import (contract limit: viewerDocs).
+    for (let i = 2; i < contract.limits.viewerDocs; i++) {
+      await call({
+        token: c,
+        method: 'PUT',
+        path: `/notes/f${i}`,
+        query: { from: S.blockId },
+        body: { data: {} },
+      });
+    }
+    const over = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/over',
+      query: { from: S.blockId },
+      body: { data: {} },
+    });
+    expect(over.status).toBe(413);
+    expect(over.body).toMatchObject({ code: 'quota_exceeded' });
+  });
+
+  it("a preview namespace cannot reach the source's production data", async () => {
+    const { S, C } = importApps();
+    grant(VIEWER_IDS.v1, C, S);
+    await call({
+      token: await sourceToken(S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/live',
+      body: { data: { text: 'production' } },
+    });
+    // A dev token reaches only the same developer's dev namespace in the source.
+    const dev = await mintDevReal(C, VIEWER_IDS.v1, CONSUMER_SCOPES);
+    const devRead = await call({
+      token: dev,
+      method: 'GET',
+      path: '/notes/live',
+      query: { from: S.blockId },
+    });
+    expect(devRead.status).toBe(404);
+    const devPut = await call({
+      token: dev,
+      method: 'PUT',
+      path: '/notes/devdoc',
+      query: { from: S.blockId },
+      body: { data: { text: 'dev' } },
+    });
+    expect(devPut.status).toBe(200);
+    expect(await harness.raw(`SELECT app_id, ns FROM appdata.doc WHERE key = 'devdoc'`)).toEqual([
+      { app_id: S.id, ns: `dev:${VIEWER_IDS.v1}` },
+    ]);
+    // A review token reaches no other app at all.
+    const pr = {
+      id: `pubreq_01JIMPORTREVIEW${seq}000000`,
+      status: 'pending',
+      manifest: C.manifest,
+    };
+    publishRequests.push(pr);
+    const review = await mint({
+      app: { id: pr.id, appId: 'appblk-imp-review', blockId: 'imp-review' },
+      uid: VIEWER_IDS.v1,
+      scopes: CONSUMER_SCOPES,
+      dev: true,
+      reviewRunForReal: true,
+    });
+    const r = await call({
+      token: review,
+      method: 'GET',
+      path: '/notes/live',
+      query: { from: S.blockId },
+    });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ code: 'not_eligible', details: { reason: 'import_in_review' } });
   });
 });

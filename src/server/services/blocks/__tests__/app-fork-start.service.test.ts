@@ -84,6 +84,7 @@ import type { SessionUser } from '~/types/session';
 const {
   FORK_SESSION_TTL_SECONDS,
   applyForkSessionToFirstPublishRequest,
+  buildForkSeedZip,
   forkSeedExclusionReason,
   forkSlugFor,
   getForkSessionForUser,
@@ -674,5 +675,78 @@ describe('applyForkSessionToFirstPublishRequest — provenance only from the ses
       })
     ).resolves.toBe(false);
     expect(m.setProvenance).not.toHaveBeenCalled();
+  });
+});
+
+describe('the fork seed pre-fills storage imports of the parent', () => {
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'notes-app-fork-ab12'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+
+  it('imports every exportable parent collection readwrite, with the scope and a justification', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: ['apps:storage'],
+      storage: {
+        collections: {
+          notes: { visibility: 'private' },
+          board: { visibility: 'shared', write: 'own' },
+          secret: { visibility: 'private', exportable: false },
+        },
+      },
+    });
+    expect(manifest.blockId).toBe('notes-app-fork-ab12');
+    expect(manifest.storage.imports).toEqual([
+      { from: 'notes-app', collections: ['notes', 'board'], access: 'readwrite' },
+    ]);
+    // The fork keeps its own copy of the declarations: its own data starts empty.
+    expect(Object.keys(manifest.storage.collections)).toEqual(['notes', 'board', 'secret']);
+    expect(manifest.scopes).toEqual(['apps:storage', 'apps:storage:import']);
+    expect(manifest.scopeJustifications['apps:storage:import']).toBe(
+      'This app is a fork of Notes App. It reads and updates the data you already keep in Notes App, so your entries carry over instead of starting empty.'
+    );
+  });
+
+  it('keeps an author justification and replaces an existing import from the parent', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: ['apps:storage', 'apps:storage:import'],
+      scopeJustifications: { 'apps:storage:import': 'Reads the shared dictionary.' },
+      storage: {
+        collections: { notes: { visibility: 'private' } },
+        imports: [
+          { from: 'dictionary-app', collections: ['words'], access: 'read' },
+          { from: 'notes-app', collections: ['stale'], access: 'read' },
+        ],
+      },
+    });
+    expect(manifest.storage.imports).toEqual([
+      { from: 'dictionary-app', collections: ['words'], access: 'read' },
+      { from: 'notes-app', collections: ['notes'], access: 'readwrite' },
+    ]);
+    expect(manifest.scopes).toEqual(['apps:storage', 'apps:storage:import']);
+    expect(manifest.scopeJustifications).toEqual({
+      'apps:storage:import': 'Reads the shared dictionary.',
+    });
+  });
+
+  it('a parent with no exportable collection, or no storage, gets no import', async () => {
+    const none = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: ['apps:storage'],
+      storage: { collections: { secret: { visibility: 'private', exportable: false } } },
+    });
+    expect(none.storage.imports).toBeUndefined();
+    expect(none.scopes).toEqual(['apps:storage']);
+    const bare = await seedManifest({ blockId: 'notes-app', name: 'Notes App', scopes: [] });
+    expect(bare).toEqual({ blockId: 'notes-app-fork-ab12', name: 'Notes App', scopes: [] });
   });
 });
