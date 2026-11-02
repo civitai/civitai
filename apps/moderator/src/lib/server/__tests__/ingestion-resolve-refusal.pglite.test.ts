@@ -115,7 +115,8 @@ async function seed({
 }
 
 const imageRow = async () =>
-  (await db.query(`SELECT * FROM "Image" WHERE "id" = $1`, [IMAGE_ID])).rows[0];
+  (await db.query<Record<string, unknown>>(`SELECT * FROM "Image" WHERE "id" = $1`, [IMAGE_ID]))
+    .rows[0];
 const purgeRows = async () =>
   (
     await db.query(
