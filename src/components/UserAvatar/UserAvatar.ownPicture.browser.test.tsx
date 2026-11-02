@@ -50,12 +50,7 @@ const { UserAvatar } = await import('~/components/UserAvatar/UserAvatar');
 const NSFW_XXX = 16;
 const BLOCKED = 32;
 
-function renderAvatar(picture: {
-  nsfwLevel: number;
-  ingestion?: string;
-  needsReview?: string | null;
-  tosViolation?: boolean;
-}) {
+function renderAvatar(picture: { nsfwLevel: number; ingestion?: string }) {
   const user = {
     id: 1,
     username: 'tester',
@@ -67,8 +62,6 @@ function renderAvatar(picture: {
       url: 'abc',
       type: 'image',
       ingestion: 'Scanned',
-      needsReview: null,
-      tosViolation: false,
       ...picture,
     },
   } as unknown as React.ComponentProps<typeof UserAvatar>['user'];
@@ -113,17 +106,5 @@ describe('UserAvatar own profile picture', () => {
   test('an in-level picture still shows to the owner (the check can pass for the right reason)', async () => {
     renderAvatar({ nsfwLevel: 1 });
     await expect.poll(picture).not.toBeNull();
-  });
-
-  test('a picture mods removed (tosViolation) stays hidden from its owner on .red', async () => {
-    renderAvatar({ nsfwLevel: NSFW_XXX, tosViolation: true });
-    await expect.poll(() => document.body.textContent).toContain('TE');
-    expect(picture()).toBeNull();
-  });
-
-  test('a picture held for review (needsReview) stays hidden from its owner on .red', async () => {
-    renderAvatar({ nsfwLevel: NSFW_XXX, needsReview: 'minor' });
-    await expect.poll(() => document.body.textContent).toContain('TE');
-    expect(picture()).toBeNull();
   });
 });

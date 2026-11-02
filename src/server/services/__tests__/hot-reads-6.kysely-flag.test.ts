@@ -91,8 +91,6 @@ const userRow = (id: number) => ({
   profilePictureHash: null,
   profilePictureUserId: null,
   profilePictureIngestion: null,
-  profilePictureNeedsReview: null,
-  profilePictureTosViolation: null,
   profilePictureType: null,
   profilePictureWidth: null,
   profilePictureHeight: null,
