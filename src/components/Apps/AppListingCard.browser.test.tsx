@@ -1631,6 +1631,32 @@ describe('AppListingCard — the restricted-visibility badge', () => {
       ).toBe(true);
     });
 
+    test('Open carries its glyph on the right, 4px from the label; the grid card keeps it on the left', async () => {
+      renderWithProviders(
+        <div>
+          <div data-testid="emb">
+            <AppListingCard card={base({ slug: 'emb' })} canOpenPage embedded />
+          </div>
+          <div data-testid="grid">
+            <AppListingCard card={base({ slug: 'grid' })} canOpenPage />
+          </div>
+        </div>
+      );
+      await expect.element(page.getByTestId('grid')).toBeInTheDocument();
+      const section = (id: string) =>
+        document
+          .querySelector(
+            `[data-testid="${id}"] [data-testid="apps-listing-card-header"] .mantine-Button-section`
+          )
+          ?.getAttribute('data-position');
+      expect(section('emb'), 'embedded glyph is not on the right').toBe('right');
+      expect(section('grid'), 'control: the grid glyph must still be on the left').toBe('left');
+      const glyph = document.querySelector<HTMLElement>(
+        '[data-testid="emb"] [data-testid="apps-listing-card-header"] .mantine-Button-section'
+      )!;
+      expect(getComputedStyle(glyph).marginInlineStart).toBe('4px');
+    });
+
     test('no cover badge slot without a badge', async () => {
       renderWithProviders(<AppListingCard card={base({})} canOpenPage embedded />);
       await expect.element(page.getByTestId('apps-listing-card-footer')).toBeInTheDocument();

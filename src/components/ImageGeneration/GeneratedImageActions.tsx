@@ -36,9 +36,15 @@ import {
 export function GeneratedImageActions({
   actionIconSize = 'lg',
   iconSize = 20,
+  compact,
 }: {
   actionIconSize?: MantineSpacing;
   iconSize?: number;
+  /**
+   * For the mobile generator's header: sort and filters as icons, and while images are selected
+   * only the selection's actions.
+   */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const showCreatePostError = useShowCreatePostError();
@@ -162,8 +168,10 @@ export function GeneratedImageActions({
 
   return (
     <div className="flex items-center justify-end gap-2">
-      <SortFilter type="generation" ignoreNsfwLevel />
-      {!selectedCount && <MarkerFiltersDropdown />}
+      {!(compact && hasSelected) && (
+        <SortFilter type="generation" ignoreNsfwLevel iconOnly={compact} />
+      )}
+      {!selectedCount && <MarkerFiltersDropdown iconOnly={compact} />}
       {hasSelected && (
         <div className="flex gap-2">
           <BulkWorkflowMenu

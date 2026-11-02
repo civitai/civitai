@@ -119,6 +119,13 @@ CREATE TABLE "Appeal" (
 CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER);
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
+CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "CommentV3" ("id" INTEGER, "entityType" TEXT, "entityId" INTEGER, "userId" INTEGER, "deletedAt" TIMESTAMP(3));
+CREATE TABLE "Thread" (
+  "id" INTEGER, "articleId" INTEGER, "parentThreadId" INTEGER, "rootThreadId" INTEGER,
+  "commentId" INTEGER, "metadata" JSONB
+);
+CREATE TABLE "CommentV2" ("id" INTEGER, "userId" INTEGER, "threadId" INTEGER);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 

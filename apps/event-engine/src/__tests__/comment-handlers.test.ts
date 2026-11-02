@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { commentV2Handler } from '@/handlers/comment-v2';
+import { commentV3Handler } from '@/handlers/comment-v3';
 import { commentHandler } from '@/handlers/comments';
 
 type Add = { entityType: string; entityId: number; as: number; metric: string; value: number };
@@ -131,7 +132,6 @@ test('a thread that no longer exists is skipped without throwing', async () => {
 test.each([
   ['post', 'postId', 'Post'],
   ['image', 'imageId', 'Image'],
-  ['article', 'articleId', 'Article'],
   ['bounty', 'bountyId', 'Bounty'],
 ])('a %s comment counts for the entity and its owner', async (_name, idField, entityType) => {
   const { adds, actions } = recorder();
@@ -145,6 +145,21 @@ test.each([
   } as never);
 
   expectAdds(adds, [user(555, 42, 1), entity(entityType, 77, 42, 1)]);
+});
+
+// Article comments are counted from CommentV3 (comment-v3.ts), whichever table they were written to.
+test('an article comment is left to the CommentV3 handler', async () => {
+  for (const operation of ['create', 'delete']) {
+    const { adds, actions } = recorder();
+    const { pg } = pgReturning({ ...noEntity, articleId: 77, ownerId: 555 });
+    await commentV2Handler.process({
+      operation,
+      record: { userId: 42, threadId: 1 },
+      actions,
+      pg,
+    } as never);
+    expect(adds).toEqual([]);
+  }
 });
 
 test('a delete backs out both the entity and the owner', async () => {
@@ -325,4 +340,69 @@ test('a creator commenting on their own model counts for the model but not for t
   } as never);
 
   expectAdds(adds, [entity('Model', 9, 42, 1)]);
+});
+
+const v3 = (
+  operation: string,
+  record: Record<string, unknown>,
+  owner: unknown,
+  change?: { old: unknown; current: unknown }
+) => {
+  const { adds, actions } = recorder();
+  const { pg, calls } = pgReturning(owner);
+  return commentV3Handler
+    .process({
+      operation,
+      record: {
+        id: 9,
+        userId: 42,
+        entityType: 'article',
+        entityId: 77,
+        deletedAt: null,
+        ...record,
+      },
+      ...change,
+      actions,
+      pg,
+    } as never)
+    .then(() => ({ adds, calls }));
+};
+
+test('a CommentV3 article comment, reply or not, counts for the article and its owner', async () => {
+  const { adds, calls } = await v3('create', {}, { ownerId: 555 });
+  expectAdds(adds, [user(555, 42, 1), entity('Article', 77, 42, 1)]);
+  expect(calls[0].params).toEqual([77]);
+});
+
+test('a CommentV3 delete backs a live comment out, and a tombstone only once', async () => {
+  expectAdds((await v3('delete', {}, { ownerId: 555 })).adds, [
+    user(555, 42, -1),
+    entity('Article', 77, 42, -1),
+  ]);
+  const tombstoned = await v3(
+    'update',
+    { deletedAt: '2026-10-29T00:00:00Z' },
+    { ownerId: 555 },
+    { old: { deletedAt: null }, current: { deletedAt: '2026-10-29T00:00:00Z' } }
+  );
+  expectAdds(tombstoned.adds, [user(555, 42, -1), entity('Article', 77, 42, -1)]);
+  // The tombstone's removal when its last reply goes, and any other update, count nothing.
+  expect(
+    (await v3('delete', { deletedAt: '2026-10-29T00:00:00Z' }, { ownerId: 555 })).adds
+  ).toEqual([]);
+  expect(
+    (
+      await v3(
+        'update',
+        {},
+        { ownerId: 555 },
+        { old: { deletedAt: null }, current: { deletedAt: null } }
+      )
+    ).adds
+  ).toEqual([]);
+});
+
+test('CommentV3 skips self-comments for the owner and surfaces it does not count', async () => {
+  expectAdds((await v3('create', {}, { ownerId: 42 })).adds, [entity('Article', 77, 42, 1)]);
+  expect((await v3('create', { entityType: 'image' }, { ownerId: 555 })).adds).toEqual([]);
 });

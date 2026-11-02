@@ -7,6 +7,7 @@ import './challenge.profile';
 import './chat-message.profile';
 import './comment.profile';
 import './comment-v2.profile';
+import './comment-v3.profile';
 import './resource-review.profile';
 import './user.profile';
 import './user-profile.profile';

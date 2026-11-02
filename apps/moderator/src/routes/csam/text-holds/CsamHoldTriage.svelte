@@ -216,7 +216,7 @@
       {#snippet coverIcon()}
         {#if row.entityType === 'ChatMessage'}
           <IconMessage aria-hidden="true" />
-        {:else if row.entityType === 'Comment' || row.entityType === 'CommentV2'}
+        {:else if row.entityType === 'Comment' || row.entityType === 'CommentV2' || row.entityType === 'CommentV3'}
           <IconMessageCircle aria-hidden="true" />
         {:else if row.entityType === 'UserProfile'}
           <IconUser aria-hidden="true" />

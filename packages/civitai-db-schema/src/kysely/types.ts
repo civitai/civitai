@@ -2702,6 +2702,7 @@ export type CommentV3 = {
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
   legacyV1Id: number | null;
+  removedByAuthor: Generated<boolean>;
 };
 export type CommentV3Reaction = {
   id: Generated<number>;

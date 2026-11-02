@@ -229,8 +229,9 @@ describe('upsertComment — block enforcement on a reply create', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 1, rooted: false }]);
     db.thread.findUnique.mockResolvedValueOnce({ id: 1, locked: false });
     await expect(upsertComment(reply)).rejects.toThrow('comment thread is no longer available');
-    // One walk ran: the block check's own. The lock walk would be a second.
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    // The block check's own walk, then its CommentV3 lookup for the unresolved chain. The lock walk
+    // would be a third.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
     expect(isOwnerWalk(dbMock.dbWrite.$queryRaw.mock.calls[0][0])).toBe(true);
     expect(db.tx.commentV2.create).not.toHaveBeenCalled();
   });

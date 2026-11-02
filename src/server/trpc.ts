@@ -4,13 +4,9 @@ import {
   requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
-import {
-  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
-  RESTRICTED_ACCOUNT_MESSAGE,
-} from '~/server/common/content-restriction';
+import { EMAIL_VERIFICATION_REQUIRED_MESSAGE } from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
-import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
-import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
+import { mutedAccountRefusal } from '~/server/services/account-restriction.service';
 import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { NextApiRequest } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -349,16 +345,7 @@ const isMuted = middleware(async ({ ctx, next }) => {
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
   // The stored standing, not just the session's copy of it.
   if (user.muted || (await isAccountMuted(user.id, !!user.muted))) {
-    // `.catch`: this decides whether to OFFER a way out, never whether to refuse. A replica blip
-    // rejecting here would turn the refusal into a 500 carrying the driver's message.
-    const offer = couldAwaitTosReacceptance({ ...user, muted: true })
-      ? await shouldOfferTosReacceptance(user.id).catch(() => false)
-      : false;
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: RESTRICTED_ACCOUNT_MESSAGE,
-      ...(offer ? { cause: { tosReacceptRequired: true } } : {}),
-    });
+    throw await mutedAccountRefusal(user.id, user);
   }
 
   return next({

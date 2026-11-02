@@ -37,7 +37,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -113,6 +113,15 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       showErrorNotification({
         error: new Error('Unable to mute user, please try again.'),
       });
+    },
+    onSuccess(data) {
+      // The mute stands; clicking again would undo it, so this is a warning, not an error.
+      if (data.sessionInvalidated === false)
+        showWarningNotification({
+          title: 'Muted, but still signed in',
+          message: `${username} is muted, but their open sessions could not be signed out. The mute is in effect.`,
+          autoClose: false,
+        });
     },
   });
 

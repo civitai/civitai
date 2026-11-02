@@ -41,21 +41,62 @@ function logStandingError(name: string, userId: number, error?: unknown) {
 const cacheKey = (userId: number) =>
   `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${userId}` as RedisKeyTemplateCache;
 
-async function readMuted(userId: number): Promise<boolean> {
+/**
+ * What the cache holds for an account: the three facts `assertAccountNotRestricted` refuses on.
+ * `exists: false` is a missing row.
+ */
+export type AccountStanding = { muted: boolean; banned: boolean; exists: boolean };
+
+async function readStanding(userId: number): Promise<AccountStanding> {
   // The primary: a miss is most likely right after a change, which the replica may not have yet.
-  const row = await dbWrite.user.findUnique({ where: { id: userId }, select: { muted: true } });
-  return row?.muted ?? false;
+  const row = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { muted: true, bannedAt: true },
+  });
+  if (!row) return { muted: false, banned: false, exists: false };
+  return { muted: row.muted ?? false, banned: row.bannedAt != null, exists: true };
 }
 
 // One direct read per user per pod at a time: when the cache is down every guarded mutation lands
 // here, and concurrent ones for the same account share the read.
-const directReads = new Map<number, Promise<boolean>>();
-function readMutedShared(userId: number): Promise<boolean> {
+const directReads = new Map<number, Promise<AccountStanding>>();
+function readStandingShared(userId: number): Promise<AccountStanding> {
   const inFlight = directReads.get(userId);
   if (inFlight) return inFlight;
-  const read = readMuted(userId).finally(() => directReads.delete(userId));
+  const read = readStanding(userId).finally(() => directReads.delete(userId));
   directReads.set(userId, read);
   return read;
+}
+
+// The key once held a bare `muted` boolean, and a pod from before this shape may still write one
+// (and reads only a boolean itself). Anything but the full object is a miss here, read directly.
+function isStanding(value: unknown): value is AccountStanding {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.muted === 'boolean' && typeof v.banned === 'boolean' && typeof v.exists === 'boolean'
+  );
+}
+
+/**
+ * The account's stored standing, through the cache. Throws when neither the cache nor the database
+ * answers: a caller deciding whether to refuse must not read a failure as "in good standing".
+ */
+export async function getAccountStanding(userId: number): Promise<AccountStanding> {
+  try {
+    const cached = await withTimeoutFallback<unknown>(
+      fetchThroughCache(cacheKey(userId), () => readStandingShared(userId), {
+        ttl: ACCOUNT_STANDING_TTL,
+        retryCount: 0,
+      }),
+      ACCOUNT_STANDING_CACHE_DEADLINE_MS,
+      CACHE_TIMED_OUT
+    );
+    if (isStanding(cached)) return cached;
+  } catch {
+    // A cold key whose refill another request holds, or an origin error: read directly below.
+  }
+  return readStandingShared(userId);
 }
 
 /**
@@ -65,20 +106,7 @@ function readMutedShared(userId: number): Promise<boolean> {
  */
 export async function isAccountMuted(userId: number, sessionValue: boolean): Promise<boolean> {
   try {
-    const cached = await withTimeoutFallback<boolean | typeof CACHE_TIMED_OUT>(
-      fetchThroughCache(cacheKey(userId), () => readMutedShared(userId), {
-        ttl: ACCOUNT_STANDING_TTL,
-        retryCount: 0,
-      }),
-      ACCOUNT_STANDING_CACHE_DEADLINE_MS,
-      CACHE_TIMED_OUT
-    );
-    if (typeof cached === 'boolean') return cached;
-  } catch {
-    // A cold key whose refill another request holds, or an origin error: read directly below.
-  }
-  try {
-    return await readMutedShared(userId);
+    return (await getAccountStanding(userId)).muted;
   } catch (error) {
     logStandingError('account-standing.cache-read-failed', userId, error);
     return sessionValue;
@@ -99,6 +127,16 @@ function startRevoke(userId: number) {
   void Promise.resolve()
     .then(() => revokeCivitaiUserTokens({ userId }))
     .catch(() => false);
+}
+
+/**
+ * Run after a ban or unban has committed: drops the cached standing now and again after
+ * `ACCOUNT_STANDING_REBUST_MS`, past a refill that read the row before the write. The ban path takes
+ * its own session and token steps. Never throws.
+ */
+export async function afterAccountBanChanged(userId: number): Promise<void> {
+  await bustStanding(userId);
+  setTimeout(() => void bustStanding(userId), ACCOUNT_STANDING_REBUST_MS).unref?.();
 }
 
 /** The session step the caller takes for this change; repeated here so the revoke can follow it. */

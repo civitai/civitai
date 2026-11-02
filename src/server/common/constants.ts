@@ -450,6 +450,11 @@ export const constants = {
      * it here and mounts `CommentSection`; notifications build their deep links from this list.
      */
     v3ReadSurfaces: ['article'] as string[],
+    /**
+     * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
+     * on one exists only there.
+     */
+    v3WriteSurfaces: ['article'] as string[],
     /** Most replies the v3 suite opens up front under one top-level comment. */
     v3RepliesPerRoot: 10,
     /** Replies per "show more" page in the v3 suite. */

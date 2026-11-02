@@ -42,7 +42,8 @@ CREATE TABLE "Comment"(
   "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
   "userId" int NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
   "modelId" int NOT NULL REFERENCES "Model"(id) ON DELETE CASCADE,
-  locked boolean DEFAULT false, hidden boolean DEFAULT false, "pinnedAt" timestamp(3));
+  locked boolean DEFAULT false, hidden boolean DEFAULT false, "pinnedAt" timestamp(3),
+  "removedByAuthor" boolean NOT NULL DEFAULT false);
 
 CREATE TABLE "Thread"(
   id serial PRIMARY KEY, locked boolean NOT NULL DEFAULT false,
