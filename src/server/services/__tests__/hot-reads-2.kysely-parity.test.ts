@@ -359,7 +359,7 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
     });
 
     it('control: the full model exercises every relation, so its equality is not vacuous', async () => {
-      const model = golden.take<ModelWithDetails>(`model:${MODEL}`);
+      const model = golden.peek<ModelWithDetails>(`model:${MODEL}`);
       expect(model?.licenses).toHaveLength(2);
       expect(model?.reportStats).toEqual({ ownershipProcessing: 2 });
       expect(model?.user.rank).toEqual({ leaderboardRank: 9 });
@@ -377,7 +377,7 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       const empty = model?.modelVersions.find((v) => v.id === V_EMPTY);
       expect(empty?.generationCoverage).toBeNull();
       expect(full?.metrics).toHaveLength(1);
-      const bare = golden.take<ModelWithDetails>(`model:${MODEL_BARE}`);
+      const bare = golden.peek<ModelWithDetails>(`model:${MODEL_BARE}`);
       expect(bare?.user.rank).toBeNull();
       expect(bare?.reportStats).toBeNull();
       expect(bare?.modelVersions).toEqual([]);
@@ -403,7 +403,7 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
     });
 
     it('control: the full card exercises every relation, so its equality is not vacuous', async () => {
-      const read = golden.take<UserCreatorRead>('creator:by id, every relation filled');
+      const read = golden.peek<UserCreatorRead>('creator:by id, every relation filled');
       expect(read?.modelCount).toBe(1);
       expect(read?.user.links).toHaveLength(2);
       expect(read?.user.cosmetics.map((c) => c.cosmetic.id).sort()).toEqual([
@@ -422,7 +422,7 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       expect(read?.user.rank).not.toBeNull();
       expect(read?.user.profilePicture?.id).toBe(PICTURE);
       expect(read?.user.bannedAt).toBeInstanceOf(Date);
-      const bare = golden.take<UserCreatorRead>('creator:a user with no relations');
+      const bare = golden.peek<UserCreatorRead>('creator:a user with no relations');
       expect(bare).toMatchObject({ modelCount: 0 });
       expect(bare?.user).toMatchObject({ stats: null, rank: null, profilePicture: null });
     });
@@ -443,7 +443,7 @@ describe.skipIf(!parityUrl)('hot reads 2: Kysely returns exactly what Prisma ret
       expect(rows.map((row) => row.tagId)).toEqual([9811, 9812, 9814, 9813]);
       expect(rows[0].lastUpvote).toBeInstanceOf(Date);
       // The same rows the golden case holds, so the order above is the captured one.
-      expect(golden.take<ImageTagsForImagesRow[]>('tags:several images, one untagged')).toEqual(
+      expect(golden.peek<ImageTagsForImagesRow[]>('tags:several images, one untagged')).toEqual(
         rows
       );
     });

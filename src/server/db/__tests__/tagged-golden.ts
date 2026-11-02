@@ -7,8 +7,9 @@ import { Prisma } from '@prisma/client';
  * `{ "$decimal": "<text>" }` as a `Prisma.Decimal`, so `toStrictEqual` still checks the type a
  * consumer receives.
  *
- * `take(name)` returns one case and records it; `unused()` lists the cases no test took, so a suite
- * can fail when a captured case stops being asserted.
+ * `take(name)` returns one case and records it: only an assertion comparing a read with the case may
+ * take it. `peek(name)` returns it without recording, for controls that inspect the golden itself.
+ * `unused()` lists the cases no test took, so a suite fails when a case stops being asserted.
  */
 export function readTaggedGolden(path: string) {
   const cases = JSON.parse(readFileSync(path, 'utf8'), (_key, value) => {
@@ -24,6 +25,10 @@ export function readTaggedGolden(path: string) {
     take<T = unknown>(name: string): T {
       if (!(name in cases)) throw new Error(`golden: no case named "${name}"`);
       taken.add(name);
+      return cases[name] as T;
+    },
+    peek<T = unknown>(name: string): T {
+      if (!(name in cases)) throw new Error(`golden: no case named "${name}"`);
       return cases[name] as T;
     },
     unused: () => Object.keys(cases).filter((name) => !taken.has(name)),
