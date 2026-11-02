@@ -1,15 +1,21 @@
 // Module state: navigations remount the page's components and the choice must outlive them.
 //
-// It also outlives a reload, per browser, but is never READ at module init: on the server this module is
-// shared by every request, and a client that started from storage would hydrate against a server render
-// that was blurred. It starts blurred everywhere and `restore()` applies the stored choice after mount.
+// It also outlives a reload, per moderator in this browser, but is never READ at module init: on the
+// server this module is shared by every request, and a client that started from storage would hydrate
+// against a server render that was blurred. It starts blurred everywhere and `restore()` applies the
+// signed-in moderator's stored choice after mount.
 let revealed = $state(false);
-// Once per page load. The page remounts on every client navigation back to it, and re-reading storage
-// then would overwrite a choice made since: blocked storage would re-blur it, and a failed write would
-// bring back an older reveal the moderator had since turned off.
-let restored = false;
+// Whose choice is in effect, set by `restore()`. Once per moderator per page load: the page remounts on
+// every client navigation back to it, and re-reading storage then would overwrite a choice made since —
+// blocked storage would re-blur it, and a failed write would bring back an older reveal.
+let moderatorId: number | null = null;
 
-export const REVEAL_STORAGE_KEY = 'moderator.csam-holds.reveal-images';
+/**
+ * Keyed by moderator: workstations are shared, and a choice stored per browser opened the next
+ * moderator's holds unblurred without them ever choosing it. The unkeyed entry earlier builds wrote is
+ * ignored, never migrated, so everyone starts blurred.
+ */
+export const revealStorageKey = (id: number) => `moderator.csam-holds.reveal-images:${id}`;
 
 function storage(): Storage | null {
   try {
@@ -25,18 +31,20 @@ export const imageReveal = {
   },
   toggle() {
     revealed = !revealed;
+    // Before `restore()` nobody is known to store it for; the choice lasts until reload.
+    if (moderatorId === null) return;
     try {
-      storage()?.setItem(REVEAL_STORAGE_KEY, revealed ? '1' : '0');
+      storage()?.setItem(revealStorageKey(moderatorId), revealed ? '1' : '0');
     } catch {
       // Storage blocked or full: the choice lasts until reload.
     }
   },
-  /** Apply this browser's stored choice. Only an explicit reveal reveals; anything else stays blurred. */
-  restore() {
-    if (restored) return;
-    restored = true;
+  /** Apply this moderator's stored choice. Only an explicit reveal reveals; anything else stays blurred. */
+  restore(id: number) {
+    if (moderatorId === id) return;
+    moderatorId = id;
     try {
-      revealed = storage()?.getItem(REVEAL_STORAGE_KEY) === '1';
+      revealed = storage()?.getItem(revealStorageKey(id)) === '1';
     } catch {
       revealed = false;
     }

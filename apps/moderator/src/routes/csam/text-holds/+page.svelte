@@ -7,8 +7,10 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // After mount, never during render: the server rendered blurred and cannot see this browser's choice.
-  onMount(() => imageReveal.restore());
+  // After mount, never during render: the server rendered blurred and cannot see this moderator's choice.
+  onMount(() => {
+    if (data.user) imageReveal.restore(data.user.id);
+  });
 </script>
 
 <div class="flex flex-col lg:h-svh">
