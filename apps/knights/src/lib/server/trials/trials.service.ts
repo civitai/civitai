@@ -31,17 +31,41 @@ export type TrialView =
       item: TrialItem;
     };
 
+/** Mid-run the player learns only whether the pick was right; the answers and explanations wait for the summary. */
 export type AnswerResult =
   | { status: 'rejected'; reason: 'no-player' | 'no-run' | 'not-current' | 'bad-answer' }
   | {
       status: 'recorded';
       correct: boolean;
-      correctAnswer: string;
-      correctLabel: string;
-      explanation: string | null;
-      imageKey: string;
       finished: { result: 'passed' | 'failed' | 'void'; score: number | null } | null;
     };
+
+export type TrialSummaryItem = {
+  referenceId: number;
+  /** Null when the image is no longer one the feeds would serve. */
+  imageKey: string | null;
+  width: number | null;
+  height: number | null;
+  answer: string;
+  answerLabel: string;
+  correctAnswer: string;
+  correctLabel: string;
+  correct: boolean;
+  /** Core items teach and are not scored. */
+  scored: boolean;
+  explanation: string | null;
+};
+
+export type TrialSummary = {
+  runId: number;
+  result: 'passed' | 'failed';
+  /** Scored (fresh) items answered, and how many of them were right. */
+  scored: number;
+  right: number;
+  passMark: number;
+  cooldownUntil: Date | null;
+  items: TrialSummaryItem[];
+};
 
 type Run = {
   id: number;
@@ -327,7 +351,7 @@ export async function answerTrial(
 
     const reference = await trx
       .selectFrom('KnightsReferenceImage')
-      .select(['answer', 'source', 'explanation'])
+      .select('answer')
       .where('id', '=', referenceId)
       .executeTakeFirstOrThrow();
     const correct = reference.answer === answer;
@@ -356,11 +380,87 @@ export async function answerTrial(
     return {
       status: 'recorded',
       correct,
-      correctAnswer: reference.answer,
-      correctLabel: options.find((o) => o.value === reference.answer)?.label ?? reference.answer,
-      explanation: reference.source === REFERENCE_SOURCE.core ? reference.explanation : null,
-      imageKey: next.item.imageKey,
       finished,
     };
   });
+}
+
+/**
+ * The most recent run the player finished with a verdict (a void run has none). Reads finished runs only, so it can
+ * never hand out the answers of a run still being played.
+ */
+export async function getTrialSummary(
+  db: Kysely<DB>,
+  userId: number
+): Promise<TrialSummary | null> {
+  const row = await db
+    .selectFrom('KnightsTrialRun')
+    .select(['id', 'questionKey', 'itemIds', 'result', 'cooldownUntil'])
+    .where('playerId', '=', userId)
+    .where('finishedAt', 'is not', null)
+    .where('result', 'in', ['passed', 'failed'])
+    .orderBy('finishedAt', 'desc')
+    .orderBy('id', 'desc')
+    .executeTakeFirst();
+  if (!row) return null;
+  const run = toRun(row);
+
+  const [answers, { options }] = await Promise.all([
+    db
+      .selectFrom('KnightsTrialAnswer as a')
+      .innerJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
+      .select([
+        'a.referenceId',
+        'a.answer',
+        'a.correct',
+        'r.answer as correctAnswer',
+        'r.source',
+        'r.explanation',
+      ])
+      .where('a.runId', '=', run.id)
+      .execute(),
+    loadQuestion(db, run.questionKey),
+  ]);
+  const servable = await servableReferences(db, REFERENCE_POOL.trials)
+    .select(['r.id', 'img.url as imageKey', 'img.width', 'img.height'])
+    .where(
+      'r.id',
+      'in',
+      answers.map((a) => a.referenceId)
+    )
+    .execute();
+  const pictures = new Map(servable.map((s) => [s.id, s]));
+  const label = (value: string) => options.find((o) => o.value === value)?.label ?? value;
+  const byId = new Map(answers.map((a) => [a.referenceId, a]));
+
+  const items = run.itemIds.flatMap((id): TrialSummaryItem[] => {
+    const a = byId.get(id);
+    if (!a) return [];
+    const picture = pictures.get(id);
+    return [
+      {
+        referenceId: id,
+        imageKey: picture?.imageKey ?? null,
+        width: picture?.width ?? null,
+        height: picture?.height ?? null,
+        answer: a.answer,
+        answerLabel: label(a.answer),
+        correctAnswer: a.correctAnswer,
+        correctLabel: label(a.correctAnswer),
+        correct: a.correct,
+        scored: run.freshIds ? run.freshIds.has(id) : a.source !== REFERENCE_SOURCE.core,
+        explanation: a.explanation,
+      },
+    ];
+  });
+  const scored = items.filter((i) => i.scored);
+  return {
+    runId: run.id,
+    result: row.result as 'passed' | 'failed',
+    scored: scored.length,
+    right: scored.filter((i) => i.correct).length,
+    passMark: TRIALS.passMark,
+    cooldownUntil: row.cooldownUntil,
+    items,
+  };
 }

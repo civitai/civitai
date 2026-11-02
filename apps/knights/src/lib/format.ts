@@ -9,6 +9,15 @@ export const formatWait = (seconds: number): string => {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
 };
 
+/** A wait as `23:41:07`. */
+export const formatClock = (seconds: number): string => {
+  const total = Math.max(0, Math.ceil(seconds));
+  const part = (n: number) => String(n).padStart(2, '0');
+  return `${part(Math.floor(total / 3600))}:${part(Math.floor(total / 60) % 60)}:${part(
+    total % 60
+  )}`;
+};
+
 /** A whole number with thousands separators, the same on every machine. */
 export const count = (n: number): string => n.toLocaleString('en-US');
 

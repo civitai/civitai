@@ -8,6 +8,7 @@ import { planRun } from './plan';
 import {
   answerTrial,
   getTrial,
+  getTrialSummary,
   promoteToKnight,
   type TrialDeps,
   type TrialView,
@@ -291,7 +292,7 @@ describe('getTrial', () => {
 });
 
 describe('answerTrial', () => {
-  it('shows the right answer after the pick, with the explanation for core items', async () => {
+  it('tells the player only whether the pick was right, never the answer, mid-run', async () => {
     await player(1);
     await standardPool();
     const view = await current(1);
@@ -307,10 +308,7 @@ describe('answerTrial', () => {
       },
       deps
     );
-    expect(wrong).toMatchObject({ status: 'recorded', correct: false, correctAnswer: answer });
-    if (wrong.status !== 'recorded') throw new Error('unreachable');
-    expect(wrong.explanation).toBe(view.item.referenceId === 1 ? 'plainly safe' : 'because');
-    expect(wrong.correctLabel).toBeTruthy();
+    expect(wrong).toEqual({ status: 'recorded', correct: false, finished: null });
   });
 
   it('counts answers and failures per item', async () => {
@@ -531,6 +529,123 @@ describe('graduation', () => {
     expect(unmet).toHaveLength(4);
     expect(idsOf(runs[1].itemIds)).toEqual(expect.arrayContaining(unmet));
     expect(view.run.position).toBe(1);
+  });
+});
+
+describe('getTrialSummary', () => {
+  it('has nothing for a player with no finished run, and hides an unfinished one', async () => {
+    await player(1);
+    await standardPool();
+    expect(await getTrialSummary(db, 1)).toBeNull();
+    const view = await current(1);
+    await answerTrial(
+      db,
+      {
+        questionKey: Q,
+        userId: 1,
+        referenceId: view.item.referenceId,
+        answer: await answerOf(view.item.referenceId),
+      },
+      deps
+    );
+    expect(await getTrialSummary(db, 1)).toBeNull();
+  });
+
+  it('lists every item in the order played with the pick, the answer and the explanation', async () => {
+    await player(1);
+    await standardPool();
+    seeds = [7];
+    const played: { id: number; picked: string }[] = [];
+    for (let guard = 0; guard < 10; guard++) {
+      const view = await getTrial(db, 1, deps);
+      if (view.kind !== 'question') break;
+      const id = view.item.referenceId;
+      const right = await answerOf(id);
+      const picked = id === 1 || id === 3 ? (right === '16' ? '1' : '16') : right;
+      played.push({ id, picked });
+      await answerTrial(db, { questionKey: Q, userId: 1, referenceId: id, answer: picked }, deps);
+    }
+
+    const summary = await getTrialSummary(db, 1);
+
+    expect(summary?.items.map((i) => i.referenceId)).toEqual(played.map((p) => p.id));
+    expect(summary?.items.map((i) => i.answer)).toEqual(played.map((p) => p.picked));
+    const one = summary?.items.find((i) => i.referenceId === 1);
+    expect(one).toMatchObject({
+      correct: false,
+      scored: false,
+      correctAnswer: '1',
+      explanation: 'plainly safe',
+      imageKey: 'key-1',
+    });
+    expect(one?.answerLabel).toBeTruthy();
+    expect(one?.correctLabel).toBeTruthy();
+    expect(summary?.items.find((i) => i.referenceId === 3)).toMatchObject({
+      correct: false,
+      scored: true,
+    });
+    expect(summary?.items.find((i) => i.referenceId === 4)).toMatchObject({
+      correct: true,
+      scored: true,
+    });
+  });
+
+  it('reports a failed run with its score and cooldown end, and still shows it after a reload', async () => {
+    await player(1);
+    await standardPool();
+    await playOut(1, [3, 4]);
+
+    const summary = await getTrialSummary(db, 1);
+
+    expect(summary).toMatchObject({
+      result: 'failed',
+      right: 2,
+      scored: 4,
+      passMark: TRIALS.passMark,
+      cooldownUntil: new Date(T0.getTime() + TRIALS.cooldownHours * 3_600_000),
+    });
+    expect(await getTrialSummary(db, 1)).toEqual(summary);
+    expect((await getTrial(db, 1, deps)).kind).toBe('cooldown');
+  });
+
+  it('reports a passed run with no cooldown, after the player became a Knight', async () => {
+    await player(1);
+    await standardPool();
+    await playOut(1, [1]);
+
+    const summary = await getTrialSummary(db, 1);
+
+    expect(await rank(1)).toBe('Knight');
+    expect(summary).toMatchObject({ result: 'passed', right: 4, scored: 4, cooldownUntil: null });
+  });
+
+  it('shows the latest finished run, not an older one, and never a void one', async () => {
+    await player(1);
+    await standardPool();
+    for (const id of [21, 22, 23, 24, 25, 26, 27, 28]) await reference(id, { answer: '8' });
+    seeds = [100, 200];
+    await playOut(1, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    const failed = await getTrialSummary(db, 1);
+    now = new Date(T0.getTime() + (TRIALS.cooldownHours + 1) * 3_600_000);
+    await playOut(1);
+
+    const latest = await getTrialSummary(db, 1);
+
+    expect(failed?.result).toBe('failed');
+    expect(latest?.result).toBe('passed');
+    expect(latest?.runId).not.toBe(failed?.runId);
+  });
+
+  it('keeps an item whose image went away, without its picture', async () => {
+    await player(1);
+    await standardPool();
+    await playOut(1);
+    await pg.query(`UPDATE "Image" SET "ingestion"='Blocked' WHERE "id"=11`);
+
+    const summary = await getTrialSummary(db, 1);
+
+    expect(summary?.items).toHaveLength(6);
+    expect(summary?.items.find((i) => i.referenceId === 3)?.imageKey).toBeNull();
   });
 });
 

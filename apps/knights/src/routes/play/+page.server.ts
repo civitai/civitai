@@ -22,12 +22,20 @@ import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
+import { TRIALS } from '$lib/server/trials/config';
 import { trialDeps } from '$lib/server/trials/runtime';
 import { pickYesNo } from '$lib/server/yesno/feed';
 import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
-import { answerTrial, getTrial } from '$lib/server/trials/trials.service';
+import {
+  acknowledgePassedSummary,
+  markPassedSummary,
+  pendingPassedSummary,
+} from '$lib/server/trials/pending-summary';
+import { summaryStore } from '$lib/server/trials/summary-runtime';
+import { answerTrial, getTrial, getTrialSummary } from '$lib/server/trials/trials.service';
+import { summaryPayload } from './summary';
 import type { Actions, PageServerLoad } from './$types';
 
 const REJECTION_TEXT: Record<RejectReason, string> = {
@@ -67,8 +75,24 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     ratingGuide: ratingGuide(),
   };
 
+  // A new Knight sees the summary of the Trials they just passed until they enter the Order.
+  if (status.rank !== 'Acolyte') {
+    const pending = await pendingPassedSummary(summaryStore, locals.user.id);
+    const summary = pending ? await getTrialSummary(db, locals.user.id) : null;
+    if (summary?.result === 'passed' && summary.runId === pending) {
+      return {
+        conversionOpen: conversionEnabled(),
+        mode: 'trials' as const,
+        ...common,
+        trial: summaryPayload(summary, now),
+      };
+    }
+  }
+
   if (status.rank === 'Acolyte') {
     const trial = await getTrial(db, locals.user.id, trialDeps);
+    // A failed run's summary stays up for as long as its cooldown does.
+    const failed = trial.kind === 'cooldown' ? await getTrialSummary(db, locals.user.id) : null;
     if (trial.kind !== 'not-acolyte') {
       return {
         conversionOpen: conversionEnabled(),
@@ -82,6 +106,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
                 prompt: trial.prompt,
                 options: trial.options,
                 run: trial.run,
+                passMark: TRIALS.passMark,
                 item: {
                   referenceId: trial.item.referenceId,
                   src: imageUrl(trial.item.imageKey),
@@ -90,7 +115,9 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
                 },
               }
             : trial.kind === 'cooldown'
-            ? { kind: 'cooldown' as const, until: trial.until.toISOString() }
+            ? failed?.result === 'failed'
+              ? summaryPayload(failed, now)
+              : { kind: 'cooldown' as const, until: trial.until.toISOString() }
             : { kind: 'unavailable' as const },
       };
     }
@@ -319,6 +346,13 @@ export const actions: Actions = {
     }
   },
 
+  enterOrder: async ({ locals }) => {
+    if (!(await acknowledgePassedSummary(summaryStore, locals.user.id))) {
+      return fail(500, { message: 'Could not continue. Try again.' });
+    }
+    return { success: true };
+  },
+
   trial: async ({ request, locals }) => {
     const form = await request.formData();
     const referenceId = Number(form.get('referenceId'));
@@ -341,16 +375,13 @@ export const actions: Actions = {
       if (result.status === 'rejected') {
         return fail(409, { message: TRIAL_REJECTION_TEXT[result.reason] });
       }
-      return {
-        success: true,
-        reveal: {
-          correct: result.correct,
-          correctLabel: result.correctLabel,
-          explanation: result.explanation,
-          src: imageUrl(result.imageKey),
-          finished: result.finished,
-        },
-      };
+      if (result.finished?.result === 'passed') {
+        const summary = await getTrialSummary(db, locals.user.id);
+        if (summary?.result === 'passed') {
+          await markPassedSummary(summaryStore, locals.user.id, summary.runId);
+        }
+      }
+      return { success: true, correct: result.correct, finished: result.finished !== null };
     } catch (error) {
       console.error('knights: trial answer failed', { referenceId, error });
       return fail(500, { message: 'Your answer could not be recorded. Try again in a moment.' });
