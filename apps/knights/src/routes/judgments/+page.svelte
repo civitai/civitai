@@ -1,7 +1,8 @@
 <script lang="ts">
   import { judgmentsHref } from './href';
   import Thumbnail from './Thumbnail.svelte';
-  import StatusBar from '$lib/StatusBar.svelte';
+  import VerdictSeal from '$lib/VerdictSeal.svelte';
+  import { count } from '$lib/format';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -17,109 +18,215 @@
   const FILTERS = [
     ['all', 'All'],
     ['correct', 'Correct'],
-    ['wrong', 'Failed'],
+    ['wrong', 'Wrong'],
     ['pending', 'Pending'],
     ['inconclusive', 'Inconclusive'],
     ['forfeited', 'Forfeited'],
   ] as const;
-
 </script>
 
-<h1>Your judgments</h1>
-
-<StatusBar status={data.status} />
-
-<nav class="filters" aria-label="Filter by status">
-  {#each FILTERS as [value, label] (value)}
-    <a
-      href={judgmentsHref(value, 1)}
-      aria-current={data.filter === value ? 'true' : undefined}
-      class:active={data.filter === value}>{label}</a
-    >
-  {/each}
-</nav>
-
-{#each data.judgments as judgment (`${judgment.kind}:${judgment.itemId}:${judgment.at}`)}
-  <article class="judgment">
-    <Thumbnail src={judgment.src} />
-    <div class="body">
-      <p class="muted">{judgment.prompt}</p>
-      <p>Your answer: {judgment.answerLabel}</p>
-      {#if judgment.verdictLabel}
-        <p>The verdict: {judgment.verdictLabel}</p>
-      {/if}
-      <p class="muted">
-        {#if judgment.kind === 'trial'}<span class="tag">Trial</span> · {/if}<span
-          class="state {judgment.status}">{STATUS_TEXT[judgment.status]}</span
-        >
-        · {judgment.xp} XP · {judgment.gold} gold{judgment.status === 'pending' ? ' pending' : ''} · {new Date(judgment.at).toLocaleString()}
-      </p>
-      {#if judgment.imageHref}
-        <p><a href={judgment.imageHref} target="_blank" rel="noopener noreferrer">Open the image on Civitai</a></p>
-      {/if}
+<div class="page-wide">
+  <header class="head">
+    <div>
+      <p class="eyebrow">Your record</p>
+      <h1 class="page-title">Your judgments</h1>
     </div>
-  </article>
-{:else}
-  <p>{data.filter === 'all' ? 'You have not judged anything yet.' : 'Nothing matches this filter.'}</p>
-{/each}
+    <p class="summary">
+      {data.status.rank} · Level {data.status.level} · Gold {count(data.status.goldEarned)} earned, {count(
+        data.status.goldPending
+      )} pending
+    </p>
+  </header>
 
-<nav class="pager">
-  {#if data.page > 1}
-    <a href={judgmentsHref(data.filter, data.page - 1)}>Newer</a>
-  {/if}
-  {#if data.hasMore}
-    <a href={judgmentsHref(data.filter, data.page + 1)}>Older</a>
-  {/if}
-</nav>
+  <nav class="filters" aria-label="Filter by status">
+    {#each FILTERS as [value, label] (value)}
+      <a
+        href={judgmentsHref(value, 1)}
+        aria-current={data.filter === value ? 'true' : undefined}
+        class:active={data.filter === value}>{label}</a
+      >
+    {/each}
+  </nav>
 
-<p><a href="/play" data-sveltekit-preload-data="off">Back to judging</a></p>
+  <div class="list">
+    {#each data.judgments as judgment (`${judgment.kind}:${judgment.itemId}:${judgment.at}`)}
+      <article class="judgment">
+        <Thumbnail src={judgment.src} />
+        <div class="body">
+          <p class="prompt">{judgment.prompt}</p>
+          <p class="answer">
+            Your answer: {judgment.answerLabel}{#if judgment.verdictLabel}
+              <span class="dot">·</span> The verdict: {judgment.verdictLabel}{/if}
+          </p>
+          <p class="when">
+            {#if judgment.kind === 'trial'}<span class="tag">Trial</span> · {/if}{new Date(
+              judgment.at
+            ).toLocaleString()}
+            {#if judgment.imageHref}
+              · <a href={judgment.imageHref} target="_blank" rel="noopener noreferrer"
+                >Open the image on Civitai</a
+              >
+            {/if}
+          </p>
+        </div>
+        <div class="state"><VerdictSeal status={judgment.status} label={STATUS_TEXT[judgment.status]} /></div>
+        <p class="reward">
+          <span>{judgment.xp ? `+${judgment.xp}` : 0} XP</span>
+          <span class="gold" class:zero={!judgment.gold}
+            >{judgment.gold ? `+${judgment.gold}` : 0} gold{judgment.status === 'pending' ? ' pending' : ''}</span
+          >
+        </p>
+      </article>
+    {:else}
+      <p class="empty">
+        {data.filter === 'all' ? 'You have not judged anything yet.' : 'Nothing matches this filter.'}
+      </p>
+    {/each}
+  </div>
+
+  <nav class="pager" aria-label="Pages">
+    {#if data.page > 1}
+      <a class="btn" href={judgmentsHref(data.filter, data.page - 1)}>Newer</a>
+    {:else}
+      <span></span>
+    {/if}
+    <span class="page">Page {data.page}</span>
+    {#if data.hasMore}
+      <a class="btn" href={judgmentsHref(data.filter, data.page + 1)}>Older</a>
+    {:else}
+      <span></span>
+    {/if}
+  </nav>
+</div>
 
 <style>
-  .judgment {
-    display: flex;
-    gap: 1rem;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid var(--border);
-  }
   p {
-    margin: 0.15rem 0;
+    margin: 0;
+  }
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+  .head :global(.page-title) {
+    margin-bottom: 0;
+  }
+  .summary {
+    color: var(--io-parchment-muted);
+    font: 400 1rem/1.4 var(--io-font-ui);
   }
   .filters {
     display: flex;
     flex-wrap: wrap;
     gap: 0.75rem;
-    margin: 0.75rem 0;
+    margin-bottom: 1.5rem;
   }
-  .filters a.active {
-    font-weight: bold;
+  .filters a {
+    padding: 0.55rem 1.4rem;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 999px;
+    color: var(--io-parchment);
+    font: 500 1rem/1.2 var(--io-font-ui);
     text-decoration: none;
   }
-  .state.correct {
-    color: var(--gold);
+  .filters a:hover {
+    border-color: var(--io-gold);
+  }
+  .filters a.active {
+    border-color: var(--io-gold);
+    background: var(--io-gold);
+    color: var(--io-bg);
+  }
+  .list {
+    border-top: 1px solid var(--io-gold-muted);
+  }
+  .judgment {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr) minmax(0, 16rem) 11rem;
+    align-items: center;
+    gap: 1.25rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--io-gold-muted);
+  }
+  .prompt {
+    color: var(--io-parchment);
+    font-size: 1.35rem;
+    line-height: 1.25;
+  }
+  .answer,
+  .when {
+    margin-top: 0.2rem;
+    color: var(--io-parchment-muted);
+    font: 400 0.95rem/1.4 var(--io-font-ui);
+  }
+  .when a {
+    color: var(--io-parchment-muted);
+  }
+  .reward {
+    display: flex;
+    white-space: nowrap;
+    flex-direction: column;
+    align-items: flex-end;
+    color: var(--io-parchment);
+    font: 400 1rem/1.5 var(--io-font-ui);
+  }
+  .gold {
+    color: var(--io-gold);
+  }
+  .gold.zero {
+    color: var(--io-parchment-muted);
+  }
+  .empty {
+    padding: 2rem 0;
   }
   .pager {
     display: flex;
-    gap: 1rem;
-    margin: 1rem 0;
+    justify-content: space-between;
+    align-items: center;
+    margin: 1.5rem 0 0;
   }
-  .body {
-    min-width: 0;
+  .page {
+    color: var(--io-parchment-muted);
+    font: 400 1rem/1.3 var(--io-font-ui);
   }
-  @media (max-width: 40rem) {
+
+  @media (max-width: 47.99rem) {
+    .head {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
     .judgment {
-      gap: 0.75rem;
+      grid-template-columns: 72px minmax(0, 1fr) auto;
+      grid-template-areas:
+        'thumb body body'
+        'state state reward';
+      gap: 0.75rem 1rem;
     }
-    .filters {
-      gap: 0.25rem 0.5rem;
+    .judgment > :global(:first-child) {
+      grid-area: thumb;
     }
-    .filters a,
-    .pager a {
-      display: inline-block;
-      padding: 0.5rem 0.6rem;
-      border: 1px solid var(--border);
+    .body {
+      grid-area: body;
     }
-    .filters a.active {
-      border-color: var(--gold);
+    .state {
+      grid-area: state;
+    }
+    .reward {
+      grid-area: reward;
+    }
+    .prompt {
+      font-size: 1.2rem;
+    }
+    .pager {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .pager .page {
+      display: none;
     }
   }
 </style>

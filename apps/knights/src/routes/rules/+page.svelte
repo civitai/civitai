@@ -1,5 +1,6 @@
 <script lang="ts">
   import { count } from '$lib/format';
+  import RankCards from '$lib/RankCards.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import type { PageData } from './$types';
 
@@ -7,13 +8,31 @@
   let facts = $derived(data.facts);
 </script>
 
-<h1>Rules of the Order</h1>
+<div class="page-wide rules">
+  <header class="head">
+    <div>
+      <p class="eyebrow">Knights of New Order</p>
+      <h1 class="page-title">Rules of the Order</h1>
+    </div>
+    <p class="lede">
+      Knights of New Order judge how mature images should be rated, so the site can show each image
+      to the right people. <a href="/play" data-sveltekit-preload-data="off">Back to judging</a>
+    </p>
+  </header>
 
-<p class="muted">
-  Knights of New Order judge how mature images should be rated, so the site can show each image to
-  the right people. <a href="/play" data-sveltekit-preload-data="off">Back to judging</a>
-</p>
+  <h2 class="section-title">The ranks</h2>
+  <RankCards
+    ranks={facts.ranks.map((r) => ({ ...r, accuracyBar: r.accuracyPercent / 100 }))}
+  />
+  <p class="muted ranks-note">
+    Vote weights, gold rates and daily caps per rank are on the <a href="/ranks">Ranks</a> page.
+  </p>
 
+  <div class="divider" aria-hidden="true"><span></span></div>
+
+  <div class="columns">
+    <div class="col">
+<section>
 <h2>Acolyte Trials</h2>
 <ul>
   <li>
@@ -26,7 +45,8 @@
   </li>
   <li>An Acolyte's answers never decide anything, and earn no XP or gold.</li>
 </ul>
-
+</section>
+<section>
 <h2>Voting and verdicts</h2>
 <ul>
   <li>
@@ -51,7 +71,8 @@
     image. Moderators are not paced.
   </li>
 </ul>
-
+</section>
+<section>
 <h2>XP and ranks</h2>
 <ul>
   <li>
@@ -68,26 +89,11 @@
     demoted.
   </li>
 </ul>
-<table>
-  <thead>
-    <tr>
-      <th>Rank</th>
-      <th>Levels</th>
-      <th>Accuracy bar</th>
-    </tr>
-  </thead>
-  <tbody>
-    {#each facts.ranks as rank (rank.rank)}
-      <tr>
-        <th scope="row">{rank.rank}</th>
-        <td>{rank.levels}</td>
-        <td>{rank.accuracyPercent}%</td>
-      </tr>
-    {/each}
-  </tbody>
-</table>
-<p class="muted">Vote weights, gold rates and daily caps per rank are on the <a href="/ranks">Ranks</a> page.</p>
 
+</section>
+    </div>
+    <div class="col">
+<section>
 <h2>The daily Watch and streaks</h2>
 <ul>
   <li>
@@ -101,7 +107,8 @@
   </li>
   <li>Each rank has a daily cap on gold from judging. Past it, judgments still earn XP and count toward the Watch.</li>
 </ul>
-
+</section>
+<section>
 <h2>Gold</h2>
 <ul>
   <li>
@@ -116,7 +123,8 @@
     later; it is not open yet.
   </li>
 </ul>
-
+</section>
+<section>
 <h2>Smites and hearts</h2>
 <ul>
   <li>
@@ -127,23 +135,80 @@
     beginning.
   </li>
 </ul>
-
+</section>
+    </div>
+    <div class="col">
+<section>
 <h2>Rating guide</h2>
 <p class="muted">What each level means. Rate what the image shows, not what you would like to see.</p>
 <RatingGuide guide={facts.ratingGuide} />
-
-<p><a href="/">Home</a> · <a href="/play" data-sveltekit-preload-data="off">Play</a></p>
+</section>
+    </div>
+  </div>
+</div>
 
 <style>
-  table {
-    border-collapse: collapse;
-    margin: 1rem 0;
-    max-width: 100%;
+  p {
+    margin: 0;
   }
-  th,
-  td {
-    padding: 0.4rem 1rem 0.4rem 0;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
+  .head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 2rem;
+    align-items: end;
+    margin-bottom: 1.5rem;
+  }
+  .head :global(.page-title),
+  .head .lede {
+    margin-bottom: 0;
+  }
+  .section-title,
+  .rules section :global(h2) {
+    margin: 0 0 0.75rem;
+    font-size: 1.05rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .section-title {
+    margin-bottom: 1.25rem;
+  }
+  .ranks-note {
+    margin-top: 1.25rem;
+    text-align: center;
+  }
+  .columns {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2.5rem;
+    align-items: start;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+  }
+  .rules section :global(ul) {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .rules section :global(li) {
+    margin-bottom: 0.6rem;
+  }
+  .rules section :global(strong) {
+    color: var(--io-parchment);
+  }
+  @media (max-width: 47.99rem) {
+    .head,
+    .columns {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1rem;
+    }
+    .columns {
+      gap: 1.75rem;
+    }
+    .col:last-child {
+      order: -1;
+    }
   }
 </style>
