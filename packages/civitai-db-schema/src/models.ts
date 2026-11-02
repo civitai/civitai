@@ -3220,6 +3220,7 @@ export interface CommentV3 {
   pinnedAt: Date | null;
   reactionCount: number;
   legacyV1Id: number | null;
+  removedByAuthor: boolean;
   reactions?: CommentV3Reaction[];
   reports?: CommentV3Report[];
   mutes?: CommentMute[];

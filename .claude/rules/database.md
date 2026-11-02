@@ -28,7 +28,7 @@ Event and activity records (downloads, views, accesses, clicks: anything appende
 
 - Migration files live in `packages/civitai-db-schema/prisma/migrations/` for review/history and are never auto-run. It is the only directory Prisma reads; the root `prisma/migrations/` path predates the monorepo, no longer exists, and CI blocks re-creating it.
 - A human applies each environment's SQL directly (psql, retool, etc.). The `_prisma_migrations` table is not the source of truth; don't rely on it.
-- The Comment v3 tables (`CommentV3`, `CommentTopic` and their reaction, report and mute tables) are declared in `schema.full.prisma` for type generation only. prisma-kysely drops `Unsupported` columns, so query them through `kyselyV3Read`/`kyselyV3Write` (`src/server/db/kyselyDb.ts`), which add `path` and make `rootId`/`depth` select-only. Their partial and GiST indexes live only in the migration.
+- The Comment v3 tables (`CommentV3`, `CommentTopic` and their reaction, report and mute tables) are declared in `schema.full.prisma` for type generation only. prisma-kysely drops `Unsupported` columns, so read them through `kyselyV3Read` (`src/server/db/kyselyDb.ts`), which adds `path` and makes `rootId`/`depth` select-only; `kyselyV3Write` has the same typing for backfill and tooling. Write comments through `commentv3/write.service.ts`, raw SQL that runs inside the caller's Prisma transaction. Their partial and GiST indexes live only in the migration.
 
 ## Adding an enum value: deploy first, then migrate, then write
 
