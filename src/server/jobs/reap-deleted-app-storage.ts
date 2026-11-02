@@ -6,6 +6,7 @@ import {
   DocStoreMigrationPendingError,
   isDocStoreError,
 } from '~/server/services/apps/doc-store.types';
+import { createLogThrottle } from '~/server/utils/log-throttle';
 import type { JobContext } from './job';
 import { createJob } from './job';
 
@@ -19,10 +20,14 @@ import { createJob } from './job';
  * read on the PRIMARY:
  *   - `storage_deleted_at` is at least `STORAGE_REAP_AFTER_DAYS` days old;
  *   - the block is not `approved` — an approved block is a live app, whatever the column says;
+ *   - the block is still deleted: nothing has written it since (`updated_at`, Prisma's
+ *     `@updatedAt`, is not after `storage_deleted_at`), so a restore to draft or pending that
+ *     leaves the column set still keeps the data, whatever the status. The deletion must stamp
+ *     `storage_deleted_at` in or after its last write to the block;
  *   - it has not been purged since that deletion (`storage_purged_at` is null or older).
- * A restored app has its `storage_deleted_at` cleared, or is `approved` again, so it is never
- * touched. The whole predicate is re-read before EVERY batch (`purgeAppDocuments`' `proceed`),
- * so a restore that lands mid-purge stops it within one batch.
+ * The whole predicate is re-read before EVERY batch (`purgeAppDocuments`' `proceed`), so a
+ * restore that lands mid-purge stops it within one batch, and the purge is stamped only while it
+ * still holds.
  *
  * Batched, resumable and idempotent: each run deletes at most `STORAGE_REAP_ROWS_PER_RUN` rows
  * in transactions of `STORAGE_REAP_BATCH_ROWS`; an app it did not finish stays eligible and
@@ -40,12 +45,10 @@ export const STORAGE_REAP_BATCH_ROWS = 1000;
 export const STORAGE_REAP_ROWS_PER_RUN = 50_000;
 
 /**
- * A run that fails because a hand-applied migration has not run yet fails the same way every
- * hour until someone applies it, so it is logged at most once per `MIGRATION_LOG_EVERY_MS` per
- * process (and per migration), not on every run. Any other failure is logged every time.
+ * Log a pending-migration failure at most once a day per process and migration: it repeats every
+ * run until applied. Other failures log every time.
  */
-const MIGRATION_LOG_EVERY_MS = DAY_MS;
-const migrationLoggedAt = new Map<string, number>();
+const shouldLogMigration = createLogThrottle(DAY_MS);
 
 /** Which pending migration `err` comes from, or null when it is some other failure. */
 function pendingMigration(err: unknown): string | null {
@@ -82,6 +85,7 @@ async function eligibleApps(cutoff: Date, limit: number): Promise<string[]> {
     WHERE b.storage_deleted_at IS NOT NULL
       AND b.storage_deleted_at <= ${cutoff}
       AND b.status <> 'approved'
+      AND b.updated_at <= b.storage_deleted_at
       AND (b.storage_purged_at IS NULL OR b.storage_purged_at < b.storage_deleted_at)
     ORDER BY b.storage_deleted_at, b.id
     LIMIT ${limit}
@@ -97,6 +101,7 @@ async function stillEligible(id: string, cutoff: Date): Promise<boolean> {
         AND b.storage_deleted_at IS NOT NULL
         AND b.storage_deleted_at <= ${cutoff}
         AND b.status <> 'approved'
+        AND b.updated_at <= b.storage_deleted_at
         AND (b.storage_purged_at IS NULL OR b.storage_purged_at < b.storage_deleted_at)
     ) AS eligible
   `;
@@ -145,6 +150,10 @@ export async function reapDeletedAppStorage(
         await dbWrite.$executeRaw`
           UPDATE app_blocks SET storage_purged_at = now()
           WHERE id = ${id}
+            AND storage_deleted_at IS NOT NULL
+            AND storage_deleted_at <= ${cutoff}
+            AND status <> 'approved'
+            AND updated_at <= storage_deleted_at
         `;
         result.purged += 1;
         logToAxiom(
@@ -178,10 +187,8 @@ export async function reapDeletedAppStorage(
 }
 
 /**
- * Hourly at :50: an app at the largest ceiling (a million documents plus their marks) drains in a
- * day or two of runs within the row budget, and with nothing eligible a run is one read of the
- * partial index on `storage_deleted_at`. FAIL-OPEN like the sibling reapers: an error is logged and
- * the next run retries; a migration not applied yet (either one) is logged once a day.
+ * FAIL-OPEN like the sibling reapers: an error is logged and the next run retries; a migration not
+ * applied yet (either one) is logged once a day.
  */
 export const reapDeletedAppStorageJob = createJob(
   'reap-deleted-app-storage',
@@ -198,14 +205,7 @@ export const reapDeletedAppStorageJob = createJob(
     } catch (error) {
       if (isDocStoreError(error, 'storage_disabled')) return { disabled: true as const };
       const migration = pendingMigration(error);
-      if (migration) {
-        const now = Date.now();
-        const last = migrationLoggedAt.get(migration);
-        if (last !== undefined && now - last < MIGRATION_LOG_EVERY_MS) {
-          return { migrationPending: migration };
-        }
-        migrationLoggedAt.set(migration, now);
-      }
+      if (migration && !shouldLogMigration(migration)) return { migrationPending: migration };
       logToAxiom(
         {
           name: 'reap-deleted-app-storage',

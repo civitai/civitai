@@ -12,7 +12,8 @@
 --
 --   storage_deleted_at — when the app was deleted. The reaper deletes the app's document-store
 --     data (every user, every namespace) once this is 30 days old, and only while the block is
---     still not approved. Restoring the app clears it.
+--     still not approved and has not been written since (`updated_at` not after it). Restoring
+--     the app clears it.
 --   storage_purged_at  — when the reaper finished deleting that data. A deletion newer than it
 --     (storage_deleted_at > storage_purged_at) makes the app eligible again.
 --

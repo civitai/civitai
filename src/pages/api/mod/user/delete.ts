@@ -59,7 +59,6 @@ export default defineModeratorEndpoint('user.delete', {
     removeImages: moderatorBoolean
       .default(false)
       .describe('True deletes the images now. Default keeps them for the 7-day grace period.'),
-    // DEFAULTED to false, the self-serve card's default: app data is kept unless the erasure asks.
     removeAppData: moderatorBoolean
       .default(false)
       .describe(

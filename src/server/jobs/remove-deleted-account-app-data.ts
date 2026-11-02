@@ -5,6 +5,7 @@ import { purgeViewerDocuments } from '~/server/services/apps/doc-store-purge';
 import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import { isAccountUnderLegalHold } from '~/server/services/legal-hold.service';
+import { createLogThrottle } from '~/server/utils/log-throttle';
 import type { JobContext } from './job';
 import { createJob } from './job';
 
@@ -37,8 +38,8 @@ import { createJob } from './job';
  * kept: an account under a hold, and one whose wipe failed or left a namespace failed.
  * Idempotent: a wipe only removes what is still there.
  *
- * Optional index (manual migration `20261219120000_user_app_data_removal_idx`) matching the
- * worklist's predicate and order; without it the worklist reads the deleted accounts instead.
+ * REQUIRED index: manual migration `20261219120000_user_app_data_removal_idx`; the job does
+ * nothing until it exists on the replica (`worklistIndexPresent`).
  */
 
 /** Days after the deletion before the data goes; the same grace as a grace-deleted account's images. */
@@ -50,6 +51,27 @@ export const APP_DATA_REMOVAL_BATCH = 25;
 /** Accounts looked at per run at most, held ones included. */
 export const APP_DATA_REMOVAL_SCAN = 200;
 const PAGE = 50;
+
+/** The worklist's partial index; without it every run would read every deleted account. */
+export const APP_DATA_REMOVAL_INDEX = 'User_appDataRemoval_deletedAt_id_idx';
+let worklistIndexSeen = false;
+const shouldLogMissingIndex = createLogThrottle(DAY_MS);
+
+/**
+ * Whether the worklist index exists on the replica the worklist is read from. A present answer
+ * is kept for the life of the process; an absent one is asked again next run, so applying the
+ * migration needs no restart.
+ */
+async function worklistIndexPresent(): Promise<boolean> {
+  if (worklistIndexSeen) return true;
+  const [row] = await dbRead.$queryRaw<{ present: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM pg_indexes WHERE tablename = 'User' AND indexname = ${APP_DATA_REMOVAL_INDEX}
+    ) AS present
+  `;
+  worklistIndexSeen = row?.present === true;
+  return worklistIndexSeen;
+}
 
 /** `KeyValue` row holding where the next run continues the worklist. */
 export const APP_DATA_REMOVAL_CURSOR_KEY = 'remove-deleted-account-app-data-cursor';
@@ -162,10 +184,10 @@ async function wipeOne(
       ).catch(() => undefined);
       return;
     }
-    // Only while still deleted: a restore that landed during the wipe already dropped it.
+    // Only while still deleted: an account that is live again is never written here.
     await dbWrite.$executeRaw`
       UPDATE "User" SET meta = meta::jsonb - 'appDataRemoval'
-      WHERE id = ${id}
+      WHERE id = ${id} AND "deletedAt" IS NOT NULL
     `;
     result.wiped += 1;
   } catch (err) {
@@ -236,15 +258,27 @@ export async function removeDeletedAccountAppData(
 }
 
 /**
- * Every 10 minutes: a request is acted on within minutes of its grace ending. When there is
- * nothing to do a run is one replica read over the requested accounts. FAIL-OPEN like the sibling
- * reapers: an error is logged and the next run retries.
+ * FAIL-OPEN like the sibling reapers: an error is logged and the next run retries; a missing
+ * worklist index is logged once a day.
  */
 export const removeDeletedAccountAppDataJob = createJob(
   'remove-deleted-account-app-data',
   '*/10 * * * *',
   async (jobContext) => {
     try {
+      if (!(await worklistIndexPresent())) {
+        if (shouldLogMissingIndex(APP_DATA_REMOVAL_INDEX)) {
+          logToAxiom(
+            {
+              name: 'remove-deleted-account-app-data',
+              type: 'error',
+              message: `index ${APP_DATA_REMOVAL_INDEX} is missing (apply migration 20261219120000_user_app_data_removal_idx); nothing is wiped until it exists`,
+            },
+            'webhooks'
+          ).catch(() => undefined);
+        }
+        return { indexMissing: APP_DATA_REMOVAL_INDEX };
+      }
       const result = await removeDeletedAccountAppData({ jobContext });
       if (result.scanned > 0) {
         logToAxiom(
