@@ -739,6 +739,37 @@ describe('manifest storage — collection schemas', () => {
     );
   });
 
+  it('bounds the patterns of the whole manifest at 32, across every collection schema', () => {
+    // Pattern sources differ per collection and per field, so no de-duplication can hide one.
+    const withPatterns = (collection: string, n: number) => ({
+      visibility: 'private',
+      schema: {
+        type: 'object',
+        properties: Object.fromEntries(
+          Array.from({ length: n }, (_, i) => [
+            `p${i}`,
+            { pattern: `^${collection}${i}`, maxLength: 9 },
+          ])
+        ),
+      },
+    });
+    const spread = (...counts: number[]) =>
+      manifest(
+        {
+          collections: Object.fromEntries(
+            counts.map((n, i) => [`c${i}`, withPatterns(`c${i}x`, n)])
+          ),
+        },
+        [STORAGE]
+      );
+    expect(validate(spread(16, 16))).toEqual({ valid: true });
+    expect(validate(isolated(spread(16, 16, 5)))).toEqual(
+      refused(
+        'storage.collections declare 37 patterns across their schemas — a manifest may declare at most 32 in all'
+      )
+    );
+  });
+
   it('refuses a schema on a write "none" collection, which no document body is ever written to', () => {
     const plays = manifest(
       {
@@ -778,5 +809,49 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
     expect(
       await BlockManifestValidator.validateSubmission(withPrefs({ schema: CARD_SCHEMA }), APP_CTX)
     ).toEqual({ valid: true });
+  });
+
+  // The store compiles a schema pattern with the "u" flag, so the gate must analyse it with
+  // "u" too. Read without it, `\p{Ll}` is the literal text "p{Ll}" and these two look linear
+  // (recheck 4.5.0: "safe" without "u", "vulnerable" with it).
+  it.each([
+    ['^(\\p{Ll}+)+$', 'a nested quantifier over a Unicode property'],
+    ['^(\\p{L}|\\p{Ll})+$', 'overlapping Unicode properties under a quantifier'],
+  ])('refuses %s (%s), which only backtracks as the store compiles it', async (pattern) => {
+    const m = withPrefs({
+      schema: { properties: { name: { type: 'string', pattern, maxLength: 40 } } },
+    });
+    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+      refused(
+        `${SCHEMA_AT}.properties.name.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
+      )
+    );
+  });
+
+  // Without "u", recheck cannot parse `\u{…}` at all and returns "unknown", which the gate
+  // refuses: a linear code-point pattern was refused as if it were vulnerable.
+  it('accepts a linear \\u{…} code-point pattern', async () => {
+    const m = withPrefs({
+      schema: {
+        properties: {
+          mood: { type: 'string', pattern: '^[\\u{1F600}-\\u{1F64F}]+$', maxLength: 8 },
+        },
+      },
+    });
+    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual({ valid: true });
+  });
+
+  // Invariant guard, not regression coverage: refused before the flag fix too (as "unknown").
+  it('refuses a \\u{…} pattern that backtracks catastrophically', async () => {
+    const m = withPrefs({
+      schema: {
+        properties: { code: { type: 'string', pattern: '^(\\u{61}+)+$', maxLength: 40 } },
+      },
+    });
+    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+      refused(
+        `${SCHEMA_AT}.properties.code.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
+      )
+    );
   });
 });

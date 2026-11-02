@@ -328,6 +328,24 @@ const PARSER_ONLY: Array<[string, unknown]> = [
       },
     }),
   ],
+  [
+    '33 patterns across the manifest, at most 16 in any one schema',
+    {
+      collections: Object.fromEntries(
+        [16, 16, 1].map((n, c) => [
+          `c${c}`,
+          {
+            visibility: 'private',
+            schema: {
+              properties: Object.fromEntries(
+                names(n, 'p').map((p) => [p, { pattern: `x${c}`, maxLength: 3 }])
+              ),
+            },
+          },
+        ])
+      ),
+    },
+  ],
   ['minLength above maxLength', priv({ schema: { minLength: 3, maxLength: 2 } })],
   ['minimum above maximum', priv({ schema: { minimum: 3, maximum: 2 } })],
   ['a pattern that does not compile', priv({ schema: { pattern: '(', maxLength: 3 } })],
