@@ -93,7 +93,7 @@ describe('manifest storage imports — accepted', () => {
       ),
     ],
   ])('%s', (_label, m) => {
-    expect(validate(m)).toEqual({ valid: true, errors: [] });
+    expect(validate(m)).toEqual({ valid: true });
   });
 });
 

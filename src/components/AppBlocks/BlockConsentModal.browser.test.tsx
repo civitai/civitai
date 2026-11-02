@@ -22,12 +22,28 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 // cannot see the difference between "omit the key" and "send null", which is the one
 // distinction the server acts on.
 const { mutate } = vi.hoisted(() => ({ mutate: vi.fn() }));
+const storageImports = {
+  imports: [
+    {
+      from: 'notes-app',
+      sourceAppBlockId: 'apb_notes_1',
+      sourceName: 'Notes App',
+      collections: ['notes', 'prefs'],
+      access: 'readwrite' as const,
+      granted: false,
+    },
+  ],
+};
 
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
       grantScopes: {
         useMutation: () => ({ mutate, isPending: false }),
+      },
+      // Read only when `apps:storage:import` is being consented to.
+      getStorageImports: {
+        useQuery: () => ({ data: storageImports, isLoading: false }),
       },
     },
   },
@@ -249,5 +265,25 @@ describe('BlockConsentModal — per-app spend limit', () => {
     await input.fill('999999');
     await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
     expect(mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe('BlockConsentModal — cross-app storage imports', () => {
+  test('names the consumer, the source app and its collections for apps:storage:import', async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={['apps:storage:import']}
+        onGranted={() => undefined}
+      />
+    );
+    const detail = page.getByTestId('block-consent-storage-imports');
+    await expect.element(detail).toBeVisible();
+    await expect
+      .element(detail)
+      .toHaveTextContent(
+        'Notes Fork reads and changes your notes, prefs in Notes App — as you, so entries it adds to shared lists there appear under your account'
+      );
   });
 });
