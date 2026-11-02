@@ -3,6 +3,7 @@ import { cleanup } from 'vitest-browser-react';
 import { renderWithProviders } from '../../../test/geometry-setup';
 import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 import type * as TrpcModule from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * Whose profile picture a viewer sees. The owner always sees their own on the NSFW-capable site
@@ -28,7 +29,9 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: { user: { getById: { useQuery: () => ({ data: undefined, isInitialLoading: false }) } } },
+  trpc: makeTrpcProxy({
+    'user.getById': { useQuery: () => ({ data: undefined, isInitialLoading: false }) },
+  }),
 }));
 vi.mock('~/client-utils/cf-images-utils', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -61,7 +64,7 @@ function renderAvatar(picture: { nsfwLevel: number; ingestion?: string }) {
       ingestion: 'Scanned',
       ...picture,
     },
-  } as any;
+  } as unknown as React.ComponentProps<typeof UserAvatar>['user'];
   return renderWithProviders(<UserAvatar user={user} size="lg" />);
 }
 
