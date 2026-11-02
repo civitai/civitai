@@ -55,7 +55,7 @@ function settledVoters(votes: Vote[], decisions: Decision[]): string[] {
 
   const join = norm(PENDING_VOTES_JOIN);
   const j = join.match(
-    /^FROM pending orig JOIN batch new ON new\.imageId = orig\.imageId WHERE orig\.(\w+) <= new\.createdAt(?: \+ INTERVAL (\d+) SECOND)?$/
+    /^FROM pending orig JOIN batch new ON new\.imageId = orig\.imageId(?: WHERE orig\.(\w+) <= new\.createdAt(?: \+ INTERVAL (\d+) SECOND)?)?$/
   );
   if (!j) throw new Error(`unexpected join shape: ${join}`);
   const [, column, margin = '0'] = j;
@@ -63,7 +63,10 @@ function settledVoters(votes: Vote[], decisions: Decision[]): string[] {
   return [...groups.values()]
     .map(aggregate)
     .filter(passesHaving)
-    .filter((row) => (row[column] as number) <= batch.get(row.imageId as number)! + Number(margin))
+    .filter(
+      (row) =>
+        !column || (row[column] as number) <= batch.get(row.imageId as number)! + Number(margin)
+    )
     .map((row) => row.userId as string)
     .sort();
 }
