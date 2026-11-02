@@ -599,6 +599,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         userId: nobody,
         namespaces: [],
         failures: [],
+        stopped: false,
       });
       expect(await h.raw(`SELECT count(*)::int AS n FROM appdata.usage_app`)).toEqual(appsBefore);
     });

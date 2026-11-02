@@ -58,10 +58,10 @@ let main: PGlite;
 const toSql = (strings: TemplateStringsArray) =>
   strings.reduce((sql, part, i) => sql + (i === 0 ? '' : `$${i}`) + part, '');
 
-async function rowsOf(appId: string): Promise<number> {
+async function rowsOf(appId: string, harness: Harness = h): Promise<number> {
   let n = 0;
   for (const t of APPDATA_TABLES) {
-    const [r] = await h.raw(`SELECT count(*)::int AS n FROM appdata.${t} WHERE app_id = $1`, [
+    const [r] = await harness.raw(`SELECT count(*)::int AS n FROM appdata.${t} WHERE app_id = $1`, [
       appId,
     ]);
     n += Number(r.n);
@@ -265,6 +265,8 @@ describe('the reaper before its migrations are applied', () => {
       );
       ids.push(id);
     }
+    const before = await Promise.all(ids.map((id) => rowsOf(id, noPolicy)));
+    expect(before.every((n) => n > 0)).toBe(true);
 
     vi.setSystemTime(NOW);
     await runJob();
@@ -279,14 +281,9 @@ describe('the reaper before its migrations are applied', () => {
     await runJob();
     expect(errorLogs()).toBe(2);
 
-    for (const id of ids) {
-      const [r] = await noPolicy.raw(
-        `SELECT count(*)::int AS n FROM appdata.doc WHERE app_id = $1`,
-        [id]
-      );
-      expect(Number(r.n)).toBe(1);
-      expect(await purgedAt(id)).toBeNull();
-    }
+    // Nothing deleted, nothing stamped.
+    expect(await Promise.all(ids.map((id) => rowsOf(id, noPolicy)))).toEqual(before);
+    for (const id of ids) expect(await purgedAt(id)).toBeNull();
   });
 
   it('missing main-database columns are logged once a day too', async () => {

@@ -109,6 +109,7 @@ import {
   DEFAULT_DOC_STORE_LIMITS,
   DOC_STORE_BOUNDS as B,
   DocStoreError,
+  DocStoreMigrationPendingError,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
 
@@ -1936,20 +1937,19 @@ function buildDocStore(deps: DocStoreDeps) {
    * fails is reported in `failures` (it rolled back in full) and the rest continue; a disabled
    * store throws `storage_disabled`.
    *
-   * With `opts.appId`, only that app's namespaces are wiped (the same per-namespace wipe); every
-   * other app keeps the user's data. `doc-store-purge.ts` is the server's one entry point to both.
+   * `proceed` is awaited before EVERY namespace; false stops the wipe there (`stopped`), which is
+   * how a caller re-checks that the wipe is still wanted (the account was not restored or put
+   * under a hold meanwhile). The namespaces already wiped stay wiped. `doc-store-purge.ts` is the
+   * server's one entry point.
    */
   async function wipeAccount(
     userId: number,
-    opts: { appId?: string } = {}
+    opts: { proceed?: () => Promise<boolean> } = {}
   ): Promise<AccountWipeResult> {
     assertWipeUserId(userId);
-    if (opts.appId !== undefined && !APP_ID_SHAPE.test(opts.appId)) {
-      throw new Error('doc-store: malformed app id');
-    }
-    const result: AccountWipeResult = { userId, namespaces: [], failures: [] };
+    const result: AccountWipeResult = { userId, namespaces: [], failures: [], stopped: false };
     for (const { appId, ns } of await listAccountNamespaces(userId)) {
-      if (opts.appId !== undefined && appId !== opts.appId) continue;
+      if (opts.proceed && !(await opts.proceed())) return { ...result, stopped: true };
       try {
         result.namespaces.push(await wipeAccountNamespace(userId, appId, ns));
       } catch (err) {
@@ -1975,7 +1975,8 @@ function buildDocStore(deps: DocStoreDeps) {
       const page = await appPurgeTx(appId, async (c) => {
         const policies = Number((await c.query(SQL_APP_PURGE_POLICY)).rows[0]?.n ?? 0);
         if (policies !== 2) {
-          throw new Error(
+          throw new DocStoreMigrationPendingError(
+            '20261102120000_appdata_app_purge.sql',
             'doc-store: the app-purge policy is not installed (apply migration 20261102120000_appdata_app_purge.sql)'
           );
         }
@@ -2001,8 +2002,11 @@ function buildDocStore(deps: DocStoreDeps) {
    * `proceed` is awaited before EVERY transaction; false stops the purge where it is (`stopped`),
    * which is how a caller re-checks, between batches, that the app is still deleted. At most
    * `maxRows` rows are deleted per call (`done: false` when the budget ran out first).
-   * Idempotent and resumable: a re-run finds only what is left. A disabled store throws
-   * `storage_disabled`; a failed transaction throws, having rolled back only its own batch.
+   * `done: true` only when a second enumeration after the pass finds nothing: a namespace that
+   * received its first write after the first enumeration returns `done: false`, and the next call
+   * deletes it. Idempotent and resumable: a re-run finds only what is left. A disabled store throws
+   * `storage_disabled`, a missing app-purge policy `DocStoreMigrationPendingError`; a failed
+   * transaction throws, having rolled back only its own batch.
    */
   async function purgeApp(
     appId: string,
@@ -2037,6 +2041,7 @@ function buildDocStore(deps: DocStoreDeps) {
         return rows;
       });
     }
+    if (namespaces.length > 0 && (await listAppNamespaces(appId)).length > 0) return result;
     return { ...result, done: true };
   }
 

@@ -2,7 +2,10 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { purgeAppDocuments } from '~/server/services/apps/doc-store-purge';
-import { isDocStoreError } from '~/server/services/apps/doc-store.types';
+import {
+  DocStoreMigrationPendingError,
+  isDocStoreError,
+} from '~/server/services/apps/doc-store.types';
 import type { JobContext } from './job';
 import { createJob } from './job';
 
@@ -35,6 +38,27 @@ export const STORAGE_REAP_APPS_PER_RUN = 20;
 export const STORAGE_REAP_BATCH_ROWS = 1000;
 /** Rows deleted per run across all apps; a large app finishes over several runs. */
 export const STORAGE_REAP_ROWS_PER_RUN = 50_000;
+
+/**
+ * A run that fails because a hand-applied migration has not run yet fails the same way every
+ * hour until someone applies it, so it is logged at most once per `MIGRATION_LOG_EVERY_MS` per
+ * process (and per migration), not on every run. Any other failure is logged every time.
+ */
+const MIGRATION_LOG_EVERY_MS = DAY_MS;
+const migrationLoggedAt = new Map<string, number>();
+
+/** Which pending migration `err` comes from, or null when it is some other failure. */
+function pendingMigration(err: unknown): string | null {
+  // The datastore's app-purge policy (`purgeApp` refuses without it).
+  if (err instanceof DocStoreMigrationPendingError) return err.migration;
+  // The main database's two `app_blocks` columns: Postgres 42703, undefined column. Prisma wraps a
+  // raw query's error as P2010 with the driver's code in `meta.code`.
+  const e = err as { code?: unknown; meta?: { code?: unknown } } | null;
+  if (e?.code === '42703' || e?.meta?.code === '42703') {
+    return '20261218120000_app_block_storage_deleted_at';
+  }
+  return null;
+}
 
 export type ReapDeletedAppStorageResult = {
   /** Eligible apps the run looked at. */
@@ -138,8 +162,9 @@ export async function reapDeletedAppStorage(
         ).catch(() => undefined);
       }
     } catch (err) {
-      // A disabled store fails every purge alike; stop rather than count each one.
-      if (isDocStoreError(err, 'storage_disabled')) throw err;
+      // A disabled store or a missing migration fails every purge alike; stop rather than count
+      // (and log) each one.
+      if (isDocStoreError(err, 'storage_disabled') || pendingMigration(err)) throw err;
       result.failed += 1;
       logToAxiom(
         {
@@ -158,8 +183,8 @@ export async function reapDeletedAppStorage(
 /**
  * Hourly at :50: an app at the largest ceiling (a million documents plus their marks) drains in a
  * day or two of runs within the row budget, and with nothing eligible a run is one read of the
- * partial index on `storage_deleted_at`. FAIL-OPEN like the sibling reapers: an error (including
- * the columns not existing yet) is logged and the next run retries.
+ * partial index on `storage_deleted_at`. FAIL-OPEN like the sibling reapers: an error is logged and
+ * the next run retries; a migration not applied yet (either one) is logged once a day.
  */
 export const reapDeletedAppStorageJob = createJob(
   'reap-deleted-app-storage',
@@ -175,16 +200,26 @@ export const reapDeletedAppStorageJob = createJob(
       return result;
     } catch (error) {
       if (isDocStoreError(error, 'storage_disabled')) return { disabled: true as const };
+      const migration = pendingMigration(error);
+      if (migration) {
+        const now = Date.now();
+        const last = migrationLoggedAt.get(migration);
+        if (last !== undefined && now - last < MIGRATION_LOG_EVERY_MS) {
+          return { migrationPending: migration };
+        }
+        migrationLoggedAt.set(migration, now);
+      }
       logToAxiom(
         {
           name: 'reap-deleted-app-storage',
           type: 'error',
           message: (error as Error)?.message,
           stack: (error as Error)?.stack,
+          ...(migration ? { migrationPending: migration } : {}),
         },
         'webhooks'
       ).catch(() => undefined);
-      return { error: true as const };
+      return migration ? { migrationPending: migration } : { error: true as const };
     }
   }
 );

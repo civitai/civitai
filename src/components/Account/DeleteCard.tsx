@@ -193,7 +193,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
           </Radio.Group>
           <Checkbox
             label="Also delete my data in apps"
-            description="Everything apps have saved for you, including what you posted in them. Off: it stays, so a restored account gets it back"
+            description="Everything apps have saved for you, including what you posted in them. Deleted 7 days after your account closes; restore the account before then and it stays"
             checked={removeAppData}
             onChange={(event) => setRemoveAppData(event.currentTarget.checked)}
           />
@@ -224,7 +224,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
             </List.Item>
             <List.Item>
               {removeAppData
-                ? 'Your data in apps will be deleted in the background'
+                ? 'Your data in apps will be deleted after 7 days'
                 : 'Your data in apps will be kept'}
             </List.Item>
           </List>
