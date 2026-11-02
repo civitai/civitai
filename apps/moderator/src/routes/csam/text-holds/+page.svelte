@@ -1,9 +1,14 @@
 <script lang="ts">
   import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
   import CsamHoldTriage from './CsamHoldTriage.svelte';
+  import { onMount } from 'svelte';
+  import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // After mount, never during render: the server rendered blurred and cannot see this browser's choice.
+  onMount(() => imageReveal.restore());
 </script>
 
 <div class="flex flex-col lg:h-svh">
