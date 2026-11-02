@@ -53,12 +53,16 @@ describe('a bearer key owned by a system account', () => {
   it('resolves to the account while it holds no moderator access', async () => {
     const session = await getSessionFromBearerToken('k');
     expect(session?.user.id).toBe(USER_ID);
+    // The mock answers any id, so the id it was asked for is what pins the key to its owner.
+    expect(getSessionUserById).toHaveBeenCalledWith(USER_ID);
   });
 
   it.each(MODERATOR_ACCESS)('resolves to the account while it holds %s', async (_, held) => {
     getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
     const session = await getSessionFromBearerToken('k');
     expect(session?.user.id).toBe(USER_ID);
+    // The mock answers any id, so the id it was asked for is what pins the key to its owner.
+    expect(getSessionUserById).toHaveBeenCalledWith(USER_ID);
   });
 
   it('is refused once the account is banned', async () => {
@@ -81,5 +85,6 @@ describe('a bearer key owned by a system account', () => {
       roles: [],
     });
     await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+    expect(getSessionUserById).toHaveBeenCalledWith(MODERATION);
   });
 });
