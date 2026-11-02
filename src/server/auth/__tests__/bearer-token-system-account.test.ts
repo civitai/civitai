@@ -74,6 +74,7 @@ describe('a bearer key owned by a system account', () => {
       bannedAt: new Date(),
     });
     await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+    expect(getSessionUserById).toHaveBeenCalledWith(USER_ID);
   });
 
   it('is refused when it is the shared moderation account', async () => {
