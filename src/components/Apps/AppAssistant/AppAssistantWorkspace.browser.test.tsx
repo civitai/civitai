@@ -1909,6 +1909,41 @@ describe('AppAssistantWorkspace chats follow the app', () => {
     expect(m.newChat).not.toHaveBeenCalled();
   });
 
+  test('🔴 an app’s chat remembered for one user is not opened for another user in the same browser', async () => {
+    const asUser = async (userId: number) => {
+      m.chat = null;
+      m.element = null;
+      m.opened = [];
+      m.newChat.mockReset();
+      await page.viewport(1440, 900);
+      const screen = renderWithProviders(
+        <ModalsProvider>
+          <AppAssistantWorkspace canPreview sandboxUrl={BASE} userId={userId} />
+        </ModalsProvider>
+      );
+      await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+      return screen;
+    };
+    let screen = await asUser(1);
+    await workOnBoth();
+    screen.unmount();
+
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    screen = await asUser(2);
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await settle();
+    expect(m.opened).toEqual([]);
+    screen.unmount();
+
+    // POSITIVE CONTROL: user 1 on the same page gets the chat back.
+    await asUser(1);
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await vi.waitFor(() => expect(m.opened).toEqual(['chat-b']));
+  });
+
   test('🔴 a reload with no chat known for the picked app starts one when the chat opened is another app’s', async () => {
     const screen = await mount();
     await openFromSwitcher('app-aaaa');

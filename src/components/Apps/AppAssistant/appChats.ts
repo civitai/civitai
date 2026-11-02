@@ -1,9 +1,6 @@
 /**
- * The chat each app was last chosen in: the chat whose `create_app` made it, or whose `use_open_app`
- * chose it (`chosenAppOf`), the same choice the gate goes by. Kept per user in this browser, so opening
- * an app opens its chat with it; on another device, or once the browser forgets it, the app starts in
- * a new chat instead. A chat chooses one app at a time, so a chat that chose another app since is no
- * longer the first app's.
+ * The chat each app was last chosen in (`chosenAppOf`), kept per user in this browser; on another
+ * device, or once the browser forgets it, the app starts in a new chat.
  */
 const KEY_PREFIX = 'app-assistant:app-chats:';
 /** Apps remembered per user; the oldest choice goes first. Far above the apps a user can keep. */
