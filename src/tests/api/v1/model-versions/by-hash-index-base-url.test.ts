@@ -73,7 +73,11 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 // I/O behind the real `prepareModelVersionResponse`. The URL construction
 // itself (`createSerializedFileDownloadUrl`, `getPrimaryFile`) stays REAL — the
 // emitted string is the contract under test.
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: vi.fn(async () => []) }));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: vi.fn(async () => []),
+  // These suites cover other behaviour; the hold has its own.
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+}));
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(async () => []),
 }));

@@ -22,7 +22,11 @@ vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads6>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
 });
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: async () => [] }));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: async () => [],
+  // These suites cover other behaviour; the hold has its own.
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+}));
 vi.mock('~/server/services/image.service', () => ({ getImagesForModelVersion: async () => [] }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: async () => ({}),

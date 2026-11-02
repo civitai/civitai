@@ -12,6 +12,8 @@ export async function getEligibleModels(
 ): Promise<EligibleModel[]> {
   if (!versionIds.length) return [];
 
+  // Loaded on demand: the model service's import graph is large.
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
   const [versions, imageCache] = await Promise.all([
     dbRead.modelVersion.findMany({
       where: { id: { in: versionIds } },
@@ -22,7 +24,10 @@ export async function getEligibleModels(
         model: { select: { id: true, name: true } },
       },
     }),
-    imagesForModelVersionsCache.fetch(versionIds),
+    // Held for every viewer: a challenge's models are the same for everyone.
+    imagesForModelVersionsCache
+      .fetch(versionIds)
+      .then((byVersion) => holdShowcaseImages(byVersion)),
   ]);
 
   return versions.map((v) => {

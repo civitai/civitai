@@ -34,6 +34,7 @@ import {
   updateImageNsfwLevel,
   getOpenImageReportIds,
   updateImageReportStatusByReason,
+  getImagesForModelVersionCache,
 } from '~/server/services/image.service';
 import {
   clearReviewFlagsOnBlock,
@@ -48,6 +49,8 @@ import {
   getGallerySettingsByModelId,
   getHeldGalleryLevel,
   getHeldLevelsByPost,
+  heldGalleryViewer,
+  holdShowcaseImages,
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
@@ -366,6 +369,19 @@ async function withoutHeldFromViewer<T extends { postId?: number | null; nsfwLev
     return !hold || owner || Flags.intersects(hold.level, image.nsfwLevel);
   });
 }
+
+/** A version's showcase images, held at its model's level for everyone but the owner and moderators. */
+export const getImagesForModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  // Read before any await, as the request's other calls share `ctx`.
+  const viewer = heldGalleryViewer(ctx);
+  return holdShowcaseImages(await getImagesForModelVersionCache([input.id]), { viewer });
+};
 
 export const getInfiniteImagesHandler = async ({
   input,

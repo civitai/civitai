@@ -13,12 +13,14 @@ const {
   mockModelsQueueUpdate,
   mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
+  mockBustRest,
 } = vi.hoisted(() => ({
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockBustMvCache: vi.fn(),
+  mockBustRest: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/db/db-lag-helpers', () => ({
@@ -80,7 +82,7 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: mockBustMvCache,
-  bustPublicModelResponseCache: vi.fn(),
+  bustPublicModelResponseCache: mockBustRest,
   createModelVersionPostFromTraining: vi.fn(),
   publishModelVersionsWithEarlyAccess: vi.fn(),
 }));
@@ -98,7 +100,10 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import { applyModelFlagSideEffects } from '~/server/services/model.service';
+import {
+  applyModelFlagSideEffects,
+  publicResponseRebustDelayMs,
+} from '~/server/services/model.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -142,6 +147,28 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
   mockDbWrite.$queryRaw.mockResolvedValue([{ id: 900 }]);
+});
+
+describe('applyModelFlagSideEffects — public API response', () => {
+  it('drops the cached public response again once the replica has caught up with a new flag', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, sfwOnly: true } });
+    expect(mockBustRest).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(5_000);
+    expect(mockBustRest.mock.calls).toEqual([[42]]);
+  });
+
+  it('waits out the configured replica lag, and never less than 5 seconds', () => {
+    expect(publicResponseRebustDelayMs(30)).toBe(31_000);
+    expect(publicResponseRebustDelayMs(2)).toBe(5_000);
+    expect(publicResponseRebustDelayMs(undefined)).toBe(5_000);
+    expect(publicResponseRebustDelayMs('nope')).toBe(5_000);
+  });
+
+  it('schedules nothing more when neither minor nor SFW-only changed', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
+    vi.advanceTimersByTime(5_000);
+    expect(mockBustRest).not.toHaveBeenCalled();
+  });
 });
 
 describe('applyModelFlagSideEffects — image propagation', () => {

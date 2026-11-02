@@ -26,7 +26,11 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   ...(await importOriginal<typeof AuthSession>()),
   getServerAuthSession: vi.fn(async () => (session.user ? { user: session.user } : null)),
 }));
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: vi.fn(async () => []) }));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: vi.fn(async () => []),
+  // These suites cover other behaviour; the hold has its own.
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+}));
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(async () => []),
 }));
