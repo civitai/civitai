@@ -1735,7 +1735,16 @@ export async function getImagesQueue({
         heldIds.push(image.id);
         return false;
       });
-      if (heldIds.length > 0) await pool.reset({ id: heldIds });
+      if (heldIds.length > 0) {
+        // Removal is cleanup only: the filter above is what keeps them out.
+        try {
+          await pool.reset({ id: heldIds });
+          // The removed members shifted the rest of the pool down.
+          poolOffsets[poolIdx] -= heldIds.length;
+        } catch (e) {
+          handleLogError(e as Error, 'new-order-held-image-pool-removal');
+        }
+      }
 
       // Don't overshoot the target — pass 2 redistribution relies on
       // per-pool quotas being respected during pass 1. We mark `seenImageIds`

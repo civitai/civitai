@@ -5,8 +5,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // puts a clean image beside the held one, so an empty result cannot pass.
 //
 // Real service; dbRead, redis, clickhouse and the pool counters are faked. The dbRead fake
-// honours only `where.id.in` (or `where.id`), so the guard under test is the service's own
-// row check, not a query filter the fake would ignore.
+// honours `where.id` and `select` only, so the guard under test is the service's own row check
+// on a column it actually selected, not a query filter the fake would ignore.
 
 const { counterStub, poolStub, mockQuery } = vi.hoisted(() => {
   const counter = () => ({
@@ -75,30 +75,38 @@ import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 const CLEAN = 1;
 const HELD = 2;
+// Another review key: not held from New Order, so it must still be enqueued and served.
+const OTHER_REVIEW = 3;
 const SANITY_CLEAN = 10;
 const SANITY_HELD = 11;
 
 const rows: Record<number, { needsReview: string | null }> = {
   [CLEAN]: { needsReview: null },
   [HELD]: { needsReview: 'csam' },
+  [OTHER_REVIEW]: { needsReview: 'minor' },
   [SANITY_CLEAN]: { needsReview: null },
   [SANITY_HELD]: { needsReview: 'csam' },
 };
-const row = (id: number) => ({
-  id,
-  url: `https://example.test/${id}.jpg`,
-  nsfwLevel: 1,
-  metadata: {},
-  ...rows[id],
-});
+// Ids from 100 up are clean filler for the pool-offset case.
+const lookup = (id: number) => rows[id] ?? (id >= 100 ? { needsReview: null } : undefined);
+const row = (id: number, select: Record<string, boolean>) => {
+  const full: Record<string, unknown> = {
+    id,
+    url: `https://example.test/${id}.jpg`,
+    nsfwLevel: 1,
+    metadata: {},
+    ...lookup(id),
+  };
+  return Object.fromEntries(Object.keys(select).map((key) => [key, full[key]]));
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbRead.image.findMany.mockImplementation(async (args: any) =>
-    (args.where.id.in as number[]).filter((id) => rows[id]).map(row)
+    (args.where.id.in as number[]).filter((id) => lookup(id)).map((id) => row(id, args.select))
   );
   dbMock.dbRead.image.findUnique.mockImplementation(async (args: any) =>
-    rows[args.where.id] ? row(args.where.id) : null
+    lookup(args.where.id) ? row(args.where.id, args.select) : null
   );
   dbMock.dbRead.newOrderPlayer.findUnique.mockResolvedValue({
     user: {},
@@ -111,32 +119,79 @@ beforeEach(() => {
   );
   redisMock.sysRedis.sMembers.mockResolvedValue([]);
   poolStub.getAll.mockResolvedValue([]);
+  poolStub.reset.mockResolvedValue(undefined);
 });
 
 describe('New Order held-image guard', () => {
   it('(a) addImageToQueue enqueues the clean image and never the held one', async () => {
     await addImageToQueue({
-      imageIds: [CLEAN, HELD],
+      imageIds: [CLEAN, HELD, OTHER_REVIEW],
       rankType: NewOrderRankType.Knight,
       priority: 1,
     });
 
     const enqueued = poolStub.getCount.mock.calls.map(([id]) => id);
-    expect(enqueued).toEqual([CLEAN]);
+    expect(enqueued).toEqual([CLEAN, OTHER_REVIEW]);
+  });
+
+  it('(a2) addImageToQueue reports nothing added when every image is held', async () => {
+    const added = await addImageToQueue({
+      imageIds: [HELD],
+      rankType: NewOrderRankType.Knight,
+      priority: 1,
+    });
+
+    expect(added).toBe(false);
+    expect(poolStub.getCount).not.toHaveBeenCalled();
   });
 
   it('(b) getImagesQueue serves the clean image, not the held one, and drops the held one from its pool', async () => {
     poolStub.getAll.mockResolvedValueOnce([
       { value: String(CLEAN), score: 0 },
       { value: String(HELD), score: 0 },
+      { value: String(OTHER_REVIEW), score: 0 },
     ]);
 
     const served = await getImagesQueue({ playerId: 5, imageCount: 10 });
 
-    expect(served.map((i) => i.id)).toEqual([CLEAN]);
-    expect(served[0]).not.toHaveProperty('needsReview');
+    expect(served.map((i) => i.id).sort()).toEqual([CLEAN, OTHER_REVIEW]);
+    served.forEach((image) => expect(image).not.toHaveProperty('needsReview'));
     expect(poolStub.reset).toHaveBeenCalledTimes(1);
     expect(poolStub.reset).toHaveBeenCalledWith({ id: [HELD] });
+  });
+
+  it('(b2) removing a held image does not skip the pool members after it', async () => {
+    // 1 held + 100 clean; imageCount 50 reads windows of 100, so the 101st member is only
+    // reached if the next window accounts for the member that was removed.
+    let members = [HELD, ...Array.from({ length: 100 }, (_, i) => 100 + i)];
+    const read = new Set<number>();
+    poolStub.getAll.mockImplementation(
+      async ({ limit, offset }: { limit: number; offset: number }) => {
+        const window = members.slice(offset, offset + limit);
+        window.forEach((id) => read.add(id));
+        return window.map((id) => ({ value: String(id), score: 0 }));
+      }
+    );
+    poolStub.reset.mockImplementation(async ({ id }: { id: number[] }) => {
+      members = members.filter((m) => !id.includes(m));
+    });
+
+    await getImagesQueue({ playerId: 5, imageCount: 50 });
+
+    expect(members).not.toContain(HELD);
+    expect(members.filter((m) => !read.has(m))).toEqual([]);
+  });
+
+  it('(b3) a failed pool removal still serves the queue without the held image', async () => {
+    poolStub.getAll.mockResolvedValueOnce([
+      { value: String(CLEAN), score: 0 },
+      { value: String(HELD), score: 0 },
+    ]);
+    poolStub.reset.mockRejectedValue(new Error('redis down'));
+
+    const served = await getImagesQueue({ playerId: 5, imageCount: 10 });
+
+    expect(served.map((i) => i.id)).toEqual([CLEAN]);
   });
 
   it('(c) getSanityCheckImage returns the clean sanity image and nothing for a held one', async () => {
@@ -169,11 +224,11 @@ describe('New Order held-image guard', () => {
       originalLevel: null,
       lastCreatedAt: new Date('2026-02-01T00:00:00Z'),
     });
-    mockQuery.mockResolvedValue([judgment(CLEAN), judgment(HELD)]);
+    mockQuery.mockResolvedValue([judgment(CLEAN), judgment(HELD), judgment(OTHER_REVIEW)]);
 
     const { items } = await getPlayerHistory({ playerId: 5, limit: 10 });
 
-    expect(items.map((i) => i.image.id)).toEqual([CLEAN]);
+    expect(items.map((i) => i.image.id)).toEqual([CLEAN, OTHER_REVIEW]);
     expect(items[0].image).not.toHaveProperty('needsReview');
   });
 });
