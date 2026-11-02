@@ -1,4 +1,6 @@
+import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
 import { env } from '~/env/server';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
@@ -11,6 +13,7 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
+import { isAccountMuted } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
@@ -44,6 +47,12 @@ type GetOrchestratorTokenOptions = {
    * self-call. Only the per-pod cache is skipped.
    */
   bypassCache?: boolean;
+  /**
+   * Issue the token even when the account is restricted. Only for server-side calls that never hand
+   * the token to a client and only read, delete or cancel the account's own work (or a moderator's
+   * read of it). Every call site is listed in get-orchestrator-token.allow-restricted.test.ts.
+   */
+  allowRestricted?: boolean;
 };
 
 export async function getOrchestratorToken(
@@ -51,6 +60,11 @@ export async function getOrchestratorToken(
   ctx?: Context,
   options: GetOrchestratorTokenOptions = {}
 ) {
+  // Before any cache: a token cached before a restriction must not be served after it. The standing
+  // read is cached and falls back to the primary; when neither answers it reports restricted.
+  if (!options.allowRestricted && (await isAccountMuted(userId, true)))
+    throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey
   // fallback path below by setting token=null on error.

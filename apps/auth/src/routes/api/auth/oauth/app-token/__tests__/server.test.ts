@@ -70,6 +70,7 @@ beforeEach(() => {
   h.rows = {
     OauthClient: { allowedScopes: REQUESTED, accessMode: 'open' },
     OauthConsent: { scope: REQUESTED },
+    User: { muted: false, bannedAt: null },
   };
 });
 
