@@ -918,9 +918,10 @@ describe('a chapter add whose parent changes after its first read', () => {
         expect(await joinEdge()).toEqual([{ canon: false }]);
       });
 
-      // "Make main path" on a side child of 60 locks 60, not the storyline, so it can land between
-      // the end check and the edge: played here as landing when link reads 60's canon child.
-      it('refuses rather than branch when "Make main path" gives the end a canon child meanwhile', async () => {
+      // Every route writer, "Make main path" included, takes the storyline lock, so none can land
+      // here today. This plays one that skips it, giving 60 a canon child just before link reads
+      // it, to pin the canon check at the write as the backstop.
+      it('refuses rather than branch when a writer gives the end a canon child meanwhile', async () => {
         const { chapterId: side } = await addOwnerChapter({
           parentChapterId: 60,
           postId: await post(),

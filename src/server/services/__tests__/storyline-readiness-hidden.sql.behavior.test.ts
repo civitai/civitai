@@ -282,14 +282,14 @@ describe('the readiness selection while chapter 1 hides the storyline', () => {
 });
 
 /**
- * `assertCanContinueStoryline` reads participation through Prisma (an accepted collaborator row,
- * or a chapter matching `participantChapterWhere`) and stays there: it runs on every paid submit
- * beside the collaborator read it needs anyway. Everywhere else reads `storylineParticipantSql`.
- * The two must agree, or a placer is refused at submit and then held (or the reverse).
+ * Participation has two forms. `storylineParticipantSql` is read everywhere in SQL; the paid submit
+ * check (`assertCanContinueStoryline`) reads it through Prisma instead: an accepted collaborator
+ * row, or a chapter matching `participantChapterWhere`. If the two disagree, a placer is accepted
+ * at submit and then held by the readiness pass, or the reverse.
  *
- * Pins `participantChapterWhere` against the SQL, applied by a reading of Prisma's filter, beside
- * the submit check's `acceptedAt` rule as written here: a change to that function's own reads is
- * not seen, so keep it to that where object.
+ * This compares the SQL with `participantChapterWhere`, applied by `matches` below rather than by
+ * Prisma, plus the `acceptedAt` rule copied here. It does not see a change to the submit check's
+ * own queries: only to that where object.
  */
 describe('participation, as SQL and as the submit check reads it', () => {
   /** Prisma's `where` for the fields `participantChapterWhere` uses, applied to a row. */
