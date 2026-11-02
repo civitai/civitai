@@ -66,6 +66,7 @@ import {
 } from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
+  imageBlockedForConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import {
@@ -2394,11 +2395,7 @@ const getAllImagesUncaptured = async (
       Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
     );
     // Same rule as the Meilisearch feeds: any block reason hides the image from everyone but its owner.
-    AND.push(
-      userId
-        ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-        : Prisma.sql`(i."blockedFor" IS NULL)`
-    );
+    AND.push(...imageBlockedForConditions({ userId }));
   }
 
   if (disablePoi) {
@@ -6412,6 +6409,8 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
+  // With no user (the shared imagesForModelVersionsCache), this drops every blocked image.
+  imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
@@ -6670,6 +6669,7 @@ export const getImagesForPosts = async ({
         : Prisma.sql`i."ingestion" != 'Blocked'`
     );
   }
+  imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
@@ -6949,6 +6949,7 @@ export const getImagesByEntity = async ({
       AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
     }
   }
+  AND.push(...imageBlockedForConditions({ userId, isModerator }));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -8299,6 +8300,24 @@ async function probeImageMediaPresence(key: string): Promise<MediaProbeAnswer> {
   return MediaPresence.Unknown;
 }
 
+const MODERATION_BLOCK_REASONS = new Set(
+  [BlockedReason.CSAM, BlockedReason.Moderated, BlockedReason.TOS, BlockedReason.AiNotVerified].map(
+    (reason) => reason.toLowerCase()
+  )
+);
+
+/** A block only a moderator or its own re-verification may lift, never an ingestion-error resolve. */
+function hasModerationBlock({
+  blockedFor,
+  needsReview,
+}: {
+  blockedFor: string | null;
+  needsReview: string | null;
+}) {
+  if (needsReview === 'csam') return true;
+  return blockedFor != null && MODERATION_BLOCK_REASONS.has(blockedFor.trim().toLowerCase());
+}
+
 // NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in
 // the spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
 // (resolveArticleImageScan) reuses it to pin an article image's nsfwLevel.
@@ -8319,9 +8338,13 @@ export async function resolveIngestionError({
       userId: true,
       metadata: true,
       url: true,
+      blockedFor: true,
+      needsReview: true,
     },
   });
   if (!image) throw new Error('Image not found');
+  if (hasModerationBlock(image))
+    throw throwBadRequestError('This image has a moderation block; resolve it from block review.');
 
   /**
    * 🔴 REFUSE TO PUBLISH AN IMAGE WHOSE MEDIA IS GONE.
@@ -8384,16 +8407,20 @@ export async function resolveIngestionError({
 
   const metadata = (image.metadata as ImageMetadata) ?? {};
 
-  await dbWrite.image.update({
-    where: { id },
+  // Matching on the values read keeps a block that lands after the replica read from being cleared.
+  const { count } = await dbWrite.image.updateMany({
+    where: { id, blockedFor: image.blockedFor, needsReview: image.needsReview },
     data: {
       nsfwLevel,
       nsfwLevelLocked: true,
       ingestion: ImageIngestionStatus.Scanned,
+      blockedFor: null,
       scannedAt: new Date(),
       metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
     },
   });
+  if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');
+  if (image.blockedFor != null) await dropBlockedImageDeleteQueue([id]);
   await imageMetadataCache.refresh(id);
 
   await tagIdsForImagesCache.refresh(id);

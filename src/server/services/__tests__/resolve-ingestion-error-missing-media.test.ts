@@ -106,6 +106,7 @@ beforeEach(() => {
     metadata: {},
     url: IMAGE_KEY,
   } as never);
+  dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 } as never);
 });
 
 describe('main-app resolveIngestionError — missing-media guard', () => {
@@ -115,7 +116,7 @@ describe('main-app resolveIngestionError — missing-media guard', () => {
     await expect(resolve()).rejects.toThrow(MISSING_MEDIA_PUBLISH_MESSAGE);
 
     // The write is the harm. Before this guard it ran unconditionally.
-    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
   });
 
   it('surfaces the refusal as a BAD_REQUEST, so a moderator sees the message not a 500', async () => {
@@ -163,12 +164,12 @@ describe('main-app resolveIngestionError — missing-media guard', () => {
 
     await resolve();
 
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
-    const arg = dbMock.dbWrite.image.update.mock.calls[0][0] as {
+    expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
+    const arg = dbMock.dbWrite.image.updateMany.mock.calls[0][0] as {
       where: { id: number };
       data: Record<string, unknown>;
     };
-    expect(arg.where).toEqual({ id: 4242 });
+    expect(arg.where).toMatchObject({ id: 4242 });
     // Literal expectations rather than a re-read of the implementation.
     expect(arg.data).toMatchObject({
       nsfwLevel: 1,
@@ -182,7 +183,7 @@ describe('main-app resolveIngestionError — missing-media guard', () => {
 
     await resolve();
 
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('publishes when the storage CLIENT cannot even be built', async () => {
@@ -197,7 +198,7 @@ describe('main-app resolveIngestionError — missing-media guard', () => {
     await resolve();
 
     expect(headObject).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('decides through the SHARED module, not a second local copy of the rule', async () => {
@@ -247,7 +248,7 @@ describe('a non-key Image.url is never treated as a missing object', () => {
     await resolve();
 
     expect(headObject).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -377,7 +378,7 @@ describe('the guard reports what it did, in both directions', () => {
 
     await resolve();
 
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
     expect(eventsNamed('resolveIngestionError:media-probe-unknown')).toHaveLength(0);
     expect(eventsNamed('resolveIngestionError:media-absent-refused')).toHaveLength(0);
   });
