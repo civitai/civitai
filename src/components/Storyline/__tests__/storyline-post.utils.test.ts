@@ -71,6 +71,25 @@ describe('getStorylinePostParents', () => {
     }
   });
 
+  // An untitled chapter is named "Chapter 3" already: "Chapter 3 (ch 3)" said the number twice.
+  it('names an untitled parent by its number once, adding only another author', () => {
+    const [owners] = getStorylinePostParents(
+      [chapter(11, 2, null), chapter(12, 3, 'Next')],
+      CIVBOT
+    );
+    expect(owners).toEqual({ chapterId: 11, name: 'Chapter 3', href: '/posts/1100' });
+    const [theirs] = getStorylinePostParents(
+      [chapter(11, 2, null, CIVCHAN), chapter(12, 3, 'Next')],
+      CIVBOT
+    );
+    expect(theirs).toEqual({
+      chapterId: 11,
+      name: 'Chapter 3',
+      where: "CivChan's ch 3",
+      href: '/posts/1100',
+    });
+  });
+
   it('offers nothing before chapter 1', () => {
     expect(getStorylinePostParents([chapter(10, 0, 'Beep Boop')], CIVBOT)).toEqual([]);
   });
