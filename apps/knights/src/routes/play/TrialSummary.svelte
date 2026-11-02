@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
   import { percent } from '$lib/format';
   import { skippable } from '$lib/motion';
+  import { sound } from '$lib/sound';
   import type { SummaryView } from './summary';
 
   let {
@@ -20,6 +22,9 @@
   } = $props();
 
   let passed = $derived(summary.result === 'passed');
+  onMount(() => {
+    if (passed) sound.play('knighting-ring');
+  });
 </script>
 
 {#snippet enterOrder()}

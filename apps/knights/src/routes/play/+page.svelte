@@ -12,6 +12,7 @@
   import TrialSummary from './TrialSummary.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
+  import { sound } from '$lib/sound';
   import WatchProgress from '$lib/WatchProgress.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
   import { recapLines } from './recap-text';
@@ -55,15 +56,16 @@
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
-  // The hook for the answer sounds: called with whether the pick was right, before the next item loads. The page itself
-  // shows no verdict mid-run; the summary at the end does.
+  // The sound is the Trials' only per-answer cue: called with whether the pick was right, before the next item loads.
+  // The page itself shows no verdict mid-run; the summary at the end does.
   function onTrialAnswer(correct: boolean) {
-    void correct;
+    sound.play(correct ? 'trial-correct' : 'trial-wrong');
   }
 
   const submitTrial: SubmitFunction = ({ submitter }) => {
     submitting = true;
     picked = answerOf(submitter);
+    if (picked) sound.play('press');
     return async ({ result, update }) => {
       try {
         if (result.type === 'success' && typeof result.data?.correct === 'boolean') {
@@ -96,6 +98,7 @@
   const submit: SubmitFunction = ({ submitter }) => {
     submitting = true;
     picked = answerOf(submitter);
+    if (picked) sound.play('press');
     return async ({ result, update }) => {
       try {
         await update();

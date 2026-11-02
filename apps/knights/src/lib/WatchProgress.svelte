@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { sound } from './sound';
 
   let {
     label,
@@ -43,6 +44,7 @@
       }
       if (max > 0 && nowValue >= max && seenValue < max) {
         burst = ++burstId;
+        sound.play('bell');
         timers.push(setTimeout(() => (burst = 0), 700));
       }
       seenHearts = nowHearts;

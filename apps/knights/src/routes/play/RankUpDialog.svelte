@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import OverlayIcon from '$lib/OverlayIcon.svelte';
   import { modal } from '$lib/modal';
   import { skippable } from '$lib/motion';
+  import { sound } from '$lib/sound';
   import '$lib/overlay.css';
 
   let {
@@ -27,6 +29,7 @@
   } = $props();
 
   let form = $state<HTMLFormElement>();
+  onMount(() => sound.play('rankup'));
   const close = () => {
     if (!submitting) form?.requestSubmit();
   };

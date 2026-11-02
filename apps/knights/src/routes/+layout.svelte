@@ -24,6 +24,7 @@
   <div class="app" class:fit>
     <AppHeader
       player={data.player}
+      userId={data.userId}
       civitaiUrl={data.civitaiUrl}
       conversionOpen={data.conversionOpen}
       {status}
