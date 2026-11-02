@@ -1,5 +1,9 @@
 import type { ChartOptions } from 'chart.js';
 
+// Narrowed to the chart types these defaults serve: bare `ChartOptions` spans every chart type,
+// which is expensive to type-check.
+type BuzzChartOptions = ChartOptions<'line' | 'bar'>;
+
 /** Truncate a string with an ellipsis if it exceeds `max` characters. */
 export const truncateLabel = (text: string, max: number) =>
   text.length > max ? text.slice(0, max - 1) + '…' : text;
@@ -31,7 +35,7 @@ export function chartScaleDefaults({
 }: {
   labelColor: string;
   mobile: boolean;
-}): Pick<ChartOptions, 'scales'> {
+}): Pick<BuzzChartOptions, 'scales'> {
   return {
     scales: {
       x: {
@@ -51,7 +55,7 @@ export function chartScaleDefaults({
         grid: { color: 'rgba(128, 128, 128, 0.1)' },
       },
     },
-  } as Pick<ChartOptions, 'scales'>;
+  } as Pick<BuzzChartOptions, 'scales'>;
 }
 
 /**
@@ -65,8 +69,8 @@ export function chartTooltipDefaults({
   accentColor?: string;
   formatValue?: (value: number) => string;
   maxTitleLength?: number;
-} = {}): NonNullable<ChartOptions['plugins']>['tooltip'] {
-  type TooltipOptions = NonNullable<ChartOptions['plugins']>['tooltip'];
+} = {}): NonNullable<BuzzChartOptions['plugins']>['tooltip'] {
+  type TooltipOptions = NonNullable<BuzzChartOptions['plugins']>['tooltip'];
   return {
     position: 'nearest',
     xAlign: 'right',
@@ -116,7 +120,7 @@ export function chartLegendDefaults({
   labelColor: string;
   mobile: boolean;
   maxLabelLength?: number;
-}): ChartOptions['plugins'] {
+}): BuzzChartOptions['plugins'] {
   return {
     legend: {
       display: !mobile,
@@ -144,5 +148,5 @@ export function chartLegendDefaults({
       },
     },
     title: { display: false },
-  } as ChartOptions['plugins'];
+  } as BuzzChartOptions['plugins'];
 }

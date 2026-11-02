@@ -49,10 +49,10 @@ export function CustomMarkdown({
       ? Array.from(new Set([...allowedElements, 'time']))
       : undefined;
 
-  // 🔴 `a` and `time` are defined AFTER the spread, so a caller's own renderers for them are
-  // silently dropped — which is why `warnOnExternalLinks` is a prop rather than a component.
-  const mergedComponents: Options['components'] = {
-    ...components,
+  // 🔴 These are applied AFTER the caller's `components`, so a caller's own renderers for `a` and
+  // `time` are silently dropped — which is why `warnOnExternalLinks` is a prop rather than a
+  // component.
+  const overrides: Options['components'] = {
     time: ({ node, ...props }) => {
       const properties = (node?.properties ?? {}) as Record<string, unknown>;
       if (properties.dataType !== 'timestamp') return <time {...props}>{props.children}</time>;
@@ -127,6 +127,9 @@ export function CustomMarkdown({
       return <Table.Td {...props}>{children}</Table.Td>;
     },
   };
+  // `Object.assign`, not an object spread: spreading react-markdown's `Components` map is
+  // expensive to type-check.
+  const mergedComponents = Object.assign({}, components, overrides);
 
   return (
     <ContentErrorBoundary>
