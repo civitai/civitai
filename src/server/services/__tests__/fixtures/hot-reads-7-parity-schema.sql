@@ -2,8 +2,8 @@
 --
 -- Only the tables the reads behind kysely-hot-reads-7 touch, and only the columns those reads
 -- select, filter, join or group on. Types, nullability and primary keys follow schema.full.prisma.
--- Foreign keys are left out so a fixture row can point at a row that is gone (a chapter whose post
--- id names no post). All of these are base TABLES in production too (none is declared as a view),
+-- Foreign keys are left out so a fixture row can point at a row that is gone (an item whose
+-- definition is gone). All of these are base TABLES in production too (none is declared as a view),
 -- which the suite checks separately. Everything lives in its own schema, hot_reads_7_parity,
 -- because other parity suites share the throwaway database.
 --
@@ -13,14 +13,6 @@
 
 DROP SCHEMA IF EXISTS "hot_reads_7_parity" CASCADE;
 CREATE SCHEMA "hot_reads_7_parity";
-
-CREATE TABLE "hot_reads_7_parity"."StorylineChapter" (
-  "id"          INTEGER NOT NULL PRIMARY KEY,
-  "storylineId" INTEGER NOT NULL,
-  "postId"      INTEGER UNIQUE,
-  "userId"      INTEGER NOT NULL,
-  "depth"       INTEGER NOT NULL
-);
 
 CREATE TABLE "hot_reads_7_parity"."Model" (
   "id"      INTEGER NOT NULL PRIMARY KEY,

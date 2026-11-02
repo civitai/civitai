@@ -1,21 +1,24 @@
-import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { compileHarness } from '@civitai/db-queries/test-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import {
-  readHasStorylineChapterViaKysely,
+  compiledRelations,
+  declaredViews,
+  isViewMarker,
+  relationsOf,
+  schemaLines,
+} from '~/server/db/__tests__/no-view-ledger';
+import {
   readHeldItemCountsViaKysely,
   readHeldItemCountsViaPrisma,
   readPostModelVersionIdsViaKysely,
   readPostModelVersionIdsViaPrisma,
   readSfwModelNamesViaKysely,
   readSfwModelNamesViaPrisma,
-  storylineChaptersForPostsWhere,
   type HeldItemCountsInput,
 } from '~/server/services/hot-reads-7.reads';
 
@@ -23,10 +26,6 @@ import {
  * Parity gate for the reads behind `kysely-hot-reads-7`. Both paths run against the same rows in
  * the same database and must return the same value, `toStrictEqual`. Every read here is unordered
  * on both sides (no `orderBy`), so lists and Map entries are compared sorted.
- *
- * The storyline chapter read stays on Prisma; ON, a Kysely probe skips it when it would return no
- * row. Its parity is therefore "the probe is false exactly when that read, with the service's own
- * filter, returns nothing".
  *
  * Runs in CI: the `unit` job points KYSELY_HOT_READS_7_PARITY_DATABASE_URL at its throwaway
  * Postgres service, and a test below fails if that wiring is lost. Locally, KYSELY_PARITY_DATABASE_URL
@@ -51,12 +50,12 @@ const withSchema = (url: string) => {
 };
 
 // Distinct ids per table, and none equal to a count or another table's id.
-const P_CHAPTER = 7601; // a chapter
-const P_CHAPTER_2 = 7602; // a chapter of another storyline
-const P_PLAIN = 7603; // no chapter, on a version
-const P_NO_VERSION = 7604; // no chapter, on no version
-const P_GONE = 7699; // no post row, and a chapter pointing at it
-const P_MISSING = 7698; // no post row, no chapter
+const P_A = 7601; // on version A
+const P_B = 7602; // on version B
+const P_PLAIN = 7603; // on version A
+const P_NO_VERSION = 7604; // on no version
+const P_GONE = 7699; // no post row
+const P_MISSING = 7698; // no post row
 
 const MV_A = 7301;
 const MV_B = 7302;
@@ -93,15 +92,8 @@ describe.skipIf(!parityUrl)('hot reads 7: Kysely returns exactly what Prisma ret
   beforeAll(async () => {
     for (const statement of schemaStatements) await exec(statement);
     await exec(`
-      INSERT INTO ${t('StorylineChapter')} (id, "storylineId", "postId", "userId", depth) VALUES
-        (7501, 7401, ${P_CHAPTER}, ${HOLDER}, 0),
-        (7502, 7402, ${P_CHAPTER_2}, ${HOLDER}, 3),
-        (7503, 7401, ${P_GONE}, ${OTHER_HOLDER}, 1),
-        (7504, 7401, NULL, ${OTHER_HOLDER}, 2)
-    `);
-    await exec(`
       INSERT INTO ${t('Post')} (id, "modelVersionId") VALUES
-        (${P_CHAPTER}, ${MV_A}), (${P_CHAPTER_2}, ${MV_B}), (${P_PLAIN}, ${MV_A}),
+        (${P_A}, ${MV_A}), (${P_B}, ${MV_B}), (${P_PLAIN}, ${MV_A}),
         (${P_NO_VERSION}, NULL)
     `);
     await exec(`
@@ -135,31 +127,6 @@ describe.skipIf(!parityUrl)('hot reads 7: Kysely returns exactly what Prisma ret
     await db.destroy();
   });
 
-  describe('whether a page of posts holds a storyline chapter', () => {
-    it.each([
-      ['one chapter', [P_CHAPTER]],
-      ['two chapters of different storylines', [P_CHAPTER, P_CHAPTER_2]],
-      ['a chapter among plain posts', [P_PLAIN, P_NO_VERSION, P_CHAPTER_2]],
-      ['plain posts only', [P_PLAIN, P_NO_VERSION]],
-      ['a missing post', [P_MISSING]],
-      ['a chapter whose post row is gone', [P_GONE]],
-      ['an empty page', []],
-    ])('%s', async (_, postIds) => {
-      const rows = await prisma.storylineChapter.findMany({
-        where: storylineChaptersForPostsWhere(postIds),
-        select: { id: true },
-      });
-      expect(await readHasStorylineChapterViaKysely(kysely, postIds)).toBe(rows.length > 0);
-    });
-
-    it('control: each branch reads the fixture expected', async () => {
-      expect(await readHasStorylineChapterViaKysely(kysely, [P_PLAIN, P_CHAPTER])).toBe(true);
-      expect(await readHasStorylineChapterViaKysely(kysely, [P_GONE])).toBe(true);
-      expect(await readHasStorylineChapterViaKysely(kysely, [P_PLAIN, P_MISSING])).toBe(false);
-      expect(await readHasStorylineChapterViaKysely(kysely, [])).toBe(false);
-    });
-  });
-
   describe("a set of models' .com titles", () => {
     it.each([
       [
@@ -189,7 +156,7 @@ describe.skipIf(!parityUrl)('hot reads 7: Kysely returns exactly what Prisma ret
   describe("a set of posts' model versions", () => {
     it.each([
       ['on a version, on none, and missing', [P_PLAIN, P_NO_VERSION, P_MISSING]],
-      ['several on versions', [P_CHAPTER_2, P_CHAPTER, P_PLAIN]],
+      ['several on versions', [P_B, P_A, P_PLAIN]],
       ['missing only', [P_MISSING, P_GONE]],
       ['no posts', []],
     ])('%s', async (_, ids) => {
@@ -253,48 +220,8 @@ describe.skipIf(!parityUrl)('hot reads 7: Kysely returns exactly what Prisma ret
 
 // No statement reads a VIEW. Offline: the statements are compiled, not run.
 
-const SCHEMA_PRISMA = resolve(
-  here,
-  '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'
-);
-
-const schemaLines = () => readFileSync(SCHEMA_PRISMA, 'utf-8').split('\n');
-const isViewMarker = (line: string) => line.trim() === '/// @view';
-
-/**
- * Every model declared `/// @view` in schema.full.prisma. The marker sits above the model, in its
- * doc comment block, sometimes with a blank line between them, so the walk up from each `model`
- * line skips blank and `///` lines and stops at anything else.
- */
-function declaredViews(): Set<string> & { markersAttributed: number } {
-  const lines = schemaLines();
-  const views = new Set<string>();
-  const attributed = new Set<number>();
-  lines.forEach((line, i) => {
-    const model = /^model (\w+) \{/.exec(line);
-    if (!model) return;
-    for (let j = i - 1; j >= 0 && (lines[j].trim() === '' || lines[j].startsWith('///')); j--)
-      if (isViewMarker(lines[j])) {
-        views.add(model[1]);
-        attributed.add(j);
-      }
-  });
-  return Object.assign(views, { markersAttributed: attributed.size });
-}
-
-/** The quoted relation names a compiled statement reads FROM or JOINs, sorted. */
-function relationsOf(sqlText: string): string[] {
-  return [...sqlText.matchAll(/\b(?:from|join)\s+"(\w+)"/gi)].map((match) => match[1]).sort();
-}
-
-async function compiledRelations(read: (db: never) => Promise<unknown>) {
-  const harness = compileHarness();
-  await read(harness.db as never).catch(() => undefined);
-  return harness.queries.map((query) => relationsOf(query.sql));
-}
-
 describe('hot reads 7: no statement reads a view', () => {
-  const TABLES = ['StorylineChapter', 'Model', 'Post', 'Item', 'ItemDefinition'];
+  const TABLES = ['Model', 'Post', 'Item', 'ItemDefinition'];
 
   it('control: the view list is read from the schema, and names the known aggregate views', () => {
     const views = declaredViews();
@@ -312,11 +239,6 @@ describe('hot reads 7: no statement reads a view', () => {
   });
 
   it.each<[string, (db: never) => Promise<unknown>, string[][]]>([
-    [
-      'the storyline chapter probe',
-      (db) => readHasStorylineChapterViaKysely(db, [1]),
-      [['StorylineChapter']],
-    ],
     ['.com titles', (db) => readSfwModelNamesViaKysely(db, [1]), [['Model']]],
     ["posts' model versions", (db) => readPostModelVersionIdsViaKysely(db, [1]), [['Post']]],
     [
@@ -325,7 +247,7 @@ describe('hot reads 7: no statement reads a view', () => {
       [['Item', 'ItemDefinition']],
     ],
     // An empty list issues no statement.
-    ['an empty page of posts', (db) => readHasStorylineChapterViaKysely(db, []), []],
+    ['an empty id list', (db) => readSfwModelNamesViaKysely(db, []), []],
   ])('%s', async (_, read, expected) => {
     const relations = await compiledRelations(read);
     // An exact ledger: a joined view, or any extra relation or statement, fails here.

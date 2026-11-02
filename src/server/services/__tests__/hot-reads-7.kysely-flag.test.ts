@@ -67,45 +67,6 @@ describe('control', () => {
   });
 });
 
-describe('getStorylinesForPosts (the chapter probe)', () => {
-  const load = async () =>
-    (await import('~/server/services/storyline.service')).getStorylinesForPosts;
-  const args = { postIds: [POST, POST_2], viewer: undefined, browsingLevel: 1 };
-
-  it('OFF: the Prisma chapter read, with the shared filter, and no probe', async () => {
-    dbMock.dbRead.storylineChapter.findMany.mockResolvedValue([]);
-    await expect((await load())(args)).resolves.toEqual({});
-    expect(flag.mock.calls).toEqual([[FLAG]]);
-    expect(dbMock.dbRead.storylineChapter.findMany).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.storylineChapter.findMany.mock.calls[0][0].where).toEqual({
-      postId: { in: [POST, POST_2] },
-    });
-    expectNoKyselyRead();
-  });
-
-  it('ON, no chapter: the probe answers on the replica and the Prisma read never runs', async () => {
-    flag.mockResolvedValue(true);
-    q.hasStorylineChapterForPosts.mockResolvedValue(false);
-    dbMock.dbRead.storylineChapter.findMany.mockRejectedValue(new Error('must not run'));
-    await expect((await load())(args)).resolves.toEqual({});
-    expect(q.hasStorylineChapterForPosts.mock.calls).toEqual([[kyselyRead, [POST, POST_2]]]);
-    expect(q.hasStorylineChapterForPosts.mock.calls[0][0]).toBe(kyselyRead);
-    expect(dbMock.dbRead.storylineChapter.findMany).not.toHaveBeenCalled();
-  });
-
-  it('ON, a chapter: the Prisma read runs as before', async () => {
-    flag.mockResolvedValue(true);
-    q.hasStorylineChapterForPosts.mockResolvedValue(true);
-    dbMock.dbRead.storylineChapter.findMany.mockResolvedValue([]);
-    await expect((await load())(args)).resolves.toEqual({});
-    expect(q.hasStorylineChapterForPosts).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.storylineChapter.findMany).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.storylineChapter.findMany.mock.calls[0][0].where).toEqual({
-      postId: { in: [POST, POST_2] },
-    });
-  });
-});
-
 describe('getSfwModelNames', () => {
   const load = async () =>
     (await import('~/server/services/model-sfw-face.service')).getSfwModelNames;

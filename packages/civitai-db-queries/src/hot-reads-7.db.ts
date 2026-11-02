@@ -8,19 +8,8 @@ import type { DB } from '@civitai/db-schema/kysely';
 // against a real database.
 //
 // Every statement reads base TABLES only, never a view: the parity suite fails if one of them names
-// a relation declared `/// @view`. None of them is given an empty id list: the wrappers answer that
-// case without a statement, as Prisma does.
-
-/** Whether any of these posts is a storyline chapter (`StorylineChapter.postId` is unique). */
-export async function hasStorylineChapterForPosts(db: Kysely<DB>, postIds: number[]) {
-  const row = await db
-    .selectFrom('StorylineChapter')
-    .select('StorylineChapter.id')
-    .where('StorylineChapter.postId', 'in', postIds)
-    .limit(1)
-    .executeTakeFirst();
-  return row !== undefined;
-}
+// a relation declared `/// @view`. None of them is given an empty id or status list: the wrappers
+// answer that case without a statement, as Prisma does.
 
 /** The `.com` title of each of these models that has one, unordered. */
 export function listModelSfwNames(db: Kysely<DB>, modelIds: number[]) {

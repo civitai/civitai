@@ -86,9 +86,9 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   `<civitai>/src/server/services/__tests__/hot-reads-6.kysely-parity.test.ts`, on the same Postgres
   service, with the same no-view check.
 
-  `hot-reads-7.db.ts` holds four feed-path lookups (whether any of a page of posts is a storyline
-  chapter; the .com titles of a set of models; a set of posts' model versions; a user's held items
-  counted by definition, for one definition type and set of statuses). They are served behind the
+  `hot-reads-7.db.ts` holds three feed-path lookups (the .com titles of a set of models; a set of
+  posts' model versions; a user's held items counted by definition, for one definition type and set
+  of statuses). They are served behind the
   default-off server Flipt flag `kysely-hot-reads-7` and read base tables only. Parity is pinned by
   `<civitai>/src/server/services/__tests__/hot-reads-7.kysely-parity.test.ts`, on the same Postgres
   service, with the same no-view check.

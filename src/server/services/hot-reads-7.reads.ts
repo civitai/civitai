@@ -1,9 +1,8 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   countHeldItemsByDefinitionId,
-  hasStorylineChapterForPosts,
   listModelSfwNames,
   listPostModelVersionIds,
 } from '@civitai/db-queries/hot-reads-7';
@@ -12,26 +11,10 @@ import { countHeldItemsByDefinition, USER_HOLDER } from '~/server/services/item.
 /**
  * The reads behind `kysely-hot-reads-7`, each as a Prisma reader and its Kysely twin taking the
  * client, so the parity suite (__tests__/hot-reads-7.kysely-parity.test.ts) runs the very code the
- * services run. The Prisma readers are the original reads, moved here verbatim (the storyline
- * chapter read stays in its service, which shares its filter from here); each twin returns the value
- * its Prisma reader returns. An empty id list answers without a statement, as Prisma does.
+ * services run. The Prisma readers are the original reads, moved here verbatim; each twin returns
+ * the value its Prisma reader returns. An empty id or status list answers without a statement, as
+ * Prisma does.
  */
-
-// The storyline chapters of a page of posts (`getStorylinesForPosts`, storyline.service.ts).
-
-/** The chapters' filter, shared by the service's Prisma read and the probe's parity check. */
-export function storylineChaptersForPostsWhere(postIds: number[]) {
-  return { postId: { in: postIds } } satisfies Prisma.StorylineChapterWhereInput;
-}
-
-/**
- * Whether the service's chapter read can return any row. Most pages hold no chapter, so ON this
- * one-row probe answers them and the nested Prisma read runs only for a page that has one.
- */
-export async function readHasStorylineChapterViaKysely(db: Kysely<DB>, postIds: number[]) {
-  if (!postIds.length) return false;
-  return hasStorylineChapterForPosts(db, postIds);
-}
 
 // The .com titles of a set of models (`getSfwModelNames`, model-sfw-face.service.ts).
 
