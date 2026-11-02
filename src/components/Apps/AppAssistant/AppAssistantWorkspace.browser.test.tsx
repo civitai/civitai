@@ -42,7 +42,12 @@ const m = vi.hoisted(() => ({
   chat: null as null | {
     tools: Record<string, ChatTool>;
     instructions: () => string;
-    mcpServers: { id: string; url: string; label?: string }[];
+    mcpServers: {
+      id: string;
+      url: string;
+      label?: string;
+      resultLimit?: { head?: number; tail?: number } | false;
+    }[];
     holdReason?: string;
     beforeToolCall?: (
       name: string,
@@ -748,7 +753,12 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     screen.rerender(<Workspace />);
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
     expect(m.chat!.mcpServers).toEqual([
-      expect.objectContaining({ id: 'sandbox', label: 'your app' }),
+      expect.objectContaining({
+        id: 'sandbox',
+        label: 'your app',
+        // As the runner's: enough of a file or a test run that it is not read again.
+        resultLimit: { head: 6000, tail: 18000 },
+      }),
     ]);
     expect(await made).toMatchObject({
       app: 'tip-calculator',
