@@ -136,8 +136,8 @@ export async function getOwnersWithReversalsSince(ch: CustomClickHouseClient, si
 
 /**
  * Owners with a counted removal made after `since` minus the window, up to `now` minus it.
- * Consecutive ranges must overlap rather than skip, which holds only while the job's checkpoint is
- * taken before this run's `now`.
+ * Consecutive ranges must leave no gap, which holds only while the job's checkpoint is taken
+ * before this run's `now`.
  */
 export async function getOwnersWithRemovalsAgedOutSince(
   ch: CustomClickHouseClient,
