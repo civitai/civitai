@@ -34,7 +34,11 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   ) => res.status(500).json({ error: 'error', message: (e as Error).message }),
 }));
 
-const setUserMuted = vi.fn(async () => ({}));
+const setUserMuted = vi.fn(
+  async (): Promise<{ sessionInvalidated: boolean }> => ({
+    sessionInvalidated: true,
+  })
+);
 vi.mock('~/server/services/user.service', () => ({
   setUserMuted: (...a: unknown[]) => setUserMuted(...(a as [])),
 }));
@@ -91,6 +95,12 @@ describe('user.mute — the expiry it writes', () => {
       expiresAt: new Date(iso),
     });
     expect(body).toEqual({ muted: true, expiresAt: new Date(iso) });
+  });
+
+  it('answers with a retryable error when the sessions could not be ended', async () => {
+    setUserMuted.mockResolvedValueOnce({ sessionInvalidated: false });
+    const { status } = await call({ userId: 42 });
+    expect(status).toBeGreaterThanOrEqual(500);
   });
 
   it('refuses an unparseable expiry rather than muting indefinitely by accident', async () => {
