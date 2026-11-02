@@ -256,8 +256,6 @@ describe('sell / sell-merge split in the generated licence', () => {
    * Legal approved this clause as a grant placed AFTER every restriction, so "the Permissions in
    * this Attachment B" reads against a list that is already complete. Moving it back into the list,
    * or appending a restriction after it, puts a restriction outside what the grant follows.
-   * OTHERS withholds both sale permissions and credit is required, so restrictions are emitted on
-   * both sides of where the clause used to sit.
    */
   it('Changing Permissions is the last clause of Attachment B', () => {
     const license = buildLicense(OTHERS, true, true, false);
