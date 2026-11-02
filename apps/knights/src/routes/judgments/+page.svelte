@@ -49,7 +49,7 @@
   </nav>
 
   <div class="list">
-    {#each data.judgments as judgment (`${judgment.kind}:${judgment.itemId}:${judgment.at}`)}
+    {#each data.judgments as judgment, index (`${judgment.kind}:${judgment.itemId}:${judgment.at}`)}
       <article class="judgment">
         <Thumbnail src={judgment.src} />
         <div class="body">
@@ -69,7 +69,7 @@
             {/if}
           </p>
         </div>
-        <div class="state"><VerdictSeal status={judgment.status} label={STATUS_TEXT[judgment.status]} /></div>
+        <div class="state"><VerdictSeal status={judgment.status} label={STATUS_TEXT[judgment.status]} stamp delay={Math.min(index, 6) * 50} /></div>
         <p class="reward">
           <span>{judgment.xp ? `+${judgment.xp}` : 0} XP</span>
           <span class="gold" class:zero={!judgment.gold}

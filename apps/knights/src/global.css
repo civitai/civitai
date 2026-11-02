@@ -49,6 +49,7 @@
   *::before,
   *::after {
     animation-duration: 150ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }

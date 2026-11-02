@@ -4,6 +4,7 @@
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
   import { percent } from '$lib/format';
+  import { skippable } from '$lib/motion';
   import type { SummaryView } from './summary';
 
   let {
@@ -31,7 +32,7 @@
   {#if passed}
     <header class="banner">
       <p class="eyebrow">You have passed the Trials</p>
-      <section class="knighting" aria-label="Rank achieved">
+      <section class="knighting" aria-label="Rank achieved" use:skippable>
         <p class="eyebrow">Rank achieved</p>
         <span class="medal"><Icon name="swords" size={36} /></span>
         <p class="rank">Knight</p>
@@ -147,6 +148,7 @@
     gap: 24px;
   }
   .seal {
+    animation: mo-stamp var(--motion-milestone-min) var(--ease-out-quart) both;
     display: grid;
     flex: none;
     place-items: center;
@@ -177,7 +179,9 @@
     gap: 20px;
     text-align: center;
   }
+  /* The design's M8 (1200ms, skippable): the crest descends onto the banner, a flare marks the knighting, then the line lands. */
   .knighting {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -188,7 +192,24 @@
     border-radius: 8px;
     background: linear-gradient(180deg, #3a2c10, var(--io-surface));
   }
+  .knighting::after {
+    content: '';
+    position: absolute;
+    top: 96px;
+    left: 50%;
+    width: 300px;
+    height: 300px;
+    margin: -150px 0 0 -150px;
+    background: radial-gradient(circle, rgb(232 220 192 / 0.9), rgb(201 162 74 / 0.4) 40%, transparent 70%);
+    pointer-events: none;
+    animation: mo-flare var(--motion-milestone-min) var(--ease-out-quart) var(--motion-milestone-min) both;
+  }
+  .knighting h1,
+  .knighting .lead {
+    animation: mo-rise-in var(--motion-milestone-min) var(--ease-out-quart) var(--motion-milestone-min) both;
+  }
   .medal {
+    animation: mo-descend var(--motion-milestone-min) var(--ease-out-quart) both;
     display: grid;
     place-items: center;
     width: 64px;

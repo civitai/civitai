@@ -393,7 +393,8 @@
   /* The stage and whatever floats over it (the level-up toast). */
   .stagewrap {
     position: relative;
-    display: flex;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     flex: 1 1 0;
     min-height: 0;
   }
@@ -506,7 +507,35 @@
     transition:
       border-color var(--motion-fast) var(--ease-out-quart),
       background-color var(--motion-fast) var(--ease-out-quart),
-      color var(--motion-fast) var(--ease-out-quart);
+      color var(--motion-fast) var(--ease-out-quart),
+      box-shadow var(--motion-fast) var(--ease-out-quart),
+      transform var(--motion-base) var(--ease-out-quart);
+  }
+  /* The design's M1: the answer presses in (0.97) and holds a gold ring until the next image replaces it. The answer is
+     already submitted at the press; nothing here waits for the release. */
+  .pill:active:not(:disabled),
+  .pill.picked,
+  .pill.picked:disabled {
+    transform: scale(0.97);
+    box-shadow:
+      0 0 0 2px var(--io-gold),
+      0 0 14px rgb(201 162 74 / 0.4);
+    transition-duration: var(--motion-fast);
+  }
+  .pill.blocked.picked,
+  .pill.blocked:active:not(:disabled) {
+    box-shadow:
+      0 0 0 2px var(--io-crimson-text),
+      0 0 14px rgb(224 138 130 / 0.35);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pill,
+    .pill:active:not(:disabled),
+    .pill.picked,
+    .pill.picked:disabled {
+      transform: none;
+      transition-duration: 120ms;
+    }
   }
   .controls.yesno .pill {
     padding: 0 16px;

@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { page } from '$app/state';
   import { afterNavigate } from '$app/navigation';
   import Icon from './Icon.svelte';
   import { count } from './format';
   import { rankPill } from './chrome';
+  import { tween } from './motion';
+  import { rewardDeltas } from './rewards';
   import type { PlayerBadge } from './player-badge';
   import type { PlayerStatus } from './server/player-status';
 
@@ -64,6 +66,33 @@
   }
 
   afterNavigate(() => close());
+
+  // What a vote just earned floats up from its chip and the gold counter ticks to its new value. Ambient only: nothing
+  // here waits on, or blocks, the next answer.
+  let shownGold = $state(untrack(() => status?.goldEarned ?? 0));
+  let floater = $state<{ id: number; xp: number; gold: number } | null>(null);
+  let previous: PlayerStatus | null = null;
+  let cancelTick: (() => void) | undefined;
+  let floatTimer: ReturnType<typeof setTimeout> | undefined;
+  let floatId = 0;
+
+  $effect(() => {
+    const next = status;
+    if (!next) return;
+    const deltas = rewardDeltas(previous, next);
+    previous = next;
+    cancelTick?.();
+    cancelTick = tween(untrack(() => shownGold), next.goldEarned, 360, (value) => (shownGold = Math.round(value)));
+    if (deltas.xp > 0 || deltas.gold > 0) {
+      floater = { id: ++floatId, xp: deltas.xp, gold: deltas.gold };
+      clearTimeout(floatTimer);
+      floatTimer = setTimeout(() => (floater = null), 500);
+    }
+  });
+  $effect(() => () => {
+    cancelTick?.();
+    clearTimeout(floatTimer);
+  });
 </script>
 
 <svelte:window {onkeydown} />
@@ -92,11 +121,17 @@
         title="Gold earned: {count(status.goldEarned)}, pending: {count(status.goldPending)}"
       >
         <Icon name="coins" />
-        {count(status.goldEarned)}
+        {count(shownGold)}
+        {#if floater && floater.gold > 0}
+          {#key floater.id}<span class="floater" aria-hidden="true">+{count(floater.gold)} gold</span>{/key}
+        {/if}
       </li>
       <li class="pill" title="Level {status.level}: {status.xpIntoLevel}/{status.xpForNextLevel} XP">
         <Icon name="swords" />
         {rankPill(status)}
+        {#if floater && floater.xp > 0}
+          {#key floater.id}<span class="floater" aria-hidden="true">+{count(floater.xp)} XP</span>{/key}
+        {/if}
       </li>
     </ul>
   {/if}
@@ -197,6 +232,7 @@
     list-style: none;
   }
   .pill {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -210,6 +246,17 @@
   }
   .pill :global(svg) {
     color: var(--io-gold);
+  }
+  .floater {
+    --rise: -14px;
+    position: absolute;
+    bottom: 70%;
+    left: 50%;
+    translate: -50% 0;
+    color: var(--io-gold);
+    font: 700 12px/1 var(--io-font-ui);
+    pointer-events: none;
+    animation: mo-float 480ms var(--ease-out-quart) both;
   }
   .pill .flame :global(svg) {
     color: var(--io-crimson-text);

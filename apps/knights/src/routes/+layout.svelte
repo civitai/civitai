@@ -1,5 +1,6 @@
 <script lang="ts">
   import '../global.css';
+  import '../motion.css';
   import { page } from '$app/state';
   import AppHeader from '$lib/AppHeader.svelte';
   import type { PlayerStatus } from '$lib/server/player-status';
