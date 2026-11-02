@@ -129,6 +129,14 @@ describe('/api/csam-hold-chat', () => {
     expect(JSON.stringify(body.participants)).not.toContain('secret text');
   });
 
+  it('names nobody when the hold does not know its sender, rather than list the sender as a recipient', async () => {
+    getChatHold.mockResolvedValue({ chatId: 5, messageIds: [11], senderId: null });
+    canAccess.mockImplementation((_user, path) => path !== '/retool/chat-audit');
+    getJudgedMessages.mockResolvedValue([]);
+    const body = await (await call('7')).json();
+    expect(body.participants).toEqual([]);
+  });
+
   it('flags the full conversation for a moderator with Chat Audit access', async () => {
     const body = await (await call('7')).json();
     expect(getJudgedMessages).not.toHaveBeenCalled();

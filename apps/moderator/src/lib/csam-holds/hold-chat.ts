@@ -22,9 +22,12 @@ export const holdParticipants = (
   members: readonly { userId: number; username: string | null }[],
   senderId: number | null
 ): HoldChatParticipant[] =>
-  members
-    .filter((m) => m.userId !== senderId)
-    .map((m) => ({ userId: m.userId, username: m.username }));
+  // Without a known sender, every member would read as a recipient, the sender included.
+  senderId === null
+    ? []
+    : members
+        .filter((m) => m.userId !== senderId)
+        .map((m) => ({ userId: m.userId, username: m.username }));
 
 export type HoldChat = {
   chatId: number;

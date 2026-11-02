@@ -4,6 +4,10 @@
 // shared by every request, and a client that started from storage would hydrate against a server render
 // that was blurred. It starts blurred everywhere and `restore()` applies the stored choice after mount.
 let revealed = $state(false);
+// Once per page load. The page remounts on every client navigation back to it, and re-reading storage
+// then would overwrite a choice made since: blocked storage would re-blur it, and a failed write would
+// bring back an older reveal the moderator had since turned off.
+let restored = false;
 
 export const REVEAL_STORAGE_KEY = 'moderator.csam-holds.reveal-images';
 
@@ -29,6 +33,8 @@ export const imageReveal = {
   },
   /** Apply this browser's stored choice. Only an explicit reveal reveals; anything else stays blurred. */
   restore() {
+    if (restored) return;
+    restored = true;
     try {
       revealed = storage()?.getItem(REVEAL_STORAGE_KEY) === '1';
     } catch {
