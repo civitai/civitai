@@ -57,7 +57,7 @@
       <p class="kicker">The Order awaits</p>
       <span class="crest"><Icon name="flame" size={36} /></span>
       <strong class="rank">Acolyte</strong>
-      <span class="levels">Levels 21–40</span>
+      <span class="levels">Your first rank</span>
       <p class="begin">Begin in the Trials</p>
       <p class="sub">Every Knight was once an Acolyte.</p>
     </aside>
