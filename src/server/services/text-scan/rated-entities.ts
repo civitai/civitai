@@ -19,7 +19,7 @@ import {
 
 export type RatedEntityType = 'Article' | 'Post' | 'Bounty' | 'BountyEntry';
 
-type RatedRow = {
+export type RatedEntitySnapshot = {
   nsfwLevel: number;
   moderatorNsfwLevel: number | null;
   userId: number | null;
@@ -29,7 +29,10 @@ type RatedRow = {
 
 const ratedEntities: Record<
   RatedEntityType,
-  { recompute: (ids: number[]) => Promise<unknown>; read: (id: number) => Promise<RatedRow | null> }
+  {
+    recompute: (ids: number[]) => Promise<unknown>;
+    read: (id: number) => Promise<RatedEntitySnapshot | null>;
+  }
 > = {
   Article: {
     recompute: (ids) => updateArticleNsfwLevels(ids),
@@ -83,6 +86,10 @@ function noticeLevel(after: number, detectedLevel: number) {
   return after === nsfwBrowsingLevelsFlag ? detectedLevel : highestNsfwLevel(after);
 }
 
+export function readRatedEntity(entityType: RatedEntityType, entityId: number) {
+  return ratedEntities[entityType].read(entityId);
+}
+
 export async function recomputeRatedEntityNsfwLevel(entityType: RatedEntityType, entityId: number) {
   await ratedEntities[entityType].recompute([entityId]);
 }
@@ -103,12 +110,12 @@ export async function applyRatingFloor(
 
 async function raiseToFloor(
   entityType: RatedEntityType,
-  { entityId, workflowId, outcome }: ApplyTextScanArgs
+  { entityId, workflowId, outcome, ratingBefore }: ApplyTextScanArgs
 ): Promise<RatingFloorResult> {
   if (!outcome.nsfw) return NOTHING_DEFERRED;
 
   const entity = ratedEntities[entityType];
-  const before = await entity.read(entityId);
+  const before = ratingBefore !== undefined ? ratingBefore : await entity.read(entityId);
   if (!before) return NOTHING_DEFERRED;
   await entity.recompute([entityId]);
 
