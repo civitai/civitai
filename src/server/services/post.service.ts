@@ -124,6 +124,7 @@ import { getMetadata } from '~/utils/metadata';
 import { canAddManualResources, getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
+import { normalizeText } from '~/utils/normalize-text';
 import { CacheTTL, constants } from '../common/constants';
 import type {
   AddPostTagInput,
@@ -1730,6 +1731,11 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   await imagesForModelVersionsCache.refresh(showcaseVersionIds);
 }
 
+const promptOf = (meta: unknown) => {
+  const prompt = (meta as { prompt?: unknown } | null | undefined)?.prompt;
+  return normalizeText(typeof prompt === 'string' ? prompt : undefined);
+};
+
 export const updatePostImage = async (image: UpdatePostImageInput) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
@@ -1816,6 +1822,10 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       name: 'post-image-ingest',
       userId: result.userId,
     });
+  } else if (metaProvided && promptOf(meta) !== promptOf(currentImage.meta)) {
+    // Lazy: image-scan-pipeline imports this module.
+    const { rederivePromptTags } = await import('~/server/services/image-scan-pipeline');
+    await rederivePromptTags(image.id);
   }
 
   purgeImageGenerationDataCache(image.id);

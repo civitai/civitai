@@ -324,6 +324,8 @@ const tagsForReview: TagForReview[] = [
   },
 ];
 
+export const conditionalReviewTagNames = tagsForReview.flatMap(({ tags }) => tags);
+
 export function getConditionalTagsForReview<T extends { name: string; confidence: number }>(
   tags: T[],
   nsfwLevel: NsfwLevel

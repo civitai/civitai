@@ -24,10 +24,17 @@ import {
   includesInappropriate,
   includesPoi,
 } from '~/utils/metadata/audit';
-import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
-import { getTagRules } from '~/server/services/system-cache';
+import {
+  conditionalReviewTagNames,
+  getComputedTags,
+  getConditionalTagsForReview,
+} from '~/server/utils/tag-rules';
+import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
-import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import {
+  deleteTagsOnImageNew,
+  insertTagsOnImageNew,
+} from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
 import { normalizeText } from '~/utils/normalize-text';
 import { styleTags, tagsNeedingReview } from '~/libs/tags';
@@ -59,8 +66,9 @@ import { hasBlockMarker } from '~/server/common/image-visibility';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
-import { evaluateRules } from '~/server/utils/mod-rules';
+import { evaluateRules, ruleDefinitionTagNames } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { decreaseDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 
@@ -341,6 +349,10 @@ export async function loadImageForScan(imageId: number) {
       ingestion: true,
       blockedFor: true,
       needsReview: true,
+      minor: true,
+      poi: true,
+      acceptableMinor: true,
+      scanJobs: true,
     },
   });
 
@@ -391,6 +403,29 @@ export async function buildAndInsertScanTags({
   );
 }
 
+// `(term:0)` and `(term:-0.5)`: a term weighted zero or below adds nothing to the generation.
+const WEIGHTED_TERM = /\(([^()]*):\s*([-+]?(?:\d+\.?\d*|\.\d+))\s*\)/g;
+export function dropZeroWeightTerms(prompt: string) {
+  return prompt.replace(WEIGHTED_TERM, (term, _text, weight) => (Number(weight) <= 0 ? ' ' : term));
+}
+
+/**
+ * Tags that route an image to review, block it, or mark it minor or POI, as opposed to tags that only
+ * move its level. Prompt re-derivation never removes these, and they match the raw prompt.
+ */
+export async function getSafetyClassTagNames() {
+  const [moderatedTags, modRules] = await Promise.all([getModeratedTags(), getImagesModRules()]);
+  return new Set(
+    [
+      ...tagsNeedingReview,
+      ...poiWords,
+      ...conditionalReviewTagNames,
+      ...moderatedTags.filter((tag) => tag.nsfwLevel === NsfwLevel.Blocked).map((tag) => tag.name),
+      ...modRules.flatMap((rule) => ruleDefinitionTagNames(rule.definition)),
+    ].map((name) => name.toLowerCase())
+  );
+}
+
 async function processTags({
   tags: normalized,
   prompt,
@@ -399,14 +434,16 @@ async function processTags({
   prompt?: string;
 }): Promise<ProcessedTag[]> {
   if (prompt) {
+    // Normalized first, as both audit paths do. Stripping the raw text while the audit that
+    // runs next reads the normalized copy means two different alphabets decide what counts
+    // as whitelisted for the same prompt.
+    const allowlisted = await stripBenignPhrases(
+      normalizeText(prompt),
+      BlocklistType.PromptBenignPhrase
+    );
     // Strip moderator-whitelisted phrases first, or a whitelisted proper noun is written as a
     // confidence-100 POI tag that reaches the image search index.
-    const realPersonName = includesPoi(
-      // Normalized first, as both audit paths do. Stripping the raw text while the audit that
-      // runs next reads the normalized copy means two different alphabets decide what counts
-      // as whitelisted for the same prompt.
-      await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase)
-    );
+    const realPersonName = includesPoi(allowlisted);
     if (realPersonName) {
       const tagName =
         typeof realPersonName === 'object' ? realPersonName.matchedText : realPersonName;
@@ -417,12 +454,14 @@ async function processTags({
       });
     }
 
-    // Detect tags from prompt
-    const promptTags = getTagsFromPrompt(prompt);
-    if (promptTags)
-      normalized.push(
-        ...promptTags.map((name) => ({ name, confidence: 70, source: TagSource.Computed }))
-      );
+    // A safety-class tag still matches the raw prompt, whatever its weight or allowlisting.
+    const safetyClass = await getSafetyClassTagNames();
+    const promptTags = new Set([
+      ...(getTagsFromPrompt(dropZeroWeightTerms(allowlisted)) || []),
+      ...(getTagsFromPrompt(prompt) || []).filter((name) => safetyClass.has(name.toLowerCase())),
+    ]);
+    for (const name of promptTags)
+      normalized.push({ name, confidence: 70, source: TagSource.Computed });
   }
 
   // add computed tags
@@ -530,6 +569,7 @@ export async function resolveScanOutcome({
   prompt,
   negativePrompt,
   log = LEGACY_SCAN_LOG,
+  monotone = false,
 }: {
   image: ScanImage;
   blocked?: { reason: string | null };
@@ -538,6 +578,11 @@ export async function resolveScanOutcome({
   prompt?: string;
   negativePrompt?: string;
   log?: ScanLog;
+  /**
+   * For a re-derivation outside a scan: keep pHash and scannedAt, never clear the minor or poi flag
+   * or a review flag. The level still follows the image's current automated tags.
+   */
+  monotone?: boolean;
 }): Promise<ScanOutcome> {
   const updatedAt = new Date();
 
@@ -666,15 +711,23 @@ export async function resolveScanOutcome({
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
-      "pHash" = ${pHash ?? null},
+      "pHash" = ${monotone ? Prisma.sql`"pHash"` : pHash ?? null},
       "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
       "nsfwLevel" = ${toUpdate.nsfwLevel as number},
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
-        ELSE ${(toUpdate.needsReview as string) ?? null} END,
-      "minor" = ${(toUpdate.minor as boolean) ?? false},
-      "poi" = ${(toUpdate.poi as boolean) ?? false},
-      "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
+        ELSE ${
+          monotone
+            ? Prisma.sql`COALESCE(${(toUpdate.needsReview as string) ?? null}, "needsReview")`
+            : (toUpdate.needsReview as string) ?? null
+        } END,
+      "minor" = ${(toUpdate.minor as boolean) ?? false}${
+    monotone ? Prisma.sql` OR "minor"` : Prisma.empty
+  },
+      "poi" = ${(toUpdate.poi as boolean) ?? false}${
+    monotone ? Prisma.sql` OR "poi"` : Prisma.empty
+  },
+      "scannedAt" = ${monotone ? Prisma.sql`"scannedAt"` : (toUpdate.scannedAt as Date) ?? null},
       "metadata" = COALESCE(${
         metadataUpdate ? JSON.stringify(metadataUpdate) : null
       }::jsonb, "metadata"),
@@ -683,6 +736,23 @@ export async function resolveScanOutcome({
       )}::jsonb)
     WHERE id = ${image.id}
   `;
+
+  await notifyPromptRatingRaised({
+    image,
+    workflowId,
+    ingestion: toUpdate.ingestion as ImageIngestionStatus,
+    reviewKey,
+    nsfwLevel: toUpdate.nsfwLevel as number,
+  }).catch((error) =>
+    logToAxiom({
+      name: log.name,
+      type: 'error',
+      message: 'prompt rating notice failed',
+      source: log.source,
+      imageId: image.id,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null)
+  );
 
   return {
     ingestion: toUpdate.ingestion as ImageIngestionStatus,
@@ -921,9 +991,12 @@ async function notifyImageAutoBlocked({
 export async function applyIngestionSideEffects({
   image,
   outcome,
+  rederived = false,
 }: {
   image: ScanImage;
   outcome: ScanOutcome;
+  /** A prompt re-derivation, not a scan: the image is not queued for rating again. */
+  rederived?: boolean;
 }) {
   // handle blocked image updates
   if (outcome.ingestion === ImageIngestionStatus.Blocked) {
@@ -994,11 +1067,216 @@ export async function applyIngestionSideEffects({
         });
       }
 
-      if (!reviewKey && image.type === 'image') {
+      if (!reviewKey && !rederived && image.type === 'image') {
         await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
       }
     }
   }
+}
+
+/**
+ * Tells the owner when prompt-derived tags alone set the image's level above what its machine tags
+ * give. Never for a block, a review, or a safety-class tag: those have their own paths.
+ */
+async function notifyPromptRatingRaised({
+  image,
+  workflowId,
+  ingestion,
+  reviewKey,
+  nsfwLevel,
+}: {
+  image: ScanImage;
+  workflowId: string;
+  ingestion: ImageIngestionStatus;
+  reviewKey: string | null;
+  nsfwLevel: number;
+}) {
+  if (ingestion !== ImageIngestionStatus.Scanned || reviewKey || image.nsfwLevelLocked) return;
+  if (!(image.meta as { prompt?: unknown } | null)?.prompt) return;
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_PROMPT_RATING_NOTICE))) return;
+
+  const stored = await dbWrite.$queryRaw<(StoredImageTag & { nsfwLevel: number })[]>`
+    SELECT toi."tagId", t.name, t."nsfwLevel", toi.source, toi.confidence, toi.automated, toi.disabled
+    FROM "TagsOnImageDetails" toi
+    JOIN "Tag" t ON t.id = toi."tagId"
+    WHERE toi."imageId" = ${image.id} AND toi.automated AND NOT toi.disabled
+  `;
+  const machineDerived = await processTags({
+    tags: stored
+      .filter((tag) => tag.source !== TagSource.Computed)
+      .map(({ name, confidence, source }) => ({ name, confidence, source })),
+  });
+  const machineLevel = Math.max(0, ...machineDerived.map((tag) => tag.nsfwLevel));
+  const machineIds = new Set(machineDerived.map((tag) => tag.id));
+  const raisers = stored.filter(
+    (tag) =>
+      tag.source === TagSource.Computed &&
+      !machineIds.has(tag.tagId) &&
+      tag.nsfwLevel > machineLevel
+  );
+  const safetyClass = await getSafetyClassTagNames();
+  if (!raisers.length || raisers.some((tag) => safetyClass.has(tag.name.toLowerCase()))) return;
+  const [top] = raisers.sort((a, b) => b.nsfwLevel - a.nsfwLevel);
+
+  await createNotification({
+    userId: image.userId,
+    category: NotificationCategory.Moderation,
+    type: 'image-prompt-rating-raised',
+    key: `image-prompt-rating-raised-${image.id}-${nsfwLevel}-${workflowId}`,
+    details: { imageId: image.id, level: nsfwLevel, tag: top.name },
+  });
+}
+
+// Prompt re-derivation
+// --------------------------------------------------
+const PROMPT_REDERIVE_LOG: ScanLog = { name: 'prompt-tag-rederive', source: 'image-scan-pipeline' };
+
+export type RederivePromptTagsResult =
+  | { status: 'skipped'; reason: string }
+  | { status: 'unchanged' }
+  | { status: 'applied'; added: number; removed: number }
+  | { status: 'failed' };
+
+type StoredImageTag = {
+  tagId: number;
+  name: string;
+  source: TagSource;
+  confidence: number;
+  automated: boolean;
+  disabled: boolean;
+};
+
+async function rederiveSkipReason(image: ScanImage) {
+  if (image.ingestion !== ImageIngestionStatus.Scanned) return 'not-scanned';
+  if (image.nsfwLevelLocked) return 'level-locked';
+  if (image.nsfwLevel === NsfwLevel.Blocked || image.blockedFor) return 'blocked';
+  if (image.needsReview) return 'in-review';
+  if (image.acceptableMinor) return 'moderator-decision';
+  if ((await getPendingAppealImageIds([image.id])).size) return 'appeal';
+  // Tags are added by hand, disabled and voted on by people; any of that leaves the tags to them.
+  const [{ touched }] = await dbWrite.$queryRaw<{ touched: boolean }[]>`
+    SELECT
+      EXISTS (SELECT 1 FROM "ImageTagForReview" WHERE "imageId" = ${image.id})
+      OR EXISTS (
+        SELECT 1 FROM "TagsOnImageDetails"
+        WHERE "imageId" = ${image.id} AND (disabled OR NOT automated)
+      )
+      OR EXISTS (
+        SELECT 1 FROM "TagsOnImageVote" v
+        JOIN "User" u ON u.id = v."userId"
+        WHERE v."imageId" = ${image.id} AND u."isModerator"
+      ) AS touched
+  `;
+  return touched ? 'moderator-touched' : null;
+}
+
+/**
+ * Brings an image's prompt tags in line with its edited prompt without a rescan. Every tag the new
+ * prompt derives is added; a prompt tag it no longer derives is removed only when it moves the level
+ * alone. The level is then re-resolved from the image's automated tags, so it never drops below what
+ * the machine tags give, and no review, block or minor/poi flag is lifted.
+ */
+export async function rederivePromptTags(imageId: number): Promise<RederivePromptTagsResult> {
+  const image = await loadImageForScan(imageId);
+  const skip = await rederiveSkipReason(image);
+  if (skip) return { status: 'skipped', reason: skip };
+  const workflowId = (image.scanJobs as { workflowId?: unknown } | null)?.workflowId;
+  if (typeof workflowId !== 'string') return { status: 'skipped', reason: 'no-scan' };
+
+  const { prompt, negativePrompt } = (image.meta ?? {}) as {
+    prompt?: string;
+    negativePrompt?: string;
+  };
+  const stored = await dbWrite.$queryRaw<StoredImageTag[]>`
+    SELECT toi."tagId", t.name, toi.source, toi.confidence, toi.automated, toi.disabled
+    FROM "TagsOnImageDetails" toi
+    JOIN "Tag" t ON t.id = toi."tagId"
+    WHERE toi."imageId" = ${imageId}
+  `;
+  const derived = await processTags({
+    tags: stored
+      .filter((tag) => tag.automated && tag.source !== TagSource.Computed)
+      .map(({ name, confidence, source }) => ({ name, confidence, source })),
+    prompt,
+  });
+  const safetyClass = await getSafetyClassTagNames();
+  const storedIds = new Set(stored.map((tag) => tag.tagId));
+  const derivedIds = new Set(derived.map((tag) => tag.id));
+  const toAdd = derived.filter((tag) => !storedIds.has(tag.id));
+  // Confidence 100 is the computed POI tag.
+  const toRemove = stored.filter(
+    (tag) =>
+      tag.automated &&
+      tag.source === TagSource.Computed &&
+      tag.confidence < 100 &&
+      !derivedIds.has(tag.tagId) &&
+      !safetyClass.has(tag.name.toLowerCase())
+  );
+  if (!toAdd.length && !toRemove.length) return { status: 'unchanged' };
+
+  let outcome: ScanOutcome;
+  try {
+    await insertTagsOnImageNew(
+      toAdd.map((tag) => ({
+        imageId,
+        tagId: tag.id,
+        source: tag.source,
+        confidence: tag.confidence,
+        automated: true,
+      }))
+    );
+    if (toRemove.length)
+      await deleteTagsOnImageNew(toRemove.map(({ tagId }) => ({ imageId, tagId })));
+    outcome = await resolveScanOutcome({
+      image,
+      workflowId,
+      prompt,
+      negativePrompt,
+      log: PROMPT_REDERIVE_LOG,
+      monotone: true,
+    });
+  } catch (error) {
+    // Put the tags back, so a failure part-way never leaves the image rated on a partial tag set.
+    const restored = await restoreImageTags(imageId, toAdd, toRemove).then(
+      () => true,
+      () => false
+    );
+    logToAxiom({
+      name: PROMPT_REDERIVE_LOG.name,
+      type: 'error',
+      message: 'prompt tag re-derivation failed',
+      imageId,
+      restored,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return { status: 'failed' };
+  }
+
+  try {
+    await applyIngestionSideEffects({ image, outcome, rederived: true });
+  } catch (error) {
+    logToAxiom({
+      name: PROMPT_REDERIVE_LOG.name,
+      type: 'error',
+      message: 'side effects failed after prompt tags were re-derived',
+      imageId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+  }
+  return { status: 'applied', added: toAdd.length, removed: toRemove.length };
+}
+
+async function restoreImageTags(imageId: number, added: ProcessedTag[], removed: StoredImageTag[]) {
+  if (added.length) await deleteTagsOnImageNew(added.map(({ id }) => ({ imageId, tagId: id })));
+  await insertTagsOnImageNew(
+    removed.map((tag) => ({
+      imageId,
+      tagId: tag.tagId,
+      source: tag.source,
+      confidence: tag.confidence,
+      automated: true,
+    }))
+  );
 }
 
 const KONO_NSFW_SAMPLING_RATE = 0.3; // 30%

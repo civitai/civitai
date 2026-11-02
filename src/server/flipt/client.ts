@@ -9,6 +9,8 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
   RATING_DISPUTE = 'rating-dispute',
+  // Tells an image's owner when tags derived from its prompt raised its rating. DEFAULT-OFF.
+  IMAGE_PROMPT_RATING_NOTICE = 'image-prompt-rating-notice',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from

@@ -114,6 +114,8 @@ vi.mock('~/server/services/collection.service', () => ({
 }));
 vi.mock('~/server/services/cosmetic.service', () => ({ getCosmeticsForEntity: vi.fn() }));
 vi.mock('~/server/services/post-collection-visibility', () => ({ canViewCollectionPost: vi.fn() }));
+// Hand-listed: the real pipeline reaches the pg pools and search index this file stubs out.
+vi.mock('~/server/services/image-scan-pipeline', () => ({ rederivePromptTags: vi.fn() }));
 vi.mock('~/server/services/tag.service', () => ({
   findOrCreateTagsByName: vi.fn(),
   getVotableImageTags: vi.fn(),
@@ -137,6 +139,7 @@ vi.mock('~/utils/image-utils', async (importOriginal) => {
 });
 
 const { updatePostImage } = await import('~/server/services/post.service');
+const { rederivePromptTags } = await import('~/server/services/image-scan-pipeline');
 
 const KEY_URL = IMAGE_URL;
 
@@ -307,5 +310,20 @@ describe('updatePostImage — Image.meta write semantics', () => {
 
     const meta = updateData().meta as { extra: Record<string, unknown> };
     expect(meta.extra).not.toHaveProperty('sourceImageIds');
+  });
+});
+
+describe('updatePostImage — prompt tags', () => {
+  it('re-derives the prompt tags when the prompt changes', async () => {
+    wireCurrentImage(false, { prompt: 'stored prompt' });
+    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'new prompt' } } as any);
+    expect(rederivePromptTags).toHaveBeenCalledWith(IMAGE_ID);
+  });
+
+  it('does nothing for a save whose prompt normalizes to the stored one', async () => {
+    wireCurrentImage(false, { prompt: 'café &amp; tea', seed: 1 });
+    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'cafe & tea', seed: 2 } } as any);
+    await updatePostImage({ id: IMAGE_ID, hideMeta: true } as any);
+    expect(rederivePromptTags).not.toHaveBeenCalled();
   });
 });

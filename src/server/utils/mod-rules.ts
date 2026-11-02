@@ -120,3 +120,11 @@ export function evaluateRule(rule: RuleDefinition, obj: any): boolean {
       return false;
   }
 }
+
+/** Every tag name a rule definition can match on. */
+export function ruleDefinitionTagNames(definition: RuleDefinition): string[] {
+  if (definition.type === 'tag') return definition.tags;
+  if (definition.type === 'and' || definition.type === 'or')
+    return definition.rules.flatMap(ruleDefinitionTagNames);
+  return [];
+}

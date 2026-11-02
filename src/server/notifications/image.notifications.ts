@@ -1,7 +1,21 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 export const imageNotifications = createNotificationProcessor({
+  'image-prompt-rating-raised': {
+    displayName: 'Image rating raised by its prompt',
+    category: NotificationCategory.Moderation,
+    prepareMessage: ({ details }) => {
+      if (!details) return undefined;
+      const { imageId, level, tag } = details as { imageId: number; level: number; tag: string };
+      const label = browsingLevelLabels[level as keyof typeof browsingLevelLabels] ?? '?';
+      return {
+        message: `Your image is now rated ${label} because its prompt added the "${tag}" tag. Editing the prompt re-checks the tags it added.`,
+        url: `/images/${imageId}`,
+      };
+    },
+  },
   'profile-picture-blocked': {
     displayName: 'Avatar blocked',
     category: NotificationCategory.Moderation,
