@@ -404,8 +404,11 @@ export async function buildAndInsertScanTags({
 }
 
 // `(term:0)` and `(term:-0.5)`: a term weighted zero or below adds nothing to the generation.
-const WEIGHTED_TERM = /\(([^()]*):\s*([-+]?(?:\d+\.?\d*|\.\d+))\s*\)/g;
+// Each number has one way to match, so a long digit run without a closing paren stays linear.
+const WEIGHTED_TERM = /\(([^()]*):\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)/g;
+const MAX_WEIGHTED_PROMPT_CHARS = 10_000;
 export function dropZeroWeightTerms(prompt: string) {
+  if (prompt.length > MAX_WEIGHTED_PROMPT_CHARS) return prompt;
   return prompt.replace(WEIGHTED_TERM, (term, _text, weight) => (Number(weight) <= 0 ? ' ' : term));
 }
 
@@ -429,9 +432,12 @@ export async function getSafetyClassTagNames() {
 async function processTags({
   tags: normalized,
   prompt,
+  legacyPrompt = false,
 }: {
   tags: NormalizedTag[];
   prompt?: string;
+  /** Every prompt tag from the raw prompt, as before allowlisting and weights applied. */
+  legacyPrompt?: boolean;
 }): Promise<ProcessedTag[]> {
   if (prompt) {
     // Normalized first, as both audit paths do. Stripping the raw text while the audit that
@@ -455,11 +461,16 @@ async function processTags({
     }
 
     // A safety-class tag still matches the raw prompt, whatever its weight or allowlisting.
-    const safetyClass = await getSafetyClassTagNames();
-    const promptTags = new Set([
-      ...(getTagsFromPrompt(dropZeroWeightTerms(allowlisted)) || []),
-      ...(getTagsFromPrompt(prompt) || []).filter((name) => safetyClass.has(name.toLowerCase())),
-    ]);
+    const rawPromptTags = getTagsFromPrompt(prompt) || [];
+    const safetyClass = legacyPrompt ? undefined : await getSafetyClassTagNames();
+    const promptTags = new Set(
+      safetyClass
+        ? [
+            ...(getTagsFromPrompt(dropZeroWeightTerms(allowlisted)) || []),
+            ...rawPromptTags.filter((name) => safetyClass.has(name.toLowerCase())),
+          ]
+        : rawPromptTags
+    );
     for (const name of promptTags)
       normalized.push({ name, confidence: 70, source: TagSource.Computed });
   }
@@ -579,8 +590,9 @@ export async function resolveScanOutcome({
   negativePrompt?: string;
   log?: ScanLog;
   /**
-   * For a re-derivation outside a scan: keep pHash and scannedAt, never clear the minor or poi flag
-   * or a review flag. The level still follows the image's current automated tags.
+   * For a re-derivation outside a scan: keep pHash and scannedAt, never clear the minor or poi flag,
+   * and write only while the image is still Scanned, unlocked, unblocked and out of review (else
+   * throws). The level still follows the image's current automated tags.
    */
   monotone?: boolean;
 }): Promise<ScanOutcome> {
@@ -707,7 +719,7 @@ export async function resolveScanOutcome({
     }
   }
 
-  await dbWrite.$executeRaw`
+  const written = await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
@@ -716,11 +728,7 @@ export async function resolveScanOutcome({
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
       "nsfwLevel" = ${toUpdate.nsfwLevel as number},
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
-        ELSE ${
-          monotone
-            ? Prisma.sql`COALESCE(${(toUpdate.needsReview as string) ?? null}, "needsReview")`
-            : (toUpdate.needsReview as string) ?? null
-        } END,
+        ELSE ${(toUpdate.needsReview as string) ?? null} END,
       "minor" = ${(toUpdate.minor as boolean) ?? false}${
     monotone ? Prisma.sql` OR "minor"` : Prisma.empty
   },
@@ -734,8 +742,19 @@ export async function resolveScanOutcome({
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
       )}::jsonb)
-    WHERE id = ${image.id}
+    WHERE id = ${image.id}${
+    monotone
+      ? Prisma.sql`
+      AND ingestion = 'Scanned'::"ImageIngestionStatus"
+      AND NOT "nsfwLevelLocked"
+      AND "blockedFor" IS NULL
+      AND "needsReview" IS NULL
+      AND NOT "acceptableMinor"`
+      : Prisma.empty
+  }
   `;
+  // A moderator acted on the image after a re-derivation found it eligible.
+  if (monotone && !written) throw new RederiveConflictError();
 
   await notifyPromptRatingRaised({
     image,
@@ -763,6 +782,40 @@ export async function resolveScanOutcome({
   };
 }
 
+type AuditTag = {
+  id: number;
+  name: string;
+  type?: TagType;
+  nsfwLevel: number;
+  confidence: number;
+  source: TagSource;
+};
+
+async function withRawPromptTags(tags: AuditTag[], prompt?: string): Promise<AuditTag[]> {
+  if (!prompt) return tags;
+  const derived = await processTags({
+    tags: tags
+      .filter((tag) => tag.source !== TagSource.Computed)
+      .map(({ name, confidence, source }) => ({ name, confidence, source })),
+    prompt,
+    legacyPrompt: true,
+  });
+  const present = new Set(tags.map((tag) => tag.id));
+  return [
+    ...tags,
+    ...derived
+      .filter((tag) => !present.has(tag.id))
+      .map(({ id, name, type, nsfwLevel, confidence, source }) => ({
+        id,
+        name,
+        type,
+        nsfwLevel,
+        confidence,
+        source,
+      })),
+  ];
+}
+
 async function auditScanResults(args: {
   imageId: number;
   userId: number;
@@ -777,14 +830,16 @@ async function auditScanResults(args: {
     stripBenignPhrases(normalizeText(args.prompt), BlocklistType.PromptBenignPhrase),
     stripBenignPhrases(normalizeText(args.negativePrompt), BlocklistType.NegativeBenignPhrase),
   ]);
-  const tags = await dbWrite.$queryRaw<
-    { id: number; name: string; type: TagType; nsfwLevel: number; confidence: number }[]
-  >`
-    SELECT t.id, t.name, t."nsfwLevel", toi.confidence
+  const imageTags = await dbWrite.$queryRaw<AuditTag[]>`
+    SELECT t.id, t.name, t."nsfwLevel", toi.confidence, toi.source
     FROM "TagsOnImageDetails" toi
     JOIN "Tag" t ON t.id = toi."tagId"
     WHERE toi."imageId" = ${args.imageId} AND toi.automated AND NOT toi.disabled
   `;
+  const ratingLevel = Math.max(...[...imageTags.map((x) => x.nsfwLevel), 0]);
+  // Allowlisting and weights only lower the rating: every review, audit and flag decision below
+  // reads the tags and level the raw prompt derives, as it did before they applied.
+  const tags = await withRawPromptTags(imageTags, args.prompt);
   const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
   const nsfw = nsfwLevel > sfwBrowsingLevelsFlag;
   const minorTags = tags.filter((tag) => tagsNeedingReview.includes(tag.name.toLowerCase()));
@@ -835,7 +890,7 @@ async function auditScanResults(args: {
 
   return {
     tags,
-    nsfwLevel,
+    nsfwLevel: ratingLevel,
     nsfw,
     minorTags,
     poiTags,
@@ -1129,6 +1184,16 @@ async function notifyPromptRatingRaised({
 
 // Prompt re-derivation
 // --------------------------------------------------
+class RederiveConflictError extends Error {
+  constructor() {
+    super('image changed during prompt tag re-derivation');
+  }
+}
+
+const REDERIVE_LOCK_SECONDS = 60;
+const rederiveLockKey = (imageId: number) =>
+  `${REDIS_SYS_KEYS.WEBHOOKS.IMAGE_PROMPT_REDERIVE_LOCK}:${imageId}` as RedisKeyTemplateSys;
+
 const PROMPT_REDERIVE_LOG: ScanLog = { name: 'prompt-tag-rederive', source: 'image-scan-pipeline' };
 
 export type RederivePromptTagsResult =
@@ -1177,6 +1242,26 @@ async function rederiveSkipReason(image: ScanImage) {
  * the machine tags give, and no review, block or minor/poi flag is lifted.
  */
 export async function rederivePromptTags(imageId: number): Promise<RederivePromptTagsResult> {
+  const key = rederiveLockKey(imageId);
+  // Each run re-reads the stored prompt, so waiting out a concurrent one is enough to end on the
+  // latest save.
+  for (let attempt = 0; ; attempt++) {
+    // Fails open: the write itself re-checks that no moderator acted meanwhile.
+    const locked = await sysRedis
+      .set(key, '1', { NX: true, EX: REDERIVE_LOCK_SECONDS })
+      .catch(() => 'OK');
+    if (locked) break;
+    if (attempt >= 20) return { status: 'skipped', reason: 'busy' };
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  try {
+    return await rederiveLocked(imageId);
+  } finally {
+    await sysRedis.del(key).catch(() => null);
+  }
+}
+
+async function rederiveLocked(imageId: number): Promise<RederivePromptTagsResult> {
   const image = await loadImageForScan(imageId);
   const skip = await rederiveSkipReason(image);
   if (skip) return { status: 'skipped', reason: skip };
@@ -1241,6 +1326,8 @@ export async function rederivePromptTags(imageId: number): Promise<RederivePromp
       () => true,
       () => false
     );
+    if (error instanceof RederiveConflictError)
+      return { status: 'skipped', reason: 'changed-during-rederive' };
     logToAxiom({
       name: PROMPT_REDERIVE_LOG.name,
       type: 'error',

@@ -23,6 +23,9 @@ const holder = vi.hoisted(() => ({
   appeals: [] as number[],
   failAudit: false,
   notifyFlag: false,
+  ruleAction: 'Approve',
+  nsfwGatedReview: false,
+  moderated: [] as { id: number; name: string; nsfwLevel: number }[],
 }));
 type StoredTag = {
   tagId: number;
@@ -52,7 +55,10 @@ const byId = (id: number) => {
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
   auditMetaData: vi.fn(() => ({ success: true })),
-  includesInappropriate: vi.fn(() => false),
+  // Stands in for every check gated on the image being NSFW.
+  includesInappropriate: vi.fn((_: unknown, nsfw: boolean) =>
+    holder.nsfwGatedReview && nsfw ? 'minor' : false
+  ),
   includesPoi: vi.fn(() => false),
   getTagsFromPrompt: vi.fn((prompt?: string) => {
     const found = [
@@ -73,7 +79,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
     {
       id: 1,
       definition: { type: 'tag', tags: ['safety tag'], match: 'any' },
-      action: 'Approve',
+      action: holder.ruleAction,
       reason: null,
     },
   ]),
@@ -82,7 +88,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
   getTagRules: vi.fn(async () => []),
-  getModeratedTags: vi.fn(async () => []),
+  getModeratedTags: vi.fn(async () => holder.moderated),
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof Caches>()),
@@ -134,6 +140,8 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import {
   buildAndInsertScanTags,
+  dropZeroWeightTerms,
+  getSafetyClassTagNames,
   rederivePromptTags,
   resolveScanOutcome,
   type ScanImage,
@@ -141,6 +149,10 @@ import {
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { createNotification } from '~/server/services/notification.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { tagsNeedingReview } from '~/libs/tags';
+import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
+import { conditionalReviewTagNames } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 
 const ID = 7;
@@ -170,6 +182,12 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
+    CREATE TABLE "ImageTagForReview" ("imageId" int, "tagId" int);
+    CREATE TABLE "TagsOnImageDetails" (
+      "imageId" int, "tagId" int, automated boolean, disabled boolean
+    );
+    CREATE TABLE "User" (id int PRIMARY KEY, "isModerator" boolean);
+    CREATE TABLE "TagsOnImageVote" ("imageId" int, "tagId" int, "userId" int);
   `);
 });
 
@@ -222,13 +240,27 @@ const seedImage = async (prompt: string, over: Record<string, unknown> = {}) => 
   );
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  holder.ruleAction = 'Approve';
+  holder.nsfwGatedReview = false;
+  holder.moderated = [];
+  await holder.db.exec(
+    `DELETE FROM "ImageTagForReview"; DELETE FROM "TagsOnImageVote"; DELETE FROM "User"`
+  );
   holder.touched = false;
   holder.appeals = [];
   holder.failAudit = false;
   holder.notifyFlag = false;
-  dbMock.dbWrite.image.findUnique.mockImplementation((async () => row()) as never);
+  // Only the selected keys, as Prisma returns them.
+  dbMock.dbWrite.image.findUnique.mockImplementation((async ({
+    select,
+  }: {
+    select: Record<string, boolean>;
+  }) => {
+    const full = await row();
+    return Object.fromEntries(Object.keys(select).map((key) => [key, full[key]]));
+  }) as never);
   dbMock.dbWrite.appeal.findMany.mockImplementation((async () =>
     holder.appeals.map((entityId) => ({ entityId }))) as never);
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
@@ -239,10 +271,24 @@ beforeEach(() => {
     const { affectedRows } = await holder.db.query(flat.text, flat.values as unknown[]);
     return affectedRows ?? 0;
   }) as never);
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
     const text = strings.join('');
     const live = [...holder.tags.values()];
-    if (text.includes('AS touched')) return [{ touched: holder.touched }];
+    if (text.includes('AS touched')) {
+      await holder.db.exec(`DELETE FROM "TagsOnImageDetails"`);
+      for (const t of live)
+        await holder.db.query(`INSERT INTO "TagsOnImageDetails" VALUES ($1, $2, $3, $4)`, [
+          ID,
+          t.tagId,
+          t.automated,
+          t.disabled,
+        ]);
+      const flat = Prisma.sql(strings, ...(values as never[]));
+      return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
+    }
     if (text.includes('toi.source'))
       return text.includes('NOT toi.disabled')
         ? live.filter((t) => t.automated && !t.disabled)
@@ -300,7 +346,7 @@ describe('rederivePromptTags', () => {
     seedTags(machine('still life'), fromPrompt('level tag'));
     await seedImage('a clean prompt');
     await rederivePromptTags(ID);
-    expect(tagNames()).toContain('still life');
+    expect(tagNames()).toEqual(['grit', 'still life']);
   });
 
   it('never lowers the level below what the machine tags give', async () => {
@@ -311,16 +357,17 @@ describe('rederivePromptTags', () => {
   });
 
   it.each([
-    ['locked by a moderator', { nsfwLevelLocked: true }],
-    ['blocked', { ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'moderated' }],
-    ['in review', { needsReview: 'tag' }],
-    ['ruled an acceptable minor', { acceptableMinor: true }],
-    ['not scanned', { ingestion: 'Pending' }],
-  ])('leaves an image %s alone', async (_, over) => {
+    ['locked by a moderator', { nsfwLevelLocked: true }, 'level-locked'],
+    ['blocked', { nsfwLevel: 32, blockedFor: 'moderated' }, 'blocked'],
+    ['in review', { needsReview: 'tag' }, 'in-review'],
+    ['ruled an acceptable minor', { acceptableMinor: true }, 'moderator-decision'],
+    ['not scanned', { ingestion: 'Pending' }, 'not-scanned'],
+    ['never scanned by a workflow', { scanJobs: null }, 'no-scan'],
+  ])('leaves an image %s alone', async (_, over, reason) => {
     seedTags(machine('still life'), fromPrompt('level tag'));
     await seedImage('a clean prompt', over);
     const before = await row();
-    expect(await rederivePromptTags(ID)).toMatchObject({ status: 'skipped' });
+    expect(await rederivePromptTags(ID)).toEqual({ status: 'skipped', reason });
     expect(tagNames()).toEqual(['level tag', 'still life']);
     expect((await row()).nsfwLevel).toBe(before.nsfwLevel);
   });
@@ -333,16 +380,67 @@ describe('rederivePromptTags', () => {
     expect(tagNames()).toEqual(['level tag', 'still life']);
   });
 
-  it('leaves an image whose tags a person has touched alone', async () => {
-    seedTags(machine('still life'), fromPrompt('level tag'));
+  it.each([
+    ['a tag in the review queue', `INSERT INTO "ImageTagForReview" VALUES (${ID}, 10)`, {}],
+    ['a disabled tag', '', { disabled: true }],
+    ['a tag added by hand', '', { automated: false }],
+    [
+      'a moderator vote',
+      `INSERT INTO "User" VALUES (9, true); INSERT INTO "TagsOnImageVote" VALUES (${ID}, 10, 9)`,
+      {},
+    ],
+  ])('leaves an image with %s alone', async (_, sql, mark) => {
+    seedTags(machine('still life'), fromPrompt('level tag', mark));
     await seedImage('a clean prompt');
-    holder.touched = true;
+    if (sql) await holder.db.exec(sql);
     expect(await rederivePromptTags(ID)).toEqual({
       status: 'skipped',
       reason: 'moderator-touched',
     });
     expect(tagNames()).toEqual(['level tag', 'still life']);
     expect((await row()).nsfwLevel).toBe(8);
+  });
+
+  it('does not count a vote by someone who is not a moderator', async () => {
+    seedTags(machine('still life'), fromPrompt('level tag'));
+    await seedImage('a clean prompt');
+    await holder.db.exec(
+      `INSERT INTO "User" VALUES (9, false); INSERT INTO "TagsOnImageVote" VALUES (${ID}, 10, 9)`
+    );
+    expect(await rederivePromptTags(ID)).toMatchObject({ status: 'applied' });
+  });
+
+  it('routes the image to review when the edit adds a tag a hold rule names', async () => {
+    holder.ruleAction = 'Hold';
+    seedTags(machine('still life'));
+    await seedImage('bravo', { nsfwLevel: 1 });
+    await rederivePromptTags(ID);
+    expect(tagNames()).toEqual(['safety tag', 'still life']);
+    expect((await row()).needsReview).toBe('modRule');
+  });
+
+  it('backs off when a moderator acts on the image during the re-derivation', async () => {
+    seedTags(machine('still life'), fromPrompt('level tag'));
+    await seedImage('a clean prompt');
+    vi.mocked(dbMock.dbWrite.appeal.findMany).mockImplementationOnce((async () => {
+      await holder.db.exec(`UPDATE "Image" SET "nsfwLevelLocked" = true WHERE id = ${ID}`);
+      return [];
+    }) as never);
+    expect(await rederivePromptTags(ID)).toEqual({
+      status: 'skipped',
+      reason: 'changed-during-rederive',
+    });
+    expect(tagNames()).toEqual(['level tag', 'still life']);
+    expect((await row()).nsfwLevel).toBe(8);
+  });
+
+  it('waits for a concurrent re-derivation of the same image', async () => {
+    seedTags(machine('still life'), fromPrompt('level tag'));
+    await seedImage('a clean prompt');
+    vi.mocked(redisMock.sysRedis.set).mockResolvedValueOnce(null as never);
+    expect(await rederivePromptTags(ID)).toMatchObject({ status: 'applied' });
+    expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(2);
+    expect(redisMock.sysRedis.del).toHaveBeenCalled();
   });
 
   it('puts the tags back and leaves the level when it fails part-way', async () => {
@@ -357,22 +455,31 @@ describe('rederivePromptTags', () => {
 
 describe('resolveScanOutcome monotone', () => {
   const image = async () => (await row()) as unknown as ScanImage;
-  const flagged = { minor: true, poi: true, needsReview: 'tag', nsfwLevel: 8 };
+  const flagged = { minor: true, poi: true, nsfwLevel: 8 };
 
-  it('keeps minor, poi, review, pHash and scannedAt, and takes the level from the tags', async () => {
+  it('keeps minor, poi, pHash and scannedAt, and takes the level from the tags', async () => {
     seedTags(machine('still life'));
     await seedImage('a clean prompt', flagged);
     const before = await row();
     await resolveScanOutcome({ image: await image(), workflowId: 'wf-1', monotone: true });
     const after = await row();
-    expect(after).toMatchObject({ minor: true, poi: true, needsReview: 'tag', nsfwLevel: 1 });
+    expect(after).toMatchObject({ minor: true, poi: true, needsReview: null, nsfwLevel: 1 });
     expect(Number(after.pHash)).toBe(99);
     expect(after.scannedAt.getTime()).toBe(before.scannedAt.getTime());
   });
 
+  it('writes nothing over an image that went into review', async () => {
+    seedTags(machine('still life'));
+    await seedImage('a clean prompt', { ...flagged, needsReview: 'tag' });
+    await expect(
+      resolveScanOutcome({ image: await image(), workflowId: 'wf-1', monotone: true })
+    ).rejects.toThrow();
+    expect(await row()).toMatchObject({ needsReview: 'tag', nsfwLevel: 8 });
+  });
+
   it('without the option, writes the audit as a scan always has', async () => {
     seedTags(machine('still life'));
-    await seedImage('a clean prompt', flagged);
+    await seedImage('a clean prompt', { ...flagged, needsReview: 'tag' });
     await resolveScanOutcome({ image: await image(), workflowId: 'wf-2', pHash: BigInt(7) });
     const after = await row();
     expect(after).toMatchObject({ minor: false, poi: false, needsReview: null, nsfwLevel: 1 });
@@ -406,6 +513,25 @@ describe('prompt tags at scan time', () => {
       prompt: '(alpha:0), (bravo:0.0), (charlie:-0.5)',
     });
     expect(scannedTagNames()).toEqual(['safety tag', 'still life']);
+  });
+
+  it('decides review from the raw prompt when weights lower only the rating', async () => {
+    holder.nsfwGatedReview = true;
+    seedTags(machine('still life'));
+    await seedImage('(alpha:0)', { nsfwLevel: 1 });
+    await resolveScanOutcome({
+      image: (await row()) as unknown as ScanImage,
+      workflowId: 'wf-1',
+      prompt: '(alpha:0)',
+    });
+    expect(await row()).toMatchObject({ nsfwLevel: 1, needsReview: 'minor' });
+  });
+
+  it('parses weights in linear time on a long run of digits', () => {
+    const started = performance.now();
+    dropZeroWeightTerms(`(:${'9'.repeat(100_000)}`);
+    dropZeroWeightTerms(`(x:${'1'.repeat(5_000)}.${'1'.repeat(4_000)}`);
+    expect(performance.now() - started).toBeLessThan(250);
   });
 
   it('keeps a positively weighted term', async () => {
@@ -462,5 +588,24 @@ describe('prompt rating notice', () => {
     await rederivePromptTags(ID);
     expect(tagNames()).toContain('mild tag');
     expect(notices()).toEqual([]);
+  });
+});
+
+describe('getSafetyClassTagNames', () => {
+  it('covers every source of review, block, minor and POI signals', async () => {
+    holder.moderated = [
+      { id: 30, name: 'Blocked Tag', nsfwLevel: 32 },
+      { id: 31, name: 'level only', nsfwLevel: 8 },
+    ];
+    const names = await getSafetyClassTagNames();
+    for (const name of [
+      tagsNeedingReview[0],
+      poiWords[0],
+      conditionalReviewTagNames[0],
+      'blocked tag',
+      'safety tag',
+    ])
+      expect(names.has(name.toLowerCase()), name).toBe(true);
+    expect(names.has('level only')).toBe(false);
   });
 });

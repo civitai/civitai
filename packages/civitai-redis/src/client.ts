@@ -2868,6 +2868,8 @@ export const REDIS_SYS_KEYS = {
     // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
     // callbacks so the terminal workflow event can classify the failure. Short TTL.
     IMAGE_SCAN_JOB_REASON: 'webhooks:image-scan:job-reason',
+    // One prompt-tag re-derivation per image at a time — `…:${imageId}`.
+    IMAGE_PROMPT_REDERIVE_LOCK: 'webhooks:image-scan:prompt-rederive-lock',
   },
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',

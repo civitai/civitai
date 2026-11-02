@@ -317,12 +317,18 @@ describe('updatePostImage — prompt tags', () => {
   it('re-derives the prompt tags when the prompt changes', async () => {
     wireCurrentImage(false, { prompt: 'stored prompt' });
     await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'new prompt' } } as any);
+    expect(rederivePromptTags).toHaveBeenCalledTimes(1);
     expect(rederivePromptTags).toHaveBeenCalledWith(IMAGE_ID);
   });
 
   it('does nothing for a save whose prompt normalizes to the stored one', async () => {
     wireCurrentImage(false, { prompt: 'café &amp; tea', seed: 1 });
     await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'cafe & tea', seed: 2 } } as any);
+    expect(rederivePromptTags).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for a save that leaves meta alone', async () => {
+    wireCurrentImage(false, { prompt: 'stored prompt' });
     await updatePostImage({ id: IMAGE_ID, hideMeta: true } as any);
     expect(rederivePromptTags).not.toHaveBeenCalled();
   });
