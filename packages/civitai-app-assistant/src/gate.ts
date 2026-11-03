@@ -12,7 +12,7 @@ const sandboxTool = (tool: string) => `${SANDBOX_SERVER_ID}__${tool}`;
  * request; Continue starts a new reply with a fresh count. Calls stand in for steps because a step's Buzz
  * cost is not visible to the page. A subagent's calls are not counted: the chat caps those per subagent.
  */
-export const APP_ASSISTANT_TURN_TOOL_CALL_LIMIT = 150;
+export const APP_ASSISTANT_TURN_TOOL_CALL_LIMIT = 300;
 
 export const REPORT_READY = 'report_ready';
 export const SET_CHECKLIST = 'set_checklist';

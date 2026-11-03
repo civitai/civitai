@@ -186,8 +186,26 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       username: NAME,
       removeModels: true,
       removeImages: false,
+      // Defaulted, not absent: support-led erasure keeps app data unless it asks.
+      removeAppData: false,
     });
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
+  });
+
+  it('passes `removeAppData` through when the erasure asks for app data to go too', async () => {
+    const { status } = await call({
+      userId: String(TARGET),
+      username: NAME,
+      removeAppData: 'true',
+    });
+    expect(status).toBe(200);
+    expect(deleteUser).toHaveBeenCalledWith({
+      id: TARGET,
+      username: NAME,
+      removeModels: undefined,
+      removeImages: false,
+      removeAppData: true,
+    });
   });
 
   // A muted account can't close itself through `user.delete`; a support ticket routes it here. If
@@ -214,6 +232,7 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       removeModels: undefined,
       // Defaulted, not absent — see the grace-period case below.
       removeImages: false,
+      removeAppData: false,
     });
   });
 

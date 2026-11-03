@@ -9,6 +9,8 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
   RATING_DISPUTE = 'rating-dispute',
+  // Percentage rollout keyed on the image id: the share of scanned images sampled.
+  SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
@@ -125,6 +127,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // environment must set a non-zero value before flipping. Failures surface as pg errors, not
   // Prisma P2024/P1008.
   KYSELY_HOT_READS_7 = 'kysely-hot-reads-7',
+  // The reads in packages/civitai-db-queries/src/hot-reads-8.db.ts, through Kysely instead of Prisma.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // the storyline read runs on most feed pages.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead`. Its acquire wait is
+  // `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), so the
+  // environment must set a non-zero value before flipping. Failures surface as pg errors, not
+  // Prisma P2024/P1008.
+  KYSELY_HOT_READS_8 = 'kysely-hot-reads-8',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
@@ -421,6 +434,27 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag state (enabled: false is fine) before this code serves traffic, for the reason given at
   // KYSELY_IMAGE_REACTIONS.
   CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
+
+  // On: the hub-session read path (`sessionClient.getSessionUser`) keeps a per-process cache of ES256
+  // signature verifications, keyed by a SHA-256 of the whole token, so a token seen again skips `jwtVerify`
+  // (packages/civitai-auth/src/verified-claims-cache.ts). Expiry is still enforced on a hit, and the
+  // revocation read (`isRevoked`) runs on every call, hit or miss, exactly as when off. Off (and unknown or
+  // unreachable): every call verifies the signature, as before, and the cache is emptied.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every session read. The key must exist in flag
+  // state (enabled: false is fine) before this code serves traffic, for the reason given at
+  // KYSELY_IMAGE_REACTIONS.
+  AUTH_VERIFIED_CLAIMS_CACHE = 'auth-verified-claims-cache',
+
+  // On: the internal image-delivery lookup (`image-delivery.service.ts`) sends its statement
+  // through the raw pg pools (`pgDbRead`, falling back to `pgDbWrite` on a replica error) instead
+  // of Prisma's `dbRead`/`dbWrite`. Off (and unknown, or a client that has not initialised): Prisma,
+  // as before. Same statement, parameters, row and fallback trigger either way.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, and read at most once per 5s per process
+  // (`createCachedFlagGate`), so `enabled` IS the switch. The key must exist in flag state
+  // (enabled: false is fine) before this code serves traffic.
+  IMAGE_DELIVERY_PG_LOOKUP = 'image-delivery-pg-lookup',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

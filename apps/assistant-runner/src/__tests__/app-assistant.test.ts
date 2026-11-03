@@ -409,16 +409,16 @@ describe('App Assistant’s gate on the runner', () => {
     });
   });
 
-  it('ends the reply at its 151st parent call', async () => {
+  it('ends the reply at its 301st parent call', async () => {
     fake.add('my-app');
     const { tools, reported } = await open();
-    for (let i = 0; i < 150; i++) await call(tools.tools, 'report_ready', CIVITAI);
+    for (let i = 0; i < 300; i++) await call(tools.tools, 'report_ready', CIVITAI);
     const ended = (await call(tools.tools, 'sandbox__read_file', { path: 'a' })) as {
       error: string;
     };
     expect(ended.error).toBe(TURN_LIMIT_REFUSAL);
-    // The 150th was still the gate's ordinary refusal, not the end.
-    expect(reported[149]).not.toHaveProperty('stopped');
+    // The 300th was still the gate's ordinary refusal, not the end.
+    expect(reported[299]).not.toHaveProperty('stopped');
     expect(reported.at(-1)).toMatchObject({ stopped: true, refused: TURN_LIMIT_REFUSAL });
     expect(assistantReads()).toBe(0);
   });
@@ -444,7 +444,7 @@ describe('App Assistant’s gate on the runner', () => {
     expect(assistantReads()).toBe(1);
   });
 
-  it('leaves a subagent’s calls out of the parent’s 150', async () => {
+  it('leaves a subagent’s calls out of the parent’s 300', async () => {
     fake.add('my-app');
     // The subagent reads five times, then answers.
     const child = scriptedModel((prompt) =>
@@ -453,13 +453,13 @@ describe('App Assistant’s gate on the runner', () => {
         : { text: 'Found it.' }
     );
     const { tools, reported } = await open({ subagents: true, model: () => child });
-    for (let i = 0; i < 148; i++) await call(tools.tools, 'report_ready', CIVITAI);
+    for (let i = 0; i < 298; i++) await call(tools.tools, 'report_ready', CIVITAI);
     const dispatched = (await call(tools.tools, 'dispatch_agent', {
       task: 'Read a and say what it exports.',
       mode: 'read',
     })) as { status: string };
     expect(dispatched.status).toBe('done');
-    // All five ran though the parent's count stood at 149: a subagent has its own budget.
+    // All five ran though the parent's count stood at 299: a subagent has its own budget.
     expect(assistantReads()).toBe(5);
     expect(reported.filter((r) => r.subagent !== undefined)).toHaveLength(5);
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toBe('src/');
@@ -495,7 +495,7 @@ describe('App Assistant’s gate on the runner', () => {
     expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
 
     const many = messagesOf(
-      Array.from({ length: 150 }, () => ['sandbox__list_dir', {}, 'src/'] as const)
+      Array.from({ length: 300 }, () => ['sandbox__list_dir', {}, 'src/'] as const)
     );
     const full = await open({ history: { earlier: [], current: many } });
     expect(await call(full.tools.tools, 'sandbox__list_dir', { path: '.' })).toMatchObject({

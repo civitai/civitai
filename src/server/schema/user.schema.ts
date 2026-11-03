@@ -211,6 +211,8 @@ export const deleteUserSchema = z.object({
   username: usernameSchema.optional(),
   removeModels: z.boolean().optional(),
   removeImages: z.boolean().optional(),
+  /** Also delete the account's App Blocks document-store data (`remove-deleted-account-app-data`). */
+  removeAppData: z.boolean().optional(),
 });
 
 export type RestoreUserInput = z.infer<typeof restoreUserSchema>;
@@ -390,6 +392,9 @@ export const userSettingsSchema = z.object({
   // Opt-in, per event name: list me on my team's roster (events/points/roster.ts). The durable record
   // the Redis roster is rebuilt from; absent means hidden. Written only by event.setRosterOptIn.
   eventRosterOptIn: z.record(z.string(), z.boolean()).optional(),
+  // Per event name: the hat the user picked to show on their avatar (events/showcase-hat.ts); null
+  // or absent means the default. Written only by event.setShowcaseHat.
+  eventShowcaseHat: z.record(z.string(), z.number().int().nullable()).optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
@@ -572,6 +577,8 @@ export const userMeta = z.object({
   muteReason: z.string().optional(),
   mutedBy: z.number().optional(),
   imageRemoval: z.enum(['grace', 'immediate']).optional(),
+  // Read by `remove-deleted-account-app-data`.
+  appDataRemoval: z.literal('requested').optional(),
   // Stamped at onboarding when the account ends up without a verified address. Read by
   // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
   emailVerificationRequired: z.boolean().optional(),

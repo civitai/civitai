@@ -83,6 +83,7 @@ import {
   toggleTopicMute,
 } from '~/server/services/commentv3/write.service';
 import { getCosmeticsAndProfilePicturesForUsers } from '~/server/services/user.service';
+import { getShowcaseHatsForUsers } from '~/server/events/showcase-hat';
 
 export type CommentThread = {
   id: number;
@@ -1414,18 +1415,36 @@ export async function getCommentsInfinite({
       : { threads: [], childlessCommentIds: [] };
 
     const replyComments = replies.threads.flatMap((thread) => thread.comments);
-    const userCosmetics = await getCosmeticsAndProfilePicturesForUsers(
-      [...pinnedComments, ...replyComments, ...(targetComment ? [targetComment] : [])].map(
-        (x) => x.user.id
-      )
-    );
+    const [userCosmetics, regularShowcaseHats] = await Promise.all([
+      getCosmeticsAndProfilePicturesForUsers(
+        [...pinnedComments, ...replyComments, ...(targetComment ? [targetComment] : [])].map(
+          (x) => x.user.id
+        ),
+        { showcaseHat: true }
+      ),
+      // The page's own comments carry their cosmetics from the query, all but the showcase hat.
+      getShowcaseHatsForUsers(regularComments.flatMap((x) => (x.user ? [x.user.id] : []))),
+    ]);
     const withUserCosmetics = (comment: CommentV2WithCachedUser): CommentV2Model => ({
       ...comment,
       user: { ...comment.user, ...userCosmetics(comment.user.id) },
     });
 
     return {
-      comments: [...pinnedComments.map(withUserCosmetics), ...regularComments],
+      comments: [
+        ...pinnedComments.map(withUserCosmetics),
+        ...regularComments.map((comment) =>
+          comment.user
+            ? {
+                ...comment,
+                user: {
+                  ...comment.user,
+                  showcaseHat: regularShowcaseHats[comment.user.id] ?? null,
+                },
+              }
+            : comment
+        ),
+      ],
       nextCursor,
       targetComment: targetComment ? withUserCosmetics(targetComment) : null,
       replyThreads: replies.threads.map((thread) => ({

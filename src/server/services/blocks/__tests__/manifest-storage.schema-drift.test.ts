@@ -18,6 +18,10 @@ import {
   APP_STORAGE_MAX_OWNED_MODEL_VERSIONS,
   APP_STORAGE_OWNED_POINTER_PATTERN,
   APP_STORAGE_RESERVED_INDEX_NAMES,
+  APP_STORAGE_SCHEMA_KEYWORDS,
+  APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH,
+  APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH,
+  APP_STORAGE_SCHEMA_TYPES,
   APP_STORAGE_TALLY_NAME_RE,
   APP_STORAGE_TTL_MAX_SECONDS,
   APP_STORAGE_TTL_MIN_SECONDS,
@@ -50,6 +54,7 @@ type SchemaObject = Record<string, unknown>;
 const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')) as {
   required: string[];
   properties: Record<string, SchemaObject>;
+  $defs: Record<string, SchemaObject>;
 };
 const storageSchema = schema.properties.storage;
 
@@ -67,6 +72,24 @@ const priv = (extra: Record<string, unknown> = {}) => one({ visibility: 'private
 const shared = (extra: Record<string, unknown> = {}) =>
   one({ visibility: 'shared', write: 'own', ...extra });
 const names = (n: number, prefix = 'n') => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+/** A collection schema nested `levels` deep through `properties` (the schema itself is 1). */
+const deepSchema = (levels: number) => {
+  let s: Record<string, unknown> = { type: 'number' };
+  for (let i = 1; i < levels; i++) s = { properties: { x: s } };
+  return s;
+};
+const CARD = {
+  type: 'object',
+  required: ['title'],
+  additionalProperties: false,
+  properties: {
+    title: { type: 'string', minLength: 1, maxLength: 60, pattern: '^[^<]*$' },
+    stars: { type: 'integer', minimum: 0, maximum: 5, description: 'rating' },
+    tags: { type: 'array', minItems: 1, maxItems: 4, items: { enum: ['a', 'b'] } },
+    kind: { const: 'card' },
+    extra: { type: ['object', 'null'], additionalProperties: { type: 'boolean' } },
+  },
+};
 
 /**
  * [label, storage, accepted with every phased feature ON, phased]. `phased` marks the cases
@@ -122,6 +145,12 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     shared({ ownedModelVersions: ['/a', '/_b/c9', '/c/d/e/f', `/${'x'.repeat(64)}`] }),
     true,
   ],
+  ['private with a schema using every keyword', priv({ schema: CARD }), true],
+  ['shared own with a schema', shared({ schema: { type: 'object' } }), true],
+  ['empty schema', priv({ schema: {} }), true],
+  ['schema nested 16 deep', priv({ schema: deepSchema(16) }), true],
+  ['pattern with maxLength 1000', priv({ schema: { pattern: 'x', maxLength: 1000 } }), true],
+  ['256-char pattern', priv({ schema: { pattern: 'p'.repeat(256), maxLength: 1 } }), true],
   // accept, but phased
   ['dailyWritesPerAuthor 1', shared({ dailyWritesPerAuthor: 1 }), true, true],
   ['dailyWritesPerAuthor 1000', shared({ dailyWritesPerAuthor: 1000 }), true, true],
@@ -214,6 +243,31 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     false,
   ],
   ['showAuthor string', shared({ showAuthor: 'yes' }), false],
+  // reject — collection schemas
+  ['schema not an object', priv({ schema: [] }), false],
+  ['schema keyword outside the subset', priv({ schema: { format: 'date' } }), false],
+  ['nested keyword outside the subset', priv({ schema: { items: { oneOf: [] } } }), false],
+  ['$ref in a collection schema', priv({ schema: { $ref: '#/x' } }), false],
+  ['boolean items schema', priv({ schema: { items: true } }), false],
+  ['unknown type name', priv({ schema: { type: 'date' } }), false],
+  ['empty type list', priv({ schema: { type: [] } }), false],
+  ['repeated type', priv({ schema: { type: ['string', 'string'] } }), false],
+  ['repeated required name', priv({ schema: { required: ['a', 'a'] } }), false],
+  ['non-string required name', priv({ schema: { required: [1] } }), false],
+  ['empty enum', priv({ schema: { enum: [] } }), false],
+  ['negative minLength', priv({ schema: { minLength: -1 } }), false],
+  ['fractional maxItems', priv({ schema: { maxItems: 1.5 } }), false],
+  ['string minimum', priv({ schema: { minimum: '1' } }), false],
+  ['additionalProperties not a schema', priv({ schema: { additionalProperties: 'no' } }), false],
+  ['pattern without maxLength', priv({ schema: { pattern: 'x' } }), false],
+  ['pattern with maxLength 1001', priv({ schema: { pattern: 'x', maxLength: 1001 } }), false],
+  ['257-char pattern', priv({ schema: { pattern: 'p'.repeat(257), maxLength: 1 } }), false],
+  ['description not a string', priv({ schema: { description: 1 } }), false],
+  [
+    'schema on write none',
+    shared({ write: 'none', counters: ['plays'], schema: { type: 'object' } }),
+    false,
+  ],
   // reject — ownedModelVersions
   ['ownedModelVersions not an array', shared({ ownedModelVersions: '/v' }), false],
   ['ownedModelVersions empty', shared({ ownedModelVersions: [] }), false],
@@ -261,6 +315,40 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
  */
 const PARSER_ONLY: Array<[string, unknown]> = [
   ['one name as counter and mark', shared({ counters: ['vote'], marks: ['vote'] })],
+  // Collection schemas: bounds on the schema as a whole, and what a pattern compiles to.
+  ['schema nested 17 deep', priv({ schema: deepSchema(17) })],
+  ['schema over 16384 bytes', priv({ schema: { description: 'd'.repeat(16_400) } })],
+  [
+    '17 patterns in one schema',
+    priv({
+      schema: {
+        properties: Object.fromEntries(
+          names(17, 'p').map((n) => [n, { pattern: 'x', maxLength: 3 }])
+        ),
+      },
+    }),
+  ],
+  [
+    '33 patterns across the manifest, at most 16 in any one schema',
+    {
+      collections: Object.fromEntries(
+        [16, 16, 1].map((n, c) => [
+          `c${c}`,
+          {
+            visibility: 'private',
+            schema: {
+              properties: Object.fromEntries(
+                names(n, 'p').map((p) => [p, { pattern: `x${c}`, maxLength: 3 }])
+              ),
+            },
+          },
+        ])
+      ),
+    },
+  ],
+  ['minLength above maxLength', priv({ schema: { minLength: 3, maxLength: 2 } })],
+  ['minimum above maximum', priv({ schema: { minimum: 3, maximum: 2 } })],
+  ['a pattern that does not compile', priv({ schema: { pattern: '(', maxLength: 3 } })],
 ];
 
 describe('app-block v1 schema ⇄ storage parser drift guard', () => {
@@ -330,6 +418,34 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     );
   });
 
+  it('declares the collection schema subset as one recursive $defs entry, pinned to the constants', () => {
+    const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
+    const collection = Object.values(
+      collections.patternProperties as Record<string, SchemaObject>
+    )[0];
+    const declared = (collection.properties as Record<string, SchemaObject>).schema;
+    expect(declared.$ref).toBe('#/$defs/storageCollectionSchema');
+    const subset = schema.$defs.storageCollectionSchema;
+    expect(subset.type).toBe('object');
+    expect(subset.additionalProperties).toBe(false);
+    const keywords = subset.properties as Record<string, SchemaObject>;
+    expect(Object.keys(keywords)).toEqual([...APP_STORAGE_SCHEMA_KEYWORDS]);
+    expect(schema.$defs.storageCollectionSchemaType.enum).toEqual([...APP_STORAGE_SCHEMA_TYPES]);
+    expect(keywords.pattern.maxLength).toBe(APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH);
+    const then = subset.then as SchemaObject;
+    expect(then.required).toEqual(['maxLength']);
+    expect(
+      ((then.properties as Record<string, SchemaObject>).maxLength as SchemaObject).maximum
+    ).toBe(APP_STORAGE_SCHEMA_PATTERNED_MAX_LENGTH);
+  });
+
+  it('the evaluator resolves a local $ref and refuses one it cannot resolve', () => {
+    const doc = { $defs: { s: { type: 'string' } }, properties: { a: { $ref: '#/$defs/s' } } };
+    expect(schemaAccepts(doc, { a: 'x' })).toBe(true);
+    expect(schemaAccepts(doc, { a: 1 })).toBe(false);
+    expect(() => schemaAccepts({ $ref: '#/$defs/missing' }, 1)).toThrow(/cannot resolve/);
+  });
+
   it('the evaluator refuses a keyword it does not implement', () => {
     expect(() => schemaAccepts({ exclusiveMinimum: 1 }, 2)).toThrow(
       /does not implement "exclusiveMinimum"/
@@ -337,7 +453,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
   });
 
   it.each(CASES)('%s → schema and parser agree (accept=%s)', (_label, storage, expected) => {
-    expect(schemaAccepts(storageSchema, storage)).toBe(expected);
+    expect(schemaAccepts(storageSchema, storage, schema)).toBe(expected);
     expect(parserAccepts(storage)).toBe(expected);
   });
 
@@ -350,7 +466,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
   );
 
   it.each(PARSER_ONLY)('%s → schema accepts, parser refuses (parser-only rule)', (_l, storage) => {
-    expect(schemaAccepts(storageSchema, storage)).toBe(true);
+    expect(schemaAccepts(storageSchema, storage, schema)).toBe(true);
     expect(parserAccepts(storage)).toBe(false);
   });
 });

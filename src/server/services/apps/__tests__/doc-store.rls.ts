@@ -34,7 +34,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('row-level security (second isolation layer)', () => {
-    it('every appdata table has RLS enabled AND forced, with the scope policy, the two review-maintenance policies, and the account-wipe read on usage_user and doc_mark only', async () => {
+    it('every appdata table has RLS enabled AND forced, with the scope policy, the two review-maintenance policies, the account-wipe read on usage_user and doc_mark only, and the app-purge read on doc and usage_app only', async () => {
       const rows = await h.raw(
         `SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
                 (SELECT string_agg(p.policyname || ':' || p.cmd, ',' ORDER BY p.policyname)
@@ -48,6 +48,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           relforcerowsecurity: true,
           policies:
             (t === 'usage_user' || t === 'doc_mark' ? 'appdata_account_wipe_read:SELECT,' : '') +
+            (t === 'doc' || t === 'usage_app' ? 'appdata_app_purge_read:SELECT,' : '') +
             'appdata_review_delete:DELETE,appdata_review_read:SELECT,appdata_scope:ALL',
         }))
       );
