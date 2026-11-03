@@ -52,12 +52,14 @@ const insertVote = (
   playerId: number,
   answer: string,
   weight: number,
-  verdict = 'pending'
+  verdict = 'pending',
+  blockReason: string | null = null,
+  second = playerId
 ) =>
   db.query(
-    `INSERT INTO "KnightsVote" ("itemId","playerId","questionKey","imageId","stage","answer","weight","verdict")
-     VALUES ($1,$2,$3,1,'Knight',$4,$5,$6)`,
-    [itemId, playerId, Q, answer, weight, verdict]
+    `INSERT INTO "KnightsVote" ("itemId","playerId","questionKey","imageId","stage","answer","weight","verdict","blockReason","createdAt")
+     VALUES ($1,$2,$3,1,'Knight',$4,$5,$6,$7, TIMESTAMP '2026-12-27 12:00:00' + ($8::int * interval '1 second'))`,
+    [itemId, playerId, Q, answer, weight, verdict, blockReason, second]
   );
 
 const verdicts = async (itemId: number) =>
@@ -91,6 +93,7 @@ beforeAll(async () => {
   );`);
   await db.exec(migration('20261210120000_knights_v2_queue'));
   await db.exec(migration('20261211120000_knights_v2_sources'));
+  await db.exec(migration('20261227120000_knights_v2_block_reason'));
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -146,6 +149,28 @@ describe('getInquisitorQueue', () => {
     await insertItem(3, 3, 'Inquisitor', Q, 2);
 
     expect((await getInquisitorQueue()).map((i) => i.id)).toEqual([2, 1, 3]);
+  });
+});
+
+describe('getInquisitorQueue block reason', () => {
+  it('shows the reason most Blocked votes gave, and nothing when none gave one', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    await insertItem(2, 2, 'Inquisitor');
+    await insertVote(1, 11, '32', 1, 'pending', 'Other');
+    await insertVote(1, 12, '32', 1, 'pending', 'DepictsRealPerson');
+    await insertVote(1, 13, '32', 1, 'pending', 'DepictsRealPerson');
+    await insertVote(1, 14, '4', 1);
+    await insertVote(2, 21, '32', 1);
+
+    const [first, second] = await getInquisitorQueue();
+
+    expect(first.blockReason).toEqual({
+      reason: 'DepictsRealPerson',
+      label: 'Depicts Real Person',
+      count: 2,
+      of: 3,
+    });
+    expect(second.blockReason).toBeNull();
   });
 });
 
