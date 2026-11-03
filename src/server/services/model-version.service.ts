@@ -127,6 +127,7 @@ import {
   paidGenerationGrant,
 } from '@civitai/buzz';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
+import { assertNonCommercialVersionsUnmonetized } from '~/server/services/non-commercial-publish.service';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
@@ -747,7 +748,7 @@ export const upsertModelVersion = async ({
   // Note the model-level strip below bypasses this: on a POI model the fee columns are cleared even when
   // the caller sent no fee at all, which is how a partial write (a moderator review action) stops
   // carrying one forward.
-  const feeProvided = data.licensingFee !== undefined;
+  let feeProvided = data.licensingFee !== undefined;
   const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
 
   // A cleared fee persists NULL, not 0: the monetization guard below (and the studio's fee filters)
@@ -846,6 +847,14 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError(
         `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
       );
+    }
+    // A write that omits the fee would otherwise carry a stored one forward, including one set while
+    // the version was on a commercial base model.
+    if (!feeProvided) {
+      data.licensingFee = null;
+      data.licensingFeeType = null;
+      data.licensingFeeSettlementCurrency = null;
+      feeProvided = true;
     }
   }
 
@@ -2034,6 +2043,7 @@ export const publishModelVersionById = async ({
   assertBaseModelAttestations({
     versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
   });
+  await assertNonCommercialVersionsUnmonetized([currentVersion]);
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.

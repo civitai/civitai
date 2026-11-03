@@ -42,6 +42,7 @@ function ShowcaseHatModal({ event, color }: { event: string; color?: string }) {
         utils.user.getCreator.invalidate(),
         utils.userProfile.get.invalidate(),
         utils.event.getTeamRoster.invalidate(),
+        utils.event.getMyShowcaseHatArt.invalidate({ event }),
       ]);
     },
     onError: (error) => showErrorNotification({ title: 'Could not save', error }),

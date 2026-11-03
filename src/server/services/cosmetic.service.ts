@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { DEFAULT_CANVAS } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
@@ -1047,6 +1048,19 @@ export async function updateCosmetic({
  * so a save can never drop the art's measured shape, nor a field another moderator just set.
  */
 export async function updateEventHatFit({ id, fit }: UpdateEventHatFitInput) {
+  if (fit.brim) {
+    const [row] = await dbWrite.$queryRaw<{ canvas: Prisma.JsonValue }[]>`
+      SELECT data->'fit'->'canvas' AS canvas FROM "Cosmetic" WHERE id = ${id}
+    `;
+    const canvas = row?.canvas;
+    const [width, height] =
+      Array.isArray(canvas) && canvas.length === 2 && canvas.every((x) => typeof x === 'number')
+        ? (canvas as [number, number])
+        : DEFAULT_CANVAS;
+    const [, right, y] = fit.brim;
+    if (right > width || y > height)
+      throw throwBadRequestError(`The brim must lie inside the art (${width}×${height})`);
+  }
   const fields = Object.entries(fit).filter(([, value]) => value !== undefined);
   const set = Object.fromEntries(fields.filter(([, value]) => value !== null));
   const unset = fields.filter(([, value]) => value === null).map(([key]) => key);

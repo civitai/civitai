@@ -10,12 +10,10 @@ import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/type
 import { highestNsfwLevel } from '~/server/services/text-scan/evaluate';
 import {
   notifyTextScanRatingRaised,
+  ratingRose,
   type NotifyTextScanRatingRaisedArgs,
 } from '~/server/services/text-scan/notify';
-import {
-  nsfwBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export type RatedEntityType = 'Article' | 'Post' | 'Bounty' | 'BountyEntry';
 
@@ -75,11 +73,6 @@ const ratedEntities: Record<
     },
   },
 };
-
-function ratingRose(before: number, after: number) {
-  const droppedSfwBit = (before & sfwBrowsingLevelsFlag & ~after) !== 0;
-  return droppedSfwBit || highestNsfwLevel(after) > highestNsfwLevel(before);
-}
 
 // A bounty's nsfw flag pins it to every NSFW bit at once, which names no level.
 function noticeLevel(after: number, detectedLevel: number) {

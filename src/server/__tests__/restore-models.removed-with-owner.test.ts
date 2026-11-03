@@ -81,3 +81,34 @@ it('republishes a model no wipe kept, with its meta as it is under the lock', as
     })
   );
 });
+
+it('skips a model a publish rule refuses and still restores the rest', async () => {
+  const OTHER = 4;
+  dbMock.dbWrite.$queryRawUnsafe.mockResolvedValue([
+    { id: MODEL, meta: { unpublishedReason: 'duplicate' }, versionIds: [30] },
+    { id: OTHER, meta: { unpublishedReason: 'duplicate' }, versionIds: [40] },
+  ] as never);
+  // Version 30 is on a non-commercial base model and still stores a licensing fee.
+  dbMock.dbWrite.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] }; modelId?: number; licensingFee?: unknown };
+  }) => {
+    if (args.where.licensingFee) return args.where.id.in.includes(30) ? [{ id: 30 }] : [];
+    const rows = [
+      { id: 30, modelId: MODEL, baseModel: 'Flux.2 Klein 9B' },
+      { id: 40, modelId: OTHER, baseModel: 'SDXL 1.0' },
+    ];
+    return rows
+      .filter((v) => args.where.id.in.includes(v.id) && v.modelId === args.where.modelId)
+      .map((v) => ({ ...v, publishedAt: null, meta: {}, model: { type: 'LORA', userId: 5 } }));
+  }) as never);
+  dbMock.dbWrite.paidAccess.findMany.mockResolvedValue([]);
+  dbMock.dbWrite.modelVersion.update.mockResolvedValue({ id: 40, modelId: OTHER } as never);
+
+  const res = await run();
+
+  expect(dbMock.dbWrite.model.update).toHaveBeenCalledTimes(1);
+  expect(dbMock.dbWrite.model.update).toHaveBeenCalledWith(
+    expect.objectContaining({ where: expect.objectContaining({ id: OTHER }) })
+  );
+  expect(res.status).toHaveBeenCalledWith(200);
+});

@@ -64,7 +64,7 @@ export const getHatRoom = (edge: number) =>
 
 // The art convention when a cosmetic says nothing about its own fit: a 128x160 canvas, hat drawn
 // upright, nothing below y=156.
-const DEFAULT_CANVAS: [number, number] = [128, 160];
+export const DEFAULT_CANVAS: [number, number] = [128, 160];
 const DEFAULT_BOUNDS: [number, number, number, number] = [0, 0, 128, 156];
 
 const isNumbers = (value: unknown, length: number): value is number[] =>
@@ -249,7 +249,7 @@ export function getEventDecorationClearLeftCss(
 /** A moderator's unsaved edit to a hat's fit; `null` puts a field back to the default look. */
 export type HatFitChanges = Partial<{
   [K in 'size' | 'tilt' | 'depth' | 'grow' | 'offset']: EventDecorationFit[K] | null;
-}>;
+}> & { brim?: EventDecorationFit['brim'] };
 
 /** The hat's fit with the unsaved changes applied: a cleared field falls back to the look. */
 export function applyHatFitChanges(fit: EventDecorationFit | undefined, changes: HatFitChanges) {
