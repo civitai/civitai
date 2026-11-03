@@ -16,7 +16,6 @@ import {
 } from './apprenticeship.service';
 
 const T0 = new Date('2026-12-25T12:00:00Z');
-const RATING_Q = 'knights.image.nsfwLevel';
 const YESNO_Q = 'knights.yesno.violence';
 
 let pg: PGlite;
@@ -31,7 +30,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsApprenticeAnswer","KnightsTrialAnswer","KnightsTrialRun","KnightsYesNoReference","KnightsReferenceImage","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsApprenticeAnswer","KnightsYesNoReference","KnightsReferenceImage","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
   );
   await pg.exec(`DELETE FROM "KnightsQuestion" WHERE "key" LIKE 'knights.yesno.%'`);
   await pg.query(
@@ -225,7 +224,7 @@ describe('the stream', () => {
     expect(b).toEqual(a);
   });
 
-  it('skips retired and held references, inactive pairs, unservable images and what an old Trial already showed', async () => {
+  it('skips retired and held references, inactive pairs, unservable images', async () => {
     await player(1);
     await rating(1, { status: 'retired' });
     await rating(2, { status: 'pending' });
@@ -233,17 +232,6 @@ describe('the stream', () => {
     await yesNo(4, { active: false });
     const blocked = await rating(5);
     await pg.query(`UPDATE "Image" SET "ingestion"='Blocked' WHERE "id"=5`);
-    const seenBefore = await rating(6);
-    const run = (
-      await pg.query<{ id: number }>(
-        `INSERT INTO "KnightsTrialRun" ("playerId","questionKey","seed","itemIds","finishedAt") VALUES (1,$1,1,'{}',now()) RETURNING id`,
-        [RATING_Q]
-      )
-    ).rows[0].id;
-    await pg.query(
-      `INSERT INTO "KnightsTrialAnswer" ("runId","playerId","referenceId","answer","correct") VALUES ($1,1,$2,'4',true)`,
-      [run, seenBefore]
-    );
     const good = await rating(7);
 
     const { item } = question(await getApprentice(db, 1));

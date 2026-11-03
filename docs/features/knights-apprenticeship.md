@@ -13,6 +13,6 @@ Replaces the old Trial (a 12-item run with a pass mark and a cooldown). Code: `a
 
 Migration `20261225120000_knights_v2_apprenticeship` (applied by hand, idempotent) adds `KnightsApprenticeAnswer`: one graded answer per row, pointing at exactly one of `referenceId` / `yesNoReferenceId`, with the answer as given, the correct answer as it stood, whether it was right, the XP paid and `checkpointSeenAt` (set on the answer that closed a checkpoint once the player moved past its recap). Partial unique indexes keep a player from answering a reference twice. Deploy order: apply the migration, then the Knights app.
 
-Accuracy, the recap and promotion read only answers since the player's last career reset (`NewOrderPlayer.startAt`); the no-repeat rule reads all of them, plus answers recorded by the old Trial in `KnightsTrialAnswer`. The old `KnightsTrialRun` and `KnightsTrialAnswer` tables are no longer written and can be dropped later.
+Accuracy, the recap and promotion read only answers since the player's last career reset (`NewOrderPlayer.startAt`); the no-repeat rule reads all of them.
 
 The Redis marker `knights:trial-summary:<id>` is no longer read or written and can expire or be deleted.

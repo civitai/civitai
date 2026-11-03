@@ -25,9 +25,9 @@ export const parseJudgmentFilter = (raw: string | null): JudgmentFilter =>
   JUDGMENT_FILTERS.find((f) => f === raw) ?? 'all';
 
 export type Judgment = {
-  /** A vote's item id, a Trial's reference id, or a practice answer's id; unique only together with `kind`. */
+  /** A vote's item id or a practice answer's id; unique only together with `kind`. */
   itemId: number;
-  kind: 'vote' | 'trial' | 'practice';
+  kind: 'vote' | 'practice';
   imageId: number;
   /** Null when the image is no longer one the public feeds would show. */
   imageKey: string | null;
@@ -117,34 +117,7 @@ export async function listJudgments(
     ])
     .where('v.playerId', '=', userId);
 
-  // A Trial answer is graded when it is given and pays nothing, so it never waits or forfeits.
-  const trials = db
-    .selectFrom('KnightsTrialAnswer as a')
-    .innerJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
-    .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
-    .leftJoin('Image as img', 'img.id', 'r.imageId')
-    .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => [
-      sql<string>`'trial'`.as('kind'),
-      'a.referenceId as itemId',
-      'r.imageId',
-      'a.answer',
-      sql<string>`CASE WHEN a.correct THEN 'correct' ELSE 'failed' END`.as('verdict'),
-      'a.createdAt as settledAt',
-      sql<number>`0`.as('xp'),
-      sql<number>`0`.as('gold'),
-      'a.createdAt',
-      sql<Date | null>`NULL`.as('startAt'),
-      'q.prompt',
-      sql<string | null>`NULL`.as('itemPrompt'),
-      'q.options',
-      'r.answer as resolved',
-      'img.url as imageKey',
-      servableImage(eb).as('servable'),
-    ])
-    .where('a.playerId', '=', userId);
-
-  // An apprenticeship answer is graded when it is given, like a Trial answer, but it pays XP.
+  // An apprenticeship answer is graded when it is given and pays XP, so it never waits or forfeits.
   const practice = db
     .selectFrom('KnightsApprenticeAnswer as a')
     .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
@@ -180,7 +153,7 @@ export async function listJudgments(
     ])
     .where('a.playerId', '=', userId);
 
-  let query = db.selectFrom(votes.unionAll(trials).unionAll(practice).as('j')).selectAll();
+  let query = db.selectFrom(votes.unionAll(practice).as('j')).selectAll();
   if (filter !== 'all') query = query.where(filterClause(filter));
 
   const rows = await query

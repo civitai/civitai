@@ -39,7 +39,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsApprenticeAnswer","KnightsYesNoReference","KnightsTrialAnswer","KnightsTrialRun","KnightsReferenceImage" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsApprenticeAnswer","KnightsYesNoReference","KnightsReferenceImage" RESTART IDENTITY`
   );
   await pg.exec(
     `INSERT INTO "NewOrderPlayer" ("userId","rankType") VALUES (1,'Knight'),(2,'Knight')`
@@ -264,44 +264,6 @@ describe('listJudgments', () => {
       const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
 
       expect(row).toMatchObject({ status: 'wrong', verdictLabel: null });
-    });
-  });
-
-  describe('Trial answers', () => {
-    async function trialAnswer(imageId: number, answer: string, correct: boolean, at: string) {
-      await seedImage(pg, imageId);
-      const ref = await pg.query<{ id: number }>(
-        `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES ($1,'trials','2','core') RETURNING id`,
-        [imageId]
-      );
-      const run = await pg.query<{ id: number }>(
-        `INSERT INTO "KnightsTrialRun" ("playerId","questionKey","seed","itemIds","finishedAt") VALUES (1,'knights.image.nsfwLevel',1,'{}',now()) RETURNING id`
-      );
-      await pg.query(
-        `INSERT INTO "KnightsTrialAnswer" ("runId","playerId","referenceId","answer","correct","createdAt") VALUES ($1,1,$2,$3,$4,$5)`,
-        [run.rows[0].id, ref.rows[0].id, answer, correct, at]
-      );
-    }
-
-    it('lists them with the votes, newest first, and files them under right or wrong', async () => {
-      await trialAnswer(50, '2', true, '2026-12-15T08:00:00Z');
-      await trialAnswer(51, '4', false, '2026-12-15T09:00:00Z');
-      const vote = await judge(10, new Date('2026-12-15T10:00:00Z'));
-
-      const { judgments } = await listJudgments(db, 1, { page: 1 });
-      expect(judgments.map((j) => [j.kind, j.status])).toEqual([
-        ['vote', 'pending'],
-        ['trial', 'wrong'],
-        ['trial', 'correct'],
-      ]);
-      expect(judgments[0].itemId).toBe(vote);
-      expect(judgments[1].verdictLabel).toBeTruthy();
-      expect(judgments[1]).toMatchObject({ xp: 0, gold: 0 });
-
-      const only = async (filter: JudgmentFilter) =>
-        (await listJudgments(db, 1, { page: 1, filter })).judgments.map((j) => j.kind);
-      expect(await only('wrong')).toEqual(['trial']);
-      expect(await only('pending')).toEqual(['vote']);
     });
   });
 

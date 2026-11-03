@@ -18,7 +18,7 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsTrialAnswer","KnightsTrialRun","KnightsReferenceImage","KnightsHarvestCursor","ModActivity","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsHarvestCursor","ModActivity","Image","Post" RESTART IDENTITY CASCADE`
   );
 });
 

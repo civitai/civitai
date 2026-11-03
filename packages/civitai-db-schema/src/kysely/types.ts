@@ -3813,27 +3813,6 @@ export type KnightsReferenceImage = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
-export type KnightsTrialAnswer = {
-  id: Generated<number>;
-  runId: number;
-  playerId: number;
-  referenceId: number;
-  answer: string;
-  correct: boolean;
-  createdAt: Generated<Timestamp>;
-};
-export type KnightsTrialRun = {
-  id: Generated<number>;
-  playerId: number;
-  questionKey: string;
-  seed: number;
-  itemIds: unknown;
-  startedAt: Generated<Timestamp>;
-  finishedAt: Timestamp | null;
-  result: string | null;
-  score: number | null;
-  cooldownUntil: Timestamp | null;
-};
 export type KnightsVote = {
   itemId: number;
   playerId: number;
@@ -6689,8 +6668,6 @@ export type DB = {
   KnightsQuestion: KnightsQuestion;
   KnightsQueueItem: KnightsQueueItem;
   KnightsReferenceImage: KnightsReferenceImage;
-  KnightsTrialAnswer: KnightsTrialAnswer;
-  KnightsTrialRun: KnightsTrialRun;
   KnightsVote: KnightsVote;
   KnightsYesNoReference: KnightsYesNoReference;
   Leaderboard: Leaderboard;

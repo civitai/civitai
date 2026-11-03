@@ -149,10 +149,6 @@ async function nextRating(db: Executor, playerId: number, core: boolean): Promis
     .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('r.source', core ? '=' : '<>', REFERENCE_SOURCE.core)
     .where(seenBy(playerId, 'referenceId', 'r.id'))
-    // What an earlier Trial already showed counts as seen too.
-    .where(
-      sql<SqlBool>`NOT EXISTS (SELECT 1 FROM "KnightsTrialAnswer" t WHERE t."playerId" = ${playerId} AND t."referenceId" = r."id")`
-    )
     .select(['r.id', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
     .orderBy(shuffled(playerId, 'r.id'))
     .limit(1)
