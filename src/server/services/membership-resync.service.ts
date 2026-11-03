@@ -19,7 +19,8 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
  * was missed. Writes nothing to Stripe: it reads, then runs the webhook's own `upsertSubscription`.
  *
  * That upsert ends a live Buzz-bought membership when the Stripe one is active or trialing, as the
- * webhook would. The preview names it and the write is refused without `confirmEndBuzzMembership`.
+ * webhook would. The preview names it, and the write is refused unless `confirmEndBuzzMembership`
+ * matches the preview's confirm.
  *
  * Not the webhook's gift settlement, which writes to Stripe: an ended subscription is refused (its
  * deleted event hands over owed gifted months; resend that event from Stripe instead), and an owed
@@ -34,11 +35,15 @@ const SUPERSEDING_STATUSES = ['active', 'trialing'];
 
 const iso = (epoch: number | null | undefined) =>
   epoch == null ? null : new Date(epoch * 1000).toISOString();
-// The upsert stores Stripe times through toDateTime, which is offset from the epoch; a stored time
-// shifted back by it is Stripe's own, so the two compare equal and both show true time.
-const STORED_OFFSET_MS = toDateTime(0).getTime();
-const storedIso = (d: Date | null) =>
-  d == null ? null : new Date(d.getTime() - STORED_OFFSET_MS).toISOString();
+// The upsert stores Stripe times through toDateTime, which is offset from the epoch (30 min, plus the
+// process timezone's DST shift). Undoing it per value gives Stripe's own time, so a matching row
+// compares equal and both columns show true time.
+const storedIso = (d: Date | null) => {
+  if (d == null) return null;
+  const guess = Math.round(d.getTime() / 1000) - 1800;
+  const offsetMs = toDateTime(guess).getTime() - guess * 1000;
+  return new Date(d.getTime() - offsetMs).toISOString();
+};
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'mod-membership-resync', ...data }, 'webhooks').catch(() => null);
