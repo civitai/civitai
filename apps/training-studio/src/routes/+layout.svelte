@@ -55,6 +55,8 @@
   });
 </script>
 
-<div class="mx-auto w-full max-w-6xl overflow-x-hidden px-6 py-10">
+<!-- overflow-x-clip, not -hidden: hidden makes this a scroll container, which pins every sticky aside to it
+     instead of the viewport. -->
+<div class="mx-auto w-full max-w-6xl overflow-x-clip px-6 py-10">
   {@render children()}
 </div>
