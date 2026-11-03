@@ -79,6 +79,7 @@ describe('the generation form', () => {
   it('gives the workflow and ecosystem pickers their compatibility props', () => {
     expect(lane).toContain('isCompatible={compatibility.isWorkflowCompatible}');
     expect(lane).toContain('isCompatible={compatibility.isEcosystemKeyCompatible}');
-    expect(lane).toContain('getTargetWorkflow={(key) => compatibility.getTargetWorkflow');
+    // A pattern, not a string: Prettier wraps this prop across lines once the call grows.
+    expect(lane).toMatch(/getTargetWorkflow=\{\(key\)\s*=>\s*compatibility\.getTargetWorkflow/);
   });
 });
