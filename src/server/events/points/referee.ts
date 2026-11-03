@@ -258,8 +258,6 @@ export async function queryReferee(event: RefereeEvent, window: Window) {
   }));
 }
 
-const isoDay = (time: Date) => time.toISOString().slice(0, 10);
-
 // The durable record: one row per hat per day, which the standings, the winner and the per-hat
 // counts read. Recomputing a day replaces it, so a rerun never double counts. Days before
 // recomputeFrom are left as they are.
@@ -268,7 +266,7 @@ async function writeDailySnapshot(event: RefereeEvent, window: Window, rows: Ref
     dbWrite.$executeRaw`
       DELETE FROM "EventCosmeticScoreDaily"
       WHERE event = ${event.name}
-        AND day >= ${isoDay(window.recomputeFrom)}::date AND day <= ${isoDay(window.cut)}::date
+        AND day >= ${utcDay(window.recomputeFrom)}::date AND day <= ${utcDay(window.cut)}::date
     `,
     ...chunk(rows, 5000).map(
       (part) => dbWrite.$executeRaw`
@@ -321,7 +319,7 @@ async function finalDayTotals(event: RefereeEvent, window: Window) {
       sum(remixes)::int AS remixes, sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
     WHERE event = ${event.name}
-      AND day >= ${isoDay(window.start)}::date AND day < ${isoDay(window.recomputeFrom)}::date
+      AND day >= ${utcDay(window.start)}::date AND day < ${utcDay(window.recomputeFrom)}::date
     GROUP BY "userId", "cosmeticId", "claimKey"
   `;
 }
@@ -423,9 +421,9 @@ export async function runEventPointsReferee(
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
   const totals = refereeTotals([...final, ...rows]);
-  if (season === 'live')
-    for (const { team, points } of teamAwardsBy(event, window.cut))
-      totals.team.set(team, (totals.team.get(team) ?? 0) + points);
+  // A preview's cut never passes the start, so no award reaches its base.
+  for (const { team, points } of teamAwardsBy(event, window.cut))
+    totals.team.set(team, (totals.team.get(team) ?? 0) + points);
   const changed = await resetLiveBase(sysRedis, event, season, window.cut, totals);
   // This runs in a job: its corrections go out before it returns, not on a later window, except the
   // team totals while another server holds their push lease: this server retries those on its own

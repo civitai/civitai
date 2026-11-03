@@ -3,6 +3,7 @@ import { TURF_CLAIM_KEY } from '~/server/events/turf/turf-map';
 import {
   eventSeasonKeys,
   hatField,
+  LIVE_BUCKET_MS,
   TEAM_HOURS_CUT_FIELD,
   utcDay,
 } from '~/server/events/points/keys';
@@ -140,11 +141,15 @@ async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof
     GROUP BY team, day
     ORDER BY day
   `;
-  const awarded = teamAwardsBy(event, new Date()).map(({ team, points, at }) => ({
-    team,
-    day: new Date(`${utcDay(at)}T00:00:00.000Z`),
-    points,
-  }));
+  // Cut where the referee last settled, so the snapshot and the live base count the same awards.
+  const liveCut = Number((await sysRedis.get(eventSeasonKeys(event.name, 'live').cut)) ?? 0);
+  const awarded = teamAwardsBy(event, new Date(liveCut * LIVE_BUCKET_MS)).map(
+    ({ team, points, at }) => ({
+      team,
+      day: new Date(`${utcDay(at)}T00:00:00.000Z`),
+      points,
+    })
+  );
   const days = [...teamDays, ...awarded].sort((a, b) => a.day.getTime() - b.day.getTime());
   const totals = new Map<string, number>();
   const history = event.teams.map((team) => ({

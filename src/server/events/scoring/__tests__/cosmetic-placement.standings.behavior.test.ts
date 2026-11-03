@@ -44,7 +44,9 @@ const {
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
-const { eventSeasonKeys, hatTopicId, previewTopicId } = await import('~/server/events/points/keys');
+const { eventSeasonKeys, hatTopicId, LIVE_BUCKET_MS, previewTopicId } = await import(
+  '~/server/events/points/keys'
+);
 
 const MIGRATIONS = ['20261012130000_event_cosmetic_placement', '20261015120000_event_points'].map(
   (name) =>
@@ -263,6 +265,14 @@ const zeroStandings = {
   updatedAt: new Date(0),
 };
 
+// Where the referee's live season last settled to: team awards in the snapshot are cut there.
+function settledTo(iso: string) {
+  const cutKey = eventSeasonKeys(event.name, 'live').cut;
+  redisMock.sysRedis.get.mockImplementation(async (k: string) =>
+    k === cutKey ? String(new Date(iso).getTime() / LIVE_BUCKET_MS) : null
+  );
+}
+
 describe('standings', () => {
   beforeEach(async () => {
     await insertDays([
@@ -321,16 +331,24 @@ describe('standings', () => {
           { team: 'Pink', points: 40, at: new Date('2026-11-02T12:00:00.000Z'), reason: 'seed' },
           // Lands on a day Blue already scored: one point in its history, not two.
           { team: 'Blue', points: 5, at: new Date('2026-11-03T01:00:00.000Z'), reason: 'seed' },
+          // Inside the event, but after the referee's cut: not settled yet.
           {
             team: 'Green',
             points: 1000,
-            at: new Date('2099-01-01T00:00:00.000Z'),
+            at: new Date('2026-11-04T06:00:00.000Z'),
             reason: 'later',
           },
         ],
       },
     };
-    await settle(awarded);
+    settledTo('2026-11-04T00:00:00.000Z');
+    // The clock is past Green's award; only the referee's cut keeps it out.
+    vi.useFakeTimers({ now: new Date('2026-11-05T00:00:00.000Z'), toFake: ['Date'] });
+    try {
+      await settle(awarded);
+    } finally {
+      vi.useRealTimers();
+    }
     const standings = await getEventStandings(awarded);
     expect(standings.teams).toEqual([
       { team: 'Pink', score: 40, rank: 1 },
@@ -371,6 +389,7 @@ describe('standings', () => {
         ],
       },
     };
+    settledTo('2026-11-10T00:00:00.000Z');
     await settle(ended);
     const { teams } = await getEventStandings(ended);
     expect(teams.map((t) => [t.team, t.score])).toEqual([
@@ -819,10 +838,9 @@ describe('referee snapshot', () => {
       expect(hashes.get(keys.base('owner'))).toEqual({ '8': '7' });
       expect((await chartedHours()).earned).toMatchObject({ Blue: [[30, 7]], Pink: [[33, 100]] });
 
-      // The preview never takes one: testers' totals are their own.
+      // The same awards never reach the preview: testers' totals are their own.
       const preview = { ...awarded, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
       const previewKeys = eventSeasonKeys(event.name, 'preview');
-      preview.scoring.teamAwards = [award('Pink', 100, '2026-10-25T09:30:00.000Z')];
       answer([hourlyRow('2026-10-25', 8, 'Blue', { 6: 7 })]);
       await runEventPointsReferee(preview, 'preview', new Date('2026-10-25T12:07:00.000Z'));
       expect(hashes.get(previewKeys.base('team'))).toEqual({ Blue: '7' });
