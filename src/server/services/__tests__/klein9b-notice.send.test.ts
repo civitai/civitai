@@ -130,7 +130,7 @@ describe('sendKlein9bNotice', () => {
 
   it('two runs at once still send each creator once', async () => {
     const [a, b] = await Promise.all([run(false), run(false)]);
-    expect(a.sent + b.sent).toBe(2);
+    expect([a, b].map((r) => ('sent' in r ? r.sent : 0)).reduce((x, y) => x + y)).toBe(2);
     expect(sendMock).toHaveBeenCalledTimes(2);
     expect(notifyMock).toHaveBeenCalledTimes(2);
   });
