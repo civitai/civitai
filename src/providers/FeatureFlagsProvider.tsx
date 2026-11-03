@@ -4,6 +4,7 @@ import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
+import { OverlayFastPathContext } from '~/components/MantineOverlays/overlayFastPathContext';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
 // Whether the per-user `getFeatureFlags` overlay has resolved. SSR seeds
@@ -130,7 +131,12 @@ export const FeatureFlagsProvider = ({
 
   return (
     <FeatureFlagsCtx.Provider value={featureFlags}>
-      <FeatureFlagsReadyCtx.Provider value={ready}>{children}</FeatureFlagsReadyCtx.Provider>
+      <FeatureFlagsReadyCtx.Provider value={ready}>
+        {/* Read once per overlay at mount, so a later flag change never swaps a mounted tree. */}
+        <OverlayFastPathContext.Provider value={featureFlags.ssrClosedOverlayFastPath === true}>
+          {children}
+        </OverlayFastPathContext.Provider>
+      </FeatureFlagsReadyCtx.Provider>
     </FeatureFlagsCtx.Provider>
   );
 };

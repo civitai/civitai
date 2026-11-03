@@ -201,6 +201,19 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'model-page-design-system-markup',
   },
+  // SSR-CPU switch for CLOSED Mantine overlays (Tooltip, Popover, Menu, HoverCard imported from
+  // `~/components/MantineOverlays`). ON: the server render and the hydrating render emit only the
+  // trigger, with the attributes Mantine gives a closed trigger, and Mantine's floating machinery
+  // (floating-ui, styles, portals) mounts on the trigger's first pointer, focus, click or key event,
+  // without remounting the trigger. An overlay that starts open, or `keepMounted`, stays on Mantine.
+  // OFF: every overlay renders Mantine's component, unchanged. `[]`: dark and fails CLOSED when the
+  // key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
+  // on-switch. Hydration cannot mismatch: server and client read the same serialised flags, and each
+  // overlay reads it once, at mount (`OverlayFastPathContext`).
+  ssrClosedOverlayFastPath: {
+    availability: [],
+    fliptKey: 'ssr-closed-overlay-fast-path',
+  },
   // Browser site search through /api/search, which applies the viewer's and the site's rules on
   // the server, instead of straight to Meilisearch with a per-viewer token. OFF = the direct path,
   // unchanged, so this is also the kill switch while the proxy's load on the API pods is unknown.
