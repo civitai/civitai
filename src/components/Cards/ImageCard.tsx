@@ -13,12 +13,24 @@ import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
+import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
+import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
 import clsx from 'clsx';
 
-export function ImageCard({ data }: Props) {
+export function ImageCard(props: Props) {
+  return (
+    <HatTurfCardProvider>
+      <ImageCardContent {...props} />
+    </HatTurfCardProvider>
+  );
+}
+
+function ImageCardContent({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
   // Called unconditionally: inside the `??` below it would sit after a
@@ -37,16 +49,22 @@ export function ImageCard({ data }: Props) {
         state: { imageId: data.id, images: getImages(), ...context },
       }}
       overlay={({ safe }) =>
-        // Not mounted at all with the flag off. The overlay renders null there
-        // anyway, but a card is rendered by the hundred and this keeps the
-        // flag-off tree identical to what shipped before it.
-        safe && features.stickerPlacement && <CardStickerOverlay imageId={data.id} />
+        safe && (
+          <>
+            {/* Not mounted with the flag off: a card is rendered by the hundred. */}
+            {features.stickerPlacement && <CardStickerOverlay imageId={data.id} />}
+            <HatTurfLayer imageId={data.id} />
+          </>
+        )
       }
       header={
         <div className="flex w-full items-start justify-between">
-          {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
-            <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
-          )}
+          <div className="flex flex-col items-start gap-1">
+            <HatTurfBadge imageId={data.id} />
+            {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
+              <DurationBadge duration={data.metadata.duration ?? 0} className={cardClasses.chip} />
+            )}
+          </div>
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
             <CardRemixButton image={data} />
@@ -111,6 +129,7 @@ function ImageCardActionRow({ data }: Props) {
         )}
         <div className={cardClasses.tipEnd}>
           {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
+          <HatTurfButton imageId={data.id} />
           {hasMetaButton && (
             <ImageMetaPopover2 imageId={data.id} type={data.type}>
               <ThemeIcon className={cardClasses.infoChip} variant="light">

@@ -1,0 +1,103 @@
+.badge {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+}
+
+.ringBox {
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 48px;
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+
+.track {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 6;
+}
+
+.arc {
+  fill: none;
+  stroke-width: 5;
+  transition: stroke-dasharray 0.55s ease, stroke-dashoffset 0.55s ease;
+}
+
+.disc {
+  position: absolute;
+  inset: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 50%;
+  color: var(--mantine-color-white);
+  /* White has to read on the lightest team colour (yellow) too. */
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
+  transition: background-color 0.3s ease;
+
+  & svg {
+    filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.6));
+  }
+}
+
+.neutral {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.count {
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.bump {
+  animation: bump 0.55s ease;
+}
+
+.you {
+  margin-top: 24px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 19px;
+  padding: 0 6px 0 5px;
+  border: 2px solid currentColor;
+  border-radius: 99px;
+  background-color: rgba(0, 0, 0, 0.6);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.youLabel {
+  color: var(--mantine-color-white);
+}
+
+@keyframes bump {
+  35% {
+    transform: scale(1.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arc,
+  .disc {
+    transition: none;
+  }
+
+  .bump {
+    animation: none;
+  }
+}

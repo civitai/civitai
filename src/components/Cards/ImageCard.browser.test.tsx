@@ -1,3 +1,4 @@
+import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
@@ -64,7 +65,10 @@ vi.mock('~/components/Sticker/StickerPlacementCardBadge', () => ({
       </button>
     ) : null,
 }));
-vi.mock('~/components/Sticker/CardStickerOverlay', () => ({ CardStickerOverlay: () => null }));
+vi.mock('~/components/Sticker/CardStickerOverlay', async (importOriginal) => ({
+  ...(await importOriginal<typeof CardStickerOverlayModule>()),
+  CardStickerOverlay: () => null,
+}));
 vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
   InteractiveTipBuzzButton: ({ children }: { children: ReactNode }) => <>{children}</>,
   useBuzzTippingStore: () => 0,

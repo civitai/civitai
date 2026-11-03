@@ -51,11 +51,11 @@ beforeEach(() => {
   askedWith = undefined;
 });
 
-function eventShown(at: Date) {
+function eventShown(at: Date, enabled?: boolean) {
   vi.setSystemTime(at);
   let result: ReturnType<typeof usePlayableEventDecoration>;
   function Probe() {
-    result = usePlayableEventDecoration('Image');
+    result = usePlayableEventDecoration('Image', enabled);
     return null;
   }
   root = createRoot(document.createElement('div'));
@@ -80,6 +80,12 @@ describe('usePlayableEventDecoration', () => {
   it('asks the server nothing before the hats are released', () => {
     access = 'open';
     expect(eventShown(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() - 1))).toBeUndefined();
+    expect(askedWith?.enabled).toBe(false);
+  });
+
+  it('asks the server nothing when the caller turns it off, even during the event', () => {
+    access = 'open';
+    expect(eventShown(DURING_PREVIEW, false)).toBeUndefined();
     expect(askedWith?.enabled).toBe(false);
   });
 });
