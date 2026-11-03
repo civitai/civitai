@@ -1,4 +1,5 @@
 import { chunk } from 'lodash-es';
+import { TURF_CLAIM_KEY } from '~/server/events/turf/turf-map';
 import type { EventScoring } from '~/server/events/base.event';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
@@ -435,6 +436,9 @@ export async function runEventPointsReferee(
   if (season === eventPointSeason(event.startDate, now) && changed.length) {
     for (const field of changed) {
       const hat = parseHatField(field);
+      // Turf credits have no live hat bucket, so every one reads as changed here, and none has a hat
+      // card on screen: marking them would crowd real hats out of the dirty set.
+      if (hat?.claimKey === TURF_CLAIM_KEY) continue;
       if (!hat || !markEventPointsDirty(event, hat, now)) unpushed++;
     }
     await drainEventPointsPush();

@@ -17,7 +17,6 @@ const EVENT = {
     creditedPlayers: [{ from: START, players: 25 }],
     renderLimit: 12,
     mapMaxEntries: 10,
-    minCreatorTier: null,
   },
   getUserTeam: async () => 'Blue',
   getTeamCosmetic: async () => 11,
@@ -120,6 +119,14 @@ describe('placeTurfSticker', () => {
     // Stocked at 0.5 just now: no time has passed to refill it.
     await expect(placeTurfSticker(input, NOW)).rejects.toThrow(/Out of hat stickers/);
     expect(dbMock.dbWrite.eventTurfSticker.create).not.toHaveBeenCalled();
+  });
+
+  it('records where the placement started, for the experiment readout', async () => {
+    given(OK_PLACER, OK_IMAGE, 3);
+    await placeTurfSticker({ ...input, source: 'feed' }, NOW);
+    expect(dbMock.dbWrite.eventTurfSticker.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ data: expect.objectContaining({ x: 0.5, source: 'feed' }) }),
+    });
   });
 
   it('places the sticker and spends exactly one', async () => {

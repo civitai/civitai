@@ -153,6 +153,5 @@ export const birthday2026 = createEvent(name, {
     creditedPlayers: [{ from: new Date('2026-11-01T00:00:00Z'), players: 25 }],
     renderLimit: 12,
     mapMaxEntries: 50_000,
-    minCreatorTier: null,
   },
 });

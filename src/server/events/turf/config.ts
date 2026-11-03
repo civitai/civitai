@@ -1,10 +1,16 @@
 import * as z from 'zod';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { scoreTierKey } from '~/shared/constants/creator-journey.constants';
 import type { CreditStep, SupplyStep } from '~/server/events/turf/schedule';
+
+// New accounts earn turf from this Creator Journey tier's threshold (its CreatorMilestone row). A
+// missing row fails closed: none earn.
+export const TURF_SCORE_TIER_KEY = scoreTierKey('spark');
 
 // off: no placing, nothing earns. shadow: testers place and turf actions are recorded under
 // `shadow:<type>` point types, which no weight can ever count (the referee reads only the types in
 // the event's scoring config). live: turf actions record the real point types.
+
 export const TURF_MODES = ['off', 'shadow', 'live'] as const;
 export type TurfMode = (typeof TURF_MODES)[number];
 
@@ -19,9 +25,6 @@ export type EventTurfConfig = {
   renderLimit: number;
   // Most turf images an app server holds in memory. Past it, the least recently stickered drop out.
   mapMaxEntries: number;
-  // The Creator Journey tier that lets an account created on or after the event start earn turf.
-  // null: such accounts never earn (their stickers still show, and never count toward a lead).
-  minCreatorTier: string | null;
 };
 
 // Every live override for one event, on sysRedis: a JSON object of the fields to replace.
@@ -47,10 +50,10 @@ const overrideSchema = z
       .min(1),
     renderLimit: z.number().int().positive(),
     mapMaxEntries: z.number().int().positive(),
-    minCreatorTier: z.string().min(1).nullable(),
   })
-  .partial()
-  .strict();
+  // Not strict: a key this build no longer knows (one an older build read) is dropped, rather than
+  // failing the whole override and silently reverting every field to the event file.
+  .partial();
 
 /**
  * The event file's config with the live override applied. An override that does not parse is
