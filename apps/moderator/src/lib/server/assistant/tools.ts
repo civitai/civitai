@@ -329,6 +329,10 @@ const SHOWN_ACTORS = 20;
 /** Narrowest first, so these are the identifying ones. */
 const ADDRESSES_SHOWN = 3;
 
+/** Refusal text names Stripe objects (`sub_…`, `in_…`); the model provider gets the words only. */
+export const withoutStripeIds = (text: string) =>
+  text.replace(/\b(?:sub|cus|in|pi|ch|price|prod|sub_sched)_[A-Za-z0-9]+/g, '[Stripe id]');
+
 export const TOOLS = [
   tool({
     name: 'find_user',
@@ -879,7 +883,7 @@ export const TOOLS = [
   // talk the model into one. A person previews and confirms it on the panel.
   tool({
     name: 'preview_membership_extension',
-    description: `What extending one account's Stripe membership by N free days (1-${MEMBERSHIP_EXTEND_MAX_DAYS}) would do: the subscription's status and period end, the new end, and every reason it would be refused. Read-only.`,
+    description: `What extending one account's Stripe membership by N free days (1-${MEMBERSHIP_EXTEND_MAX_DAYS}) would do: the subscription's status and period end, the new end, and the problems that would refuse it. Read-only.`,
     input: z.object({ userId, days: z.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS) }),
     requires: [LOOKUP],
     grant: 'user.membership.extend',
@@ -892,7 +896,8 @@ export const TOOLS = [
       const r = await previewMembershipExtension({ userId: id, days });
       if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
       // Status, dates and the verdict only: no Stripe ids for the model provider.
-      const { subscription: sub, problems, trialEndIso, mode } = r.preview;
+      const { subscription: sub, trialEndIso, mode } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
       const data = {
         days,
         subscription: sub && {
@@ -934,12 +939,11 @@ export const TOOLS = [
     },
   }),
 
-  // Cancel-at-period-end and re-sync: read the verdict and prefill the panel, as for the extension.
-  // Never a tool that calls the write endpoints.
+  // No tool calls the cancel or re-sync write endpoints; these only preview and prefill the panel.
   tool({
     name: 'preview_membership_cancel',
     description:
-      "What setting (true) or undoing (false) cancel-at-period-end on one account's Stripe membership would do: its status, period end and cancel state, and every reason it would be refused. Read-only.",
+      "What setting (true) or undoing (false) cancel-at-period-end on one account's Stripe membership would do: its status, period end and cancel state, and the problems that would refuse it. Read-only.",
     input: z.object({ userId, cancelAtPeriodEnd: z.boolean() }),
     requires: [LOOKUP],
     grant: 'user.membership.cancel',
@@ -948,7 +952,8 @@ export const TOOLS = [
       const { previewMembershipCancel } = await import('../user-actions.service');
       const r = await previewMembershipCancel({ userId: id, cancelAtPeriodEnd });
       if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
-      const { subscription: sub, problems, changed } = r.preview;
+      const { subscription: sub, changed } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
       const data = {
         cancelAtPeriodEnd,
         subscription: sub && {
@@ -995,7 +1000,7 @@ export const TOOLS = [
   tool({
     name: 'preview_membership_resync',
     description:
-      "Whether one account's membership record differs from its Stripe subscription, field by field, any Buzz-bought membership a re-sync would end, and every reason it would be refused. Read-only.",
+      "Whether one account's membership record differs from its Stripe subscription, field by field, any Buzz-bought membership a re-sync would end, and the problems that would refuse it. Read-only.",
     input: z.object({ userId }),
     requires: [LOOKUP],
     grant: 'user.membership.extend',
@@ -1004,8 +1009,9 @@ export const TOOLS = [
       const { previewMembershipResync } = await import('../user-actions.service');
       const r = await previewMembershipResync({ userId: id });
       if (!r.ok) return { data: { error: r.error }, rows: 0, truncated: false, sources: [] };
-      // Fields that differ and the verdict; Stripe ids stay out, as for the extension.
-      const { changes, endsBuzzMembership, problems } = r.preview;
+      // Changes minus the id and plan rows, and the verdict.
+      const { changes, endsBuzzMembership } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
       const data = {
         changes: changes.filter((c) => c.field !== 'id' && c.field !== 'priceId'),
         idOrPlanDiffers: changes.some((c) => c.field === 'id' || c.field === 'priceId'),

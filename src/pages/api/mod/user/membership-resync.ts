@@ -7,11 +7,12 @@ import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
 export default defineModeratorEndpoint('user.membership-resync', {
   summary:
-    "Re-read a member's Stripe subscription into CustomerSubscription, as its webhook would have. Writes nothing to Stripe.",
+    "Re-read a member's Stripe subscription into CustomerSubscription through the webhook's upsert. Writes nothing to Stripe.",
   returns: '{ ok, userId, subscriptionId, before, after, changes, endedBuzzMembership }',
   notes: [
     'Requires the moderator app permission `user.membership.extend`.',
     'With no row yet, syncs only when the customer has exactly one live subscription.',
+    'Refused for an ended subscription (resend its deleted event from Stripe: that settles gifted months, which this does not) and for a lapsed one the customer has replaced.',
     'An active or trialing Stripe membership ends a live Buzz-bought one: refused unless `confirmEndBuzzMembership` is true (preview shows it).',
   ],
   rateLimit: { max: 5, windowSeconds: 60 },

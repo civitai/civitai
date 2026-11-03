@@ -1009,4 +1009,65 @@ describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a 
       /\bsetMembershipCancel\b|\bresyncMembership\b|user\/membership-cancel\b|user\/membership-resync\b/
     );
   });
+
+  const cancelPreview = (over: Record<string, unknown>) => ({
+    ok: true,
+    preview: {
+      userId: 5,
+      cancelAtPeriodEnd: false,
+      subscription: {
+        id: 'sub_secret',
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        trialEnd: null,
+        cancelAtPeriodEnd: true,
+        cancelAt: null,
+        latestInvoiceId: 'in_secret',
+      },
+      problems: [],
+      changed: true,
+      ...over,
+    },
+  });
+  const previewCancelTool = async () =>
+    (await run('preview_membership_cancel', { userId: 5, cancelAtPeriodEnd: false }, LOOKUP_PAGE, [
+      'user.membership.cancel',
+    ])) as { data: Record<string, unknown> };
+
+  it('the cancel preview tells "already so" apart from refused, and hides Stripe ids in problems', async () => {
+    previewMembershipCancel.mockResolvedValueOnce(cancelPreview({ changed: false }));
+    expect((await previewCancelTool()).data).toEqual({
+      cancelAtPeriodEnd: false,
+      subscription: {
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        cancelAtPeriodEnd: true,
+      },
+      problems: [],
+      alreadySo: true,
+    });
+
+    previewMembershipCancel.mockResolvedValueOnce(
+      cancelPreview({ changed: null, problems: ['Stripe returned sub_secret, not sub_other'] })
+    );
+    const refused = (await previewCancelTool()).data;
+    expect(refused).toMatchObject({
+      alreadySo: false,
+      problems: ['Stripe returned [Stripe id], not [Stripe id]'],
+    });
+    expect(JSON.stringify(refused)).not.toMatch(/secret|sub_other/);
+  });
+
+  it('proposing a re-sync returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_resync',
+      { userId: 5, reason: 'Ticket 123: webhook missed' },
+      LOOKUP_PAGE,
+      ['user.membership.extend']
+    )) as { data: { resynced: boolean; confirmAt: string } };
+    expect(out.data.resynced).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&resyncReason=Ticket+123%3A+webhook+missed#membership-resync'
+    );
+  });
 });

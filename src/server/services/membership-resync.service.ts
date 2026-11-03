@@ -4,10 +4,14 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ownershipProblems } from '~/server/services/membership-extend.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { upsertSubscription } from '~/server/services/stripe.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { toDateTime, upsertSubscription } from '~/server/services/stripe.service';
+import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } from '~/shared/utils/buzz-membership';
+import { randomUUID } from 'crypto';
+import { delIfValue } from '~/server/redis/atomic';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 /**
@@ -16,15 +20,22 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
  *
  * That upsert ends a live Buzz-bought membership when the Stripe one is active or trialing, as the
  * webhook would. The preview names it and the write is refused without `confirmEndBuzzMembership`.
+ *
+ * Not the webhook's gift settlement, which writes to Stripe: an ended subscription is refused (its
+ * deleted event hands over owed gifted months; resend that event from Stripe instead), and an owed
+ * gift month on a live one is armed by the next subscription event.
  */
 
 export const MEMBERSHIP_RESYNC_ACTIVITY = 'resyncMembership';
 const LIVE_STATUSES = ['active', 'trialing', 'past_due'];
+const ENDED_STATUSES = ['canceled', 'incomplete_expired'];
 // upsertSubscription ends a live Buzz membership only for these.
 const SUPERSEDING_STATUSES = ['active', 'trialing'];
 
+// Through the upsert's own toDateTime (which is offset from the epoch), so a stored row and Stripe's
+// copy of the same instant compare equal.
 const iso = (epoch: number | null | undefined) =>
-  epoch == null ? null : new Date(epoch * 1000).toISOString();
+  epoch == null ? null : toDateTime(epoch).toISOString();
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'mod-membership-resync', ...data }, 'webhooks').catch(() => null);
@@ -84,6 +95,17 @@ export function diffRow(row: RowView | null, stripe: RowView) {
     .map((field) => ({ field, ours: row?.[field] ?? null, stripe: stripe[field] }));
 }
 
+// Mirrors liveBuzzMembershipWhere in subscriptions.service, which the upsert ends.
+const liveBuzzMembership = (userId: number) =>
+  dbWrite.customerSubscription.findFirst({
+    where: {
+      userId,
+      buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+      status: { notIn: ['canceled', 'incomplete_expired'] },
+    },
+    select: { id: true, status: true, currentPeriodEnd: true },
+  });
+
 type BuzzMembership = { id: string; status: string; currentPeriodEnd: string | null };
 
 async function load(stripe: Stripe, userId: number) {
@@ -93,15 +115,7 @@ async function load(stripe: Stripe, userId: number) {
       select: rowSelect,
     }),
     dbWrite.user.findUnique({ where: { id: userId }, select: { customerId: true } }),
-    dbWrite.customerSubscription.findFirst({
-      // Mirrors liveBuzzMembershipWhere in subscriptions.service, which the upsert ends.
-      where: {
-        userId,
-        buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
-        status: { notIn: ['canceled', 'incomplete_expired'] },
-      },
-      select: { id: true, status: true, currentPeriodEnd: true },
-    }),
+    liveBuzzMembership(userId),
   ]);
   const problems: string[] = [];
   const customerId = user?.customerId ?? null;
@@ -115,17 +129,35 @@ async function load(stripe: Stripe, userId: number) {
     throw e;
   };
   let sub: Stripe.Subscription | null = null;
-  if (row) {
-    sub = await stripe.subscriptions.retrieve(row.id).catch(notFound);
-    if (!sub) problems.push(`Stripe has no subscription ${row.id}`);
-  } else {
-    // No row: the webhook that makes it was missed. Only an unambiguous single live one is synced.
+  const listLive = async () => {
     const list = await stripe.subscriptions.list({
       customer: customerId as string,
       status: 'all',
       limit: 10,
     });
-    const live = list.data.filter((s) => LIVE_STATUSES.includes(s.status));
+    return list.data.filter((s) => LIVE_STATUSES.includes(s.status));
+  };
+  if (row) {
+    sub = await stripe.subscriptions.retrieve(row.id).catch(notFound);
+    if (!sub) problems.push(`Stripe has no subscription ${row.id}`);
+    else if (!LIVE_STATUSES.includes(sub.status)) {
+      // The row's subscription is over, but another may have replaced it (both webhooks missed):
+      // syncing the old one would mark a paying member as lapsed.
+      const others = (await listLive()).filter((s) => s.id !== sub?.id);
+      if (others.length)
+        problems.push(
+          `${row.id} is ${sub.status} but the customer has live ${others
+            .map((s) => s.id)
+            .join(', ')}; sync by hand`
+        );
+    }
+    if (sub && ENDED_STATUSES.includes(sub.status))
+      problems.push(
+        `the subscription has ended (${sub.status}); resend its customer.subscription.deleted event from Stripe, which also settles gifted months`
+      );
+  } else {
+    // No row: the webhook that makes it was missed. Only an unambiguous single live one is synced.
+    const live = await listLive();
     if (live.length === 1) sub = live[0];
     else
       problems.push(
@@ -203,6 +235,32 @@ export async function resyncMembership({
 }) {
   refuseOwn(userId, actorId);
   const stripe = await requireStripe();
+  // The extend and cancel lock: a re-sync landing between their write and its webhook would write
+  // back the old Stripe copy.
+  const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
+  const owner = randomUUID();
+  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: 600 })) === null)
+    throw throwConflictError('Another membership change for this member is in progress');
+  try {
+    return await resyncLocked({ stripe, userId, reason, confirmEndBuzzMembership, actorId });
+  } finally {
+    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
+  }
+}
+
+async function resyncLocked({
+  stripe,
+  userId,
+  reason,
+  confirmEndBuzzMembership,
+  actorId,
+}: {
+  stripe: Stripe;
+  userId: number;
+  reason: string;
+  confirmEndBuzzMembership: boolean;
+  actorId: number;
+}) {
   const { problems, row, sub, customerId, buzz } = await load(stripe, userId);
   // Decided on this read, not the preview's: a Buzz membership that appeared since still needs the confirm.
   if (buzz && !confirmEndBuzzMembership)
@@ -216,19 +274,49 @@ export async function resyncMembership({
 
   const before = row ? rowView(row) : null;
   const changes = diffRow(before, stripeView(sub));
-  // Not a webhook event type, so the upsert neither waits out a webhook race nor deletes the row.
-  await upsertSubscription(sub, customerId, new Date(), 'moderator.resync');
+  const audit = () =>
+    trackModActivity(actorId, {
+      entityType: 'user',
+      entityId: userId,
+      activity: MEMBERSHIP_RESYNC_ACTIVITY,
+    }).catch((e) => log({ type: 'audit-failed', actorId, userId, error: (e as Error).message }));
+  // The upsert ends whatever Buzz membership is live when it runs: refuse if that is no longer the
+  // one this decision (and the moderator's confirm) was about.
+  const buzzNow = SUPERSEDING_STATUSES.includes(sub.status)
+    ? await liveBuzzMembership(userId)
+    : null;
+  if ((buzzNow?.id ?? null) !== (buzz?.id ?? null)) {
+    await log({ type: 'refused', actorId, userId, reason, problems: ['Buzz membership changed'] });
+    throw throwConflictError("The member's Buzz-bought membership changed; preview again");
+  }
+  try {
+    // Not a webhook event type, so the upsert neither waits out a webhook race nor deletes the row.
+    await upsertSubscription(sub, customerId, new Date(), 'moderator.resync');
+  } catch (e) {
+    // Its writes are not one transaction: the row may be written and a Buzz membership ended.
+    await audit();
+    await log({
+      type: 'resync-failed',
+      actorId,
+      userId,
+      subscriptionId: sub.id,
+      reason,
+      before,
+      changes,
+      error: (e as Error).message,
+    });
+    throw e;
+  }
+  await syncFreshdeskMembership({ customerId }).catch((e) =>
+    log({ type: 'freshdesk-sync-failed', userId, error: (e as Error).message })
+  );
   const afterRow = await dbWrite.customerSubscription.findUnique({
     where: { userId_buzzType: { userId, buzzType: 'green' } },
     select: rowSelect,
   });
   const after = afterRow ? rowView(afterRow) : null;
 
-  await trackModActivity(actorId, {
-    entityType: 'user',
-    entityId: userId,
-    activity: MEMBERSHIP_RESYNC_ACTIVITY,
-  }).catch((e) => log({ type: 'audit-failed', actorId, userId, error: (e as Error).message }));
+  await audit();
   await log({
     type: 'resynced',
     actorId,

@@ -66,14 +66,14 @@ export const PERMISSIONS = [
     id: 'user.membership.gift',
     label: 'Revoke or refund a membership gift whose payment did not clear',
   },
-  // Money: free days on a member's Stripe subscription. The main app checks this literal
-  // (`ModeratorGrantId`), so rename the two together.
+  // Money: free days on, or a re-sync of, a member's Stripe subscription. The main app checks this
+  // literal (`ModeratorGrantId`), so rename the two together.
   {
     id: 'user.membership.extend',
     label: 'Extend a member’s Stripe membership by free days, or re-sync it from Stripe',
   },
-  // Undoing a cancel arms the member's next renewal charge, so it is granted apart from extend. The main
-  // app checks this literal (`ModeratorGrantId`), so rename the two together.
+  // Undoing a cancel arms the next renewal charge, so it is granted apart from extend. Also checked by
+  // literal in the main app (`ModeratorGrantId`).
   {
     id: 'user.membership.cancel',
     label: 'Set or undo cancel-at-period-end on a member’s Stripe membership',

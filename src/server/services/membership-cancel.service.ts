@@ -27,8 +27,8 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
  * charge, which is why it has its own grant (`user.membership.cancel`).
  *
  * Already in the asked-for state: nothing is written and the answer is `changed: false`.
- * Every refusal happens before the write; from the write on, a ModActivity row and an Axiom record
- * are always written.
+ * Every refusal happens before the write. Once Stripe has taken the update, or may have, a ModActivity
+ * row and an Axiom record are written; a Stripe rejection logs to Axiom only.
  */
 
 export const MEMBERSHIP_CANCEL_ACTIVITY = {
@@ -182,6 +182,12 @@ export async function previewMembershipCancel({
   const stripe = await requireStripe();
   const loaded = await load(stripe, userId);
   const checked = checkCancelChange({ userId, cancelAtPeriodEnd, ...loaded });
+  // The write's live-money checks, so a preview never promises what the write refuses.
+  if (stripeKeyMode(env.STRIPE_SECRET_KEY) !== 'live')
+    checked.problems.push('the Stripe key is not live');
+  if (loaded.sub && !loaded.sub.livemode)
+    checked.problems.push('the subscription is not a live-mode subscription');
+  if (checked.problems.length) checked.changed = undefined;
   return {
     userId,
     cancelAtPeriodEnd,
@@ -285,6 +291,26 @@ async function setLocked({
       reason,
     });
     return result;
+  }
+
+  // A ban or mute landing since the read would otherwise be undone: its own cancel sees ours and
+  // leaves no mark, so reinstate never revisits it. Narrows the window; the ban flow takes no lock.
+  if (!cancelAtPeriodEnd) {
+    const now = await dbWrite.user.findUnique({
+      where: { id: userId },
+      select: { bannedAt: true, muted: true },
+    });
+    if (now?.bannedAt || now?.muted) {
+      await log({
+        type: 'refused',
+        actorId,
+        userId,
+        cancelAtPeriodEnd,
+        reason,
+        problems: ['banned or muted since the read'],
+      });
+      throw throwBadRequestError('Not changed: the member is banned or muted');
+    }
   }
 
   result.after = null;

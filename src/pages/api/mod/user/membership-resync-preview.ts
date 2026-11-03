@@ -12,7 +12,7 @@ export default defineModeratorEndpoint('user.membership-resync-preview', {
   returns: '{ userId, ours, stripe, changes, endsBuzzMembership, problems }',
   notes: [
     'Requires the moderator app permission `user.membership.extend`.',
-    'Read-only, Stripe included. An empty `problems` means `/api/mod/user/membership-resync` would accept it now; with `endsBuzzMembership` set it needs `confirmEndBuzzMembership: true`.',
+    'Read-only: reads Stripe, writes nothing. An empty `problems` means `/api/mod/user/membership-resync` would accept it now; with `endsBuzzMembership` set it needs `confirmEndBuzzMembership: true`.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({ userId }),

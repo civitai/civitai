@@ -205,6 +205,7 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'routes/retool/bulk-ban/+page.svelte',
     'routes/retool/user-lookup/CommentList.svelte',
     'routes/retool/user-lookup/IdentityPanel.svelte',
+    'routes/retool/user-lookup/MembershipResyncPanel.svelte',
     'routes/retool/user-lookup/ReviewsPanel.svelte',
     'routes/text-scan/model-rules/AliasBackfill.svelte',
     'routes/text-scan/model-rules/SuggestAliases.svelte',

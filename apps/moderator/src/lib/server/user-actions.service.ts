@@ -1769,8 +1769,7 @@ export async function extendMembership(input: {
   return { ok: true, result: body };
 }
 
-// CANCEL-AT-PERIOD-END and RE-SYNC. Like the extension, the endpoints write their own ModActivity
-// row and Axiom record.
+// The cancel and re-sync endpoints write their own ModActivity row; do not add one here.
 
 export const CANCEL_OUTCOME_UNKNOWN =
   'Outcome unknown: the cancel setting may have changed. Preview again before retrying; a repeat to the same setting writes nothing.';

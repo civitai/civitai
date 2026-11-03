@@ -162,6 +162,17 @@ describe('setMembershipCancel / previewMembershipCancel', () => {
     );
     expect(calls[0].init.method).toBe('GET');
   });
+
+  it('a 200 that is not a result reads as outcome unknown', async () => {
+    respond = () => new Response('{}', { status: 200 });
+    expect(await setMembershipCancel(CANCEL)).toEqual({ ok: false, error: CANCEL_OUTCOME_UNKNOWN });
+  });
+
+  it('a post-check failure (200, ok: false) comes back as the result, for the panel to show', async () => {
+    const body = { ok: false, changed: true, written: true, problems: ['made invoice'] };
+    respond = () => new Response(JSON.stringify(body), { status: 200 });
+    expect(await setMembershipCancel(CANCEL)).toEqual({ ok: true, result: body });
+  });
 });
 
 describe('resyncMembership', () => {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { FormState } from '$lib/form-state.svelte';
@@ -14,7 +15,7 @@
 
   let { userId, initialReason = '' }: { userId: number; initialReason?: string } = $props();
 
-  // Seeded once from the assistant's proposal link; the operator previews and confirms.
+  // Intentionally not reactive: seeded once from the proposal link.
   // svelte-ignore state_referenced_locally
   let reason = $state(initialReason);
   let preview = $state<MembershipResyncPreview | null>(null);
@@ -133,10 +134,10 @@
         <input type="hidden" name="userId" value={userId} />
         {#if p.endsBuzzMembership}
           <label
+            data-touch-target
             class="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200"
           >
-            <input
-              type="checkbox"
+            <Checkbox
               name="confirmEndBuzzMembership"
               bind:checked={endBuzzConfirmed}
               class="mt-1"

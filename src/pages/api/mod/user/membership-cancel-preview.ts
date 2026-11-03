@@ -9,7 +9,7 @@ import { booleanString } from '~/utils/zod-helpers';
 export default defineModeratorEndpoint('user.membership-cancel-preview', {
   method: 'GET',
   summary:
-    'What setting or undoing cancel-at-period-end on a Stripe membership would do, and every reason it would be refused.',
+    'What setting or undoing cancel-at-period-end on a Stripe membership would do, and the problems that would refuse it.',
   returns: '{ userId, cancelAtPeriodEnd, subscription, problems, changed }',
   notes: [
     'Requires the moderator app permission `user.membership.cancel`.',

@@ -18,7 +18,7 @@
     initialReason = '',
   }: { userId: number; initialCancel?: string; initialReason?: string } = $props();
 
-  // Seeded once from the assistant's proposal link; the operator previews and confirms.
+  // Intentionally not reactive: seeded once from the proposal link.
   // svelte-ignore state_referenced_locally
   let reason = $state(initialReason);
   let preview = $state<MembershipCancelPreview | null>(null);
@@ -183,7 +183,6 @@
             class="mt-1"
           />
         </div>
-        <!-- Two steps: this changes a real Stripe subscription. -->
         <div class="flex items-center gap-2">
           {#if confirming}
             <Button type="submit" disabled={!canChange || changeForm.submitting}>

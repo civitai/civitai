@@ -3,6 +3,9 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { Stripe } from 'stripe';
 import { dbMock, redisMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
+import { delIfValue } from '~/server/redis/atomic';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { toDateTime } from '~/server/services/stripe.service';
 
 /**
  * `/api/mod/user/membership-cancel*` and `/api/mod/user/membership-resync*`. Drives the REAL
@@ -68,6 +71,11 @@ vi.mock('~/server/utils/subscription.utils', () => ({
   invalidateSubscriptionCaches: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/redis/atomic', () => ({ delIfValue: vi.fn(async () => 1) }));
+// Only the third-party call; the Buzz supersede the upsert reaches stays real.
+vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncFreshdeskMembership: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/utils/get-server-stripe', () => ({
   getServerStripe: async () => stripeRef.current,
 }));
@@ -108,47 +116,56 @@ function liveSub(over: Record<string, unknown> = {}) {
 }
 
 /**
- * Stripe as these endpoints see it. Every method outside `allowed` is recorded in `writes` (and
- * throws), so "no Stripe write" is an assertion on that list, whatever the method is called.
+ * Stripe as these endpoints see it. Any method outside the allowed reads, on any resource at any
+ * depth, is recorded in `writes` (and throws), so "no Stripe write" is an assertion on that list.
  */
-function fakeStripe(sub = liveSub(), list: Stripe.Subscription[] = []) {
+function fakeStripe(
+  sub = liveSub(),
+  list: Stripe.Subscription[] = [],
+  hooks: { updateError?: Error; retrieveErrorAfterUpdate?: Error; invoiceOnUpdate?: string } = {}
+) {
   const state = structuredClone(sub) as unknown as Record<string, unknown>;
   const writes: string[] = [];
   const updates: Record<string, unknown>[] = [];
-  const resource = (name: string, allowed: Record<string, unknown>) =>
-    new Proxy(allowed, {
-      get(target, prop: string) {
-        if (prop in target) return target[prop];
-        return (...args: unknown[]) => {
-          writes.push(`${name}.${prop}`);
-          void args;
-          throw new Error(`unexpected Stripe call ${name}.${prop}`);
-        };
+  let updated = false;
+  const recorder = (path: string): unknown =>
+    new Proxy(function () {}, {
+      get: (_t, prop) => (prop === 'then' ? undefined : recorder(`${path}.${String(prop)}`)),
+      apply: () => {
+        writes.push(path);
+        throw new Error(`unexpected Stripe call ${path}`);
       },
     });
+  const reads = <T extends object>(name: string, allowed: T) =>
+    new Proxy(allowed, {
+      get: (target, prop) =>
+        prop in target ? target[prop as keyof T] : recorder(`${name}.${String(prop)}`),
+    });
   const subscriptions = {
-    retrieve: vi.fn(async () => structuredClone(state)),
+    retrieve: vi.fn(async () => {
+      if (updated && hooks.retrieveErrorAfterUpdate) throw hooks.retrieveErrorAfterUpdate;
+      return structuredClone(state);
+    }),
     list: vi.fn(async () => ({ data: list })),
     update: vi.fn(async (_id: string, params: Record<string, unknown>) => {
       writes.push('subscriptions.update');
       updates.push(params);
+      if (hooks.updateError) throw hooks.updateError;
+      updated = true;
       state.cancel_at_period_end = params.cancel_at_period_end;
       state.canceled_at = params.cancel_at_period_end ? NOW : null;
       state.cancel_at = params.cancel_at_period_end ? state.current_period_end : null;
+      if (hooks.invoiceOnUpdate) state.latest_invoice = hooks.invoiceOnUpdate;
       return structuredClone(state);
     }),
   };
-  const stripe = {
-    subscriptions: resource('subscriptions', subscriptions),
-    customers: resource('customers', {
+  const stripe = reads('stripe', {
+    subscriptions: reads('subscriptions', subscriptions),
+    customers: reads('customers', {
       retrieve: vi.fn(async () => ({ id: 'cus_case', metadata: { userId: String(MEMBER) } })),
     }),
-    invoices: resource('invoices', {}),
-    invoiceItems: resource('invoiceItems', {}),
-    paymentIntents: resource('paymentIntents', {}),
-    refunds: resource('refunds', {}),
-    checkout: { sessions: resource('checkout.sessions', {}) },
-  };
+    then: undefined,
+  });
   stripeRef.current = stripe;
   return { stripe, subscriptions, writes, updates };
 }
@@ -204,13 +221,14 @@ const ROW = {
   priceId: 'price_gold',
   cancelAtPeriodEnd: false,
   cancelAt: null,
-  currentPeriodEnd: new Date(PERIOD_END * 1000),
+  // As the upsert stores it (toDateTime is offset from the epoch).
+  currentPeriodEnd: toDateTime(PERIOD_END),
   product: { provider: 'Stripe' },
 };
 const BUZZ_MEMBERSHIP = {
   id: 'buzz_sub_1',
   status: 'active',
-  currentPeriodEnd: new Date(PERIOD_END * 1000),
+  currentPeriodEnd: toDateTime(PERIOD_END),
 };
 
 beforeEach(() => {
@@ -299,6 +317,11 @@ describe('cancel-at-period-end: the rules', () => {
     expect(status).toBe(200);
     expect(body).toMatchObject({ ok: true, changed: true });
     expect(updates).toEqual([{ cancel_at_period_end: false }]);
+    expect(trackModActivity).toHaveBeenCalledWith(MOD, {
+      entityType: 'user',
+      entityId: MEMBER,
+      activity: 'undoMembershipCancel',
+    });
   });
 
   it.each([
@@ -335,15 +358,62 @@ describe('cancel-at-period-end: the rules', () => {
     expect(writes).toEqual([]);
   });
 
-  it('undo is refused for a banned member', async () => {
-    const { writes } = fakeStripe(liveSub({ cancel_at_period_end: true }));
+  it.each([
+    ['banned', { bannedAt: new Date(), muted: false }],
+    ['muted', { bannedAt: null, muted: true }],
+  ])('undo is refused for a %s member', async (_label, user) => {
+    const { writes } = fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
     dbMock.dbWrite.user.findUnique.mockResolvedValue({
       customerId: 'cus_case',
       isModerator: false,
-      bannedAt: new Date(),
+      ...user,
+    });
+    const { status, body } = await setCancel(false);
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/banned or muted/);
+    expect(writes).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a custom cancel date (a gift end)',
+      liveSub({ cancel_at: PERIOD_END + 60 * 86_400 }),
+      /custom cancel date/,
+    ],
+    ['a past_due subscription', liveSub({ status: 'past_due' }), /not active or trialing/],
+    ['a schedule', liveSub({ schedule: 'sub_sched_1' }), /schedule/],
+    ['another customer', liveSub({ customer: 'cus_other' }), /not this user's Stripe customer/],
+    ['a test-mode subscription', liveSub({ livemode: false }), /not a live-mode subscription/],
+  ])('set is refused (400) for %s, nothing written', async (_label, sub, message) => {
+    const { writes } = fakeStripe(sub);
+    const { status, body } = await setCancel(true);
+    expect(status).toBe(400);
+    expect(body.message).toMatch(message);
+    expect(writes).toEqual([]);
+  });
+
+  it('a moderator member is refused (400)', async () => {
+    const { writes } = fakeStripe();
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      customerId: 'cus_case',
+      isModerator: true,
+      bannedAt: null,
       muted: false,
     });
-    expect((await setCancel(false)).status).toBe(400);
+    const { status, body } = await setCancel(true);
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/is a moderator/);
+    expect(writes).toEqual([]);
+  });
+
+  it('a test Stripe key is refused (400) before Stripe is read, and the preview says so', async () => {
+    const { writes, subscriptions } = fakeStripe();
+    setEnv({ STRIPE_SECRET_KEY: 'sk_test_00000000000000000000' });
+    expect((await setCancel(true)).status).toBe(400);
+    expect(subscriptions.retrieve).not.toHaveBeenCalled();
+    const pv = await previewCancel(true);
+    expect(pv.body).toMatchObject({ changed: null });
+    expect(String(pv.body.problems)).toMatch(/key is not live/);
     expect(writes).toEqual([]);
   });
 
@@ -365,6 +435,26 @@ describe('cancel-at-period-end: the rules', () => {
     asModerator([GRANTED_ROLE], MEMBER);
     expect((await setCancel(true)).status).toBe(403);
     expect(writes).toEqual([]);
+  });
+
+  it("takes extend's per-member lock with NX, and releases it with its owner token", async () => {
+    fakeStripe();
+    await setCancel(true);
+    const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${MEMBER}`;
+    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+      lockKey,
+      expect.any(String),
+      expect.objectContaining({ NX: true })
+    );
+    const owner = redisMock.sysRedis.set.mock.calls.find((c) => c[0] === lockKey)?.[1];
+    expect(delIfValue).toHaveBeenCalledWith(redisMock.sysRedis, lockKey, owner);
+  });
+
+  it('the lock is released after a refusal too', async () => {
+    fakeStripe(liveSub({ schedule: 'sub_sched_1' }));
+    vi.mocked(delIfValue).mockClear();
+    expect((await setCancel(true)).status).toBe(400);
+    expect(delIfValue).toHaveBeenCalledTimes(1);
   });
 
   it('another change holding the member lock is refused (409)', async () => {
@@ -487,7 +577,16 @@ describe('re-sync: ending a Buzz-bought membership needs a confirm', () => {
     const { status, body } = await resync({ confirmEndBuzzMembership: true });
     expect(status).toBe(200);
     expect(body.endedBuzzMembership).toMatchObject({ id: 'buzz_sub_1' });
-    expect(dbMock.dbWrite.customerSubscription.updateMany).toHaveBeenCalled();
+    expect(dbMock.dbWrite.customerSubscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userId: MEMBER,
+          buzzType: 'buzzPurchase',
+          status: { notIn: ['canceled', 'incomplete_expired'] },
+        }),
+        data: expect.objectContaining({ status: 'canceled' }),
+      })
+    );
     expect(writes).toEqual([]);
   });
 
@@ -496,5 +595,141 @@ describe('re-sync: ending a Buzz-bought membership needs a confirm', () => {
     const { status, body } = await resync();
     expect(status).toBe(200);
     expect(body.endedBuzzMembership).toBeNull();
+  });
+});
+
+describe('cancel-at-period-end: after the write', () => {
+  it('a new invoice after the update comes back ok: false, and is audited', async () => {
+    fakeStripe(liveSub(), [], { invoiceOnUpdate: 'in_new' });
+    const { status, body } = await setCancel(true);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: false, written: true });
+    expect(String(body.problems)).toMatch(/made invoice in_new/);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('Stripe refusing the update: written false, no ModActivity row', async () => {
+    fakeStripe(liveSub(), [], {
+      updateError: Object.assign(new Error('No such subscription'), {
+        type: 'StripeInvalidRequestError',
+      }),
+    });
+    const { status, body } = await setCancel(true);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: false, written: false });
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('the re-read failing after the update: written true, ok false, still audited', async () => {
+    fakeStripe(liveSub(), [], { retrieveErrorAfterUpdate: new Error('socket hang up') });
+    const { body } = await setCancel(true);
+    expect(body).toMatchObject({ ok: false, written: true, after: null });
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('re-sync: what it refuses', () => {
+  beforeEach(() => {
+    grantRow.path = 'grant:user.membership.extend';
+  });
+
+  it('control: a row that matches Stripe previews as no changes (the stored-date offset is not a diff)', async () => {
+    fakeStripe();
+    const { body } = await previewResync();
+    expect(body).toMatchObject({ problems: [], changes: [] });
+  });
+
+  it('an ended subscription is refused (400): its deleted event settles gifted months', async () => {
+    const { writes } = fakeStripe(liveSub({ status: 'canceled', ended_at: NOW }));
+    const { status, body } = await resync();
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/has ended \(canceled\)/);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.customerSubscription.delete).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('a lapsed row the customer has replaced with a live subscription is refused (400)', async () => {
+    fakeStripe(liveSub({ status: 'unpaid' }), [liveSub({ id: 'sub_new' })]);
+    const { status, body } = await resync();
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/customer has live sub_new/);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+
+  it('a row whose subscription Stripe no longer has is refused (400)', async () => {
+    const { subscriptions } = fakeStripe();
+    subscriptions.retrieve.mockRejectedValueOnce(
+      Object.assign(new Error('gone'), { statusCode: 404 })
+    );
+    const { status, body } = await resync();
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/Stripe has no subscription sub_case/);
+  });
+
+  it('a user with no Stripe customer is refused (400) without reading Stripe', async () => {
+    const { subscriptions } = fakeStripe();
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ customerId: null });
+    const { status, body } = await resync();
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/no Stripe customer/);
+    expect(subscriptions.retrieve).not.toHaveBeenCalled();
+  });
+
+  it('your own membership is refused (403)', async () => {
+    fakeStripe();
+    asModerator([GRANTED_ROLE], MEMBER);
+    expect((await resync()).status).toBe(403);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+
+  it('the upsert failing part-way still leaves a ModActivity row, and the error surfaces', async () => {
+    fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
+    dbMock.dbWrite.customerSubscription.upsert.mockRejectedValueOnce(new Error('deadlock'));
+    const { status } = await resync();
+    expect(status).toBe(500);
+    expect(trackModActivity).toHaveBeenCalledWith(MOD, {
+      entityType: 'user',
+      entityId: MEMBER,
+      activity: 'resyncMembership',
+    });
+  });
+});
+
+describe('races the lanes found', () => {
+  it('undo is refused when the member was banned after the read, before the write', async () => {
+    const { writes } = fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
+    dbMock.dbWrite.user.findUnique
+      .mockResolvedValueOnce({
+        customerId: 'cus_case',
+        isModerator: false,
+        bannedAt: null,
+        muted: false,
+      })
+      .mockResolvedValueOnce({ bannedAt: new Date(), muted: false });
+    const { status, body } = await setCancel(false);
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/banned or muted/);
+    expect(writes).toEqual([]);
+  });
+
+  it('re-sync is refused (409) when the Buzz membership changed after the confirm was decided', async () => {
+    grantRow.path = 'grant:user.membership.extend';
+    fakeStripe();
+    dbMock.dbWrite.customerSubscription.findFirst
+      .mockResolvedValueOnce(BUZZ_MEMBERSHIP)
+      .mockResolvedValueOnce({ ...BUZZ_MEMBERSHIP, id: 'buzz_sub_2' });
+    const { status } = await resync({ confirmEndBuzzMembership: true });
+    expect(status).toBe(409);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+
+  it('re-sync takes the member lock: another change in progress is refused (409)', async () => {
+    grantRow.path = 'grant:user.membership.extend';
+    fakeStripe();
+    redisMock.sysRedis.set.mockResolvedValue(null as never);
+    expect((await resync()).status).toBe(409);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
   });
 });
