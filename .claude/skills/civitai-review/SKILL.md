@@ -335,8 +335,8 @@ pnpm run test:unit:run      # queued on this machine; targeted files are not
 If `schema.full.prisma` changed: `pnpm run db:check-generated`, and surface that the migration must be
 **applied manually** — this repo never runs `prisma migrate deploy`.
 
-⚠️ `pnpm run typecheck` is blind to `__tests__` files, so a green typecheck does not clear the test
-changes. ⚠️ If a queued unit run returns suspiciously fast or empty, check the dev-server daemon is
+⚠️ `pnpm run typecheck` is blind to every test file, so a green typecheck does not clear the test
+changes: run `pnpm run typecheck:tests` (`.claude/rules/testing.md`). ⚠️ If a queued unit run returns suspiciously fast or empty, check the dev-server daemon is
 alive before believing it.
 
 Then **look at the page** in a browser. Typecheck passes on plenty of pages that render blank.

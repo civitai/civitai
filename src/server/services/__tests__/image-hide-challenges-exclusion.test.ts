@@ -7,8 +7,8 @@ import type * as PromClient from '~/server/prom/client';
 // going through getAllImages / getAllImagesIndex would silently serve an unfiltered feed.
 //
 // Both entry points mutate `input` in place (mirroring enforceBlockedBrowsingTags), so the
-// assertions read the input object after the call. The calls are expected to reject once they
-// reach real infra; the mapping runs before that, which is exactly what makes this cheap to test.
+// assertions read the input object after the call. The calls may reject further in; the mapping
+// runs before that, which is exactly what makes this cheap to test.
 //
 // Mock recipe follows getAllImages-prioritized-guards.test.ts: stub env + infra clients + the
 // event-engine-common submodule so importing image.service boots no real infra.
@@ -44,6 +44,17 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
+// The feed query itself: an empty page, so the calls finish without a database.
+const { emptyPool } = vi.hoisted(() => {
+  const client = { query: async () => ({ rows: [] }), release: () => undefined };
+  return { emptyPool: { connect: async () => client, query: async () => ({ rows: [] }) } };
+});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: emptyPool,
+  pgDbReadLong: emptyPool,
+  pgDbWrite: emptyPool,
+}));
+
 // The mapping sits directly after this call in both entry points — a non-empty result lets
 // execution reach it.
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
@@ -61,7 +72,7 @@ const CHALLENGE_TAG_ID = 676575;
 
 type FeedInput = Record<string, unknown>;
 
-// Both entry points reject once they reach real infra; the mapping has already run by then.
+// Either entry point may reject further in; the mapping has already run by then.
 const entryPoints: [string, (input: FeedInput) => Promise<unknown>][] = [
   [
     'getAllImages',

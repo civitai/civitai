@@ -54,7 +54,7 @@ export function ImageCard({ data }: Props) {
         </div>
       }
       footer={({ safe }) => (
-        <div className="flex w-full flex-col gap-2">
+        <div className={clsx(cardClasses.footer, 'flex w-full flex-col gap-2')}>
           {/* In the footer, not over the media: this card's footer is painted on
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
@@ -74,25 +74,15 @@ export function ImageCard({ data }: Props) {
   );
 }
 
-const countFormatter = new Intl.NumberFormat('en-US');
-const MAX_COUNT_LENGTH = 9;
-
 function ImageCardActionRow({ data }: Props) {
   const features = useFeatureFlags();
-  const biggest = Math.max(
-    data.stats?.likeCountAllTime ?? 0,
-    data.stats?.heartCountAllTime ?? 0,
-    data.stats?.laughCountAllTime ?? 0,
-    data.stats?.cryCountAllTime ?? 0
-  );
-  const countLength = Math.min(countFormatter.format(biggest).length, MAX_COUNT_LENGTH);
   const hasMetaButton = features.imageCardInfoButton && data.hasMeta;
 
   return (
-    <div className="flex flex-col">
-      <div className={cardClasses.actionRow} data-count-len={Math.max(countLength, 5)}>
+    <div className={cardClasses.actions}>
+      <div className={cardClasses.actionRow}>
         <Reactions
-          className={clsx(cardClasses.reactions, cardClasses.reactionsFill)}
+          className={cardClasses.reactions}
           entityId={data.id}
           entityType="image"
           reactions={data.reactions}
@@ -105,7 +95,7 @@ function ImageCardActionRow({ data }: Props) {
             cryCount: data.stats?.cryCountAllTime,
           }}
           targetUserId={data.user.id}
-          abbreviate="container"
+          abbreviate
           disableBuzzTip
         />
       </div>
@@ -119,7 +109,7 @@ function ImageCardActionRow({ data }: Props) {
             className={clsx(cardClasses.reactions, 'flex items-center pl-0.5')}
           />
         )}
-        <div className="ml-auto flex items-center gap-1">
+        <div className={cardClasses.tipEnd}>
           {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
           {hasMetaButton && (
             <ImageMetaPopover2 imageId={data.id} type={data.type}>

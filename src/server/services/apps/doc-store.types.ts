@@ -198,7 +198,25 @@ export type AccountWipeResult = {
   namespaces: AccountWipeNamespaceResult[];
   /** Namespaces whose transaction failed and rolled back in full; a re-run retries them. */
   failures: { appId: string; ns: string; error: string }[];
+  /** The caller's `proceed` said no before a namespace: the rest were not reached. */
+  stopped: boolean;
 };
+
+/**
+ * A maintenance operation that needs a hand-applied datastore migration ran before it was
+ * applied (today: the app purge without `20261102120000_appdata_app_purge.sql`). Nothing was
+ * deleted; every call refuses alike until the migration runs, so callers stop rather than retry
+ * per item.
+ */
+export class DocStoreMigrationPendingError extends Error {
+  readonly migration: string;
+
+  constructor(migration: string, message: string) {
+    super(message);
+    this.name = 'DocStoreMigrationPendingError';
+    this.migration = migration;
+  }
+}
 
 export class DocStoreError extends Error {
   readonly code: DocStoreErrorCode;
