@@ -15,6 +15,6 @@ describe('Ideogram generator default', () => {
 
   it('the locked ecosystem default is not 4.0', () => {
     const settings = ecosystemSettings.find((s) => s.ecosystemId === ECO.Ideogram);
-    expect(settings?.defaults.model?.id).not.toBe(v40);
+    expect(settings?.defaults?.model?.id).not.toBe(v40);
   });
 });
