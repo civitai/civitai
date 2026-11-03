@@ -189,8 +189,8 @@ on:
   # and the quarantine run). On pull_request and push `inputs.only` is empty, so
   # it narrows nothing: what runs there is decided by each job's or step's own
   # event gate (`unit` skips pull requests without the `full-ci` label and the
-  # quarantine step skips all of them; ESLint is
-  # PR-only; typecheck runs where Tekton does not; drafts run ESLint only unless
+  # quarantine step skips all of them; ESLint is PR-only; typecheck runs where
+  # Tekton does not; drafts run ESLint only unless
   # labeled `full-ci`).
   # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
   # The app suites moved to apps.yml, which has its own dispatch.
@@ -535,10 +535,10 @@ jobs:
     # PRs merged as drafts or merged red let 12 errors in 9 files reach `main`
     # unmeasured (re-baselined in #7571), and every later PR inherited the red with
     # no way to tell which commit caused it. On `main` it renders red and blocks
-    # nothing. It usually lands on the commit that caused it: the job takes ~3 min,
-    # and a finished job keeps its result when the concurrency group cancels the run.
-    # A push within ~3 min of the previous one cancels the job first, and the error
-    # then shows on the newer commit's run.
+    # nothing. It lands on the first run that finishes after the bad commit: a verdict
+    # takes ~4-5 min from push, a newer push cancels the run in flight, and a finished
+    # job keeps its result. In a burst of pushes the error shows on the last commit of
+    # the burst, so check the cancelled runs before it.
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
     timeout-minutes: 30
     steps:
