@@ -8,6 +8,7 @@ import {
   useGenerationSidebarState,
 } from '~/components/ImageGeneration/GenerationSidebar';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
+import { PushOptInPrompt } from '~/components/Notifications/PushOptInPrompt';
 import { PushRegistrationManager } from '~/components/Notifications/PushRegistrationManager';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -34,6 +35,7 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
     <>
       <MetaPWA />
       <PushRegistrationManager />
+      <PushOptInPrompt blocked={!!isBanned || shouldOnboard} />
       <div className="flex flex-1 overflow-hidden">
         {showSidebar && <GenerationSidebar />}
         <ContainerProvider
