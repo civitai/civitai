@@ -183,6 +183,50 @@ export const storylineInviteNotifications = createNotificationProcessor({
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'storyline-collaborator-invited')
     `,
   },
+  /**
+   * Sent once chapter 1 exists, so a titled but empty story pings nobody: the watermark reads
+   * chapter 1's creation, not the storyline's. Keyed per storyline, so it fires once.
+   */
+  'storyline-spark-started': {
+    displayName: 'Someone started a story from your image',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.ownerUsername} started a story from your image: "${details.storylineTitle}"`,
+      url: storylineUrl(details.storylineId as number),
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          i."userId",
+          s.id "storylineId",
+          jsonb_build_object(
+            'storylineId', s.id,
+            'storylineTitle', s.title,
+            'imageId', i.id,
+            'ownerId', s."userId",
+            'ownerUsername', u.username
+          ) as "details"
+        FROM "Storyline" s
+        JOIN "StorylineChapter" c ON c."storylineId" = s.id AND c.depth = 0
+        JOIN "Image" i ON i.id = s."sparkImageId"
+        JOIN "User" u ON u.id = s."userId"
+        WHERE s."sparkImageId" IS NOT NULL
+          AND c."createdAt" > '${lastSent}'
+          AND c."removedAt" IS NULL
+          AND i."userId" <> s."userId"
+          AND NOT s."tosViolation"
+          AND NOT i."tosViolation"
+          AND ${notBlockedBetween('i."userId"', 's."userId"')}
+      )
+      SELECT
+        CONCAT('storyline-spark-started:',"storylineId") "key",
+        "userId",
+        'storyline-spark-started' "type",
+        details
+      FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'storyline-spark-started')
+    `,
+  },
 });
 
 /**

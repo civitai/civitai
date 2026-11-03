@@ -145,18 +145,26 @@ export function storylineChangedPrice(message: string) {
   return price === undefined ? null : Number(price);
 }
 
-export type StorylineChapterLevels = { rootNsfwLevel: number | null; chapterLevels: number[] };
+export type StorylineChapterLevels = {
+  rootNsfwLevel: number | null;
+  /** The spark image's level, null when it holds no floor. */
+  sparkNsfwLevel?: number | null;
+  chapterLevels: number[];
+};
 
 /**
- * What a ceiling does to a storyline that already has chapters. Chapter 1 sets the floor: the
- * server refuses a ceiling below it, so a story can never open on a hidden chapter. Any later
+ * What a ceiling does to a storyline that already has chapters. Chapter 1 and the spark image set
+ * the floor: the server refuses a ceiling below either, so a story can never open on a hidden
+ * chapter or lose its credited source. Any later
  * chapter above the ceiling is hidden from readers until it is raised again. Unrated chapters
  * (level 0) are not counted; they are hidden for being unrated, whatever the ceiling.
  */
 export function storylineCeilingImpact(ceiling: number, levels: StorylineChapterLevels) {
   const fits = (postLevel: number) => storylineLevelAllowed({ postLevel, maxNsfwLevel: ceiling });
   return {
-    allowed: levels.rootNsfwLevel == null || fits(levels.rootNsfwLevel),
+    allowed:
+      (levels.rootNsfwLevel == null || fits(levels.rootNsfwLevel)) &&
+      (levels.sparkNsfwLevel == null || fits(levels.sparkNsfwLevel)),
     hidden: levels.chapterLevels.filter((level) => level > 0 && !fits(level)).length,
   };
 }

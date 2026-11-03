@@ -5568,6 +5568,11 @@ export type Storyline = {
    * The banner's vertical focus, as a percentage (0 top to 100 bottom).
    */
   heroImagePosition: Generated<number>;
+  /**
+   * The image the storyline was started from, credited above chapter 1. Not a chapter. Shown only
+   * while the image is visible and within the storyline's ceiling, which may not go below it.
+   */
+  sparkImageId: number | null;
 };
 export type StorylineBranchChoice = {
   userId: number;

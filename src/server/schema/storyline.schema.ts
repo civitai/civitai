@@ -28,6 +28,8 @@ const picksSchema = {
 export const createStorylineSchema = z.object({
   /** Chapter 1, when the storyline starts from a post already published. Omitted, it starts empty. */
   postId: z.number().int().positive().optional(),
+  /** Someone's image the storyline starts from, credited above chapter 1. Not a chapter. */
+  sparkImageId: z.number().int().positive().optional(),
   title: titleSchema,
   maxNsfwLevel: ceilingSchema,
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),

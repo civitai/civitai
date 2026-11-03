@@ -23,6 +23,13 @@ import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
+import type { Viewer } from '~/server/services/storyline.service';
+import {
+  getViewerExcludedIds,
+  storyLevelSql,
+  storylineCeilingSql,
+  storylineRootVisibleSql,
+} from '~/server/services/storyline.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
@@ -1319,6 +1326,27 @@ const hostContentBand = (host: Prisma.Sql) => Prisma.sql`
         )`;
 
 /**
+ * The host's gallery is not switched off, resolved image, post, account as
+ * `resolvePlacementSpace` does. Off is the creator's remix opt-out, so storylines
+ * started from the host are not listed on it.
+ */
+const hostGalleryOpen = (host: Prisma.Sql) => Prisma.sql`
+        COALESCE(
+          (SELECT s.mode FROM "PlacementSpace" s
+            WHERE s.surface = ${SURFACE} AND s."entityType" = 'image'
+              AND s."entityId" = ${host}),
+          (SELECT s.mode FROM "PlacementSpace" s
+            JOIN "Image" hp ON hp.id = ${host}
+            WHERE s.surface = ${SURFACE} AND s."entityType" = 'post'
+              AND s."entityId" = hp."postId"),
+          (SELECT s.mode FROM "PlacementSpace" s
+            JOIN "Image" hu ON hu.id = ${host}
+            WHERE s.surface = ${SURFACE} AND s."entityType" = 'user'
+              AND s."entityId" = hu."userId"),
+          ${PLACEMENT_SURFACES[SURFACE].defaultMode}
+        ) <> 'off'`;
+
+/**
  * Which approved entries a viewer may see, as one fragment.
  *
  * 🔴 There is no second copy of this. It was written out by hand in the ordering
@@ -1336,7 +1364,10 @@ const hostContentBand = (host: Prisma.Sql) => Prisma.sql`
  * `p` the entry's post.
  */
 const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
-        AND pl.status = 'approved'
+        AND pl.status = 'approved'${postedImageIsVisible(levels, host)}`;
+
+/** `entryIsVisible` without the placement: also the gate on a spark storyline's preview images. */
+const postedImageIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         AND p."publishedAt" IS NOT NULL
         AND p."publishedAt" < now()
         -- 🔴 Published is not the same as public. A post inherits its
@@ -1449,7 +1480,23 @@ export type RemixGalleryCardEntry = {
   nsfwLevel: number;
 };
 
-export type RemixGalleryCardSummary = { count: number; entries: RemixGalleryCardEntry[] };
+export type SparkStorylineCardEntry = {
+  storylineId: number;
+  title: string;
+  username: string | null;
+  /** First images of its chapters this viewer may see on this host, chapter 1 first. */
+  previews: { url: string; type: MediaType; nsfwLevel: number }[];
+};
+
+export type RemixGalleryCardSummary = {
+  count: number;
+  entries: RemixGalleryCardEntry[];
+  /** Storylines started from the host. Absent where they were not asked for. */
+  storylines?: { count: number; entries: SparkStorylineCardEntry[] };
+};
+
+/** Chapter images a spark storyline's tile pages through. */
+export const SPARK_STORYLINE_PREVIEWS = 5;
 
 /**
  * Counts and preview thumbnails for a surface's worth of host images.
@@ -1476,11 +1523,127 @@ export type RemixGalleryCardSummary = { count: number; entries: RemixGalleryCard
 export async function getRemixGalleryCardSummaries({
   imageIds,
   browsingLevel,
+  storylinesFor,
+}: {
+  imageIds: number[];
+  browsingLevel: number;
+  /** Set to list the storylines started from each host, for this viewer. */
+  storylinesFor?: { viewer: Viewer };
+}): Promise<Record<number, RemixGalleryCardSummary>> {
+  if (!imageIds.length) return {};
+  const [summaries, storylines] = await Promise.all([
+    getRemixEntrySummaries({ imageIds, browsingLevel }),
+    storylinesFor
+      ? getSparkStorylineSummaries({ imageIds, browsingLevel, viewer: storylinesFor.viewer })
+      : undefined,
+  ]);
+  for (const [hostId, summary] of Object.entries(storylines ?? {}))
+    (summaries[Number(hostId)] ??= { count: 0, entries: [] }).storylines = summary;
+  return summaries;
+}
+
+/**
+ * Storylines started from each host, for its card: listed only while the host's
+ * gallery is open, the storyline is one this viewer would find in the feed, and
+ * neither side of the spark blocks the other. One statement, previews included.
+ */
+async function getSparkStorylineSummaries({
+  imageIds,
+  browsingLevel,
+  viewer,
+}: {
+  imageIds: number[];
+  browsingLevel: number;
+  viewer: Viewer;
+}) {
+  const levels = onlySelectableLevels(browsingLevel);
+  const ids = [...new Set(imageIds)];
+  const excluded = [...(await getViewerExcludedIds(viewer))];
+  const rows = await dbRead.$queryRaw<
+    (Omit<SparkStorylineCardEntry, 'previews'> & {
+      hostId: number;
+      total: bigint;
+      previews: SparkStorylineCardEntry['previews'];
+    })[]
+  >`
+    WITH listed AS (
+      SELECT st.id AS "storylineId", st.title, st."sparkImageId" AS "hostId", u.username,
+        row_number() OVER (PARTITION BY st."sparkImageId" ORDER BY st.id DESC) AS rn,
+        count(*) OVER (PARTITION BY st."sparkImageId") AS total
+      FROM "Storyline" st
+      JOIN "Image" h ON h.id = st."sparkImageId"
+      JOIN "User" u ON u.id = st."userId"
+      JOIN "StorylineChapter" rc ON rc."storylineId" = st.id AND rc.depth = 0
+      LEFT JOIN "Post" rp ON rp.id = rc."postId"
+      LEFT JOIN "User" ru ON ru.id = rp."userId"
+      WHERE st."sparkImageId" = ANY(${ids}::int[])
+        AND st."tosViolation" = false
+        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+        AND ${storylineRootVisibleSql}
+        AND (${storyLevelSql} & ${levels}::int) <> 0
+        AND st."userId" <> ALL(${excluded}::int[])
+        AND NOT EXISTS (
+          SELECT 1 FROM "UserEngagement" blk
+          WHERE blk.type = 'Block'
+            AND ((blk."userId" = h."userId" AND blk."targetUserId" = st."userId")
+              OR (blk."userId" = st."userId" AND blk."targetUserId" = h."userId"))
+        )
+        AND ${hostGalleryOpen(Prisma.raw('st."sparkImageId"'))}
+    )
+    SELECT l."storylineId", l.title, l."hostId", l.username, l.total, pv.previews
+    FROM listed l
+    JOIN "Storyline" st ON st.id = l."storylineId"
+    CROSS JOIN LATERAL (
+      SELECT COALESCE(jsonb_agg(
+        jsonb_build_object('url', f.url, 'type', f.type, 'nsfwLevel', f."nsfwLevel")
+        ORDER BY f.depth, f."chapterId"), '[]'::jsonb) AS previews
+      FROM (
+        SELECT * FROM (
+          SELECT DISTINCT ON (c.id) c.id AS "chapterId", c.depth, i.url, i.type, i."nsfwLevel"
+          FROM "StorylineChapter" c
+          JOIN "Post" p ON p.id = c."postId"
+          JOIN "User" cu ON cu.id = p."userId"
+          JOIN "Image" i ON i."postId" = p.id
+          WHERE c."storylineId" = st.id
+            AND c."removedAt" IS NULL
+            AND p."tosViolation" = false
+            AND cu."bannedAt" IS NULL AND cu."deletedAt" IS NULL
+            AND p."userId" <> ALL(${excluded}::int[])
+            AND (p."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0
+            AND (i."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0${postedImageIsVisible(
+    levels,
+    Prisma.raw('l."hostId"')
+  )}
+          ORDER BY c.id, i.index NULLS LAST, i.id
+        ) firsts
+        ORDER BY depth, "chapterId"
+        LIMIT ${SPARK_STORYLINE_PREVIEWS}
+      ) f
+    ) pv
+    WHERE l.rn <= ${REMIX_GALLERY_CARD_THUMBS}
+    ORDER BY l."hostId", l.rn
+  `;
+
+  const summaries: Record<number, NonNullable<RemixGalleryCardSummary['storylines']>> = {};
+  for (const row of rows) {
+    const summary = (summaries[row.hostId] ??= { count: Number(row.total), entries: [] });
+    summary.entries.push({
+      storylineId: row.storylineId,
+      title: row.title,
+      username: row.username,
+      previews: row.previews,
+    });
+  }
+  return summaries;
+}
+
+async function getRemixEntrySummaries({
+  imageIds,
+  browsingLevel,
 }: {
   imageIds: number[];
   browsingLevel: number;
 }): Promise<Record<number, RemixGalleryCardSummary>> {
-  if (!imageIds.length) return {};
   const levels = onlySelectableLevels(browsingLevel);
   const ids = [...new Set(imageIds)];
 

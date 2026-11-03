@@ -1782,6 +1782,7 @@ export interface Image {
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
 }
@@ -6698,6 +6699,8 @@ export interface Storyline {
   heroImageId: number | null;
   heroImage?: Image | null;
   heroImagePosition: number;
+  sparkImageId: number | null;
+  sparkImage?: Image | null;
   chapters?: StorylineChapter[];
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];

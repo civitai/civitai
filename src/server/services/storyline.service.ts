@@ -39,6 +39,7 @@ import {
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
+import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
@@ -108,7 +109,7 @@ import { effectivePlacementPrice, resolvePlacementSpace } from '~/shared/utils/p
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
-type Viewer = { id: number; isModerator?: boolean } | undefined;
+export type Viewer = { id: number; isModerator?: boolean } | undefined;
 
 const chapterPostSelect = {
   id: true,
@@ -312,7 +313,7 @@ async function getParticipatingStorylineIds(
  * Users whose work this viewer does not see: either side of a block, and anyone the viewer has
  * hidden.
  */
-async function getViewerExcludedIds(viewer: Viewer): Promise<ReadonlySet<number>> {
+export async function getViewerExcludedIds(viewer: Viewer): Promise<ReadonlySet<number>> {
   if (!viewer) return new Set();
   const [blocked, hidden] = await Promise.all([
     getBlockedPairIds(viewer.id),
@@ -366,7 +367,7 @@ function raiseNsfwLevel(level: number, floor: number) {
 }
 
 /** The SQL twin of the level `isStorylineOutsideLevel` judges, for the feed query. */
-const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l', 'lv.f'))}
+export const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l', 'lv.f'))}
   FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${
     NsfwLevel.Blocked
   }), st."maxNsfwLevel") AS l,
@@ -376,7 +377,7 @@ const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l',
  * `getStorylineRootHiddenReason` is null, in SQL: chapter 1 `rc` (joined), its post `rp` and that
  * post's author `ru` (both LEFT JOINed). Change both together.
  */
-const storylineRootVisibleSql = Prisma.sql`(rp.id IS NOT NULL AND rc."removedAt" IS NULL
+export const storylineRootVisibleSql = Prisma.sql`(rp.id IS NOT NULL AND rc."removedAt" IS NULL
   AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
   AND rp."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND rp."publishedAt" < now())`;
 
@@ -881,6 +882,7 @@ export const createRootChapter = (
  */
 export async function createStoryline({
   postId,
+  sparkImageId,
   title,
   maxNsfwLevel,
   whoCanContinue,
@@ -891,6 +893,7 @@ export async function createStoryline({
   isModerator,
 }: {
   postId?: number;
+  sparkImageId?: number;
   title: string;
   maxNsfwLevel: number;
   whoCanContinue?: StorylineWhoCanContinue;
@@ -902,13 +905,14 @@ export async function createStoryline({
 }) {
   if (!isStorylineCeilingLevel(maxNsfwLevel)) throw throwBadRequestError('Invalid maximum rating');
   await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
+  if (sparkImageId) await assertStorylineSpark({ imageId: sparkImageId, userId, maxNsfwLevel });
 
   let created: { id: number; rootChapterId: number | null };
   try {
     created = await dbWrite.$transaction(async (tx) => {
       if (postId) await assertPostCanBeChapter(tx, { postId, authorId: userId, maxNsfwLevel });
       const storyline = await tx.storyline.create({
-        data: { userId, title, maxNsfwLevel, whoCanContinue },
+        data: { userId, title, maxNsfwLevel, whoCanContinue, sparkImageId },
         select: { id: true },
       });
       const root = postId
@@ -936,6 +940,79 @@ export async function createStoryline({
   }
   scanEntityInBackground({ entityType: 'Storyline', entityId: created.id });
   return created;
+}
+
+export const STORYLINE_SPARK_REFUSALS = {
+  cannotUse: "This image can't start a story",
+  unrated: "This image hasn't been rated yet. Try again in a few minutes",
+  closed: "This image's creator isn't accepting stories from it",
+  belowSpark:
+    'The maximum rating cannot be below the rating of the image this story started from. Choose a higher rating',
+} as const;
+
+/**
+ * The image a storyline starts from must be one anyone may be shown, rated, outside a block with
+ * the starter, and from a creator whose remix gallery is open: a closed gallery is the creator's
+ * remix opt-out, and their own image is never closed to them.
+ */
+async function assertStorylineSpark({
+  imageId,
+  userId,
+  maxNsfwLevel,
+}: {
+  imageId: number;
+  userId: number;
+  maxNsfwLevel: number;
+}) {
+  const image = await dbWrite.image.findUnique({
+    where: { id: imageId },
+    select: {
+      userId: true,
+      nsfwLevel: true,
+      ingestion: true,
+      tosViolation: true,
+      needsReview: true,
+      minor: true,
+      poi: true,
+      acceptableMinor: true,
+      post: { select: { publishedAt: true, availability: true, tosViolation: true } },
+      user: { select: { bannedAt: true, deletedAt: true } },
+    },
+  });
+  const own = image?.userId === userId;
+  if (
+    !image ||
+    !image.post?.publishedAt ||
+    image.post.publishedAt > new Date() ||
+    image.post.tosViolation ||
+    (image.post.availability === 'Private' && !own) ||
+    image.tosViolation ||
+    image.needsReview != null ||
+    image.minor ||
+    image.poi ||
+    image.acceptableMinor ||
+    image.user.bannedAt ||
+    image.user.deletedAt ||
+    image.ingestion === 'Blocked' ||
+    image.ingestion === 'Error' ||
+    image.ingestion === 'NotFound' ||
+    image.nsfwLevel === NsfwLevel.Blocked
+  )
+    throw throwBadRequestError(STORYLINE_SPARK_REFUSALS.cannotUse);
+  if (image.ingestion !== 'Scanned' || !image.nsfwLevel)
+    throw throwBadRequestError(STORYLINE_SPARK_REFUSALS.unrated);
+  if (!storylineLevelAllowed({ postLevel: image.nsfwLevel, maxNsfwLevel }))
+    throw throwBadRequestError(STORYLINE_SPARK_REFUSALS.belowSpark);
+  if (own) return;
+  // Same refusal as an unusable image: a block is not disclosed.
+  if ((await getBlockedPairIds(userId)).includes(image.userId))
+    throw throwBadRequestError(STORYLINE_SPARK_REFUSALS.cannotUse);
+  const space = await resolvePlacementSpaceFor({
+    surface: 'remixGallery',
+    targetType: 'image',
+    targetId: imageId,
+  });
+  if (space.mode === 'off') throw throwBadRequestError(STORYLINE_SPARK_REFUSALS.closed);
 }
 
 export async function updateStoryline({
@@ -983,7 +1060,7 @@ export async function updateStoryline({
   if (maxNsfwLevel !== undefined) {
     if (!isStorylineCeilingLevel(maxNsfwLevel))
       throw throwBadRequestError('Invalid maximum rating');
-    if (maxNsfwLevel < current.maxNsfwLevel) await assertCeilingKeepsFirstChapter(id, maxNsfwLevel);
+    if (maxNsfwLevel < current.maxNsfwLevel) await assertCeilingKeepsFloor(id, maxNsfwLevel);
   }
   if (title !== undefined)
     await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
@@ -1812,23 +1889,32 @@ async function assertStorylinePicks(
  * accepted. Only lowering is checked, so an owner whose chapter 1 was re-rated upwards can still
  * raise the ceiling towards it.
  */
-async function assertCeilingKeepsFirstChapter(storylineId: number, maxNsfwLevel: number) {
+async function assertCeilingKeepsFloor(storylineId: number, maxNsfwLevel: number) {
   // The primary: the write that follows must not be judged on a replica's older rating.
-  const root = await dbWrite.storylineChapter.findFirst({
-    where: { storylineId, depth: 0 },
-    select: { post: { select: { nsfwLevel: true, tosViolation: true } } },
-  });
+  const [root, storyline] = await Promise.all([
+    dbWrite.storylineChapter.findFirst({
+      where: { storylineId, depth: 0 },
+      select: { post: { select: { nsfwLevel: true, tosViolation: true } } },
+    }),
+    dbWrite.storyline.findUnique({
+      where: { id: storylineId },
+      select: { sparkImage: { select: { nsfwLevel: true, tosViolation: true } } },
+    }),
+  ]);
   const floor = firstChapterFloor(root?.post);
   if (floor !== null && floor > maxNsfwLevel)
     throw throwBadRequestError(
       "The maximum rating cannot be below your first chapter's rating. Choose a higher rating"
     );
+  const sparkFloor = firstChapterFloor(storyline?.sparkImage);
+  if (sparkFloor !== null && sparkFloor > maxNsfwLevel)
+    throw throwBadRequestError(STORYLINE_SPARK_REFUSALS.belowSpark);
 }
 
 /**
- * The rating chapter 1 holds the ceiling to: its most severe image. Null when there is nothing to
- * keep, because the post is gone, taken down, not yet rated or rated Blocked. Shared by the floor
- * and the owner's settings read, so the two cannot disagree.
+ * The rating chapter 1's post, or the spark image, holds the ceiling to: its most severe level.
+ * Null when there is nothing to keep, because it is gone, taken down, not yet rated or rated
+ * Blocked. Shared by the floor and the owner's settings read, so the two cannot disagree.
  */
 export function firstChapterFloor(
   post: { nsfwLevel: number; tosViolation: boolean } | null | undefined
@@ -2715,6 +2801,7 @@ export async function getStoryline({
     select: {
       ...storylineReadSelect,
       ...storylinePicksSelect,
+      sparkImageId: true,
       tosViolationByScan: true,
       tosViolationByModerator: true,
       user: { select: castUserSelect },
@@ -2759,7 +2846,7 @@ export async function getStoryline({
     AND (p."nsfwLevel" & ${browsingLevel}::int) <> 0
     AND (p."nsfwLevel" & ~${ceilingMask}::int) = 0`;
   const castIds = [storyline.userId, ...collaboratorIds];
-  const [counts, authors, castCounts, mainPath, chosen] = await Promise.all([
+  const [counts, authors, castCounts, mainPath, chosen, spark] = await Promise.all([
     dbRead.$queryRaw<{ chapters: number; contributors: number }[]>`
       SELECT COUNT(*)::int AS chapters,
         COUNT(DISTINCT c."userId") FILTER (WHERE p.id IS NOT NULL AND ${visibleChapter})::int
@@ -2796,6 +2883,7 @@ export async function getStoryline({
       { storylineId: id, imageId: storyline.heroImageId },
       { storylineId: id, imageId: storyline.coverImageId },
     ]),
+    getStorylineSpark(gate, id, storyline.sparkImageId),
   ]);
   const contributorUsers = authors.length
     ? await dbRead.user.findMany({
@@ -2824,6 +2912,7 @@ export async function getStoryline({
     user,
     coverImageId,
     heroImageId,
+    sparkImageId: _sparkImageId,
     minorByScan,
     // The title's ratings decide who is shown the story; readers get the decision, not them.
     nsfwLevel: _nsfwLevel,
@@ -2852,6 +2941,7 @@ export async function getStoryline({
     // A pick that is not showing, usually an upload whose scan has not cleared it yet.
     coverPickHidden: isOwnerView && coverImageId != null && !chosen(id, coverImageId),
     heroPickHidden: isOwnerView && heroImageId != null && !banner,
+    spark,
     titleAppealable,
     titleAppeal,
     rootChapterId: root?.id ?? null,
@@ -3167,7 +3257,7 @@ export async function getStorylineChapterLevels({
 }) {
   const storyline = await getOwnedStoryline({ storylineId: id, userId, isModerator });
   const owner = { id: storyline.userId };
-  const [rows, blockedUserIds] = await Promise.all([
+  const [rows, blockedUserIds, spark] = await Promise.all([
     dbRead.$queryRaw<
       {
         depth: number;
@@ -3189,8 +3279,13 @@ export async function getStorylineChapterLevels({
       ORDER BY c.depth, c.id
     `,
     getViewerExcludedIds(owner),
+    dbRead.storyline.findUnique({
+      where: { id },
+      select: { sparkImage: { select: { nsfwLevel: true, tosViolation: true } } },
+    }),
   ]);
   const root = rows.find((row) => row.depth === 0);
+  const sparkImage = spark?.sparkImage;
   // Shown to the owner whatever the ceiling: judged at the highest ceiling and every level, so
   // only the reasons a ceiling cannot change are applied.
   const shownToOwner = (row: (typeof rows)[number]) =>
@@ -3204,6 +3299,8 @@ export async function getStorylineChapterLevels({
     });
   return {
     rootNsfwLevel: root && firstChapterFloor(root) !== null ? root.nsfwLevel : null,
+    sparkNsfwLevel:
+      sparkImage && firstChapterFloor(sparkImage) !== null ? sparkImage.nsfwLevel : null,
     chapterLevels: rows
       .filter((row) => row.depth > 0 && shownToOwner(row))
       .map((row) => row.nsfwLevel),
@@ -3885,6 +3982,33 @@ async function withFirstImages<T extends { post: { id: number } | null }>(
     ...row,
     firstImage: row.post ? images.get(row.post.id) ?? null : null,
   }));
+}
+
+/**
+ * The image a storyline started from, with its creator, when this reader may be shown it: by the
+ * chapter-image gate (so never above the story's ceiling), from a published post, by an account in
+ * good standing outside a block with the reader. Otherwise null, and the story reads without it.
+ */
+async function getStorylineSpark(
+  gate: StorylineImageGateSource,
+  storylineId: number,
+  sparkImageId: number | null
+) {
+  if (!sparkImageId) return null;
+  const resolved = await gate();
+  const [row] = await dbRead.$queryRaw<(StorylineFeedCover & { username: string | null })[]>`
+    SELECT ${storylineImageColumns}, u.username
+    FROM "Storyline" st
+    JOIN "Image" i ON i.id = st."sparkImageId"
+    JOIN "Post" p ON p.id = i."postId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE st.id = ${storylineId}
+      AND p."publishedAt" < now() AND p."tosViolation" = false
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      AND ${storylineImageVisible(resolved)}
+  `;
+  if (!row || resolved.blockedUserIds.has(row.userId)) return null;
+  return { image: toStorylineImage(row), user: { id: row.userId, username: row.username } };
 }
 
 /**

@@ -2272,6 +2272,7 @@ model Image {
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
+  storylineSparks        Storyline[]            @relation("StorylineSparkImage")
   storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
 
@@ -10502,6 +10503,10 @@ model Storyline {
   heroImage         Image? @relation("StorylineHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
   /// The banner's vertical focus, as a percentage (0 top to 100 bottom).
   heroImagePosition Int    @default(50)
+  /// The image the storyline was started from, credited above chapter 1. Not a chapter. Shown only
+  /// while the image is visible and within the storyline's ceiling, which may not go below it.
+  sparkImageId      Int?
+  sparkImage        Image? @relation("StorylineSparkImage", fields: [sparkImageId], references: [id], onDelete: SetNull)
 
   chapters      StorylineChapter[]
   pendingChapters StorylinePendingChapter[]
@@ -10514,6 +10519,7 @@ model Storyline {
   @@index([userId])
   @@index([coverImageId])
   @@index([heroImageId])
+  @@index([sparkImageId])
 }
 
 /// A chapter of a storyline: one post. The tree lives in `StorylineChapterEdge`, not
