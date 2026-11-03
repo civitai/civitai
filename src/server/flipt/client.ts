@@ -421,6 +421,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag state (enabled: false is fine) before this code serves traffic, for the reason given at
   // KYSELY_IMAGE_REACTIONS.
   CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
+
+  // On: the internal image-delivery lookup (`image-delivery.service.ts`) sends its statement
+  // through the raw pg pools (`pgDbRead`, falling back to `pgDbWrite` on a replica error) instead
+  // of Prisma's `dbRead`/`dbWrite`. Off (and unknown, or a client that has not initialised): Prisma,
+  // as before. Same statement, parameters, row and fallback trigger either way.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, and read at most once per 5s per process
+  // (`createCachedFlagGate`), so `enabled` IS the switch. The key must exist in flag state
+  // (enabled: false is fine) before this code serves traffic.
+  IMAGE_DELIVERY_PG_LOOKUP = 'image-delivery-pg-lookup',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

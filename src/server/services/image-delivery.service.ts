@@ -1,10 +1,19 @@
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { AugmentedPool } from '~/server/db/db-helpers';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import {
+  ensureFliptInitialized,
+  FLIPT_FEATURE_FLAGS,
+  getFliptClientSync,
+  isFliptSync,
+} from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordImageDeliveryBustFailure } from '~/server/prom/image-delivery.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { createCachedFlagGate } from '~/server/utils/otel-withspan-gate';
 import { Prisma } from '@prisma/client';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
@@ -72,11 +81,15 @@ const deliverableSource = Prisma.sql`NOT (
   ingestion = ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus" AND NOT "hideMeta"
 )`;
 
-// Origin read, with the dbRead -> dbWrite (primary) fallback so a read-replica error still
-// resolves. Several rows can share a url (a copied image keeps its source's url); rows sharing a
-// url resolve to the most restrictive setting, hence the ORDER BY.
-const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
-  const [image] = await dbRead.$queryRaw<ImageDeliveryMetadataRow[]>`
+// The origin statement, as two interchangeable readers of the same rows: Prisma (switch off) and the
+// raw pg pools (switch on, IMAGE_DELIVERY_PG_LOOKUP). Each takes the url and resolves the raw rows, or
+// rejects on a database error. Several rows can share a url (a copied image keeps its source's url);
+// rows sharing a url resolve to the most restrictive setting, hence the ORDER BY.
+type ImageDeliveryRowsReader = (url: string) => Promise<ImageDeliveryMetadataRow[]>;
+type ImageDeliveryReaders = { read: ImageDeliveryRowsReader; write: ImageDeliveryRowsReader };
+
+const prismaReaders: ImageDeliveryReaders = {
+  read: (url) => dbRead.$queryRaw<ImageDeliveryMetadataRow[]>`
       SELECT
         id,
         url,
@@ -88,9 +101,8 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
         AND ${deliverableSource}
       ORDER BY "hideMeta" DESC
       LIMIT 1
-    `.catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
-    return dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>`
+    `,
+  write: (url) => dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>`
         SELECT
           id,
           url,
@@ -102,7 +114,67 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
           AND ${deliverableSource}
         ORDER BY "hideMeta" DESC
         LIMIT 1
-      `;
+      `,
+};
+
+// The statement Prisma sends for the template above (`Prisma.sql(...).text`, whitespace aside), with
+// the same two parameters in the same order: the url, then the NotFound ingestion status that
+// `deliverableSource` binds. `image-delivery-pg-lookup.test.ts` pins the two against each other.
+export const IMAGE_DELIVERY_METADATA_PG_SQL = `
+      SELECT
+        id,
+        url,
+        "hideMeta",
+        type,
+        "mimeType"
+      FROM "Image"
+      WHERE url = $1
+        AND NOT (
+  ingestion = $2::"ImageIngestionStatus" AND NOT "hideMeta"
+)
+      ORDER BY "hideMeta" DESC
+      LIMIT 1
+    `;
+
+const pgRows = (pool: AugmentedPool, url: string) =>
+  pool
+    .query<ImageDeliveryMetadataRow>(IMAGE_DELIVERY_METADATA_PG_SQL, [
+      url,
+      ImageIngestionStatus.NotFound,
+    ])
+    .then((result) => result.rows);
+
+const pgReaders: ImageDeliveryReaders = {
+  read: (url) => pgRows(pgDbRead, url),
+  write: (url) => pgRows(pgDbWrite, url),
+};
+
+// The switch, read at most once per 5s per process, so a request pays a clock read and a compare,
+// never a Flipt evaluation. A missing key, a throw and a client that has not initialised all read as
+// off (Prisma). `isFliptSync` cannot initialise the client itself, so an uninitialised one is
+// started here, detached; until it answers, the lookup stays on Prisma.
+const readPgLookupSwitch = () => {
+  const on = isFliptSync(FLIPT_FEATURE_FLAGS.IMAGE_DELIVERY_PG_LOOKUP);
+  if (on === null && !getFliptClientSync()) void ensureFliptInitialized().catch(() => undefined);
+  return on;
+};
+let pgLookupGate = createCachedFlagGate(readPgLookupSwitch);
+
+/** Tests only: forget the cached switch read so the next lookup re-reads Flipt. */
+export const resetImageDeliveryPgLookupGateForTests = () => {
+  pgLookupGate = createCachedFlagGate(readPgLookupSwitch);
+};
+
+const getImageDeliveryReaders = (): ImageDeliveryReaders =>
+  pgLookupGate() ? pgReaders : prismaReaders;
+
+// Origin read, with the read -> write (primary) fallback so a read-replica error still resolves.
+// Only an error falls back: an empty result from the replica is a not-found, as it always was.
+const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
+  const readers = getImageDeliveryReaders();
+  const [image] = await readers.read(url).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
+    return readers.write(url);
   });
 
   if (!image) return null;
