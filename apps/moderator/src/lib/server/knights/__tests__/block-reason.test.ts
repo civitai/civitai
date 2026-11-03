@@ -50,4 +50,8 @@ describe('consensusBlockReason', () => {
     expect(consensusBlockReason([vote(1, null, 1), vote(2, null, 2)])).toBeNull();
     expect(consensusBlockReason([vote(1, 'Invented', 1)])).toBeNull();
   });
+
+  it('ignores a reason that is only an inherited property name', () => {
+    expect(consensusBlockReason([vote(1, 'constructor', 1), vote(2, 'toString', 2)])).toBeNull();
+  });
 });

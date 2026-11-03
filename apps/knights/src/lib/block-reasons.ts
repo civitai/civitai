@@ -1,7 +1,12 @@
 import { NsfwLevel } from '@civitai/shared';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 
 /** The answer value of the rating question's Blocked option. */
 export const BLOCKED_ANSWER = String(NsfwLevel.Blocked);
+
+/** Whether a question's Blocked answer carries a reason: only the rating question does, as `insertVote` enforces. */
+export const asksBlockReason = (questionKey: string | undefined) =>
+  questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
 
 /** Why a Knight blocks an image: the original game's `NewOrderDamnedReason` names and labels, in its order. */
 export const BLOCK_REASONS = [

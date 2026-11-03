@@ -18,7 +18,7 @@
   import { heartsLeft, watchStrip } from '$lib/chrome';
   import { recapLines } from './recap-text';
   import { answerForKey, answerForKeyPress } from './keys';
-  import { BLOCKED_ANSWER, BLOCK_REASONS, type BlockReason } from '$lib/block-reasons';
+  import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -360,7 +360,7 @@
         <form class="answers" method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
           <input type="hidden" name="item" value={data.item.id} />
           {#each data.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed, !yesNo)}
+            {@render pill(option, index, imageFailed, asksBlockReason(data.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm}>
