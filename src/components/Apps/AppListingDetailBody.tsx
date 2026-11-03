@@ -426,6 +426,9 @@ function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
  * standard pairing. The descriptive fallback stays for a captionless shot, where
  * nothing else names the tile.
  */
+/** Tall screenshots would otherwise run the tile as tall as the image; the viewer shows them full size. */
+const SCREENSHOT_MAX_HEIGHT_PX = 360;
+
 function ScreenshotTile({
   shot,
   name,
@@ -475,7 +478,13 @@ function ScreenshotTile({
           alt={shot.caption ? '' : `${name} screenshot ${index + 1}`}
           loading="lazy"
           onError={onBroken}
-          style={{ width: '100%', height: 'auto', display: 'block' }}
+          style={{
+            width: '100%',
+            height: 'auto',
+            maxHeight: SCREENSHOT_MAX_HEIGHT_PX,
+            objectFit: 'contain',
+            display: 'block',
+          }}
         />
         {shot.caption && (
           <Text size="xs" c="dimmed" p="xs" lineClamp={2}>
@@ -756,10 +765,19 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
   const rows = buildListingDetailRows(detail, { preview, formatDate: (iso) => formatDate(iso) });
   return (
     <Accordion
-      variant="contained"
+      variant="separated"
       defaultValue="listing-details"
       data-testid="apps-listing-details-accordion"
-      styles={{ content: { padding: 0 } }}
+      styles={(theme) => ({
+        content: { padding: 0 },
+        label: { padding: 0 },
+        item: {
+          overflow: 'hidden',
+          borderColor: 'light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+          boxShadow: theme.shadows.sm,
+        },
+        control: { padding: theme.spacing.sm, gap: theme.spacing.md },
+      })}
     >
       <Accordion.Item value="listing-details">
         <Accordion.Control>Details</Accordion.Control>
