@@ -82,6 +82,7 @@ describe('the live-author short-circuit', () => {
     // cache working, not a spy that sees nothing.
     expect(liveAuthorReads()).toHaveLength(1);
     expect(dbCallCount()).toBe(1);
+    expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'empty_set' });
 
     vi.clearAllMocks();
     const page = await getFollowedAnnouncements({ userId: VIEWER });
@@ -105,6 +106,7 @@ describe('the live-author short-circuit', () => {
       targetUserId: { in: [AUTHOR, OTHER_AUTHOR] },
     });
     expect(feedQueries()).toHaveLength(0);
+    expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'no_follows' });
   });
 
   it('narrows the feed query to the intersection and keeps every viewer predicate', async () => {
@@ -154,7 +156,7 @@ describe('the live-author short-circuit', () => {
     );
   });
 
-  it('records the size of the set it built, and no fallback on the narrowed path', async () => {
+  it('records the narrowed decision and the set size it built, and no fallback', async () => {
     liveAuthorRows = [{ userId: AUTHOR }, { userId: OTHER_AUTHOR }, { userId: AUTHOR }];
     follows = [{ targetUserId: AUTHOR }];
 
@@ -164,6 +166,7 @@ describe('the live-author short-circuit', () => {
     expect(dbMock.dbRead.userEngagement.findMany).toHaveBeenCalledTimes(1);
     // The gauge is how an ON window sees the set's size. Deduped: three rows, two authors.
     expect(creatorFeedLiveAuthorsGauge.set).toHaveBeenCalledWith({ domain: 'any' }, 2);
+    expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'narrowed' });
     // Negative control for the fallback test: a narrowing that worked logs nothing.
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });

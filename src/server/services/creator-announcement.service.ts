@@ -154,9 +154,11 @@ export async function getCreatorAnnouncements({
       // other one. Without this the profile shows both, which is a browsing-boundary
       // leak rather than a double-render.
       ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
-      // The shared live window, as an AND member rather than spread: a spread brings its own
-      // `AND` key, which any later `AND` here would silently replace.
-      ...(includeHidden ? {} : { AND: [activeAnnouncementWhere(now)] }),
+      // The shared live window, as a member of a literal `AND` key rather than spread: the
+      // helper carries its own `AND`, and a spread followed by another `AND` here would
+      // silently drop the window. As a literal key, a second `AND` is TS1117 and does not
+      // compile. `includeHidden` gets the empty conjunction, which Prisma treats as no filter.
+      AND: includeHidden ? [] : [activeAnnouncementWhere(now)],
     },
     select: creatorAnnouncementSelect,
     orderBy: [{ startsAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
