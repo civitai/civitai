@@ -187,8 +187,8 @@ async function recordPrediction(args: {
     currentNsfwLevel: shadow.currentNsfwLevel,
     wouldNsfwLevel: args.would,
   };
-  // The submit path is the one the app may call: it files under the pipeline family, prefixes the
-  // source ref with `pipeline:`, and applies the same image exclusion the scan-label producers use.
+  // Via submit_predictions, so the row files under family `pipeline` with a `pipeline:`-prefixed
+  // sourceRef, not `xguard_prompt`.
   const rows = await dbWrite.$queryRaw<{ status: string; error: string | null }[]>`
     SELECT s.status, s.error
     FROM "Image" i

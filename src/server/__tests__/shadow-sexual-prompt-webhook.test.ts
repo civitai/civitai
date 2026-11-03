@@ -106,6 +106,20 @@ async function deliver(
 }
 
 const predictionValues = () => dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1) as unknown[];
+// The submitted item, key by key: each bound value paired with the jsonb key written before it.
+const predictionItem = () => {
+  const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+  const item: Record<string, unknown> = {};
+  values.forEach((value, i) => {
+    const key = /'(\w+)',\s*$/.exec(strings[i])?.[1];
+    if (key) item[key] = value;
+  });
+  return item;
+};
+const predictionKeys = () => {
+  const [strings] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[]];
+  return [...strings.join('').matchAll(/^\s*'(\w+)',/gm)].map((m) => m[1]);
+};
 const nothingWritten = () => {
   expect(insert).not.toHaveBeenCalled();
   expect(calledHybridNodes(['dbRead', 'dbWrite'])).toEqual([]);
@@ -128,6 +142,33 @@ describe('text-moderation-result: shadow sexual-prompt verdicts', () => {
     expect(calledHybridNodes(['dbRead', 'dbWrite'])).toEqual(['dbWrite.$queryRaw']);
     const [sql] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[]];
     expect(sql.join('?')).toContain('label_store.submit_predictions(');
+    // The keys submit_prediction reads; a misspelt one arrives as NULL and the item is refused.
+    expect(predictionKeys()).toEqual([
+      'subjectType',
+      'subjectId',
+      'contentHash',
+      'question',
+      'value',
+      'modelRef',
+      'sourceRef',
+      'predictedAt',
+      'questionVersion',
+      'confidence',
+      'scores',
+      'versions',
+      'inputHash',
+      'detail',
+    ]);
+    expect(predictionItem()).toMatchObject({
+      subjectId: '9001',
+      question: 'image.prompt_sexual',
+      value: 'sexual',
+      modelRef: 'xguard-prompt@p1',
+      sourceRef: 'ShadowSexualPrompt:wf-shadow',
+      confidence: 0.91,
+      inputHash: PROMPT_HASH,
+    });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
     expect(predictionValues()).toEqual(
       expect.arrayContaining([
         'image.prompt_sexual',

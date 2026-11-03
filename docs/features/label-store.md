@@ -46,9 +46,9 @@ excluded when it, or another image sharing its stored file, matches. Deleting an
 image out too. The same job excludes a `model_text` subject as `removed` once its model is deleted (soft or hard),
 so the owner's text goes and the judgements stay; in batches.
 
-The functions belong to the owner of the site tables. App code may call only `record_label`,
+The functions belong to the owner of the site tables. App code calls only `record_label`,
 `submit_predictions`, `attach_bytes`, `exclude`, `person_hash` and `text_hash`; the
-`no-ungranted-label-store-routine` guard holds `src/` to that list.
+`no-ungranted-label-store-routine` guard holds it to that list.
 
 Pass people as user ids (`p_labeller_user_id`, `p_owner_user_id`); the store hashes them. Give every
 call a `p_source_ref` that is unique to the source row: a retry with the same ref records nothing.
