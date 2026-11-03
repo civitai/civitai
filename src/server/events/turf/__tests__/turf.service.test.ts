@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as PlacementModeration from '~/server/services/placement-moderation.service';
 
 const START = new Date('2026-11-01T00:00:00Z');
 const EVENT = {
@@ -24,7 +25,7 @@ const EVENT = {
 vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => [EVENT] }));
 const assertCanPlace = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('~/server/services/placement-moderation.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/placement-moderation.service')>()),
+  ...(await importOriginal<typeof PlacementModeration>()),
   assertCanPlace,
 }));
 
