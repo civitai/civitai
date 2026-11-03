@@ -142,7 +142,7 @@ export function buildReadout(
   });
 
   const controlArm = byArm.get(control) ?? [];
-  const role = (m: MetricKey) =>
+  const role = (m: MetricKey): Readout['comparisons'][number]['role'] =>
     m === plan.primary ? 'primary' : plan.guardrail.includes(m) ? 'guardrail' : 'secondary';
   const comparisons = variants
     .filter((v) => v !== control)
