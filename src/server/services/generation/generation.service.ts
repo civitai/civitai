@@ -91,6 +91,7 @@ import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
+  isBaseModelGenerationDisabled,
   ecosystemById,
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
@@ -1178,6 +1179,8 @@ export function getResourceCanGenerate({
   if (resource.usageControl === 'InternalGeneration' && !user.isModerator) {
     canGenerate = false;
   }
+
+  if (isBaseModelGenerationDisabled(resource.baseModel)) canGenerate = false;
 
   if (canGenerate) {
     const baseModel = baseModelByName.get(resource.baseModel);

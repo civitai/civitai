@@ -2463,6 +2463,9 @@ export const supportOverrides: SupportOverride[] = [
   // SD3 group - no training (redundant since all SD3 models are disabled, but kept for documentation)
   // { ecosystemId: ECO.SD3, supportType: 'training', enabled: false },
   // { ecosystemId: ECO.SD35M, supportType: 'training', enabled: false },
+  // Not licensed for on-site generation. Ideogram 4.5 shares the ecosystem but is licensed
+  // separately, so this is per base model, never per ecosystem.
+  { baseModelId: BM.Ideogram, supportType: 'generation', disabled: true },
 ];
 
 // =============================================================================
@@ -4239,6 +4242,20 @@ export function isModelSupported(
   }
 
   return true;
+}
+
+/**
+ * A base model whose generation is switched off by name, whatever the resource type. Narrower than
+ * `isModelSupported`: it reads only explicit disables, so paths that skip the model-type check (a
+ * LoRA attached to a generation) can apply it without refusing types they support by design.
+ */
+export function isBaseModelGenerationDisabled(baseModelName: string): boolean {
+  const baseModel = baseModelByName.get(baseModelName);
+  if (!baseModel) return false;
+  if (baseModel.disabled) return true;
+  return supportOverrides.some(
+    (o) => o.baseModelId === baseModel.id && o.supportType === 'generation' && o.disabled
+  );
 }
 
 /**
