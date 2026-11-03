@@ -12,6 +12,13 @@
 -- Every backfilled row was created before invitations shipped on 2026-10-30. The cutoff keeps out
 -- any invitation accepted later in the same millisecond it was made. Re-running changes nothing:
 -- the rows re-asked here now have a later "createdAt".
+-- First, invitations already pending that the build before the invite notification made on
+-- 2026-10-30: nobody was ever told of them. Ahead of the statement below, so it does not also catch
+-- the rows that one sets to pending. A pending row that did get its invite is sent nothing new.
+UPDATE "StorylineCollaborator"
+SET "createdAt" = (now() AT TIME ZONE 'UTC') + interval '1 hour'
+WHERE "acceptedAt" IS NULL AND "createdAt" < '2026-10-31';
+
 UPDATE "StorylineCollaborator"
 SET "acceptedAt" = NULL, "createdAt" = (now() AT TIME ZONE 'UTC') + interval '1 hour'
 WHERE "acceptedAt" = "createdAt" AND "createdAt" < '2026-10-30';
