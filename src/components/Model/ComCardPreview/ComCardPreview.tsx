@@ -25,7 +25,8 @@ export function RedCardLink({ path }: { path: string }) {
   return (
     <Group gap={4}>
       <Text size="xs" c="dimmed">
-        This is the civitai.com card.
+        You&apos;re seeing this model&apos;s civitai.com card: its title and description differ from
+        the original on civitai.red.
       </Text>
       <Anchor size="xs" href={syncAccount(`//${serverDomains.red}${path}`)}>
         See the civitai.red card

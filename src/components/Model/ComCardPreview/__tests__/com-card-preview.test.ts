@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canLinkToRedCard,
   canPreviewComCard,
+  getCardViewer,
   withComCard,
 } from '~/components/Model/ComCardPreview/com-card-preview';
 
@@ -21,6 +22,21 @@ describe('civitai.com card preview', () => {
     expect(canLinkToRedCard(ownerOrMod, 'Com title')).toBe(false);
     expect(canPreviewComCard({ ...ownerOrMod, onComSite: true }, 'Com title')).toBe(false);
     expect(canLinkToRedCard({ ...ownerOrMod, onComSite: true }, 'Com title')).toBe(true);
+  });
+
+  it('gives a moderator on civitai.com the link to the civitai.red card', () => {
+    const mod = getCardViewer({ id: 20, isModerator: true }, 10, true);
+    expect(canLinkToRedCard(mod, 'Com title')).toBe(true);
+    expect(
+      canPreviewComCard(getCardViewer({ id: 20, isModerator: true }, 10, false), 'Com title')
+    ).toBe(true);
+  });
+
+  it('treats only the owner and moderators as owner-or-moderator', () => {
+    expect(getCardViewer({ id: 10 }, 10, true).isOwnerOrModerator).toBe(true);
+    expect(getCardViewer({ id: 30, isModerator: false }, 10, true).isOwnerOrModerator).toBe(false);
+    expect(getCardViewer(null, 10, true).isOwnerOrModerator).toBe(false);
+    expect(getCardViewer({ id: 30 }, undefined, false).isOwnerOrModerator).toBe(false);
   });
 
   it('offers neither on a model with no civitai.com card', () => {

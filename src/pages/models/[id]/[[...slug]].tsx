@@ -123,6 +123,7 @@ import {
 import {
   canLinkToRedCard,
   canPreviewComCard,
+  getCardViewer,
   withComCard,
 } from '~/components/Model/ComCardPreview/com-card-preview';
 import {
@@ -466,11 +467,7 @@ export default function ModelDetailsV2({
     id,
     excludeTrainingData: true,
   });
-  const cardViewer = {
-    isOwnerOrModerator:
-      !!currentUser && (currentUser.isModerator || storedModel?.user.id === currentUser.id),
-    onComSite: !!features.isGreen,
-  };
+  const cardViewer = getCardViewer(currentUser, storedModel?.user.id, !!features.isGreen);
   // Keyed on the model id: the page stays mounted across in-app links to another model.
   const [previewedModelId, setPreviewedModelId] = useState<number>();
   const previewComCard = previewedModelId === id;

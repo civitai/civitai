@@ -1,5 +1,16 @@
 type CardViewer = { isOwnerOrModerator: boolean; onComSite: boolean };
 
+export function getCardViewer(
+  user: { id: number; isModerator?: boolean } | null | undefined,
+  ownerId: number | undefined,
+  onComSite: boolean
+): CardViewer {
+  return {
+    isOwnerOrModerator: !!user && (!!user.isModerator || user.id === ownerId),
+    onComSite,
+  };
+}
+
 export function canPreviewComCard(
   { isOwnerOrModerator, onComSite }: CardViewer,
   sfwName: string | null | undefined
