@@ -61,6 +61,8 @@
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
@@ -474,6 +476,7 @@
         return {
           cost: q.cost,
           eta: q.steps ? Math.max(1, Math.round((q.steps / 2000) * 18)) : null,
+          matureCount: q.matureCount ?? 0,
         };
       } catch (err) {
         quoteError = err instanceof Error ? err.message : 'Could not price this';
@@ -483,9 +486,28 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
+  // A mature dataset's continuation is charged in Yellow (beyond a member's Blue) only once the user
+  // ticks this; the server refuses the submit without it. Changing the price or epochs un-ticks it.
+  const furtherMature = $derived(quote?.matureCount ?? 0);
+  const furtherSpend = $derived(
+    quote?.cost != null
+      ? nonBlueSpend(quote.cost, buzzMode.value, {
+          mature: furtherMature > 0,
+          member: hostConfig().isPaidMember === true,
+        })
+      : null
+  );
+  // The run id is in the key so a tick never carries over to another run with the same price.
+  const furtherAckKey = $derived.by(() => {
+    const key = matureAckKey(furtherSpend?.amount ?? quote?.cost, furtherMature);
+    return key && `${workflowIdKey}:${key}`;
+  });
+  let furtherAckedFor = $state<string | null>(null);
+  const furtherAckMissing = $derived(matureAckMissing(furtherAckedFor, furtherAckKey));
+
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
-    if (!publishTarget || continuing || quote == null) return;
+    if (!publishTarget || continuing || quote == null || furtherAckMissing) return;
     continuing = true;
     continueError = '';
     try {
@@ -493,7 +515,8 @@
         d.workflowId,
         publishTarget.number,
         Number(furtherEpochs) || 5,
-        buzzMode.currencies
+        buzzMode.currencies,
+        furtherAckKey !== null
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
@@ -566,6 +589,7 @@
     archiveError = '';
     archiveParts = [];
     showLineage = false;
+    furtherAckedFor = null;
   });
 </script>
 
@@ -1171,7 +1195,10 @@
                 class="w-20"
               />
               {#if confirming}
-                <Button onclick={doTrainFurther} disabled={continuing || quote == null}>
+                <Button
+                  onclick={doTrainFurther}
+                  disabled={continuing || quote == null || furtherAckMissing}
+                >
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
                         >— <IconBoltFilled size={13} stroke={2} class="mx-0.5 inline" />{quote.cost.toLocaleString()}</span
@@ -1188,7 +1215,7 @@
               {#if quoteError}
                 <span class="text-red-400">{quoteError}</span>
               {:else if quote?.cost != null}
-                {@const spend = nonBlueSpend(quote.cost, buzzMode.value)}
+                {@const spend = furtherSpend}
                 Costs <span class="text-buzz"
                   ><IconBoltFilled size={10} stroke={2} class="mb-px inline" />{quote.cost.toLocaleString()}</span
                 >{#if quote.eta} · ~{quote.eta} min{/if} · spends Buzz on confirm{#if spend}
@@ -1202,6 +1229,33 @@
                 pricing…
               {/if}
             </div>
+            {#if furtherAckKey}
+              <div
+                class="flex max-w-sm items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
+              >
+                <Checkbox
+                  id="ack-further-mature"
+                  bind:checked={
+                    () => furtherAckedFor === furtherAckKey,
+                    (v) => (furtherAckedFor = v ? furtherAckKey : null)
+                  }
+                  class="mt-0.5 shrink-0"
+                />
+                <label for="ack-further-mature" class="cursor-pointer">
+                  {furtherMature}
+                  {furtherMature === 1 ? 'image in this dataset is' : 'images in this dataset are'} rated
+                  <strong>mature</strong>.
+                  {#if furtherSpend}
+                    I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
+                      >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
+                    > will be charged.
+                  {:else}
+                    I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
+                    charged in <span class="text-yellow-400">Yellow</span> Buzz.
+                  {/if}
+                </label>
+              </div>
+            {/if}
           </div>
         </div>
         {#if continueError}

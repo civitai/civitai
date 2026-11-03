@@ -12,6 +12,7 @@
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
+    stampMature,
     defaultRunParams,
     isTrainable,
     labelOptions,
@@ -182,7 +183,8 @@
     launched: LaunchedRun[],
     prompts: SamplePrompt[],
     name: string,
-    currencies: string[]
+    currencies: string[],
+    matureAck: boolean
   ) {
     if (!selection) return;
     // An edit run's pairs go as blobs placed by path — each image was uploaded and scanned on its own.
@@ -198,7 +200,9 @@
       labelMode,
       edit
     );
-    const { workflowIds: ids, failure } = await backend().submitTraining(runs);
+    const { workflowIds: ids, failure } = await backend().submitTraining(
+      stampMature(runs, matureAck, matureCount)
+    );
     if (failure)
       submitNotice.set(
         `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
