@@ -10,6 +10,7 @@ import {
   getEffectiveCommercialUse,
   getEffectiveDifferentLicense,
   nonCommercialBaseModels,
+  sameLicenseBaseModels,
   stopsCreatorEarnings,
 } from '~/server/common/constants';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
@@ -128,5 +129,8 @@ describe('the older non-commercial base models', () => {
       'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/26afe3a78bb242c0a8bb181dcc8937bb16e5c66c/LICENSE.md'
     );
     expect(getEffectiveDifferentLicense(true, 'Flux.2 D')).toBe(false);
+    expect(sameLicenseBaseModels).toContain('Flux.2 D');
+    expect(sameLicenseBaseModels).not.toContain('Flux.1 D');
+    expect(getEffectiveDifferentLicense(true, 'Flux.1 D')).toBe(true);
   });
 });
