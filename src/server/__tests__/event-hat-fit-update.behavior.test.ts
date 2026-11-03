@@ -155,6 +155,23 @@ describe('saving a hat edit in Postgres', () => {
     expect(((await stored(HAT_ID)).fit as { brim: number[] }).brim).toEqual([40, 220, 300]);
   });
 
+  it('takes a brim reaching the edge of the canvas', async () => {
+    await seed(HAT_ID, HAT);
+    await updateEventHatFit({ id: HAT_ID, fit: { brim: [17, 128, 160] } });
+    expect(((await stored(HAT_ID)).fit as { brim: number[] }).brim).toEqual([17, 128, 160]);
+  });
+
+  // Hats measured before canvases were stored have none; their art is the default size.
+  it('holds a brim inside the default canvas when the hat stores none', async () => {
+    const { canvas: _, ...noCanvas } = SHAPE;
+    await seed(HAT_ID, { ...HAT, fit: noCanvas });
+    await expect(updateEventHatFit({ id: HAT_ID, fit: { brim: [17, 129, 89] } })).rejects.toThrow(
+      /inside the art \(128×160\)/
+    );
+    await updateEventHatFit({ id: HAT_ID, fit: { brim: [17, 128, 89] } });
+    expect(((await stored(HAT_ID)).fit as { brim: number[] }).brim).toEqual([17, 128, 89]);
+  });
+
   it('keeps fields set by an earlier save', async () => {
     await seed(HAT_ID, { ...HAT, fit: { ...SHAPE, grow: 1.2 } });
     await updateEventHatFit({ id: HAT_ID, fit: { offset: [3, -4] } });
