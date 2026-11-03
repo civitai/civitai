@@ -48,31 +48,25 @@ function safeStringify(value: unknown): string {
 
 // OpenAI-compatible backends echo the offending request field in validation errors, and the
 // request carries the system prompt and the submitter's prompt, so those values never reach a log.
-const ECHOED_FIELDS = new Set([
-  'input',
-  'inputs',
-  'content',
-  'contents',
-  'messages',
-  'prompt',
-  'text',
-  'system',
-  'system_instruction',
-]);
+const ECHOED_FIELD =
+  'input_value|inputs?|contents?|messages|prompt|text|instructions|system(?:_?instruction|_?prompt)?';
+const ECHOED_KEY = new RegExp(`^(?:${ECHOED_FIELD})$`, 'i');
 // Any key-shaped echo in any encoding: JSON at any escape depth, a Python repr ('input': ...), or
-// pydantic's `input_value=`. Only a value already redacted may follow.
-const ECHO_ANYWHERE_PATTERN =
-  /\\*["']?\b(input_value|inputs?|contents?|messages|prompt|text|system(?:_instruction)?)\\*["']?\s*[:=](?!\s*\\*["']?\[redacted\])/i;
+// pydantic's `input_value=`. Anchored at the word so a run of backslashes cannot backtrack.
+const ECHO_ANYWHERE_PATTERN = new RegExp(`\\b(?:${ECHOED_FIELD})\\\\*["']?\\s*[:=]`, 'i');
+// Bounds the regex work; far more than the log line keeps.
+const SCAN_LIMIT = 64 * 1024;
 
 function redactEchoedValue(value: unknown): unknown {
   if (typeof value === 'string') return redactEchoedText(value);
   if (Array.isArray(value)) return value.map(redactEchoedValue);
   if (value && typeof value === 'object')
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        key,
-        ECHOED_FIELDS.has(key.toLowerCase()) ? '[redacted]' : redactEchoedValue(item),
-      ])
+      // The renamed key is no longer key-shaped, so cutAtEcho leaves it alone; a value marker
+      // could be forged by the echoed text itself.
+      Object.entries(value).map(([key, item]) =>
+        ECHOED_KEY.test(key) ? [`${key} (redacted)`, true] : [key, redactEchoedValue(item)]
+      )
     );
   return value;
 }
@@ -113,7 +107,7 @@ export const PROVIDER_ERROR_LOG_LIMIT = 1024;
  * URLs among them) and credential-looking strings removed, capped at ~1 KB.
  */
 export function describeProviderError(error: unknown, maxLength = PROVIDER_ERROR_LOG_LIMIT) {
-  const parts = [...new Set(errorTextParts(error))];
+  const parts = [...new Set(errorTextParts(error))].map((part) => part.slice(0, SCAN_LIMIT));
   const text = (parts.length ? parts : [safeStringify(error)]).map(redactEchoedText).join('\n');
   // A provider's own error usually arrives as a JSON string inside OpenRouter's JSON envelope, so
   // one level of escaping is undone first or the patterns below cannot see its URLs.

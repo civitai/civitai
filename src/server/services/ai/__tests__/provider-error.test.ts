@@ -104,6 +104,10 @@ describe('describeProviderError', () => {
   // unicode-escaped keys; none of these may carry the prompt into the log.
   it.each([
     ['a Python repr', "{'input': 'PROMPT_TAIL', 'loc': ['body']}"],
+    ['text that forges the redaction marker', "{'input': '[redacted] PROMPT_TAIL'}"],
+    ['a system_prompt field', '{"error":"x","system_prompt":"PROMPT_TAIL'],
+    ['a camelCase systemInstruction field', JSON.stringify({ systemInstruction: 'PROMPT_TAIL' })],
+    ['an instructions field', "{'instructions': 'PROMPT_TAIL'}"],
     [
       'a Python repr inside the envelope',
       JSON.stringify({
@@ -144,6 +148,12 @@ describe('describeProviderError', () => {
     ],
   ])('drops an echo in %s', (_label, body) => {
     expect(describeProviderError(chatErrorFrom(body))).not.toContain('PROMPT_TAIL');
+  });
+
+  it('stays fast on a long run of backslashes', () => {
+    const started = performance.now();
+    describeProviderError(chatErrorFrom(`{"error":"${'\\'.repeat(200_000)}`));
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   it('strips JSON-escaped and scheme-relative URLs, Basic auth and Google keys', () => {
