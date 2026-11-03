@@ -100,6 +100,52 @@ describe('describeProviderError', () => {
     expect(text).toContain('bad request');
   });
 
+  // Python servers echo in their own formats, and a body can arrive double-encoded or with
+  // unicode-escaped keys; none of these may carry the prompt into the log.
+  it.each([
+    ['a Python repr', "{'input': 'PROMPT_TAIL', 'loc': ['body']}"],
+    [
+      'a Python repr inside the envelope',
+      JSON.stringify({
+        error: {
+          message: 'Provider returned error',
+          metadata: { raw: "{'content': 'PROMPT_TAIL'}" },
+        },
+      }),
+    ],
+    [
+      'a pydantic validation message',
+      JSON.stringify({
+        error: {
+          message: 'Provider returned error',
+          metadata: {
+            raw: JSON.stringify({
+              object: 'error',
+              message: "1 validation error input_value={'type': 'text', 'text': 'PROMPT_TAIL'}",
+            }),
+          },
+        },
+      }),
+    ],
+    [
+      'a cut-off body with a unicode-escaped key',
+      '{"error":{"message":"x","\\u0069nput":"PROMPT_TAIL',
+    ],
+    [
+      'a double-encoded envelope',
+      JSON.stringify(
+        JSON.stringify({
+          error: {
+            message: 'Provider returned error',
+            metadata: { raw: JSON.stringify({ input: 'PROMPT_TAIL' }) },
+          },
+        })
+      ),
+    ],
+  ])('drops an echo in %s', (_label, body) => {
+    expect(describeProviderError(chatErrorFrom(body))).not.toContain('PROMPT_TAIL');
+  });
+
   it('strips JSON-escaped and scheme-relative URLs, Basic auth and Google keys', () => {
     const body = String.raw`{"raw":"fetch https:\/\/image.example\/abc\/x.jpeg?sig=s1 and //cdn.example/x?token=t1 failed; Authorization: Basic dXNlcjpwYXNz key AIzaSyA1b2C3d4E5f6G7h8I9j0"}`;
     const text = describeProviderError(chatErrorFrom(body));

@@ -48,8 +48,21 @@ function safeStringify(value: unknown): string {
 
 // OpenAI-compatible backends echo the offending request field in validation errors, and the
 // request carries the system prompt and the submitter's prompt, so those values never reach a log.
-const ECHOED_FIELDS = new Set(['input', 'content', 'messages', 'prompt', 'text', 'system']);
-const ECHOED_KEY_PATTERN = /"(input|content|messages|prompt|text|system)"\s*:/i;
+const ECHOED_FIELDS = new Set([
+  'input',
+  'inputs',
+  'content',
+  'contents',
+  'messages',
+  'prompt',
+  'text',
+  'system',
+  'system_instruction',
+]);
+// Any key-shaped echo in any encoding: JSON at any escape depth, a Python repr ('input': ...), or
+// pydantic's `input_value=`. Only a value already redacted may follow.
+const ECHO_ANYWHERE_PATTERN =
+  /\\*["']?\b(input_value|inputs?|contents?|messages|prompt|text|system(?:_instruction)?)\\*["']?\s*[:=](?!\s*\\*["']?\[redacted\])/i;
 
 function redactEchoedValue(value: unknown): unknown {
   if (typeof value === 'string') return redactEchoedText(value);
@@ -64,21 +77,26 @@ function redactEchoedValue(value: unknown): unknown {
   return value;
 }
 
-// Parsed, not pattern-matched: the echoed text is user-written and can contain any quote or
-// bracket. A body that will not parse (cut off, not JSON) loses everything from the first echoed
-// key on.
+// Parsed where possible, so a well-formed body keeps its context; describeProviderError cuts
+// whatever echo this cannot see.
 function redactEchoedText(text: string): string {
   const trimmed = text.trim();
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      return JSON.stringify(redactEchoedValue(JSON.parse(trimmed)));
-    } catch {
-      // falls through to the truncation below
-    }
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return text;
+  try {
+    return JSON.stringify(redactEchoedValue(JSON.parse(trimmed)));
+  } catch {
+    return text;
   }
-  const unescaped = text.replace(/\\(["/])/g, '$1');
-  const echoed = ECHOED_KEY_PATTERN.exec(unescaped);
-  return echoed ? `${unescaped.slice(0, echoed.index)}"${echoed[1]}":[redacted]…` : unescaped;
+}
+
+// The echoed text is user-written and arrives in formats no parser here knows, so the line ends at
+// the first sign of one rather than trying to find where the echo stops.
+function cutAtEcho(text: string): string {
+  const decoded = text.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+    String.fromCharCode(parseInt(hex, 16))
+  );
+  const echo = ECHO_ANYWHERE_PATTERN.exec(decoded);
+  return echo ? `${decoded.slice(0, echo.index)}[echoed request redacted]` : decoded;
 }
 
 // Scheme, `data:` or scheme-relative.
@@ -99,8 +117,7 @@ export function describeProviderError(error: unknown, maxLength = PROVIDER_ERROR
   const text = (parts.length ? parts : [safeStringify(error)]).map(redactEchoedText).join('\n');
   // A provider's own error usually arrives as a JSON string inside OpenRouter's JSON envelope, so
   // one level of escaping is undone first or the patterns below cannot see its URLs.
-  const redacted = text
-    .replace(/\\(["/])/g, '$1')
+  const redacted = cutAtEcho(text.replace(/\\(["/])/g, '$1'))
     .replace(URL_PATTERN, '[url]')
     .replace(TOKEN_PATTERN, '[redacted]');
   return redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;
