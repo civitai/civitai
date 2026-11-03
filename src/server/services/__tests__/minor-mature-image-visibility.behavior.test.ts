@@ -80,7 +80,7 @@ beforeAll(async () => {
       minor boolean DEFAULT false, poi boolean DEFAULT false, index int,
       "needsReview" text, "acceptableMinor" boolean DEFAULT false,
       ingestion "ImageIngestionStatus" DEFAULT 'Scanned', "nsfwLevelLocked" boolean DEFAULT false,
-      "scanJobs" jsonb, "modelRestricted" boolean DEFAULT false
+      "scanJobs" jsonb, "modelRestricted" boolean DEFAULT false, "blockedFor" text
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelVersionId" int, "publishedAt" timestamp,
