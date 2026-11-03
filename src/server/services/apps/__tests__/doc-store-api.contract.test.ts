@@ -3322,6 +3322,50 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     expect(lookups).toHaveBeenCalled();
   });
 
+  // INVARIANT GUARD, not regression coverage: deletes were never publish-gated. It pins that a
+  // delete through an import, even in a SHARED source collection, is gated only by the import
+  // grant and the source's own write policy, so the publish prompt is never needed for one.
+  it('INVARIANT GUARD: a delete in a SHARED source collection needs no publish grant in the source', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    // The viewer's own entry, written while they held publish in the source.
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    const created = await call({
+      token: c,
+      method: 'PUT',
+      path: '/board/del1',
+      query: { from: S.blockId },
+      body: { data: { title: 'bye' } },
+    });
+    expect(created.status).toBe(200);
+    // Publish is now revoked in the source; a create there is refused again (the control).
+    publishGrants.delete(`${VIEWER_IDS.v1}|${S.id}`);
+    const refused = await call({
+      token: c,
+      method: 'POST',
+      path: '/board',
+      query: { from: S.blockId },
+      body: { data: { title: 'again' } },
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({
+      code: 'consent_required',
+      details: { scope: PUBLISH_SCOPE, from: S.blockId },
+    });
+    const del1 = () =>
+      harness.raw(`SELECT key FROM appdata.doc WHERE app_id = $1 AND key = 'del1'`, [S.id]);
+    expect(await del1()).toEqual([{ key: 'del1' }]);
+    const del = await call({
+      token: c,
+      method: 'DELETE',
+      path: '/board/del1',
+      query: { from: S.blockId },
+    });
+    expect(del.status).toBe(200);
+    expect(await del1()).toEqual([]);
+  });
+
   // ── Writes through an import are validated against the SOURCE collection's schema ───────
 
   it("a write through an import is checked against the source's schema, never the consumer's", async () => {

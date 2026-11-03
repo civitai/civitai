@@ -9,6 +9,11 @@ import type * as StorageImportGrantService from '~/server/services/apps/storage-
  * and whose own approved manifest asks for the scope — never for any other app, and never any other
  * scope.
  *
+ * It is also refused when the grant could never be used: a consumer without `apps:storage:import`
+ * in its approved ceiling cannot reach the source at all, and a source none of whose imported
+ * collections is exportable AND shared has nothing a publish grant gates. The viewer's import grant
+ * is NOT required: the block may ask for publish before it asks for the import.
+ *
  * The consumer's own manifest asks for `apps:storage:publish` too, on purpose: a call that dropped
  * `from` and granted the consumer instead would write a grant row, and every refusal below asserts
  * that nothing is written.
@@ -69,6 +74,7 @@ vi.mock('~/server/services/apps/storage-import-grant.service', async (importOrig
 }));
 
 import { blocksRouter } from '../blocks.router';
+import { ConsentRevocation } from '~/server/services/blocks/consent-revocation.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -99,8 +105,16 @@ const source = (
   version: '1.4.0',
   approvedScopes: [STORAGE, PUBLISH],
   ...over,
-  manifest: { name: `${blockId} name`, scopes: [STORAGE, PUBLISH], ...over.manifest },
+  manifest: {
+    name: `${blockId} name`,
+    scopes: [STORAGE, PUBLISH],
+    // The collection every `rw()` import names: shared, viewer-authored and exportable, so a
+    // publish grant in the source gates the consumer's writes to it.
+    storage: { collections: { board: { visibility: 'shared', write: 'own' } } },
+    ...over.manifest,
+  },
 });
+const collections = (c: Record<string, unknown>) => ({ storage: { collections: c } });
 
 const SOURCES: Row[] = [
   source('apb_src_3611', 'notes-app', { manifest: { name: 'Notes App' } }),
@@ -116,6 +130,25 @@ const SOURCES: Row[] = [
   source('apb_src_3616', 'pending-app', { status: 'pending' }),
   // Imported readwrite; mature-rated, and the test host shows no mature content.
   source('apb_src_3617', 'mature-app', { manifest: { contentRating: 'x' } }),
+  // Imported readwrite; its `board` is private, so no write there needs publish.
+  source('apb_src_3618', 'private-app', {
+    manifest: collections({ board: { visibility: 'private' } }),
+  }),
+  // Imported readwrite; its `board` is shared but not exportable, so the import reaches nothing.
+  source('apb_src_3619', 'closed-app', {
+    manifest: collections({ board: { visibility: 'shared', write: 'own', exportable: false } }),
+  }),
+  // Imported readwrite; it declares no `board` at all.
+  source('apb_src_3620', 'renamed-app', {
+    manifest: collections({ posts: { visibility: 'shared', write: 'own' } }),
+  }),
+  // Imported readwrite with two collections: `notes` is private, `board` is shared.
+  source('apb_src_3621', 'mixed-app', {
+    manifest: collections({
+      notes: { visibility: 'private' },
+      board: { visibility: 'shared', write: 'own' },
+    }),
+  }),
 ];
 
 const rw = (from: string) => ({ from, collections: ['board'], access: 'readwrite' as const });
@@ -141,7 +174,18 @@ const CONSUMER: Row = {
   },
   approvedScopes: [STORAGE, IMPORT, PUBLISH],
 };
-const ROWS = [CONSUMER, ...SOURCES];
+/** The consumer row the db mocks serve; a test may replace it (reset in `beforeEach`). */
+let consumer: Row = CONSUMER;
+const rows = () => [consumer, ...SOURCES];
+/** The consumer with `imports` in place of its own (a manifest declares at most 8). */
+const importing = (imports: unknown[], over: Partial<Row> = {}): Row => ({
+  ...CONSUMER,
+  ...over,
+  manifest: {
+    ...CONSUMER.manifest,
+    storage: { collections: { mine: { visibility: 'shared', write: 'own' } }, imports },
+  },
+});
 
 function consentCtx() {
   return {
@@ -168,9 +212,10 @@ const grantRow = dbMock.dbWrite.appUserScopeGrant;
 
 beforeEach(() => {
   recordImports.mockClear();
+  consumer = CONSUMER;
   dbMock.dbRead.appBlock.findUnique.mockImplementation(
     (async ({ where }: { where: { id?: string; blockId?: string } }) =>
-      ROWS.find((r) =>
+      rows().find((r) =>
         where.id !== undefined ? r.id === where.id : r.blockId === where.blockId
       ) ?? null) as never
   );
@@ -179,7 +224,7 @@ beforeEach(() => {
   }: {
     where: { blockId?: { in: string[] }; status?: string };
   }) =>
-    ROWS.filter(
+    rows().filter(
       (r) =>
         (where.blockId?.in ?? []).includes(r.blockId) &&
         (where.status === undefined || r.status === where.status)
@@ -276,6 +321,102 @@ describe('blocks.grantScopes with from: publish consent in the source app', () =
     nothingWritten();
   });
 
+  it.each<[string, Row, string, string]>([
+    [
+      'a consumer whose approved scopes lack apps:storage:import',
+      { ...CONSUMER, approvedScopes: [STORAGE, PUBLISH] },
+      'notes-app',
+      'This app was not approved to reach your data in other apps, so it cannot ask for this permission there.',
+    ],
+    [
+      'a consumer whose manifest scopes lack apps:storage:import',
+      { ...CONSUMER, manifest: { ...CONSUMER.manifest, scopes: [STORAGE, PUBLISH] } },
+      'notes-app',
+      'This app was not approved to reach your data in other apps, so it cannot ask for this permission there.',
+    ],
+    [
+      'a source whose imported collection is private',
+      importing([rw('private-app')]),
+      'private-app',
+      'This app adds nothing public in private-app, so it does not need this permission there.',
+    ],
+    [
+      'a source whose imported collection is not exportable',
+      importing([rw('closed-app')]),
+      'closed-app',
+      'This app adds nothing public in closed-app, so it does not need this permission there.',
+    ],
+    [
+      'a source that does not declare the imported collection',
+      importing([rw('renamed-app')]),
+      'renamed-app',
+      'This app adds nothing public in renamed-app, so it does not need this permission there.',
+    ],
+    [
+      'a source whose shared collection the consumer does not import (only its private one)',
+      importing([{ from: 'mixed-app', collections: ['notes'], access: 'readwrite' }]),
+      'mixed-app',
+      'This app adds nothing public in mixed-app, so it does not need this permission there.',
+    ],
+  ])('refuses %s with FORBIDDEN, and writes nothing', async (_label, row, from, message) => {
+    consumer = row;
+    await expect(grant({ from })).rejects.toMatchObject({ code: 'FORBIDDEN', message });
+    nothingWritten();
+  });
+
+  // INVARIANT GUARD (passes before the refusals above existed): "at least one", not "every".
+  it('INVARIANT GUARD: grants when one imported collection is shared and exportable in the source', async () => {
+    consumer = importing([
+      { from: 'mixed-app', collections: ['notes', 'board'], access: 'readwrite' },
+    ]);
+    await expect(grant({ from: 'mixed-app' })).resolves.toMatchObject({ granted: [PUBLISH] });
+    expect(grantRow.create).toHaveBeenCalledTimes(1);
+    expect(grantRow.create.mock.calls[0][0]).toMatchObject({
+      data: { userId: UID, appBlockId: 'apb_src_3621', grantedScopes: [PUBLISH] },
+    });
+  });
+
+  // INVARIANT GUARD (it passes on the code before this test was added): the self-import branch.
+  // The submit-time validator already refuses an import from the app's own blockId; this pins the
+  // grant's own refusal for a stored manifest that has one. The consumer's `mine` is shared and
+  // exportable and its ceiling holds publish, so without the branch a row WOULD be written.
+  it('INVARIANT GUARD: refuses an import whose from is the consumer itself, and writes nothing', async () => {
+    consumer = importing([{ from: 'notes-fork', collections: ['mine'], access: 'readwrite' }]);
+    await expect(grant({ from: 'notes-fork' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'notes-fork is not available',
+    });
+    nothingWritten();
+  });
+
+  // GUARD on which app the follow-ups run for: a re-consent that lifts a per-scope revoke must
+  // re-publish the SOURCE's suppression marker (the grant row it changed), never the consumer's.
+  it("after a per-scope revoke of publish in the source, re-publishes the SOURCE's revocation marker", async () => {
+    const SPEND = 'ai:write:budgeted';
+    grantRow.findUnique.mockResolvedValue({
+      id: 'grant_src_2',
+      grantedScopes: [STORAGE],
+      revokedScopes: [PUBLISH, SPEND],
+      revokedAt: null,
+    } as never);
+    const publish = vi.spyOn(ConsentRevocation, 'publish').mockResolvedValue(undefined);
+    try {
+      await grant({ from: 'notes-app' });
+      expect(grantRow.update.mock.calls[0][0]).toMatchObject({
+        where: { id: 'grant_src_2' },
+        data: { revokedScopes: [SPEND] },
+      });
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(publish.mock.calls[0][0]).toEqual({
+        userId: UID,
+        appBlockId: 'apb_src_3611',
+        revokedScopes: [SPEND],
+      });
+    } finally {
+      publish.mockRestore();
+    }
+  });
+
   it.each<[string, Record<string, unknown>]>([
     ['another scope alongside publish', { scopes: [PUBLISH, IMPORT] }],
     ['a scope other than publish', { scopes: [STORAGE] }],
@@ -298,7 +439,7 @@ describe('blocks.grantScopes with from: publish consent in the source app', () =
     }) =>
       where.id === CONSUMER_ID
         ? pending
-        : ROWS.find((r) => r.blockId === where.blockId) ?? null) as never);
+        : rows().find((r) => r.blockId === where.blockId) ?? null) as never);
     await expect(grant({ from: 'notes-app' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'App block is not approved',

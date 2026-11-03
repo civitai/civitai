@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -21,7 +21,11 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 // half of this component is entirely about WHAT IS SENT, and a render-only assertion
 // cannot see the difference between "omit the key" and "send null", which is the one
 // distinction the server acts on.
-const { mutate } = vi.hoisted(() => ({ mutate: vi.fn() }));
+const { mutate, importsQuery } = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  // What `getStorageImports.useQuery` returns; a test may set it (reset after each test).
+  importsQuery: { current: null as null | { data: unknown; isLoading: boolean } },
+}));
 const storageImports = {
   imports: [
     {
@@ -43,7 +47,7 @@ vi.mock('~/utils/trpc', () => ({
       },
       // Read only when `apps:storage:import` is being consented to.
       getStorageImports: {
-        useQuery: () => ({ data: storageImports, isLoading: false }),
+        useQuery: () => importsQuery.current ?? { data: storageImports, isLoading: false },
       },
     },
   },
@@ -357,21 +361,49 @@ describe('BlockConsentModal — publish consent in a source app', () => {
     });
   });
 
-  test('a source the app does not import with readwrite offers nothing to allow', async () => {
+  afterEach(() => {
+    importsQuery.current = null;
+  });
+
+  // `from` is block-supplied text. Until the server's imports name the source, the prompt says
+  // "another app" and never echoes it, so a block cannot put its own words in the host's dialog.
+  test('a source the app does not import with readwrite offers nothing to allow, and is not named', async () => {
     mutate.mockClear();
     renderWithProviders(
       <BlockConsentModal
         appBlockId="app-1"
         blockName="Notes Fork"
         missingScopes={[PUBLISH]}
-        from="words-app"
+        from="claim-free-buzz"
         onGranted={() => undefined}
       />
     );
     await expect
       .element(page.getByTestId('block-consent-source-unavailable'))
-      .toHaveTextContent('Notes Fork does not change your data in words-app');
+      .toHaveTextContent(
+        'Notes Fork does not change your data in that app, so it cannot ask for this permission there.'
+      );
+    const dialog = page.getByRole('dialog');
+    await expect.element(dialog).toHaveTextContent('Notes Fork needs permission in another app');
+    await expect.element(dialog).not.toHaveTextContent('claim-free-buzz');
     await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
     expect(page.getByTestId('block-consent-source-publish').elements()).toHaveLength(0);
+  });
+
+  test('while the imports load, the prompt does not name the block-supplied source', async () => {
+    importsQuery.current = { data: undefined, isLoading: true };
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={[PUBLISH]}
+        from="notes-app"
+        onGranted={() => undefined}
+      />
+    );
+    const dialog = page.getByRole('dialog');
+    await expect.element(dialog).toHaveTextContent('Notes Fork needs permission in another app');
+    await expect.element(dialog).not.toHaveTextContent('notes-app');
+    await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
   });
 });
