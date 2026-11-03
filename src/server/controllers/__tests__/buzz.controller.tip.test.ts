@@ -340,3 +340,45 @@ describe('createBuzzTipTransactionHandler — block gate', () => {
     expect(mockCreateMany).not.toHaveBeenCalled();
   });
 });
+
+describe('createBuzzTipTransactionHandler — a model that is not commercially available', () => {
+  const mockVersionFindMany = dbMock.dbWrite.modelVersion.findMany;
+  const tipModel = () =>
+    createBuzzTipTransactionHandler({
+      input: { ...baseInput, entityType: 'Model', entityId: 77 },
+      ctx: ctxUser(),
+    });
+
+  it('refuses a tip on a model whose versions are all Flux.2 Klein 9B, and moves no Buzz', async () => {
+    const ledger = installLedger();
+    mockVersionFindMany.mockResolvedValue([
+      { baseModel: 'Flux.2 Klein 9B' },
+      { baseModel: 'Flux.2 Klein 9B-base' },
+    ] as never);
+    await expect(tipModel()).rejects.toThrow(
+      "This model isn't commercially available at the moment."
+    );
+    expect(mockVersionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { modelId: 77 } })
+    );
+    expect(ledger.debits()).toBe(0);
+  });
+
+  it.each([
+    ['a Flux.2 Klein 4B model', ['Flux.2 Klein 4B']],
+    ['a Flux.3 Klein model', ['Flux.3 Klein']],
+    ['a model with a 9B and a 4B version', ['Flux.2 Klein 9B', 'Flux.2 Klein 4B']],
+  ])('still tips %s', async (_, baseModels) => {
+    const ledger = installLedger();
+    mockVersionFindMany.mockResolvedValue(baseModels.map((baseModel) => ({ baseModel })) as never);
+    await tipModel();
+    expect(ledger.debits()).toBe(1);
+  });
+
+  it('a profile tip with no entity never looks up versions', async () => {
+    const ledger = installLedger();
+    await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() });
+    expect(mockVersionFindMany).not.toHaveBeenCalled();
+    expect(ledger.debits()).toBe(1);
+  });
+});

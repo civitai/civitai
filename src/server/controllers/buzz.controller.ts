@@ -1,4 +1,5 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { notCommerciallyAvailableMessage, stopsCreatorEarnings } from '~/server/common/constants';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
@@ -174,6 +175,15 @@ export async function createBuzzTipTransactionHandler({
     }
 
     const { entityType, entityId } = input;
+    if (entityType === 'Model' && entityId) {
+      const versions = await dbWrite.modelVersion.findMany({
+        where: { modelId: entityId },
+        select: { baseModel: true },
+      });
+      // A model is tipped as a whole, so it's refused only when no version can earn.
+      if (versions.length > 0 && versions.every((v) => stopsCreatorEarnings(v.baseModel)))
+        throw throwBadRequestError(notCommerciallyAvailableMessage(versions[0].baseModel));
+    }
     let targetUserIds: number[] = input.toAccountId ? [input.toAccountId] : [];
 
     if ((entityType === 'Post' || entityType === 'Image') && entityId) {
