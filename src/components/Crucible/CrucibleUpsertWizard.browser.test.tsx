@@ -1,3 +1,4 @@
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { describe, expect, test, vi } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -191,6 +192,35 @@ describe('CrucibleUpsertWizard — prizes', () => {
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain(
         'Each creator can win at most one prize. A creator who places more than once is paid for their best entry, and the next creator moves up.'
+      )
+    );
+  });
+});
+
+describe('CrucibleUpsertWizard — minimum view time', () => {
+  const RANGE_ERROR = 'Enter a whole number from 3 to 30 seconds';
+  const videoStep2 = (minViewSeconds?: number, maxClipSeconds?: number) =>
+    valuesOnStep(2, { contentType: MediaType.video, minViewSeconds, maxClipSeconds });
+
+  test.each([20, 3, 30])('accepts %ss without an error', async (seconds) => {
+    renderWithProviders(<Harness values={videoStep2(seconds)} />);
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Minimum view time'));
+    expect(document.body.textContent).not.toContain(RANGE_ERROR);
+  });
+
+  test.each([2, 31])('flags %ss as out of range', async (seconds) => {
+    renderWithProviders(<Harness values={videoStep2(seconds)} />);
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain(RANGE_ERROR));
+  });
+
+  test('flags a minimum longer than the maximum clip length', async () => {
+    renderWithProviders(<Harness values={videoStep2(20, 15)} />);
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain(
+        'Minimum view time cannot exceed the maximum clip length'
       )
     );
   });

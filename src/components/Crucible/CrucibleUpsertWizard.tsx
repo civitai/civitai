@@ -92,7 +92,8 @@ import {
   CRUCIBLE_MAX_TOTAL_ENTRIES,
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
-  CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
+  CRUCIBLE_MIN_VIEW_SECONDS_MAX,
+  CRUCIBLE_MIN_VIEW_SECONDS_MIN,
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
@@ -242,6 +243,13 @@ export function CrucibleUpsertWizard(props: Props) {
   // Mirrors the server's `checkCrucibleSettings`.
   const minViewSeconds = toVideoRule(values.minViewSeconds);
   const maxClipSeconds = toVideoRule(values.maxClipSeconds);
+  const minViewRangeError =
+    minViewSeconds != null &&
+    (!Number.isInteger(minViewSeconds) ||
+      minViewSeconds < CRUCIBLE_MIN_VIEW_SECONDS_MIN ||
+      minViewSeconds > CRUCIBLE_MIN_VIEW_SECONDS_MAX)
+      ? `Enter a whole number from ${CRUCIBLE_MIN_VIEW_SECONDS_MIN} to ${CRUCIBLE_MIN_VIEW_SECONDS_MAX} seconds, or leave empty for no minimum`
+      : null;
   const videoSettingsError =
     minViewSeconds != null && maxClipSeconds != null && minViewSeconds > maxClipSeconds
       ? 'Minimum view time cannot exceed the maximum clip length'
@@ -303,6 +311,7 @@ export function CrucibleUpsertWizard(props: Props) {
         !entryLimitError &&
         !freeEntriesError &&
         !entryWindowError &&
+        !minViewRangeError &&
         !videoSettingsError));
 
   const totalPrizePercentage = getPrizeDistributionTotal(values.prizePositions);
@@ -736,20 +745,18 @@ export function CrucibleUpsertWizard(props: Props) {
           description="Optional. Both default to no rule."
         >
           <Stack gap="md" mt={8}>
-            <InputSelect
+            <InputNumber
               name="minViewSeconds"
               label="Minimum view time"
-              description="Judges must watch this much of BOTH clips before either vote unlocks"
+              description={`Seconds (${CRUCIBLE_MIN_VIEW_SECONDS_MIN}-${CRUCIBLE_MIN_VIEW_SECONDS_MAX}). Judges must watch this much of BOTH clips before either vote unlocks`}
               placeholder="No minimum"
-              data={[
-                { value: NO_RULE, label: 'No minimum' },
-                ...CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS.map((seconds) => ({
-                  value: seconds,
-                  label: formatSeconds(seconds),
-                  disabled: maxClipSeconds != null && seconds > maxClipSeconds,
-                })),
-              ]}
-              allowDeselect={false}
+              format="default"
+              min={CRUCIBLE_MIN_VIEW_SECONDS_MIN}
+              max={CRUCIBLE_MIN_VIEW_SECONDS_MAX}
+              allowNegative={false}
+              allowDecimal={false}
+              clampBehavior="none"
+              error={minViewRangeError}
               disabled={rulesLocked}
             />
             <InputSelect
