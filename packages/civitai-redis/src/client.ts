@@ -3162,6 +3162,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.
     USER_CREATOR: 'packed:caches:user-creator',
+    // userId -> the event hat their avatar shows during the event (src/server/events/showcase-hat.ts).
+    SHOWCASE_HAT: 'packed:caches:showcase-hat',
     // Bearer-credential lookup: `<prefix>:<hash of the key>` -> the ApiKey row the bearer path
     // reads. Personal and system keys only, positive results only, short TTL, tombstoned on
     // revocation. See src/server/auth/api-key-principal-cache.ts.

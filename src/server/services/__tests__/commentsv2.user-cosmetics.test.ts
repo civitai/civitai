@@ -6,6 +6,16 @@ vi.mock('@civitai/db-queries/hot-reads', async () =>
   (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).hotReadsOverDbMock()
 );
 
+// The showcase hat has its own cache and tests (events/showcase-hat.ts); here it only has to reach
+// the right author.
+const SHOWCASE_HAT = { cosmeticId: 5, url: 'hat.png', until: '2026-12-01T00:00:00.000Z' };
+const showcase = vi.hoisted(() => ({ getShowcaseHatsForUsers: vi.fn(async () => ({})) }));
+vi.mock('~/server/events/showcase-hat', () => ({ ...showcase, getShowcaseHatForUser: vi.fn() }));
+const hatFor = (...owners: number[]) =>
+  showcase.getShowcaseHatsForUsers.mockImplementation(async (ids: number[]) =>
+    Object.fromEntries(ids.filter((id) => owners.includes(id)).map((id) => [id, SHOWCASE_HAT]))
+  );
+
 const { getCommentsInfinite } = await import('~/server/services/commentsv2.service');
 
 /**
@@ -125,18 +135,25 @@ describe('commentv2.getInfinite authors', () => {
   });
 
   it('carries every author picture and worn cosmetics from cache, read in one batch', async () => {
+    hatFor();
     const result = await list();
 
     expect(result?.comments.map((c) => [c.id, c.user])).toStrictEqual([
-      [1, { ...user(PINNED_AUTHOR), profilePicture: picture, cosmetics: [] }],
-      [2, pageAuthor],
+      [1, { ...user(PINNED_AUTHOR), profilePicture: picture, showcaseHat: null, cosmetics: [] }],
+      [2, { ...pageAuthor, showcaseHat: null }],
     ]);
     expect(result?.replyThreads.map((t) => t.comments.map((c) => [c.id, c.user]))).toStrictEqual([
-      [[21, { ...user(REPLY_AUTHOR), profilePicture: null, cosmetics: [badge] }]],
+      [
+        [
+          21,
+          { ...user(REPLY_AUTHOR), profilePicture: null, showcaseHat: null, cosmetics: [badge] },
+        ],
+      ],
     ]);
     expect(result?.targetComment?.user).toStrictEqual({
       ...user(TARGET_AUTHOR),
       profilePicture: null,
+      showcaseHat: null,
       cosmetics: [
         {
           data: { tint: 1 },
@@ -154,5 +171,21 @@ describe('commentv2.getInfinite authors', () => {
     expect(dbMock.dbRead.userCosmetic.findMany).toHaveBeenCalledTimes(1);
     const { userId } = dbMock.dbRead.userCosmetic.findMany.mock.calls[0][0].where;
     expect([...userId.in].sort()).toEqual([PINNED_AUTHOR, REPLY_AUTHOR, TARGET_AUTHOR]);
+  });
+
+  it('gives every author their showcase hat, the page comments as well as the cache-filled ones', async () => {
+    hatFor(PINNED_AUTHOR, PAGE_AUTHOR, REPLY_AUTHOR, TARGET_AUTHOR);
+    const result = await list();
+    const hats = [
+      ...(result?.comments ?? []),
+      ...(result?.replyThreads ?? []).flatMap((t) => t.comments),
+      ...(result?.targetComment ? [result.targetComment] : []),
+    ].map((c) => [c.id, (c.user as { showcaseHat?: unknown }).showcaseHat]);
+    expect(hats).toEqual([
+      [1, SHOWCASE_HAT],
+      [2, SHOWCASE_HAT],
+      [21, SHOWCASE_HAT],
+      [result?.targetComment?.id, SHOWCASE_HAT],
+    ]);
   });
 });

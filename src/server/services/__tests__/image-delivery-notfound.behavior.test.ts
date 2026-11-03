@@ -1,5 +1,4 @@
 import { PGlite } from '@electric-sql/pglite';
-import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Runs the real statement against a Postgres stand-in: a $queryRaw fake returning a fixture row
@@ -11,6 +10,7 @@ import { getCachedImageDeliveryMetadata } from '~/server/services/image-delivery
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { statementOf } from '~/test-utils/queryRawProjection';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
@@ -21,8 +21,8 @@ const urlFor = (state: string, hideMeta: boolean) =>
 
 const SHARED_URL = 'shared-copy/img.jpeg';
 
-const runAgainstPglite = async (strings: TemplateStringsArray, ...values: unknown[]) => {
-  const flat = Prisma.sql(strings, ...(values as never[]));
+const runAgainstPglite = async (...call: unknown[]) => {
+  const flat = statementOf(call);
   return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
 };
 

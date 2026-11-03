@@ -44,7 +44,12 @@ import {
   submitBundleFromExport,
 } from '~/components/Apps/AppAssistant/assistantSubmit';
 import { setFeedbackStatusVia } from '~/components/Apps/AppAssistant/assistantFeedback';
-import { chosenAppOf, createAppFeedbackSource } from '@civitai/app-assistant';
+import {
+  SANDBOX_RESULT_LIMIT,
+  SANDBOX_SERVER_LABEL,
+  chosenAppOf,
+  createAppFeedbackSource,
+} from '@civitai/app-assistant';
 import { appChatOf, appOfChat, rememberAppChat } from '~/components/Apps/AppAssistant/appChats';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
@@ -583,8 +588,10 @@ export function AppAssistantWorkspace({
             {
               id: SANDBOX_SERVER_ID,
               url: mcpUrl,
-              label: 'your app',
+              label: SANDBOX_SERVER_LABEL,
               token: () => tokens.getToken({ purpose: 'sandbox' }),
+              // As the server runner's: enough of a file or a test run that it is not read again.
+              resultLimit: SANDBOX_RESULT_LIMIT,
             },
           ]
         : NO_MCP_SERVERS,

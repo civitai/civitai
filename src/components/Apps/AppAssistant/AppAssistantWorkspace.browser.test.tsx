@@ -42,7 +42,12 @@ const m = vi.hoisted(() => ({
   chat: null as null | {
     tools: Record<string, ChatTool>;
     instructions: () => string;
-    mcpServers: { id: string; url: string; label?: string }[];
+    mcpServers: {
+      id: string;
+      url: string;
+      label?: string;
+      resultLimit?: { head?: number; tail?: number } | false;
+    }[];
     holdReason?: string;
     beforeToolCall?: (
       name: string,
@@ -766,7 +771,12 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     screen.rerender(<Workspace />);
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
     expect(m.chat!.mcpServers).toEqual([
-      expect.objectContaining({ id: 'sandbox', label: 'your app' }),
+      expect.objectContaining({
+        id: 'sandbox',
+        label: 'your app',
+        // As the runner's: enough of a file or a test run that it is not read again.
+        resultLimit: { head: 6000, tail: 18000 },
+      }),
     ]);
     expect(await made).toMatchObject({
       app: 'tip-calculator',
@@ -822,7 +832,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
   test('a refused set_checklist still counts against the per-reply tool-call limit', async () => {
     m.list = [];
     await mount();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toHaveProperty('refuse');
     expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toMatchObject({ stop: true });
   });
@@ -2480,7 +2490,7 @@ describe('AppAssistantWorkspace tool gate', () => {
 
   test('hands the chat a gate that ends a reply at the tool-call limit, and counts each reply afresh', async () => {
     await mount();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toMatchObject({ stop: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({

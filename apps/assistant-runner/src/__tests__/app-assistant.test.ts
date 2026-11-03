@@ -2,6 +2,8 @@ import {
   KEEP_LIMIT,
   NEW_APP_FAILED_KEEP_OPEN,
   REMOTE_PREVIEW,
+  SANDBOX_RESULT_LIMIT,
+  SANDBOX_TOOL_RULES,
   TURN_LIMIT_REFUSAL,
   isKeepLimitResult,
   openAppNotChosen,
@@ -18,7 +20,12 @@ import type { ModelMessage, ToolSet } from 'ai';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { toolResultsOf } from '../app-assistant/history';
-import { AppAssistantTools, appChosenIn, readPageState } from '../app-assistant/provider';
+import {
+  AppAssistantTools,
+  appChosenIn,
+  readPageState,
+  type AppAssistantToolsOptions,
+} from '../app-assistant/provider';
 import { PAUSED_BY_OTHER_APP, PAUSED_IDLE, SANDBOX_GONE } from '../app-assistant/sandbox';
 import type { OpenTools, ToolContext } from '../core/interfaces';
 import type { TokenPurpose } from '../minter';
@@ -34,8 +41,11 @@ let fake: FakeSandboxService;
 let purposes: TokenPurpose[];
 let seen: string[];
 let opened: OpenTools[];
+/** More provider options for the test that sets them (the docs' fetch). */
+let providerOptions: Partial<AppAssistantToolsOptions>;
 
 beforeEach(async () => {
+  providerOptions = {};
   fake = new FakeSandboxService();
   await fake.start();
   purposes = [];
@@ -62,6 +72,7 @@ function provider() {
     },
     wakePollMs: 5,
     wakeTimeoutMs: 5_000,
+    ...providerOptions,
   });
 }
 
@@ -399,16 +410,16 @@ describe('App Assistant’s gate on the runner', () => {
     });
   });
 
-  it('ends the reply at its 151st parent call', async () => {
+  it('ends the reply at its 301st parent call', async () => {
     fake.add('my-app');
     const { tools, reported } = await open();
-    for (let i = 0; i < 150; i++) await call(tools.tools, 'report_ready', CIVITAI);
+    for (let i = 0; i < 300; i++) await call(tools.tools, 'report_ready', CIVITAI);
     const ended = (await call(tools.tools, 'sandbox__read_file', { path: 'a' })) as {
       error: string;
     };
     expect(ended.error).toBe(TURN_LIMIT_REFUSAL);
-    // The 150th was still the gate's ordinary refusal, not the end.
-    expect(reported[149]).not.toHaveProperty('stopped');
+    // The 300th was still the gate's ordinary refusal, not the end.
+    expect(reported[299]).not.toHaveProperty('stopped');
     expect(reported.at(-1)).toMatchObject({ stopped: true, refused: TURN_LIMIT_REFUSAL });
     expect(assistantReads()).toBe(0);
   });
@@ -434,7 +445,7 @@ describe('App Assistant’s gate on the runner', () => {
     expect(assistantReads()).toBe(1);
   });
 
-  it('leaves a subagent’s calls out of the parent’s 150', async () => {
+  it('leaves a subagent’s calls out of the parent’s 300', async () => {
     fake.add('my-app');
     // The subagent reads five times, then answers.
     const child = scriptedModel((prompt) =>
@@ -443,13 +454,13 @@ describe('App Assistant’s gate on the runner', () => {
         : { text: 'Found it.' }
     );
     const { tools, reported } = await open({ subagents: true, model: () => child });
-    for (let i = 0; i < 148; i++) await call(tools.tools, 'report_ready', CIVITAI);
+    for (let i = 0; i < 298; i++) await call(tools.tools, 'report_ready', CIVITAI);
     const dispatched = (await call(tools.tools, 'dispatch_agent', {
       task: 'Read a and say what it exports.',
       mode: 'read',
     })) as { status: string };
     expect(dispatched.status).toBe('done');
-    // All five ran though the parent's count stood at 149: a subagent has its own budget.
+    // All five ran though the parent's count stood at 299: a subagent has its own budget.
     expect(assistantReads()).toBe(5);
     expect(reported.filter((r) => r.subagent !== undefined)).toHaveLength(5);
     expect(await call(tools.tools, 'sandbox__list_dir', { path: '.' })).toBe('src/');
@@ -485,7 +496,7 @@ describe('App Assistant’s gate on the runner', () => {
     expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
 
     const many = messagesOf(
-      Array.from({ length: 150 }, () => ['sandbox__list_dir', {}, 'src/'] as const)
+      Array.from({ length: 300 }, () => ['sandbox__list_dir', {}, 'src/'] as const)
     );
     const full = await open({ history: { earlier: [], current: many } });
     expect(await call(full.tools.tools, 'sandbox__list_dir', { path: '.' })).toMatchObject({
@@ -828,6 +839,7 @@ describe('the runner’s prompt', () => {
     'dispatch_agent',
     'fetch_page',
     'get_guide',
+    'read_docs',
     'web_search',
     'run_step',
     'run_workflow',
@@ -1189,3 +1201,145 @@ function messagesOf(
     },
   ]);
 }
+
+describe('the sandbox’s replies on the runner', () => {
+  it('keep their first 6,000 and last 18,000 characters, as the page’s do', async () => {
+    fake.add('my-app');
+    fake.tools.set(
+      'dev_server_logs',
+      () => 'H'.repeat(7_000) + 'M'.repeat(20_000) + 'T'.repeat(19_000)
+    );
+    const { tools } = await open();
+    const output = (await call(tools.tools, 'sandbox__dev_server_logs')) as string;
+    expect(SANDBOX_RESULT_LIMIT).toEqual({ head: 6_000, tail: 18_000 });
+    expect(output.startsWith('H'.repeat(6_000))).toBe(true);
+    expect(output.startsWith('H'.repeat(6_001))).toBe(false);
+    expect(output.endsWith('T'.repeat(18_000))).toBe(true);
+    expect(output).not.toContain('T'.repeat(18_001));
+    expect(output).not.toContain('M');
+  });
+});
+
+describe('a sandbox with the newer tools (read_files, edits, run_checks)', () => {
+  // The sandbox MCP server's own run_checks output format.
+  const RUN_CHECKS_OK =
+    'exit_code: 0\ntest: exit_code 0 (npm test, 3.1s)\ntypecheck: exit_code 0 (npx tsc --noEmit, 5.2s)\n';
+  function newerSandbox() {
+    fake.add('my-app');
+    fake.newTools.add('read_files');
+    fake.newTools.add('run_checks');
+    fake.editsSchema = true;
+    fake.tools.set('run_checks', () => RUN_CHECKS_OK);
+    fake.tools.set('read_files', () => '==> my-app/a.ts <==\nexport {}');
+  }
+
+  it('the rules name them, and run_checks in place of npm test', async () => {
+    newerSandbox();
+    const { tools } = await open();
+    const rules = tools.rules?.('D') ?? '';
+    for (const line of Object.values(SANDBOX_TOOL_RULES)) expect(rules).toContain(line);
+    expect(rules).not.toContain('npm test');
+  });
+
+  it('NEGATIVE CONTROL: an older sandbox’s rules name none of them', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    const rules = tools.rules?.('D') ?? '';
+    for (const line of Object.values(SANDBOX_TOOL_RULES)) expect(rules).not.toContain(line);
+    expect(rules).toContain('cd <blockId> && npm test');
+  });
+
+  it('report_ready asks for run_checks, and a passing run_checks counts as both checks', async () => {
+    newerSandbox();
+    const { tools } = await open();
+    await call(tools.tools, 'set_checklist', { items: [{ label: 'Tip calculator', done: true }] });
+    await call(tools.tools, 'sandbox__preview_check');
+    const refused = (await call(tools.tools, 'report_ready', CIVITAI)) as { error: string };
+    expect(refused.error).toContain(
+      'Run sandbox__run_checks with cwd <blockId>: the tests and the typecheck have not run'
+    );
+    await call(tools.tools, 'sandbox__run_checks', { cwd: 'my-app' });
+    await call(tools.tools, 'sandbox__read_files', { paths: ['my-app/a.ts'] });
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
+  });
+
+  it('a subagent may call read_files, never run_checks', async () => {
+    newerSandbox();
+    const child = scriptedModel((prompt) =>
+      toolResults(prompt) === 0
+        ? {
+            calls: [
+              { toolName: 'sandbox__run_checks', input: { cwd: 'my-app' } },
+              { toolName: 'sandbox__read_files', input: { paths: ['my-app/a.ts'] } },
+            ],
+          }
+        : { text: 'Done.' }
+    );
+    const { tools } = await open({ subagents: true, model: () => child });
+    await call(tools.tools, 'dispatch_agent', { task: 'Read a.', mode: 'read' });
+    expect(fake.callsTo('run_checks')).toBe(0);
+    expect(fake.callsTo('read_files')).toBe(1);
+  });
+});
+
+describe('read_docs on the runner', () => {
+  const GUIDE = 'https://developer.civitai.com/agent-setup/in-sandbox.md';
+
+  it('reads Civitai’s developer docs for the assistant, once per reply', async () => {
+    fake.add('my-app');
+    const urls: string[] = [];
+    providerOptions = {
+      docsFetch: async (input) => {
+        urls.push(String(input));
+        return new Response('# In the sandbox', { headers: { 'content-type': 'text/markdown' } });
+      },
+    };
+    const { tools } = await open();
+    expect(await call(tools.tools, 'read_docs', { url: GUIDE })).toEqual({
+      url: GUIDE,
+      text: '# In the sandbox',
+    });
+    await call(tools.tools, 'read_docs', { url: GUIDE });
+    expect(urls).toEqual([GUIDE]);
+    // Not one of the page's tools, which the page has its own fetch_page for.
+    expect(tools.hostTools).not.toContain('read_docs');
+  });
+
+  it('refuses any other host without fetching, and fails clearly when it cannot connect', async () => {
+    fake.add('my-app');
+    let fetched = 0;
+    providerOptions = {
+      docsFetch: async () => {
+        fetched++;
+        throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } });
+      },
+    };
+    const { tools } = await open();
+    const other = await call(tools.tools, 'read_docs', { url: 'https://example.org/x.md' });
+    expect(JSON.stringify(other)).toContain('read_docs reads only https://developer.civitai.com/');
+    expect(fetched).toBe(0);
+    const down = await call(tools.tools, 'read_docs', { url: GUIDE });
+    expect(JSON.stringify(down)).toContain(
+      'Could not reach developer.civitai.com (ENOTFOUND). Go on without it.'
+    );
+  });
+
+  it('a subagent may read the docs too', async () => {
+    fake.add('my-app');
+    const urls: string[] = [];
+    providerOptions = {
+      docsFetch: async (input) => {
+        urls.push(String(input));
+        return new Response('guide', { headers: { 'content-type': 'text/markdown' } });
+      },
+    };
+    const child = scriptedModel((prompt) =>
+      toolResults(prompt) === 0
+        ? { calls: [{ toolName: 'read_docs', input: { url: GUIDE } }] }
+        : { text: 'Done.' }
+    );
+    const { tools } = await open({ subagents: true, model: () => child });
+    await call(tools.tools, 'dispatch_agent', { task: 'Read the guide.', mode: 'read' });
+    expect(urls).toEqual([GUIDE]);
+  });
+});

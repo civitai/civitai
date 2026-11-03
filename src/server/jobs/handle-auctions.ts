@@ -26,19 +26,13 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { refundTransactionOnce } from '~/server/services/buzz-prefix-refund';
-import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { bustFeaturedModelsHomeBlockCache } from '~/server/services/home-block-cache.service';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { withRetries } from '~/server/utils/errorHandling';
-import {
-  AuctionType,
-  BuzzAccountType,
-  HomeBlockType,
-  ModelStatus,
-  ModelType,
-} from '~/shared/utils/prisma/enums';
+import { AuctionType, BuzzAccountType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
@@ -454,7 +448,7 @@ export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: 
       coverageModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
     await bustFeaturedModelsCache();
-    await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
+    await bustFeaturedModelsHomeBlockCache();
     // Dropouts need the winners' invalidation: the set also takes top weekly earners, so a version
     // leaves with no auction event of its own, and unbusted the orchestrator keeps serving it as
     // covered until its entry expires.
