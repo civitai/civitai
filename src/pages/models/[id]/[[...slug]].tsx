@@ -45,7 +45,7 @@ import {
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
@@ -116,6 +116,15 @@ import {
   TagDivider,
   UpdatedText,
 } from '~/components/Model/ModelPageDs/ModelPageDs';
+import {
+  ComCardPreviewToggle,
+  RedCardLink,
+} from '~/components/Model/ComCardPreview/ComCardPreview';
+import {
+  canLinkToRedCard,
+  canPreviewComCard,
+  withComCard,
+} from '~/components/Model/ComCardPreview/com-card-preview';
 import {
   modelVersionAccessInput,
   toModelVersionPermissionData,
@@ -453,10 +462,23 @@ export default function ModelDetailsV2({
 
   const { blockedUsers } = useHiddenPreferencesData();
 
-  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({
+  const { data: storedModel, isLoading: loadingModel } = trpc.model.getById.useQuery({
     id,
     excludeTrainingData: true,
   });
+  const cardViewer = {
+    isOwnerOrModerator:
+      !!currentUser && (currentUser.isModerator || storedModel?.user.id === currentUser.id),
+    onComSite: !features.canViewNsfw,
+  };
+  const [previewComCard, setPreviewComCard] = useState(false);
+  const showComCardToggle = canPreviewComCard(cardViewer, storedModel?.sfwName);
+  const showRedCardLink = canLinkToRedCard(cardViewer, storedModel?.sfwName);
+  const model = useMemo(
+    () =>
+      storedModel && showComCardToggle && previewComCard ? withComCard(storedModel) : storedModel,
+    [storedModel, showComCardToggle, previewComCard]
+  );
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
@@ -934,6 +956,10 @@ export default function ModelDetailsV2({
         <Container size="xl" px={0} className={classes.contentCol} data-tour="model:start">
           <PageStack ds={ds} gap="xl">
             <PageStack ds={ds} gap="xs">
+              {showComCardToggle && (
+                <ComCardPreviewToggle checked={previewComCard} onChange={setPreviewComCard} />
+              )}
+              {showRedCardLink && <RedCardLink path={router.asPath} />}
               <PageStack ds={ds} gap={4}>
                 <PageGroup ds={ds} align="flex-start" justify="space-between" nowrap>
                   <PageGroup ds={ds} className={classes.titleWrapper}>
