@@ -59,6 +59,10 @@ import { hasBlockMarker } from '~/server/common/image-visibility';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  logShadowSexualPromptError,
+  submitShadowSexualPromptScan,
+} from '~/server/services/shadow-sexual-prompt.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -1019,6 +1023,16 @@ export async function applyIngestionSideEffects({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Update,
     });
+
+    // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.
+    try {
+      submitShadowSexualPromptScan({
+        ...image,
+        nsfwLevel: outcome.nsfwLevel ?? image.nsfwLevel,
+      }).catch((e) => logShadowSexualPromptError(e, image.id));
+    } catch (e) {
+      logShadowSexualPromptError(e, image.id);
+    }
 
     const { audit, reviewKey } = outcome;
     if (audit) {

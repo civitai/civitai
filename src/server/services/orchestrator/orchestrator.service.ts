@@ -431,6 +431,8 @@ type XGuardModerationArgs = {
    */
   entityType?: string;
   entityId?: number;
+  /** Stamped on the workflow metadata beside the standard keys, which win on a clash. */
+  extraMetadata?: Record<string, unknown>;
   /** Optional. When present, the moderator-review UI can link the scanned
    * content to a user for follow-up investigation. Travels on workflow
    * metadata only — not stored in the ClickHouse audit table. */
@@ -503,6 +505,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
       : callbackUrl;
 
   const metadata: Record<string, unknown> = {
+    ...args.extraMetadata,
     mode: args.mode,
     recordForReview,
     version: '1',
