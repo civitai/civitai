@@ -895,3 +895,79 @@ describe('payoutEnabled and tipsEnabled', () => {
     expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
   });
 });
+
+describe('non-commercial base models: no fee, no comp, no tips', () => {
+  type Fee = { role: string; amount: number; recipientModelVersionId: number };
+  const charged = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { fees, payoutEnabled, tipsEnabled } = body as Body & {
+      fees: Fee[];
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { fees, payoutEnabled, tipsEnabled };
+  };
+  const OWN_FEE = { licensingFee: 5 as never, licensingFeeType: 'PerImageBuzz' as never };
+  const ROOT_FEE = { ...OWN_FEE, isLicensingRoot: true };
+  const SOURCE_FEE = {
+    licensingSourceVersionId: 900 as never,
+    sourceLicensingFee: 3 as never,
+    sourceLicensingFeeRecipientUserId: 31 as never,
+  };
+
+  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
+    'a %s version sends no fee and turns comp and tips off',
+    async (baseModel) => {
+      for (const fee of [
+        OWN_FEE,
+        ROOT_FEE,
+        { ...SOURCE_FEE, sourceBaseModel: 'SDXL 1.0' as never },
+      ])
+        expect(await charged({ baseModel, ...fee })).toEqual({
+          fees: [],
+          payoutEnabled: false,
+          tipsEnabled: false,
+        });
+    }
+  );
+
+  it('drops a lineage fee owed to a non-commercial source version', async () => {
+    const { fees } = await charged({
+      baseModel: 'SDXL 1.0',
+      ...SOURCE_FEE,
+      ...OWN_FEE,
+      sourceBaseModel: 'Flux.2 Klein 9B' as never,
+    });
+    expect(fees.map((f) => f.role)).toEqual(['version']);
+  });
+
+  it('a Flux.2 Klein 4B version keeps its fee, comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B', ...OWN_FEE })).toEqual({
+      fees: [
+        expect.objectContaining({
+          role: 'version',
+          amount: 5,
+          recipientModelVersionId: VERSION_ID,
+        }),
+      ],
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+    expect(
+      (
+        await charged({
+          baseModel: 'SDXL 1.0',
+          ...SOURCE_FEE,
+          sourceBaseModel: 'SDXL 1.0' as never,
+        })
+      ).fees
+    ).toEqual([
+      expect.objectContaining({ role: 'baseModel', amount: 3, recipientModelVersionId: 900 }),
+    ]);
+  });
+});

@@ -33,7 +33,7 @@ describe('Flux.2 Klein 9B licence registration', () => {
     (name, record) => {
       const server = baseModelLicenses[name as BaseModel];
       expect(server, `no licence bound for base model '${name}'`).toBeDefined();
-      expect(server!.name).toBe('FLUX Non-Commercial License');
+      expect(server!.name).toBe('FLUX Non-Commercial License v2.1');
       expect(server!.url).toBe(PERMALINK);
 
       const shared = sharedLicenses.find((l) => l.id === record.licenseId);

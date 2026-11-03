@@ -6,6 +6,7 @@ import type { Session } from '~/types/session';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { isNonCommercialBaseModel } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import {
   getShouldChargeForResources,
@@ -424,7 +425,10 @@ export default MixedAuthEndpoint(async function handler(
   //      (a checkpoint built on Turbo inherits the Turbo rate).
   //   Otherwise there is no lineage fee — a null source is NOT a fallback to a
   //   (baseModel, modelType) default; derivatives carry an explicit parent.
+  // A non-commercial licence forbids charging for the model, so no fee, comp or tip is sent.
+  const nonCommercial = isNonCommercialBaseModel(modelVersion.baseModel);
   const isLicensingRoot =
+    !nonCommercial &&
     modelVersion.isLicensingRoot &&
     modelVersion.licensingFee != null &&
     modelVersion.licensingFee > 0;
@@ -433,6 +437,8 @@ export default MixedAuthEndpoint(async function handler(
   // worse than no fee — the orchestrator would stamp a null owner onto
   // ResourceCompensation. Dropping the component degrades safely instead.
   const hasSourceRule =
+    !nonCommercial &&
+    !isNonCommercialBaseModel(modelVersion.sourceBaseModel) &&
     !isLicensingRoot &&
     modelVersion.licensingSourceVersionId != null &&
     modelVersion.sourceLicensingFee != null &&
@@ -442,7 +448,10 @@ export default MixedAuthEndpoint(async function handler(
   // root), its own fee IS that component — don't double-count it as a surcharge.
   const isBaseRecipientItself = isLicensingRoot;
   const hasOwnFee =
-    modelVersion.licensingFee != null && modelVersion.licensingFee > 0 && !isBaseRecipientItself;
+    !nonCommercial &&
+    modelVersion.licensingFee != null &&
+    modelVersion.licensingFee > 0 &&
+    !isBaseRecipientItself;
 
   // `recipientUserId` is the owner of `recipientModelVersionId` at request time, so
   // payouts and the orchestrator's ResourceCompensation records follow ownership
@@ -488,13 +497,16 @@ export default MixedAuthEndpoint(async function handler(
   // A version charging its own fee earns through that channel instead of creator comp. The
   // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
+    !nonCommercial &&
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
     !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
   // Independent of the fee: a fee creator still gets their share of the creator tip.
-  const tipsEnabled = isCreatorTipEligible({
-    ownerId: modelVersion.modelUserId,
-    ownerFlags: modelVersion.userFlags,
-  });
+  const tipsEnabled =
+    !nonCommercial &&
+    isCreatorTipEligible({
+      ownerId: modelVersion.modelUserId,
+      ownerFlags: modelVersion.userFlags,
+    });
 
   const data = {
     air,

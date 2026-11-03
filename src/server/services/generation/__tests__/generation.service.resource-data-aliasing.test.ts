@@ -367,3 +367,31 @@ describe('getResourceData — tipsEnabled from the owner flags in the cached row
     expect(resource.model).not.toHaveProperty('userFlags');
   });
 });
+
+describe('getResourceData — non-commercial base models', () => {
+  async function resourceFor(
+    over: { baseModel: string; hasAccess?: boolean },
+    user: typeof MOD | typeof ANON = MOD
+  ) {
+    queryRawMock.mockResolvedValue([{ ...dbRow(), ...over }]);
+    const [resource] = await getResourceData([VERSION_ID], { user });
+    return resource;
+  }
+
+  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
+    'a %s version takes no tips',
+    async (baseModel) => {
+      expect((await resourceFor({ baseModel })).tipsEnabled).toBe(false);
+    }
+  );
+
+  it('a Flux.2 Klein 4B version still takes tips (control)', async () => {
+    expect((await resourceFor({ baseModel: 'Flux.2 Klein 4B' })).tipsEnabled).toBe(true);
+  });
+
+  it('a past buyer of a Flux.2 Klein 9B version keeps access', async () => {
+    expect(
+      (await resourceFor({ baseModel: 'Flux.2 Klein 9B', hasAccess: true }, ANON)).hasAccess
+    ).toBe(true);
+  });
+});

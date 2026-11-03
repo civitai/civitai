@@ -74,3 +74,38 @@ describe('donateToGoal — the creator receives what the donor gave', () => {
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 });
+
+describe('donateToGoal — non-commercial base models', () => {
+  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
+    'refuses a donation to a %s version without charging anything',
+    async (baseModel) => {
+      mockDbRead.modelVersion.findUnique.mockResolvedValue({ baseModel });
+
+      await expect(
+        donateToGoal({ donationGoalId: GOAL_ID, amount: 500, userId: DONOR, buzzType: 'yellow' })
+      ).rejects.toThrow(
+        `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`
+      );
+      expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+      expect(mockDbRead.modelVersion.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 555 } })
+      );
+    }
+  );
+
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])(
+    'still takes a donation to a %s version (control)',
+    async (baseModel) => {
+      mockDbRead.modelVersion.findUnique.mockResolvedValue({ baseModel });
+
+      await donateToGoal({
+        donationGoalId: GOAL_ID,
+        amount: 500,
+        userId: DONOR,
+        buzzType: 'yellow',
+      });
+
+      expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    }
+  );
+});
