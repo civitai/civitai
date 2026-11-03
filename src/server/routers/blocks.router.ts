@@ -2111,22 +2111,12 @@ async function afterPromptedGrant(
   // suppression really was lifted, and the marker should go so the app stops being refused
   // before the TTL elapses.
   //
-  // ⚠️ A PRE-MIGRATION DATABASE HAS **THREE** OUTCOMES, AND BOTH EARLIER VERSIONS OF THIS
-  // COMMENT NAMED ONE. It first grouped "a database without the column" with `null`; round-5
-  // review pointed out the round-4 commit had falsified that, and the correction then listed
-  // only the two new cases — which over-corrected, as round 6 measured. All three:
-  //   * `revoked_at` was never set (the DOMINANT row) → `unrevokeData` takes its
-  //     `!wasWholeGrantRevoked` early return and never touches `clearedTo`, and
-  //     `revocationData` has nothing to subtract, so this line IS reached, with `null`.
-  //     The original sentence was right about this one.
-  //   * `revoked_at` set and the re-consent covers everything granted → `[]`, the honest
-  //     value: nothing is withheld afterwards, so a stale marker must go.
-  //   * `revoked_at` set and it does not → throws `PRECONDITION_FAILED`, so this line is
-  //     never reached refusing.
-  // The `[]` is correct there rather than merely harmless: `revokeScopes` refuses that same
-  // database before storage, so no marker can exist to delete — and in the one shape where
-  // one could (migration applied, revoke taken, migration rolled back) deleting it after a
-  // full re-consent is exactly right.
+  // A pre-migration database has three outcomes:
+  //   * `revoked_at` was never set (the common row) → `unrevokeData` returns early and
+  //     `revocationData` has nothing to subtract, so this is reached with `null`.
+  //   * `revoked_at` set and the re-consent covers everything granted → `[]`: nothing is
+  //     withheld afterwards, so a stale marker must go.
+  //   * `revoked_at` set and it does not → `PRECONDITION_FAILED`, so this is never reached.
   //
   // 🔴 BEST-EFFORT, UNLIKE THE REVOKE PATH'S PUBLISH, AND THE ASYMMETRY IS THE SAFE
   // DIRECTION. Failing to WIDEN access on a Redis blip costs the viewer at most one
