@@ -44,7 +44,9 @@ const {
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
-const { eventSeasonKeys, hatTopicId, previewTopicId } = await import('~/server/events/points/keys');
+const { eventSeasonKeys, hatTopicId, LIVE_BUCKET_MS, previewTopicId } = await import(
+  '~/server/events/points/keys'
+);
 
 const MIGRATIONS = ['20261012130000_event_cosmetic_placement', '20261015120000_event_points'].map(
   (name) =>
@@ -263,6 +265,14 @@ const zeroStandings = {
   updatedAt: new Date(0),
 };
 
+// Where the referee's live season last settled to: team awards in the snapshot are cut there.
+function settledTo(iso: string) {
+  const cutKey = eventSeasonKeys(event.name, 'live').cut;
+  redisMock.sysRedis.get.mockImplementation(async (k: string) =>
+    k === cutKey ? String(new Date(iso).getTime() / LIVE_BUCKET_MS) : null
+  );
+}
+
 describe('standings', () => {
   beforeEach(async () => {
     await insertDays([
@@ -311,6 +321,83 @@ describe('standings', () => {
       ['2026-11-03', 25],
     ]);
     expect(history.find((h) => h.team === 'Pink')!.scores).toEqual([]);
+  });
+
+  it('counts a team award toward the total, rank and history from its day, never toward a hat or person', async () => {
+    const awarded = {
+      ...event,
+      scoring: {
+        teamAwards: [
+          { team: 'Pink', points: 40, at: new Date('2026-11-02T12:00:00.000Z'), reason: 'seed' },
+          // Lands on a day Blue already scored: one point in its history, not two.
+          { team: 'Blue', points: 5, at: new Date('2026-11-03T01:00:00.000Z'), reason: 'seed' },
+          // Inside the event, but after the referee's cut: not settled yet.
+          {
+            team: 'Green',
+            points: 1000,
+            at: new Date('2026-11-04T06:00:00.000Z'),
+            reason: 'later',
+          },
+        ],
+      },
+    };
+    settledTo('2026-11-04T00:00:00.000Z');
+    // The clock is past Green's award; only the referee's cut keeps it out.
+    vi.useFakeTimers({ now: new Date('2026-11-05T00:00:00.000Z'), toFake: ['Date'] });
+    try {
+      await settle(awarded);
+    } finally {
+      vi.useRealTimers();
+    }
+    const standings = await getEventStandings(awarded);
+    expect(standings.teams).toEqual([
+      { team: 'Pink', score: 40, rank: 1 },
+      { team: 'Blue', score: 30, rank: 2 },
+      { team: 'Yellow', score: 24, rank: 3 },
+      { team: 'Green', score: 0, rank: 4 },
+    ]);
+    const days = (team: string) =>
+      standings.history
+        .find((h) => h.team === team)!
+        .scores.map((s) => [s.date.toISOString().slice(0, 10), s.score]);
+    expect(days('Pink')).toEqual([['2026-11-02', 40]]);
+    expect(days('Blue')).toEqual([
+      ['2026-11-02', 15],
+      ['2026-11-03', 30],
+    ]);
+    expect(standings.topCosmetics.map((c) => [c.userId, c.points])).toEqual([
+      [2, 25],
+      [1, 20],
+      [1, 4],
+    ]);
+    expect(standings.topUsers).toEqual({
+      Blue: [{ userId: 2, points: 25 }],
+      Yellow: [{ userId: 1, points: 24 }],
+    });
+  });
+
+  // The live base, the standings, the winner and the payout must agree on which awards count, or
+  // the team shown leading all event can lose the final standings.
+  it('counts no award dated before the start or at or after the end', async () => {
+    const ended = {
+      ...event,
+      endDate: new Date('2026-11-03T00:00:00.000Z'),
+      scoring: {
+        teamAwards: [
+          { team: 'Pink', points: 40, at: new Date('2026-10-31T23:00:00.000Z'), reason: 'early' },
+          { team: 'Green', points: 50, at: new Date('2026-11-03T00:00:00.000Z'), reason: 'late' },
+        ],
+      },
+    };
+    settledTo('2026-11-10T00:00:00.000Z');
+    await settle(ended);
+    const { teams } = await getEventStandings(ended);
+    expect(teams.map((t) => [t.team, t.score])).toEqual([
+      ['Blue', 25],
+      ['Yellow', 24],
+      ['Pink', 0],
+      ['Green', 0],
+    ]);
   });
 
   it('reads per-cosmetic and per-user scores across days', async () => {
@@ -722,6 +809,41 @@ describe('referee snapshot', () => {
       const standings = await refreshStandings(scored, dbMock.dbWrite as never);
       expect(standings.hourly).toBeUndefined();
       expect(standings.teams[0]).toEqual({ team: 'Blue', score: 7, rank: 1 });
+    });
+
+    it('adds a team award settled by the cut to the live team base and its hour, and to nothing else', async () => {
+      answer([hourlyRow('2026-11-05', 8, 'Blue', { 6: 7 })]);
+      const award = (team: string, points: number, at: string) => ({
+        team,
+        points,
+        at: new Date(at),
+        reason: 'seed',
+      });
+      const awarded = {
+        ...scored,
+        scoring: {
+          ...scored.scoring,
+          teamAwards: [
+            award('Pink', 100, '2026-11-05T09:30:00.000Z'),
+            // Before the start: counts nowhere.
+            award('Pink', 9, '2026-10-31T23:00:00.000Z'),
+            // After the 11:55 cut: not settled yet.
+            award('Green', 7, '2026-11-05T11:58:00.000Z'),
+          ],
+        },
+      };
+      await runEventPointsReferee(awarded, 'live', HOURLY);
+      expect(hashes.get(keys.base('team'))).toEqual({ Blue: '7', Pink: '100' });
+      expect(hashes.get(keys.base('hat'))).toEqual({ '8:28:claimed': '7' });
+      expect(hashes.get(keys.base('owner'))).toEqual({ '8': '7' });
+      expect((await chartedHours()).earned).toMatchObject({ Blue: [[30, 7]], Pink: [[33, 100]] });
+
+      // The same awards never reach the preview: testers' totals are their own.
+      const preview = { ...awarded, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
+      const previewKeys = eventSeasonKeys(event.name, 'preview');
+      answer([hourlyRow('2026-10-25', 8, 'Blue', { 6: 7 })]);
+      await runEventPointsReferee(preview, 'preview', new Date('2026-10-25T12:07:00.000Z'));
+      expect(hashes.get(previewKeys.base('team'))).toEqual({ Blue: '7' });
     });
 
     it('clears a recomputed day that lost its points, rather than keep the old hours', async () => {

@@ -8,6 +8,7 @@ import { diffHats } from '~/server/events/points/sync';
 import {
   applyTurfOverride,
   turfConfigKey,
+  TURF_SCORE_TIER_KEY,
   type EventTurfConfig,
 } from '~/server/events/turf/config';
 import { refillStock, stepAt } from '~/server/events/turf/schedule';
@@ -20,6 +21,7 @@ import {
   type TurfEntry,
   type TurfStickerRow,
 } from '~/server/events/turf/turf-map';
+import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/turf/turf-watch';
 import { logToAxiom } from '~/server/logging/client';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
@@ -95,12 +97,18 @@ export function turfSupplyAt(
 export async function getTurfStock(eventName: string, userId: number, now = new Date()) {
   const event = await getTurfEvent(eventName, now);
   if (!event) throw throwNotFoundError('This event has no turf');
-  const row = await dbRead.eventTurfStock.findUnique({
-    where: { event_userId: { event: event.name, userId } },
-    select: { stock: true, refilledAt: true },
-  });
+  const [row, [user]] = await Promise.all([
+    dbRead.eventTurfStock.findUnique({
+      where: { event_userId: { event: event.name, userId } },
+      select: { stock: true, refilledAt: true },
+    }),
+    dbRead.$queryRaw<{ optedIn: boolean | null }[]>`
+      SELECT (settings -> ${TURF_SETTING} ->> ${event.name}) = 'true' AS "optedIn"
+      FROM "User" WHERE id = ${userId}
+    `,
+  ]);
   const { stock: _, ...supply } = turfSupplyAt(event, row, now);
-  return { ...supply, mode: event.turf.mode };
+  return { ...supply, mode: event.turf.mode, optedIn: !!user?.optedIn };
 }
 // #endregion
 
@@ -111,6 +119,7 @@ export type PlaceTurfStickerInput = {
   imageId: number;
   cosmeticId: number;
   data: TurfStickerData;
+  source?: 'feed' | 'image-detail';
 };
 
 export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new Date()) {
@@ -181,7 +190,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
           userId,
           team,
           cosmeticId: input.cosmeticId,
-          data: input.data,
+          data: input.source ? { ...input.data, source: input.source } : input.data,
           createdAt: now,
         },
       });
@@ -217,35 +226,44 @@ export async function removeTurfSticker(id: bigint, moderatorId: number) {
 export async function setTurfOptIn(eventName: string, userId: number, optedIn: boolean) {
   const event = await getTurfEvent(eventName);
   if (!event) throw throwNotFoundError('This event has no turf');
-  await dbWrite.$executeRaw`
+  // Only a real change writes, and `changed` says so: the opt-in analytics count each change once.
+  const changed = await dbWrite.$executeRaw`
     UPDATE "User"
     SET settings = jsonb_set(
       COALESCE(settings, '{}'::jsonb) || jsonb_build_object(${TURF_SETTING}::text,
         COALESCE(settings -> ${TURF_SETTING}, '{}'::jsonb)),
       ARRAY[${TURF_SETTING}::text, ${event.name}::text], to_jsonb(${optedIn}::boolean))
     WHERE id = ${userId}
+      AND (settings -> ${TURF_SETTING} ->> ${event.name}) IS DISTINCT FROM ${String(optedIn)}
   `;
+  return { changed: changed > 0, event: event.name };
 }
 // #endregion
 
 // #region map
 type StickerRow = TurfStickerRow & { imageId: number };
 
-// The live stickers on images still in a post, oldest first per image. The owner's opt-in only gates
+// The live stickers on images anyone may see (imageVisible), oldest first per image. The owner's opt-in only gates
 // new placements: an opt-out leaves what was placed counting. A placer earns with an account from
-// before the event start, and is not banned, deleted or excluded.
-// shortcut: minCreatorTier is not read yet, so a later account never earns; add the tier check here
-// once the tier key is settled.
+// before the event start, or one that has since reached the Spark tier's threshold, read from its
+// CreatorMilestone row so the tier stays the one source (compared as
+// creatorScoreFromMeta: `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted
+// or excluded. Read when the map is written, so a newly eligible placer counts from then on only.
 function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | typeof dbWrite) {
   return db.$queryRaw<StickerRow[]>`
     SELECT s."imageId", s."userId", s.team, s."cosmeticId", s."createdAt",
-      (u."createdAt" < ${event.startDate} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-        AND NOT u."excludeFromLeaderboards") AS eligible
+      COALESCE(((u."createdAt" < ${event.startDate}
+          OR CASE WHEN jsonb_typeof(u.meta -> 'scores' -> 'total') = 'number'
+            THEN (u.meta -> 'scores' ->> 'total')::numeric ELSE 0 END >= (
+              SELECT threshold FROM "CreatorMilestone" WHERE key = ${TURF_SCORE_TIER_KEY}
+            ))
+        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+        AND NOT u."excludeFromLeaderboards"), false) AS eligible
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"
-    WHERE s.event = ${event.name} AND s."removedAt" IS NULL AND ${where}
-      AND i."postId" IS NOT NULL
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE s.event = ${event.name} AND s."removedAt" IS NULL AND ${where} AND ${imageVisible}
     ORDER BY s."imageId", s."createdAt", s.id
   `;
 }
@@ -321,11 +339,17 @@ export async function syncTurfImages(event: TurfEvent, imageIds: number[], now =
   const desired = new Map([...entries].map(([k, e]) => [k, encodeTurfEntry(e)]));
   await writeMap(event, current, desired);
   const countsKey = turfKeys(event.name).counts;
-  for (const k of keys) {
+  const before = await sysRedis.hmGet(countsKey, keys);
+  const changes: TurfPush[] = [];
+  for (const [i, k] of keys.entries()) {
     const c = counts.get(k);
-    if (c) await sysRedis.hSet(countsKey, k, JSON.stringify(c));
+    const value = c ? JSON.stringify(c) : null;
+    if (value === before[i]) continue;
+    if (value) await sysRedis.hSet(countsKey, k, value);
     else await sysRedis.hDel(countsKey, k);
+    changes.push({ imageId: imageIds[i], counts: c ?? null });
   }
+  await pushTurfCounts(event.name, changes);
 }
 
 /** Rebuilds the whole turf map and counts for an event: hides, bans, opt-outs and cap changes. */
@@ -372,6 +396,11 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
     await Promise.all(part.map(([k, v]) => sysRedis.hSet(keys.counts, k, v)));
   for (const part of chunk(countDiff.remove, 500))
     await Promise.all(part.map((k) => sysRedis.hDel(keys.counts, k)));
+  const imageIdOf = (k: string) => Number(k.slice('Image:'.length));
+  await pushTurfCounts(event.name, [
+    ...countDiff.set.map(([k]) => ({ imageId: imageIdOf(k), counts: counts.get(k) ?? null })),
+    ...countDiff.remove.map((k) => ({ imageId: imageIdOf(k), counts: null })),
+  ]);
   return { images: counts.size, turf: kept.size, dropped, ...written };
 }
 
@@ -393,22 +422,44 @@ export async function reconcileAllTurf(now = new Date()) {
 // #region reads
 /**
  * Per-image counts and leader for a batch of images, plus the viewer's team. `hatted`: an event hat
- * protects the image, so its stickers earn nothing until the hat comes off. Two HMGETs.
+ * protects the image, so its stickers earn nothing until the hat comes off. `open`: for every image
+ * asked about, whether it can take a new sticker now (visible, owner opted in); owners may sticker
+ * their own. `mine`: whether the viewer has already stickered it, so cannot again.
  */
 export async function getTurfSummaries(eventName: string, imageIds: number[], viewerId?: number) {
   const event = await getTurfEvent(eventName);
-  if (!event || event.turf.mode === 'off' || !imageIds.length) return { team: null, images: {} };
+  if (!event || event.turf.mode === 'off' || !imageIds.length)
+    return { team: null, images: {}, open: {}, mine: {} };
   const keys = imageIds.map((id) => `Image:${id}`);
-  const [counts, hats] = await Promise.all([
+  const [counts, hats, openRows, mineRows] = await Promise.all([
     sysRedis.hmGet(turfKeys(event.name).counts, keys),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
+    dbRead.$queryRaw<{ id: number }[]>`
+      SELECT i.id FROM "Image" i
+      JOIN "Post" p ON p.id = i."postId"
+      JOIN "User" o ON o.id = i."userId"
+      WHERE i.id = ANY(${imageIds}::int[]) AND ${imageVisible}
+        AND (o.settings -> ${TURF_SETTING} ->> ${event.name}) = 'true'
+    `,
+    // Removed ones too: the unique key refuses a second sticker either way.
+    viewerId
+      ? dbRead.$queryRaw<{ imageId: number }[]>`
+          SELECT "imageId" FROM "EventTurfSticker"
+          WHERE event = ${event.name} AND "userId" = ${viewerId}
+            AND "imageId" = ANY(${imageIds}::int[])
+        `
+      : [],
   ]);
+  const mineIds = new Set(mineRows.map((r) => r.imageId));
+  const mine = Object.fromEntries(imageIds.map((id) => [id, mineIds.has(id)]));
+  const openIds = new Set(openRows.map((r) => r.id));
+  const open = Object.fromEntries(imageIds.map((id) => [id, openIds.has(id)]));
   const images: Record<number, TurfCounts & { hatted: boolean }> = {};
   imageIds.forEach((id, i) => {
     if (counts[i]) images[id] = { ...(JSON.parse(counts[i]!) as TurfCounts), hatted: !!hats[i] };
   });
   const team = viewerId ? await event.getUserTeam(viewerId).catch(() => null) : null;
-  return { team: team ?? null, images };
+  return { team: team ?? null, images, open, mine };
 }
 
 type DrawnSticker = {
@@ -443,6 +494,53 @@ export async function getTurfStickers(eventName: string, imageId: number, viewer
     viewerId ? rows(Prisma.sql`AND s."userId" = ${viewerId}`, 1) : [],
   ]);
   return { stickers, mine: mine[0] ?? null };
+}
+
+/**
+ * Stickers to draw on a page of feed cards: per image, the latest sticker of each team first, then
+ * the next most recent, up to `perImage`. Same visibility and placer rules as getTurfStickers.
+ */
+export async function getTurfStickersForImages(
+  eventName: string,
+  imageIds: number[],
+  perImage: number
+) {
+  const event = await getTurfEvent(eventName);
+  if (!event || event.turf.mode === 'off' || !imageIds.length) return {};
+  const rows = await dbRead.$queryRaw<(DrawnSticker & { imageId: number })[]>`
+    WITH ranked AS (
+      SELECT s.id, s."imageId", s."userId", s.team, s."cosmeticId", s.data, s."createdAt",
+        row_number() OVER (PARTITION BY s."imageId", s.team ORDER BY s."createdAt" DESC, s.id DESC)
+          AS "teamRank"
+      FROM "EventTurfSticker" s
+      JOIN "User" u ON u.id = s."userId"
+      JOIN "Image" i ON i.id = s."imageId"
+      JOIN "Post" p ON p.id = i."postId"
+      WHERE s.event = ${event.name} AND s."imageId" = ANY(${imageIds}::int[])
+        AND s."removedAt" IS NULL AND ${imageVisible}
+        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+    ), picked AS (
+      SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt", row_number() OVER (
+        PARTITION BY "imageId" ORDER BY "teamRank", "createdAt" DESC, id DESC
+      ) AS n
+      FROM ranked
+      WHERE "teamRank" <= ${perImage}
+    )
+    SELECT id, "imageId", "userId", team, "cosmeticId", data, "createdAt"
+    FROM picked WHERE n <= ${perImage}
+    ORDER BY "imageId", n
+  `;
+  const byImage: Record<number, DrawnSticker[]> = {};
+  for (const { imageId, ...sticker } of rows) (byImage[imageId] ??= []).push(sticker);
+  return byImage;
+}
+
+/** Marks images as on a viewer's screen, so changes to their counts are pushed (turf-watch.ts). */
+export async function watchTurfImages(eventName: string, imageIds: number[]) {
+  const event = await getTurfEvent(eventName);
+  if (!event || event.turf.mode === 'off') return 0;
+  const endsAt = new Date(event.endDate.getTime() + (event.scoring?.finalizeAfterMs ?? 0));
+  return markTurfWatched({ name: event.name, endsAt }, imageIds);
 }
 
 /**

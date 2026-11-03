@@ -453,18 +453,73 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     if (!marked) return undefined;
     try {
       await expireSeen(def, seenKey, rule, time);
-      if (live)
-        await Promise.all(
-          players.map((ownerId) =>
-            liveGrant(event, action, { ...teamHat, ownerId }, keys, actor, time).catch((error) =>
-              deps.logError('redis', 'eventPoints.turfLiveGrant', error)
-            )
-          )
-        );
+      if (live) await liveGrantTurf(event, action, teamHat, players, keys, actor, time);
     } catch (error) {
       deps.logError('redis', 'eventPoints.turfLiveGrant', error);
     }
     return first;
+  }
+
+  // A turf first's live totals, batched: one cap increment per credited player, then their owner and
+  // totals and one team increment for the sum. Issued together so the client pipelines them, two round
+  // trips whatever the player count. No per-hat, count or roster update: turf credits are not listed
+  // as hats, and the roster's points sort (display only) catches up at the hourly roster reconcile.
+  async function liveGrantTurf(
+    event: LoadedEvent,
+    action: EventPointAction,
+    teamHat: EventHat,
+    players: number[],
+    keys: ReturnType<typeof eventSeasonKeys>,
+    actor: string,
+    time: Date
+  ) {
+    const { def } = event;
+    const weight = event.weights[action.type] ?? 0;
+    if (weight <= 0) return;
+    const day = utcDay(time);
+    // Settled one by one: a failed cap increment costs only that player's live grant.
+    const totals = await Promise.allSettled(
+      players.map((p) => deps.redis.hIncrBy(keys.cap(day, p), actor, weight))
+    );
+    const granted = players
+      .flatMap((ownerId, i) => {
+        const result = totals[i];
+        if (result.status === 'rejected') {
+          deps.logError('redis', 'eventPoints.turfCap', result.reason);
+          return [];
+        }
+        const total = Number(result.value);
+        const grant = cappedGrant(weight, total, def.scoring.capPerActorPerOwnerPerDay);
+        return [{ ownerId, firstToday: total === weight, grant }];
+      })
+      .filter((g) => g.grant > 0 || g.firstToday);
+    const bucket = liveBucket(time);
+    const ownerKey = keys.live(bucket, 'owner');
+    const teamKey = keys.live(bucket, 'team');
+    const sum = granted.reduce((n, g) => n + g.grant, 0);
+    await Promise.all([
+      ...granted
+        .filter((g) => g.firstToday)
+        .map((g) => deps.redis.expireAt(keys.cap(day, g.ownerId), dayExpiry(time))),
+      ...granted
+        .filter((g) => g.grant > 0)
+        .map((g) => deps.redis.hIncrBy(ownerKey, String(g.ownerId), g.grant)),
+      ...(sum > 0 ? [deps.redis.hIncrBy(teamKey, teamHat.team, sum)] : []),
+    ]);
+    if (sum <= 0) return;
+    for (const g of granted)
+      if (g.grant > 0)
+        try {
+          deps.onGrant(def, { ...teamHat, ownerId: g.ownerId }, time);
+        } catch (error) {
+          deps.logError('push', 'eventPoints.onGrant', error);
+        }
+    for (const key of [ownerKey, teamKey]) {
+      if (bucketTtlSet.has(key)) continue;
+      if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
+      bucketTtlSet.add(key);
+      await deps.redis.expire(key, LIVE_TTL_S);
+    }
   }
 
   async function liveGrant(

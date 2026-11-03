@@ -134,6 +134,9 @@ export interface TrainingStudioMeta {
    *  before lineage shipped. */
   sourceWorkflowId?: string;
   sourceEpoch?: number;
+  /** Dataset images the upload scan rated R or above, stamped at submit. A positive count lets "train
+   *  further" skip re-rating the dataset; 0 or absent is re-checked. */
+  matureCount?: number;
 }
 
 const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {

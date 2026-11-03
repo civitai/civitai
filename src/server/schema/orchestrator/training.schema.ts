@@ -9,6 +9,7 @@ import {
   trainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { aiToolkitLrSchedulerTypes, aiToolkitOptimizerTypes } from '~/utils/training';
 
 const imageTrainingBaseSchema = z.object({
   model: z.string(),
@@ -35,19 +36,8 @@ const aiToolkitBaseParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),
@@ -232,20 +222,8 @@ const whatIfAiToolkitParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adam',
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),

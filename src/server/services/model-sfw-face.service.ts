@@ -14,6 +14,7 @@ import { previewTextScanNsfw } from '~/server/services/text-scan/preview';
 import type { TextScanField } from '~/server/services/text-scan/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { truncateModelName } from '~/shared/constants/model-name.constants';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { removeTags } from '~/utils/string-helpers';
 
@@ -198,7 +199,7 @@ export async function draftSfwFace({
     ).catch(() => draft);
 
   return {
-    sfwName: draft.title.trim().slice(0, 255),
+    sfwName: truncateModelName(draft.title.trim()),
     sfwDescription: sanitizeHtml(draft.description),
   };
 }

@@ -253,7 +253,11 @@ export type EventScoring = EventPointsConfig & {
   newAccountDays: number;
   // Scoring keeps running this long past endDate for late data; the winner is decided after it.
   finalizeAfterMs: number;
+  // Points a team is given outright: they count toward its total, rank and winner from `at`, but
+  // never toward any hat's or person's points.
+  teamAwards?: readonly TeamAward[];
 };
+export type TeamAward = { team: string; points: number; at: Date; reason: string };
 
 // The words a scored event's page shows. The numbers on it (reaction weight, caps, cooldown, what can
 // wear a decoration) are read from `scoring` and the event's decoration definition, never restated

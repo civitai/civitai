@@ -939,6 +939,40 @@ describe('Hat Turf', () => {
     expect(livePoints('team', 'Yellow')).toBe(2);
   });
 
+  it('a live first on a 25-player turf image costs a bounded number of Redis calls', async () => {
+    const many = Array.from({ length: 25 }, (_, i) => 100 + i);
+    fake.setTurf(EVENT.name, 'Image:200', encodeTurfEntry({ ...TURF, players: many }));
+    let calls = 0;
+    const counted = new Proxy(fake.redis, {
+      get: (target, prop, receiver) => {
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function'
+          ? (...args: unknown[]) => {
+              calls++;
+              return (value as (...a: unknown[]) => unknown).apply(target, args);
+            }
+          : value;
+      },
+    });
+    build({ redis: counted, loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.awardEventPoints([view(30)]);
+    calls = 0;
+    await engine.awardEventPoints([view(31)]);
+    expect(livePoints('team', 'Yellow')).toBe(50);
+    // Per player: the cap increment, its TTL (set on this viewer's first grant to that player today)
+    // and the owner increment; plus the seen mark, its TTL and one team increment.
+    expect(calls).toBeLessThanOrEqual(3 * 25 + 5);
+  });
+
+  it('caps each credited player separately for one viewer', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    await fake.redis.hIncrBy(keys.cap('2026-11-05', 21), '30', 50);
+    await engine.awardEventPoints([view(30)]);
+    expect(livePoints('owner', '21')).toBe(0);
+    expect(livePoints('owner', '22')).toBe(1);
+  });
+
   it('shadow: records the shadow type and moves no live total', async () => {
     build({ loadScoredEvents: async () => [turfEvent('shadow')] });
     await engine.awardEventPoints([view(30)]);
@@ -974,7 +1008,7 @@ describe('Hat Turf', () => {
     };
     await engine.awardEventPoints([action]);
     fake.setTurf(EVENT.name, 'Image:200', '');
-    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.refresh();
     expect(engine.isHattedEntity('Image', 200)).toBe(false);
     expect(await engine.hasTurfMark(action)).toBe(true);
     expect(await engine.hasTurfMark({ ...action, actorId: 31 })).toBe(false);
@@ -986,6 +1020,42 @@ describe('Hat Turf', () => {
   });
 
   it('still finds a turf earning after the mode is switched off', async () => {
+    let mode: 'live' | 'off' = 'live';
+    build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: mode }] });
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 200,
+      sourceId: 'ImageReaction:200:30',
+    };
+    await engine.awardEventPoints([action]);
+    mode = 'off';
+    await engine.refresh();
+    expect(engine.isHattedEntity('Image', 200)).toBe(false);
+    expect(await engine.hasTurfMark(action)).toBe(true);
+  });
+
+  it('nets out a reaction earned under a hat that has since come off', async () => {
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 100,
+      sourceId: 'ImageReaction:100:30',
+    };
+    await engine.awardEventPoints([action]);
+    fake.setHat(EVENT.name, 'Image:100', '');
+    await engine.refresh();
+    expect(engine.isHattedEntity('Image', 100)).toBe(false);
+    expect(await engine.hasTurfMark(action)).toBe(true);
+  });
+
+  // Decision: the removal lookup always asks Redis (two SISMEMBERs) rather than prefiltering on what
+  // this server has loaded. A prefilter forgets everything at a restart, and an un-react it skips
+  // leaves the earlier add scoring. Do not reintroduce one without keeping this test red-on-revert.
+  it('still finds an earning after a restart while turf mode is off (no in-memory prefilter)', async () => {
     build({ loadScoredEvents: async () => [turfEvent('live')] });
     const action = {
       type: 'reaction' as const,
@@ -995,6 +1065,7 @@ describe('Hat Turf', () => {
       sourceId: 'ImageReaction:200:30',
     };
     await engine.awardEventPoints([action]);
+    // A fresh engine is a restarted server; with the mode off it loads no turf map at all.
     build({ loadScoredEvents: async () => [{ ...EVENT, turfMode: 'off' as const }] });
     expect(await engine.hasTurfMark(action)).toBe(true);
   });

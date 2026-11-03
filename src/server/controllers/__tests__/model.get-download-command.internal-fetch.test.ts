@@ -85,14 +85,14 @@ describe('getDownloadCommandHandler Download events', () => {
   it('the system account gets the command and emits no Download event', async () => {
     const result = await call(constants.system.user.id);
 
-    expect(result.commands).toHaveLength(1);
+    expect(result?.commands).toHaveLength(1);
     expect(modelVersionEvent).not.toHaveBeenCalled();
   });
 
   it('a real user emits one Download event', async () => {
     const result = await call(42);
 
-    expect(result.commands).toHaveLength(1);
+    expect(result?.commands).toHaveLength(1);
     expect(modelVersionEvent).toHaveBeenCalledTimes(1);
     expect(modelVersionEvent.mock.calls[0][0]).toMatchObject({
       type: 'Download',

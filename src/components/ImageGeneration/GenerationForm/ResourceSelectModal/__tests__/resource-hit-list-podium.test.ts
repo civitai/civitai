@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react';
+import { act, createElement, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
@@ -20,7 +20,6 @@ const state = vi.hoisted(() => ({
   hiddenTags: new Map<number, boolean>(),
   hiddenModels: new Map<number, boolean>(),
   hiddenImages: new Map<number, boolean>(),
-  resources: [{ type: 'Checkpoint', baseModels: [] as string[] }],
   selectSource: 'generation',
 }));
 
@@ -113,7 +112,7 @@ vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', () => ({
     render,
   }: {
     data: { id: number }[];
-    render: (props: { data: unknown; height: number }) => unknown;
+    render: (props: { data: unknown; height: number }) => ReactNode;
   }) =>
     data.map((item) => createElement('div', { key: item.id }, render({ data: item, height: 1 }))),
 }));
@@ -188,7 +187,6 @@ beforeEach(() => {
   state.hiddenTags = new Map();
   state.hiddenModels = new Map();
   state.hiddenImages = new Map();
-  state.resources = [{ type: 'Checkpoint', baseModels: [] }];
 });
 
 describe('ResourceHitList featured podium', () => {

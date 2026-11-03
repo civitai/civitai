@@ -354,6 +354,37 @@ export const PARAM_HELP: Record<keyof RunParams, string> = {
     'Randomly mirrors images horizontally to double the effective dataset. Good for symmetric subjects; keep it off for characters with asymmetric details, text, logos or handedness.',
 };
 
+/** LoRA file size per unit of network dim, in MB, from the median size of published trainings. Size is
+ *  linear in dim but the per-dim cost depends on the architecture, so only measured cards are listed. */
+const LORA_MB_PER_DIM: Partial<Record<string, number>> = {
+  sdxl: 6.8,
+  illustrious: 6.8,
+  pony: 6.8,
+  flux: 10.25,
+  sd15: 1.125,
+};
+
+/** " At dim 32 the file is about 218MB (≈6.8MB per dim)." for a measured card, else ''. */
+export function networkDimSizeHint(cardType: string, dim: NumericInput): string {
+  const mbPerDim = LORA_MB_PER_DIM[cardType];
+  const n = Number(dim);
+  if (!mbPerDim || dim === '' || !Number.isFinite(n) || n <= 0) return '';
+  const perDim = Math.round(mbPerDim * 10) / 10;
+  return ` At dim ${n} the file is about ${Math.round(n * mbPerDim)}MB (≈${perDim}MB per dim).`;
+}
+
+/** A param's help text for a run: the model's recommended value filled in, and for network dim the file
+ *  size at the value the user has entered. */
+export function paramHelpText(
+  field: keyof RunParams,
+  cardType: string,
+  defaults: RunParams,
+  current: RunParams
+): string {
+  const text = PARAM_HELP[field].replace('{recommended}', paramDisplay(defaults[field]));
+  return field === 'networkDim' ? text + networkDimSizeHint(cardType, current.networkDim) : text;
+}
+
 /** A run + its chosen params, produced by the Review step's Start and fed to `buildTrainingRuns`. */
 export interface LaunchedRun {
   run: Run;
@@ -657,6 +688,19 @@ function num(value: NumericInput, fallback: number): number {
  *  (labels resolved by the dataset's single label type), the chosen params, prompts, trigger, and the
  *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. An
  *  edit LoRA passes its pairs as path-placed `items` (`pairItems`), which replace the image list. */
+/** One confirm covers every run of a sweep: they train on the same dataset. */
+export function stampMature(
+  runs: TrainingRunPayload[],
+  matureAck: boolean,
+  matureCount: number
+): TrainingRunPayload[] {
+  return runs.map((run) => ({
+    ...run,
+    ...(matureAck ? { matureAck: true } : {}),
+    meta: { ...run.meta, matureCount },
+  }));
+}
+
 export function buildTrainingRuns(
   selection: Selection,
   images: Img[],

@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
 import { submitTrainingBatch, type TrainingRunInput } from '$lib/server/train';
 import {
+  MatureAckRequiredError,
   TrainingBatchValidationError,
   TrainingSubmitError,
   type SubmittedBatch,
@@ -33,6 +34,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     );
   } catch (err) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);
+    if (err instanceof MatureAckRequiredError)
+      error(409, { message: err.message, matureCount: err.matureCount });
     throwTextCheckHttpError(err);
     if (err instanceof TrainingSubmitError && err.isRefusal)
       error(400, `Training could not start: ${err.reason}`);
