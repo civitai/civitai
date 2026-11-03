@@ -11,13 +11,13 @@ import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake
 
 const { getModel } = vi.hoisted(() => ({ getModel: vi.fn() }));
 
-// The Kysely/Prisma switch. FLIPT_FEATURE_FLAGS stays real, so the key asserted below is the one
-// production evaluates.
+// Every server flag on this path reads off: the owner-posts skip among them, so the posts read
+// runs for this viewer.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
-// Every hot-read-3 statement stubbed: their rows against Prisma's are compared in
+// Every hot-read-3 statement stubbed: their rows, against a real database, are pinned in
 // hot-reads-3.kysely-parity.test.ts.
 vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads3>();
@@ -52,10 +52,10 @@ const { isFlipt } = await import('~/server/flipt/client');
 const { getModelHandler } = await import('~/server/controllers/model.controller');
 
 /**
- * The three reads `getModelHandler` makes after the model row, behind `kysely-hot-reads-3`: the
- * owner's posts on the visible versions, the suggested-resource count and the owner's settings (read
- * only with metric privacy on, for a viewer who is not the owner). ON reads each through Kysely on
- * the replica and touches none of the Prisma reads; OFF the reverse. Row parity is in
+ * The three reads `getModelHandler` makes after the model row: the owner's posts on the visible
+ * versions, the suggested-resource count and the owner's settings (read only with metric privacy
+ * on, for a viewer who is not the owner). Each reads through Kysely on the replica and touches none
+ * of the Prisma reads it replaced. Row parity is in
  * src/server/services/__tests__/hot-reads-3.kysely-parity.test.ts.
  */
 
@@ -68,8 +68,6 @@ const MODEL = 6101;
 const OWNER = 6202;
 const VIEWER = 6303;
 const SUGGESTED = 2;
-
-const ON_KEYS = new Set(['kysely-hot-reads-3']);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -89,9 +87,6 @@ beforeEach(() => {
     user: { id: OWNER, image: null, username: 'owner', deletedAt: null, rank: null },
   });
   flag.mockReset().mockResolvedValue(false);
-  dbMock.dbRead.post.findMany.mockResolvedValue([]);
-  dbMock.dbRead.modelAssociations.count.mockResolvedValue(SUGGESTED);
-  dbMock.dbRead.user.findUnique.mockResolvedValue({ settings: {} });
   q.listModelPagePosts.mockResolvedValue([] as never);
   q.countSuggestedResources.mockResolvedValue(SUGGESTED);
   q.getUserSettings.mockResolvedValue({ settings: {} } as never);
@@ -106,38 +101,12 @@ const modelPage = () =>
     },
   } as never);
 
-describe('getModelHandler reads behind kysely-hot-reads-3', () => {
+describe('getModelHandler: the reads after the model row', () => {
   it('control: the routing checks below can tell the two Kysely clients apart', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('evaluates kysely-hot-reads-3 by key, with no entity or context, once per request', async () => {
-    await modelPage();
-    expect(flag.mock.calls.filter(([key]) => key === 'kysely-hot-reads-3')).toEqual([
-      ['kysely-hot-reads-3'],
-    ]);
-  });
-
-  it('OFF: the posts, the count and the owner settings read through Prisma only', async () => {
-    const model = await modelPage();
-    expect(dbMock.dbRead.post.findMany).toHaveBeenCalledWith({
-      where: { modelVersionId: { in: [] }, userId: OWNER },
-      select: { id: true, modelVersionId: true },
-      orderBy: { id: 'asc' },
-    });
-    expect(dbMock.dbRead.modelAssociations.count).toHaveBeenCalledWith({
-      where: { fromModelId: MODEL, type: 'Suggested' },
-    });
-    expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith({
-      where: { id: OWNER },
-      select: { settings: true },
-    });
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
-    expect(model.hasSuggestedResources).toBe(true);
-  });
-
-  it('ON: the same three reads through Kysely only, on the replica', async () => {
-    flag.mockImplementation(async (key) => ON_KEYS.has(key as string));
+  it('reads the three through Kysely only, on the replica', async () => {
     const model = await modelPage();
     expect(q.listModelPagePosts.mock.calls).toEqual([
       [kyselyRead, { modelVersionIds: [], userId: OWNER }],
@@ -157,8 +126,7 @@ describe('getModelHandler reads behind kysely-hot-reads-3', () => {
     expect(model.hasSuggestedResources).toBe(true);
   });
 
-  it('ON: the Kysely count decides hasSuggestedResources (zero is false)', async () => {
-    flag.mockImplementation(async (key) => ON_KEYS.has(key as string));
+  it('the Kysely count decides hasSuggestedResources (zero is false)', async () => {
     q.countSuggestedResources.mockResolvedValue(0);
     const model = await modelPage();
     expect(model.hasSuggestedResources).toBe(false);

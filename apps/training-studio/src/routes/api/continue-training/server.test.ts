@@ -1,21 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
+import { MatureAckRequiredError } from '$lib/mature-charge';
 
 const continueTrainingWhatIf = vi.fn();
 const continueTraining = vi.fn();
-class MatureAckRequiredError extends Error {
-  constructor(message: string, readonly matureCount = 0) {
-    super(message);
-  }
-}
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
 vi.mock('$lib/server/text-check', () => ({
   textCheckCookie: () => null,
   throwTextCheckHttpError: () => undefined,
 }));
-vi.mock('$lib/server/train', () => ({
+vi.mock('$lib/server/train', async () => ({
   continueTraining: (...args: unknown[]) => continueTraining(...args),
   continueTrainingWhatIf: (...args: unknown[]) => continueTrainingWhatIf(...args),
-  MatureAckRequiredError,
+  MatureAckRequiredError: (await import('$lib/mature-charge')).MatureAckRequiredError,
 }));
 
 const { GET, POST } = await import('./+server');
@@ -55,10 +51,11 @@ describe('POST /api/continue-training', () => {
   });
 
   it('answers 409 with the reason when the mature confirm is missing', async () => {
-    continueTraining.mockRejectedValueOnce(new MatureAckRequiredError('Confirm the charge', 3));
+    const refusal = new MatureAckRequiredError(3);
+    continueTraining.mockRejectedValueOnce(refusal);
     await expect(post(body)).rejects.toMatchObject({
       status: 409,
-      body: { message: 'Confirm the charge', matureCount: 3 },
+      body: { message: refusal.message, matureCount: 3 },
     });
   });
 });

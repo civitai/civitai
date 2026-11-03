@@ -2,7 +2,12 @@ import { test as setup } from '@playwright/test';
 import fs from 'fs';
 import { EncryptJWT } from 'jose';
 import { hkdfSync } from 'node:crypto';
-import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fixtures';
+import {
+  PREVIEW_SESSION_MAX_AGE_S,
+  PREVIEW_USERS,
+  type PreviewRole,
+  storageStatePath,
+} from './preview-fixtures';
 
 /**
  * Preview-environment auth setup.
@@ -39,7 +44,6 @@ import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fix
 const SECRET = process.env.NEXTAUTH_SECRET;
 const PREVIEW_URL = process.env.PREVIEW_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https preview => __Secure- prefix
-const MAX_AGE_S = 30 * 24 * 60 * 60;
 
 // Mint the LEGACY next-auth v4 session cookie (a `dir`/`A256GCM` JWE, HKDF-derived key) WITHOUT next-auth, which
 // is now removed. The app still ACCEPTS it via @civitai/auth's decodeLegacySessionCookie during the cutover, so
@@ -70,7 +74,7 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
   const value = await new EncryptJWT(token)
     .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
     .setIssuedAt()
-    .setExpirationTime(Math.floor(Date.now() / 1000) + MAX_AGE_S)
+    .setExpirationTime(Math.floor(Date.now() / 1000) + PREVIEW_SESSION_MAX_AGE_S)
     .encrypt(derivedKey(SECRET as string));
 
   const { hostname } = new URL(PREVIEW_URL as string);
@@ -81,7 +85,7 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
         value,
         domain: hostname,
         path: '/',
-        expires: Math.floor(Date.now() / 1000) + MAX_AGE_S,
+        expires: Math.floor(Date.now() / 1000) + PREVIEW_SESSION_MAX_AGE_S,
         httpOnly: true,
         secure: true,
         sameSite: 'Lax' as const,
