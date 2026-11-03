@@ -117,22 +117,24 @@ describe('queryBoard', () => {
     expect(await ids()).toEqual([3, 5, 7]);
   });
 
-  it('shows the profile picture when it is rated PG or PG-13, else the legacy image', async () => {
+  it('shows the profile picture at any rated level, but not unrated or Blocked', async () => {
     await member(1, 'Knight', 3);
     await member(2, 'Knight', 2);
     await member(3, 'Knight', 1);
     await member(4, 'Knight', 1);
+    await member(5, 'Knight', 1);
     await pg.exec(
-      `INSERT INTO "Image" ("id","url","nsfwLevel") VALUES (50,'pic-ok',1),(51,'pic-nsfw',4),(52,'pic-pg13',2)`
+      `INSERT INTO "Image" ("id","url","nsfwLevel") VALUES (50,'pic-pg',1),(51,'pic-blocked',32),(52,'pic-x',8),(53,'pic-unrated',0)`
     );
     await pg.exec(`UPDATE "User" SET "profilePictureId"=50 WHERE "id"=1`);
     await pg.exec(`UPDATE "User" SET "profilePictureId"=51 WHERE "id"=2`);
     await pg.exec(`UPDATE "User" SET "profilePictureId"=52 WHERE "id"=3`);
     await pg.exec(`UPDATE "User" SET "image"=NULL WHERE "id"=4`);
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=53 WHERE "id"=5`);
 
     const { rows } = await queryBoard(db, NOW);
 
-    expect(rows.map((r) => r.image)).toEqual(['pic-ok', 'img-2', 'pic-pg13', null]);
+    expect(rows.map((r) => r.image)).toEqual(['pic-pg', 'img-2', 'pic-x', null, 'img-5']);
   });
 
   it('reads each rank badge cosmetic image from the Trophy cosmetics, and none for Paladin', async () => {
