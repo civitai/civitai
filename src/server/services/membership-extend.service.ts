@@ -36,7 +36,8 @@ export { MEMBERSHIP_EXTEND_MAX_DAYS };
 export const MEMBERSHIP_EXTEND_COOLDOWN_DAYS = 25;
 export const MEMBERSHIP_EXTEND_ACTIVITY = 'extendMembership';
 const DAY_SECONDS = 86_400;
-const LOCK_SECONDS = 60;
+// Longer than every Stripe call the locked section can make (up to four, 80 s client timeout each).
+const LOCK_SECONDS = 600;
 const EXTENDABLE_STATUSES = ['active', 'trialing'];
 
 const iso = (epoch: number | null | undefined) =>
@@ -98,10 +99,13 @@ export type ExtensionGuardInput = {
     id: string;
     provider: string;
     userCustomerId: string | null;
+    userIsModerator?: boolean;
   } | null;
   sub: Stripe.Subscription | null;
   customer: Stripe.Customer | Stripe.DeletedCustomer | null;
   recentExtensions: number;
+  /** Pending invoice items on the customer: the trial's $0 invoice would pick them up and charge them. */
+  pendingInvoiceItems?: number;
 };
 
 /**
@@ -116,6 +120,7 @@ export function checkExtension({
   sub,
   customer,
   recentExtensions,
+  pendingInvoiceItems = 0,
 }: ExtensionGuardInput) {
   const problems: string[] = [];
   if (!Number.isInteger(days) || days < 1 || days > MEMBERSHIP_EXTEND_MAX_DAYS)
@@ -127,6 +132,9 @@ export function checkExtension({
   if (!row) problems.push('no green membership subscription for this user');
   else if (row.provider !== PaymentProvider.Stripe)
     problems.push(`the membership is billed by ${row.provider}, not Stripe`);
+  // Moderators cannot give each other free days (nor themselves: refused before this).
+  if (row?.userIsModerator)
+    problems.push('the member is a moderator; extend a moderator out of band');
   if (!row || row.provider !== PaymentProvider.Stripe) return { problems };
   if (!sub) return { problems: [...problems, 'Stripe has no such subscription'] };
 
@@ -153,6 +161,13 @@ export function checkExtension({
   if (sub.trial_end != null && sub.trial_end > now)
     problems.push(`already in a trial until ${iso(sub.trial_end)}`);
   // An armed gift month (or any coupon) rides on the next invoice; v1 does not move it.
+  // Monthly only: a trial on an annual plan stops its monthly Buzz and cosmetics until the trial ends
+  // (deliver-annual-sub-buzz pays status 'active' only) and bills a new year at its end.
+  const items = sub.items?.data ?? [];
+  if (items.length !== 1 || items[0].price?.recurring?.interval !== 'month')
+    problems.push('only a single monthly plan can be extended');
+  if (pendingInvoiceItems > 0)
+    problems.push('the customer has pending invoice items, which the trial invoice would charge');
   if (sub.discount) problems.push('the subscription carries a discount (an armed gift month?)');
   const mode = cancelModeOf(sub);
   if (!mode) problems.push(`a custom cancel date (${iso(sub.cancel_at)}) is set`);
@@ -237,6 +252,7 @@ type Loaded = {
   sub: Stripe.Subscription | null;
   customer: ExtensionGuardInput['customer'];
   recentExtensions: number;
+  pendingInvoiceItems: number;
 };
 
 async function load(stripe: Stripe, userId: number, now: number): Promise<Loaded> {
@@ -245,7 +261,10 @@ async function load(stripe: Stripe, userId: number, now: number): Promise<Loaded
       where: { userId_buzzType: { userId, buzzType: 'green' } },
       select: { id: true, product: { select: { provider: true } } },
     }),
-    dbWrite.user.findUnique({ where: { id: userId }, select: { customerId: true } }),
+    dbWrite.user.findUnique({
+      where: { id: userId },
+      select: { customerId: true, isModerator: true },
+    }),
     dbWrite.modActivity.count({
       where: {
         entityType: 'user',
@@ -256,10 +275,15 @@ async function load(stripe: Stripe, userId: number, now: number): Promise<Loaded
     }),
   ]);
   const row = cs
-    ? { id: cs.id, provider: cs.product.provider, userCustomerId: user?.customerId ?? null }
+    ? {
+        id: cs.id,
+        provider: cs.product.provider,
+        userCustomerId: user?.customerId ?? null,
+        userIsModerator: !!user?.isModerator,
+      }
     : null;
   if (!row || row.provider !== PaymentProvider.Stripe)
-    return { row, sub: null, customer: null, recentExtensions };
+    return { row, sub: null, customer: null, recentExtensions, pendingInvoiceItems: 0 };
   const sub = await stripe.subscriptions
     .retrieve(row.id, { expand: ['latest_invoice'] })
     .catch((e: { statusCode?: number }) => {
@@ -273,7 +297,11 @@ async function load(stripe: Stripe, userId: number, now: number): Promise<Loaded
           throw e;
         })
       : null;
-  return { row, sub, customer, recentExtensions };
+  const pending =
+    sub && typeof sub.customer === 'string'
+      ? await stripe.invoiceItems.list({ customer: sub.customer, pending: true, limit: 1 })
+      : null;
+  return { row, sub, customer, recentExtensions, pendingInvoiceItems: pending?.data.length ?? 0 };
 }
 
 async function requireStripe() {
@@ -404,7 +432,9 @@ async function extendLocked({
   }
 
   const { trialEnd, mode } = checked;
-  const stamp = `${actorId}:${days}d:${new Date(now * 1000).toISOString()}`;
+  // No moderator id: Stripe metadata is copied to CustomerSubscription.metadata, which the member can
+  // read (getUserSubscription). ModActivity and Axiom hold the actor.
+  const stamp = `${days}d:${new Date(now * 1000).toISOString()}`;
   const result: ExtendMembershipResult = {
     ok: false,
     userId,
@@ -419,6 +449,9 @@ async function extendLocked({
     problems: [],
   };
   let response: Stripe.Subscription | null = null;
+  // Stripe refused the first update outright (a 4xx invalid-request or card error): nothing was
+  // written, so it must not start the member's cooldown.
+  let rejected = false;
   try {
     response = await stripe.subscriptions.update(sub.id, updateParams({ trialEnd, mode, stamp }), {
       idempotencyKey: `mod-extend:${sub.id}:${trialEnd}`,
@@ -448,20 +481,23 @@ async function extendLocked({
     result.problems.push(...verified.problems);
     result.newInvoiceId = verified.newInvoiceId;
   } catch (e) {
+    const type = (e as { type?: string }).type;
+    rejected = !response && (type === 'StripeInvalidRequestError' || type === 'StripeCardError');
     result.problems.push(
       `stopped after ${response ? 'the update' : 'no confirmed write'}: ${(e as Error).message}`
     );
   } finally {
     result.ok = result.problems.length === 0;
-    // Always, from the first write attempt on: the activity counts toward the cooldown even when the
-    // write's outcome is unknown.
-    await trackModActivity(actorId, {
-      entityType: 'user',
-      entityId: userId,
-      activity: MEMBERSHIP_EXTEND_ACTIVITY,
-    }).catch((e) => log({ type: 'audit-failed', actorId, userId, error: (e as Error).message }));
+    // From the first write attempt on: the activity counts toward the cooldown even when the write's
+    // outcome is unknown. Only a definite Stripe rejection of the first update is left out.
+    if (!rejected)
+      await trackModActivity(actorId, {
+        entityType: 'user',
+        entityId: userId,
+        activity: MEMBERSHIP_EXTEND_ACTIVITY,
+      }).catch((e) => log({ type: 'audit-failed', actorId, userId, error: (e as Error).message }));
     await log({
-      type: result.ok ? 'extended' : 'extended-with-problems',
+      type: result.ok ? 'extended' : rejected ? 'rejected-by-stripe' : 'extended-with-problems',
       actorId,
       userId,
       subscriptionId: sub.id,

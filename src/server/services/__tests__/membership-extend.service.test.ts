@@ -59,6 +59,9 @@ function liveSub(over: Partial<Record<string, unknown>> = {}) {
     schedule: null,
     discount: null,
     metadata: {},
+    items: { data: [{ price: { id: 'price_gold', recurring: { interval: 'month' } } }] },
+    // Payment fields the audit must never carry.
+    default_payment_method: 'pm_secret_card',
     latest_invoice: paidInvoice,
     ...over,
   } as unknown as Stripe.Subscription;
@@ -67,6 +70,8 @@ const customer = {
   id: 'cus_case',
   object: 'customer',
   metadata: { userId: String(USER) },
+  invoice_settings: { default_payment_method: 'pm_secret_card' },
+  sources: { data: [{ id: 'card_secret', last4: '4242', brand: 'visa' }] },
 } as unknown as Stripe.Customer;
 
 const base = (over: Partial<ExtensionGuardInput> = {}): ExtensionGuardInput => ({
@@ -103,6 +108,32 @@ describe('checkExtension: the passing base, then each guard broken on its own', 
     expect(problemsOf({ days: 1 })).toBe('');
     expect(problemsOf({ days: 31 })).toBe('');
     for (const days of [0, 32, 1.5]) expect(problemsOf({ days })).toMatch(/days must be/);
+  });
+  it('only a single monthly plan: yearly, or more than one item, refuses', () => {
+    const yearly = { data: [{ price: { id: 'p', recurring: { interval: 'year' } } }] };
+    expect(withSub({ items: yearly })).toMatch(/single monthly plan/);
+    const two = {
+      data: [
+        { price: { recurring: { interval: 'month' } } },
+        { price: { recurring: { interval: 'month' } } },
+      ],
+    };
+    expect(withSub({ items: two })).toMatch(/single monthly plan/);
+  });
+  it('pending invoice items refuse (the trial invoice would charge them)', () => {
+    expect(problemsOf({ pendingInvoiceItems: 1 })).toMatch(/pending invoice items/);
+  });
+  it('a moderator as the member refuses', () => {
+    expect(
+      problemsOf({
+        row: { id: SUB_ID, provider: 'Stripe', userCustomerId: 'cus_case', userIsModerator: true },
+      })
+    ).toMatch(/the member is a moderator/);
+  });
+  it('the Stripe stamp names no moderator (the member can read sub metadata)', () => {
+    expect(updateParams({ trialEnd: T3, mode: 'renewing', stamp: '3d:x' }).metadata).toEqual({
+      modExtension: '3d:x',
+    });
   });
   it('cooldown: an extension in the last 25 days refuses', () => {
     expect(problemsOf({ recentExtensions: 1 })).toMatch(/already extended in the last 25 days/);
@@ -231,19 +262,32 @@ describe('the update and its post-check', () => {
 /** Stripe for the flow: trial_end moves the period; options misbehave the ways the code must catch. */
 function fakeStripe(
   sub: Stripe.Subscription,
-  opts: { dropCancel?: boolean; invoiceOnUpdate?: unknown; failRetrieveAfterWrite?: boolean } = {}
+  opts: {
+    dropCancel?: boolean;
+    loseCancelAfterResponse?: boolean;
+    invoiceOnUpdate?: unknown;
+    failRetrieveAfterWrite?: boolean;
+    rejectUpdate?: string;
+    pendingItems?: number;
+  } = {}
 ) {
   const state = { sub: structuredClone(sub) as unknown as Record<string, unknown> };
   const updates: [string, Record<string, unknown>, unknown][] = [];
   const stripe = {
     subscriptions: {
-      retrieve: vi.fn(async (id: string) => {
+      retrieve: vi.fn(async (id: string, params?: { expand?: string[] }) => {
         if (opts.failRetrieveAfterWrite && updates.length) throw new Error('stripe 503');
-        return id === state.sub.id
-          ? structuredClone(state.sub)
-          : Promise.reject(Object.assign(new Error('nf'), { statusCode: 404 }));
+        if (id !== state.sub.id) throw Object.assign(new Error('nf'), { statusCode: 404 });
+        const out = structuredClone(state.sub);
+        // As Stripe: latest_invoice is a bare id unless expanded.
+        const inv = out.latest_invoice as { id?: string } | string | null;
+        if (!params?.expand?.includes('latest_invoice') && inv && typeof inv !== 'string')
+          out.latest_invoice = inv.id;
+        return out;
       }),
       update: vi.fn(async (id: string, params: Record<string, unknown>, options: unknown) => {
+        if (opts.rejectUpdate)
+          throw Object.assign(new Error('invalid'), { type: opts.rejectUpdate, statusCode: 400 });
         updates.push([id, params, options]);
         const s = state.sub;
         if ('trial_end' in params) {
@@ -260,10 +304,21 @@ function fakeStripe(
           s.cancel_at_period_end = false;
           s.cancel_at = null;
         }
-        return structuredClone(s);
+        const reply = structuredClone(s);
+        // The response still shows the cancel; the subscription lost it right after.
+        if (opts.loseCancelAfterResponse && 'trial_end' in params) {
+          s.cancel_at_period_end = false;
+          s.cancel_at = null;
+        }
+        return reply;
       }),
     },
     customers: { retrieve: vi.fn(async () => customer) },
+    invoiceItems: {
+      list: vi.fn(async () => ({
+        data: Array.from({ length: opts.pendingItems ?? 0 }, (_, i) => ({ id: `ii_${i}` })),
+      })),
+    },
   };
   return { stripe, state, updates };
 }
@@ -318,7 +373,7 @@ describe('extendMembership: the flow', () => {
           trial_end: T3,
           proration_behavior: 'none',
           cancel_at_period_end: false,
-          metadata: { modExtension: `${MOD}:3d:2026-11-03T12:00:00.000Z` },
+          metadata: { modExtension: '3d:2026-11-03T12:00:00.000Z' },
         },
         { idempotencyKey: `mod-extend:${SUB_ID}:${T3}` },
       ],
@@ -330,7 +385,85 @@ describe('extendMembership: the flow', () => {
       activity: 'extendMembership',
     });
     expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(USER);
+    expect(refreshSession).toHaveBeenCalledWith(USER, { caller: 'subscription' });
     expect(delIfValue).toHaveBeenCalledTimes(1);
+    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+      `membership-extend:lock:${USER}`,
+      expect.any(String),
+      { NX: true, EX: 600 }
+    );
+    expect(dbMock.dbWrite.modActivity.count).toHaveBeenCalledWith({
+      where: {
+        entityType: 'user',
+        entityId: USER,
+        activity: 'extendMembership',
+        createdAt: { gte: new Date((NOW - 25 * DAY) * 1000) },
+      },
+    });
+    expect(f.stripe.invoiceItems.list).toHaveBeenCalledWith({
+      customer: 'cus_case',
+      pending: true,
+      limit: 1,
+    });
+  });
+
+  it('cancelling: the response kept the cancel but the re-read lost it: restored with its own key, ok', async () => {
+    const f = fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }), {
+      loseCancelAfterResponse: true,
+    });
+    stripeRef.current = f.stripe;
+    const r = await extendMembership(input());
+    expect(r.ok).toBe(true);
+    expect(r.cancelRestored).toBe(true);
+    expect(f.updates).toHaveLength(2);
+    expect(f.updates[1]).toEqual([
+      SUB_ID,
+      { cancel_at_period_end: true },
+      { idempotencyKey: `mod-extend:${SUB_ID}:${T3}:cancel` },
+    ]);
+    expect(f.state.sub.cancel_at_period_end).toBe(true);
+    expect(f.state.sub.cancel_at).toBe(T3);
+  });
+
+  it('a new $0 invoice is read expanded after the update, so the extension is ok', async () => {
+    const f = fakeStripe(liveSub(), {
+      invoiceOnUpdate: { id: 'in_zero', amount_due: 0, amount_paid: 0 },
+    });
+    stripeRef.current = f.stripe;
+    const r = await extendMembership(input());
+    expect(r.ok).toBe(true);
+    expect(r.newInvoiceId).toBe('in_zero');
+  });
+
+  it('Stripe rejecting the update outright (4xx): ok false, no ModActivity row (no cooldown), Axiom says so', async () => {
+    for (const type of ['StripeInvalidRequestError', 'StripeCardError']) {
+      trackModActivity.mockClear();
+      const f = fakeStripe(liveSub(), { rejectUpdate: type });
+      stripeRef.current = f.stripe;
+      const r = await extendMembership(input());
+      expect(r.ok).toBe(false);
+      expect(trackModActivity).not.toHaveBeenCalled();
+      expect(axiomRecords().at(-1)?.type).toBe('rejected-by-stripe');
+    }
+    // Control: an error of unknown outcome (a timeout, a 5xx) still starts the cooldown.
+    trackModActivity.mockClear();
+    stripeRef.current = fakeStripe(liveSub(), { rejectUpdate: 'StripeAPIError' }).stripe;
+    expect((await extendMembership(input())).ok).toBe(false);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing ModActivity write is logged as audit-failed and the result still returns', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('db down'));
+    stripeRef.current = fakeStripe(liveSub()).stripe;
+    expect((await extendMembership(input())).ok).toBe(true);
+    expect(axiomRecords().some((r) => r.type === 'audit-failed')).toBe(true);
+  });
+
+  it('pending invoice items on the customer refuse, nothing written', async () => {
+    const f = fakeStripe(liveSub(), { pendingItems: 1 });
+    stripeRef.current = f.stripe;
+    await expect(extendMembership(input())).rejects.toThrow(/pending invoice items/);
+    expect(f.updates).toEqual([]);
   });
 
   it('cancelling: still cancels, at the new end', async () => {
@@ -381,15 +514,28 @@ describe('extendMembership: the flow', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' });
     expect(f.updates).toEqual([]);
     expect(trackModActivity).not.toHaveBeenCalled();
+    expect(delIfValue).toHaveBeenCalledTimes(1);
+    expect(axiomRecords().at(-1)).toMatchObject({
+      type: 'refused',
+      problems: ['current_period_end changed since the preview'],
+    });
   });
 
-  it('CAS: a double submit with the same preview value refuses the second (the first moved the period end)', async () => {
+  it('CAS: a later expectedCurrentPeriodEnd refuses too (equality, not an ordering)', async () => {
+    const f = fakeStripe(liveSub());
+    stripeRef.current = f.stripe;
+    await expect(
+      extendMembership(input({ expectedCurrentPeriodEnd: PERIOD_END + DAY }))
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(f.updates).toEqual([]);
+  });
+
+  it('a double submit: the second is refused (the cooldown and the live-trial guard stop it before the CAS)', async () => {
     const f = fakeStripe(liveSub());
     stripeRef.current = f.stripe;
     expect((await extendMembership(input())).ok).toBe(true);
-    // The cooldown would also stop it; take it away so the CAS is what is tested.
-    dbMock.dbWrite.modActivity.count.mockResolvedValue(0);
-    await expect(extendMembership(input())).rejects.toThrow();
+    dbMock.dbWrite.modActivity.count.mockResolvedValue(1);
+    await expect(extendMembership(input())).rejects.toThrow(/last 25 days.*already in a trial/);
     expect(f.updates).toHaveLength(1);
   });
 
@@ -421,6 +567,15 @@ describe('extendMembership: the flow', () => {
     expect(f.updates).toEqual([]);
     expect(trackModActivity).not.toHaveBeenCalled();
     expect(axiomRecords().at(-1)?.type).toBe('refused');
+    expect(delIfValue).toHaveBeenCalledTimes(1);
+  });
+
+  it('a moderator member, read from the User row, refuses with nothing written', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ customerId: 'cus_case', isModerator: true });
+    const f = fakeStripe(liveSub());
+    stripeRef.current = f.stripe;
+    await expect(extendMembership(input())).rejects.toThrow(/the member is a moderator/);
+    expect(f.updates).toEqual([]);
   });
 
   it('the cooldown, read from ModActivity, refuses', async () => {
@@ -474,11 +629,35 @@ describe('extendMembership: the flow', () => {
       'payment_intent',
       'pi_',
       'ch_',
+      'pm_',
+      'secret',
       'last4',
       'brand',
-      'default_payment_method',
+      '4242',
+      'visa',
+      'invoice_settings',
+      'sources',
     ])
       expect(text).not.toContain(banned);
+    expect(Object.keys(rec).sort()).toEqual([
+      'actorId',
+      'after',
+      'before',
+      'cancelRestored',
+      'days',
+      'mode',
+      'name',
+      'newInvoiceId',
+      'problems',
+      'reason',
+      'response',
+      'subscriptionId',
+      'trialEnd',
+      'type',
+      'userId',
+    ]);
+    for (const k of ['before', 'response'] as const)
+      expect(Object.keys(rec[k] as object).sort()).toEqual(Object.keys(rec.after as object).sort());
     expect(Object.keys(rec.after as object).sort()).toEqual([
       'cancelAt',
       'cancelAtPeriodEnd',

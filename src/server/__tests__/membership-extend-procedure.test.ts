@@ -66,6 +66,11 @@ describe('subscriptions.extendMembership / previewMembershipExtension auth', () 
       'previewed'
     );
     expect(extendMembership).toHaveBeenCalledWith({ ...extendInput, actorId: 5 });
+    expect(previewMembershipExtension).toHaveBeenCalledWith({
+      userId: 10495685,
+      days: 3,
+      actorId: 5,
+    });
   });
 
   it('a moderator without the grant is FORBIDDEN: being a mod is not enough', async () => {
