@@ -94,6 +94,11 @@ function Probe(): ReactNode {
 }
 
 const ids = (n: number, from = 1) => Array.from({ length: n }, (_, i) => from + i);
+const tree = (imageIds: number[]) => (
+  <TurfSummaryProvider imageIds={imageIds}>
+    <Probe />
+  </TurfSummaryProvider>
+);
 const mount = (imageIds: number[]) =>
   renderWithProviders(
     <TurfSummaryProvider imageIds={imageIds}>
@@ -152,6 +157,21 @@ describe('TurfSummaryProvider', () => {
     await vi.waitFor(() =>
       expect(h.fetch).toHaveBeenCalledWith({ event: 'birthday2026', imageIds: [1], perImage: 5 })
     );
+  });
+
+  test('loading another page does not wipe the pushes already applied to the first', async () => {
+    const view = await mount(ids(100));
+    act(() =>
+      h.push!({
+        event: 'birthday2026',
+        imageId: 5,
+        counts: { shown: { pink: 5 }, counted: { pink: 5 }, leader: 'pink', leaderCosmeticId: 12 },
+      })
+    );
+    await vi.waitFor(() => expect(latest!.images[5].leader).toBe('pink'));
+    await view.rerender(tree(ids(150)));
+    await vi.waitFor(() => expect(latest!.images[149]).toBeDefined());
+    expect(latest!.images[5].leader).toBe('pink');
   });
 
   test('a push for the last sticker leaving removes the image’s turf', async () => {

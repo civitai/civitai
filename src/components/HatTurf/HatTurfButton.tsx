@@ -15,13 +15,9 @@ import { showErrorNotification, showInfoNotification } from '~/utils/notificatio
 import { trpc } from '~/utils/trpc';
 
 /**
- * The card's hat button: a hat and how many the viewer can still place, so the count is there
- * before pressing. Pressing drops a draft hat on the picture to drag and save (HatTurfDraftLayer).
- * The gear on its corner, always on screen, picks which hat is placed. Hidden on the viewer's own
- * images that cannot take a hat and when signed out; greyed at zero (no refill timing is shown), green once placed here.
+ * Hidden when signed out or the image can't take a hat.
  */
 export function HatTurfButton({ imageId }: { imageId: number }) {
-  // The flag-off card runs none of this, not even its hooks.
   return useTurfFeed() ? <HatTurfButtonContent imageId={imageId} /> : null;
 }
 
@@ -44,7 +40,6 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
     onError: (error) => showErrorNotification({ title: "Couldn't join Hat Turf", error }),
   });
 
-  // `open` is false when the owner has not opted in (or the image is not public): nothing to place on.
   if (!feed || !card || !user || feed.open[imageId] === false) return null;
 
   const { draft, setDraft } = card;
@@ -176,7 +171,7 @@ function HatChoices({ onPicked }: { onPicked: () => void }) {
   const color = (feed?.team && teamColor(feed.team)) || 'var(--mantine-color-gray-6)';
 
   return (
-    <div role="listbox" aria-label="Hat to place" style={{ minWidth: 170 }}>
+    <div role="group" aria-label="Hat to place" style={{ minWidth: 170 }}>
       <Text size="xs" fw={700} c="dimmed" tt="uppercase" px={8} pb={4}>
         Hat to place
       </Text>
@@ -189,8 +184,7 @@ function HatChoices({ onPicked }: { onPicked: () => void }) {
         <button
           type="button"
           key={hat.cosmeticId}
-          role="option"
-          aria-selected={hat.cosmeticId === cosmeticId}
+          aria-pressed={hat.cosmeticId === cosmeticId}
           className={clsx(classes.option, hat.cosmeticId === cosmeticId && classes.selected)}
           onClick={() => {
             pick(hat.cosmeticId);

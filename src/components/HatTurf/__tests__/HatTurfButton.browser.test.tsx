@@ -269,6 +269,27 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(h.invalidate).toHaveBeenCalled();
   });
 
+  test('the draft hat can be placed from the keyboard', async () => {
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    await press();
+    await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
+    const before = q('hat-turf-draft')!.style.left;
+    q('hat-turf-draft')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+    );
+    await vi.waitFor(() => expect(q('hat-turf-draft')!.style.left).not.toBe(before));
+  });
+
+  test('the layer rides the card’s hover zoom and clips to the card', async () => {
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    await press();
+    await vi.waitFor(() => expect(q('hat-turf-layer')).not.toBeNull());
+    expect(q('hat-turf-layer')!.hasAttribute('data-sticker-overlay')).toBe(true);
+    expect(getComputedStyle(q('hat-turf-layer')!).overflow).toBe('hidden');
+  });
+
   test('the cross discards the draft and places nothing', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
@@ -295,8 +316,8 @@ describe('Hat Turf button on a feed ImageCard', () => {
     q('hat-turf-gear')!.click();
     await vi.waitFor(() => expect(document.body.textContent).toContain('Top Hat'));
     expect(document.body.textContent).toContain('Party Cap');
-    const option = [...document.body.querySelectorAll('[role="option"]')].find((o) =>
-      o.textContent?.includes('Top Hat')
+    const option = [...document.body.querySelectorAll('[aria-label="Hat to place"] button')].find(
+      (o) => o.textContent?.includes('Top Hat')
     ) as HTMLElement;
     option.click();
     await press();

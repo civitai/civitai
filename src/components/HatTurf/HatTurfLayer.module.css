@@ -1,6 +1,7 @@
 .layer {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   z-index: 3;
   pointer-events: none;
 }
@@ -33,18 +34,15 @@
   animation: land 0.3s ease;
 }
 
-/* Another team's hat once the lead is not theirs: faded and grey. */
 .dim {
   opacity: 0.38;
   filter: saturate(0.25) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
 
-/* The leading team's hats, lit in its colour. */
 .lead {
   filter: drop-shadow(0 0 7px var(--hat-glow)) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
 }
 
-/* A protected image (a worn event hat is on it): stickers stay, but earn nothing. */
 .muted {
   opacity: 0.45;
   filter: grayscale(1) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));

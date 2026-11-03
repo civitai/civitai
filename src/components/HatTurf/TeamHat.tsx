@@ -1,4 +1,3 @@
-/** A party cone in a team's colour with a white outline, band and pom, the hat drawn on the picture. */
 export function TeamHat({ color, size }: { color: string; size: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">

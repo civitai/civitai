@@ -3,7 +3,7 @@ import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { trpc } from '~/utils/trpc';
 
-/** The viewer's hats available to place now and whether they have joined. Signed out, or Hat Turf off: undefined. Never exposes the refill schedule. */
+/** Undefined while signed out or Hat Turf is off. */
 export function useHatStock() {
   const feed = useTurfFeed();
   const user = useCurrentUser();

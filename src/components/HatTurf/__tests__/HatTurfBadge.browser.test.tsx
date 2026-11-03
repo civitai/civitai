@@ -221,7 +221,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(badge()!.querySelector('[data-testid="hat-turf-count"]')).toBeNull();
   });
 
-  test('four large counts still fit the disc', async () => {
+  test('large counts still fit the disc', async () => {
     renderCard({
       feed: feedWith({ 1: standing({ counted: { blue: 1240, pink: 980 }, leader: 'blue' }) }),
     });
@@ -231,5 +231,38 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(count.getBoundingClientRect().width).toBeLessThanOrEqual(
       disc.getBoundingClientRect().width
     );
+  });
+
+  test('the count pops when it changes after being seen, not when it first arrives', async () => {
+    const tree = (counted: Record<string, number>) => (
+      <TurfSummaryContext.Provider
+        value={feedWith({ 1: standing({ counted, shown: counted, leader: 'blue' }) })}
+      >
+        <IntersectionObserverProvider>
+          <div data-testid="card-root" style={{ width: PHONE_CARD }}>
+            <ImageCard data={image} />
+          </div>
+        </IntersectionObserverProvider>
+      </TurfSummaryContext.Provider>
+    );
+    const view = await renderWithProviders(
+      <TurfSummaryContext.Provider value={feedWith({})}>
+        <IntersectionObserverProvider>
+          <div data-testid="card-root" style={{ width: PHONE_CARD }}>
+            <ImageCard data={image} />
+          </div>
+        </IntersectionObserverProvider>
+      </TurfSummaryContext.Provider>
+    );
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[aria-label$="reaction"]')).not.toBeNull()
+    );
+    await view.rerender(tree({ blue: 6 }));
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const count = () => badge()!.querySelector('[data-testid="hat-turf-count"]')!;
+    expect(count().className).not.toContain('bump');
+    await view.rerender(tree({ blue: 7 }));
+    await vi.waitFor(() => expect(count().textContent).toBe('7'));
+    expect(count().className).toContain('bump');
   });
 });

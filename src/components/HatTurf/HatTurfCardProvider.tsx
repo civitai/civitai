@@ -5,20 +5,16 @@ import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 export type HatSpot = { x: number; y: number };
 
 type HatTurfCard = {
-  /** The hat being dragged into place, not yet saved. */
   draft: HatSpot | null;
   setDraft: (spot: HatSpot | null) => void;
-  /** The viewer's hat once saved here this visit; one per player per image, and it cannot move. */
+  /** The viewer's saved hat, kept until the read-back catches up. */
   placed: HatSpot | null;
   setPlaced: (spot: HatSpot | null) => void;
 };
 
 const HatTurfCardContext = createContext<HatTurfCard | null>(null);
 
-/**
- * Per card: the button in the footer and the layer over the picture share one draft. Around the
- * card, not inside its slots, because the footer and the overlay are siblings.
- */
+/** Around the card, not inside its slots, because the footer and the overlay are siblings. */
 export function HatTurfCardProvider({ children }: { children: React.ReactNode }) {
   const feed = useTurfFeed();
   const [draft, setDraft] = useState<HatSpot | null>(null);

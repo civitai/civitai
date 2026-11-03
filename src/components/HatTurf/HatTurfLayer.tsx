@@ -39,7 +39,7 @@ const offsetWithin = (el: HTMLElement, stop: Element | null) => {
   return current === stop ? { x, y } : null;
 };
 
-/** Marks the card on screen and listens to its topic. Mounted only with Hat Turf on, so the signals hub is never needed without it. */
+/** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
 function HatTurfLive({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const watch = feed?.watch;
@@ -48,17 +48,17 @@ function HatTurfLive({ imageId }: { imageId: number }) {
   return null;
 }
 
-/** A card this narrow draws fewer hats, so they stay hats rather than a pile. */
 const NARROW_PICTURE = 220;
+const LOAD_EVENTS = ['load', 'loadedmetadata', 'resize'] as const;
+/** How far a dragged hat's centre stays from the card's edge, in px, so its buttons stay reachable. */
+const DRAG_MARGIN = 28;
 
 /**
- * Over the card's picture: the hats on it, the viewer's hat being dragged into place with its tick
- * and cross, and the viewer's hat once saved. Measures the picture the way the sticker overlay
- * does, so a spot is a fraction of the drawn image (not of a letterboxed card) and means the same
- * on image detail. Also tells the provider this card is on screen, so its changes are pushed.
+ * Measures the picture like the sticker overlay, so a spot is a fraction of the drawn image, not
+ * the letterboxed card, and means the same on image detail.
  */
 export function HatTurfLayer({ imageId }: { imageId: number }) {
-  // The flag-off card runs none of this, not even its hooks.
+  // Hooks stay in the inner component so flag-off cards run none.
   return useTurfFeed() ? <HatTurfLayerContent imageId={imageId} /> : null;
 }
 
@@ -77,8 +77,6 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
   const stickers = feed?.stickers[imageId];
   const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length);
 
-  // A hat that arrives after the first draw (someone else just placed it) drops in; those already
-  // there at first draw simply appear.
   const seen = useRef<Set<string> | null>(null);
   useEffect(() => {
     seen.current = new Set((stickers ?? []).map((sticker) => String(sticker.id)));
@@ -86,10 +84,13 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
 
   useEffect(() => {
     const node = ref.current;
-    const media = node?.parentElement?.querySelector<HTMLElement>('img, video');
-    if (!active || !node || !media) return;
+    const parent = node?.parentElement;
+    if (!active || !node || !parent) return;
+    let media: HTMLElement | null = null;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(node);
     const measure = () => {
-      if (media.offsetWidth <= 0 || media.offsetHeight <= 0) return;
+      if (!media || media.offsetWidth <= 0 || media.offsetHeight <= 0) return;
       const stop = node.offsetParent;
       const at = offsetWithin(media, stop);
       const self = offsetWithin(node, stop);
@@ -102,14 +103,27 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
         top: at.y - self.y + drawn.top,
       });
     };
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    observer.observe(media);
-    media.addEventListener('load', measure);
-    measure();
+    const bind = () => {
+      const next = parent.querySelector<HTMLElement>('img, video');
+      if (next === media) return;
+      if (media) {
+        observer.unobserve(media);
+        for (const event of LOAD_EVENTS) media.removeEventListener(event, measure);
+      }
+      media = next;
+      if (!media) return;
+      observer.observe(media);
+      for (const event of LOAD_EVENTS) media.addEventListener(event, measure);
+      measure();
+    };
+    // EdgeMedia can swap the img for a video, or mount the media after this layer.
+    const mutations = new MutationObserver(bind);
+    mutations.observe(parent, { childList: true, subtree: true });
+    bind();
     return () => {
       observer.disconnect();
-      media.removeEventListener('load', measure);
+      mutations.disconnect();
+      if (media) for (const event of LOAD_EVENTS) media.removeEventListener(event, measure);
     };
   }, [active]);
 
@@ -121,8 +135,7 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
   const protectedImage = !!summary?.hatted;
   const hatSize = (scale: number) => (box ? Math.max(22, box.width * scale) : 0);
   const mineDrawn = placed
-    ? // The viewer's own just-saved hat is drawn from `placed`, not twice from the read-back.
-      (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
+    ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
   const drawn = showHats ? mineDrawn.slice(0, box && box.width < NARROW_PICTURE ? 3 : 5) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
@@ -137,12 +150,24 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
   const move = (event: React.PointerEvent) => {
     if (!box || !ref.current || !(event.buttons & 1 || event.pointerType === 'touch')) return;
     const rect = ref.current.getBoundingClientRect();
-    setDraft(
-      clampSpot({
-        x: (event.clientX - rect.left - box.left) / box.width,
-        y: (event.clientY - rect.top - box.top) / box.height,
-      })
-    );
+    // On a cropped picture the drawn image is larger than the card: keep the hat on what is visible.
+    const px = Math.min(rect.width - DRAG_MARGIN, Math.max(DRAG_MARGIN, event.clientX - rect.left));
+    const py = Math.min(rect.height - DRAG_MARGIN, Math.max(DRAG_MARGIN, event.clientY - rect.top));
+    setDraft(clampSpot({ x: (px - box.left) / box.width, y: (py - box.top) / box.height }));
+  };
+
+  const nudge = (event: React.KeyboardEvent) => {
+    const step = 0.03;
+    const delta: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    const move = delta[event.key];
+    if (!move || !draft) return;
+    event.preventDefault();
+    setDraft(clampSpot({ x: draft.x + move[0], y: draft.y + move[1] }));
   };
 
   const save = (spot: HatSpot) => {
@@ -171,7 +196,7 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
   const at = (x: number, y: number) => ({ left: `${x * 100}%`, top: `${y * 100}%` });
 
   return (
-    <div ref={ref} className={classes.layer} data-testid="hat-turf-layer">
+    <div ref={ref} className={classes.layer} data-testid="hat-turf-layer" data-sticker-overlay>
       <HatTurfLive imageId={imageId} />
       {box && (
         <div
@@ -222,12 +247,16 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
                 className={classes.draft}
                 style={at(draft.x, draft.y)}
                 data-testid="hat-turf-draft"
+                tabIndex={0}
+                role="group"
+                aria-label="Hat position. Drag it, or use the arrow keys."
+                onKeyDown={nudge}
                 onPointerDown={(event) => {
                   stop(event);
                   try {
                     event.currentTarget.setPointerCapture(event.pointerId);
                   } catch {
-                    // The pointer already ended; the drag simply doesn't capture.
+                    // pointer already ended
                   }
                 }}
                 onPointerMove={(event) => {

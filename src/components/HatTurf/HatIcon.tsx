@@ -1,4 +1,4 @@
-/** A party cone. Takes the colour of the text around it. */
+/** Uses currentColor. */
 export function HatIcon({ size = 16, className }: { size?: number; className?: string }) {
   return (
     <svg

@@ -38,7 +38,7 @@
   outline: 2px solid var(--mantine-color-white);
 }
 
-/* Always on screen: a phone has no hover to reveal it. Overhangs the corner so it costs the row no width. */
+/* Always on screen: a phone has no hover to reveal it. */
 .gear {
   position: absolute;
   top: -9px;
@@ -53,6 +53,13 @@
   background-color: var(--mantine-color-dark-6);
   color: var(--mantine-color-white);
   cursor: pointer;
+}
+
+/* The visible gear is 15px; its tap area is not. */
+.gear::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 
 .option {
@@ -76,7 +83,6 @@
   box-shadow: inset 0 0 0 1.5px var(--mantine-color-yellow-4);
 }
 
-/* Where the join popover points: the button's own box. */
 .anchor {
   position: absolute;
   inset: 0;

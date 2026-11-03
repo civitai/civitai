@@ -1,12 +1,9 @@
-/** Hat Turf on feed cards: the pure parts (ring arcs, leader, what the badge says). */
-
 import { SignalTopic } from '~/server/common/enums';
 import {
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_SCALE,
 } from '~/shared/utils/sticker-placement';
 
-/** The standings of one image: hats that count per team (the number that decides the lead). */
 export type TurfCounted = Record<string, number>;
 
 export type TurfSummary = {
@@ -20,7 +17,6 @@ export type TurfSummary = {
 /** Radius of the ring's circle in the badge's 44-unit box; the arcs are drawn on it. */
 export const RING_RADIUS = 20;
 export const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
-/** Visible gap between two arcs, in ring units, so neighbours do not read as one. */
 const ARC_GAP = 2.2;
 
 /** Teams in a fixed order, so an arc keeps its place on the ring when the lead changes. */
@@ -29,8 +25,8 @@ export const orderedTeams = (counted: TurfCounted) => Object.keys(counted).sort(
 export type RingArc = { team: string; length: number; offset: number };
 
 /**
- * One arc per team, its length its share of the hats that count. A team with none gets a zero-length
- * arc (kept, so it can grow in place). No hats at all gives no length anywhere.
+ * One arc per team, its length its share of the hats that count. A team with none keeps a
+ * zero-length arc so the CSS transition can grow it in place.
  */
 export function ringArcs(counted: TurfCounted): RingArc[] {
   const teams = orderedTeams(counted);
@@ -121,7 +117,6 @@ export function readHatPose(data: unknown): HatPose | null {
   };
 }
 
-/** Whether a drawn hat is the leading team's (bright) or not (dim). No leader: all plain. */
 export function hatTone(team: string, leader: string | null): 'lead' | 'dim' | 'plain' {
   if (!leader) return 'plain';
   return team === leader ? 'lead' : 'dim';
