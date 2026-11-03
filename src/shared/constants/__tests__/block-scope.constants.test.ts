@@ -165,9 +165,12 @@ describe('block-scope.constants', () => {
       // `auth: "oauth"` alongside them is the fail-closed answer until they do.
       'apps:storage',
       'apps:storage:publish',
+      // Cross-app imports run through the same document-store route, which reads the
+      // middleware-resolved claims; refused alongside `auth: "oauth"` like its siblings.
+      'apps:storage:import',
     ];
 
-    it('is EXACTLY the six app-storage scopes — no more, no fewer', () => {
+    it('is EXACTLY the seven app-storage scopes — no more, no fewer', () => {
       expect([...APP_STORAGE_SCOPES].sort()).toEqual([...EXPECTED_APP_STORAGE].sort());
     });
 
@@ -253,6 +256,8 @@ describe('block-scope.constants', () => {
       'apps:storage:shared:write',
       // Documents in a shared collection, authored as the viewer, read by every viewer.
       'apps:storage:publish',
+      // The viewer's documents in ANOTHER app, read and written as the viewer.
+      'apps:storage:import',
       'posts:write:self',
       'goods:purchase:self',
       // Publishes store cards every visitor sees, under the viewer's name.

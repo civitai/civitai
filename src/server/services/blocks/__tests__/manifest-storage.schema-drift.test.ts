@@ -6,6 +6,8 @@ import {
   APP_STORAGE_BUILTIN_MARKS,
   APP_STORAGE_COLLECTION_NAME_RE,
   APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_IMPORT_ACCESS,
+  APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_INDEX_PATH_RE,
   APP_STORAGE_INDEX_TYPES,
   APP_STORAGE_KINDS,
@@ -13,6 +15,8 @@ import {
   APP_STORAGE_MAX_COLLECTIONS,
   APP_STORAGE_MAX_COUNTERS,
   APP_STORAGE_MAX_DAILY_WRITES_PER_AUTHOR,
+  APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+  APP_STORAGE_MAX_IMPORTS,
   APP_STORAGE_MAX_INDEXES,
   APP_STORAGE_MAX_MARKS,
   APP_STORAGE_MAX_OWNED_MODEL_VERSIONS,
@@ -72,6 +76,13 @@ const priv = (extra: Record<string, unknown> = {}) => one({ visibility: 'private
 const shared = (extra: Record<string, unknown> = {}) =>
   one({ visibility: 'shared', write: 'own', ...extra });
 const names = (n: number, prefix = 'n') => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+const imp = (extra: Record<string, unknown> = {}) => ({
+  from: 'notes-app',
+  collections: ['notes'],
+  access: 'read',
+  ...extra,
+});
+const imports = (...list: unknown[]) => ({ imports: list });
 /** A collection schema nested `levels` deep through `properties` (the schema itself is 1). */
 const deepSchema = (levels: number) => {
   let s: Record<string, unknown> = { type: 'number' };
@@ -145,6 +156,19 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     shared({ ownedModelVersions: ['/a', '/_b/c9', '/c/d/e/f', `/${'x'.repeat(64)}`] }),
     true,
   ],
+  ['exportable false', priv({ exportable: false }), true],
+  ['exportable true on shared', shared({ exportable: true }), true],
+  ['imports only', imports(imp()), true],
+  ['imports beside collections', { ...priv(), ...imports(imp({ access: 'readwrite' })) }, true],
+  [
+    '8 imports, 16 collections, 40-char from',
+    imports(
+      ...names(7, 'source-app-').map((from) => imp({ from })),
+      imp({ from: `a${'b'.repeat(38)}c`, collections: names(16, 'c') })
+    ),
+    true,
+  ],
+  ['3-char from', imports(imp({ from: 'abc' })), true],
   ['private with a schema using every keyword', priv({ schema: CARD }), true],
   ['shared own with a schema', shared({ schema: { type: 'object' } }), true],
   ['empty schema', priv({ schema: {} }), true],
@@ -174,6 +198,25 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['collection null', one(null), false],
   ['unknown collection key', priv({ label: 'x' }), false],
   ['`constructor` as an unknown collection key', priv({ constructor: 1 }), false],
+  // reject — imports
+  ['imports empty', imports(), false],
+  ['imports an object', { imports: imp() }, false],
+  ['9 imports', imports(...names(9, 'source-app-').map((from) => imp({ from }))), false],
+  ['from with uppercase', imports(imp({ from: 'Notes-app' })), false],
+  ['from with underscore', imports(imp({ from: 'notes_app' })), false],
+  ['from of 2 chars', imports(imp({ from: 'ab' })), false],
+  ['from of 41 chars', imports(imp({ from: `a${'b'.repeat(39)}c` })), false],
+  ['from ending in -', imports(imp({ from: 'notes-' })), false],
+  ['from missing', imports({ collections: ['notes'], access: 'read' }), false],
+  ['access write', imports(imp({ access: 'write' })), false],
+  ['access missing', imports({ from: 'notes-app', collections: ['notes'] }), false],
+  ['import collections empty', imports(imp({ collections: [] })), false],
+  ['import of 17 collections', imports(imp({ collections: names(17, 'c') })), false],
+  ['import collections duplicated', imports(imp({ collections: ['a', 'a'] })), false],
+  ['import collection uppercase', imports(imp({ collections: ['Notes'] })), false],
+  ['unknown import key', imports(imp({ mode: 'x' })), false],
+  ['imports beside empty collections', { collections: {}, ...imports(imp()) }, false],
+  ['exportable string', priv({ exportable: 'no' }), false],
   // reject — names
   ['uppercase collection', { collections: { Prefs: { visibility: 'private' } } }, false],
   ['leading digit collection', { collections: { '1x': { visibility: 'private' } } }, false],
@@ -315,6 +358,8 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
  */
 const PARSER_ONLY: Array<[string, unknown]> = [
   ['one name as counter and mark', shared({ counters: ['vote'], marks: ['vote'] })],
+  // `uniqueItems` compares whole entries, not one field of them.
+  ['two imports from one app', imports(imp(), imp({ collections: ['other'] }))],
   // Collection schemas: bounds on the schema as a whole, and what a pattern compiles to.
   ['schema nested 17 deep', priv({ schema: deepSchema(17) })],
   ['schema over 16384 bytes', priv({ schema: { description: 'd'.repeat(16_400) } })],
@@ -356,7 +401,32 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(schema.required).not.toContain('storage');
     expect(storageSchema.type).toBe('object');
     expect(storageSchema.additionalProperties).toBe(false);
-    expect(storageSchema.required).toEqual(['collections']);
+    // At least one of the two: an app may only import, and declare no collection of its own.
+    expect(storageSchema.required).toBeUndefined();
+    expect(storageSchema.anyOf).toEqual([{ required: ['collections'] }, { required: ['imports'] }]);
+  });
+
+  it('pins every imports bound to the exported constants', () => {
+    const imports = (storageSchema.properties as Record<string, SchemaObject>).imports;
+    expect([imports.type, imports.minItems, imports.maxItems]).toEqual([
+      'array',
+      1,
+      APP_STORAGE_MAX_IMPORTS,
+    ]);
+    const item = imports.items as SchemaObject;
+    expect(item.additionalProperties).toBe(false);
+    expect(item.required).toEqual(['from', 'collections', 'access']);
+    const p = item.properties as Record<string, SchemaObject>;
+    expect(p.from.pattern).toBe(APP_STORAGE_IMPORT_FROM_RE.source);
+    expect([p.collections.minItems, p.collections.maxItems, p.collections.uniqueItems]).toEqual([
+      1,
+      APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+      true,
+    ]);
+    expect((p.collections.items as SchemaObject).pattern).toBe(
+      APP_STORAGE_COLLECTION_NAME_RE.source
+    );
+    expect(p.access.enum).toEqual([...APP_STORAGE_IMPORT_ACCESS]);
   });
 
   it('pins every bound to the exported constants', () => {
@@ -373,6 +443,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     const p = collection.properties as Record<string, SchemaObject>;
 
     expect(p.kind.enum).toEqual([...APP_STORAGE_KINDS]);
+    expect(p.exportable.type).toBe('boolean');
     expect(p.visibility.enum).toEqual([...APP_STORAGE_VISIBILITIES]);
     expect(p.write.enum).toEqual([...APP_STORAGE_WRITE_POLICIES]);
 

@@ -3,6 +3,14 @@ import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from 
 import * as z from 'zod';
 import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
+  APP_STORAGE_COLLECTION_NAME_RE,
+  APP_STORAGE_IMPORT_ACCESS,
+  APP_STORAGE_IMPORT_FROM_RE,
+  APP_STORAGE_IMPORT_SCOPE,
+  APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+  APP_STORAGE_MAX_IMPORTS,
+} from '~/shared/constants/block-storage.constants';
+import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
   isLaunchSlot,
   PAGE_SLOT_ID,
@@ -3481,6 +3489,25 @@ export const blocksRouter = router({
           .max(BLOCK_CONSENT_BUDGET_MAX_PER_DAY)
           .nullable()
           .optional(),
+        /**
+         * With `apps:storage:import`: the imports the consent modal DISPLAYED (from
+         * `getStorageImports`). The grant records exactly these, and only when they equal the
+         * approved manifest's current imports — a version approved while the prompt was open
+         * is refused, never recorded as consented to.
+         */
+        storageImports: z
+          .array(
+            z.object({
+              from: z.string().regex(APP_STORAGE_IMPORT_FROM_RE),
+              collections: z
+                .array(z.string().regex(APP_STORAGE_COLLECTION_NAME_RE))
+                .min(1)
+                .max(APP_STORAGE_MAX_IMPORT_COLLECTIONS),
+              access: z.enum(APP_STORAGE_IMPORT_ACCESS),
+            })
+          )
+          .max(APP_STORAGE_MAX_IMPORTS)
+          .optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -3564,6 +3591,47 @@ export const blocksRouter = router({
           })
         ).has(CONSENT_SPEND_SCOPE);
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
+      // `apps:storage:import`: the consent covers exactly what the prompt DISPLAYED — each source
+      // app with its collections and access, one row per source. The client sends what it
+      // showed; it must equal the approved manifest's imports now, or nothing is recorded.
+      // Written BEFORE the scope ledger, so a refusal here (or a database without the table)
+      // refuses the whole consent rather than recording a scope no source is granted for.
+      if (toGrant.includes(APP_STORAGE_IMPORT_SCOPE)) {
+        if (input.storageImports === undefined) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `storageImports is required to grant ${APP_STORAGE_IMPORT_SCOPE}`,
+          });
+        }
+        const { canonicalImports, recordStorageImportGrants, resolveDeclaredImports } =
+          await import('~/server/services/apps/storage-import-grant.service');
+        const imports = await resolveDeclaredImports(block.manifest, {
+          host: ctx.req?.headers?.host ?? '',
+        });
+        if (canonicalImports(input.storageImports) !== canonicalImports(imports)) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message:
+              'What this app can reach in other apps changed while the prompt was open. Close it and try again.',
+          });
+        }
+        await recordStorageImportGrants({
+          userId: ctx.user!.id,
+          consumerAppBlockId: input.appBlockId,
+          keepUnshown: imports.flatMap((i) => (i.unshownAppBlockId ? [i.unshownAppBlockId] : [])),
+          grants: imports.flatMap((i) =>
+            i.source
+              ? [
+                  {
+                    sourceAppBlockId: i.source.appBlockId,
+                    collections: i.collections,
+                    access: i.access,
+                  },
+                ]
+              : []
+          ),
+        });
+      }
       const cleared = await recordScopeGrant({
         userId: ctx.user!.id,
         appBlockId: input.appBlockId,
@@ -3982,6 +4050,74 @@ export const blocksRouter = router({
         fullyRevoked: result.fullyRevoked,
         budgetCleared: result.budgetCleared,
       };
+    }),
+
+  /**
+   * CROSS-APP STORAGE IMPORTS — what an app reaches in other apps through `storage.imports`, for
+   * the consent modal (which names each source app and its collections) and the per-source
+   * revoke on the permissions surfaces. The approved manifest is the only input; `granted` is the
+   * VIEWER's own per-source grant.
+   */
+  getStorageImports: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true, manifest: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      const { importGrantCovers, listStorageImportGrants, resolveDeclaredImports } = await import(
+        '~/server/services/apps/storage-import-grant.service'
+      );
+      const [imports, granted] = await Promise.all([
+        block.status === 'approved'
+          ? resolveDeclaredImports(block.manifest, { host: ctx.req?.headers?.host ?? '' })
+          : Promise.resolve([]),
+        listStorageImportGrants({
+          userId: ctx.user!.id,
+          consumerAppBlockId: input.appBlockId,
+        }),
+      ]);
+      return {
+        imports: imports.map((i) => ({
+          from: i.from,
+          sourceAppBlockId: i.source?.appBlockId ?? null,
+          sourceName: i.source?.name ?? null,
+          collections: i.collections,
+          access: i.access,
+          granted: i.source ? importGrantCovers(granted.get(i.source.appBlockId), i) : false,
+          hasGrant: i.source ? granted.has(i.source.appBlockId) : false,
+          // The source exists but this host may not show it (its rating): offered nowhere here.
+          unavailable: i.unavailable ?? null,
+        })),
+      };
+    }),
+
+  /**
+   * Withdraw the viewer's grant for ONE source app. Takes effect on the next storage request (the
+   * route reads the grant on every import call); the next token mint then withholds
+   * `apps:storage:import`, so the host offers the consent again. No status gate: narrowing is
+   * always allowed.
+   */
+  revokeStorageImport: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        sourceAppBlockId: z.string().min(1).max(64),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { revokeStorageImportGrant } = await import(
+        '~/server/services/apps/storage-import-grant.service'
+      );
+      const revoked = await revokeStorageImportGrant({
+        userId: ctx.user!.id,
+        consumerAppBlockId: input.appBlockId,
+        sourceAppBlockId: input.sourceAppBlockId,
+      });
+      return { ok: true, revoked };
     }),
 
   /**

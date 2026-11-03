@@ -1,6 +1,7 @@
 // Setup-order import: installs the env mock with the test RSA keypair BEFORE the block-token
 // service and the middleware read it at module load.
 import '~/__tests__/setup';
+import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import { Readable } from 'stream';
 import path from 'path';
@@ -19,6 +20,7 @@ import type { SharedTextScan } from '~/server/services/apps/shared-data-moderati
 import type { DocStore } from '~/server/services/apps/doc-store';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { createPgliteHarness, type Harness } from './doc-store.harness';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
  * The document-store REST routes, end to end: a REAL signed block token → the REAL
@@ -144,6 +146,8 @@ vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) 
 
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { DOC_STORE_READ_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { DEFAULT_DOC_STORE_LIMITS, DocStoreError } from '~/server/services/apps/doc-store.types';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -166,6 +170,13 @@ import {
 } from '~/shared/constants/block-storage.constants';
 import { DOC_STORE_BOUNDS } from '~/server/services/apps/doc-store.types';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
+import { resolveImportAccess, resolveStorageAccess } from '~/server/services/apps/doc-store-access';
+import {
+  isImportScopeCovered,
+  recordStorageImportGrants,
+} from '~/server/services/apps/storage-import-grant.service';
+import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import { HUB_TOKEN_JTI_PREFIX } from '~/server/services/block-token-subject';
 
 // ---------------------------------------------------------------------------
 // The contract
@@ -203,6 +214,10 @@ const CONTRACT_PATH = path.resolve(
   '../../../../../public/schemas/app-block/storage-contract.v1.json'
 );
 const contract = JSON.parse(readFileSync(CONTRACT_PATH, 'utf8')) as Contract;
+const GRANTS_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261218120000_app_storage_import_grants/migration.sql'
+);
 
 // User ids are distinctive so the "no numeric user id in any response" check cannot pass
 // by coincidence, and none of them appears in any fixture value.
@@ -301,12 +316,20 @@ function installDb() {
     async ({
       where,
     }: {
-      where: { id?: string; appId_blockId?: { appId: string; blockId: string } };
+      where: {
+        id?: string;
+        blockId?: string;
+        appId_blockId?: { appId: string; blockId: string };
+      };
     }) => {
       const pair = where.appId_blockId;
       return (
         apps.find((a) =>
-          pair ? a.appId === pair.appId && a.blockId === pair.blockId : a.id === where.id
+          pair
+            ? a.appId === pair.appId && a.blockId === pair.blockId
+            : where.blockId !== undefined
+            ? a.blockId === where.blockId
+            : a.id === where.id
         ) ?? null
       );
     }
@@ -337,6 +360,8 @@ async function mint(opts: {
   scopes: string[];
   dev?: boolean;
   reviewRunForReal?: boolean;
+  /** The token's maturity ceiling; SFW (1) unless a test mints a red-host token. */
+  maxBrowsingLevel?: number;
 }): Promise<string> {
   const { token } = await BlockTokenService.sign({
     userId: opts.uid,
@@ -346,7 +371,7 @@ async function mint(opts: {
     blockInstanceId: `bki_${opts.app.id}`,
     scopes: opts.scopes,
     ctx: {},
-    maxBrowsingLevel: 1,
+    maxBrowsingLevel: opts.maxBrowsingLevel ?? 1,
     domain: 'green',
     ...(opts.dev ? { dev: true } : {}),
     ...(opts.reviewRunForReal ? { reviewRunForReal: true } : {}),
@@ -687,6 +712,10 @@ describe('the contract file', () => {
       internal_error: 'an unexpected fault; its own test below',
       resource_not_owned:
         'needs model-version rows the request table cannot express; the ownedModelVersions block below',
+      import_not_declared:
+        'needs two apps with different manifests, which the request table cannot express; the cross-app imports block below',
+      not_exportable:
+        'needs two apps with different manifests, which the request table cannot express; the cross-app imports block below',
     };
     const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
       (code) => !(code in UNREACHABLE_IN_PHASE_1)
@@ -2385,6 +2414,939 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
     await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: {} } });
     expect(h.isFlipt).toHaveBeenCalledWith(SHADOW_FLAG, A.id, undefined);
     expect(h.isFlipt).toHaveBeenCalledWith(ENFORCE_FLAG, A.id, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-app imports: `?from=<source blockId>` on a collection route
+// ---------------------------------------------------------------------------
+
+describe('cross-app imports: a consumer acts as the viewer in the source app', () => {
+  const IMPORT_SCOPE = 'apps:storage:import';
+  const PUBLISH_SCOPE = 'apps:storage:publish';
+  const CONSUMER_SCOPES = ['apps:storage', IMPORT_SCOPE];
+
+  // The per-source ledger is raw SQL on the primary (`storage-import-grant.service.ts`). It runs
+  // for real, on its own in-process Postgres with the real hand-applied migration; only the two
+  // tables its foreign keys name are stand-ins.
+  let ledger: PGlite;
+  beforeAll(async () => {
+    ledger = new PGlite();
+    await ledger.exec(`
+      CREATE TABLE "User" ("id" integer PRIMARY KEY);
+      CREATE TABLE "app_blocks" ("id" text PRIMARY KEY);
+    `);
+    await ledger.exec(readFileSync(GRANTS_MIGRATION, 'utf8'));
+  });
+  afterAll(async () => {
+    await ledger?.close();
+  });
+
+  /** (viewer, source app id) pairs holding `apps:storage:publish` in the SOURCE app's own grant. */
+  let publishGrants: Set<string>;
+  beforeEach(async () => {
+    await ledger.exec(`TRUNCATE "app_storage_import_grants"`);
+    publishGrants = new Set();
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values: unknown[]) =>
+        strings.join('?').includes('app_storage_import_grants')
+          ? pgliteRaw(ledger).queryRaw(strings, ...values)
+          : []
+    );
+    // The scope ledger (`getGrantedScopes`), for the source app's own publish consent.
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockImplementation(
+      async ({
+        where,
+      }: {
+        where: { userId_appBlockId: { userId: number; appBlockId: string } };
+      }) => {
+        const { userId, appBlockId } = where.userId_appBlockId;
+        return publishGrants.has(`${userId}|${appBlockId}`)
+          ? { grantedScopes: ['apps:storage', PUBLISH_SCOPE], revokedAt: null, revokedScopes: [] }
+          : null;
+      }
+    );
+    // The approved apps a manifest's imports name (`resolveDeclaredImports`, the mint's read).
+    dbMock.dbRead.appBlock.findMany.mockImplementation(
+      async ({ where }: { where: { blockId?: { in: string[] }; status?: string } }) =>
+        apps.filter(
+          (a) =>
+            (where.blockId?.in ?? []).includes(a.blockId) &&
+            (where.status === undefined || a.status === where.status)
+        )
+    );
+  });
+
+  let seq = 0;
+  /** A source app, a consumer importing from it, and an app that imports nothing. */
+  function importApps(access: 'read' | 'readwrite' = 'readwrite') {
+    seq += 1;
+    const row = (label: string, manifest: unknown): AppRow => {
+      const r = {
+        id: `apb_imp${label}${seq}`,
+        appId: `appblk-imp${label}${seq}`,
+        blockId: `imp-${label}-${seq}`,
+        status: 'approved',
+        manifest,
+      };
+      apps.push(r);
+      return r;
+    };
+    const S = row('src', {
+      scopes: ['apps:storage', PUBLISH_SCOPE],
+      storage: {
+        collections: {
+          notes: { visibility: 'private' },
+          board: { visibility: 'shared', write: 'own' },
+          secret: { visibility: 'private', exportable: false },
+          extra: { visibility: 'private' },
+        },
+      },
+    });
+    const C = row('fork', consumerManifest(S, ['notes', 'board', 'secret'], access));
+    const N = row('none', {
+      scopes: CONSUMER_SCOPES,
+      storage: { collections: { notes: { visibility: 'private' } } },
+    });
+    return { S, C, N };
+  }
+  /** The consumer's manifest at some version: its own `notes`, and one import from S (or none). */
+  function consumerManifest(
+    S: AppRow,
+    collections: string[] | null,
+    access: 'read' | 'readwrite' = 'readwrite'
+  ) {
+    return {
+      scopes: collections ? CONSUMER_SCOPES : ['apps:storage'],
+      storage: {
+        // The consumer's own `notes` is a different collection from the source's.
+        collections: { notes: { visibility: 'private' } },
+        ...(collections ? { imports: [{ from: S.blockId, collections, access }] } : {}),
+      },
+    };
+  }
+  /** What the consent modal showed the viewer for S: the consumer's CURRENT import of S. */
+  function shownImport(C: AppRow, S: AppRow) {
+    const decl = parseManifestStorage(C.manifest).imports.get(S.blockId);
+    if (!decl) throw new Error(`${C.blockId} does not import from ${S.blockId}`);
+    return { collections: [...decl.collections], access: decl.access };
+  }
+  /** The prompted consent for S, through the real ledger write. */
+  async function grant(
+    uid: number,
+    C: AppRow,
+    S: AppRow,
+    shown: { collections: string[]; access: 'read' | 'readwrite' } = shownImport(C, S)
+  ) {
+    await ledger.query(`INSERT INTO "User" VALUES ($1) ON CONFLICT DO NOTHING`, [uid]);
+    await ledger.exec(
+      `INSERT INTO "app_blocks" VALUES ('${C.id}'), ('${S.id}') ON CONFLICT DO NOTHING`
+    );
+    await recordStorageImportGrants({
+      userId: uid,
+      consumerAppBlockId: C.id,
+      grants: [{ sourceAppBlockId: S.id, ...shown }],
+    });
+  }
+  /** The viewer's own `apps:storage:publish` consent in the SOURCE app. */
+  const grantPublishInSource = (uid: number, S: AppRow) => publishGrants.add(`${uid}|${S.id}`);
+  const as = (app: AppRow, uid: number, scopes = CONSUMER_SCOPES) => mint({ app, uid, scopes });
+  const sourceToken = (S: AppRow, uid: number) =>
+    mint({ app: S, uid, scopes: ['apps:storage', PUBLISH_SCOPE] });
+
+  it('with a grant, a declared import reads and writes the source data as that viewer', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const s = await sourceToken(S, VIEWER_IDS.v1);
+
+    // The viewer's own note in the source, read through the import.
+    await call({
+      token: s,
+      method: 'PUT',
+      path: '/notes/n1',
+      body: { data: { text: 'from source' } },
+    });
+    const read = await call({
+      token: c,
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(read.status).toBe(200);
+    expect(read.body).toMatchObject({ key: 'n1', data: { text: 'from source' } });
+
+    // A write through the import lands in the SOURCE app, under the source's namespace.
+    const put = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/n2',
+      query: { from: S.blockId },
+      body: { data: { text: 'from fork' } },
+    });
+    expect(put.status).toBe(200);
+    const back = await call({ token: s, method: 'GET', path: '/notes/n2' });
+    expect(back.body).toMatchObject({ data: { text: 'from fork' } });
+    const rows = await harness.raw(`SELECT app_id, ns FROM appdata.doc WHERE key = 'n2'`);
+    expect(rows).toEqual([{ app_id: S.id, ns: 'prod' }]);
+
+    // Without `from`, the consumer's own `notes` is untouched: a different collection.
+    const own = await call({ token: c, method: 'GET', path: '/notes/n1' });
+    expect(own.status).toBe(404);
+
+    // A shared write follows the SOURCE's policy and is read by other viewers of the source. It
+    // needs the viewer's own publish consent in the source (the next test refuses without it).
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    const created = await call({
+      token: c,
+      method: 'PUT',
+      path: '/board/b1',
+      query: { from: S.blockId },
+      body: { data: { title: 'hello' } },
+    });
+    expect(created.status).toBe(200);
+    const other = await call({
+      token: await sourceToken(S, VIEWER_IDS.v2),
+      method: 'GET',
+      path: '/board/b1',
+    });
+    expect(other.body).toMatchObject({
+      data: { title: 'hello' },
+      author: { kind: 'user', isViewer: false },
+    });
+  });
+
+  it('without a grant: 403 consent_required naming the scope and the source', async () => {
+    const { S, C } = importApps();
+    const r = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({
+      code: 'consent_required',
+      details: { scope: IMPORT_SCOPE, from: S.blockId },
+    });
+    // A grant row without the scope on the token (the ledger withheld it) is refused the same way.
+    await grant(VIEWER_IDS.v1, C, S);
+    const noScope = await call({
+      token: await as(C, VIEWER_IDS.v1, ['apps:storage']),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(noScope.status).toBe(403);
+    expect(noScope.body).toMatchObject({ code: 'consent_required' });
+  });
+
+  it('an undeclared import: 403 import_not_declared (an undeclared collection, or an app that imports nothing)', async () => {
+    const { S, C, N } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    await grant(VIEWER_IDS.v1, N, S, { collections: ['notes'], access: 'read' });
+    const notListed = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/extra/e1',
+      query: { from: S.blockId },
+    });
+    expect(notListed.status).toBe(403);
+    expect(notListed.body).toMatchObject({ code: 'import_not_declared' });
+    const noImports = await call({
+      token: await as(N, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(noImports.status).toBe(403);
+    expect(noImports.body).toMatchObject({ code: 'import_not_declared' });
+  });
+
+  it('a source collection declared exportable: false: 403 not_exportable', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    const r = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/secret/s1',
+      query: { from: S.blockId },
+    });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ code: 'not_exportable' });
+  });
+
+  it('access: read refuses every write, and still reads', async () => {
+    const { S, C } = importApps('read');
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const put = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+      body: { data: { text: 'x' } },
+    });
+    expect(put.status).toBe(403);
+    expect(put.body).toMatchObject({
+      code: 'write_policy',
+      details: { reason: 'import_read_only' },
+    });
+    const del = await call({
+      token: c,
+      method: 'DELETE',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(del.status).toBe(403);
+    expect((await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [S.id])).length).toBe(
+      0
+    );
+    const get = await call({
+      token: c,
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(get.status).toBe(404);
+    expect(get.body).toMatchObject({ code: 'not_found' });
+  });
+
+  it("viewer isolation: viewer B cannot reach viewer A's private source documents through the import", async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    await grant(VIEWER_IDS.v2, C, S);
+    await call({
+      token: await sourceToken(S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/mine',
+      body: { data: { text: 'v1 private' } },
+    });
+    const b = await as(C, VIEWER_IDS.v2);
+    const get = await call({
+      token: b,
+      method: 'GET',
+      path: '/notes/mine',
+      query: { from: S.blockId },
+    });
+    expect(get.status).toBe(404);
+    const list = await call({
+      token: b,
+      method: 'GET',
+      path: '/notes',
+      query: { from: S.blockId },
+    });
+    expect(list.status).toBe(200);
+    expect(list.body).toMatchObject({ items: [] });
+    // And B's grant does not make A's documents B's: A still reads its own.
+    const a = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/mine',
+      query: { from: S.blockId },
+    });
+    expect(a.body).toMatchObject({ data: { text: 'v1 private' } });
+  });
+
+  it("usage counts against the source app and the viewer's ceilings there, not the consumer's", async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    for (const key of ['u1', 'u2']) {
+      const r = await call({
+        token: c,
+        method: 'PUT',
+        path: `/notes/${key}`,
+        query: { from: S.blockId },
+        body: { data: { n: key } },
+      });
+      expect(r.status).toBe(200);
+    }
+    const sourceInfo = await call({
+      token: await sourceToken(S, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '',
+    });
+    expect(sourceInfo.body).toMatchObject({ usage: { viewer: { docs: 2 } } });
+    const consumerInfo = await call({ token: c, method: 'GET', path: '' });
+    expect(consumerInfo.body).toMatchObject({ usage: { viewer: { docs: 0 } } });
+    // The source's per-viewer document ceiling binds the import (contract limit: viewerDocs).
+    for (let i = 2; i < contract.limits.viewerDocs; i++) {
+      await call({
+        token: c,
+        method: 'PUT',
+        path: `/notes/f${i}`,
+        query: { from: S.blockId },
+        body: { data: {} },
+      });
+    }
+    const over = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/over',
+      query: { from: S.blockId },
+      body: { data: {} },
+    });
+    expect(over.status).toBe(413);
+    expect(over.body).toMatchObject({ code: 'quota_exceeded' });
+  });
+
+  it('a dev, hub or review token cannot import: 403 not_eligible, before any grant is read', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    await call({
+      token: await sourceToken(S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/live',
+      body: { data: { text: 'production' } },
+    });
+    const refused = (reason: string) => ({
+      code: 'not_eligible',
+      details: { reason },
+    });
+
+    // A dev token (the bearer dev-token route, scopes passed straight through to the signer so
+    // the refusal is the route's own and not the allowlist's).
+    const { token: dev } = await signDevScopedPageToken({
+      userId: VIEWER_IDS.v1,
+      signBlockId: C.blockId,
+      signAppId: C.appId,
+      signAppBlockId: C.id,
+      blockInstanceId: `page_${C.id}`,
+      granted: CONSUMER_SCOPES,
+      buzzBudget: undefined,
+    });
+    for (const [method, p] of [
+      ['GET', '/notes/live'],
+      ['PUT', '/notes/devdoc'],
+    ] as const) {
+      const r = await call({
+        token: dev,
+        method,
+        path: p,
+        query: { from: S.blockId },
+        ...(method === 'PUT' ? { body: { data: { text: 'dev' } } } : {}),
+      });
+      expect(r.status).toBe(403);
+      expect(r.body).toMatchObject(refused('import_dev_token'));
+      expect((r.body as { message: string }).message).toBe(
+        'a development token cannot reach another app'
+      );
+    }
+    expect(
+      await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = 'devdoc'`, [S.id])
+    ).toEqual([]);
+
+    // A hub token: the claims `withBlockScope` builds for a hub-issued OAuth bearer of an
+    // approved app (`resolveHubTokenClaims`: `hub_<api key id>` jti, no `dev`).
+    const iat = Math.floor(Date.now() / 1000);
+    const hub: BlockTokenClaims = {
+      iss: 'civitai',
+      aud: 'civitai-app-block',
+      sub: `user:${VIEWER_IDS.v1}`,
+      iat,
+      exp: iat + 900,
+      jti: `${HUB_TOKEN_JTI_PREFIX}7713`,
+      blockId: C.blockId,
+      appId: C.appId,
+      appBlockId: C.id,
+      blockInstanceId: `page_${C.id}`,
+      ctx: { entityType: 'none' },
+      scopes: CONSUMER_SCOPES,
+      maxBrowsingLevel: 1,
+    };
+    const own = await resolveStorageAccess(hub, { consentUnavailable: false });
+    await expect(
+      resolveImportAccess(own, { from: S.blockId, collection: 'notes', op: 'read' })
+    ).rejects.toMatchObject({
+      code: 'not_eligible',
+      message: 'a hub token cannot reach another app',
+      details: { reason: 'import_hub_token' },
+    });
+
+    // A review token reaches no other app at all.
+    const pr = {
+      id: `pubreq_01JIMPORTREVIEW${seq}000000`,
+      status: 'pending',
+      manifest: C.manifest,
+    };
+    publishRequests.push(pr);
+    const review = await mint({
+      app: { id: pr.id, appId: 'appblk-imp-review', blockId: 'imp-review' },
+      uid: VIEWER_IDS.v1,
+      scopes: CONSUMER_SCOPES,
+      dev: true,
+      reviewRunForReal: true,
+    });
+    const r = await call({
+      token: review,
+      method: 'GET',
+      path: '/notes/live',
+      query: { from: S.blockId },
+    });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject(refused('import_in_review'));
+
+    // Control: the same viewer's production token reaches it.
+    const prod = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/live',
+      query: { from: S.blockId },
+    });
+    expect(prod.status).toBe(200);
+  });
+
+  // ── The grant covers what the viewer was SHOWN (round-1 R1-1) ────────────────────────────
+
+  /** A read through the import of S's `notes` — the collection every version below imports. */
+  async function readNotes(C: AppRow, S: AppRow) {
+    return call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+  }
+  const consentRequiredFor = (S: AppRow) => ({
+    code: 'consent_required',
+    details: { scope: IMPORT_SCOPE, from: S.blockId },
+  });
+
+  it('a later version importing another collection is refused until the viewer is asked again', async () => {
+    const { S, C } = importApps();
+    C.manifest = consumerManifest(S, ['notes'], 'read');
+    await grant(VIEWER_IDS.v1, C, S);
+    await call({
+      token: await sourceToken(S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/n1',
+      body: { data: { text: 'mine' } },
+    });
+    expect((await readNotes(C, S)).status).toBe(200);
+    // v2 widens the import to `extra` — still `read`, and `notes` is unchanged.
+    C.manifest = consumerManifest(S, ['notes', 'extra'], 'read');
+    const r = await readNotes(C, S);
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject(consentRequiredFor(S));
+    expect(
+      await isImportScopeCovered({
+        userId: VIEWER_IDS.v1,
+        consumerAppBlockId: C.id,
+        manifest: C.manifest,
+        host: '',
+      })
+    ).toBe(false);
+    // The prompt for v2, accepted: covered again.
+    await grant(VIEWER_IDS.v1, C, S);
+    expect((await readNotes(C, S)).status).toBe(200);
+  });
+
+  it('a later version turning read into readwrite is refused until the viewer is asked again', async () => {
+    const { S, C } = importApps();
+    C.manifest = consumerManifest(S, ['notes'], 'read');
+    await grant(VIEWER_IDS.v1, C, S);
+    C.manifest = consumerManifest(S, ['notes'], 'readwrite');
+    const r = await readNotes(C, S);
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject(consentRequiredFor(S));
+    const put = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/n2',
+      query: { from: S.blockId },
+      body: { data: { text: 'x' } },
+    });
+    expect(put.status).toBe(403);
+    expect(put.body).toMatchObject(consentRequiredFor(S));
+    expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1`, [S.id])).toEqual([]);
+  });
+
+  // Passes before the fix too (no grant was ever narrowed then): it pins that the fix does not
+  // over-refuse.
+  it('INVARIANT GUARD: a later version that narrows is still allowed', async () => {
+    const { S, C } = importApps();
+    C.manifest = consumerManifest(S, ['notes', 'extra'], 'readwrite');
+    await grant(VIEWER_IDS.v1, C, S);
+    C.manifest = consumerManifest(S, ['notes'], 'read');
+    await call({
+      token: await sourceToken(S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/n1',
+      body: { data: { text: 'mine' } },
+    });
+    const r = await readNotes(C, S);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ data: { text: 'mine' } });
+  });
+
+  it('a source dropped and added back is prompted for again', async () => {
+    const { S, C } = importApps();
+    C.manifest = consumerManifest(S, ['notes'], 'read');
+    await grant(VIEWER_IDS.v1, C, S);
+    // v2 drops the import; the viewer opens the app, so the mint runs under v2.
+    C.manifest = consumerManifest(S, null);
+    expect(
+      await isImportScopeCovered({
+        userId: VIEWER_IDS.v1,
+        consumerAppBlockId: C.id,
+        manifest: C.manifest,
+        host: '',
+      })
+    ).toBe(true);
+    // v3 declares exactly what v1 did.
+    C.manifest = consumerManifest(S, ['notes'], 'read');
+    const r = await readNotes(C, S);
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject(consentRequiredFor(S));
+  });
+
+  // ── Writes to the source's SHARED collections need the source's own publish consent (Q1) ──
+
+  it("a shared write through a readwrite import needs the viewer's apps:storage:publish in the source", async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const board = () =>
+      call({
+        token: c,
+        method: 'PUT',
+        path: '/board/b1',
+        query: { from: S.blockId },
+        body: { data: { title: 'hello' } },
+      });
+    const refused = await board();
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({
+      code: 'consent_required',
+      details: { scope: PUBLISH_SCOPE, from: S.blockId },
+    });
+    expect(
+      await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = 'b1'`, [S.id])
+    ).toEqual([]);
+    // A private source collection needs only the import grant.
+    const priv = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+      body: { data: { text: 'private' } },
+    });
+    expect(priv.status).toBe(200);
+    // With the viewer's own publish consent in the source, the same write lands.
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    expect((await board()).status).toBe(200);
+    // The consumer's OWN publish consent is not the source's.
+    grantPublishInSource(VIEWER_IDS.v2, C);
+    await grant(VIEWER_IDS.v2, C, S);
+    const otherConsumer = await call({
+      token: await as(C, VIEWER_IDS.v2, [...CONSUMER_SCOPES, PUBLISH_SCOPE]),
+      method: 'PUT',
+      path: '/board/b2',
+      query: { from: S.blockId },
+      body: { data: { title: 'x' } },
+    });
+    expect(otherConsumer.status).toBe(403);
+    expect(otherConsumer.body).toMatchObject({
+      code: 'consent_required',
+      details: { scope: PUBLISH_SCOPE, from: S.blockId },
+    });
+  });
+
+  // ── Import calls are charged to the consumer's read bucket before resolution (R1-2) ──────
+
+  /** The consumer's own `read` bucket counter for a viewer. */
+  const readBucket = (app: AppRow, uid: number) =>
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-read:${app.id}:u:${uid}`;
+
+  it("a refused import call is charged to the consumer's read bucket", async () => {
+    const { S, N } = importApps();
+    const r = await call({
+      token: await as(N, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(r.body).toMatchObject({ code: 'import_not_declared' });
+    expect(kv.get(readBucket(N, VIEWER_IDS.v1))?.value).toBe('1');
+  });
+
+  it('an exhausted consumer read bucket refuses an import before it is resolved', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    kv.set(readBucket(C, VIEWER_IDS.v1), { value: String(DOC_STORE_READ_RATE_LIMIT_MAX), ttl: 30 });
+    // The source's bucket for this viewer is untouched, so a 429 here is the consumer's.
+    for (const path of ['/notes/n1', '/extra/e1']) {
+      const r = await call({
+        token: await as(C, VIEWER_IDS.v1),
+        method: 'GET',
+        path,
+        query: { from: S.blockId },
+      });
+      expect(r.status).toBe(429);
+      expect(r.body).toMatchObject({ code: 'rate_limited', details: { bucket: 'read' } });
+    }
+    expect(kv.get(readBucket(S, VIEWER_IDS.v1))).toBeUndefined();
+  });
+
+  // ── A mature-rated source is reached only from a token whose ceiling allows mature ──────────
+
+  it('a mature-rated source is refused to a SFW-ceiling consumer token, before any grant is read', async () => {
+    const pair = (rating: string) => {
+      seq += 1;
+      const app = (label: string, manifest: unknown): AppRow => {
+        const r = {
+          id: `apb_imprating${label}${seq}`,
+          appId: `appblk-imprating${label}${seq}`,
+          blockId: `imp-rating-${label}-${seq}`,
+          status: 'approved',
+          manifest,
+        };
+        apps.push(r);
+        return r;
+      };
+      const S = app('src', {
+        contentRating: rating,
+        scopes: ['apps:storage'],
+        storage: { collections: { notes: { visibility: 'private' } } },
+      });
+      const C = app('fork', {
+        contentRating: 'g',
+        scopes: CONSUMER_SCOPES,
+        storage: {
+          collections: { own: { visibility: 'private' } },
+          imports: [{ from: S.blockId, collections: ['notes'], access: 'readwrite' }],
+        },
+      });
+      return { S, C };
+    };
+    const SFW_CEILING = 1;
+    const read = async (S: AppRow, C: AppRow, maxBrowsingLevel: number) =>
+      call({
+        token: await mint({
+          app: C,
+          uid: VIEWER_IDS.v1,
+          scopes: CONSUMER_SCOPES,
+          maxBrowsingLevel,
+        }),
+        method: 'GET',
+        path: '/notes/n1',
+        query: { from: S.blockId },
+      });
+    const ledgerReads = () =>
+      dbMock.dbWrite.$queryRaw.mock.calls.filter((c) =>
+        (c[0] as unknown as string[]).join('?').includes('app_storage_import_grants')
+      ).length;
+
+    const mature = pair('x');
+    await grant(VIEWER_IDS.v1, mature.C, mature.S);
+    await call({
+      token: await sourceToken(mature.S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/n1',
+      body: { data: { text: 'mature source' } },
+    });
+    dbMock.dbWrite.$queryRaw.mockClear();
+    const refused = await read(mature.S, mature.C, SFW_CEILING);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({
+      code: 'not_eligible',
+      details: { reason: 'import_source_rating' },
+    });
+    expect(JSON.stringify(refused.body)).not.toContain('mature source');
+    expect(ledgerReads()).toBe(0);
+    // A red-host token (its ceiling allows mature) reaches it.
+    const red = await read(mature.S, mature.C, allBrowsingLevelsFlag);
+    expect(red.status).toBe(200);
+    expect(red.body).toMatchObject({ data: { text: 'mature source' } });
+
+    // A SFW source is reached from both.
+    const sfw = pair('g');
+    await grant(VIEWER_IDS.v1, sfw.C, sfw.S);
+    await call({
+      token: await sourceToken(sfw.S, VIEWER_IDS.v1),
+      method: 'PUT',
+      path: '/notes/n1',
+      body: { data: { text: 'sfw source' } },
+    });
+    for (const ceiling of [SFW_CEILING, allBrowsingLevelsFlag]) {
+      const r = await read(sfw.S, sfw.C, ceiling);
+      expect(r.status, `ceiling ${ceiling}`).toBe(200);
+    }
+  });
+
+  // ── Counters and marks on the source's SHARED collections need its publish consent too ────
+
+  it("a tally through a readwrite import needs the viewer's apps:storage:publish in the source", async () => {
+    seq += 1;
+    const app = (label: string, manifest: unknown): AppRow => {
+      const r = {
+        id: `apb_imptally${label}${seq}`,
+        appId: `appblk-imptally${label}${seq}`,
+        blockId: `imp-tally-${label}-${seq}`,
+        status: 'approved',
+        manifest,
+      };
+      apps.push(r);
+      return r;
+    };
+    const S = app('src', {
+      scopes: ['apps:storage', PUBLISH_SCOPE],
+      storage: {
+        collections: {
+          board: { visibility: 'shared', write: 'own', marks: ['vote'] },
+          // `write: "none"`: no viewer authors a document, but a tally is still shared state.
+          plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+        },
+      },
+    });
+    const C = app('fork', {
+      scopes: CONSUMER_SCOPES,
+      storage: {
+        collections: { own: { visibility: 'private' } },
+        imports: [{ from: S.blockId, collections: ['board', 'plays'], access: 'readwrite' }],
+      },
+    });
+    await grant(VIEWER_IDS.v1, C, S);
+    // A shared document in the source to mark, written by another viewer there.
+    const made = await call({
+      token: await sourceToken(S, VIEWER_IDS.v2),
+      method: 'PUT',
+      path: '/board/b1',
+      body: { data: { title: 'hi' } },
+    });
+    expect(made.status).toBe(200);
+    const c = await as(C, VIEWER_IDS.v1);
+    const tallies = [
+      { method: 'POST', path: '/plays/p1/counters/plays', body: { by: 1 } },
+      { method: 'PUT', path: '/board/b1/marks/vote' },
+      { method: 'PUT', path: '/board/b1/marks/report' },
+      { method: 'DELETE', path: '/board/b1/marks/vote' },
+    ];
+    for (const t of tallies) {
+      const r = await call({ token: c, ...t, query: { from: S.blockId } });
+      expect(r.status, `${t.method} ${t.path}`).toBe(403);
+      expect(r.body, `${t.method} ${t.path}`).toMatchObject({
+        code: 'consent_required',
+        details: { scope: PUBLISH_SCOPE, from: S.blockId },
+      });
+    }
+    expect(
+      await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = 'p1'`, [S.id])
+    ).toEqual([]);
+    // With the viewer's own publish consent in the source, the same tallies land.
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    for (const t of tallies) {
+      const r = await call({ token: c, ...t, query: { from: S.blockId } });
+      expect(r.status, `${t.method} ${t.path}`).toBe(200);
+    }
+  });
+
+  it('a read or a delete through an import never reads the source publish consent', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/d1',
+      query: { from: S.blockId },
+      body: { data: { text: 'x' } },
+    });
+    const lookups = dbMock.dbWrite.appUserScopeGrant.findUnique;
+    lookups.mockClear();
+    for (const t of [
+      { method: 'GET', path: '/notes/d1' },
+      { method: 'DELETE', path: '/notes/d1' },
+    ]) {
+      const r = await call({ token: c, ...t, query: { from: S.blockId } });
+      expect(r.status, `${t.method} ${t.path}`).toBe(200);
+    }
+    expect(lookups).not.toHaveBeenCalled();
+    // Control: a put does read it.
+    await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/d2',
+      query: { from: S.blockId },
+      body: { data: { text: 'x' } },
+    });
+    expect(lookups).toHaveBeenCalled();
+  });
+
+  // ── Writes through an import are validated against the SOURCE collection's schema (R1-4) ──
+
+  it("a write through an import is checked against the source's schema, never the consumer's", async () => {
+    seq += 1;
+    const app = (label: string, manifest: unknown): AppRow => {
+      const r = {
+        id: `apb_impschema${label}${seq}`,
+        appId: `appblk-impschema${label}${seq}`,
+        blockId: `imp-schema-${label}-${seq}`,
+        status: 'approved',
+        manifest,
+      };
+      apps.push(r);
+      return r;
+    };
+    // The source's `notes`: `text` is required and at most 5 characters; anything else is free.
+    const S = app('src', {
+      scopes: ['apps:storage'],
+      storage: {
+        collections: {
+          notes: {
+            visibility: 'private',
+            schema: { type: 'object', required: ['text'], properties: { text: { maxLength: 5 } } },
+          },
+        },
+      },
+    });
+    // The consumer's OWN `notes` has a different schema: `title` is required.
+    const C = app('fork', {
+      scopes: CONSUMER_SCOPES,
+      storage: {
+        collections: {
+          notes: { visibility: 'private', schema: { type: 'object', required: ['title'] } },
+        },
+        imports: [{ from: S.blockId, collections: ['notes'], access: 'readwrite' }],
+      },
+    });
+    await grant(VIEWER_IDS.v1, C, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const put = (key: string, data: unknown) =>
+      call({
+        token: c,
+        method: 'PUT',
+        path: `/notes/${key}`,
+        query: { from: S.blockId },
+        body: { data },
+      });
+    const inSource = async (key: string) =>
+      harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = $2`, [S.id, key]);
+
+    // Violates the source schema at /text, and satisfies the consumer's: refused, nothing written.
+    const refused = await put('bad', { title: 'x', text: 'too long' });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({
+      code: 'schema_violation',
+      details: { collection: 'notes', pointer: '/text', keyword: 'maxLength' },
+    });
+    expect(await inSource('bad')).toEqual([]);
+
+    // Satisfies the source schema and violates the consumer's (no `title`): accepted, in the source.
+    const accepted = await put('good', { text: 'short' });
+    expect(accepted.status).toBe(200);
+    expect(await inSource('good')).toEqual([{ '?column?': 1 }]);
+
+    // Control: the consumer's own schema still binds its own collection, without `from`.
+    const own = await call({
+      token: c,
+      method: 'PUT',
+      path: '/notes/own',
+      body: { data: { text: 'short' } },
+    });
+    expect(own.status).toBe(400);
+    expect(own.body).toMatchObject({ code: 'schema_violation', details: { keyword: 'required' } });
   });
 });
 

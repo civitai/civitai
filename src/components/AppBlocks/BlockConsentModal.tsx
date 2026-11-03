@@ -23,6 +23,7 @@ import {
   isSensitiveBlockScope,
 } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
+import { APP_STORAGE_IMPORT_SCOPE } from '~/shared/constants/block-storage.constants';
 import { trpc } from '~/utils/trpc';
 
 interface BlockConsentModalProps {
@@ -98,6 +99,10 @@ export default function BlockConsentModal({
   const dialog = useDialogContext();
   const [error, setError] = useState<string | null>(null);
   const grantsSpend = missingScopes.includes(BLOCK_SPEND_SCOPE);
+  const grantsImport = missingScopes.includes(APP_STORAGE_IMPORT_SCOPE);
+  // The import consent covers every source app the approved manifest imports from, so the
+  // prompt names each one and its collections before the viewer allows it.
+  const imports = trpc.blocks.getStorageImports.useQuery({ appBlockId }, { enabled: grantsImport });
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [budget, setBudget] = useState<number | string>(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
   const grant = trpc.blocks.grantScopes.useMutation({
@@ -147,6 +152,13 @@ export default function BlockConsentModal({
                   </Text>
                   {sensitive && <SensitiveScopeBadge size="xs" />}
                 </Group>
+                {scope === APP_STORAGE_IMPORT_SCOPE ? (
+                  <StorageImportConsentDetail
+                    consumerName={blockName ?? 'This app'}
+                    imports={imports.data?.imports}
+                    loading={imports.isLoading}
+                  />
+                ) : null}
               </List.Item>
             );
           })}
@@ -214,7 +226,7 @@ export default function BlockConsentModal({
             size="xs"
             color="yellow"
             loading={grant.isPending}
-            disabled={budgetBlocksSubmit}
+            disabled={budgetBlocksSubmit || (grantsImport && !imports.data)}
             onClick={() =>
               grant.mutate({
                 appBlockId,
@@ -226,6 +238,17 @@ export default function BlockConsentModal({
                 ...(grantsSpend && limitEnabled && budgetValid
                   ? { buzzBudgetPerDay: parsedBudget }
                   : {}),
+                // Exactly what the list above showed: the server records these and refuses the
+                // grant if the app's approved imports are no longer the same.
+                ...(grantsImport && imports.data
+                  ? {
+                      storageImports: imports.data.imports.map((i) => ({
+                        from: i.from,
+                        collections: i.collections,
+                        access: i.access,
+                      })),
+                    }
+                  : {}),
               })
             }
           >
@@ -234,5 +257,49 @@ export default function BlockConsentModal({
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+type StorageImportRow = {
+  from: string;
+  sourceName: string | null;
+  collections: string[];
+  access: 'read' | 'readwrite';
+};
+
+/** One line per source app: both app names, the collections, and whether it can change them. */
+export function StorageImportConsentDetail({
+  consumerName,
+  imports,
+  loading,
+}: {
+  consumerName: string;
+  imports: StorageImportRow[] | undefined;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <Text size="xs" c="dimmed">
+        Loading which apps…
+      </Text>
+    );
+  }
+  if (!imports || imports.length === 0) return null;
+  return (
+    <List size="xs" spacing={2} mt={4} data-testid="block-consent-storage-imports">
+      {imports.map((i) => (
+        <List.Item key={i.from}>
+          <strong>{consumerName}</strong> {i.access === 'readwrite' ? 'reads and changes' : 'reads'}{' '}
+          your {i.collections.join(', ')} in <strong>{i.sourceName ?? i.from}</strong>
+          {/* An import is not publish consent in the source: writes, counters and marks in its
+              shared collections need `apps:storage:publish` there, separately. */}
+          {i.access === 'readwrite'
+            ? ` — as you. Changing what other people see there, such as adding entries, votes or counts, needs your separate permission in ${
+                i.sourceName ?? i.from
+              }.`
+            : ''}
+        </List.Item>
+      ))}
+    </List>
   );
 }
