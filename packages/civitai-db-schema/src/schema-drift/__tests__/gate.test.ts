@@ -751,10 +751,16 @@ describe('baseline reasons', () => {
         'Pre-existing at the 2026-10-20 production capture; accepted wholesale when the ' +
         'baseline was created, not reviewed entry by entry.';
 
-      it('is what the committed entries carry, and they keep it', () => {
-        expect(committed.entries.every((e) => e.reason === backfill)).toBe(true);
+      // Pins the carry-over, not the data file: a later PR that accepts an entry under its own
+      // reason must not turn this red.
+      it('is kept by the committed entries that carry it', () => {
+        const carrying = committed.entries.filter((e) => e.reason === backfill);
+        expect(carrying.length).toBeGreaterThan(0);
         const result = acceptIntoBaseline(committed, candidate, {});
-        expect(result.ok && result.baseline.entries.every((e) => e.reason === backfill)).toBe(true);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const kept = new Map(result.baseline.entries.map((e) => [e.fingerprint, e.reason]));
+        expect(carrying.map((e) => kept.get(e.fingerprint))).toEqual(carrying.map(() => backfill));
       });
 
       it.each([
