@@ -65,7 +65,8 @@ export function ModelListingTabs({
     name: ['sfwName', 'sfwDescription'],
   });
   const { errors, submitCount } = useFormState({ control: form.control });
-  const [site, setSite] = useState<Site>('red');
+  const features = useFeatureFlags();
+  const [site, setSite] = useState<Site>(features.isGreen ? 'com' : 'red');
   const ownComContent = sfwName != null;
 
   const nameVerdict = useSfwFaceVerdict('sfwName', ownComContent ? sfwName : null);
@@ -102,22 +103,17 @@ export function ModelListingTabs({
         </div>
         <Tabs value={site} onChange={(value) => value && setSite(value as Site)} keepMounted>
           <Tabs.List>
-            <Tabs.Tab value="red" rightSection={redHasErrors ? <ErrorDot /> : undefined}>
-              civitai.red
-            </Tabs.Tab>
             <Tabs.Tab
               value="com"
-              rightSection={
-                comHasErrors ? (
-                  <ErrorDot />
-                ) : (
-                  <Badge size="xs" variant="light" color={ownComContent ? 'green' : 'gray'}>
-                    {ownComContent ? 'Own content' : 'Same as .red'}
-                  </Badge>
-                )
-              }
+              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge custom={ownComContent} />}
             >
               civitai.com
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="red"
+              rightSection={redHasErrors ? <ErrorDot /> : <CardBadge custom={ownComContent} />}
+            >
+              civitai.red
             </Tabs.Tab>
           </Tabs.List>
 
@@ -196,10 +192,10 @@ function ComListing({
     dialogStore.trigger({
       component: ConfirmDialog,
       props: {
-        title: 'Show the civitai.red card on civitai.com?',
+        title: 'Use the same card on both sites?',
         message:
           'The civitai.com title, description and cover are removed, and civitai.com shows the same card as civitai.red.',
-        labels: { confirm: 'Use the civitai.red listing', cancel: 'Keep it' },
+        labels: { confirm: 'Use the same card on both sites', cancel: 'Keep it' },
         confirmProps: { color: 'red' },
         onConfirm: () => setComContent(null, null),
       },
@@ -232,7 +228,7 @@ function ComListing({
               setComContent(name, description ?? '');
             }}
           >
-            Write a civitai.com version
+            Customize for civitai.com
           </Button>
           {draftButton}
         </Group>
@@ -280,7 +276,7 @@ function ComListing({
           Version descriptions are not shown on civitai.com while it has its own card.
         </Text>
         <Button variant="subtle" color="red" size="compact-sm" onClick={handleUseRed}>
-          Use the civitai.red listing
+          Use the same card on both sites
         </Button>
       </Group>
     </Stack>
@@ -365,6 +361,14 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
         </Alert>
       )}
     </Stack>
+  );
+}
+
+function CardBadge({ custom }: { custom: boolean }) {
+  return (
+    <Badge size="xs" variant="light" color={custom ? 'green' : 'gray'}>
+      {custom ? 'Custom for this site' : 'Same on both sites'}
+    </Badge>
   );
 }
 
