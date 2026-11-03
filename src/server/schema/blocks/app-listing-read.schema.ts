@@ -388,10 +388,8 @@ export type ListingDetailKindData =
 export type ListingDetail = {
   id: string;
   /**
-   * Integer surrogate key (`app_listings.serial_id`). Carried so the detail page
-   * can mount the CommentsV2 discussion (`<CommentsProvider entityType="appListing"
-   * entityId={serialId} />`) — CommentsV2 is integer-keyed, the store `id` is a TEXT
-   * ULID. Public + non-sensitive (an opaque row number, like the numeric ids already
+   * Integer surrogate key (`app_listings.serial_id`): comments key on it, because the store `id`
+   * is a TEXT ULID. Public and non-sensitive (an opaque row number, like the numeric ids already
    * exposed for images/models/posts).
    */
   serialId: number;
