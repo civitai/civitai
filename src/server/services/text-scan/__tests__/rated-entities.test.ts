@@ -35,6 +35,7 @@ const { maybeAutoResolveRatingDisputeAfterScan } = await import(
 const args = (level: number, raised: boolean) => ({
   entityId: 7,
   workflowId: 'wf-1',
+  textHash: 'h',
   outcome: {
     nsfw: { detectedLevel: level, declaredLevel: 1, raised, reason: 'r' },
     triggeredLabels: raised ? ['nsfw' as const] : [],
