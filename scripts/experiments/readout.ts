@@ -369,18 +369,16 @@ async function main() {
   const pg = new PgClient({ connectionString: process.env.READOUT_DATABASE_URL });
   await pg.connect();
   await pg.query('SET default_transaction_read_only = on');
-  await pg.query("SET TIME ZONE 'UTC'");
   const placements = new Map<number, Placement[]>();
   const ids = rows.map((r) => Number(r.userId));
   for (let i = 0; i < ids.length; i += 10_000) {
-    // "createdAt" is timestamp without time zone, stored in UTC: read it as epoch ms, so the
-    // client's own time zone cannot shift it.
+    // Removed stickers still count: a moderator's removal says nothing about how the arm worked.
     const res = await pg.query<{ userId: number; atMs: string; source: string | null }>(
       `SELECT "userId", (extract(epoch from "createdAt") * 1000)::bigint AS "atMs",
               data->>'source' AS source FROM "EventTurfSticker"
        WHERE event = $1 AND "userId" = ANY($2::int[])
-         AND "createdAt" >= $3::timestamp AND "createdAt" <= $4::timestamp`,
-      [event, ids.slice(i, i + 10_000), `${since} 00:00:00`, `${until} 23:59:59`]
+         AND "createdAt" >= $3::timestamptz AND "createdAt" <= $4::timestamptz`,
+      [event, ids.slice(i, i + 10_000), `${since}T00:00:00Z`, `${until}T23:59:59Z`]
     );
     for (const p of res.rows) {
       const list = placements.get(p.userId) ?? [];
