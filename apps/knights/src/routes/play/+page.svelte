@@ -19,7 +19,7 @@
   import { recapLines } from './recap-text';
   import { answerForKey, answerForKeyPress } from './keys';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
-  import { holdToken, itemKey, type HeldToken } from '$lib/item-token';
+  import { holdToken, itemKey, releaseToken, type HeldToken } from '$lib/item-token';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -153,6 +153,12 @@
         picked = null;
       }
     };
+  };
+
+  // Answering and skipping advance the item, so the held token is dropped; a dismissal keeps it.
+  const submitItem: SubmitFunction = (input) => {
+    held = releaseToken();
+    return submit(input);
   };
 
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
@@ -367,13 +373,13 @@
         {@render levelToast(true)}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
-        <form class="answers" method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
+        <form class="answers" method="POST" action="?/vote" use:enhance={submitItem} bind:this={answers}>
           <input type="hidden" name="item" value={itemToken} />
           {#each data.question.options as option, index (option.value)}
             {@render pill(option, index, imageFailed, asksBlockReason(data.question.key))}
           {/each}
         </form>
-        <form class="skip" method="POST" action="?/skip" use:enhance={submit} bind:this={skipForm}>
+        <form class="skip" method="POST" action="?/skip" use:enhance={submitItem} bind:this={skipForm}>
           <input type="hidden" name="item" value={itemToken} />
           <button type="submit" class="quiet" disabled={submitting}>
             Skip<span class="space">&nbsp;·&nbsp;Space</span>
