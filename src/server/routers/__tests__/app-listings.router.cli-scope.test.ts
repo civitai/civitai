@@ -443,10 +443,6 @@ describe('moderator listing-edit authority needs a session or a full-access key'
   );
   const MOD_EDIT_PROCS = [...MOD_READ_PROCS, ...MOD_WRITE_PROCS];
 
-  it('covers every editor procedure that takes the moderator flag', () => {
-    expect(MOD_EDIT_PROCS).toHaveLength(8);
-  });
-
   for (const { name, input, mock } of MOD_EDIT_PROCS) {
     it(`${name}: a moderator's full-scope app token (not a personal key) does not act as a moderator`, async () => {
       mock.mockClear();

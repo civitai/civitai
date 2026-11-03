@@ -205,3 +205,74 @@ describe('the audit fingerprint inside a transaction', () => {
     expect(txFind.mock.calls.some(([a]) => 'sourceRepoUrl' in a.select)).toBe(false);
   });
 });
+
+describe('assertModeratorMayUseShadow row locks', () => {
+  function fakeTx() {
+    const order: string[] = [];
+    const sqlText = (q: unknown) => {
+      const sql = q as { strings?: string[]; sql?: string; values?: unknown[] };
+      return { text: sql.sql ?? (sql.strings ?? []).join('?'), values: sql.values ?? [] };
+    };
+    const locks: { text: string; values: unknown[] }[] = [];
+    const tx = {
+      $queryRaw: vi.fn(async (q: unknown) => {
+        const { text, values } = sqlText(q);
+        if (/FOR UPDATE/.test(text)) {
+          locks.push({ text, values });
+          order.push('lock');
+        } else {
+          order.push('raw');
+        }
+        return [];
+      }),
+      appListing: {
+        findUnique: vi.fn(
+          async (args: { where: { id: string }; select: Record<string, unknown> }) => {
+            order.push(`findUnique:${Object.keys(args.select)[0]}`);
+            if ('revisionOfId' in args.select) return { revisionOfId: 'apl_parent' };
+            return { name: 'same' };
+          }
+        ),
+      },
+      appListingScreenshot: { findMany: vi.fn(async () => []) },
+      appListingPublishRequest: { findFirst: vi.fn(async () => null) },
+      appListingModerationEvent: { findFirst: vi.fn(async () => null) },
+    };
+    return { tx, locks, order };
+  }
+
+  beforeEach(() => {
+    findListing.mockResolvedValue({ sourceRepoUrl: null });
+  });
+
+  it('inside a transaction, locks the revision row and its screenshot rows before reading', async () => {
+    const { tx, locks, order } = fakeTx();
+    await assertModeratorMayUseShadow(tx as never, { shadowId: 'apl_shadow', actorUserId: 7 });
+    expect(locks).toHaveLength(2);
+    expect(locks[0].text).toMatch(/FROM app_listings\b[\s\S]*FOR UPDATE/);
+    expect(locks[1].text).toMatch(/FROM app_listing_screenshots\b[\s\S]*FOR UPDATE/);
+    for (const lock of locks) expect(lock.values).toContain('apl_shadow');
+    expect(order.slice(0, 2)).toEqual(['lock', 'lock']);
+    expect(order.indexOf('findUnique:revisionOfId')).toBeGreaterThan(1);
+  });
+
+  it('takes no locks outside a transaction', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    findListing.mockImplementation(async (args: { select: Record<string, unknown> }) =>
+      'revisionOfId' in args.select ? { revisionOfId: 'apl_parent' } : { name: 'same' }
+    );
+    dbMock.dbWrite.appListingScreenshot.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.appListingPublishRequest.findFirst.mockResolvedValue(null);
+    await assertModeratorMayUseShadow(dbMock.dbWrite as never, {
+      shadowId: 'apl_shadow',
+      actorUserId: 7,
+    });
+    const texts = dbMock.dbWrite.$queryRaw.mock.calls.map((c) => {
+      const q = c[0] as { strings?: string[]; sql?: string };
+      return q.sql ?? (q.strings ?? []).join('?');
+    });
+    expect(texts.length).toBeGreaterThan(0);
+    expect(texts.some((t) => /FOR UPDATE/.test(t))).toBe(false);
+  });
+});

@@ -844,14 +844,27 @@ describe('screenshot CRUD', () => {
       status: 'approved',
       revisionOfId: null,
     });
+    const tx = { ...mockDb };
+    let deletedThrough: unknown = null;
+    tx.appListingScreenshot = {
+      ...mockDb.appListingScreenshot,
+      deleteMany: vi.fn(async () => {
+        deletedThrough = tx;
+        return { count: 1 };
+      }),
+    };
+    mockDb.$transaction.mockImplementationOnce(async (cb: unknown) =>
+      (cb as (t: unknown) => Promise<unknown>)(tx)
+    );
     recordModeratorEdit.mockClear().mockRejectedValueOnce(new Error('check constraint'));
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     await expect(removeListingScreenshot({ screenshotId: 'b' }, mod)).rejects.toThrow(
       'check constraint'
     );
-    expect(mockDb.$transaction).toHaveBeenCalled();
+    // The delete and the audit row went through the same transaction client.
+    expect(deletedThrough).toBe(tx);
     expect(recordModeratorEdit).toHaveBeenCalledWith(
-      expect.objectContaining({ db: expect.anything(), surface: 'media' })
+      expect.objectContaining({ db: tx, surface: 'media' })
     );
   });
 
