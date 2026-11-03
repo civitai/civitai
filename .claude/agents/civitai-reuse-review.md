@@ -36,13 +36,14 @@ advice it has missed real duplicates. For **each new function, component or hook
 the search **before** deciding, and include at least one **same-shape** search: one that targets what
 it does (same inputs, same output, same behaviour), not what it is called. For a **server-side
 function, or anything that fetches data** (a data-loading hook included), that search must cover
-`src/server/services/`; a purely client-side UI helper does not need one there. Record every command in `checks.searches` (see Report). A same-shape hit is a
-finding, or a one-line reason it differs.
+`src/server/services/`; a purely client-side UI helper does not need one there. Record every command
+in `checks.searches` (see Report). **An existing function of the same shape is a finding**, or a
+one-line `reason` it differs; a grep hit is only a lead, and needs no reason of its own.
 
 ```bash
 git diff --stat main...HEAD -- src/
 grep -rn "getMyImages\|getAllImages" src/server/services/image.service.ts   # exact name
-grep -rniE "function (get|fetch|load)[A-Za-z]*Images" src/server/services/  # shape
+grep -rnE 'image\.findMany|FROM "Image"' src/server/services/               # shape: same table, same read
 ls src/components/ | grep -i carousel                                       # component by concept
 ```
 
@@ -182,16 +183,23 @@ The one structured exception to "findings only": it records the method, so a rea
 searched from one that skipped. **One entry per search command run**: `symbol` is the new function,
 component or hook it was for, `command` is the command as run, and `hits` is the integer count of
 matching lines it returned. **Every new symbol has at least one entry, and at least one of its entries
-is a same-shape search**; a symbol without one was not checked. An empty list means the diff adds no
-functions, components or hooks; never omit the key. When your invoker gives you
-a JSON result contract, put this under `checks` in that result; otherwise end your report with it as a
-fenced `json` block:
+is a same-shape search**; a symbol without one was not checked. When the search found an existing
+function of the same shape that you judged different, put why in an optional `reason` on that entry;
+it is then not a finding. An empty list means the diff adds no functions, components or hooks; never
+omit the key. When your invoker gives you a JSON result contract, put its `checks` object in that
+result; otherwise end your report with this block as a fenced `json` block:
 
 ```json
 {
   "checks": {
     "searches": [
-      { "symbol": "getThingsForUser", "command": "grep -rn 'thing.findMany' src/server/services/", "hits": 3 }
+      { "symbol": "getThingsForUser", "command": "grep -rn 'thing.findMany' src/server/services/", "hits": 3 },
+      {
+        "symbol": "getThingsForUser",
+        "command": "grep -rn 'getThings' src/server/services/",
+        "hits": 1,
+        "reason": "getThings filters by collection, not owner"
+      }
     ]
   }
 }

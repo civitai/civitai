@@ -221,8 +221,9 @@ what the whole section is worth.
 - **Read each lane's `checks` block.** The test, reuse and correctness lanes end every report with one
   (`assertions`; `searches`; `writes` and `siblings`; the shape is in each definition's Report section).
   A missing block, or a missing key, means the lane skipped its method: re-ping it as you would a silent
-  lane. A `"none"` clear, a `passes`/`hangs` assertion or an unchecked sibling with neither a finding nor
-  a reason is the same gap.
+  lane. A `"none"` clear or a `passes`/`hangs` assertion with neither a finding nor a `reason` is the
+  same gap. The block lists sibling paths but cannot show which were checked: read that from the lane's
+  prose and each entry's `reason`, and treat a sibling neither one accounts for as the same gap.
 
 **C. Map contribution, not for this PR** — `civitai-reuse-review`'s "Pre-existing service duplication".
 
