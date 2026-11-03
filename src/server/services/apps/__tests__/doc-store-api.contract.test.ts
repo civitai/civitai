@@ -2829,7 +2829,9 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
         'a development token cannot reach another app'
       );
     }
-    expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE key = 'devdoc'`)).toEqual([]);
+    expect(
+      await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = 'devdoc'`, [S.id])
+    ).toEqual([]);
 
     // A hub token: the claims `withBlockScope` builds for a hub-issued OAuth bearer of an
     // approved app (`resolveHubTokenClaims`: `hub_<api key id>` jti, no `dev`).
@@ -3013,7 +3015,9 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       code: 'consent_required',
       details: { scope: PUBLISH_SCOPE, from: S.blockId },
     });
-    expect(await harness.raw(`SELECT 1 FROM appdata.doc WHERE key = 'b1'`)).toEqual([]);
+    expect(
+      await harness.raw(`SELECT 1 FROM appdata.doc WHERE app_id = $1 AND key = 'b1'`, [S.id])
+    ).toEqual([]);
     // A private source collection needs only the import grant.
     const priv = await call({
       token: c,
