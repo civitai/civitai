@@ -508,12 +508,16 @@ describe('namesIdentifier and callsImported', () => {
  * `src/server/__tests__/*credential-requirements.test.ts` and `*session-scope.test.ts` files.
  */
 const FULL_SCOPE_SESSION_ROUTES = [
+  // App Assistant's preview strip and page tool: the caller's own app's recent activity.
+  'apps/assistant/activity',
   'apps/assistant/preview',
   'apps/assistant/run-grant',
   'apps/assistant/runner-viewer-token',
   'apps/assistant/token',
   // The /apps/dev page's Retry: a freshly signed dev-tunnel entry URL.
   'apps/dev/entry-url',
+  // The dev-tunnel host's errors from the caller's own live preview, for App Assistant.
+  'apps/dev/preview-errors',
   'auth/freshdesk',
   // Session submit (App Assistant's Submit for review): no OAuth-client token reaches submitVersion here.
   'blocks/submit-version',

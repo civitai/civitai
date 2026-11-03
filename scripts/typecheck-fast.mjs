@@ -75,7 +75,7 @@ if (!exe) {
   if (!existsSync(resolver)) {
     console.error('typecheck:fast: TypeScript 7 is not installed.');
     console.error('');
-    console.error('  run:  pnpm -C tools/ts7 install     (~30s, one time)');
+    console.error('  run:  pnpm -C tools/ts7 install --ignore-workspace     (~30s, one time)');
     console.error('');
     console.error('  That is the whole setup. It lives outside the pnpm workspace on purpose, so');
     console.error('  a root `pnpm install` does not fetch it and does not move the root lockfile.');
@@ -95,7 +95,7 @@ if (!exe) {
     resolvedVersion = pkg.default.version;
   } catch (err) {
     console.error(`typecheck:fast: could not resolve the TypeScript 7 binary: ${err?.message ?? err}`);
-    console.error('  run: pnpm -C tools/ts7 install');
+    console.error('  run: pnpm -C tools/ts7 install --ignore-workspace');
     process.exit(2);
   }
 }

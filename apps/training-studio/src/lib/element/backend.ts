@@ -230,11 +230,11 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         )
       ),
 
-    continueRun: (workflowId, fromEpoch, addEpochs, currencies) =>
+    continueRun: (workflowId, fromEpoch, addEpochs, currencies, matureAck) =>
       call((client) =>
         train.continueTraining(
           client,
-          { workflowId, fromEpoch, addEpochs, currencies },
+          { workflowId, fromEpoch, addEpochs, currencies, matureAck },
           { ...submitOpts(), checkText: hostTextCheck }
         )
       ),

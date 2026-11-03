@@ -136,6 +136,8 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   'storage-doc-unhide',
   'storage-doc-delete',
   'storage-doc-dismiss',
+  // Edits content only; must not displace the event that explains a removal.
+  'moderator-edit',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

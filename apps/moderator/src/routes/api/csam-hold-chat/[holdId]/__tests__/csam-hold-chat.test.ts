@@ -6,7 +6,12 @@ const getChatHold = vi.fn();
 vi.mock('$lib/server/csam-holds.queries', () => ({ getChatHold }));
 const getChatWindow = vi.fn();
 const getJudgedMessages = vi.fn();
-vi.mock('$lib/server/chat-audit.service', () => ({ getChatWindow, getJudgedMessages }));
+const getChatMembers = vi.fn();
+vi.mock('$lib/server/chat-audit.service', () => ({
+  getChatWindow,
+  getJudgedMessages,
+  getChatMembers,
+}));
 const canAccess = vi.fn((_user: unknown, _path: string) => true);
 vi.mock('$lib/server/access', () => ({ canAccess }));
 
@@ -19,6 +24,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   canAccess.mockImplementation(() => true);
   getChatHold.mockResolvedValue({ chatId: 5, messageIds: [11], senderId: 3 });
+  getChatMembers.mockResolvedValue([
+    { userId: 3, username: 'sender', bannedAt: null, isOwner: true, status: 'Joined' },
+    { userId: 9, username: 'recipient', bannedAt: null, isOwner: false, status: 'Invited' },
+  ]);
   getChatWindow.mockResolvedValue({
     omitted: 4,
     rows: [
@@ -46,6 +55,7 @@ describe('/api/csam-hold-chat', () => {
       senderId: 3,
       omitted: 4,
       fullConversation: true,
+      participants: [{ userId: 9, username: 'recipient' }],
       messages: [
         {
           id: 11,
@@ -81,6 +91,50 @@ describe('/api/csam-hold-chat', () => {
     expect(body.fullConversation).toBe(false);
     expect(body.omitted).toBe(0);
     expect(body.messages.map((m: { userId: number }) => m.userId)).toEqual([3]);
+  });
+
+  it('names who a one-way DM was sent to, though only the sender wrote', async () => {
+    // The window holds only the sender's message: the recipient never replied.
+    const body = await (await call('7')).json();
+    expect(body.messages.map((m: { userId: number }) => m.userId)).toEqual([3]);
+    expect(body.participants).toEqual([{ userId: 9, username: 'recipient' }]);
+    expect(getChatMembers).toHaveBeenCalledWith(5);
+  });
+
+  it('names the participants without Chat Audit access too', async () => {
+    canAccess.mockImplementation((_user, path) => path !== '/retool/chat-audit');
+    getJudgedMessages.mockResolvedValue([]);
+    const body = await (await call('7')).json();
+    expect(body.participants).toEqual([{ userId: 9, username: 'recipient' }]);
+  });
+
+  it('a participant is an identity only: never the sender, never message content', async () => {
+    getChatMembers.mockResolvedValue([
+      { userId: 3, username: 'sender', bannedAt: null, isOwner: true, status: 'Joined' },
+      // Whatever the member row carries beyond an identity must not reach the page.
+      {
+        userId: 9,
+        username: 'recipient',
+        content: 'secret text',
+        bannedAt: new Date(),
+        status: 'Joined',
+      },
+      { userId: 10, username: null, status: 'Left' },
+    ]);
+    const body = await (await call('7')).json();
+    expect(body.participants).toEqual([
+      { userId: 9, username: 'recipient' },
+      { userId: 10, username: null },
+    ]);
+    expect(JSON.stringify(body.participants)).not.toContain('secret text');
+  });
+
+  it('names nobody when the hold does not know its sender, rather than list the sender as a recipient', async () => {
+    getChatHold.mockResolvedValue({ chatId: 5, messageIds: [11], senderId: null });
+    canAccess.mockImplementation((_user, path) => path !== '/retool/chat-audit');
+    getJudgedMessages.mockResolvedValue([]);
+    const body = await (await call('7')).json();
+    expect(body.participants).toEqual([]);
   });
 
   it('flags the full conversation for a moderator with Chat Audit access', async () => {

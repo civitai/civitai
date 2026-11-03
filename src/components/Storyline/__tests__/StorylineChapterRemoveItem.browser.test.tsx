@@ -33,7 +33,7 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
     leave: mocks.leave,
     chapterIdOfImage: (imageId: number) => 99 + imageId,
     path: {
-      storyline: { id: 2, userId: OWNER },
+      storyline: { id: 2, userId: OWNER, tosViolation: false },
       chapters: [
         { chapterId: 100, depth: 0, childCount: 2, post: { id: 500, title: 'One', userId: OWNER } },
         {
@@ -107,10 +107,13 @@ describe('Remove from storyline in the reader', () => {
     expect(offered()).toBe(false);
   });
 
-  test('is never offered for chapter 1', async () => {
+  test('for chapter 1, is disabled and points to deleting the storyline', async () => {
     mocks.currentUser = { id: OWNER };
     renderItem(1);
-    await expect.element(page.getByRole('menuitem', { name: 'Other' })).toBeVisible();
-    expect(offered()).toBe(false);
+    const item = page.getByRole('menuitem', { name: /Remove from storyline/ });
+    await expect.element(item).toBeDisabled();
+    await expect
+      .element(item)
+      .toHaveTextContent("Chapter 1 can't be removed. Delete the storyline");
   });
 });

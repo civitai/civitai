@@ -7,7 +7,8 @@
  *   1. a new block slug for the fork (`<parent>-fork-<4 hex>`, unique, a valid blockId);
  *   2. a SEED — the parent's LATEST APPROVED source, zipped with its files at the root, secrets,
  *      dependencies and build output left out, its manifest's `blockId` rewritten to the fork's
- *      slug, uploaded to the dedicated seed store and presigned for 10 minutes;
+ *      slug and `storage.imports` pre-filled to reach the viewer's data in the parent
+ *      (`prefillParentStorageImports`), uploaded to the dedicated seed store and presigned;
  *   3. a server-side FORK SESSION recording who forked what, at which commit.
  *
  * 🔴 THE FORK SESSION IS THE ONLY SOURCE OF A FORK'S PROVENANCE. When the fork's first version is
@@ -60,6 +61,16 @@ import {
   FORK_UNAVAILABLE_HERE_MESSAGE,
 } from '~/shared/constants/app-fork.constants';
 import type { SessionUser } from '~/types/session';
+import {
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_COLLECTION_NAME_RE,
+  APP_STORAGE_IMPORT_FROM_RE,
+  APP_STORAGE_IMPORT_SCOPE,
+  APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+  APP_STORAGE_MAX_IMPORTS,
+  isCollectionExportable,
+  type DeclaredStorageCollection,
+} from '~/shared/constants/block-storage.constants';
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -179,6 +190,7 @@ export async function buildForkSeedZip(
   } catch {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
+  prefillParentStorageImports(manifest);
   manifest.blockId = forkSlug;
   // The parent's source-repository link is the PARENT's, not the fork's: left in, the fork's store
   // page would show the parent author's repository as its "Source".
@@ -200,6 +212,76 @@ export async function buildForkSeedZip(
     files: kept.map((f) => f.path),
     excluded,
   };
+}
+
+export function defaultForkImportJustification(parentName: string): string {
+  return `This app is a fork of ${parentName}. It reads and updates the data you already keep in ${parentName}, so your entries carry over instead of starting empty.`;
+}
+
+/**
+ * Pre-fill a fork's manifest so it can reach the viewer's data in its PARENT, in place (the
+ * manifest still carries the parent's `blockId` when this runs):
+ *   - `storage.imports` gains `{ from: <parent blockId>, collections: <every exportable parent
+ *     collection>, access: "readwrite" }` (an existing import from the parent is replaced, and
+ *     nothing is added when the manifest already holds the most imports allowed);
+ *   - `scopes` gains `apps:storage` and `apps:storage:import`;
+ *   - `scopeJustifications` gains a default entry for `apps:storage:import`, unless one is set.
+ * The fork author can edit or remove all of it before publishing; the fork's own review then
+ * decides it. A parent with no exportable collection gets nothing. Only the manifest's SHAPE is
+ * read here; the parent's declaration was validated when it was approved.
+ */
+export function prefillParentStorageImports(manifest: Record<string, unknown>): void {
+  const parentBlockId = manifest.blockId;
+  if (typeof parentBlockId !== 'string' || !APP_STORAGE_IMPORT_FROM_RE.test(parentBlockId)) return;
+  const storage = manifest.storage;
+  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) return;
+  const store = storage as Record<string, unknown>;
+  const collections = store.collections;
+  if (!collections || typeof collections !== 'object' || Array.isArray(collections)) return;
+  const exportable = Object.entries(collections as Record<string, unknown>)
+    .filter(
+      ([name, decl]) =>
+        APP_STORAGE_COLLECTION_NAME_RE.test(name) &&
+        // Only the shape is read here (see above); the opt-out rule is the parser's own.
+        !(
+          decl &&
+          typeof decl === 'object' &&
+          !isCollectionExportable(decl as DeclaredStorageCollection)
+        )
+    )
+    .map(([name]) => name)
+    .slice(0, APP_STORAGE_MAX_IMPORT_COLLECTIONS);
+  if (exportable.length === 0) return;
+
+  const existing = Array.isArray(store.imports)
+    ? (store.imports as unknown[]).filter(
+        (i) => !(i && typeof i === 'object' && (i as { from?: unknown }).from === parentBlockId)
+      )
+    : [];
+  if (existing.length >= APP_STORAGE_MAX_IMPORTS) return;
+  store.imports = [
+    ...existing,
+    { from: parentBlockId, collections: exportable, access: 'readwrite' },
+  ];
+
+  const scopes = Array.isArray(manifest.scopes) ? [...(manifest.scopes as unknown[])] : [];
+  for (const scope of [APP_STORAGE_BASE_SCOPE, APP_STORAGE_IMPORT_SCOPE]) {
+    if (!scopes.includes(scope)) scopes.push(scope);
+  }
+  manifest.scopes = scopes;
+  const justifications =
+    manifest.scopeJustifications &&
+    typeof manifest.scopeJustifications === 'object' &&
+    !Array.isArray(manifest.scopeJustifications)
+      ? { ...(manifest.scopeJustifications as Record<string, unknown>) }
+      : {};
+  const current = justifications[APP_STORAGE_IMPORT_SCOPE];
+  if (!(typeof current === 'string' && current.trim().length > 0)) {
+    const parentName =
+      typeof manifest.name === 'string' && manifest.name ? manifest.name : parentBlockId;
+    justifications[APP_STORAGE_IMPORT_SCOPE] = defaultForkImportJustification(parentName);
+  }
+  manifest.scopeJustifications = justifications;
 }
 
 /** The sandbox service's cap on a seed's uncompressed size (`SEED_MAX_UNCOMPRESSED_BYTES`). */

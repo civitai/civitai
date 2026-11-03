@@ -81,6 +81,10 @@ import {
   readModelVersionEngagementsViaKysely,
   readModelVersionEngagementsViaPrisma,
 } from '~/server/services/hot-reads-6.reads';
+import {
+  readUserCosmeticsViaKysely,
+  readUserCosmeticsViaPrisma,
+} from '~/server/services/hot-reads-8.reads';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -204,7 +208,6 @@ import {
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 import { profileImageSelect } from '../selectors/image.selector';
 import type {
   ToggleUserArticleEngagementsInput,
@@ -228,6 +231,11 @@ import {
   fetchUserCreator,
   getCachedUserCreator,
 } from '~/server/services/user-creator.service';
+import {
+  getShowcaseHatForUser,
+  getShowcaseHatsForUsers,
+  type ShowcaseHat,
+} from '~/server/events/showcase-hat';
 import { asJsonbObject, asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const getUsersByIds = async (userIds: number[]) => {
@@ -267,9 +275,13 @@ export const getUserCreator = async ({
   // An id on its own is the hot shape (creator card, header) and is served from a short-TTL
   // per-user cache; what invalidates it is documented on `userCreatorCache`. A username lookup
   // reads the database as before.
-  if (where.id !== undefined && where.username === undefined)
-    return await getCachedUserCreator(where.id);
-  return await fetchUserCreator(where);
+  const creator =
+    where.id !== undefined && where.username === undefined
+      ? await getCachedUserCreator(where.id)
+      : await fetchUserCreator(where);
+  if (!creator) return creator;
+  // Read beside the cached card, not inside it, so the card's own invalidation stays as it is.
+  return { ...creator, showcaseHat: await getShowcaseHatForUser(creator.id) };
 };
 
 type UserSearchResult = {
@@ -1142,7 +1154,13 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   }
 };
 
-export const deleteUser = async ({ id, username, removeModels, removeImages }: DeleteUserInput) => {
+export const deleteUser = async ({
+  id,
+  username,
+  removeModels,
+  removeImages,
+  removeAppData,
+}: DeleteUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { username, id },
     select: { id: true, meta: true },
@@ -1159,6 +1177,10 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   const meta = {
     ...((user.meta ?? {}) as UserMeta),
     imageRemoval: imageRemovalMode(removeImages),
+    // Committed with the deletion below and acted on by the `remove-deleted-account-app-data`
+    // job, never inline: a wipe walks every app the account has data in. Rewritten on every
+    // deletion, so a re-deletion without the box does not inherit an earlier request.
+    appDataRemoval: removeAppData ? ('requested' as const) : undefined,
     tokenRevocation: undefined,
   };
 
@@ -1405,9 +1427,11 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // The scrub's retry state goes with the deletion it belonged to. Left behind, a re-deleted
   // account would inherit its old attempt count, so its first failure would already be backed off
   // for hours and it would alert as stuck long before it is.
+  // An app-data removal the job has not reached yet is withdrawn with the deletion it belonged to.
   const {
     imageRemoval: _removalChoice,
     gdprStripeScrub: _scrubState,
+    appDataRemoval: _appDataRemoval,
     ...meta
   } = (user.meta ?? {}) as UserMeta;
 
@@ -2230,7 +2254,8 @@ export const removeAllContent = async ({
 };
 
 /**
- * The App Blocks DOCUMENT STORE half of an account wipe (`DocStoreMaintenance.wipeAccount`):
+ * The App Blocks DOCUMENT STORE half of an account wipe (`purgeViewerDocuments`, the store's one
+ * account-erasure entry point in `doc-store-purge.ts`, over `DocStoreMaintenance.wipeAccount`):
  * private documents, authored shared documents and marks deleted, usage released, in
  * every app. Same posture as the per-user storage purge above, for the same reasons: it runs
  * LAST, in a separate database with no transaction spanning the two, and NEVER throws into the
@@ -2244,10 +2269,8 @@ export const removeAllContent = async ({
  */
 async function wipeAccountFromDocStore(userId: number): Promise<string | null> {
   try {
-    const { getDocStoreMaintenance } = await import(
-      '~/server/services/apps/doc-store-maintenance.instance'
-    );
-    const result = await getDocStoreMaintenance().wipeAccount(userId);
+    const { purgeViewerDocuments } = await import('~/server/services/apps/doc-store-purge');
+    const result = await purgeViewerDocuments(userId);
     if (result.failures.length > 0) {
       // eslint-disable-next-line no-console
       console.warn(
@@ -2279,40 +2302,13 @@ async function wipeAccountFromDocStore(userId: number): Promise<string | null> {
   }
 }
 
-export const getUserCosmetics = ({
+export const getUserCosmetics = async ({
   userId,
   equipped,
-}: GetUserCosmeticsSchema & { userId: number }) => {
-  return dbRead.user.findUnique({
-    where: { id: userId },
-    select: {
-      cosmetics: {
-        where: equipped ? { equippedAt: { not: null } } : undefined,
-        select: {
-          obtainedAt: true,
-          equippedAt: true,
-          equippedToId: true,
-          equippedToType: true,
-          forId: true,
-          forType: true,
-          claimKey: true,
-          data: true,
-          cosmetic: {
-            // Spread rather than hand-listed, so a field added to the shared
-            // selector reaches this read too — it is the one the whole cosmetics
-            // UI runs on, and a divergence here surfaces as one surface missing a
-            // field nobody thinks to check.
-            //
-            // `createdById` is extra: a scalar on the row already being selected,
-            // so no join and no extra round trip, and it is what lets the sticker
-            // tray filter to your own without asking a second procedure.
-            select: { ...simpleCosmeticSelect, createdById: true, flags: true },
-          },
-        },
-      },
-    },
-  });
-};
+}: GetUserCosmeticsSchema & { userId: number }) =>
+  (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_8))
+    ? readUserCosmeticsViaKysely(kyselyRead, { userId, equipped })
+    : readUserCosmeticsViaPrisma(dbRead, { userId, equipped });
 
 export async function getBasicDataForUsers(userIds: number[]) {
   return await userBasicCache.fetch(userIds);
@@ -2352,7 +2348,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
 export type CachedUserCosmeticsAndProfilePicture = Pick<
   UserWithCosmetics,
   'profilePicture' | 'cosmetics'
->;
+> & { showcaseHat?: ShowcaseHat | null };
 
 /**
  * The `profilePicture` and `cosmetics` that `userWithCosmeticsSelect` nests, in that shape, from the
@@ -2360,18 +2356,27 @@ export type CachedUserCosmeticsAndProfilePicture = Pick<
  * `{ profilePicture: null, cosmetics: [] }`, as the nested select gives.
  */
 export async function getCosmeticsAndProfilePicturesForUsers(
-  userIds: number[]
+  userIds: number[],
+  // Only for surfaces that draw it (UserAvatar `withShowcaseHat`): it is one more cache read.
+  { showcaseHat = false }: { showcaseHat?: boolean } = {}
 ): Promise<(userId: number) => CachedUserCosmeticsAndProfilePicture> {
   const ids = [...new Set(userIds)];
-  if (!ids.length) return () => ({ profilePicture: null, cosmetics: [] });
+  if (!ids.length)
+    return () => ({
+      profilePicture: null,
+      ...(showcaseHat && { showcaseHat: null }),
+      cosmetics: [],
+    });
 
-  const [profilePictures, cosmetics] = await Promise.all([
+  const [profilePictures, cosmetics, showcaseHats] = await Promise.all([
     getProfilePicturesForUsers(ids),
     getCosmeticsForUsers(ids),
+    showcaseHat ? getShowcaseHatsForUsers(ids) : undefined,
   ]);
 
   return (userId) => ({
     profilePicture: profilePictures[userId] ?? null,
+    ...(showcaseHats && { showcaseHat: showcaseHats[userId] ?? null }),
     cosmetics: (cosmetics[userId] ?? []).flatMap(({ data, cosmetic }) =>
       cosmetic
         ? [

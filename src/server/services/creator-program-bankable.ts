@@ -53,13 +53,26 @@ export const GENERATION_TIP_SQL = `(type = 'compensation' AND fromAccountId = 0 
   GENERATION_TIP_TRANSACTION_PREFIX
 )}))`;
 
+/**
+ * Generation compensation for the last day before the cutover. Its payout runs after midnight, so it
+ * misses the cutover snapshot; it was earned before the cutover and counts as bankable (Justin,
+ * 2026-11-02). Every later day's compensation stays out. The key format is set by the payout job.
+ */
+export const LAST_PRE_CUTOVER_COMPENSATION_PREFIX = `creator-tip-comp-${dayjs
+  .utc(BANKABLE_CUTOVER)
+  .subtract(1, 'day')
+  .format('YYYY-MM-DD')}-`;
+const LAST_PRE_CUTOVER_COMPENSATION_SQL = `(type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, ${sqlString(
+  LAST_PRE_CUTOVER_COMPENSATION_PREFIX
+)}))`;
+
 /** A tip one user paid another from their own account: not a hand grant (account 0), not to self. */
 export const USER_TIP_SQL = `(type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId)`;
 
 /**
- * Transactions that raise a creator's bankable amount. Excludes generation `compensation`, purchased
- * Buzz, and system-minted tips. Generation tips are stored as `compensation` but are bankable: the
- * generating user pays them on top of the price. Tips paid before `GENERATION_TIP_TRANSACTION_START`
+ * Transactions that raise a creator's bankable amount. Excludes generation `compensation` (except the
+ * last pre-cutover day's, above), purchased Buzz, and system-minted tips. Generation tips are stored
+ * as `compensation` but are bankable: the generating user pays them on top of the price. Tips paid before `GENERATION_TIP_TRANSACTION_START`
  * are folded into compensation and cannot be told apart; the cutover snapshot covers them.
  *
  * App Blocks author fees are `fee` rows from before `TransactionType.AppAuthorFee` existed and
@@ -70,6 +83,7 @@ export const BANKABLE_EARNING_PREDICATE_SQL = `(
   type IN ('licenseFee', 'donation', 'sell', 'bounty')
   OR (type IN ('purchase', 'tip') AND fromAccountId != 0)
   OR ${GENERATION_TIP_SQL}
+  OR ${LAST_PRE_CUTOVER_COMPENSATION_SQL}
   OR (type = 'fee' AND description IN (${placementEarningDescriptionsSql}))
   OR (type IN ('fee', 'unknown_28', 'appAuthorFee') AND description LIKE ${sqlString(
     `${APP_AUTHOR_FEE_DESCRIPTION}%`
