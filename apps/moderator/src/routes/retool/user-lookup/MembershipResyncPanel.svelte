@@ -139,6 +139,7 @@
           >
             <Checkbox
               name="confirmEndBuzzMembership"
+              value={p.endsBuzzMembership.confirm}
               bind:checked={endBuzzConfirmed}
               class="mt-1"
             />

@@ -1824,7 +1824,7 @@ export async function previewMembershipResync(input: {
 export async function resyncMembership(input: {
   userId: number;
   reason: string;
-  confirmEndBuzzMembership: boolean;
+  confirmEndBuzzMembership?: string;
 }): Promise<{ ok: true; result: MembershipResyncResult } | { ok: false; error: string }> {
   const result = await callModEndpoint(
     'user/membership-resync',

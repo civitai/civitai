@@ -32,10 +32,13 @@ const ENDED_STATUSES = ['canceled', 'incomplete_expired'];
 // upsertSubscription ends a live Buzz membership only for these.
 const SUPERSEDING_STATUSES = ['active', 'trialing'];
 
-// Through the upsert's own toDateTime (which is offset from the epoch), so a stored row and Stripe's
-// copy of the same instant compare equal.
 const iso = (epoch: number | null | undefined) =>
-  epoch == null ? null : toDateTime(epoch).toISOString();
+  epoch == null ? null : new Date(epoch * 1000).toISOString();
+// The upsert stores Stripe times through toDateTime, which is offset from the epoch; a stored time
+// shifted back by it is Stripe's own, so the two compare equal and both show true time.
+const STORED_OFFSET_MS = toDateTime(0).getTime();
+const storedIso = (d: Date | null) =>
+  d == null ? null : new Date(d.getTime() - STORED_OFFSET_MS).toISOString();
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'mod-membership-resync', ...data }, 'webhooks').catch(() => null);
@@ -72,8 +75,8 @@ function rowView(row: {
     status: row.status,
     priceId: row.priceId,
     cancelAtPeriodEnd: !!row.cancelAtPeriodEnd,
-    cancelAt: row.cancelAt?.toISOString() ?? null,
-    currentPeriodEnd: row.currentPeriodEnd?.toISOString() ?? null,
+    cancelAt: storedIso(row.cancelAt),
+    currentPeriodEnd: storedIso(row.currentPeriodEnd),
   };
 }
 
@@ -106,7 +109,23 @@ const liveBuzzMembership = (userId: number) =>
     select: { id: true, status: true, currentPeriodEnd: true },
   });
 
-type BuzzMembership = { id: string; status: string; currentPeriodEnd: string | null };
+type BuzzMembership = {
+  id: string;
+  status: string;
+  currentPeriodEnd: string | null;
+  /** Sent back as `confirmEndBuzzMembership`. A repeat Buzz purchase keeps the row id, so the token
+   *  carries the period too: a month bought after the preview no longer matches. */
+  confirm: string;
+};
+const buzzView = (b: { id: string; status: string; currentPeriodEnd: Date | null }) => {
+  const currentPeriodEnd = b.currentPeriodEnd?.toISOString() ?? null;
+  return {
+    id: b.id,
+    status: b.status,
+    currentPeriodEnd,
+    confirm: `${b.id}|${b.status}|${currentPeriodEnd}`,
+  };
+};
 
 async function load(stripe: Stripe, userId: number) {
   const [row, user, buzz] = await Promise.all([
@@ -153,7 +172,7 @@ async function load(stripe: Stripe, userId: number) {
     }
     if (sub && ENDED_STATUSES.includes(sub.status))
       problems.push(
-        `the subscription has ended (${sub.status}); resend its customer.subscription.deleted event from Stripe, which also settles gifted months`
+        `the subscription has ended (${sub.status}); resend its customer.subscription.deleted event from Stripe, which also settles gifted months (Stripe keeps events 30 days; older, ask an engineer)`
       );
   } else {
     // No row: the webhook that makes it was missed. Only an unambiguous single live one is synced.
@@ -179,14 +198,7 @@ async function load(stripe: Stripe, userId: number) {
       })
     );
   }
-  const endsBuzz =
-    sub && buzz && SUPERSEDING_STATUSES.includes(sub.status)
-      ? {
-          id: buzz.id,
-          status: buzz.status,
-          currentPeriodEnd: buzz.currentPeriodEnd?.toISOString() ?? null,
-        }
-      : null;
+  const endsBuzz = sub && buzz && SUPERSEDING_STATUSES.includes(sub.status) ? buzzView(buzz) : null;
   return { problems, row, sub, customerId, buzz: endsBuzz as BuzzMembership | null };
 }
 
@@ -230,7 +242,8 @@ export async function resyncMembership({
 }: {
   userId: number;
   reason: string;
-  confirmEndBuzzMembership: boolean;
+  /** The preview's `endsBuzzMembership.confirm`, when it named one. */
+  confirmEndBuzzMembership?: string;
   actorId: number;
 }) {
   refuseOwn(userId, actorId);
@@ -258,14 +271,15 @@ async function resyncLocked({
   stripe: Stripe;
   userId: number;
   reason: string;
-  confirmEndBuzzMembership: boolean;
+  /** The preview's `endsBuzzMembership.confirm`, when it named one. */
+  confirmEndBuzzMembership?: string;
   actorId: number;
 }) {
   const { problems, row, sub, customerId, buzz } = await load(stripe, userId);
   // Decided on this read, not the preview's: a Buzz membership that appeared since still needs the confirm.
-  if (buzz && !confirmEndBuzzMembership)
+  if (buzz && confirmEndBuzzMembership !== buzz.confirm)
     problems.push(
-      `this ends the member's Buzz-bought membership ${buzz.id}; confirm that to re-sync`
+      `this ends the member's Buzz-bought membership ${buzz.id} (to ${buzz.currentPeriodEnd}); confirm it from a fresh preview to re-sync`
     );
   if (problems.length || !sub || !customerId) {
     await log({ type: 'refused', actorId, userId, reason, problems });
@@ -285,7 +299,7 @@ async function resyncLocked({
   const buzzNow = SUPERSEDING_STATUSES.includes(sub.status)
     ? await liveBuzzMembership(userId)
     : null;
-  if ((buzzNow?.id ?? null) !== (buzz?.id ?? null)) {
+  if ((buzzNow ? buzzView(buzzNow).confirm : null) !== (buzz?.confirm ?? null)) {
     await log({ type: 'refused', actorId, userId, reason, problems: ['Buzz membership changed'] });
     throw throwConflictError("The member's Buzz-bought membership changed; preview again");
   }

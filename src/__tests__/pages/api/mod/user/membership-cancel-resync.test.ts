@@ -230,6 +230,8 @@ const BUZZ_MEMBERSHIP = {
   status: 'active',
   currentPeriodEnd: toDateTime(PERIOD_END),
 };
+// What the preview hands back for the panel's checkbox to send.
+const BUZZ_CONFIRM = `buzz_sub_1|active|${toDateTime(PERIOD_END).toISOString()}`;
 
 beforeEach(() => {
   resetSharedMocks();
@@ -556,10 +558,31 @@ describe('re-sync: ending a Buzz-bought membership needs a confirm', () => {
     dbMock.dbWrite.customerSubscription.findFirst.mockResolvedValue(BUZZ_MEMBERSHIP);
   });
 
-  it('the preview names the Buzz membership it would end', async () => {
+  it('the preview names the Buzz membership it would end, with the confirm to send back', async () => {
     fakeStripe();
     const { body } = await previewResync();
-    expect(body).toMatchObject({ problems: [], endsBuzzMembership: { id: 'buzz_sub_1' } });
+    expect(body).toMatchObject({
+      problems: [],
+      endsBuzzMembership: { id: 'buzz_sub_1', confirm: BUZZ_CONFIRM },
+    });
+  });
+
+  it('a confirm from before a repeat Buzz purchase (same row, new period) is refused (400)', async () => {
+    fakeStripe();
+    dbMock.dbWrite.customerSubscription.findFirst.mockResolvedValue({
+      ...BUZZ_MEMBERSHIP,
+      currentPeriodEnd: toDateTime(PERIOD_END + 30 * 86_400),
+    });
+    const { status, body } = await resync({ confirmEndBuzzMembership: BUZZ_CONFIRM });
+    expect(status).toBe(400);
+    expect(body.message).toMatch(/confirm it from a fresh preview/);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
+
+  it('a bare `true` is not a confirm', async () => {
+    fakeStripe();
+    expect((await resync({ confirmEndBuzzMembership: true })).status).toBe(400);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
   });
 
   it('without the confirm it is refused (400) and nothing is written', async () => {
@@ -574,7 +597,7 @@ describe('re-sync: ending a Buzz-bought membership needs a confirm', () => {
   it('control: with the confirm it syncs and the webhook path ends the Buzz membership', async () => {
     const { writes } = fakeStripe();
     dbMock.dbWrite.customerSubscription.updateMany.mockResolvedValue({ count: 1 });
-    const { status, body } = await resync({ confirmEndBuzzMembership: true });
+    const { status, body } = await resync({ confirmEndBuzzMembership: BUZZ_CONFIRM });
     expect(status).toBe(200);
     expect(body.endedBuzzMembership).toMatchObject({ id: 'buzz_sub_1' });
     expect(dbMock.dbWrite.customerSubscription.updateMany).toHaveBeenCalledWith(
@@ -720,7 +743,7 @@ describe('races the lanes found', () => {
     dbMock.dbWrite.customerSubscription.findFirst
       .mockResolvedValueOnce(BUZZ_MEMBERSHIP)
       .mockResolvedValueOnce({ ...BUZZ_MEMBERSHIP, id: 'buzz_sub_2' });
-    const { status } = await resync({ confirmEndBuzzMembership: true });
+    const { status } = await resync({ confirmEndBuzzMembership: BUZZ_CONFIRM });
     expect(status).toBe(409);
     expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
   });

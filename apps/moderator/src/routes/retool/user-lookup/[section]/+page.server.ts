@@ -2,7 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
-import { checkboxField, int4Id, parseForm, userIdSchema } from '$lib/server/query';
+import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -676,8 +676,9 @@ export const actions: Actions = {
     const input = parseForm(
       userIdSchema.extend({
         reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
-        // The endpoint refuses when the confirm is needed and missing.
-        confirmEndBuzzMembership: checkboxField,
+        // The checkbox carries the preview's confirm token; absent when unticked. The endpoint
+        // refuses when it is needed and missing or stale.
+        confirmEndBuzzMembership: z.string().max(200).optional(),
       }),
       await request.formData()
     );

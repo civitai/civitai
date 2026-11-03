@@ -81,7 +81,13 @@ export type MembershipResyncChange = {
   stripe: string | boolean | null;
 };
 
-export type BuzzMembershipToEnd = { id: string; status: string; currentPeriodEnd: string | null };
+export type BuzzMembershipToEnd = {
+  id: string;
+  status: string;
+  currentPeriodEnd: string | null;
+  /** Send back as `confirmEndBuzzMembership`; a Buzz purchase made since no longer matches. */
+  confirm: string;
+};
 
 export type MembershipResyncPreview = {
   userId: number;

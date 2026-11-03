@@ -12,8 +12,8 @@ export default defineModeratorEndpoint('user.membership-resync', {
   notes: [
     'Requires the moderator app permission `user.membership.extend`.',
     'With no row yet, syncs only when the customer has exactly one live subscription.',
-    'Refused for an ended subscription (resend its deleted event from Stripe: that settles gifted months, which this does not) and for a lapsed one the customer has replaced.',
-    'An active or trialing Stripe membership ends a live Buzz-bought one: refused unless `confirmEndBuzzMembership` is true (preview shows it).',
+    'Refused for an ended subscription (resend its deleted event from Stripe, kept 30 days: that settles gifted months, which this does not) and for a lapsed one the customer has replaced.',
+    "An active or trialing Stripe membership ends a live Buzz-bought one: refused unless `confirmEndBuzzMembership` is the preview's `endsBuzzMembership.confirm`.",
   ],
   rateLimit: { max: 5, windowSeconds: 60 },
   input: z.object({
@@ -24,7 +24,11 @@ export default defineModeratorEndpoint('user.membership-resync', {
       .min(10)
       .max(500)
       .describe('Why: the support ticket and what is out of sync.'),
-    confirmEndBuzzMembership: z.boolean().default(false),
+    confirmEndBuzzMembership: z
+      .string()
+      .max(200)
+      .optional()
+      .describe("The preview's `endsBuzzMembership.confirm`, when it named one."),
   }),
   async handler(input, ctx) {
     if (!(await hasModeratorGrant(ctx.actor, 'user.membership.extend')))

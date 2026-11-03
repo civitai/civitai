@@ -985,7 +985,12 @@ describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a 
           { field: 'id', ours: 'sub_old_secret', stripe: 'sub_new_secret' },
           { field: 'status', ours: 'past_due', stripe: 'active' },
         ],
-        endsBuzzMembership: { id: 'buzz_secret', status: 'active', currentPeriodEnd: null },
+        endsBuzzMembership: {
+          id: 'buzz_secret',
+          status: 'active',
+          currentPeriodEnd: null,
+          confirm: 'buzz_secret|active|null',
+        },
         problems: [],
       },
     });

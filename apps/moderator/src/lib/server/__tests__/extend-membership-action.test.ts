@@ -179,7 +179,7 @@ describe('resyncMembership', () => {
   const RESYNC = {
     userId: 8675309,
     reason: 'Ticket 123: webhook missed',
-    confirmEndBuzzMembership: true,
+    confirmEndBuzzMembership: 'buzz_sub_1|active|2026-11-22T02:52:00.000Z',
   };
 
   it('posts the confirm through to /api/mod/user/membership-resync', async () => {

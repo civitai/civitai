@@ -331,7 +331,7 @@ const ADDRESSES_SHOWN = 3;
 
 /** Refusal text names Stripe objects (`sub_…`, `in_…`); the model provider gets the words only. */
 export const withoutStripeIds = (text: string) =>
-  text.replace(/\b(?:sub|cus|in|pi|ch|price|prod|sub_sched)_[A-Za-z0-9]+/g, '[Stripe id]');
+  text.replace(/\b(?:sub_sched|sub|cus|in|pi|ch|price|prod)_[A-Za-z0-9]+/g, '[Stripe id]');
 
 export const TOOLS = [
   tool({
