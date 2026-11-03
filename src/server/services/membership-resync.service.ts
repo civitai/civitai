@@ -323,8 +323,13 @@ async function resyncLocked({
     throw throwConflictError("The member's Buzz-bought membership changed; preview again");
   }
   // Webhooks and the member's own changes take no lock: refuse to store a copy Stripe has moved past.
-  const fresh = await stripe.subscriptions.retrieve(sub.id);
-  if (diffRow(stripeView(sub), stripeView(fresh)).length) {
+  const fresh = await stripe.subscriptions.retrieve(sub.id).catch((e: { statusCode?: number }) => {
+    if (e?.statusCode === 404) return null;
+    throw e;
+  });
+  const moved = (s: Stripe.Subscription) =>
+    JSON.stringify([stripeView(s), s.metadata ?? {}, s.canceled_at ?? null]);
+  if (!fresh || moved(fresh) !== moved(sub)) {
     await log({ type: 'refused', actorId, userId, reason, problems: ['subscription changed'] });
     throw throwConflictError(
       'The subscription changed in Stripe during the re-sync; preview again'
@@ -352,10 +357,13 @@ async function resyncLocked({
   await syncFreshdeskMembership({ customerId }).catch((e) =>
     log({ type: 'freshdesk-sync-failed', userId, error: (e as Error).message })
   );
-  const afterRow = await dbWrite.customerSubscription.findUnique({
-    where: { userId_buzzType: { userId, buzzType: 'green' } },
-    select: rowSelect,
-  });
+  // Stored and audited by now: a failed re-read must not lose the log of what changed.
+  const afterRow = await dbWrite.customerSubscription
+    .findUnique({
+      where: { userId_buzzType: { userId, buzzType: 'green' } },
+      select: rowSelect,
+    })
+    .catch(() => null);
   const after = afterRow ? rowView(afterRow, sub) : null;
   await log({
     type: 'resynced',

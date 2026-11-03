@@ -843,14 +843,37 @@ describe('re-sync: final-head lanes', () => {
     expect(delIfValue).toHaveBeenCalledWith(redisMock.sysRedis, lockKey, owner);
   });
 
-  it('the re-read failing after a stored upsert still leaves one ModActivity row', async () => {
+  it('the re-read failing after a stored upsert still answers, audited once, after unknown', async () => {
     fakeStripe(liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }));
     dbMock.dbWrite.customerSubscription.findUnique
       .mockResolvedValueOnce(ROW)
       .mockRejectedValueOnce(new Error('pool timeout'));
-    expect((await resync()).status).toBe(500);
+    const { status, body } = await resync();
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: true, after: null });
     expect(dbMock.dbWrite.customerSubscription.upsert).toHaveBeenCalled();
     expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['only its metadata changed', liveSub({ metadata: { userId: String(MEMBER), banned: 'x' } })],
+    ['Stripe no longer has it', Object.assign(new Error('gone'), { statusCode: 404 })],
+  ])('is refused (409) when, on the re-read before the upsert, %s', async (_label, second) => {
+    const { subscriptions } = fakeStripe(
+      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END })
+    );
+    subscriptions.retrieve.mockResolvedValueOnce(
+      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }) as never
+    );
+    if (second instanceof Error) subscriptions.retrieve.mockRejectedValueOnce(second);
+    else
+      subscriptions.retrieve.mockResolvedValueOnce({
+        ...second,
+        cancel_at_period_end: true,
+        cancel_at: PERIOD_END,
+      } as never);
+    expect((await resync()).status).toBe(409);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
   });
 
   it('the cancel grant alone does not reach re-sync (403)', async () => {
@@ -877,8 +900,11 @@ describe('re-sync: final-head lanes', () => {
         currentPeriodEnd: toDateTime(secs),
       });
       const { body } = await previewResync();
-      expect(body).toMatchObject({ problems: [], changes: [] });
-      expect(body.ours.currentPeriodEnd).toBe(new Date(secs * 1000).toISOString());
+      expect(body).toMatchObject({
+        problems: [],
+        changes: [],
+        ours: { currentPeriodEnd: new Date(secs * 1000).toISOString() },
+      });
       expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
       expect(trackModActivity).not.toHaveBeenCalled();
     } finally {
