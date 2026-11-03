@@ -45,7 +45,8 @@ describe('listMyScopeInvocations — one pre-approval dev app', () => {
   it('returns a synthetic row with no app id', async () => {
     findMany.mockResolvedValueOnce([
       {
-        id: 7n,
+        // BigInt(), not a `7n` literal: tsconfig targets ES2018, where a BigInt literal is TS2737.
+        id: BigInt(7),
         invokedAt: new Date('2026-10-30T11:59:00Z'),
         appBlockId: null,
         blockInstanceId: 'page_ephemeral-slideshow',
