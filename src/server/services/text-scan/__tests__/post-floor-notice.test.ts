@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as Adapters from '~/server/services/moderation-adapters';
 import type * as RatingReviewService from '~/server/services/rating-review.service';
@@ -108,7 +108,7 @@ const setLevel = (id: number, level: number) => {
   else if (other) other.level = level;
 };
 
-const fakeRaw = async (query: Prisma.Sql) => {
+const answerRaw = async (query: Prisma.Sql) => {
   const sql = query.text.replace(/\s+/g, ' ').trim();
   const ids = query.values as number[];
   if (sql.startsWith('WITH next AS') && sql.includes('UPDATE "Post" p')) {
@@ -147,6 +147,16 @@ const fakeRaw = async (query: Prisma.Sql) => {
   }
   throw new Error(`unexpected raw query: ${sql}`);
 };
+// batcher() swallows throws, so a fake that throws would pass every no-notice case; afterEach fails on any.
+let fakeFailures: unknown[];
+const fakeRaw = async (query: Prisma.Sql) => {
+  try {
+    return await answerRaw(query);
+  } catch (e) {
+    fakeFailures.push(e);
+    throw e;
+  }
+};
 
 const ratingNotices = () =>
   vi.mocked(createNotification).mock.calls.filter(([n]) => n.type === 'text-scan-rating-raised');
@@ -166,6 +176,7 @@ const imageRated = async (imageLevel: number, postIds = [POST_ID]) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  fakeFailures = [];
   post = { images: 0, level: 0, moderatorNsfwLevel: null };
   verdict = null;
   other = null;
@@ -193,6 +204,10 @@ beforeEach(() => {
     return { count: 1 };
   }) as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(fakeRaw as never);
+});
+
+afterEach(() => {
+  expect(fakeFailures).toEqual([]);
 });
 
 describe('rating-raised notice when the floor lands on the level recompute', () => {
