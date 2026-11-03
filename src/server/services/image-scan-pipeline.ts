@@ -48,7 +48,6 @@ import {
   refreshProfilePicturesForImages,
 } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
-import { recomputePostNsfwLevelWithFloorNotice } from '~/server/services/text-scan/rated-entities';
 import {
   queueComicsForPanelImage,
   updateComicNsfwLevelsForImage,
@@ -1009,8 +1008,7 @@ export async function applyIngestionSideEffects({
     }
 
     if (image.postId) {
-      const postId = image.postId;
-      await recomputePostNsfwLevelWithFloorNotice(postId, () => updatePostNsfwLevel(postId));
+      await updatePostNsfwLevel(image.postId);
       // Without this, the showcase cache stays empty until its 24h TTL for any model version whose images hadn't scanned yet on first read.
       await bustCachesForPosts(image.postId);
     }
