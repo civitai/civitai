@@ -90,7 +90,8 @@ the chosen option as the value, ref `KnightsVote:<itemId>:<labeller hash>`. Each
 (`minHuman` = its `votesToResolve`, not unanimous). Yes/no answers are written by the same pass, as given rather than when
 graded, one `knight` label per answer: subject `image`, question `knights.yesno.<producer question id>`, value `yes` or `no`, ref
 `KnightsYesNoVote:<producer question id>:<labeller hash>`. Each answered question gets its own `rule` row (`minHuman` = the axis
-question's `votesToResolve`, not unanimous), so the store's `consensus` computes its majority.
+question's `votesToResolve`, not unanimous), so the store's `consensus` computes its majority. Both kinds carry `msOnItem`, the
+server-measured time the player spent on the item (`KnightsVote.msOnItem`; null when unknown). Hidden checks are never labelled.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
 moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back

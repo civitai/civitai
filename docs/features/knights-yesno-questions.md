@@ -75,7 +75,7 @@ and are left open. Moderators' questions are not swept. Locks are taken in the v
 ## Labels
 
 Each answer becomes a `knight` label in the label store, written by the tick as given (not when graded), never for a
-held player: question `knights.yesno.<externalId>`, value `yes` or `no`, one label per answer, unique source ref. Each answered
+held player: question `knights.yesno.<externalId>`, value `yes` or `no`, one label per answer, unique source ref, and `msOnItem` (the server-measured time on the question, from the sealed feed token's issue time to the answer, clamped to 0-600000 ms; null when unknown). Each answered
 question gets its own `rule` row, so the store computes the majority per question. Details: `docs/features/label-store.md`.
 
 ## Players see

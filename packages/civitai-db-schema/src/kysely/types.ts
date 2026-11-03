@@ -3833,6 +3833,7 @@ export type KnightsVote = {
   consequence: string | null;
   noticedAt: Timestamp | null;
   blockReason: string | null;
+  msOnItem: number | null;
 };
 export type KnightsYesNoReference = {
   id: Generated<number>;

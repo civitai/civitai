@@ -149,6 +149,7 @@ export async function answerHiddenCheck(
     referenceId: number;
     answer: string;
     blockReason?: string | null;
+    msOnItem?: number | null;
     isModerator?: boolean;
   },
   deps: Pick<QueueDeps, 'now' | 'voteLimits'> & { mirrorXp?: XpMirror }
@@ -172,6 +173,7 @@ export async function answerHiddenCheck(
         userId: input.userId,
         answer: input.answer,
         blockReason: input.blockReason,
+        msOnItem: input.msOnItem,
         now,
         lockPlayer: true,
       },

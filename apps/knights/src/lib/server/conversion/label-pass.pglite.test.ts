@@ -134,6 +134,23 @@ describe('labels', () => {
     expect(await hasUnlabelled(db, 'rating')).toBe(false);
   });
 
+  it('carries the time on the item into the label', async () => {
+    await seedPlayer(pg, 1);
+    await vote(1, 1, 101);
+    await vote(2, 1, 102);
+    await pg.exec(`UPDATE "KnightsVote" SET "msOnItem" = 4200 WHERE "itemId" = 1`);
+
+    await pass();
+
+    expect(
+      (
+        await pg.query<{ msOnItem: number | null }>(
+          `SELECT "msOnItem" FROM label_store.label ORDER BY "subjectId"`
+        )
+      ).rows
+    ).toEqual([{ msOnItem: 4200 }, { msOnItem: null }]);
+  });
+
   it('writes none again on a later tick', async () => {
     await seedPlayer(pg, 1);
     await vote(1, 1, 101);

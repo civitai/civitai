@@ -261,6 +261,30 @@ describe('castVote rejections', () => {
   });
 });
 
+describe('castVote time on item', () => {
+  it('stores the server-measured time, and null when it is unknown', async () => {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    const id = await item(10);
+
+    await castVote(db, { userId: 1, itemId: id, answer: '4', msOnItem: 5300 }, deps());
+    await castVote(db, { userId: 2, itemId: id, answer: '4' }, deps());
+
+    expect(
+      (
+        await pg.query(
+          `SELECT "playerId", "msOnItem" FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId"`,
+          [id]
+        )
+      ).rows
+    ).toEqual([
+      { playerId: 1, msOnItem: 5300 },
+      { playerId: 2, msOnItem: null },
+    ]);
+  });
+});
+
 describe('castVote block reasons', () => {
   const rejected = { status: 'rejected', reason: 'bad-block-reason' };
 

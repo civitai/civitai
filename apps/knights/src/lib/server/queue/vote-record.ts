@@ -48,6 +48,8 @@ export async function insertVote(
     answer: string;
     /** Why the voter blocked the image: required with Blocked on the rating question, refused with anything else. */
     blockReason?: string | null;
+    /** Server-measured time on the item (`msOnItem`), never a client-sent value; null when unknown. */
+    msOnItem?: number | null;
     now: Date;
     lockPlayer?: boolean;
   },
@@ -66,12 +68,11 @@ export async function insertVote(
     return rejected('not-eligible');
   }
   if (!subject.options.some((o) => o.value === input.answer)) return rejected('bad-answer');
-  const reasonProblem =
-    asksBlockReason(subject.questionKey)
-      ? blockReasonProblem(input.answer, input.blockReason)
-      : input.blockReason
-      ? 'unexpected'
-      : null;
+  const reasonProblem = asksBlockReason(subject.questionKey)
+    ? blockReasonProblem(input.answer, input.blockReason)
+    : input.blockReason
+    ? 'unexpected'
+    : null;
   if (reasonProblem) return rejected('bad-block-reason');
 
   const already = await trx
@@ -108,6 +109,7 @@ export async function insertVote(
       stage: subject.stage,
       answer: input.answer,
       blockReason: input.blockReason || null,
+      msOnItem: input.msOnItem ?? null,
       weight,
       xp: PROGRESSION.voteXp,
       gold,

@@ -239,6 +239,19 @@ describe('answering a hidden check', () => {
     expect(await voteRow(1)).toHaveLength(1);
   });
 
+  it('stores the time on the item like a vote does', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '4');
+    await answerHiddenCheck(
+      db,
+      { userId: 1, referenceId: ref, answer: '4', msOnItem: 1800 },
+      deps(NOW)
+    );
+    expect((await pg.query(`SELECT "msOnItem" FROM "KnightsVote"`)).rows).toEqual([
+      { msOnItem: 1800 },
+    ]);
+  });
+
   it('asks a Blocked answer for a reason like a vote and stores it, the grade is on the level alone', async () => {
     await seedPlayer(pg, 1);
     const ref = await reference(10, '4');

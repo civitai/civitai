@@ -313,6 +313,7 @@ export async function castVote(
     itemId: number;
     answer: string;
     blockReason?: string | null;
+    msOnItem?: number | null;
     isModerator?: boolean;
   },
   deps: QueueDeps

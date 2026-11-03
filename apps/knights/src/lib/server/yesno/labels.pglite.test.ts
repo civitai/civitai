@@ -108,6 +108,23 @@ describe('labels for yes/no answers', () => {
     expect(await labels()).toHaveLength(2);
   });
 
+  it("carries the answer's time on the item into its label", async () => {
+    await importYesNo(db, [row(ID, 10)]);
+    await seedPlayer(pg, 1);
+    clock = new Date(clock.getTime() + 1000);
+    await castYesNoVote(
+      db,
+      { userId: 1, itemId: await itemOf(ID), answer: 'yes', msOnItem: 3100 },
+      { now: () => clock }
+    );
+
+    await pass();
+
+    expect((await pg.query(`SELECT "msOnItem" FROM label_store.label`)).rows).toEqual([
+      { msOnItem: 3100 },
+    ]);
+  });
+
   it('writes the label before the question has a consensus', async () => {
     await importYesNo(db, [row(ID, 10)]);
     for (const p of [1, 2]) await seedPlayer(pg, p);

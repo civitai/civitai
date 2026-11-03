@@ -3,7 +3,7 @@ import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
-import { openItem, sealItem } from '$lib/server/feed-token';
+import { msOnItem, openItem, sealItem } from '$lib/server/feed-token';
 import {
   answerHiddenCheck,
   pickHiddenCheck,
@@ -255,6 +255,8 @@ export const actions: Actions = {
     }
     if (!ref) return fail(400, { message: 'Pick an answer.' });
     const itemId = ref.id;
+    // Measured here from the sealed token's issue time; nothing the client sends is used.
+    const timeOnItem = msOnItem(ref.issuedAt, queueDeps.now());
     if (ref.kind === 'yesno' && blockReason !== null) {
       return fail(400, { message: BLOCK_REASON_TEXT });
     }
@@ -269,6 +271,7 @@ export const actions: Actions = {
                 referenceId: itemId,
                 answer,
                 blockReason,
+                msOnItem: timeOnItem,
                 isModerator: locals.user.isModerator,
               },
               queueDeps
@@ -276,7 +279,13 @@ export const actions: Actions = {
           : ref.kind === 'yesno'
           ? await castYesNoVote(
               db,
-              { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
+              {
+                userId: locals.user.id,
+                itemId,
+                answer,
+                msOnItem: timeOnItem,
+                isModerator: locals.user.isModerator,
+              },
               queueDeps
             )
           : await castVote(
@@ -286,6 +295,7 @@ export const actions: Actions = {
                 itemId,
                 answer,
                 blockReason,
+                msOnItem: timeOnItem,
                 isModerator: locals.user.isModerator,
               },
               queueDeps

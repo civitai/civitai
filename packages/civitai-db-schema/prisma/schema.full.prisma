@@ -8102,6 +8102,7 @@ model KnightsVote {
   consequence String? // what a graded hidden check cost the player (warning | smite)
   noticedAt   DateTime? // when the player dismissed the notice of that cost
   blockReason String? // why a Knight blocked an image (a NewOrderDamnedReason name); only on Blocked rating votes
+  msOnItem    Int? // ms from the feed token's issue to the answer, server-measured, clamped to 0..600000; null when unknown
 
   @@id([itemId, playerId, createdAt])
   @@index([playerId, createdAt])
