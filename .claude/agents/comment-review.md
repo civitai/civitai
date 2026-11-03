@@ -131,6 +131,29 @@ Order: **false comments first**, then fix-the-code-instead, then deletions group
 comments are clean — that is a real and common outcome, and the guideline's whole point is that the
 best diff has almost none.
 
+### Facts on every finding — required
+
+Your severity is advisory: the severity is computed from three facts you report on every finding. When
+your invoker gives you a JSON result contract, they are fields of each finding; otherwise end each
+finding with them as `impact / reach / evidence`.
+
+- `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
+  user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
+  moderation, NSFW gating), `data-loss` (rows or files destroyed or corrupted), `privacy` (PII or private
+  content shown to the wrong person), `wrong-for-user` (a visible wrong result, nothing lost: a wrong
+  count, a dead button), `internal` (cost only we see: an extra query, log noise), `maintainability`
+  (nothing wrong yet: a duplicate, a misleading comment).
+- `reach`, when it happens: `normal-use` (an ordinary request on the main path), `unusual-state` (a rare
+  but real state: a retry, a webhook delivered twice, a race), `theoretical` (you found no path to it).
+- `evidence`, `{kind, ref}`: `traced` (you followed the path; `ref` is the `file:line` that does it),
+  `reproduced` (you ran it; `ref` is the short repro), `inferred` (you reasoned it without tracing;
+  `ref` is the `file:line` you reasoned from).
+
+Report the reach you can show, not the worst you can imagine. Comment findings are `maintainability`.
+Example: a comment that says a function checks ownership when it does not is `maintainability /
+normal-use / traced`, `ref` the function's first line; the missing check itself is the correctness
+lane's.
+
 ## Delivering your report
 
 🔴 **Your findings reach nobody unless you deliver them.** Text you write in your own transcript is not

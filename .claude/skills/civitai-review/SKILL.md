@@ -216,6 +216,17 @@ what the whole section is worth.
 - Deduplicate — the same defect commonly surfaces as reuse *and* perf (a rewritten query that the
   cached-by-id-array helper already answers), or safety *and* test (an unguarded path with a vacuous
   test over it).
+- **Severity comes from each finding's facts, not the lane's word.** Every lane reports `impact`,
+  `reach` and `evidence` per finding (defined in each lane's Report section); its own severity is
+  advisory. A finding missing a fact goes back to its lane like a missing `checks` block. Compute:
+  - `money`, `access`, `data-loss` or `privacy`: `normal-use` is **high** when the evidence is
+    `traced` or `reproduced` and **medium** when only `inferred`; `unusual-state` is **medium**;
+    `theoretical` is **low**.
+  - `wrong-for-user`: `normal-use` is **medium**, otherwise **low**.
+  - `internal` and `maintainability`: **low**.
+  - Floor: `money` or `access` in a file whose path names auth, session, permission, Buzz, payment,
+    Stripe, Paddle, billing, purchase, payout, withdraw, subscription, email, PII, NSFW, browsing level
+    or moderation is at least **medium**.
 - Rank by consequence: money moving wrongly and content crossing a gate first, then production cost,
   then false confidence from a bad test, then reuse.
 - **Read each lane's `checks` block.** The test, reuse and correctness lanes end every report with one

@@ -158,6 +158,27 @@ are the second, and calling them all urgent is how the list stops being read.
 is clean. One exception, one line: a hot path the segment came close to but did not touch, where the
 next edit would.
 
+### Facts on every finding — required
+
+Your severity is advisory: the severity is computed from three facts you report on every finding. When
+your invoker gives you a JSON result contract, they are fields of each finding; otherwise end each
+finding with them as `impact / reach / evidence`.
+
+- `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
+  user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
+  moderation, NSFW gating), `data-loss` (rows or files destroyed or corrupted), `privacy` (PII or private
+  content shown to the wrong person), `wrong-for-user` (a visible wrong result, nothing lost: a wrong
+  count, a dead button), `internal` (cost only we see: an extra query, log noise), `maintainability`
+  (nothing wrong yet: a duplicate, a misleading comment).
+- `reach`, when it happens: `normal-use` (an ordinary request on the main path), `unusual-state` (a rare
+  but real state: a retry, a webhook delivered twice, a race), `theoretical` (you found no path to it).
+- `evidence`, `{kind, ref}`: `traced` (you followed the path; `ref` is the `file:line` that does it),
+  `reproduced` (you ran it; `ref` is the short repro), `inferred` (you reasoned it without tracing;
+  `ref` is the `file:line` you reasoned from).
+
+Report the reach you can show, not the worst you can imagine. Example: an extra query on every request of
+a hot path is `internal / normal-use / traced`; a query that times out the page is `wrong-for-user`.
+
 ## Delivering your report
 
 🔴 **Your findings reach nobody unless you deliver them.** Text you write in your own transcript is not
