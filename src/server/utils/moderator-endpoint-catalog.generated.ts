@@ -61,6 +61,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/model/bring-back': () => import('~/pages/api/mod/model/bring-back'),
   '/api/mod/model/bump': () => import('~/pages/api/mod/model/bump'),
   '/api/mod/model/republish': () => import('~/pages/api/mod/model/republish'),
+  '/api/mod/model/resolve-lock-review': () => import('~/pages/api/mod/model/resolve-lock-review'),
   '/api/mod/model/set-poi': () => import('~/pages/api/mod/model/set-poi'),
   '/api/mod/model/set-sfw-only': () => import('~/pages/api/mod/model/set-sfw-only'),
   '/api/mod/model/take-down': () => import('~/pages/api/mod/model/take-down'),
