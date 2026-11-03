@@ -3,11 +3,12 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { jsonArrayFrom } from './infra/helpers';
 
 // Kysely ports of the model page's comment reads (`comment.getAll` and
-// `comment.getVisibleCountByModel`, <civitai>/src/server/services/comment.service.ts), served behind
-// the default-off server Flipt flag `kysely-hot-reads-4`; off, the Prisma reads run unchanged. The
-// app-side wrappers (<civitai>/src/server/services/hot-reads-4.reads.ts) map these rows to the exact
-// Prisma payload, and <civitai>/src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts
-// compares the two against a real database.
+// `comment.getVisibleCountByModel`, <civitai>/src/server/services/comment.service.ts). They
+// replaced the Prisma reads (formerly behind a server Flipt flag); a cursor page or another sort of
+// the unpinned list still reads through Prisma. The app-side wrappers
+// (<civitai>/src/server/services/hot-reads-4.reads.ts) map these rows to the exact Prisma payload,
+// and <civitai>/src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts pins them, against
+// a real database, to the values the Prisma reads returned.
 //
 //   - `countTopLevelComments`: the visible top-level comment count.
 //   - `countTopLevelCommentsByHidden`: the plain and the hidden view's counts in one statement
@@ -16,9 +17,9 @@ import { jsonArrayFrom } from './infra/helpers';
 //     pinned block (`pinnedAt desc`), each with its author, its reactions and the model name, as ONE
 //     statement where Prisma issues one query per relation.
 //
-// Both apply the same `TopLevelCommentsFilter` the Prisma where is built from, so the viewer's
-// exclusions (hidden and blocked users), the moderator's view of ToS violations and the hidden view
-// cannot drift between the two paths.
+// Both apply the same `TopLevelCommentsFilter` the remaining Prisma list's where is built from, so
+// the viewer's exclusions (hidden and blocked users), the moderator's view of ToS violations and
+// the hidden view cannot drift between the Kysely pages and the Prisma ones.
 //
 // Every statement reads base TABLES only ("Comment", "User", "Model", "CommentReaction"), never a
 // view: the parity suite fails if one of them names a relation declared `/// @view`.

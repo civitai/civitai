@@ -258,10 +258,17 @@ describe('THREAD_CONTENT_OWNERS', () => {
     expect(THREAD_CONTENT_OWNERS.map((o) => o.column)).toEqual(ownerColumns);
   });
 
-  // A new owner-bearing FK on Thread must land here or be named as exempt. clubPostId has no
-  // owner lookup anywhere, so its threads resolve no owner and are never bulk-hidden.
+  // A new owner-bearing FK on Thread must land here or be named as exempt. clubPostId, questionId
+  // and answerId have no owner lookup, so their threads resolve no owner and are never bulk-hidden.
   it('covers every Thread foreign key that is not a chain link', () => {
-    const exempt = ['commentId', 'parentThreadId', 'rootThreadId', 'clubPostId'];
+    const exempt = [
+      'commentId',
+      'parentThreadId',
+      'rootThreadId',
+      'clubPostId',
+      'questionId',
+      'answerId',
+    ];
     const thread = Prisma.dmmf.datamodel.models.find((m) => m.name === 'Thread');
     const foreignKeys = thread?.fields
       .filter((f) => f.kind === 'scalar' && f.name.endsWith('Id') && !exempt.includes(f.name))

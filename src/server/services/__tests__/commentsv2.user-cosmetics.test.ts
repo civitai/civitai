@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake';
-// The image-thread Kysely read, answered from the shared Prisma mock this file's fixtures use.
-vi.mock('@civitai/db-queries/hot-reads', async () =>
-  (await import('~/__tests__/mocks/kysely-reads-over-db-mock')).hotReadsOverDbMock()
-);
+import type * as HotReads from '@civitai/db-queries/hot-reads';
+// An image's thread lookup (one Kysely read). Its rows, against a real database, are pinned in
+// hot-reads-2.kysely-parity.test.ts.
+const { imageThread } = vi.hoisted(() => ({ imageThread: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads>()),
+  getImageThread: imageThread,
+}));
 
 // The showcase hat has its own cache and tests (events/showcase-hat.ts); here it only has to reach
 // the right author.
@@ -101,7 +105,7 @@ beforeEach(() => {
       return [];
     },
   });
-  dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: THREAD } as never);
+  imageThread.mockResolvedValue({ id: THREAD, locked: false });
   dbMock.dbRead.commentV2.findMany.mockImplementation((async ({ where }: { where: Where }) => {
     if (where.pinnedAt) return [comment(1, PINNED_AUTHOR, { pinnedAt: new Date(0) })];
     return [comment(21, REPLY_AUTHOR, { threadId: REPLY_THREAD })];

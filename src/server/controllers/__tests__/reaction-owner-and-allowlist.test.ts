@@ -82,9 +82,8 @@ async function react(entityType: ReactionEntityType, entityId: number) {
 // encouragement.reward.ts declines to pay only when ownerId === reactorId, so the owner the
 // handler passes is what decides whether a self-reaction is paid.
 describe('toggleReactionHandler — owner of a bounty entry', () => {
-  it('reads the bounty entry, not an answer that happens to share its id', async () => {
+  it('passes the entry author as owner', async () => {
     dbMock.dbRead.bountyEntry.findFirst.mockResolvedValueOnce({ userId: 77 });
-    dbMock.dbRead.answer.findFirst.mockResolvedValueOnce({ userId: 13 });
 
     const ctx = await react('bountyEntry', 300);
 
@@ -97,7 +96,6 @@ describe('toggleReactionHandler — owner of a bounty entry', () => {
 
   it('passes the reactor as owner when they react to their own entry', async () => {
     dbMock.dbRead.bountyEntry.findFirst.mockResolvedValueOnce({ userId: REACTOR_ID });
-    dbMock.dbRead.answer.findFirst.mockResolvedValueOnce(null);
 
     await react('bountyEntry', 300);
 
@@ -152,7 +150,7 @@ describe('toggleReactionHandler — owner of a resource review', () => {
 const ALL_REACTIONS: ReviewReactions[] = ['Like', 'Dislike', 'Heart', 'Laugh', 'Cry'];
 const CONTENT: ReviewReactions[] = ['Like', 'Heart', 'Laugh', 'Cry'];
 // The set each entity type's site UI offers: `Reactions.tsx` / `JudgeReactionBar` for content,
-// the legacy `ReactionPicker` (every value) for commentOld, `FavoriteBadge` (Heart) for Q&A.
+// the legacy `ReactionPicker` (every value) for commentOld.
 const EXPECTED_ALLOWED: Record<ReactionEntityType, ReviewReactions[]> = {
   image: CONTENT,
   post: CONTENT,
@@ -161,13 +159,9 @@ const EXPECTED_ALLOWED: Record<ReactionEntityType, ReviewReactions[]> = {
   comment: CONTENT,
   resourceReview: CONTENT,
   commentOld: ALL_REACTIONS,
-  question: ['Heart'],
-  answer: ['Heart'],
 };
 const ENTITY_TYPES = Object.keys(EXPECTED_ALLOWED) as ReactionEntityType[];
 const HELD_TABLE: Record<ReactionEntityType, string> = {
-  question: 'questionReaction',
-  answer: 'answerReaction',
   commentOld: 'commentReaction',
   comment: 'commentV2Reaction',
   image: 'imageReaction',
@@ -177,8 +171,6 @@ const HELD_TABLE: Record<ReactionEntityType, string> = {
   bountyEntry: 'bountyEntryReaction',
 };
 const HELD_FK: Record<ReactionEntityType, string> = {
-  question: 'questionId',
-  answer: 'answerId',
   commentOld: 'commentId',
   comment: 'commentId',
   image: 'imageId',

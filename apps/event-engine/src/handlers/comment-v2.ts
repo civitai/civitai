@@ -45,7 +45,7 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
         COALESCE(
           p."userId", i."userId", a."userId", b."userId",
           rev."userId", be."userId", ch."createdById", cp."userId", clp."createdById",
-          m3d."userId", m3dr."userId", mdl."userId", q."userId", ans."userId", al.user_id
+          m3d."userId", m3dr."userId", mdl."userId", al.user_id
         ) AS "ownerId"
       FROM "Thread" t
       LEFT JOIN "Thread" r ON r.id = t."rootThreadId"
@@ -61,8 +61,6 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
       LEFT JOIN "Model3D" m3d ON m3d.id = COALESCE(r."model3dId", t."model3dId")
       LEFT JOIN "Model3DReview" m3dr ON m3dr.id = COALESCE(r."model3dReviewId", t."model3dReviewId")
       LEFT JOIN "Model" mdl ON mdl.id = COALESCE(r."modelId", t."modelId")
-      LEFT JOIN "Question" q ON q.id = COALESCE(r."questionId", t."questionId")
-      LEFT JOIN "Answer" ans ON ans.id = COALESCE(r."answerId", t."answerId")
       LEFT JOIN app_listings al ON al.serial_id = COALESCE(r."appListingId", t."appListingId")
       WHERE t.id = $1`,
       [record.threadId]
