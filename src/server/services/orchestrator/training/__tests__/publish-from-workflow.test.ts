@@ -710,7 +710,10 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it('allows an approved run, reading it with the owner token, and backfills the stamp', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
     await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: false,
+      allowRestricted: false,
+    });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
       path: { workflowId: 'wf-studio-1' },
@@ -721,7 +724,10 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it('mints the owner token with the cache bypass when a moderator publishes', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
     await assertTrainingSourcePublishable({ ...args, callerId: 999 });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: true,
+      allowRestricted: true,
+    });
   });
 
   it.each([...REFUSED_STATUSES, undefined])(
@@ -987,7 +993,10 @@ describe('stampWorkflowPublished', () => {
       workflowId: 'wf-studio-1',
       modelId: 42,
     });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: true,
+      allowRestricted: true,
+    });
 
     mockGetToken.mockClear();
     await stampWorkflowPublished({
@@ -996,7 +1005,10 @@ describe('stampWorkflowPublished', () => {
       workflowId: 'wf-studio-1',
       modelId: 42,
     });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: false,
+      allowRestricted: false,
+    });
   });
 
   it('never throws — an unreachable orchestrator must not fail the publish', async () => {

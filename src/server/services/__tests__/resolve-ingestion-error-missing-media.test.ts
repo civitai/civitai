@@ -105,6 +105,7 @@ beforeEach(() => {
     userId: 99,
     metadata: {},
     url: IMAGE_KEY,
+    user: { bannedAt: null, deletedAt: null },
   } as never);
   dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 } as never);
 });
@@ -241,6 +242,7 @@ describe('a non-key Image.url is never treated as a missing object', () => {
       userId: 99,
       metadata: {},
       url,
+      user: { bannedAt: null, deletedAt: null },
     } as never);
     // Armed to answer `absent` — so if the probe DID run, the publish would be refused.
     headObject.mockResolvedValue({ status: 'absent' });
@@ -338,6 +340,7 @@ describe('the guard reports what it did, in both directions', () => {
       userId: 99,
       metadata: {},
       url: 'https://cdn.discordapp.com/avatars/123/abc.png',
+      user: { bannedAt: null, deletedAt: null },
     } as never);
     headObject.mockResolvedValue({ status: 'absent' });
 
@@ -373,6 +376,7 @@ describe('the guard reports what it did, in both directions', () => {
       userId: 99,
       metadata: {},
       url: 'https://cdn.discordapp.com/avatars/123/abc.png',
+      user: { bannedAt: null, deletedAt: null },
     } as never);
     headObject.mockResolvedValue({ status: 'absent' });
 

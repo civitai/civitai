@@ -695,6 +695,8 @@ const featureFlags = createFeatureFlags({
   // dropped from the version options, which both hides it and makes a submitted
   // `version: 'v7'` fail the node's schema (see `model3d/polygen.graph.ts`).
   meshyV7Generator: { availability: ['mod'] },
+  // Same shape for Meshy v7.1.
+  meshyV71Generator: { availability: ['mod'] },
   // Gates Krea 3's Ultra thinking mode the same way: it is a `thinkingMode`
   // option, not a model version, so it ships dark and opens with the partner's
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the

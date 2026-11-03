@@ -38,6 +38,7 @@ vi.mock('~/server/games/new-order/utils', () => ({
   checkVotingRateLimit: vi.fn(),
   computePoolTargets: vi.fn(),
   getActiveSlot: vi.fn().mockResolvedValue('a'),
+  clearImageRatings: vi.fn(),
   getImageRatingsCounter: vi.fn(),
   getVotingCooldownUntil: vi.fn().mockResolvedValue(null),
   getVotingRateLimitConfig: vi.fn().mockResolvedValue(null),
@@ -141,7 +142,7 @@ describe('New Order held-image guard', () => {
       priority: 1,
     });
 
-    expect(added).toBe(false);
+    expect(added).toEqual({ added: false, heldIds: [HELD] });
     expect(poolStub.getCount).not.toHaveBeenCalled();
   });
 

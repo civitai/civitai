@@ -3186,6 +3186,16 @@ model AppBlock {
   forkOfAppBlockId   String?   @map("fork_of_app_block_id") // @no-type
   forkOfCommitSha    String?   @map("fork_of_commit_sha") // @no-type
 
+  // STORAGE DELETION — when the app was deleted (`storageDeletedAt`), and when the deleted-app
+  // reaper (`jobs/reap-deleted-app-storage.ts`) finished deleting its document-store data
+  // (`storagePurgedAt`). The reaper deletes every user's data in the app 30 days after
+  // `storageDeletedAt`, and only while the block is not `approved` and not written since
+  // (`updatedAt`); restoring the app clears `storageDeletedAt`. No-type for the reason `visibility` documents on `AppListing`: read and
+  // written by raw SQL only, so nothing raises P2022 before manual-apply migration
+  // `20261218120000_app_block_storage_deleted_at` runs.
+  storageDeletedAt   DateTime? @map("storage_deleted_at") @db.Timestamptz(6) // @no-type
+  storagePurgedAt    DateTime? @map("storage_purged_at") @db.Timestamptz(6) // @no-type
+
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -4934,6 +4944,24 @@ model AppUserScopeGrant {
   @@map("app_user_scope_grants")
 }
 
+// App Blocks cross-app storage imports: the per-source consent ledger. RAW SQL ONLY
+// (`storage-import-grant.service.ts`), so the model is stripped from the generated client; the
+// migration `20261218120000_app_storage_import_grants` is applied by hand and the service
+// tolerates the table's absence.
+// @no-type
+model AppStorageImportGrant {
+  userId             Int      @map("user_id")
+  consumerAppBlockId String   @map("consumer_app_block_id")
+  sourceAppBlockId   String   @map("source_app_block_id")
+  collections        String[]
+  access             String
+  grantedAt          DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+
+  @@id([userId, consumerAppBlockId, sourceAppBlockId])
+  @@index([sourceAppBlockId], map: "app_storage_import_grants_source_idx")
+  @@map("app_storage_import_grants")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.
@@ -5747,6 +5775,36 @@ model EventCosmeticScoreDaily {
 
   @@id([event, userId, cosmeticId, claimKey, day])
   @@index([event, day])
+}
+
+/// A Hat Turf sticker: one player's team mark on someone else's image, for an event. Free, never
+/// moved; a moderator removal is final (the unique key outlives it). Constraints and partial index
+/// live only in the migration.
+model EventTurfSticker {
+  id          BigInt    @id @default(autoincrement())
+  event       String
+  imageId     Int
+  userId      Int
+  team        String
+  cosmeticId  Int
+  data        Json      @default("{}")
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  removedAt   DateTime? @db.Timestamptz(3)
+  removedById Int?
+
+  @@unique([event, imageId, userId])
+  @@index([event, userId])
+}
+
+/// A player's Hat Turf sticker supply: a lazy token bucket, refilled on read from the event's
+/// supply schedule.
+model EventTurfStock {
+  event      String
+  userId     Int
+  stock      Float
+  refilledAt DateTime @db.Timestamptz(3)
+
+  @@id([event, userId])
 }
 
 /// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.

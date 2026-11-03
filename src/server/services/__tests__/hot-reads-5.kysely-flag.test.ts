@@ -461,7 +461,8 @@ describe('getUserEngagedModelVersionsHandler (the version ids)', () => {
   });
 
   it('ON: the Kysely read on the replica', async () => {
-    flag.mockResolvedValue(true);
+    // Only this flag: the engagement read that follows has a Kysely flag of its own.
+    flag.mockImplementation(async (key) => key === FLAG);
     q.listModelVersionIds.mockResolvedValue([{ id: 1 }] as never);
     await call();
     expect(q.listModelVersionIds.mock.calls).toEqual([[kyselyRead, ID]]);

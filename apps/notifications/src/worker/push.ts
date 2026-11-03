@@ -213,7 +213,7 @@ async function recordFailure(id: number, userId: number) {
   );
 }
 
-async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload) {
+async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload, type: string) {
   const subscription = {
     endpoint: sub.endpoint,
     keys: { p256dh: sub.p256dh, auth: sub.auth },
@@ -221,19 +221,19 @@ async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload) {
   const body = JSON.stringify(payload);
   try {
     await webPush.sendNotification(subscription, body, SEND_OPTIONS);
-    pushDeliveryTotal.inc({ outcome: 'accepted' });
+    pushDeliveryTotal.inc({ outcome: 'accepted', type });
     await bestEffort(recordSuccess(sub.id, sub.userId));
   } catch (e: any) {
     const status: number | undefined = e?.statusCode;
     if (status === 404 || status === 410) {
       // The subscription is gone (permission revoked, browser reinstalled). Normal, not an incident.
-      pushDeliveryTotal.inc({ outcome: 'expired' });
+      pushDeliveryTotal.inc({ outcome: 'expired', type });
       await bestEffort(deleteSubscription(sub.id, sub.userId));
     } else if (status === 429) {
       // Rate limited by the push service — drop this send, keep the subscription.
-      pushDeliveryTotal.inc({ outcome: 'rate_limited' });
+      pushDeliveryTotal.inc({ outcome: 'rate_limited', type });
     } else if (status === 413) {
-      pushDeliveryTotal.inc({ outcome: 'payload_too_large' });
+      pushDeliveryTotal.inc({ outcome: 'payload_too_large', type });
       logToAxiom({
         type: 'error',
         message: 'push payload too large — payload bug, not a subscription bug',
@@ -245,13 +245,13 @@ async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload) {
           JSON.stringify({ ...payload, body: payload.body.slice(0, TRUNCATED_BODY_LENGTH) }),
           SEND_OPTIONS
         );
-        pushDeliveryTotal.inc({ outcome: 'accepted' });
+        pushDeliveryTotal.inc({ outcome: 'accepted', type });
         await bestEffort(recordSuccess(sub.id, sub.userId));
       } catch {
         await bestEffort(recordFailure(sub.id, sub.userId));
       }
     } else {
-      pushDeliveryTotal.inc({ outcome: 'failure' });
+      pushDeliveryTotal.inc({ outcome: 'failure', type });
       await bestEffort(recordFailure(sub.id, sub.userId));
     }
   }
@@ -286,7 +286,7 @@ export async function dispatchPush(
     for (const [userId, subs] of byUser) {
       const quota = await checkQuota(userId);
       if (quota === 'skip') {
-        pushDeliveryTotal.inc({ outcome: 'capped' });
+        pushDeliveryTotal.inc({ outcome: 'capped', type });
         continue;
       }
       const effective: PushPayload =
@@ -300,7 +300,7 @@ export async function dispatchPush(
       for (const sub of subs) jobs.push({ sub, payload: effective });
     }
     for (const batch of chunk(jobs, SEND_CONCURRENCY)) {
-      await Promise.all(batch.map((job) => sendToSubscription(job.sub, job.payload)));
+      await Promise.all(batch.map((job) => sendToSubscription(job.sub, job.payload, type)));
     }
   } catch (e) {
     logAxiomError(e as Error);

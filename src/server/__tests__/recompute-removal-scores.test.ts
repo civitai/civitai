@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   storedScores: vi.fn(),
   applyUserScoreUpdates: vi.fn(),
-  countRemovalsByOwner: vi.fn(),
+  removalPenaltyWeightsByOwner: vi.fn(),
   getOwnersWithReversalsSince: vi.fn(),
+  getOwnersWithRemovals: vi.fn(),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -28,14 +29,15 @@ vi.mock('~/server/jobs/update-user-score', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/creator-removals.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorRemovals>()),
-  countRemovalsByOwner: mocks.countRemovalsByOwner,
+  removalPenaltyWeightsByOwner: mocks.removalPenaltyWeightsByOwner,
   getOwnersWithReversalsSince: mocks.getOwnersWithReversalsSince,
+  getOwnersWithRemovals: mocks.getOwnersWithRemovals,
 }));
 
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as UpdateUserScore from '~/server/jobs/update-user-score';
 import type * as CreatorRemovals from '~/server/services/creator-removals.service';
-import handler from '~/pages/api/admin/temp/recompute-reversed-removals';
+import handler from '~/pages/api/admin/temp/recompute-removal-scores';
 
 function call(query: Record<string, string>) {
   let status = 200;
@@ -71,7 +73,7 @@ const STORED = { 1: -3000, 2: -1000, 3: -2000, 4: -1000, 5: null, 6: null } as R
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getOwnersWithReversalsSince.mockResolvedValue([1, 2, 3, 4, 5, 6]);
-  mocks.countRemovalsByOwner.mockResolvedValue(
+  mocks.removalPenaltyWeightsByOwner.mockResolvedValue(
     new Map([
       [1, 2],
       [3, 2],
@@ -85,7 +87,7 @@ beforeEach(() => {
   mocks.applyUserScoreUpdates.mockImplementation(async (_pg, records: unknown[]) => records);
 });
 
-describe('recompute-reversed-removals', () => {
+describe('recompute-removal-scores', () => {
   it('counts what it would change and writes nothing by default', async () => {
     const { status, body } = await call({});
 
@@ -93,7 +95,9 @@ describe('recompute-reversed-removals', () => {
     expect(body).toEqual({
       dryRun: true,
       direction: 'up',
+      scope: 'reversed',
       owners: 6,
+      nextCursor: null,
       changed: 2,
       up: 2,
       down: 2,
@@ -105,7 +109,10 @@ describe('recompute-reversed-removals', () => {
     await call({});
 
     expect(mocks.getOwnersWithReversalsSince).toHaveBeenCalledWith(expect.anything(), new Date(0));
-    expect(mocks.countRemovalsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 3, 4, 5, 6]);
+    expect(mocks.removalPenaltyWeightsByOwner).toHaveBeenCalledWith(
+      expect.anything(),
+      [1, 2, 3, 4, 5, 6]
+    );
   });
 
   it('writes only increases by default and leaves a decrease owner untouched', async () => {
@@ -119,7 +126,9 @@ describe('recompute-reversed-removals', () => {
     expect(body).toEqual({
       dryRun: false,
       direction: 'up',
+      scope: 'reversed',
       owners: 6,
+      nextCursor: null,
       changed: 2,
       up: 2,
       down: 2,
@@ -139,7 +148,9 @@ describe('recompute-reversed-removals', () => {
     expect(body).toEqual({
       dryRun: false,
       direction: 'all',
+      scope: 'reversed',
       owners: 6,
+      nextCursor: null,
       changed: 4,
       up: 2,
       down: 2,
@@ -150,7 +161,16 @@ describe('recompute-reversed-removals', () => {
   it('dry run under direction=all counts the decrease in changed', async () => {
     const { body } = await call({ direction: 'all' });
 
-    expect(body).toEqual({ dryRun: true, direction: 'all', owners: 6, changed: 4, up: 2, down: 2 });
+    expect(body).toEqual({
+      dryRun: true,
+      direction: 'all',
+      scope: 'reversed',
+      owners: 6,
+      nextCursor: null,
+      changed: 4,
+      up: 2,
+      down: 2,
+    });
     expect(mocks.applyUserScoreUpdates).not.toHaveBeenCalled();
   });
 
@@ -162,6 +182,56 @@ describe('recompute-reversed-removals', () => {
       ['2', { reportsAgainst: 0 }],
     ]);
     expect(body).toMatchObject({ direction: 'up', changed: 2, written: 2 });
+  });
+
+  it('scope=all re-scores every owner with any removal, not only those with a reversal', async () => {
+    mocks.getOwnersWithRemovals.mockResolvedValue([1, 2, 7]);
+    mocks.removalPenaltyWeightsByOwner.mockResolvedValue(new Map([[7, 1]]));
+    mocks.storedScores.mockImplementation((ids: number[]) =>
+      ids.map((id) => ({ id, score: { 1: -1000, 2: 0, 7: -3000 }[id] ?? null }))
+    );
+
+    const { body } = await call({ scope: 'all', direction: 'all', dryRun: 'false' });
+
+    expect(mocks.getOwnersWithReversalsSince).not.toHaveBeenCalled();
+    expect(mocks.removalPenaltyWeightsByOwner).toHaveBeenCalledWith(expect.anything(), [1, 2, 7]);
+    // Owner 1 has nothing left in the window; owner 7 has one removal of three left.
+    expect(mocks.applyUserScoreUpdates.mock.lastCall![1]).toEqual([
+      ['1', { reportsAgainst: 0 }],
+      ['7', { reportsAgainst: -1000 }],
+    ]);
+    expect(body).toMatchObject({ scope: 'all', owners: 3, changed: 2, up: 2, down: 0 });
+  });
+
+  it('scope=all reads one page of owners after the cursor and returns where the next starts', async () => {
+    mocks.getOwnersWithRemovals.mockResolvedValue([11, 12]);
+    mocks.removalPenaltyWeightsByOwner.mockResolvedValue(new Map());
+
+    const { body } = await call({ scope: 'all', cursor: '10', limit: '2' });
+
+    expect(mocks.getOwnersWithRemovals).toHaveBeenCalledWith(expect.anything(), 10, 2);
+    expect(body).toMatchObject({ scope: 'all', owners: 2, nextCursor: 12 });
+  });
+
+  it('scope=all ends the run when a page comes back short', async () => {
+    mocks.getOwnersWithRemovals.mockResolvedValue([13]);
+    mocks.removalPenaltyWeightsByOwner.mockResolvedValue(new Map());
+
+    const { body } = await call({ scope: 'all', cursor: '12', limit: '2' });
+
+    expect(body).toMatchObject({ owners: 1, nextCursor: null });
+  });
+
+  it('pages the reversed scope the same way, by owner id', async () => {
+    const { body } = await call({ cursor: '2', limit: '3' });
+
+    expect(mocks.removalPenaltyWeightsByOwner).toHaveBeenCalledWith(expect.anything(), [3, 4, 5]);
+    expect(body).toMatchObject({ owners: 3, nextCursor: 5 });
+  });
+
+  it('rejects a limit that is not a positive number before reading anything', async () => {
+    await expect(call({ limit: '0' })).rejects.toThrow(/limit/);
+    expect(mocks.getOwnersWithReversalsSince).not.toHaveBeenCalled();
   });
 
   it('rejects an unknown direction before reading or writing anything', async () => {

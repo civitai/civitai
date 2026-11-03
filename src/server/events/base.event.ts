@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import type { EventTurfConfig } from '~/server/events/turf/config';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
@@ -252,7 +253,11 @@ export type EventScoring = EventPointsConfig & {
   newAccountDays: number;
   // Scoring keeps running this long past endDate for late data; the winner is decided after it.
   finalizeAfterMs: number;
+  // Points a team is given outright: they count toward its total, rank and winner from `at`, but
+  // never toward any hat's or person's points.
+  teamAwards?: readonly TeamAward[];
 };
+export type TeamAward = { team: string; points: number; at: Date; reason: string };
 
 // The words a scored event's page shows. The numbers on it (reaction weight, caps, cooldown, what can
 // wear a decoration) are read from `scoring` and the event's decoration definition, never restated
@@ -333,6 +338,8 @@ type HolidayEventDefinition = {
   // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
   bankIndex?: number;
   scoring?: EventScoring;
+  // Hat Turf: team stickers on other people's images (events/turf). Needs `scoring` and `teams`.
+  turf?: EventTurfConfig;
   // Joining grants the team's cosmetic of this design (Cosmetic.data.design) under this claimKey,
   // once per user, only inside the event window. Without it, activateCosmetic keeps the bank-event
   // behaviour. `balance` places users on the event's team-balance list by predicted points instead of

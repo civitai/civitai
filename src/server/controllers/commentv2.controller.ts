@@ -10,6 +10,7 @@ import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.servi
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { assertStorylineVisible } from '~/server/services/storyline.service';
+import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import {
@@ -130,6 +131,18 @@ export async function assertCommentActionable(commentId: number, ctx: CommentRea
   });
 }
 
+// The thread list draws each author's showcase hat; a comment read or saved on its own must carry
+// it too, or the hat drops off where one comment is shown alone: the root of an opened reply thread
+// and the comment a notification links to (both read through getSingle), and an edit or new reply
+// that the client writes back into its caches.
+async function withShowcaseHat<T extends { user: { id: number } | null }>(comment: T) {
+  if (!comment.user) return comment;
+  return {
+    ...comment,
+    user: { ...comment.user, showcaseHat: await getShowcaseHatForUser(comment.user.id) },
+  };
+}
+
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
     const comment = await getComment({ ...input, isModerator: ctx.user?.isModerator ?? false });
@@ -158,7 +171,7 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
       if (blocked) throw throwNotFoundError();
     }
 
-    return comment;
+    return withShowcaseHat(comment);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -244,7 +257,7 @@ export const upsertCommentV2Handler = async ({
       }
     }
 
-    return result;
+    return withShowcaseHat(result);
   } catch (error) {
     throw throwDbError(error);
   }

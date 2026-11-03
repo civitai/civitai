@@ -318,7 +318,20 @@ export const ActionType = [
   // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
   // tracker restart in migrations/README.md); the item, group and section ride in `details`.
   'UserMenu_Click',
+  // Push opt-in funnel, one type with the step in `details.action`. Same Enum16 hazard as above
+  // (migrations/2026-11-03-push-prompt-action.sql, plus the tracker restart in migrations/README.md).
+  'Push_Prompt',
+  // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
+  'Experiment_Exposure',
+  'HatTurf_Action',
 ] as const;
+
+// Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
+// experiment readouts that need only the user id.
+const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
+  'Experiment_Exposure',
+  'HatTurf_Action',
+]);
 export type ActionType = (typeof ActionType)[number];
 
 // No deviceId here. The browser fingerprint that populated the ClickHouse `deviceId`
@@ -776,6 +789,7 @@ export class Tracker {
   // not what a reversible, private product control should leave behind.
   public action(values: { type: ActionType; details?: any }, options?: { skipActorMeta: boolean }) {
     const { details, ...rest } = values;
+    if (ACTOR_META_FREE_ACTION_TYPES.has(values.type)) options = { skipActorMeta: true };
     return this.track(
       'actions',
       {

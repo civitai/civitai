@@ -48,21 +48,14 @@ function reportPushEnableFailure(failure: PushEnableFailure) {
 }
 
 /**
- * The single owner of the browser-side push state: permission, SW registration, and the
- * subscribe/unsubscribe round trips. Registration happens only inside `enable()` — never on page
- * load — so no SW exists for users who never opted in.
+ * The browser's push facts (support, permission, whether it holds a subscription) with no server
+ * round trip. For a surface that only needs to know whether asking makes sense.
  */
-export function usePushSubscription() {
+export function usePushBrowserState() {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useUtils();
-  // One store for the whole browser, not per-hook state: this hook is mounted independently by
-  // PushDeviceToggle and PushDeviceList, and per-instance copies drift apart the moment either one
-  // subscribes or revokes (see the store's own comment).
   const support = usePushSubscriptionStore((s) => s.support);
   const permission = usePushSubscriptionStore((s) => s.permission);
   const subscribed = usePushSubscriptionStore((s) => s.subscribed);
-  const currentEndpoint = usePushSubscriptionStore((s) => s.currentEndpoint);
-  const busy = usePushSubscriptionStore((s) => s.busy);
   const setState = usePushSubscriptionStore((s) => s.set);
 
   // Effect, not render-time: SSR always computes 'unsupported', so deriving during render would
@@ -77,12 +70,28 @@ export function usePushSubscription() {
     // Only look for an existing registration — never create one from an effect.
     navigator.serviceWorker.getRegistration('/sw.js').then(async (registration) => {
       const subscription = await registration?.pushManager.getSubscription();
-      setState({
-        subscribed: !!subscription,
-        currentEndpoint: subscription?.endpoint ?? null,
-      });
+      setState({ subscribed: !!subscription, currentEndpoint: subscription?.endpoint ?? null });
     });
   }, [support, currentUser, setState]);
+
+  return { support, permission, subscribed };
+}
+
+/**
+ * The single owner of the browser-side push state: permission, SW registration, and the
+ * subscribe/unsubscribe round trips. Registration happens only inside `enable()` — never on page
+ * load — so no SW exists for users who never opted in.
+ */
+export function usePushSubscription() {
+  const currentUser = useCurrentUser();
+  const queryUtils = trpc.useUtils();
+  // One store for the whole browser, not per-hook state: this hook is mounted independently by
+  // PushDeviceToggle and PushDeviceList, and per-instance copies drift apart the moment either one
+  // subscribes or revokes (see the store's own comment).
+  const { support, permission, subscribed } = usePushBrowserState();
+  const currentEndpoint = usePushSubscriptionStore((s) => s.currentEndpoint);
+  const busy = usePushSubscriptionStore((s) => s.busy);
+  const setState = usePushSubscriptionStore((s) => s.set);
 
   // The server list is the truth about whether THIS browser's subscription is live. The browser
   // can hold an orphaned subscription (a subscribe call that never reached the server, a device

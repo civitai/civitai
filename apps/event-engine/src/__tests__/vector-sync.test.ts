@@ -2211,6 +2211,24 @@ describe('model stamp by media type', () => {
   });
 });
 
+describe('model stamp reads', () => {
+  test('a confirmed stamp is not read again, and a conflicting one is still refused', async () => {
+    let reads = 0;
+    const client = {
+      getCollection: async () => {
+        reads++;
+        return { config: { metadata: { ...STAMP } } };
+      },
+    };
+    const store = new VectorStore(client as unknown as QdrantClient, 'c');
+    for (let i = 0; i < 5; i++) await store.assertModel(STAMP);
+    expect(reads).toBe(1);
+    await expect(store.assertModel({ ...STAMP, modelRevision: 'r2' })).rejects.toThrow(
+      ModelMismatchError
+    );
+  });
+});
+
 describe('orchestrator rate limits (orchestration #460 guidance)', () => {
   const POLICY = '"inflight-multimodalEmbedding";q=80, "buzz";q=1000;w=60';
   const limited = (r: number) => `"inflight-multimodalEmbedding";r=${r};t=0, "buzz";r=938;t=11`;

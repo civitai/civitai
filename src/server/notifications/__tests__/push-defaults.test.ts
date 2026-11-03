@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
+import { DEFAULT_PUSH_TYPES, getPushTitle } from '~/server/notifications/push.constants';
 import {
   isOptInNotification,
   notificationProcessors,
@@ -34,5 +34,20 @@ describe('DEFAULT_PUSH_TYPES', () => {
 
   it('has no duplicates', () => {
     expect(new Set(DEFAULT_PUSH_TYPES).size).toBe(DEFAULT_PUSH_TYPES.length);
+  });
+});
+
+describe('getPushTitle', () => {
+  it("uses a notice's own title, else the type's display name", () => {
+    expect(getPushTitle('event-reminder', { message: 'x', title: 'Birthday hats' })).toBe(
+      'Birthday hats'
+    );
+    expect(getPushTitle('event-reminder', { message: 'x' })).toBe('Event reminders');
+    expect(getPushTitle('event-reminder', { title: 42 })).toBe('Event reminders');
+    expect(getPushTitle('no-such-type', {})).toBe('Civitai');
+    // Other types carry the content's title there, which must not become the push heading.
+    expect(getPushTitle('cosmetic-shop-item-sold', { title: 'Creator item name' })).toBe(
+      notificationProcessors['cosmetic-shop-item-sold'].displayName
+    );
   });
 });

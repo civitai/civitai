@@ -414,6 +414,12 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   string,
   { writes: string[]; decision: FkDecision; guards?: Record<string, string> }
 > = {
+  // A team hat sticker on someone's image: any visible image in a published post is a target by
+  // design, and placeTurfSticker checks that before the write.
+  'src/server/events/turf/turf.service.ts#placeTurfSticker': {
+    writes: ['imageId'],
+    decision: 'subject',
+  },
   // Called from the daily-challenge jobs, and from upsertUserChallenge with its resolved cover.
   'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeRecord': {
     writes: ['coverImageId: input.coverImageId'],
@@ -422,6 +428,13 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeWinner': {
     writes: ['imageId: input.imageId'],
     decision: 'server-derived',
+  },
+  // The New Order final-ratings settle SQL: a ClickHouse JOIN condition, not an assignment.
+  'src/server/games/new-order/final-ratings-sql.ts#<module>': {
+    writes: [
+      'new.imageId = orig.imageId WHERE orig.latestCreatedAt <= new.createdAt + INTERVAL ${SETTLE_CLOCK_MARGIN_SECONDS} SECOND`',
+    ],
+    decision: 'not-a-write',
   },
   'src/server/jobs/daily-challenge-processing.ts#createChallengeFromSelection': {
     writes: ['imageId: coverImageId'],
@@ -601,12 +614,6 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/crucible.service.ts#withdrawCrucibleEntry': {
     writes: ['imageId: null'],
     decision: 'clears',
-  },
-  'src/server/services/games/new-order.service.ts#processFinalRatings': {
-    writes: [
-      "new.imageId = orig.imageId WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte'",
-    ],
-    decision: 'not-a-write',
   },
   'src/server/services/image.service.ts#createEntityImages': {
     writes: ['imageId: image.id'],

@@ -63,6 +63,12 @@ describe('minting an orchestrator token', () => {
     expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
   });
 
+  it('is refused for an account with no row', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null as never);
+    await expect(mint()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
+  });
+
   it('reads the ban from the primary, not a replica', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(standing(new Date()));
     dbMock.dbRead.user.findUnique.mockResolvedValue(standing(null));
