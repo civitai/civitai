@@ -38,6 +38,12 @@ import {
 } from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
+import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
+import {
+  SFW_DESCRIPTION_MAX_LENGTH,
+  SFW_DESCRIPTION_TOO_LONG_MESSAGE,
+  SFW_NAME_TOO_LONG_MESSAGE,
+} from '~/shared/utils/model-sfw-face';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -220,15 +226,16 @@ export const modelGallerySettingsInput = z.object({
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const checkSfwFaceSchema = z.object({
-  sfwName: z.string().max(255).optional(),
-  sfwDescription: z.string().max(50000).optional(),
+  sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH).optional(),
+  sfwDescription: z.string().max(SFW_DESCRIPTION_MAX_LENGTH).optional(),
   modelId: z.number().optional(),
 });
 export type CheckSfwFaceInput = z.infer<typeof checkSfwFaceSchema>;
 
 export const draftSfwFaceSchema = z.object({
+  // The .red name, which may predate its own cap.
   name: z.string().trim().min(1).max(255),
-  description: z.string().max(50000).nullish(),
+  description: z.string().max(SFW_DESCRIPTION_MAX_LENGTH).nullish(),
   modelId: z.number().optional(),
 });
 
@@ -237,8 +244,10 @@ export const modelUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
-  sfwName: z.string().trim().max(255).nullish(),
-  sfwDescription: getSanitizedStringSchema().nullish(),
+  sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH, SFW_NAME_TOO_LONG_MESSAGE).nullish(),
+  sfwDescription: getSanitizedStringSchema()
+    .pipe(z.string().max(SFW_DESCRIPTION_MAX_LENGTH, SFW_DESCRIPTION_TOO_LONG_MESSAGE))
+    .nullish(),
   coverImageId: z.number().int().positive().nullish(),
   sfwCoverImageId: z.number().int().positive().nullish(),
   type: z.enum(ModelType),
