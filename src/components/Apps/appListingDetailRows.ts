@@ -47,7 +47,11 @@ import {
 } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
-import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import {
+  offsiteContentRatingColor,
+  offsiteContentRatingLabel,
+} from '~/shared/constants/browsingLevel.constants';
+import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /** A single label/value row of the Details panel. */
@@ -87,6 +91,24 @@ export type ListingDetailRow = {
    * renders — a fragment link to an id nothing renders fails SILENTLY.
    */
   anchorId?: string;
+  /**
+   * When set, the row's value renders as a SAME-SITE link to this store URL — the `/apps`
+   * grid filtered to the listing's category. Only the `category` row sets it, and only
+   * outside `preview` (the moderator review renders this panel inside a review surface,
+   * where a link would navigate the reviewer away from the decision they are making).
+   *
+   * A THIRD link field rather than a reuse of {@link href} or {@link anchorId}, for the
+   * reason `anchorId` gives: `href` obliges `target="_blank"` + `noopener` (right for an
+   * outbound third-party URL, wrong for our own store), and `anchorId` is a fragment on
+   * this page. A same-site navigation is neither.
+   */
+  storeHref?: string;
+  /**
+   * When set, the value renders as a coloured PILL in this Mantine colour instead of as
+   * text. Only the `rating` row sets it, from `offsiteContentRatingColor` — the site's
+   * existing browsing-level colours, not a palette of this panel's own.
+   */
+  pillColor?: string;
   /**
    * Mantine colour token for the value, when the value carries a verdict. Only the
    * `reviews` row sets it (the rating ladder's colour); everything else renders in the
@@ -142,10 +164,14 @@ export function buildListingDetailRows(
   // value as its fallback, so an unknown/legacy rating or a category added after
   // this client shipped degrades to the stored string rather than to a blank row.
   if (detail.category) {
+    // A link only for a category the store can actually filter by — see
+    // `appsStoreCategoryHref` — and never in preview (see `storeHref`).
+    const storeHref = opts.preview ? null : appsStoreCategoryHref(detail.category);
     rows.push({
       key: 'category',
       label: 'Category',
       value: marketplaceCategoryLabel(detail.category),
+      ...(storeHref ? { storeHref } : {}),
     });
   }
   if (detail.contentRating) {
@@ -153,6 +179,7 @@ export function buildListingDetailRows(
       key: 'rating',
       label: 'Rating',
       value: offsiteContentRatingLabel(detail.contentRating),
+      pillColor: offsiteContentRatingColor(detail.contentRating),
     });
   }
 

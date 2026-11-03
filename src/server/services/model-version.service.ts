@@ -30,6 +30,7 @@ import {
   CacheTTL,
   constants,
   isNonCommercialBaseModel,
+  notCommerciallyAvailableMessage,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -2719,6 +2720,10 @@ export const earlyAccessPurchase = async ({
 
   if (!modelVersion) {
     throw throwNotFoundError('Model version not found.');
+  }
+
+  if (isNonCommercialBaseModel(modelVersion.baseModel)) {
+    throw throwBadRequestError(notCommerciallyAvailableMessage(modelVersion.baseModel));
   }
 
   if (userId === modelVersion.model.userId) {

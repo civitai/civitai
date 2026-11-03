@@ -22,6 +22,8 @@ type ModelModActivity = {
     | 'setPoiAutoHash'
     | 'revertPoiAutoHash'
     | 'dismissPoiHashMatch'
+    | 'approveLockReview'
+    | 'rejectLockReview'
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;

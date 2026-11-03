@@ -33,6 +33,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { withRetries } from '~/server/utils/errorHandling';
 import { AuctionType, BuzzAccountType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
+import { stopsCreatorEarnings } from '~/server/common/constants';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
@@ -85,7 +86,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) =>
     }
     if (steps.includes('3')) {
       log('Running step 3');
-      await createRecurringBids(now);
+      await _createRecurringBids(now);
       log('-----------');
     }
     if (steps.includes('4')) {
@@ -113,7 +114,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) =>
       }
 
       if (currentStep <= 2) {
-        await createRecurringBids(now);
+        await _createRecurringBids(now);
         await dbKV.set(kvKey, 3);
         log('-----------');
       }
@@ -161,6 +162,22 @@ const cleanOldCollectionItems = async (now: Dayjs) => {
   log(oldIds.length, 'busted old cache');
 };
 
+// A version can't win once it's unpublished, or once it's on a base model that can't be promoted for
+// Buzz; both can change after the bid was placed.
+export const _ineligibleModelVersionIds = async (entityIds: number[]) => {
+  const ineligible = new Set<number>();
+  if (!entityIds.length) return ineligible;
+  const versions = await dbWrite.modelVersion.findMany({
+    where: { id: { in: entityIds } },
+    select: { id: true, status: true, baseModel: true },
+  });
+  for (const mv of versions) {
+    if (mv.status !== ModelStatus.Published || stopsCreatorEarnings(mv.baseModel))
+      ineligible.add(mv.id);
+  }
+  return ineligible;
+};
+
 const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers = true) => {
   // Get the bids from previous auctions
   const allAuctionsWithBids = await _fetchAuctionsWithBids(now);
@@ -176,20 +193,13 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
     if (auctionRow.bids.length > 0) {
       const sortedBids = prepareBids(auctionRow, true);
 
-      // Disqualify bids on non-Published ModelVersions so they get refunded as losers
-      const ineligibleEntityIds = new Set<number>();
-      if (auctionRow.auctionBase.type === AuctionType.Model) {
-        const entityIds = [...new Set(sortedBids.map((b) => b.entityId))];
-        if (entityIds.length) {
-          const ineligible = await dbWrite.modelVersion.findMany({
-            where: { id: { in: entityIds }, status: { not: ModelStatus.Published } },
-            select: { id: true },
-          });
-          for (const mv of ineligible) ineligibleEntityIds.add(mv.id);
-          if (ineligibleEntityIds.size) {
-            log('disqualified non-Published entity ids', [...ineligibleEntityIds].join(','));
-          }
-        }
+      // Disqualified bids are refunded as losers.
+      const ineligibleEntityIds =
+        auctionRow.auctionBase.type === AuctionType.Model
+          ? await _ineligibleModelVersionIds([...new Set(sortedBids.map((b) => b.entityId))])
+          : new Set<number>();
+      if (ineligibleEntityIds.size) {
+        log('disqualified entity ids', [...ineligibleEntityIds].join(','));
       }
 
       const { winners, losers } = sortedBids.reduce(
@@ -579,7 +589,7 @@ export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: Wi
   });
 };
 
-const createRecurringBids = async (now: Dayjs) => {
+export const _createRecurringBids = async (now: Dayjs) => {
   // Insert recurring bids today's auction
   const recurringBids = await dbWrite.bidRecurring.findMany({
     where: {
@@ -653,16 +663,20 @@ const createRecurringBids = async (now: Dayjs) => {
           continue;
         }
 
-        // If green accountType, re-validate safety before charging
-        if (
-          recurringBid.accountType === 'green' &&
-          recurringBid.auctionBase.type === AuctionType.Model
-        ) {
+        if (recurringBid.auctionBase.type === AuctionType.Model) {
           const mv = await dbWrite.modelVersion.findFirst({
             where: { id: recurringBid.entityId },
-            select: { model: { select: { nsfw: true, poi: true, minor: true } } },
+            select: { baseModel: true, model: { select: { nsfw: true, poi: true, minor: true } } },
           });
-          if (!mv || mv.model.nsfw || mv.model.poi || mv.model.minor) {
+          if (mv && stopsCreatorEarnings(mv.baseModel)) {
+            log(`Skipping recurring bid ${recurringBid.id}: not commercially available`);
+            continue;
+          }
+          // If green accountType, re-validate safety before charging
+          if (
+            recurringBid.accountType === 'green' &&
+            (!mv || mv.model.nsfw || mv.model.poi || mv.model.minor)
+          ) {
             log(`Skipping recurring bid ${recurringBid.id}: model not allowed on green`);
             continue;
           }

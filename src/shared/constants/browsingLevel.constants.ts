@@ -175,6 +175,22 @@ export function offsiteContentRatingLabel(rating: string): string {
 }
 
 /**
+ * Stored content-rating value → the Mantine colour of its rating pill.
+ *
+ * NOT A NEW PALETTE: each rating resolves to its maturity ceiling
+ * ({@link nsfwLevelFromContentRating}) and takes that level's colour from
+ * {@link nsfwLevelColors}, the map the site already colours browsing levels with — so a PG-13
+ * app pill and a PG-13 badge elsewhere are the same yellow. `g` shares `pg`'s PG ceiling and
+ * therefore its colour. An out-of-ladder value is `gray`, never the fail-closed PG green that
+ * `nsfwLevelFromContentRating` would give it: a colour that reads "safe" must not be inferred
+ * from a value nobody recognises.
+ */
+export function offsiteContentRatingColor(rating: string): string {
+  if (!isOffsiteContentRating(rating)) return 'gray';
+  return nsfwLevelColors[nsfwLevelFromContentRating(rating)] ?? 'gray';
+}
+
+/**
  * Map an off-site content rating (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
  * `NsfwLevel` bit its published assets may carry. Reuses the canonical
  * `orchestratorNsfwLevelMap` (which lacks the SFW `g` rating → PG). A null/unknown
