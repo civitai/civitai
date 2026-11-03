@@ -5119,6 +5119,7 @@ export interface KnightsVote {
   converted: boolean;
   consequence: string | null;
   noticedAt: Date | null;
+  blockReason: string | null;
 }
 
 export interface KnightsPlayer {
