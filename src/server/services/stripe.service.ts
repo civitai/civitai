@@ -52,6 +52,9 @@ const log = createLogger('stripe', 'blue');
 // Stamped on `cancellation_details.comment` when a ban / restriction flow schedules a cancel, so
 // reinstateSubscription can tell our cancellation from the member's own.
 const MODERATION_CANCELLATION = 'civitai-moderation-cancel';
+// A gift subscription's own `cancel_at` (the end of all its gifted months), saved when a moderation
+// cancel cuts it to the current period so a reinstate can put it back.
+const MODERATION_PREV_CANCEL_AT = 'civitai_moderation_prev_cancel_at';
 
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {
   const stripe = await getServerStripe();
@@ -1366,6 +1369,7 @@ export const cancelSubscription = async ({
           in: ['active', 'past_due', 'trialing'],
         },
       },
+      orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
     if (!subscription) return;
@@ -1377,13 +1381,17 @@ export const cancelSubscription = async ({
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   if (atPeriodEnd) {
-    // A cancellation already scheduled is the member's own (or a gift's `cancel_at`): leave it as
-    // it is and don't stamp it, or reinstating would resume a membership they chose to end.
+    // A cancellation already due by period end is the member's own (or a gift's last month): leave
+    // it and don't stamp it, or reinstating would resume a membership they chose to end.
     const live = await stripe.subscriptions.retrieve(subscriptionId);
-    if (live.cancel_at_period_end || live.cancel_at) return;
+    if (live.cancel_at_period_end) return;
+    if (live.cancel_at && live.cancel_at <= live.current_period_end) return;
     await stripe.subscriptions.update(subscriptionId, {
       cancel_at_period_end: true,
       cancellation_details: { comment: MODERATION_CANCELLATION },
+      ...(live.cancel_at
+        ? { metadata: { [MODERATION_PREV_CANCEL_AT]: String(live.cancel_at) } }
+        : {}),
     });
     return;
   }
@@ -1420,6 +1428,8 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
       product: { provider: 'Stripe' },
       status: { in: ['active', 'past_due', 'trialing'] },
     },
+    // A lagging row can still say false, so this only prefers the cancelling row; Stripe decides.
+    orderBy: [{ cancelAtPeriodEnd: 'desc' }, { createdAt: 'desc' }],
     select: { id: true },
   });
   if (!subscription) return;
@@ -1431,6 +1441,18 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
   const live = await stripe.subscriptions.retrieve(subscription.id);
   if (!live.cancel_at_period_end) return;
   if (live.cancellation_details?.comment !== MODERATION_CANCELLATION) return;
+
+  const prevCancelAt = Number(live.metadata?.[MODERATION_PREV_CANCEL_AT]);
+  if (prevCancelAt) {
+    // A gift: restore its own end date. Clearing the cancel would renew it into paid billing.
+    if (prevCancelAt <= live.current_period_end) return;
+    await stripe.subscriptions.update(subscription.id, {
+      cancel_at: prevCancelAt,
+      proration_behavior: 'none',
+      metadata: { [MODERATION_PREV_CANCEL_AT]: '' },
+    });
+    return;
+  }
 
   await stripe.subscriptions.update(subscription.id, { cancel_at_period_end: false });
 };

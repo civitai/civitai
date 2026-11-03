@@ -13,7 +13,16 @@ type FakeSub = {
   status: string;
   cancel_at_period_end: boolean;
   cancel_at: number | null;
+  current_period_end: number;
+  metadata: Record<string, string>;
   cancellation_details: { comment: string | null; reason: string | null } | null;
+};
+
+type UpdateParams = {
+  cancel_at_period_end?: boolean;
+  cancel_at?: number;
+  cancellation_details?: { comment?: string };
+  metadata?: Record<string, string>;
 };
 
 const { subs, retrieve, update, PERIOD_END } = vi.hoisted(() => {
@@ -27,29 +36,36 @@ const { subs, retrieve, update, PERIOD_END } = vi.hoisted(() => {
       if (!sub) throw new Error(`No such subscription: ${id}`);
       return structuredClone(sub);
     }),
-    // Mirrors Stripe for the fields under test: setting cancel_at_period_end also sets cancel_at
-    // and records the cancellation with whatever comment came with it; clearing it clears both.
-    update: vi.fn(
-      async (
-        id: string,
-        params: { cancel_at_period_end?: boolean; cancellation_details?: { comment?: string } }
-      ) => {
-        const sub = subs.get(id)!;
-        if (params.cancel_at_period_end === true) {
-          sub.cancel_at_period_end = true;
-          sub.cancel_at = PERIOD_END;
-          sub.cancellation_details = {
-            comment: params.cancellation_details?.comment ?? null,
-            reason: 'cancellation_requested',
-          };
-        } else if (params.cancel_at_period_end === false) {
-          sub.cancel_at_period_end = false;
-          sub.cancel_at = null;
-          sub.cancellation_details = { comment: null, reason: null };
+    // Mirrors Stripe (classic billing mode) for the fields under test: cancel_at_period_end:true
+    // sets cancel_at to the period end, replacing any earlier cancel_at, and records the
+    // cancellation with whatever comment came with it; clearing it clears both. A cancel_at past
+    // the period end leaves cancel_at_period_end false. Metadata merges, '' unsets a key.
+    update: vi.fn(async (id: string, params: UpdateParams) => {
+      const sub = subs.get(id)!;
+      if (params.metadata) {
+        for (const [key, value] of Object.entries(params.metadata)) {
+          if (value === '') delete sub.metadata[key];
+          else sub.metadata[key] = value;
         }
-        return structuredClone(sub);
       }
-    ),
+      if (params.cancel_at !== undefined) {
+        sub.cancel_at = params.cancel_at;
+        sub.cancel_at_period_end = params.cancel_at === sub.current_period_end;
+      }
+      if (params.cancel_at_period_end === true) {
+        sub.cancel_at_period_end = true;
+        sub.cancel_at = sub.current_period_end;
+        sub.cancellation_details = {
+          comment: params.cancellation_details?.comment ?? null,
+          reason: 'cancellation_requested',
+        };
+      } else if (params.cancel_at_period_end === false) {
+        sub.cancel_at_period_end = false;
+        sub.cancel_at = null;
+        sub.cancellation_details = { comment: null, reason: null };
+      }
+      return structuredClone(sub);
+    }),
   };
 });
 
@@ -82,6 +98,8 @@ const activeSub = (overrides: Partial<FakeSub> = {}) => {
     status: 'active',
     cancel_at_period_end: false,
     cancel_at: null,
+    current_period_end: PERIOD_END,
+    metadata: {},
     cancellation_details: null,
     ...overrides,
   });
@@ -104,6 +122,49 @@ beforeEach(() => {
   account.bannedAt = null;
   account.muted = false;
   dbMock.dbWrite.user.findUnique.mockImplementation((async () => ({ ...account })) as never);
+});
+
+describe('gift subscriptions (cancel_at = the end of all gifted months)', () => {
+  const GIFT_END = PERIOD_END + 5 * 30 * 86_400;
+
+  it('a ban cuts a gift to the current period, and lifting it restores the gift end', async () => {
+    activeSub({ cancel_at: GIFT_END });
+
+    account.bannedAt = new Date();
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+
+    const banned = subs.get(SUB_ID)!;
+    expect(banned.cancel_at_period_end).toBe(true);
+    expect(banned.cancel_at).toBe(PERIOD_END);
+
+    account.bannedAt = null;
+    await reinstateSubscription({ userId: USER_ID });
+
+    const lifted = subs.get(SUB_ID)!;
+    // Ends on the gift's own date; clearing the cancel instead would renew it into paid billing.
+    expect(lifted.cancel_at).toBe(GIFT_END);
+    expect(lifted.cancel_at_period_end).toBe(false);
+  });
+
+  it('a second ban after the restore cuts the gift again and still restores it', async () => {
+    activeSub({ cancel_at: GIFT_END });
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+    await reinstateSubscription({ userId: USER_ID });
+
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+    expect(subs.get(SUB_ID)!.cancel_at).toBe(PERIOD_END);
+    await reinstateSubscription({ userId: USER_ID });
+
+    expect(subs.get(SUB_ID)!.cancel_at).toBe(GIFT_END);
+  });
+
+  it('leaves a gift that already ends within the current period alone', async () => {
+    activeSub({ cancel_at: PERIOD_END - 86_400 });
+
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+
+    expect(update).not.toHaveBeenCalled();
+  });
 });
 
 describe('moderation cancel, then reinstate', () => {
@@ -224,13 +285,5 @@ describe('cancelSubscription({ atPeriodEnd })', () => {
 
     expect(update).not.toHaveBeenCalled();
     expect(subs.get(SUB_ID)!.cancellation_details?.comment).toBe('too expensive');
-  });
-
-  it('writes nothing over a gift subscription that already ends on cancel_at', async () => {
-    activeSub({ cancel_at: Math.floor(Date.now() / 1000) + 86_400 });
-
-    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
-
-    expect(update).not.toHaveBeenCalled();
   });
 });
