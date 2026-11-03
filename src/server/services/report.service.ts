@@ -860,9 +860,7 @@ export async function reopenAppeal({
       data: {
         status: AppealStatus.Pending,
         appealMessage: message,
-        // The moderator queue sorts and displays on createdAt, so leaving the
-        // original request's stamp puts a months-old row ahead of fresh ones under
-        // a date that describes a request nobody is being asked to review.
+        // Restamp: the moderator queue sorts on createdAt, so the old stamp would rank a stale row first.
         createdAt: new Date(),
         resolvedAt: null,
         resolvedBy: null,

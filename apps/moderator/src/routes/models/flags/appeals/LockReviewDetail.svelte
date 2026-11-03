@@ -1,7 +1,6 @@
 <script module lang="ts">
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
 
-  // Reject first, as in the flag appeal's bar.
   const RULINGS = [
     {
       verdict: 'Rejected',

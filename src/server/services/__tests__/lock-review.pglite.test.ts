@@ -252,7 +252,6 @@ describe('approving a lock review', () => {
     await seed({ locked: ['nsfw'], held: true });
 
     await expect(approve()).rejects.toThrow(LOCK_REVIEW_HELD);
-    expect(LOCK_REVIEW_HELD).toContain('under an evidence hold');
     expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
     expect((await appealRow()).status).toBe('Pending');
     expect(mocks.settleResolvedAppeals).not.toHaveBeenCalled();

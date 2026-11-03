@@ -172,8 +172,8 @@ export async function createEntityAppealHandler({
           throw throwBadRequestError('Your review request for this model is already under review');
         }
 
-        // Asking again after a denial is intended. Each kind reopens only its own row, so neither
-        // erases the other's record: the lock review's cooldown, the flag appeal's fee count.
+        // Each kind reopens only its own row, so neither erases the other's record (lock review
+        // cooldown, flag appeal fee count).
         const own = await latestModelAppealOfKind({
           modelId: input.entityId,
           userId,
