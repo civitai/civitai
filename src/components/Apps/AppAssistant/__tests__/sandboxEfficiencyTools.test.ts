@@ -171,6 +171,94 @@ describe('sandbox__run_checks in the gate', () => {
   });
 });
 
+// The seam with the sandbox: these reports are copied, line for line, from what the sandbox MCP
+// server's run_checks writes (formatChecks in civitai/talos-infra
+// applications/sandbox-mcp/src/checks.ts): `exit_code: <overall>`, then one
+// `<name>: exit_code <n> (<command>, <secs>s[, timed out])` line per check, then a blank line and
+// each failed check's output. When that format changes, change these with it.
+describe('run_checks reports in the sandbox’s own format', () => {
+  const PASS = [
+    'exit_code: 0',
+    'test: exit_code 0 (npm test, 3.1s)',
+    'typecheck: exit_code 0 (npx tsc --noEmit, 5.2s)',
+    '',
+  ].join('\n');
+  const MIXED = [
+    'exit_code: 1',
+    'test: exit_code 0 (npm test, 3.1s)',
+    'typecheck: exit_code 2 (npx tsc --noEmit, 5.2s)',
+    '',
+    '--- typecheck output (last 2 lines) ---',
+    "src/a.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
+    'Found 1 error in src/a.ts:1',
+    '',
+  ].join('\n');
+  const TIMED_OUT = [
+    'exit_code: 1',
+    'test: exit_code 0 (npm test, 3.1s)',
+    'typecheck: exit_code 124 (npx tsc --noEmit, 120.0s, timed out)',
+    '',
+    '--- typecheck output (last 1 lines) ---',
+    'still checking…',
+    '',
+  ].join('\n');
+  // A failing check whose own output prints a passing summary line: the summary above it decides.
+  const ECHOED = [
+    'exit_code: 1',
+    'test: exit_code 1 (npm test, 3.1s)',
+    'typecheck: exit_code 0 (npx tsc --noEmit, 5.2s)',
+    '',
+    '--- test output (last 3 lines) ---',
+    'test: exit_code 0',
+    'typecheck: exit_code 0',
+    'FAIL src/a.test.ts',
+    '',
+  ].join('\n');
+  const report = (output: string): ToolResult => ({
+    name: RUN_CHECKS,
+    input: { cwd: 'my-app' },
+    output,
+    isError: false,
+  });
+
+  it('reads each check’s exit code from its summary line', () => {
+    expect(checkExitCodesOf(PASS)).toEqual({ tests: 0, typecheck: 0 });
+    expect(checkExitCodesOf(MIXED)).toEqual({ tests: 0, typecheck: 2 });
+    expect(checkExitCodesOf(TIMED_OUT)).toEqual({ tests: 0, typecheck: 124 });
+    expect(checkExitCodesOf(ECHOED)).toEqual({ tests: 1, typecheck: 0 });
+  });
+
+  it('a passing report lets report_ready through', async () => {
+    const gate = await gateWith(ALL);
+    gate.onToolResult(report(PASS));
+    expect(ready(gate)).toEqual({ allow: true });
+  });
+
+  it('a failed or timed-out typecheck fails only the typecheck', async () => {
+    for (const output of [MIXED, TIMED_OUT]) {
+      const gate = await gateWith(ALL);
+      gate.onToolResult(report(output));
+      expect(ready(gate)).toEqual({
+        refuse:
+          'Not ready yet. The last typecheck failed. Fix it, then run sandbox__run_checks with cwd <blockId> again. Then call report_ready again.',
+      });
+    }
+  });
+
+  it('a passing line in a failed check’s output does not pass it', async () => {
+    const gate = await gateWith(ALL);
+    gate.onToolResult(report(ECHOED));
+    expect(ready(gate)).toEqual({
+      refuse:
+        'Not ready yet. The last test run failed. Fix it, then run sandbox__run_checks with cwd <blockId> again. Then call report_ready again.',
+    });
+    // Nor does one when the summary line is missing: only the lines before the output count.
+    expect(
+      checkExitCodesOf('exit_code: 1\n\n--- test output (last 1 lines) ---\ntest: exit_code 0\n')
+    ).toEqual({});
+  });
+});
+
 describe('the sandbox’s newer tools', () => {
   it('are read from its own tool list', () => {
     expect(
