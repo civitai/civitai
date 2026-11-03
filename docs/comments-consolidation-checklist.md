@@ -677,10 +677,12 @@ Event-engine / metrics:
       table it was written to; `comment-v2.ts` skips those surfaces, so either service can deploy
       first (a test pins `COMMENT_V3_SURFACES` to `v3WriteSurfaces`). The old handlers retire in
       Phase 6. Code built 2026-10-29: `REPLICA IDENTITY FULL` (`scripts/sql/replica-identity.sql`),
-      `public.CommentV3` in `apps/event-engine/src/config/index.ts` (the Debezium manager updates
-      the connector's `table.include.list`, the filtered publication and creates the topic from
-      that list), `postgres.CommentV3` in `scripts/create-kafka-topics.ts`. `REPLICA IDENTITY FULL` applied in prod 2026-10-30. Still to provision before the stage B deploy: the topic and
-      the CDC role's read access (infra owner), then the event-engine release
+      `public.CommentV3` in `apps/event-engine/src/config/index.ts` (the connector's
+      `table.include.list`; tables are added to the publication by hand),
+      `postgres.CommentV3` in `scripts/create-kafka-topics.ts`. CDC live in prod 2026-11-02:
+      generated columns published, `REPLICA IDENTITY FULL`, table in the publication. Apply any
+      change only through the script: without the published generated columns, Postgres 18
+      refuses every write to the table
 - [ ] `ModelMetric.commentCount` stays **distinct commenters** — verify post-cutover
 - [ ] Comment-count event continuity verified (feeds `update-user-score.ts`, search indexes,
       stat caches); full search reindex only if a count source moved discontinuously

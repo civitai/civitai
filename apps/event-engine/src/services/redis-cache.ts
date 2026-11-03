@@ -123,7 +123,7 @@ export class RedisCache {
 
     const metricKey = this.buildCacheKey(event.entityType, event.entityId)
 
-    // Dedupe on the SAME tuple ClickHouse's entityMetricEvents ReplacingMergeTree
+    // Dedupe on the SAME tuple ClickHouse's entityMetricEvents_month ReplacingMergeTree
     // dedups on — (entityType, entityId, metricType, userId, createdAt) — so the
     // cache and CH collapse duplicates identically and can't diverge. createdAt
     // is the deterministic Debezium source.ts_ms (see deriveEventTimestamp), so a
