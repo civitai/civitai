@@ -118,3 +118,35 @@ export const createExternalCsamReportSchema = z.object({
     .optional(),
 });
 // #endregion
+
+const cyberTipNumber = z.number().int().positive().max(9_999_999_999);
+const priorCTReportsSchema = cyberTipNumber.array().max(20).optional();
+
+export const generatorEvidenceUserSchema = z.object({ userId: z.number().int().positive() });
+
+export const generatorEvidenceWorkflowsSchema = generatorEvidenceUserSchema.extend({
+  cursor: z.string().max(200).optional(),
+});
+
+export type PreserveGeneratorEvidenceSchema = z.infer<typeof preserveGeneratorEvidenceSchema>;
+export const preserveGeneratorEvidenceSchema = generatorEvidenceUserSchema
+  .extend({
+    workflowIds: z.string().min(1).max(100).array().max(100).default([]),
+    triggers: z
+      .object({
+        restrictionId: z.number().int().positive(),
+        index: z.number().int().min(0).max(10_000),
+      })
+      .array()
+      .max(200)
+      .default([]),
+    priorCTReports: priorCTReportsSchema,
+  })
+  .refine((input) => input.workflowIds.length + input.triggers.length > 0, {
+    message: 'Pick at least one workflow or trigger.',
+  });
+
+export const approveGeneratorEvidenceSchema = generatorEvidenceUserSchema.extend({
+  reportId: z.number().int().positive(),
+  priorCTReports: priorCTReportsSchema,
+});

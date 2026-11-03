@@ -67,6 +67,19 @@ import type { CsamSupplementalDetails } from '~/server/services/csam-supplementa
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
+import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
+import {
+  isAwaitingEvidenceApproval,
+  isGeneratorEvidenceDetails,
+} from '~/server/services/generator-evidence/evidence-meta';
+import {
+  evidenceFileDetails,
+  evidenceFilesToSend,
+  evidenceReportInfo,
+  readVerifiedEvidence,
+} from '~/server/services/generator-evidence/evidence-payload';
+import { readEvidenceObject, sha256Hex } from '~/server/services/generator-evidence/evidence-store';
+import { getViewedEvidence } from '~/server/services/generator-evidence/evidence-views';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
 import {
@@ -265,7 +278,9 @@ export async function getCsamReportStats() {
 
 export async function getCsamsToReport() {
   const data = await dbRead.csamReport.findMany({ where: { reportSentAt: null } });
-  return data as unknown as CsamReportProps[];
+  return data.filter(
+    (report) => !isAwaitingEvidenceApproval(report.details)
+  ) as unknown as CsamReportProps[];
 }
 
 export async function getCsamsToArchive() {
@@ -1401,6 +1416,7 @@ export async function getViewedImageIds(
 
 async function reportGenerationData(claim: SendClaim) {
   const { report } = claim;
+  if (isGeneratorEvidenceDetails(report.details)) return reportPreservedEvidence(claim);
   const initialReport = await getInitialReportData(claim);
   if (!initialReport) return;
 
@@ -1500,6 +1516,91 @@ async function reportGenerationData(claim: SendClaim) {
       },
       'error'
     );
+}
+
+/**
+ * A report of preserved generator evidence: every file is the copy made at preserve time, read back and
+ * checked against its sha256 before the CyberTip is opened. Nothing is fetched from a URL.
+ */
+async function reportPreservedEvidence(claim: SendClaim) {
+  const { report } = claim;
+  const details = report.details as unknown as GeneratorEvidenceDetails;
+  if (!details.generatorEvidence.approvedAt)
+    return logSendLine(claim, 'send-awaiting-approval', {
+      message: `report ${report.id} waits for a moderator to approve its evidence`,
+    });
+  const initialReport = await getInitialReportData(claim);
+  if (!initialReport) return;
+
+  const files = evidenceFilesToSend(details);
+  if (!files.length)
+    return logNoFiles(claim, `report ${report.id} has no preserved generator file`);
+
+  const reads = await Limiter({ batchSize: 1, limit: 2 }).process(files, ([file]) =>
+    readVerifiedEvidence(file.blob, readEvidenceObject, sha256Hex).then((read) => ({ file, read }))
+  );
+  const mismatched = reads.filter(({ read }) => !read.ok && read.shaMismatch);
+  if (mismatched.length)
+    return logSendFailure(
+      report,
+      new Error(`${mismatched.length} preserved file(s) no longer match their sha256`),
+      'evidence-sha-mismatch'
+    );
+  const unread = reads.filter(({ read }) => !read.ok);
+  if (unread.length)
+    return logSendFailure(
+      report,
+      new Error(`${unread.length} preserved file(s) could not be read`),
+      'archive-data'
+    );
+
+  // Read before the CyberTip is opened: a view recorded once the send has begun does not count.
+  let viewed: Map<string, number[]>;
+  try {
+    viewed = await getViewedEvidence(
+      report.id,
+      files.map(({ blob }) => blob.blobId)
+    );
+  } catch (e) {
+    return logSendFailure(report, e, 'send-view-check');
+  }
+
+  const priorCTReports = details.generatorEvidence.priorCTReports;
+  const notCarried = evidenceReportInfo(details);
+  const toSend = reads.flatMap(({ file, read }) => (read.ok ? [{ file, read }] : []));
+  let sending: ReturnType<typeof sendEach> | undefined;
+  await sendCyberTip(
+    claim,
+    {
+      ...initialReport,
+      ...(priorCTReports?.length && {
+        personOrUserReported: { ...initialReport.personOrUserReported, priorCTReports },
+      }),
+      ...(notCarried.length && { additionalInfo: notCarried.join('\n') }),
+    },
+    {
+      sendFiles: async (reportId) => {
+        sending = sendEach(toSend, async ({ file, read }) => {
+          const bytes = read.bytes as Uint8Array<ArrayBuffer>;
+          const {
+            data: { fileId, hash },
+          } = await uploadToCyberTip(
+            claim,
+            blobToFile(new Blob([bytes], { type: read.contentType }), file.blob.blobId)
+          );
+          const viewedByEsp = viewed.has(file.blob.blobId);
+          await cybertipClient.submitFileDetails({
+            reportId,
+            fileId,
+            ...evidenceFileDetails(file, viewedByEsp),
+          });
+          return { blobId: file.blob.blobId, fileId, hash, viewedByEsp };
+        });
+        return { generatedImageUploads: await sending.sent };
+      },
+      beforeCancel: async () => sending?.settled(),
+    }
+  );
 }
 
 async function reportTrainingData(claim: SendClaim) {
@@ -2650,7 +2751,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
     const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
     const namedUrls = new Set(
-      (report.details?.generatedImages ?? []).flatMap(({ blobs }) => blobs.map(({ url }) => url))
+      (report.details?.generatedImages ?? []).flatMap(({ blobs }) =>
+        blobs.flatMap(({ url }) => (url ? [url] : []))
+      )
     );
     const imageUrls = [
       ...new Set([

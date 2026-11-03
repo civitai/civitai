@@ -178,9 +178,15 @@ type SiteAlertModActivity = {
   activity: 'post' | 'edit' | 'extend' | 'end';
 };
 
+type CsamReportModActivity = {
+  entityType: 'csamReport';
+  activity: `generatorEvidence:view:${string}`;
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
+  | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
   | ImageTagModActivity

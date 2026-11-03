@@ -359,6 +359,78 @@ describe('a second report folded into an unsent one', () => {
     });
   });
 
+  it('folds preserved generator files by blob id, a preserved copy replacing an unreadable one', async () => {
+    const evidence = { version: 1, approvedAt: '2026-11-01T00:00:00Z', approvedById: MOD };
+    const first = seed({
+      userId: 101,
+      type: 'GeneratedImage',
+      details: {
+        generatorEvidence: evidence,
+        generatedImages: [
+          {
+            jobId: 'wf-a',
+            blobs: [
+              { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'old' },
+              { blobId: 'b2', role: 'output', status: 'blocked-unreadable' },
+            ],
+          },
+        ],
+      },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage',
+      details: {
+        generatorEvidence: { version: 1 },
+        generatedImages: [
+          {
+            jobId: 'wf-a',
+            source: 'workflow',
+            blobs: [
+              { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'new' },
+              { blobId: 'b2', role: 'output', status: 'preserved', sha256: 'b2' },
+              { blobId: 'b3', role: 'input', status: 'preserved', sha256: 'b3' },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(rows).toHaveLength(1);
+    const details = rows.find((r) => r.id === first.id)?.details as {
+      generatedImages: { blobs: { blobId: string; sha256?: string }[] }[];
+      generatorEvidence: { approvedAt: unknown };
+    };
+    expect(details.generatedImages[0].blobs.map((b) => [b.blobId, b.sha256])).toEqual([
+      ['b1', 'old'],
+      ['b2', 'b2'],
+      ['b3', 'b3'],
+    ]);
+    expect(details.generatorEvidence.approvedAt).toBeNull();
+  });
+
+  it('files a URL-only generated-image report apart from a preserved-evidence report', async () => {
+    seed({
+      userId: 101,
+      type: 'GeneratedImage',
+      details: {
+        generatorEvidence: { version: 1 },
+        generatedImages: [{ jobId: 'wf-a', blobs: [{ blobId: 'b1', status: 'preserved' }] }],
+      },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage',
+      details: { generatedImages: [{ jobId: 'job-x', blobs: [{ url: 'x' }] }] },
+    });
+
+    expect(rows).toHaveLength(2);
+  });
+
   it('files training data for another version as its own report, and folds the same version', async () => {
     const v1 = seed({ userId: 101, type: 'TrainingData', details: { modelVersionIds: [7] } });
 

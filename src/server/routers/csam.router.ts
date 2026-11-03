@@ -8,14 +8,27 @@ import {
   createExternalCsamReportSchema,
   getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
+  approveGeneratorEvidenceSchema,
+  generatorEvidenceUserSchema,
+  generatorEvidenceWorkflowsSchema,
+  preserveGeneratorEvidenceSchema,
 } from '~/server/schema/csam.schema';
+import {
+  approveGeneratorEvidenceReport,
+  getEvidenceTriggers,
+  getEvidenceWorkflows,
+  getGeneratorEvidenceReport,
+  preserveGeneratorEvidence,
+} from '~/server/services/generator-evidence/generator-evidence.service';
 import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.service';
 import {
   getCsamReportStats,
   getCsamReportsPaged,
   getImageResources,
 } from '~/server/services/csam.service';
-import { moderatorProcedure, router } from '~/server/trpc';
+import { isFlagProtected, moderatorProcedure, router } from '~/server/trpc';
+
+const csamProcedure = moderatorProcedure.use(isFlagProtected('csamReports'));
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const csamRouter = router({
@@ -33,4 +46,23 @@ export const csamRouter = router({
     .input(paginationSchema)
     .query(({ input }) => getCsamReportsPaged(input)),
   getCsamReportsStats: moderatorProcedure.query(() => getCsamReportStats()),
+  getGeneratorEvidenceTriggers: csamProcedure
+    .input(generatorEvidenceUserSchema)
+    .query(({ input }) => getEvidenceTriggers(input.userId)),
+  getGeneratorEvidenceWorkflows: csamProcedure
+    .input(generatorEvidenceWorkflowsSchema)
+    .query(({ input }) => getEvidenceWorkflows(input.userId, input.cursor)),
+  getGeneratorEvidenceReport: csamProcedure
+    .input(generatorEvidenceUserSchema)
+    .query(({ input, ctx }) => getGeneratorEvidenceReport(input.userId, ctx.user.id)),
+  preserveGeneratorEvidence: csamProcedure
+    .input(preserveGeneratorEvidenceSchema)
+    .mutation(({ input, ctx }) =>
+      preserveGeneratorEvidence({ ...input, moderatorId: ctx.user.id })
+    ),
+  approveGeneratorEvidence: csamProcedure
+    .input(approveGeneratorEvidenceSchema)
+    .mutation(({ input, ctx }) =>
+      approveGeneratorEvidenceReport({ ...input, moderatorId: ctx.user.id })
+    ),
 });

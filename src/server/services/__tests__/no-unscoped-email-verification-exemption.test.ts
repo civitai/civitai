@@ -101,6 +101,8 @@ const DERIVED_BASES: Record<string, string> = {
   comicModeratorProcedure: 'moderatorProcedure',
   comicProtectedProcedure: 'protectedProcedure',
   comicPublicProcedure: 'publicProcedure',
+  // `csam.router.ts`: moderators with CSAM reporting access.
+  csamProcedure: 'moderatorProcedure',
   creatorShopProcedure: 'protectedProcedure',
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
