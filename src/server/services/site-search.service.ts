@@ -15,12 +15,18 @@ import {
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
+import type { FallbackReason, SearchEngine } from '~/server/prom/site-search.metrics';
+import { recordSiteSearch, siteSearchFallbacksCounter } from '~/server/prom/site-search.metrics';
 import type {
   SiteFacetSearchInput,
   SiteMultiSearchInput,
   SiteSearchParams,
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
+import { UnsupportedSearchRequest } from '~/server/search/meili-filter';
+import { getOpenSearchClient } from '~/server/search/opensearch/client';
+import { MODELS_INDEX_ALIAS } from '~/server/search/opensearch/indexes';
+import { searchModelsOnOpenSearch } from '~/server/search/opensearch/models-search';
 import { Flags } from '~/shared/utils/flags';
 import { Availability } from '~/shared/utils/prisma/enums';
 
@@ -50,6 +56,8 @@ export type SiteSearchViewer = {
   browsingLevelCap?: number;
   /** Model hits carry their civitai.com face instead of the civitai.red title. */
   showSfwFace: boolean;
+  /** The engine comparison arm this viewer is in. Absent = Meilisearch. */
+  engine?: SearchEngine;
 };
 
 /** A refusal the site-search endpoint sends as-is, so its message must be safe to show. */
@@ -74,7 +82,12 @@ export class SiteSearchError extends Error {
   }
 }
 
-export type SiteSearchResponse = { status: number; body: unknown };
+export type SiteSearchResponse = {
+  status: number;
+  body: unknown;
+  /** Which engine answered, for the response header the comparison reads. */
+  servedBy?: SearchEngine | 'mixed';
+};
 
 /**
  * The clauses every query on `indexUid` is held to, on top of whatever the client sends.
@@ -238,24 +251,101 @@ async function postToSearch(path: string, body: unknown): Promise<SiteSearchResp
   throw new SiteSearchError(502, 'search_unavailable', 'Search is temporarily unavailable');
 }
 
-export async function siteMultiSearch(input: SiteMultiSearchInput, viewer: SiteSearchViewer) {
+const cohortOf = (viewer: SiteSearchViewer): SearchEngine => viewer.engine ?? 'meilisearch';
+
+const hitCountOf = (result: { estimatedTotalHits?: number; totalHits?: number; hits?: unknown }) =>
+  result.estimatedTotalHits ??
+  result.totalHits ??
+  (Array.isArray(result.hits) ? result.hits.length : 0);
+
+/**
+ * The OpenSearch answer to one query, in Meilisearch's shape, or `null` when Meilisearch should
+ * answer it: the viewer is not in the OpenSearch arm, the index is not on OpenSearch yet, OpenSearch
+ * is not configured, the request uses something the translation does not cover, or OpenSearch
+ * failed. Falling back is always safe: Meilisearch serves the same request today.
+ */
+async function answerFromOpenSearch(
+  indexUid: string,
+  params: SiteSearchParams,
+  viewer: SiteSearchViewer
+) {
+  if (viewer.engine !== 'opensearch' || indexUid !== MODELS_SEARCH_INDEX) return null;
+  const fallback = (reason: FallbackReason) => {
+    siteSearchFallbacksCounter.inc({ index: indexUid, reason });
+    return null;
+  };
+  const client = getOpenSearchClient();
+  if (!client) return fallback('unconfigured');
+
+  const filter = withViewerClauses(params.filter, viewerSearchClauses(indexUid, viewer)) ?? [];
+  const started = performance.now();
+  try {
+    const result = await searchModelsOnOpenSearch(
+      client,
+      MODELS_INDEX_ALIAS,
+      params,
+      typeof filter === 'string' ? [filter] : filter
+    );
+    recordSiteSearch({
+      cohort: 'opensearch',
+      servedBy: 'opensearch',
+      index: indexUid,
+      hitCount: hitCountOf(result),
+      seconds: (performance.now() - started) / 1000,
+    });
+    return { indexUid, ...result, hits: shapeHits(indexUid, result.hits, viewer) };
+  } catch (error) {
+    if (error instanceof UnsupportedSearchRequest) return fallback('unsupported');
+    logToAxiom({
+      type: 'error',
+      name: 'site-search',
+      message: 'OpenSearch failed a site search; answered from Meilisearch',
+      cause: (error as Error).message,
+    }).catch(() => undefined);
+    return fallback('error');
+  }
+}
+
+export async function siteMultiSearch(
+  input: SiteMultiSearchInput,
+  viewer: SiteSearchViewer
+): Promise<SiteSearchResponse> {
   for (const query of input.queries) assertSiteSearchIndex(query.indexUid);
 
-  const response = await postToSearch('/multi-search', {
-    queries: input.queries.map((query) => withViewer(query.indexUid, query, viewer)),
-  });
-  if (response.status !== 200) return response;
+  const fromOpenSearch = await Promise.all(
+    input.queries.map((query) => answerFromOpenSearch(query.indexUid, query, viewer))
+  );
+  const forMeili = input.queries.filter((_, i) => !fromOpenSearch[i]);
+  let meiliResults: { indexUid?: string; hits?: unknown }[] = [];
+  if (forMeili.length) {
+    const started = performance.now();
+    const response = await postToSearch('/multi-search', {
+      queries: forMeili.map((query) => withViewer(query.indexUid, query, viewer)),
+    });
+    if (response.status !== 200) return response;
+    const seconds = (performance.now() - started) / 1000;
+    meiliResults = (response.body as { results?: typeof meiliResults }).results ?? [];
+    for (const result of meiliResults)
+      recordSiteSearch({
+        cohort: cohortOf(viewer),
+        servedBy: 'meilisearch',
+        index: result.indexUid ?? 'unknown',
+        hitCount: hitCountOf(result),
+        seconds,
+      });
+  }
 
-  const body = response.body as { results?: { indexUid?: string; hits?: unknown }[] };
+  const pending = [...meiliResults];
+  const results = fromOpenSearch.map((answer) => {
+    if (answer) return answer;
+    const result = pending.shift() ?? {};
+    return { ...result, hits: shapeHits(result.indexUid, result.hits, viewer) };
+  });
+  const served = new Set(fromOpenSearch.map((a) => (a ? 'opensearch' : 'meilisearch')));
   return {
     status: 200,
-    body: {
-      ...body,
-      results: body.results?.map((result) => ({
-        ...result,
-        hits: shapeHits(result.indexUid, result.hits, viewer),
-      })),
-    },
+    body: { results },
+    servedBy: served.size > 1 ? 'mixed' : (([...served][0] ?? 'meilisearch') as SearchEngine),
   };
 }
 
@@ -263,17 +353,32 @@ export async function siteIndexSearch(
   indexUid: string,
   params: SiteSearchParams,
   viewer: SiteSearchViewer
-) {
+): Promise<SiteSearchResponse> {
   assertSiteSearchIndex(indexUid);
 
+  const answer = await answerFromOpenSearch(indexUid, params, viewer);
+  if (answer) return { status: 200, body: answer, servedBy: 'opensearch' };
+
+  const started = performance.now();
   const response = await postToSearch(
     `/indexes/${indexUid}/search`,
     withViewer(indexUid, params, viewer)
   );
   if (response.status !== 200) return response;
 
-  const body = response.body as { hits?: unknown };
-  return { status: 200, body: { ...body, hits: shapeHits(indexUid, body.hits, viewer) } };
+  const body = response.body as { hits?: unknown; estimatedTotalHits?: number; totalHits?: number };
+  recordSiteSearch({
+    cohort: cohortOf(viewer),
+    servedBy: 'meilisearch',
+    index: indexUid,
+    hitCount: hitCountOf(body),
+    seconds: (performance.now() - started) / 1000,
+  });
+  return {
+    status: 200,
+    body: { ...body, hits: shapeHits(indexUid, body.hits, viewer) },
+    servedBy: 'meilisearch',
+  };
 }
 
 export async function siteFacetSearch(
@@ -282,5 +387,10 @@ export async function siteFacetSearch(
   viewer: SiteSearchViewer
 ) {
   assertSiteSearchIndex(indexUid);
-  return postToSearch(`/indexes/${indexUid}/facet-search`, withViewer(indexUid, params, viewer));
+  // Searching within a facet's values stays on Meilisearch for every arm.
+  const response = await postToSearch(
+    `/indexes/${indexUid}/facet-search`,
+    withViewer(indexUid, params, viewer)
+  );
+  return { ...response, servedBy: 'meilisearch' as const };
 }

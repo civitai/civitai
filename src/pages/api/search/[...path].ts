@@ -78,10 +78,18 @@ export default MixedAuthEndpoint(
         getRequestBrowsingLevel({ features, user }),
         nsfwBrowsingLevelsFlag
       ),
+      engine: user && features.siteSearchOpenSearch ? 'opensearch' : 'meilisearch',
     };
 
     try {
-      const { status, body } = await route([req.query.path ?? []].flat(), req.body, viewer);
+      const { status, body, servedBy } = await route(
+        [req.query.path ?? []].flat(),
+        req.body,
+        viewer
+      );
+      // Which comparison arm and engine answered, for support and for client-side measurement.
+      res.setHeader('X-Search-Cohort', viewer.engine ?? 'meilisearch');
+      if (servedBy) res.setHeader('X-Search-Engine', servedBy);
       return res.status(status).json(body);
     } catch (error) {
       if (!(error instanceof SiteSearchError)) throw error;

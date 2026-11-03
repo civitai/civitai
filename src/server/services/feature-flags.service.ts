@@ -207,6 +207,13 @@ const featureFlags = createFeatureFlags({
   // Ramp it by percentage in Flipt. `[]`, not `['mod']`: nobody gets it until the Flipt flag
   // exists (see `reactionCountsUnknown`).
   siteSearchProxy: { availability: [], fliptKey: 'site-search-proxy' },
+  // The search engine comparison (docs/features/search-engine-comparison.md): signed-in viewers
+  // the Flipt `site-search-opensearch` rollout puts ON have their models searches answered by
+  // OpenSearch through /api/search; everyone else, and anything OpenSearch cannot answer, stays on
+  // Meilisearch. Needs `siteSearchProxy` on. Signed-out visitors are not in it: they all evaluate
+  // as one `anonymous` entity, so a percentage rollout cannot split them. `[]`: dark and fails
+  // CLOSED, so the Flipt percentage is the only on-switch and turning it off is the kill switch.
+  siteSearchOpenSearch: { availability: [], fliptKey: 'site-search-opensearch' },
   // Measurement switch: while ON, signed-in `/images/[imageId]` HTML renders write a capped log
   // line (imageId, Cloudflare colo, minute) — see `~/server/logging/image-render-sample`. Read with
   // no user (entity `anonymous`), so it is all-or-nothing, not a per-user rollout. `availability:
