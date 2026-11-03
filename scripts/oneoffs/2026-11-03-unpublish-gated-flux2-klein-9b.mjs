@@ -7,7 +7,8 @@
  *
  *   1. In ONE transaction (primary): licensingFee > 0 -> NULL (with its type and currency),
  *      licensingSourceVersionId -> NULL, earlyAccessTimeFrame > 0 -> 0, ModelVersionMonetization rows
- *      deleted. Any count that differs from its --expect-* value rolls the whole transaction back, and
+ *      deleted, and meta.unpublishedReason / meta.customMessage left by an earlier take-down removed
+ *      from the versions step 3 unpublishes (no other meta key may change). Any count that differs from its --expect-* value rolls the whole transaction back, and
  *      the Flux.2 Klein 4B / 4B-base fingerprint must not move.
  *   2. After COMMIT: exact-key cache evictions for every version step 1 touched
  *      (POST /api/v1/model-versions/bust-cache).
@@ -44,7 +45,7 @@ const BASES = ['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'];
 const CONTROL_BASES = ['Flux.2 Klein 4B', 'Flux.2 Klein 4B-base'];
 const SITE = (process.env.CIVITAI_URL ?? 'https://civitai.com').replace(/\/$/, '');
 const BUST_CHUNK = 500; // the endpoint's max
-const TX_KEYS = ['fees', 'sources', 'monetization', 'ea'];
+const TX_KEYS = ['fees', 'sources', 'monetization', 'ea', 'staleReason'];
 const EXPECT_KEYS = [...TX_KEYS, 'unpublish'];
 
 function parseArgs(argv) {
@@ -91,7 +92,8 @@ const SQL = {
                 WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = o.id AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW()))))
              AS "otherPublished",
            (SELECT count(*)::int FROM "EntityAccess" ea WHERE ea."accessToType" = 'ModelVersion' AND ea."accessToId" = mv.id) AS buyers,
-           (SELECT count(*)::int FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId" AND p."publishedAt" IS NOT NULL) AS posts
+           (SELECT count(*)::int FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId" AND p."publishedAt" IS NOT NULL) AS posts,
+           (mv.meta ? 'unpublishedReason' OR mv.meta ? 'customMessage') AS "staleReason"
     FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
     WHERE mv."baseModel" = ANY($1::text[]) AND mv.status = 'Published' AND ${LIVE_GATE}
     ORDER BY mv.id`,
@@ -132,6 +134,7 @@ function counts(plan) {
     monetization: plan.monetization.length,
     ea: plan.versions.filter((v) => v.earlyAccessTimeFrame > 0).length,
     unpublish: plan.gated.length,
+    staleReason: plan.gated.filter((g) => g.staleReason).length,
   };
 }
 
@@ -330,6 +333,28 @@ async function execute(client, args) {
         plan.monetization.map((x) => x.id),
       ])
     ).rowCount;
+    // A reason left in meta by an earlier take-down survives the unpublish below (it spreads the
+    // existing meta) and would send the creator a "model-version-unpublished" notice naming it.
+    const staleIds = plan.gated.filter((g) => g.staleReason).map((g) => g.versionId);
+    const metaBefore = await rows(
+      client,
+      `SELECT id, meta - 'unpublishedReason' - 'customMessage' AS rest FROM "ModelVersion" WHERE id = ANY($1::int[]) ORDER BY id`,
+      [staleIds]
+    );
+    done.staleReason = (
+      await client.query(
+        `UPDATE "ModelVersion" SET meta = meta - 'unpublishedReason' - 'customMessage'
+         WHERE id = ANY($1::int[]) AND (meta ? 'unpublishedReason' OR meta ? 'customMessage')`,
+        [staleIds]
+      )
+    ).rowCount;
+    const metaAfter = await rows(
+      client,
+      `SELECT id, meta AS rest FROM "ModelVersion" WHERE id = ANY($1::int[]) ORDER BY id`,
+      [staleIds]
+    );
+    if (JSON.stringify(metaAfter) !== JSON.stringify(metaBefore))
+      throw new Error('Clearing the stale unpublish reason changed other meta keys');
 
     const wrong = TX_KEYS.filter((k) => done[k] !== c[k]);
     if (wrong.length)
