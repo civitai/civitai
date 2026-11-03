@@ -17,6 +17,7 @@ import {
 } from '@civitai/db-queries/placement';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
+import { teamWaivedWhere } from '~/server/services/placement-count-predicates';
 import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
 
 /**
@@ -295,6 +296,35 @@ describe.skipIf(!parityUrl)('placement reads: Kysely returns exactly what Prisma
         targetId: TARGET,
       });
       expect(k).toBe(3); // rows 2, 4, 6
+    });
+
+    // Prisma's JSON path filter and its Kysely translation, on the same rows: a marked row, a row
+    // marked otherwise, an empty object, a JSON null, and a paid row carrying the marker. Own ids,
+    // so the counts above are untouched.
+    it('the team-waived share counts the same on both sides, and only marked free rows', async () => {
+      const WAIVER_PLACER = 106;
+      const WAIVER_TARGET = 703;
+      await prisma.$executeRawUnsafe(`
+        INSERT INTO ${t(
+          'Placement'
+        )} (id, surface, "targetType", "targetId", "ownerId", "placerId", data, status, amount, free, "createdAt") VALUES
+          (20, 'remixGallery', 'image', ${WAIVER_TARGET}, ${OWNER}, ${WAIVER_PLACER}, '{"imageId": 1, "waiver": "team"}', 'pending', 0, true, '2026-10-23 01:00:00.000'),
+          (21, 'remixGallery', 'image', ${WAIVER_TARGET}, ${OWNER}, ${WAIVER_PLACER}, '{"imageId": 2, "waiver": "other"}', 'pending', 0, true, '2026-10-23 02:00:00.000'),
+          (22, 'remixGallery', 'image', ${WAIVER_TARGET}, ${OWNER}, ${WAIVER_PLACER}, '{"imageId": 3}', 'pending', 0, true, '2026-10-23 03:00:00.000'),
+          (23, 'remixGallery', 'image', ${WAIVER_TARGET}, ${OWNER}, ${WAIVER_PLACER}, 'null', 'pending', 0, true, '2026-10-23 04:00:00.000'),
+          (24, 'remixGallery', 'image', ${WAIVER_TARGET}, ${OWNER}, ${WAIVER_PLACER}, '{"imageId": 5, "waiver": "team"}', 'pending', 50, false, '2026-10-23 05:00:00.000')
+      `);
+      try {
+        const base = { placerId: WAIVER_PLACER, free: true, createdAt: { gte: DAY } };
+        const counts = async (where: Parameters<typeof countPlacements>[1]) => [
+          await prisma.placement.count({ where: where as never }),
+          await count(where),
+        ];
+        expect(await counts(base)).toEqual([4, 4]);
+        expect(await counts(teamWaivedWhere(base))).toEqual([1, 1]); // row 20 only
+      } finally {
+        await prisma.$executeRawUnsafe(`DELETE FROM ${t('Placement')} WHERE id BETWEEN 20 AND 24`);
+      }
     });
 
     it('an empty `in` counts 0', async () => {

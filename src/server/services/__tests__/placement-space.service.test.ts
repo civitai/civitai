@@ -281,7 +281,7 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
     spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 4 },
     ]);
-    placementCount.mockResolvedValue(3);
+    placementCount.mockImplementation(async (_db, where) => ('data' in where ? 0 : 3));
 
     expect((await resolve()).freeSlotsRemaining).toBe(1);
   });
@@ -312,7 +312,7 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
     spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 1 },
     ]);
-    placementCount.mockResolvedValue(3);
+    placementCount.mockImplementation(async (_db, where) => ('data' in where ? 0 : 3));
 
     expect((await resolve()).freeSlotsRemaining).toBe(0);
   });

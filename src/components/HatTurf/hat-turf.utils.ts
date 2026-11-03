@@ -1,4 +1,5 @@
 import { SignalTopic } from '~/server/common/enums';
+import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_SCALE,
@@ -150,9 +151,16 @@ export function applyTurfPush(
 
 /** Reads a turf push off the wire; null for anything not for this event or not shaped like one. */
 export function readTurfPush(push: unknown, event: string) {
-  const { event: e, imageId, counts } = (push ?? {}) as Record<string, unknown>;
+  const {
+    event: e,
+    imageId,
+    counts,
+    stickers: rawStickers,
+  } = (push ?? {}) as Record<string, unknown>;
   if (e !== event || typeof imageId !== 'number' || !Number.isInteger(imageId)) return null;
-  if (counts === null) return { imageId, counts: null };
+  // null: the push does not say (keep what is drawn); undefined: none usable, read them back.
+  const stickers = rawStickers === null ? null : readPushedStickers(rawStickers);
+  if (counts === null) return { imageId, counts: null, stickers };
   if (!counts || typeof counts !== 'object') return null;
   const c = counts as Record<string, unknown>;
   const record = (v: unknown) =>
@@ -172,7 +180,30 @@ export function readTurfPush(push: unknown, event: string) {
       leader: typeof c.leader === 'string' ? c.leader : null,
       leaderCosmeticId: typeof c.leaderCosmeticId === 'number' ? c.leaderCosmeticId : null,
     },
+    stickers,
   };
+}
+
+/** The hats a push carries; undefined when it carries none usable (an older server), so the card reads them. */
+function readPushedStickers(raw: unknown): HatSticker[] | undefined {
+  if (!Array.isArray(raw) || raw.length > TURF_FEED_STICKERS) return undefined;
+  const ok = raw.every((s) => {
+    const r = (s ?? {}) as Record<string, unknown>;
+    return (
+      (typeof r.id === 'string' || typeof r.id === 'number') &&
+      typeof r.userId === 'number' &&
+      typeof r.team === 'string' &&
+      typeof r.cosmeticId === 'number'
+    );
+  });
+  if (!ok) return undefined;
+  return raw.map(({ id, userId, team, cosmeticId, data }) => ({
+    id,
+    userId,
+    team,
+    cosmeticId,
+    data,
+  }));
 }
 
 /** The signal topic a card listens on for one image's counts; must match the server's `eventTurfTopic`. */

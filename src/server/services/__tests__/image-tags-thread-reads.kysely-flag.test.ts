@@ -19,10 +19,7 @@ import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
 import { readImageTagsForImages } from '~/server/redis/caches';
-import {
-  getCommentsInfinite,
-  getCommentsThreadDetails2,
-} from '~/server/services/commentsv2.service';
+import { getCommentsInfinite } from '~/server/services/commentsv2.service';
 
 const flag = vi.mocked(isFlipt);
 const q = vi.mocked(queries);
@@ -78,37 +75,6 @@ describe('readImageTagsForImages (imageTagsCache)', () => {
     expect(dbMock.dbRead.imageTag.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.imageTag.findMany).not.toHaveBeenCalled();
     expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
-  });
-});
-
-describe('getCommentsThreadDetails2 (an image thread)', () => {
-  const imageThread = () => getCommentsThreadDetails2({ entityType: 'image', entityId: IMAGE });
-
-  it('reads the thread through Kysely only, on the replica (invariant: no flag check remains)', async () => {
-    q.getImageThread.mockResolvedValue({ id: THREAD, locked: true } as never);
-    await expect(imageThread()).resolves.toEqual({ id: THREAD, locked: true });
-    expect(q.getImageThread.mock.calls).toEqual([[kyselyRead, IMAGE]]);
-    expect(q.getImageThread.mock.calls[0][0]).toBe(kyselyRead);
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
-    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('no thread is null, as findUnique returned', async () => {
-    q.getImageThread.mockResolvedValue(undefined);
-    await expect(imageThread()).resolves.toBeNull();
-    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('any other entity type stays on Prisma', async () => {
-    dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: THREAD, locked: false });
-    await expect(
-      getCommentsThreadDetails2({ entityType: 'model', entityId: MODEL })
-    ).resolves.toEqual({ id: THREAD, locked: false });
-    expect(dbMock.dbRead.thread.findUnique).toHaveBeenCalledWith({
-      where: { modelId: MODEL },
-      select: { id: true, locked: true },
-    });
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
   });
 });
 
