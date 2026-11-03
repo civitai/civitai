@@ -127,6 +127,26 @@ export const aiToolkitBatchMax = (baseType: TrainingBaseModelType): number => {
   return 1;
 };
 
+// LoRA file size per unit of network dim, in MB, from the median size of published trainings. Size is
+// linear in dim but the per-dim cost depends on the architecture, so only measured types are listed.
+// Same figures as the Training Studio's LORA_MB_PER_DIM.
+const loraMbPerDim: Partial<Record<TrainingBaseModelType, number>> = {
+  sdxl: 6.8,
+  flux: 10.25,
+  sd15: 1.125,
+};
+
+/** "At dim 32 the file is about 218MB (≈6.8MB per dim)." for a measured base type, else null. */
+export const networkDimSizeHint = (
+  baseType: TrainingBaseModelType,
+  dim: number | undefined
+): string | null => {
+  const mbPerDim = loraMbPerDim[baseType];
+  if (!mbPerDim || !dim || !Number.isFinite(dim) || dim <= 0) return null;
+  const perDim = Math.round(mbPerDim * 10) / 10;
+  return `At dim ${dim} the file is about ${Math.round(dim * mbPerDim)}MB (≈${perDim}MB per dim).`;
+};
+
 export const engineTypes = [
   'kohya',
   'rapid',
