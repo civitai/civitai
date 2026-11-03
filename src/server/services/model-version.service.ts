@@ -127,6 +127,7 @@ import {
   paidGenerationGrant,
 } from '@civitai/buzz';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
+import { assertNonCommercialVersionsUnmonetized } from '~/server/services/non-commercial-publish.service';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
@@ -2034,6 +2035,7 @@ export const publishModelVersionById = async ({
   assertBaseModelAttestations({
     versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
   });
+  await assertNonCommercialVersionsUnmonetized([currentVersion]);
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.

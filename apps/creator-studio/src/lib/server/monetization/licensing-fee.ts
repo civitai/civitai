@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { baseModelRecords, getBaseModelLicense } from '@civitai/shared/basemodel.constants';
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from '$lib/server/db';
 import {
@@ -61,10 +62,10 @@ export const licensingFeeRatioSchema = z
     return perImage;
   });
 
-// Base models whose license forbids commercial use → can't carry a fee. Mirrors `nonCommercialBaseModels` in
-// the main app's server/common/constants.ts (derived from the `nonCommercial` license flag — the source of
-// truth). Keep in sync when a non-commercial base model is added there.
-const NON_COMMERCIAL_BASE_MODELS = new Set(['Ideogram 4.0']);
+// Base models whose licence forbids commercial use can't carry a fee.
+const NON_COMMERCIAL_BASE_MODELS = new Set(
+  baseModelRecords.filter((m) => getBaseModelLicense(m.id)?.nonCommercial).map((m) => m.name)
+);
 
 export type SetFeeResult = { ok: true } | { ok: false; status: 400 | 403; error: string };
 export type BulkFeeResult =

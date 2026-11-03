@@ -750,6 +750,16 @@ const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
   },
+  'flux nc 2.1': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+  },
   'illustrious license': {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
     name: 'Illustrious License',
@@ -945,8 +955,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'MOSS Image': baseLicenses['apache 2.0'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
+  'Flux.2 Klein 9B': baseLicenses['flux nc 2.1'],
+  'Flux.2 Klein 9B-base': baseLicenses['flux nc 2.1'],
   'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
   'Flux.2 Klein 4B-base': baseLicenses['apache 2.0'],
   ODOR: undefined,
