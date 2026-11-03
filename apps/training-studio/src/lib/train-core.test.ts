@@ -335,6 +335,35 @@ describe('retired base', () => {
     await submitTrainingBatch(client, [wanRun(wan21.air)], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(wan21.air);
   });
+
+  it('refuses an Ideogram 4 run that names no model, which would train on the ecosystem default', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), ecosystem: 'ideogram4' }], { checkText })
+    ).rejects.toThrow(/runs\[0\]\.ecosystem/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses to keep training an Ideogram 4 run, quote or submit', async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: 'ideogram4', epochs: 10, steps: 2000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    const calls = submitWorkflow.mock.calls.length;
+    const opts = { workflowId: 'wf-id4', fromEpoch: 10, addEpochs: 5 };
+    await expect(continueTrainingWhatIf(client, opts)).rejects.toThrow(/no longer offered/);
+    await expect(continueTraining(client, opts, { checkText })).rejects.toThrow(
+      /no longer offered/
+    );
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
 });
 
 describe('sample input images', () => {

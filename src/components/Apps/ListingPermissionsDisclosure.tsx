@@ -1,4 +1,5 @@
-import { Card, Group, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
+import { Fragment } from 'react';
+import { Card, Divider, Group, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconCheck, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {
@@ -42,9 +43,7 @@ export function ListingPermissionsDisclosure({
   return (
     <Card withBorder data-testid={testId}>
       <Group gap="xs" mb="sm" wrap="nowrap">
-        <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
-          <IconShieldCheck size={14} />
-        </ThemeIcon>
+        <IconShieldCheck size={22} aria-hidden />
         <Title order={4}>{title}</Title>
         {info && (
           <Tooltip multiline w={300} label={info}>
@@ -63,8 +62,11 @@ export function ListingPermissionsDisclosure({
                 Sensitive permissions ({sensitive.length})
               </Text>
             </Group>
-            {sensitive.map((p) => (
-              <PermissionRow key={p.id} permission={p} />
+            {sensitive.map((p, i) => (
+              <Fragment key={p.id}>
+                {i > 0 && <Divider />}
+                <PermissionRow permission={p} />
+              </Fragment>
             ))}
           </Stack>
         )}
@@ -76,8 +78,11 @@ export function ListingPermissionsDisclosure({
                 Other permissions ({other.length})
               </Text>
             )}
-            {other.map((p) => (
-              <PermissionRow key={p.id} permission={p} />
+            {other.map((p, i) => (
+              <Fragment key={p.id}>
+                {i > 0 && <Divider />}
+                <PermissionRow permission={p} />
+              </Fragment>
             ))}
           </Stack>
         )}

@@ -371,6 +371,8 @@ export const serverSchema = z
     DISCORD_BOT_TOKEN: z.string().optional(),
     DISCORD_GUILD_ID: z.string().optional(),
     DISCORD_WEBHOOK_MOD_ALERTS: z.string().optional(),
+    // The training canary's Discord channel. Unset: canary results are only logged to Axiom.
+    DISCORD_WEBHOOK_TRAINING_CANARY: z.string().optional(),
     EMAIL_HOST: z.string(),
     EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
     EMAIL_SECURE: zc.booleanString,
