@@ -60,14 +60,15 @@ export function ModelListingTabs({
   redFields: ReactNode;
 }) {
   const form = useFormContext<ListingForm>();
-  const [sfwName, sfwDescription] = useWatch({
+  const [sfwName, sfwDescription, nsfw] = useWatch({
     control: form.control,
-    name: ['sfwName', 'sfwDescription'],
+    name: ['sfwName', 'sfwDescription', 'nsfw'],
   });
   const { errors, submitCount } = useFormState({ control: form.control });
   const features = useFeatureFlags();
   const [site, setSite] = useState<Site>(features.isGreen ? 'com' : 'red');
   const ownComContent = sfwName != null;
+  const cardState: CardState = ownComContent ? 'custom' : nsfw ? 'redOnly' : 'same';
 
   const nameVerdict = useSfwFaceVerdict('sfwName', ownComContent ? sfwName : null);
   const descriptionVerdict = useSfwFaceVerdict(
@@ -105,13 +106,13 @@ export function ModelListingTabs({
           <Tabs.List>
             <Tabs.Tab
               value="com"
-              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge custom={ownComContent} />}
+              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge state={cardState} />}
             >
               civitai.com
             </Tabs.Tab>
             <Tabs.Tab
               value="red"
-              rightSection={redHasErrors ? <ErrorDot /> : <CardBadge custom={ownComContent} />}
+              rightSection={redHasErrors ? <ErrorDot /> : <CardBadge state={cardState} />}
             >
               civitai.red
             </Tabs.Tab>
@@ -215,7 +216,11 @@ function ComListing({
   if (!ownContent)
     return (
       <Stack gap="sm" align="flex-start">
-        <Text size="sm">civitai.com shows the same card as civitai.red.</Text>
+        <Text size="sm">
+          {nsfw
+            ? 'This model is marked mature, so it doesn’t appear on civitai.com until you set up its civitai.com card with a cover.'
+            : 'civitai.com shows the same card as civitai.red.'}
+        </Text>
         <Text size="sm" c="dimmed">
           Set up a civitai.com card to give this model its own title, description and cover there.
           civitai.com is for a general audience, so its card is checked for that.
@@ -355,8 +360,8 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
       {site === 'com' && nsfw && !value && (
         <Alert color="yellow" p="xs">
           <Text size="xs">
-            This model is marked mature, so it won&apos;t appear on civitai.com until you set up its
-            civitai.com card with a cover.
+            This model is marked mature, so it won&apos;t appear on civitai.com until you pick a
+            civitai.com cover.
           </Text>
         </Alert>
       )}
@@ -364,10 +369,18 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
   );
 }
 
-function CardBadge({ custom }: { custom: boolean }) {
+type CardState = 'custom' | 'same' | 'redOnly';
+const cardBadges: Record<CardState, { label: string; color: string }> = {
+  custom: { label: 'Custom for this site', color: 'green' },
+  same: { label: 'Same on both sites', color: 'gray' },
+  redOnly: { label: 'Only on civitai.red', color: 'yellow' },
+};
+
+function CardBadge({ state }: { state: CardState }) {
+  const { label, color } = cardBadges[state];
   return (
-    <Badge size="xs" variant="light" color={custom ? 'green' : 'gray'}>
-      {custom ? 'Custom for this site' : 'Same on both sites'}
+    <Badge size="xs" variant="light" color={color}>
+      {label}
     </Badge>
   );
 }
