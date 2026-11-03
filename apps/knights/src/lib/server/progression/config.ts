@@ -6,7 +6,10 @@ export const PROGRESSION = {
   /** voteXp + correctXp must stay 100, the original game's per-correct-vote XP. */
   correctXp: 90,
   baseGold: 100,
-  fervorWindow: 500,
+  /** Accuracy (and so rank) is over this many graded votes; it never decays with time. */
+  accuracyWindow: 500,
+  /** Fervor counts votes cast in this many days (by createdAt), with no cap. */
+  fervorWindowDays: 7,
   fervorPerCorrect: 100,
   fervorAccuracyFloor: 0.1,
 } as const;
@@ -18,7 +21,7 @@ export const RANK_LADDER = [
   { rank: 'Paladin', fromLevel: 41, accuracyBar: 0.85 },
 ] as const satisfies readonly { rank: Rank; fromLevel: number; accuracyBar: number }[];
 
-/** Accuracy is over the same last `PROGRESSION.fervorWindow` graded votes as fervor. */
+/** Accuracy is over the last `PROGRESSION.accuracyWindow` graded votes. */
 export const RATING = {
   minGraded: 50,
   belowBarFactor: 0.5,

@@ -1,3 +1,4 @@
+import { REDIS_TIMEOUT_MS, within } from './redis-timeout';
 import type { ItemKind, ItemRef } from './feed-token';
 
 /** What a player has passed over: never served to them again, never a vote. Per kind, as the feeds take them. */
@@ -63,22 +64,11 @@ export function memorySkipStore(): SkipStore {
   };
 }
 
-/** A Redis client that is offline can queue a command and never settle it, so every call is raced against a clock. */
-export const SKIP_STORE_TIMEOUT_MS = 400;
-
-export function within<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const clock = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`skip store did not answer in ${ms}ms`)), ms);
-  });
-  return Promise.race([work, clock]).finally(() => clearTimeout(timer));
-}
-
 /** A store that is down or silent serves as if nothing was skipped: the player sees an item again, nothing is lost. */
 export async function skippedFor(
   store: SkipStore,
   userId: number,
-  timeoutMs = SKIP_STORE_TIMEOUT_MS
+  timeoutMs = REDIS_TIMEOUT_MS
 ): Promise<Skipped> {
   const skipped: Skipped = { queue: [], hidden: [], yesno: [] };
   try {
@@ -95,7 +85,7 @@ export async function recordSkip(
   userId: number,
   ref: ItemRef,
   now: Date,
-  timeoutMs = SKIP_STORE_TIMEOUT_MS
+  timeoutMs = REDIS_TIMEOUT_MS
 ): Promise<boolean> {
   try {
     await within(store.add(userId, ref, now), timeoutMs);

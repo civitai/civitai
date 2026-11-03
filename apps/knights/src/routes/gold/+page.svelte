@@ -1,11 +1,11 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { ComponentProps } from 'svelte';
+  import { count } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
-  const gold = (n: number) => n.toLocaleString('en-US');
   const balance = $derived(data.balance);
   const canConvert = $derived(data.conversionOpen && balance.buzzOnConvert > 0);
   let converting = $state(false);
@@ -58,7 +58,7 @@
             <span class="title">{row.title}</span>
             <span class="note">{row.note}</span>
           </span>
-          <span class="value">{gold(row.value)}</span>
+          <span class="value">{count(row.value)}</span>
         </li>
       {/each}
     </ul>
@@ -73,15 +73,15 @@
       </p>
     {:else}
       <p class="eyebrow">Convert</p>
-      <p class="buzz"><span class="amount">{gold(balance.buzzOnConvert)}</span> <span class="unit label-caps">Buzz</span></p>
+      <p class="buzz"><span class="amount">{count(balance.buzzOnConvert)}</span> <span class="unit label-caps">Buzz</span></p>
       {#if canConvert}
         <p class="muted from">
-          From {gold(balance.buzzOnConvert * balance.goldPerBuzz)} of your {gold(balance.convertible)} convertible
+          From {count(balance.buzzOnConvert * balance.goldPerBuzz)} of your {count(balance.convertible)} convertible
           gold. The rest stays in your ledger.
         </p>
       {/if}
       <p class="muted from">
-        {gold(balance.goldPerBuzz)} gold is 1 Yellow Buzz, converted in whole Buzz, at least {balance.minBuzz} at a time.
+        {count(balance.goldPerBuzz)} gold is 1 Yellow Buzz, converted in whole Buzz, at least {balance.minBuzz} at a time.
       </p>
     {/if}
 
@@ -132,7 +132,7 @@
           {@const s = statusOf(c.status)}
           <li class="recent-row">
             <time class="when" datetime={c.at}>{c.today ? 'Today' : dayFormat.format(new Date(c.at))}</time>
-            <span class="what">{gold(c.gold)} gold → {gold(c.buzz)} Buzz</span>
+            <span class="what">{count(c.gold)} gold → {count(c.buzz)} Buzz</span>
             <span class="state {s.tone}">{s.label}</span>
           </li>
         {/each}

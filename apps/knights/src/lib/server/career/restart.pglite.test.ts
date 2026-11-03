@@ -40,7 +40,9 @@ describe('restartCareer', () => {
     expect(await restartCareer(db, 7, new Date())).toEqual({ reset: true });
 
     const after = await player(7);
-    expect(after).toMatchObject({ rankType: 'Acolyte', exp: 0, fervor: 0 });
+    expect(after).toMatchObject({ rankType: 'Acolyte', exp: 0 });
+    // The column is the original game's: a v2 restart never writes it.
+    expect(after.fervor).toBe(40);
     expect(after.startAt.getTime()).toBeGreaterThan(before.startAt.getTime());
   });
 

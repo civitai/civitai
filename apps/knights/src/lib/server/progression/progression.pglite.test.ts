@@ -14,7 +14,8 @@ import {
 } from '../queue/queue.service';
 import { PROGRESSION } from './config';
 import { getPlayerStatus } from '../player-status';
-import { calculateFervor, settleFinalItems, settleItemVotes } from './progression';
+import { calculateFervor, fervorLedgerOf } from './fervor';
+import { settleFinalItems, settleItemVotes } from './progression';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -160,7 +161,7 @@ describe('grading', () => {
     expect(await who(1)).toMatchObject({ goldPending: 0, goldEarned: PROGRESSION.baseGold });
   });
 
-  it('computes fervor from correct votes and accuracy', async () => {
+  it('computes fervor from correct votes and accuracy, read from the ledger', async () => {
     for (let i = 1; i <= 5; i++) await player(i);
     await image(10);
     await image(11);
@@ -169,9 +170,18 @@ describe('grading', () => {
     await resolve(first, 1, '4');
     await resolve(second, 1, '8', 1);
 
-    expect((await who(1)).fervor).toBe(calculateFervor({ correct: 2, graded: 2 }));
-    expect((await who(5)).fervor).toBe(calculateFervor({ correct: 1, graded: 2 }));
-    expect((await who(5)).fervor).toBe(50);
+    expect(await fervorLedgerOf(db, 1, NOW)).toEqual({ correct: 2, graded: 2 });
+    expect(await fervorLedgerOf(db, 5, NOW)).toEqual({ correct: 1, graded: 2 });
+    expect((await getPlayerStatus(db, 5, NOW))?.fervor).toBe(50);
+  });
+
+  it('never writes the stored fervor column, which belongs to the original game', async () => {
+    for (let i = 1; i <= 5; i++) await player(i, 'Knight', i === 1 ? `"fervor"=777` : '');
+    await image(10);
+    await resolve(await item(10), 1, '4');
+
+    expect((await who(1)).fervor).toBe(777);
+    expect((await getPlayerStatus(db, 1, NOW))?.fervor).toBe(100);
   });
 
   it('gives inconclusive votes no bulk, no gold and no weight in fervor', async () => {
@@ -325,9 +335,9 @@ describe('career reset (startAt)', () => {
       await castVote(db, { userId: i, itemId: after, answer: '4' }, at('2026-12-15T10:00:00Z'));
     }
 
-    expect((await who(1)).fervor).toBe(calculateFervor({ correct: 1, graded: 1 }));
-    expect((await who(2)).fervor).toBe(calculateFervor({ correct: 2, graded: 2 }));
-    expect((await getPlayerStatus(db, 1))?.fervor).toBe(100);
+    expect(await fervorLedgerOf(db, 1, NOW)).toEqual({ correct: 1, graded: 1 });
+    expect(await fervorLedgerOf(db, 2, NOW)).toEqual({ correct: 2, graded: 2 });
+    expect((await getPlayerStatus(db, 1, NOW))?.fervor).toBe(100);
   });
 });
 

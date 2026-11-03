@@ -8,7 +8,7 @@ export const load: PageServerLoad = async ({ locals }) => ({
   status: await getPlayerStatusOrNew(db, locals.user.id),
   ranks: rankTable(),
   rules: {
-    window: PROGRESSION.fervorWindow,
+    window: PROGRESSION.accuracyWindow,
     minGraded: RATING.minGraded,
     belowBarFactor: RATING.belowBarFactor,
   },

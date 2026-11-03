@@ -43606,6 +43606,4017 @@
           "width": 390
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "ZPr40",
+      "x": 12600,
+      "y": 12451,
+      "name": "B10 · Leaderboard — desktop",
+      "clip": true,
+      "width": 1280,
+      "height": 1580,
+      "fill": "$io-bg",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "jc6k3",
+          "type": "ref",
+          "ref": "fxxxi",
+          "name": "Header",
+          "width": "fill_container",
+          "descendants": {
+            "W2Twma": {
+              "content": "12 day streak"
+            },
+            "CIJmO": {
+              "content": "3,200"
+            },
+            "XnX3L": {
+              "content": "Knight · Lv 12"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "oa76K",
+          "name": "Body",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 28,
+          "padding": [
+            32,
+            64
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "dagW6",
+              "name": "Title row",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "W6NvG",
+                  "name": "Title",
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "zJ5Ma",
+                      "name": "Eyebrow",
+                      "fill": "$io-gold",
+                      "content": "THIS WEEK'S VIGIL",
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "600",
+                      "letterSpacing": 3
+                    },
+                    {
+                      "type": "text",
+                      "id": "fW99F",
+                      "name": "Heading",
+                      "fill": "$io-parchment",
+                      "content": "Most devoted",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 34,
+                      "fontWeight": "700",
+                      "letterSpacing": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "O3Xtto",
+                  "name": "Meta",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "XjB82",
+                      "name": "Window",
+                      "fill": "$io-parchment-muted",
+                      "content": "Fervor from judgments cast in the last 7 days",
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "k1EL4",
+                      "name": "Updated",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "gCuvc",
+                          "name": "Clock",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "hourglass",
+                          "library": "lucide",
+                          "fill": "$io-gold"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Pbb4N",
+                          "name": "Next update",
+                          "fill": "$io-parchment-muted",
+                          "content": "Tallied daily · next tally in 6h 12m",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "GOIK8",
+              "name": "How fervor works",
+              "width": "fill_container",
+              "fill": "$io-surface",
+              "cornerRadius": 4,
+              "stroke": "$io-gold-muted",
+              "strokeWidth": {
+                "left": 2
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": [
+                18,
+                24
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "HVzHH",
+                  "name": "Heading line",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "i7R35",
+                      "name": "Info",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "scale",
+                      "library": "lucide",
+                      "fill": "$io-gold"
+                    },
+                    {
+                      "type": "text",
+                      "id": "kS9ET",
+                      "name": "Heading",
+                      "fill": "$io-parchment",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "How fervor works",
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "W27Xty",
+                      "name": "Collapse",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-up",
+                      "library": "lucide",
+                      "fill": "$io-parchment-muted"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "uFzkP",
+                  "name": "Formula",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "qXmQF",
+                      "name": "Formula text",
+                      "fill": "$io-gold",
+                      "content": "Correct judgments × 100 × your accuracy",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 19,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "VRvFG",
+                  "name": "Facts",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "aXj2a",
+                      "name": "Fact 1",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Counts judgments you cast in the last 7 days once their verdict is in. Older ones fall away, so fervor fades when you rest.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Os70Q",
+                      "name": "Fact 2",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Accuracy is the share you judged rightly. It never counts below 10%, and inconclusive images don't count either way.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "J19Py",
+                      "name": "Fact 3",
+                      "fill": "$io-parchment",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Example: 400 right of 500 judged is 400 × 100 × 80% = 32,000 fervor.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "LB35p",
+              "name": "Podium",
+              "width": "fill_container",
+              "gap": 20,
+              "padding": [
+                8,
+                0,
+                0,
+                0
+              ],
+              "justifyContent": "center",
+              "alignItems": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "FPebF",
+                  "name": "Place 2",
+                  "width": 280,
+                  "layout": "vertical",
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fdtrZ",
+                      "name": "Avatar wrap",
+                      "width": 80,
+                      "height": 80,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "m7nEkM",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "irisavi",
+                            "link": "https://unsplash.com/@irisavi",
+                            "author": "IRIS AVI"
+                          },
+                          "width": 80,
+                          "height": 80,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1771358342118-8b77de7a3d93?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0NDZ8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1.5
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dRAAI",
+                          "x": 54,
+                          "y": 54,
+                          "name": "Rank badge",
+                          "width": 30,
+                          "height": 30,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1.5,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "E8Vte9",
+                              "name": "Templar motif",
+                              "width": 15,
+                              "height": 15,
+                              "icon": "shield-plus",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fwrc0",
+                      "name": "Who",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "K7wSl",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "content": "Lusio",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "rGUp6",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Templar · Level 53",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "grxIT",
+                      "name": "Pedestal",
+                      "width": "fill_container",
+                      "height": 128,
+                      "fill": "$io-surface",
+                      "stroke": "$io-gold-muted",
+                      "strokeWidth": {
+                        "top": 1
+                      },
+                      "layout": "vertical",
+                      "gap": 2,
+                      "padding": [
+                        18,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "A5Omv",
+                          "name": "Place numeral",
+                          "fill": "$io-parchment-muted",
+                          "content": "2",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 32,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "dlao3",
+                          "name": "Fervor",
+                          "fill": "$io-gold",
+                          "content": "1,394,110",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "iYNVy",
+                          "name": "Fervor label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "gDXZ4",
+                  "name": "Place 1",
+                  "width": 280,
+                  "layout": "vertical",
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ycZMt",
+                      "name": "Avatar wrap",
+                      "width": 96,
+                      "height": 96,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "L85g1",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "irisavi",
+                            "link": "https://unsplash.com/@irisavi",
+                            "author": "IRIS AVI"
+                          },
+                          "width": 96,
+                          "height": 96,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1771358342231-1e7c38f58d0e?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0NDZ8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 2
+                        },
+                        {
+                          "type": "frame",
+                          "id": "e5gmZf",
+                          "x": 66,
+                          "y": 66,
+                          "name": "Rank badge",
+                          "width": 30,
+                          "height": 30,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1.5,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "dm7BQ",
+                              "name": "Paladin motif",
+                              "width": 15,
+                              "height": 15,
+                              "icon": "crown",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "KQIzS",
+                      "name": "Who",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Szwq1",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "content": "This_Rock",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 18,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "fhplI",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Paladin · Level 61",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "qCjyE",
+                      "name": "Pedestal",
+                      "width": "fill_container",
+                      "height": 156,
+                      "fill": "$io-surface",
+                      "stroke": "$io-gold",
+                      "strokeWidth": {
+                        "top": 2
+                      },
+                      "layout": "vertical",
+                      "gap": 2,
+                      "padding": [
+                        18,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "M46vPY",
+                          "name": "Place numeral",
+                          "fill": "$io-gold",
+                          "content": "1",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 40,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "RJy44",
+                          "name": "Fervor",
+                          "fill": "$io-gold",
+                          "content": "1,450,074",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 22,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "UioHd",
+                          "name": "Fervor label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "XQjro",
+                  "name": "Place 3",
+                  "width": 280,
+                  "layout": "vertical",
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Tl0eV",
+                      "name": "Avatar wrap",
+                      "width": 80,
+                      "height": 80,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ihtTc",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "casunshine0508",
+                            "link": "https://unsplash.com/@casunshine0508",
+                            "author": "Royce Fonseca"
+                          },
+                          "width": 80,
+                          "height": 80,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1792895007264-258fea077238?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0NDZ8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1.5
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Hq9m1",
+                          "x": 54,
+                          "y": 54,
+                          "name": "Rank badge",
+                          "width": 30,
+                          "height": 30,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1.5,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "sYmY9",
+                              "name": "Templar motif",
+                              "width": 15,
+                              "height": 15,
+                              "icon": "shield-plus",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "RAtH5",
+                      "name": "Who",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "TQdA0",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "content": "Guudaha",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Tv5l8",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Templar · Level 52",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "QiMDW",
+                      "name": "Pedestal",
+                      "width": "fill_container",
+                      "height": 112,
+                      "fill": "$io-surface",
+                      "stroke": "$io-gold-muted",
+                      "strokeWidth": {
+                        "top": 1
+                      },
+                      "layout": "vertical",
+                      "gap": 2,
+                      "padding": [
+                        18,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "H7DCJC",
+                          "name": "Place numeral",
+                          "fill": "$io-parchment-muted",
+                          "content": "3",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 32,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "AiXPc",
+                          "name": "Fervor",
+                          "fill": "$io-gold",
+                          "content": "1,203,182",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "r4C8wH",
+                          "name": "Fervor label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "b3jLK",
+              "name": "Ranks",
+              "width": "fill_container",
+              "stroke": "$io-gold-muted",
+              "strokeWidth": {
+                "top": 1
+              },
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "EacJl",
+                  "name": "Row 4",
+                  "width": "fill_container",
+                  "height": 68,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    20
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "iuFrB",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 56,
+                      "content": "4",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 20,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "c2fzA",
+                      "name": "Avatar wrap",
+                      "width": 44,
+                      "height": 44,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "SYQqr",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "hughgreenphotography",
+                            "link": "https://unsplash.com/@hughgreenphotography",
+                            "author": "Hugh Green"
+                          },
+                          "width": 44,
+                          "height": 44,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1728557349552-c1660fbdff7c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0NjN8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ysJEH",
+                          "x": 28,
+                          "y": 28,
+                          "name": "Rank badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "md5Pf",
+                              "name": "Knight motif",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "IkUd6",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "JZCe2",
+                          "name": "Name line",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "jEWzu",
+                              "name": "Username",
+                              "fill": "$io-parchment",
+                              "content": "baltodesug",
+                              "fontFamily": "$io-font-ui",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "Ik1TJ",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 46",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "VfMRh",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "TcZOe",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "1,030,893",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "zH2mQ",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "R5Qsjm",
+                  "name": "Row 5",
+                  "width": "fill_container",
+                  "height": 68,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    20
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "kUu0M",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 56,
+                      "content": "5",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 20,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sjnOr",
+                      "name": "Avatar wrap",
+                      "width": 44,
+                      "height": 44,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "vaJI7",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "width": 44,
+                          "height": 44,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "npxyt",
+                              "name": "Initial",
+                              "fill": "$io-gold",
+                              "content": "A",
+                              "fontFamily": "$io-font-display",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "c1hLo",
+                          "x": 28,
+                          "y": 28,
+                          "name": "Rank badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "Bb6sw",
+                              "name": "Knight motif",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "bltOO",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "QosQL",
+                          "name": "Name line",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Obv8W",
+                              "name": "Username",
+                              "fill": "$io-parchment",
+                              "content": "a58846928564",
+                              "fontFamily": "$io-font-ui",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "SWJss",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 46",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "LmtzN",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Ga5CB",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "1,003,485",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "gIenY",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ET5y8",
+                  "name": "Row 6",
+                  "width": "fill_container",
+                  "height": 68,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    20
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "rzXul",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 56,
+                      "content": "6",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 20,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "UuEWX",
+                      "name": "Avatar wrap",
+                      "width": 44,
+                      "height": 44,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "jQKVG",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "benadam",
+                            "link": "https://unsplash.com/@benadam",
+                            "author": "Benjaima Kamel"
+                          },
+                          "width": 44,
+                          "height": 44,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1561649716-83cbc40728a7?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0NjN8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "kXRBo",
+                          "x": 28,
+                          "y": 28,
+                          "name": "Rank badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "Rcrcs",
+                              "name": "Templar motif",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "shield-plus",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Fkfdr",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "VQNX9",
+                          "name": "Name line",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "KoChM",
+                              "name": "Username",
+                              "fill": "$io-parchment",
+                              "content": "Ayyina",
+                              "fontFamily": "$io-font-ui",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "eipQ9",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Templar · Level 41",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rRIA9",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "D5i3zx",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "895,441",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "SOabI",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "q2tVWD",
+                  "name": "Row 7",
+                  "width": "fill_container",
+                  "height": 68,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    20
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "MZqH3",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 56,
+                      "content": "7",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 20,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Hh4MC",
+                      "name": "Avatar wrap",
+                      "width": 44,
+                      "height": 44,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Immfz",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "width": 44,
+                          "height": 44,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "KYXnc",
+                              "name": "Initial",
+                              "fill": "$io-gold",
+                              "content": "Y",
+                              "fontFamily": "$io-font-display",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "XZcUr",
+                          "x": 28,
+                          "y": 28,
+                          "name": "Rank badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "KFsYZ",
+                              "name": "Knight motif",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hn1fB",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "N6dstU",
+                          "name": "Name line",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "G9BE1",
+                              "name": "Username",
+                              "fill": "$io-parchment",
+                              "content": "yks_cvtai62826",
+                              "fontFamily": "$io-font-ui",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "NIdMY",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 44",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rnlVp",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "IlAdi",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "891,064",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "fEPeF",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "QcrC3",
+                  "name": "Row 8",
+                  "width": "fill_container",
+                  "height": 68,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    20
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "M6ofd",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 56,
+                      "content": "8",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 20,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "FdNny",
+                      "name": "Avatar wrap",
+                      "width": 44,
+                      "height": 44,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "S6iSMU",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "vitaliyshev89",
+                            "link": "https://unsplash.com/@vitaliyshev89",
+                            "author": "Vitaliy Shevchenko"
+                          },
+                          "width": 44,
+                          "height": 44,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1788984203949-3199229bac73?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0NjN8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "bvqdM",
+                          "x": 28,
+                          "y": 28,
+                          "name": "Rank badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "LbWUk",
+                              "name": "Templar motif",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "shield-plus",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JDLpX",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "u82dB",
+                          "name": "Name line",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "zvcuo",
+                              "name": "Username",
+                              "fill": "$io-parchment",
+                              "content": "Carbonnight19",
+                              "fontFamily": "$io-font-ui",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "zneMW",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Templar · Level 62",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mkmkk",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "k3EFX7",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "805,254",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "jmGN1",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Z8JNf",
+                  "name": "Row 9",
+                  "width": "fill_container",
+                  "height": 68,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    20
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "bw1Hw",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 56,
+                      "content": "9",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 20,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "LbLtw",
+                      "name": "Avatar wrap",
+                      "width": 44,
+                      "height": 44,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "lU2F4",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "width": 44,
+                          "height": 44,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "umCOJ",
+                              "name": "Initial",
+                              "fill": "$io-gold",
+                              "content": "M",
+                              "fontFamily": "$io-font-display",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "UUvFM",
+                          "x": 28,
+                          "y": 28,
+                          "name": "Rank badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "KKHYV",
+                              "name": "Knight motif",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mq6K2",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "f3p9D",
+                          "name": "Name line",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "PXdbO",
+                              "name": "Username",
+                              "fill": "$io-parchment",
+                              "content": "marcosandrew685208",
+                              "fontFamily": "$io-font-ui",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "RoiZr",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 58",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "EnNcZ",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "x6xxRE",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "804,136",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "sY8qM",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Syumm",
+                  "name": "Row 10",
+                  "width": "fill_container",
+                  "height": 68,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    20
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "nNAFu",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 56,
+                      "content": "10",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 20,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "j5cPQ8",
+                      "name": "Avatar wrap",
+                      "width": 44,
+                      "height": 44,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "oQREv",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "h_popowski",
+                            "link": "https://unsplash.com/@h_popowski",
+                            "author": "Hannah Popowski"
+                          },
+                          "width": 44,
+                          "height": 44,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1741981961804-825227c06782?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0NjN8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "f809v",
+                          "x": 28,
+                          "y": 28,
+                          "name": "Rank badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "rpVLG",
+                              "name": "Knight motif",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Q48D0",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "o14AB",
+                          "name": "Name line",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "F7MBto",
+                              "name": "Username",
+                              "fill": "$io-parchment",
+                              "content": "rothwildwhalemeat",
+                              "fontFamily": "$io-font-ui",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "elDfz",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 54",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "OuInI",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zEoXv",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "802,788",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "uL6qD",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "d1pGR",
+                  "name": "More",
+                  "width": "fill_container",
+                  "height": 44,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ZoV7C",
+                      "name": "Continues",
+                      "fill": "$io-parchment-muted",
+                      "content": "Top 100 · scroll for more",
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sMINq",
+              "name": "Your standing",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "OlV8G",
+                  "name": "Label",
+                  "fill": "$io-gold",
+                  "content": "YOUR STANDING",
+                  "fontFamily": "$io-font-ui",
+                  "fontSize": 12,
+                  "fontWeight": "600",
+                  "letterSpacing": 3
+                },
+                {
+                  "type": "frame",
+                  "id": "pnLZc",
+                  "name": "Row 42",
+                  "width": "fill_container",
+                  "height": 68,
+                  "fill": "$io-surface",
+                  "cornerRadius": 6,
+                  "stroke": "$io-gold",
+                  "strokeWidth": 1,
+                  "gap": 20,
+                  "padding": [
+                    0,
+                    20
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "k5K0V",
+                      "name": "Position",
+                      "fill": "$io-gold",
+                      "textGrowth": "fixed-width",
+                      "width": 56,
+                      "content": "42",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 20,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JQT8S",
+                      "name": "Avatar wrap",
+                      "width": 44,
+                      "height": 44,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "a3nRR",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "europeana",
+                            "link": "https://unsplash.com/@europeana",
+                            "author": "Europeana"
+                          },
+                          "width": 44,
+                          "height": 44,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1745174837801-b7f37abe9d2e?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0NjN8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "DQBZh",
+                          "x": 28,
+                          "y": 28,
+                          "name": "Rank badge",
+                          "width": 20,
+                          "height": 20,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "cI2vm",
+                              "name": "Knight motif",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "CDe6A",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "GVSSO",
+                          "name": "Name line",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ESJ14",
+                              "name": "Username",
+                              "fill": "$io-parchment",
+                              "content": "SirGaladrim",
+                              "fontFamily": "$io-font-ui",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "kdbAR",
+                              "name": "You tag",
+                              "cornerRadius": 999,
+                              "stroke": "$io-gold",
+                              "strokeWidth": 1,
+                              "padding": [
+                                2,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "hiWLc",
+                                  "name": "You",
+                                  "fill": "$io-gold",
+                                  "content": "YOU",
+                                  "fontFamily": "$io-font-ui",
+                                  "fontSize": 10,
+                                  "fontWeight": "700",
+                                  "letterSpacing": 1.5
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "qIkxw",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 12",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "G8Lylr",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fNoNi",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "18,400",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 19,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "bfIg5",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "312 BEHIND #41",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "600",
+                          "letterSpacing": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "p2TO09",
+      "x": 12600,
+      "y": 13601,
+      "name": "B10 · Leaderboard — mobile",
+      "clip": true,
+      "width": 390,
+      "fill": "$io-bg",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "l369KK",
+          "type": "ref",
+          "ref": "lsKcs",
+          "name": "OS status bar",
+          "width": "fill_container"
+        },
+        {
+          "id": "b5hTAi",
+          "type": "ref",
+          "ref": "YkJoM",
+          "name": "Mobile header",
+          "width": "fill_container",
+          "descendants": {
+            "Dli7R": {
+              "content": "Knight · Lv 12"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "BBvzi",
+          "name": "Body",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "padding": [
+            24,
+            20,
+            32,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "BXwCi",
+              "name": "Title",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "fyQ5u",
+                  "name": "Eyebrow",
+                  "fill": "$io-gold",
+                  "content": "THIS WEEK'S VIGIL",
+                  "fontFamily": "$io-font-ui",
+                  "fontSize": 11,
+                  "fontWeight": "600",
+                  "letterSpacing": 3
+                },
+                {
+                  "type": "text",
+                  "id": "Td9cR",
+                  "name": "Heading",
+                  "fill": "$io-parchment",
+                  "content": "Most devoted",
+                  "fontFamily": "$io-font-display",
+                  "fontSize": 28,
+                  "fontWeight": "700",
+                  "letterSpacing": 1.5
+                },
+                {
+                  "type": "text",
+                  "id": "A5bjHb",
+                  "name": "Window",
+                  "fill": "$io-parchment-muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Fervor from judgments cast in the last 7 days. Tallied daily, next tally in 6h 12m.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$io-font-ui",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Gd2YF",
+              "name": "How fervor works",
+              "width": "fill_container",
+              "fill": "$io-surface",
+              "cornerRadius": 4,
+              "stroke": "$io-gold-muted",
+              "strokeWidth": {
+                "left": 2
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": [
+                14,
+                16
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "dqswO",
+                  "name": "Heading line",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "YVl2m",
+                      "name": "Info",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "scale",
+                      "library": "lucide",
+                      "fill": "$io-gold"
+                    },
+                    {
+                      "type": "text",
+                      "id": "lhWDO",
+                      "name": "Heading",
+                      "fill": "$io-parchment",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "How fervor works",
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 14,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "LhKMP",
+                      "name": "Collapse",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-up",
+                      "library": "lucide",
+                      "fill": "$io-parchment-muted"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "iG4q7",
+                  "name": "Formula",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "YUHU1",
+                      "name": "Formula text",
+                      "fill": "$io-gold",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Correct judgments × 100 × your accuracy",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 15,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "fJcXI",
+                  "name": "Facts",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "OnmRJ",
+                      "name": "Fact 1",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Counts judgments you cast in the last 7 days once their verdict is in. Older ones fall away, so fervor fades when you rest.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Hvd1y",
+                      "name": "Fact 2",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Accuracy is the share you judged rightly. It never counts below 10%, and inconclusive images don't count either way.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "z5Fyhr",
+                      "name": "Fact 3",
+                      "fill": "$io-parchment",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Example: 400 right of 500 judged is 400 × 100 × 80% = 32,000 fervor.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$io-font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "yBHqO",
+              "name": "Podium",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                20,
+                0,
+                0,
+                0
+              ],
+              "alignItems": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "c174x7",
+                  "name": "Place 2",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "jQ1Gw",
+                      "name": "Avatar wrap",
+                      "width": 52,
+                      "height": 52,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "B8GdoR",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "silverkblack",
+                            "link": "https://unsplash.com/@silverkblack",
+                            "author": "Vitaly Gariev"
+                          },
+                          "width": 52,
+                          "height": 52,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1790575546452-adfcc5cc3d60?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0OTd8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1.5
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ARRbY",
+                          "x": 32,
+                          "y": 32,
+                          "name": "Rank badge",
+                          "width": 22,
+                          "height": 22,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "zRWrh",
+                              "name": "Templar motif",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "shield-plus",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "i3CZL",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sVYMf",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "content": "Lusio",
+                          "textAlign": "center",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "k5xu8G",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Templar · 53",
+                          "textAlign": "center",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "bsHR9",
+                      "name": "Pedestal",
+                      "width": "fill_container",
+                      "height": 92,
+                      "fill": "$io-surface",
+                      "stroke": "$io-gold-muted",
+                      "strokeWidth": {
+                        "top": 1
+                      },
+                      "layout": "vertical",
+                      "gap": 1,
+                      "padding": [
+                        10,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "PFl04",
+                          "name": "Place numeral",
+                          "fill": "$io-parchment-muted",
+                          "content": "2",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 24,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "MBmX9",
+                          "name": "Fervor",
+                          "fill": "$io-gold",
+                          "content": "1.39M",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 16,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "GNusX",
+                          "name": "Fervor label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "bPrFx",
+                  "name": "Place 1",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "uNi9b",
+                      "name": "Avatar wrap",
+                      "width": 64,
+                      "height": 64,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "OcxAF",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "hansphoto",
+                            "link": "https://unsplash.com/@hansphoto",
+                            "author": "Hans"
+                          },
+                          "width": 64,
+                          "height": 64,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1622480219626-3887d77eedab?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0OTd8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 2
+                        },
+                        {
+                          "type": "frame",
+                          "id": "J85oI",
+                          "x": 44,
+                          "y": 44,
+                          "name": "Rank badge",
+                          "width": 22,
+                          "height": 22,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "vUVYw",
+                              "name": "Paladin motif",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "crown",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "aqWBo",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "E872wh",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "content": "This_Rock",
+                          "textAlign": "center",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "LpQ8g",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Paladin · 61",
+                          "textAlign": "center",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "G1fb4",
+                      "name": "Pedestal",
+                      "width": "fill_container",
+                      "height": 116,
+                      "fill": "$io-surface",
+                      "stroke": "$io-gold",
+                      "strokeWidth": {
+                        "top": 2
+                      },
+                      "layout": "vertical",
+                      "gap": 1,
+                      "padding": [
+                        10,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pyzQk",
+                          "name": "Place numeral",
+                          "fill": "$io-gold",
+                          "content": "1",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 30,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "f0FD4",
+                          "name": "Fervor",
+                          "fill": "$io-gold",
+                          "content": "1.45M",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 16,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "bfSSF",
+                          "name": "Fervor label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "w12HBq",
+                  "name": "Place 3",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "z0gezm",
+                      "name": "Avatar wrap",
+                      "width": 52,
+                      "height": 52,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Gdzqs",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "andrea1893",
+                            "link": "https://unsplash.com/@andrea1893",
+                            "author": "Andrea Li"
+                          },
+                          "width": 52,
+                          "height": 52,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1557132223-b700d9d6a698?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0OTd8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1.5
+                        },
+                        {
+                          "type": "frame",
+                          "id": "AERze",
+                          "x": 32,
+                          "y": 32,
+                          "name": "Rank badge",
+                          "width": 22,
+                          "height": 22,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "cfU0d",
+                              "name": "Templar motif",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "shield-plus",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "xRowM",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Igyx9",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "content": "Guudaha",
+                          "textAlign": "center",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "XUYy1",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Templar · 52",
+                          "textAlign": "center",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "L8sBS",
+                      "name": "Pedestal",
+                      "width": "fill_container",
+                      "height": 80,
+                      "fill": "$io-surface",
+                      "stroke": "$io-gold-muted",
+                      "strokeWidth": {
+                        "top": 1
+                      },
+                      "layout": "vertical",
+                      "gap": 1,
+                      "padding": [
+                        10,
+                        0,
+                        0,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "RrVIK",
+                          "name": "Place numeral",
+                          "fill": "$io-parchment-muted",
+                          "content": "3",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 24,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "hpD2G",
+                          "name": "Fervor",
+                          "fill": "$io-gold",
+                          "content": "1.20M",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 16,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "pN9EZ",
+                          "name": "Fervor label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Wf5Yf",
+              "name": "Your standing",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "zLV8L",
+                  "name": "Label",
+                  "fill": "$io-gold",
+                  "content": "YOUR STANDING",
+                  "fontFamily": "$io-font-ui",
+                  "fontSize": 11,
+                  "fontWeight": "600",
+                  "letterSpacing": 3
+                },
+                {
+                  "type": "frame",
+                  "id": "cftFh",
+                  "name": "Row 42",
+                  "width": "fill_container",
+                  "height": 60,
+                  "fill": "$io-surface",
+                  "cornerRadius": 6,
+                  "stroke": "$io-gold",
+                  "strokeWidth": 1,
+                  "gap": 12,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "kJO6X",
+                      "name": "Position",
+                      "fill": "$io-gold",
+                      "textGrowth": "fixed-width",
+                      "width": 28,
+                      "content": "42",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 16,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "H9Tg4X",
+                      "name": "Avatar wrap",
+                      "width": 36,
+                      "height": 36,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "SxF6N",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "kmkr",
+                            "link": "https://unsplash.com/@kmkr",
+                            "author": "Kris-Mikael Krister"
+                          },
+                          "width": 36,
+                          "height": 36,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1564520245432-d0b03e8712b6?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0OTd8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "LWnC4",
+                          "x": 22,
+                          "y": 22,
+                          "name": "Rank badge",
+                          "width": 17,
+                          "height": 17,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "YlV4c",
+                              "name": "Knight motif",
+                              "width": 9,
+                              "height": 9,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "I3QRde",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "GsTpa",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "SirGaladrim",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "nkpme",
+                          "name": "Rank and level",
+                          "fill": "$io-gold",
+                          "content": "You · Knight · Level 12",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YyDR7",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "WX2f3",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "18,400",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "KOZoo",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "312 BEHIND #41",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "MM5dh",
+              "name": "Ranks",
+              "width": "fill_container",
+              "stroke": "$io-gold-muted",
+              "strokeWidth": {
+                "top": 1
+              },
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "r1Lx4",
+                  "name": "Row 4",
+                  "width": "fill_container",
+                  "height": 60,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "C5UsO",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 28,
+                      "content": "4",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 16,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "GvuRo",
+                      "name": "Avatar wrap",
+                      "width": 36,
+                      "height": 36,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "h9Mcen",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "krivitskiy",
+                            "link": "https://unsplash.com/@krivitskiy",
+                            "author": "Alexander Krivitskiy"
+                          },
+                          "width": 36,
+                          "height": 36,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1540172777610-b15b605dd68d?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0OTd8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sqKay",
+                          "x": 22,
+                          "y": 22,
+                          "name": "Rank badge",
+                          "width": 17,
+                          "height": 17,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "B4jgU7",
+                              "name": "Knight motif",
+                              "width": 9,
+                              "height": 9,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cuyUT",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "OmcqK",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "baltodesug",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "MVO39",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 46",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "deEfI",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ux4L8",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "1,030,893",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "oAwe6",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Y2fDP0",
+                  "name": "Row 5",
+                  "width": "fill_container",
+                  "height": 60,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ekhIi",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 28,
+                      "content": "5",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 16,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "zSWNt",
+                      "name": "Avatar wrap",
+                      "width": 36,
+                      "height": 36,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "FJcuK",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "width": 36,
+                          "height": 36,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "CJzlv",
+                              "name": "Initial",
+                              "fill": "$io-gold",
+                              "content": "A",
+                              "fontFamily": "$io-font-display",
+                              "fontSize": 15,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ew2xQ",
+                          "x": 22,
+                          "y": 22,
+                          "name": "Rank badge",
+                          "width": 17,
+                          "height": 17,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "twdAJ",
+                              "name": "Knight motif",
+                              "width": 9,
+                              "height": 9,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "b6MDa",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "S97i7t",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "a58846928564",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Nblat",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 46",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "WIdbC",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "kgsGg",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "1,003,485",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "gKgeF",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "O3RY5",
+                  "name": "Row 6",
+                  "width": "fill_container",
+                  "height": 60,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "XqRsR",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 28,
+                      "content": "6",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 16,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "C5oqOd",
+                      "name": "Avatar wrap",
+                      "width": 36,
+                      "height": 36,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "FkG10",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "h_popowski",
+                            "link": "https://unsplash.com/@h_popowski",
+                            "author": "Hannah Popowski"
+                          },
+                          "width": 36,
+                          "height": 36,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1741981961804-825227c06782?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0OTd8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "DCkr6",
+                          "x": 22,
+                          "y": 22,
+                          "name": "Rank badge",
+                          "width": 17,
+                          "height": 17,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "kL5WM",
+                              "name": "Templar motif",
+                              "width": 9,
+                              "height": 9,
+                              "icon": "shield-plus",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JQ4HH",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "j1bYD",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Ayyina",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "eBCNf",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Templar · Level 41",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YOHFW",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "V377Y",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "895,441",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "dYDNk",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "p4aI7R",
+                  "name": "Row 7",
+                  "width": "fill_container",
+                  "height": 60,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "K7ZOGA",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 28,
+                      "content": "7",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 16,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rC4Zj",
+                      "name": "Avatar wrap",
+                      "width": 36,
+                      "height": 36,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "OzEHf",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "width": 36,
+                          "height": 36,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "rzG3D",
+                              "name": "Initial",
+                              "fill": "$io-gold",
+                              "content": "Y",
+                              "fontFamily": "$io-font-display",
+                              "fontSize": 15,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "UEvSB",
+                          "x": 22,
+                          "y": 22,
+                          "name": "Rank badge",
+                          "width": 17,
+                          "height": 17,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "Uphjt",
+                              "name": "Knight motif",
+                              "width": 9,
+                              "height": 9,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "H11Zj",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "wTTIr",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "yks_cvtai62826",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "J0dPkT",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 44",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "zQcLN",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "a5EIvQ",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "891,064",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "mQcow",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Reab5",
+                  "name": "Row 8",
+                  "width": "fill_container",
+                  "height": 60,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "yD60U",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 28,
+                      "content": "8",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 16,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "C8Y3pg",
+                      "name": "Avatar wrap",
+                      "width": 36,
+                      "height": 36,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "O51e5W",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "metadata": {
+                            "type": "unsplash",
+                            "username": "lisa_marie_theck",
+                            "link": "https://unsplash.com/@lisa_marie_theck",
+                            "author": "Lisa Marie Theck"
+                          },
+                          "width": 36,
+                          "height": 36,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "https://images.unsplash.com/photo-1783503714468-52b54555d539?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTM3MjY0OTd8&ixlib=rb-4.1.0&q=80&w=1080",
+                            "mode": "cover"
+                          },
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "OBLuW",
+                          "x": 22,
+                          "y": 22,
+                          "name": "Rank badge",
+                          "width": 17,
+                          "height": 17,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "CFMt8",
+                              "name": "Templar motif",
+                              "width": 9,
+                              "height": 9,
+                              "icon": "shield-plus",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "WFOPv",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Dw4DK",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Carbonnight19",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "X9ZD3",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Templar · Level 62",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "yQPom",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "E2cKnC",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "805,254",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "H9640",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ycDoY",
+                  "name": "Row 9",
+                  "width": "fill_container",
+                  "height": 60,
+                  "stroke": "$io-gold-muted",
+                  "strokeWidth": {
+                    "bottom": 1
+                  },
+                  "gap": 12,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "xykGi",
+                      "name": "Position",
+                      "fill": "$io-parchment-muted",
+                      "textGrowth": "fixed-width",
+                      "width": 28,
+                      "content": "9",
+                      "fontFamily": "$io-font-display",
+                      "fontSize": 16,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "m5bLfN",
+                      "name": "Avatar wrap",
+                      "width": 36,
+                      "height": 36,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "wj0gg",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Avatar",
+                          "width": 36,
+                          "height": 36,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold-muted",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "v2y5U",
+                              "name": "Initial",
+                              "fill": "$io-gold",
+                              "content": "M",
+                              "fontFamily": "$io-font-display",
+                              "fontSize": 15,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dGoBf",
+                          "x": 22,
+                          "y": 22,
+                          "name": "Rank badge",
+                          "width": 17,
+                          "height": 17,
+                          "fill": "$io-bg",
+                          "cornerRadius": 999,
+                          "stroke": "$io-gold",
+                          "strokeWidth": 1,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "JRtyg",
+                              "name": "Knight motif",
+                              "width": 9,
+                              "height": 9,
+                              "icon": "sword",
+                              "library": "lucide",
+                              "fill": "$io-gold"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "xogfQ",
+                      "name": "Who",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "nmyd5",
+                          "name": "Username",
+                          "fill": "$io-parchment",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "marcosandrew685208",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "C787q",
+                          "name": "Rank and level",
+                          "fill": "$io-parchment-muted",
+                          "content": "Knight · Level 58",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rYiK2",
+                      "name": "Fervor",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pCtff",
+                          "name": "Value",
+                          "fill": "$io-gold",
+                          "content": "804,136",
+                          "fontFamily": "$io-font-display",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "s4qRN",
+                          "name": "Label",
+                          "fill": "$io-parchment-muted",
+                          "content": "FERVOR",
+                          "fontFamily": "$io-font-ui",
+                          "fontSize": 9,
+                          "fontWeight": "600",
+                          "letterSpacing": 1.5
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "VCDex",
+          "type": "ref",
+          "ref": "BpQAG",
+          "name": "Home indicator",
+          "width": "fill_container"
+        }
+      ]
     }
   ],
   "variables": {

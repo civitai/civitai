@@ -14,7 +14,7 @@ describe('statusFrom', () => {
   it('carries fervor and gold, and defaults them to zero', () => {
     expect(
       statusFrom('Knight', 0, {
-        ledger: { correct: 1, graded: 2 },
+        fervorLedger: { correct: 1, graded: 2 },
         goldPending: 100,
         goldEarned: 25,
       })

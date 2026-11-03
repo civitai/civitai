@@ -4,6 +4,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { finalItem } from '../queue/item-state';
 import { workOffSmites } from '../smites/smites.service';
+import { grantRankBadges } from './badges';
 import { PROGRESSION } from './config';
 import { accuracyOf, earnedRank, type Ledger } from './rating';
 import { mirrorXp, type XpDelta, type XpMirror } from './legacy-exp';
@@ -11,14 +12,7 @@ import { mirrorXp, type XpDelta, type XpMirror } from './legacy-exp';
 type Executor = Kysely<DB> | Transaction<DB>;
 type RankType = DB['NewOrderPlayer']['rankType'];
 
-/** Accuracy is floored so a poor streak does not zero fervor. */
-export function calculateFervor({ correct, graded }: { correct: number; graded: number }): number {
-  if (graded <= 0) return 0;
-  const accuracy = Math.max(PROGRESSION.fervorAccuracyFloor, correct / graded);
-  return Math.floor(correct * PROGRESSION.fervorPerCorrect * accuracy);
-}
-
-/** Shared by fervor and accuracy. Excludes inconclusive and unsettled votes, and votes cast before the `startAt` reset. */
+/** The window accuracy and rank are read from (fervor has its own, in `fervor.ts`). Excludes inconclusive and unsettled votes, and votes cast before the `startAt` reset. */
 export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> {
   const window = db
     .selectFrom('KnightsVote as v')
@@ -30,7 +24,7 @@ export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> 
       sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
     )
     .orderBy('v.createdAt', 'desc')
-    .limit(PROGRESSION.fervorWindow)
+    .limit(PROGRESSION.accuracyWindow)
     .as('w');
   const totals = await db
     .selectFrom(window)
@@ -61,6 +55,7 @@ export async function applyRankUp(trx: Executor, playerId: number): Promise<stri
     .set({ rankType: earned as RankType })
     .where('userId', '=', playerId)
     .execute();
+  await grantRankBadges(trx, playerId, earned);
   return earned;
 }
 
@@ -162,14 +157,14 @@ export async function payOutVotes(
     // Read only now: the update above took the row lock, so a settlement that committed first is in the ledger.
     const ledger = await ledgerOf(trx, playerId);
     const earned = locked ? rankEarnedBy(locked, ledger) : null;
-    await trx
-      .updateTable('NewOrderPlayer')
-      .set({
-        fervor: calculateFervor(ledger),
-        ...(earned ? { rankType: earned as RankType } : {}),
-      })
-      .where('userId', '=', playerId)
-      .execute();
+    if (earned) {
+      await trx
+        .updateTable('NewOrderPlayer')
+        .set({ rankType: earned as RankType })
+        .where('userId', '=', playerId)
+        .execute();
+      await grantRankBadges(trx, playerId, earned);
+    }
     if (total.correct > 0) await workOffSmites(trx, playerId, now);
     if (total.xp > 0) xp.push({ playerId, xp: total.xp });
   }

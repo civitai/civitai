@@ -4,6 +4,7 @@ import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REFERENCE_POOL, REFERENCE_SOURCE, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
+import { grantRankBadges } from '../progression/badges';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
 import { servableReferences } from '../reference';
@@ -408,10 +409,12 @@ export async function acknowledgeCheckpoint(
 
 /** Acolyte to Knight. Only ever applied to an Acolyte: a Knight or above is left as they are. */
 export async function promoteToKnight(db: Executor, userId: number) {
-  await db
+  const promoted = await db
     .updateTable('NewOrderPlayer')
     .set({ rankType: 'Knight' })
     .where('userId', '=', userId)
     .where('rankType', '=', 'Acolyte')
-    .execute();
+    .returning('userId')
+    .executeTakeFirst();
+  if (promoted) await grantRankBadges(db, userId, 'Knight');
 }
