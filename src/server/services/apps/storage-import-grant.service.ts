@@ -1,29 +1,18 @@
-// The per-source consent ledger for cross-app storage imports (`storage.imports` in a manifest).
+// The per-source consent ledger for cross-app storage imports (`storage.imports`).
 //
-// A consumer app reaches the viewer's data in a SOURCE app only while the viewer holds a grant
-// for that (viewer, consumer, source) triple that COVERS the consumer's current import of that
-// source. Two records make that grant:
-//   - `apps:storage:import` in the viewer's `app_user_scope_grants` row for the consumer — the
-//     ordinary consent ledger, so the scope is withheld from block tokens, prompted for and
-//     revoked exactly like `apps:storage:publish`;
-//   - one row here per SOURCE app that consent covered, holding the collections and access the
-//     prompt showed for it. Written by the prompted consent only (`blocks.grantScopes`, which
-//     refuses unless what the modal showed equals the approved manifest's imports) and deleted by
-//     the viewer's per-source revoke, by a re-consent that no longer names the source, and by the
-//     mint once the consumer no longer imports from it.
-// A row covers a declared import when it names every collection the import names and grants at
-// least its access (`readwrite` covers `read`), so a narrower version needs no prompt and a wider
-// one does (`importGrantCovers`). The mint signs the scope only while every declared source the
-// consumer can reach is covered (`isImportScopeCovered`); the storage route reads the row on
-// every import call (`getStorageImportGrant`, primary), so a revoke — or a version that widens
-// the import — takes effect on the next request, not the next mint.
+// A grant is TWO records: `apps:storage:import` in the viewer's ordinary scope grant for the
+// consumer, and one row here per source holding the collections and access the prompt showed.
+// The scope alone never signs: an install records it with no prompt naming any source. A row
+// covers an import that names no other collection and asks no more access (`importGrantCovers`).
+// The storage route reads the row on the primary on every call, so a revoke is immediate.
 //
-// RAW SQL ONLY: the table is no-type in the Prisma schema and its migration is applied by hand,
-// so a database without it reads as "nobody granted anything" (fail-closed) and a grant write
-// there is refused with `STORAGE_IMPORT_UNAVAILABLE_MESSAGE`.
+// RAW SQL ONLY: the migration is applied by hand, so a missing table (or one without its
+// columns) reads as "nobody granted anything", and a grant write there is refused.
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { isMissingColumnError } from '~/server/services/blocks/scope-grant.service';
+import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import {
   APP_STORAGE_ENABLED_FEATURES,
   APP_STORAGE_IMPORT_SCOPE,
@@ -36,20 +25,15 @@ export const STORAGE_IMPORT_UNAVAILABLE_MESSAGE =
   'Sharing data between apps is not available yet. Try again later.';
 
 /**
- * `undefined_table` or `undefined_column`, as the driver or Prisma's raw-query error reports it:
- * the hand-applied migration has not run, or a table from its earlier draft (no `collections` /
- * `access`) is in place. Both fail closed the same way.
+ * The ledger's hand-applied migration has not run (no table), or a table from its earlier draft
+ * (no `collections` / `access`) is in place: both read as "nobody granted anything". The two
+ * canonical predicates, composed; `app-access.service` is imported lazily, as
+ * `app-listing.service` does, so the storage route does not load the listing services.
  */
-export function isMissingTableError(err: unknown): boolean {
-  const codes = new Set(['42P01', '42703']);
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: unknown; meta?: unknown };
-  if (codes.has(e.code as string)) return true;
-  if (e.meta && typeof e.meta === 'object') {
-    const meta = e.meta as { code?: unknown; message?: unknown };
-    if (codes.has(meta.code as string)) return true;
-  }
-  return false;
+async function isLedgerMissing(err: unknown): Promise<boolean> {
+  if (isMissingColumnError(err)) return true;
+  const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
+  return isMissingTableError(err);
 }
 
 let missingTableLogged = false;
@@ -113,7 +97,7 @@ export async function listStorageImportGrants(opts: {
     `) as GrantRow[];
     return new Map(rows.map((r) => [r.sourceAppBlockId, toGrant(r)]));
   } catch (err) {
-    if (!isMissingTableError(err)) throw err;
+    if (!(await isLedgerMissing(err))) throw err;
     noteMissingTable('list');
     return new Map();
   }
@@ -137,7 +121,7 @@ export async function getStorageImportGrant(opts: {
     `) as GrantRow[];
     return rows.length > 0 ? toGrant(rows[0]) : null;
   } catch (err) {
-    if (!isMissingTableError(err)) throw err;
+    if (!(await isLedgerMissing(err))) throw err;
     noteMissingTable('get');
     return null;
   }
@@ -212,7 +196,7 @@ export async function recordStorageImportGrants(opts: {
       keep: sources,
     });
   } catch (err) {
-    if (!isMissingTableError(err)) throw err;
+    if (!(await isLedgerMissing(err))) throw err;
     noteMissingTable('record');
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
@@ -238,15 +222,11 @@ export async function revokeStorageImportGrant(opts: {
     `) as unknown[];
     return rows.length > 0;
   } catch (err) {
-    if (!isMissingTableError(err)) throw err;
+    if (!(await isLedgerMissing(err))) throw err;
     noteMissingTable('revoke');
     return false;
   }
 }
-
-// ---------------------------------------------------------------------------
-// The consumer's declared imports, resolved to source apps
-// ---------------------------------------------------------------------------
 
 const ALL_FEATURES = Object.fromEntries(
   Object.keys(APP_STORAGE_ENABLED_FEATURES).map((f) => [f, true])
@@ -257,15 +237,25 @@ export type ResolvedStorageImport = {
   from: string;
   collections: string[];
   access: AppStorageImportAccess;
-  /** The approved source app, or null when no approved app holds that blockId. */
+  /** The approved source app, or null when none can be reached (see `unavailable`). */
   source: { appBlockId: string; name: string } | null;
+  /** Set when an approved app holds the blockId but this host may not show it (`host` given). */
+  unavailable?: 'source_rating';
 };
 
 /**
  * Every import a consumer manifest declares, each resolved to the APPROVED app that holds its
  * blockId (null when none does). A manifest whose storage does not parse declares none.
+ *
+ * With `host` (the consent surfaces), a source whose rating the host may not show
+ * (`ratingAllowedOnHost`, the mint's rule) resolves as unavailable too, so no grant is offered or
+ * written for it there; the storage route applies the same rule to the token's ceiling. The mint
+ * passes no host: its coverage and pruning must not drop a grant given on another host.
  */
-export async function resolveDeclaredImports(manifest: unknown): Promise<ResolvedStorageImport[]> {
+export async function resolveDeclaredImports(
+  manifest: unknown,
+  opts: { host?: string } = {}
+): Promise<ResolvedStorageImport[]> {
   const parsed = parseManifestStorage(manifest, ALL_FEATURES);
   if (parsed.errors.length > 0 || parsed.imports.size === 0) return [];
   const froms = [...parsed.imports.keys()];
@@ -277,12 +267,21 @@ export async function resolveDeclaredImports(manifest: unknown): Promise<Resolve
   return froms.map((from) => {
     const decl = parsed.imports.get(from)!;
     const row = byBlockId.get(from);
-    const name = (row?.manifest as { name?: unknown } | null)?.name;
+    const { name, contentRating } = (row?.manifest ?? {}) as {
+      name?: unknown;
+      contentRating?: unknown;
+    };
+    const base = { from, collections: [...decl.collections], access: decl.access };
+    if (!row) return { ...base, source: null };
+    if (
+      opts.host !== undefined &&
+      !ratingAllowedOnHost(typeof contentRating === 'string' ? contentRating : null, opts.host)
+    ) {
+      return { ...base, source: null, unavailable: 'source_rating' as const };
+    }
     return {
-      from,
-      collections: [...decl.collections],
-      access: decl.access,
-      source: row ? { appBlockId: row.id, name: typeof name === 'string' ? name : from } : null,
+      ...base,
+      source: { appBlockId: row.id, name: typeof name === 'string' ? name : from },
     };
   });
 }

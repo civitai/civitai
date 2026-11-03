@@ -17,15 +17,6 @@
 // phased feature on: the store refuses a collection that uses a deferred feature at use, and
 // a manifest that does not parse at all answers a retryable 503, never "nothing declared".
 //
-// IMPORTS. A collection call that names another app (`from`, a blockId) is re-resolved by
-// `resolveImportAccess` into that SOURCE app's access, so everything downstream — the namespace,
-// the collection declaration, visibility, write policy, indexes, ceilings, rate limits and
-// moderation mode — is the source's, for the same viewer. It refuses unless the consumer's
-// approved manifest declares the import (`import_not_declared`), the source collection is
-// exportable (`not_exportable`) and the viewer granted it (`consent_required`). Only an ordinary
-// production token imports: a review, dev or hub token reaches no other app (`not_eligible`),
-// so a consumer reaches the source's production data and nothing else.
-//
 // The review branch is reached by the run-for-real review mint
 // (`REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`). Its namespace is per MODERATOR as well as per
 // request, so a moderator's shared collections, marks and counters are shared only with
@@ -42,6 +33,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { isHubTokenClaims } from '~/server/services/block-token-subject';
+import { ratingAllowedForCeiling } from '~/server/utils/server-domain';
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
@@ -87,6 +79,8 @@ export type StorageAccess = {
    * run-for-real review mint.
    */
   tokenKind: 'app' | 'dev' | 'hub' | 'review';
+  /** The token's maturity ceiling (`maxBrowsingLevel` claim): which sources' ratings it may reach. */
+  maxBrowsingLevel?: number;
   /** Set when this access was resolved through an import: the source app's blockId. */
   importedFrom?: string;
   /** With `importedFrom`: the import's access. A `read` import refuses every write. */
@@ -166,7 +160,11 @@ export async function resolveStorageAccess(
   opts: { consentUnavailable: boolean }
 ): Promise<StorageAccess> {
   const viewerUid = viewerOf(claims);
-  const base = { scopes: claims.scopes, consentUnavailable: opts.consentUnavailable };
+  const base = {
+    scopes: claims.scopes,
+    consentUnavailable: opts.consentUnavailable,
+    maxBrowsingLevel: claims.maxBrowsingLevel,
+  };
 
   // A moderator running a PENDING app for real: a disposable namespace per (publish request,
   // moderator), live only while the request is pending (read from the primary, so a
@@ -235,29 +233,10 @@ export async function resolveStorageAccess(
 export type ImportOp = 'read' | 'delete' | 'author';
 
 /**
- * The SOURCE app's access for one collection call through an import, for the same viewer — or a
- * refusal. `consumer` is the caller's own resolved access; `from` the source blockId from the
- * request. Checked in this order, each before any read the next one needs:
- *
- *   1. only an ordinary production token reaches another app: a review, dev or hub token is
- *      refused (`not_eligible`, `import_in_review` / `import_dev_token` / `import_hub_token`);
- *   2. the consumer's approved manifest declares an import from `from` naming `collection`
- *      (`import_not_declared`); writes through a `read` import are refused (`write_policy`);
- *   3. a signed-in viewer (`sign_in_required`: a grant is per viewer);
- *   4. the source is an approved app (`not_eligible`, `source_not_approved`), declares the
- *      collection (`collection_not_declared`) and has not opted it out (`not_exportable`);
- *   5. the token carries `apps:storage:import` and the viewer's grant for (consumer, source)
- *      covers the consumer's CURRENT import of the source — every collection it names, at its
- *      access (`importGrantCovers`); otherwise `consent_required`, naming the scope and the
- *      source, so a version that widens the import is prompted for before it reaches anything.
- *
- * The returned access carries the source's collections only and `apps:storage`. It carries
- * `apps:storage:publish` only for an authoring call (create, put, a counter or a mark) through a
- * `readwrite` import by a viewer who granted that scope to the SOURCE app themselves: an import
- * consent is not publish consent there, so a write, counter or mark in one of the source's
- * shared collections without it is refused by the route (`consent_required` naming
- * `apps:storage:publish` and the source). A private source collection needs only the import
- * grant. The consumer's own publish grant is never consulted.
+ * The SOURCE app's access for one collection call through an import, for the same viewer, or a
+ * refusal (each check runs before any read the next one needs). An import grant is not publish
+ * consent in the source: the result carries `apps:storage:publish` only when the viewer granted
+ * it to the SOURCE app themselves. The consumer's own publish grant is never consulted.
  */
 export async function resolveImportAccess(
   consumer: StorageAccess,
@@ -304,6 +283,14 @@ export async function resolveImportAccess(
   }
   if (source.id === consumer.ctx.appId) {
     throw new DocStoreError('import_not_declared', 'an app cannot import from itself', { from });
+  }
+  // The mint refuses a mature-rated app off a red-capable host; its documents must not reach that
+  // host through another app either. Same rule, read from the consumer token's ceiling.
+  const rating = (source.manifest as { contentRating?: unknown } | null)?.contentRating;
+  if (
+    !ratingAllowedForCeiling(typeof rating === 'string' ? rating : null, consumer.maxBrowsingLevel)
+  ) {
+    throw notEligible('import_source_rating', `the app ${from} is not available on this site`);
   }
   const sourceStorage = declaredStorage(source.id, source.manifest);
   const decl = sourceStorage.collections.get(collection);
@@ -372,6 +359,7 @@ export async function resolveImportAccess(
     // An import is one hop: a source's own imports are never followed.
     imports: new Map(),
     tokenKind: consumer.tokenKind,
+    maxBrowsingLevel: consumer.maxBrowsingLevel,
     importedFrom: from,
     importAccess: declared.access,
   };

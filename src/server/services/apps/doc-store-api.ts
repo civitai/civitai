@@ -538,9 +538,7 @@ function requireViewer(access: StorageAccess): number {
 /**
  * Creating, editing or deleting a document other viewers read needs the consent-gated scope.
  * Through an import it is the viewer's grant in the SOURCE app (`resolveImportAccess`), and the
- * refusal names the source in `details.from`. ⚠️ No host code reads `from` yet: the host's
- * consent flow asks only for the CONSUMER's scopes, so prompting for the publish scope in the
- * source app is still to be built; until then the app surfaces this refusal to the viewer.
+ * refusal names the source in `details.from`.
  */
 function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
   if (!collectionNeedsPublishScope(coll.config)) return;
@@ -1005,9 +1003,7 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       });
       const route = match.route;
       const from = route.op === 'info' ? null : importSourceOf(req);
-      // Every import call is charged to the CONSUMER's read bucket for this viewer first, so
-      // resolving one (and every refusal it can end in) is rate limited like any other read;
-      // the operation itself is then charged to the source's buckets in `run`.
+      // Charged to the consumer's read bucket before resolving, so refusals are rate limited too.
       if (from !== null) await charge('read', own, req);
       const access =
         from === null || route.op === 'info'

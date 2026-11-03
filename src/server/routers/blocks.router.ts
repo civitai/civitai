@@ -3605,7 +3605,9 @@ export const blocksRouter = router({
         }
         const { canonicalImports, recordStorageImportGrants, resolveDeclaredImports } =
           await import('~/server/services/apps/storage-import-grant.service');
-        const imports = await resolveDeclaredImports(block.manifest);
+        const imports = await resolveDeclaredImports(block.manifest, {
+          host: ctx.req?.headers?.host ?? '',
+        });
         if (canonicalImports(input.storageImports) !== canonicalImports(imports)) {
           throw new TRPCError({
             code: 'CONFLICT',
@@ -4068,7 +4070,9 @@ export const blocksRouter = router({
         '~/server/services/apps/storage-import-grant.service'
       );
       const [imports, granted] = await Promise.all([
-        block.status === 'approved' ? resolveDeclaredImports(block.manifest) : Promise.resolve([]),
+        block.status === 'approved'
+          ? resolveDeclaredImports(block.manifest, { host: ctx.req?.headers?.host ?? '' })
+          : Promise.resolve([]),
         listStorageImportGrants({
           userId: ctx.user!.id,
           consumerAppBlockId: input.appBlockId,
@@ -4085,6 +4089,8 @@ export const blocksRouter = router({
           // reads as not allowed, which is what the storage route answers too.
           granted: i.source ? importGrantCovers(granted.get(i.source.appBlockId), i) : false,
           hasGrant: i.source ? granted.has(i.source.appBlockId) : false,
+          // The source exists but this host may not show it (its rating): offered nowhere here.
+          unavailable: i.unavailable ?? null,
         })),
       };
     }),

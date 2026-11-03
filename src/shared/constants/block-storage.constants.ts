@@ -278,10 +278,8 @@ export type DeclaredStorageCollection = {
   /** JSON Pointers into `data` that must name the author's own model versions. */
   ownedModelVersions?: readonly string[];
   /**
-   * Whether another app may reach this collection through `storage.imports`. Default true:
-   * the operator's 2026-11-02 decision was "everything exportable, opt out". Present only when
-   * declared, like the other optional fields; absent reads as exportable
-   * ({@link isCollectionExportable}).
+   * Whether another app may reach this collection through `storage.imports`. Default true (opt
+   * out); absent reads as exportable ({@link isCollectionExportable}).
    */
   exportable?: boolean;
   /**

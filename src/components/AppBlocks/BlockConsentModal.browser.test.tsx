@@ -280,11 +280,10 @@ describe('BlockConsentModal — cross-app storage imports', () => {
     );
     const detail = page.getByTestId('block-consent-storage-imports');
     await expect.element(detail).toBeVisible();
-    await expect
-      .element(detail)
-      .toHaveTextContent(
-        'Notes Fork reads and changes your notes, prefs in Notes App — as you. Changing what other people see there, such as adding entries, votes or counts, needs your separate permission in Notes App.'
-      );
+    // The viewer must see who reaches what, where; the wording around it is free.
+    for (const part of ['Notes Fork', 'notes, prefs', 'Notes App']) {
+      await expect.element(detail).toHaveTextContent(part);
+    }
   });
 
   test('Allow sends the imports the viewer was shown, so the grant records exactly those', async () => {

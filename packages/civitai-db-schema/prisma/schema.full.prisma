@@ -4944,13 +4944,10 @@ model AppUserScopeGrant {
   @@map("app_user_scope_grants")
 }
 
-// App Blocks cross-app storage imports: the per-source consent ledger. One row means the viewer
-// let the CONSUMER app reach their data in the SOURCE app through the import the consent prompt
-// showed them (`collections`, `access`: exactly what it displayed). Written by the prompted
-// consent, deleted by the viewer's revoke. RAW SQL ONLY (`storage-import-grant.service.ts`),
-// which tolerates the table's absence, so the model is stripped from the generated client. The
-// three foreign keys (all ON DELETE CASCADE), the not-self and access CHECKs and the source
-// index live in migration `20261218120000_app_storage_import_grants`.
+// App Blocks cross-app storage imports: the per-source consent ledger. RAW SQL ONLY
+// (`storage-import-grant.service.ts`), so the model is stripped from the generated client; the
+// migration `20261218120000_app_storage_import_grants` is applied by hand and the service
+// tolerates the table's absence.
 // @no-type
 model AppStorageImportGrant {
   userId             Int      @map("user_id")

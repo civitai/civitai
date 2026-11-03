@@ -100,10 +100,13 @@ describe('the mint signs apps:storage:import only while every reachable source i
 });
 
 describe('a database without the hand-applied table', () => {
-  const missing = Object.assign(new Error('relation does not exist'), {
-    code: 'P2010',
-    meta: { code: '42P01' },
-  });
+  // Prisma's raw-query spelling: the SQLSTATE travels in the message.
+  const missing = Object.assign(
+    new Error(
+      'Raw query failed. Code: `42P01`. Message: `relation "app_storage_import_grants" does not exist`'
+    ),
+    { code: 'P2010', meta: { code: '42P01' } }
+  );
 
   it('reads as nobody granted anything', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValue(missing);
@@ -137,10 +140,10 @@ describe('a database without the hand-applied table', () => {
 describe('a database whose table predates the collections and access columns', () => {
   // `undefined_column`: a table created by the earlier draft of the migration. Fail closed like
   // a missing table, never a 500 on every import call.
-  const oldShape = Object.assign(new Error('column "collections" does not exist'), {
-    code: 'P2010',
-    meta: { code: '42703' },
-  });
+  const oldShape = Object.assign(
+    new Error('Raw query failed. Code: `42703`. Message: `column "collections" does not exist`'),
+    { code: 'P2010', meta: { code: '42703' } }
+  );
 
   it('reads as nobody granted anything', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValue(oldShape);
