@@ -176,19 +176,19 @@ Each later read flip is: add the surface to `constants.comments.v3ReadSurfaces`,
 narrow column, and move its tests. The table is each surface's mount and what it needed, from a
 review of every `CommentsV2` mount (2026-10-27); "Read flip as built" below records what shipped.
 
-| Surface                | Mount                                                                      | Also needed                                                                                                                      |
-| ---------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Post                   | `title`, `anchorId="comments"`                                             | budget override                                                                                                                  |
-| Image (page and modal) | `title={null} hideSort borderless`                                         | budget override; `deepLinks={false}` when stacked over another section                                                           |
-| Resource review        | `title={null} hideSort`                                                    | budget override; the "N comments" heading reads a v2 count                                                                       |
-| Bounty                 | `title={null} hideSort emptyState={null}`                                  | owner hide/pin is new there: decide `ownerModerates`                                                                             |
-| Bounty entry           | `title={null} hideSort borderless`                                         | budget override; `ownerModerates`                                                                                                |
-| Challenge              | `title="Discussion" hideWhenLocked`, judge badge with `ownerBadge={false}` | `ownerId` is the creator                                                                                                         |
-| Crucible, storyline    | `title="Discussion" hideWhenLocked`                                        | none                                                                                                                             |
-| 3D model               | `hideWhenLocked`                                                           | `getThreadEntityOwnerId` has no `model3d` case (owner exemption)                                                                 |
-| App listing            | Divider and "Discussion" title, `hideWhenLocked`                           | no `appListing` owner case; its browser test mocks the v2 provider                                                               |
-| Comic chapter          | inline on the comics page, `ownerId` only                                  | top-level comments still written by `comics.createChapterComment`; `comicCreator` flag gate on the reads; links open the chapter |
-| Model discussion       | needs design                                                               | still the v1 masonry and dialog; `model` rows mix v1 and v2 ids                                                                  |
+| Surface                | Mount                                                                      | Also needed                                                                               |
+| ---------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Post                   | `title`, `anchorId="comments"`                                             | budget override                                                                           |
+| Image (page and modal) | `title={null} hideSort borderless`                                         | budget override; `deepLinks={false}` when stacked over another section                    |
+| Resource review        | `title={null} hideSort`                                                    | budget override; the "N comments" heading reads a v2 count                                |
+| Bounty                 | `title={null} hideSort emptyState={null}`                                  | owner hide/pin is new there: decide `ownerModerates`                                      |
+| Bounty entry           | `title={null} hideSort borderless`                                         | budget override; `ownerModerates`                                                         |
+| Challenge              | `title="Discussion" hideWhenLocked`, judge badge with `ownerBadge={false}` | `ownerId` is the creator                                                                  |
+| Crucible, storyline    | `title="Discussion" hideWhenLocked`                                        | none                                                                                      |
+| 3D model               | `hideWhenLocked`                                                           | `getThreadEntityOwnerId` has no `model3d` case (owner exemption)                          |
+| App listing            | Divider and "Discussion" title, `hideWhenLocked`                           | no `appListing` owner case; its browser test mocks the v2 provider                        |
+| Comic chapter          | inline on the comics page, `ownerId` only                                  | top-level comments still written by `comics.createChapterComment`; links open the chapter |
+| Model discussion       | needs design                                                               | still the v1 masonry and dialog; `model` rows mix v1 and v2 ids                           |
 
 Questions and answers have no surface to flip: their code was removed in #7543, and their threads stay as data until Phase 6 archives them to `qa_archive`.
 
@@ -216,9 +216,9 @@ Every surface in the table above except model discussion reads CommentV3
 - **Timing.** Replica, most-commented image and post: section read under 2 ms.
 - **Comic chapters.** Keyed by `ComicChapter.id`. A top-level comment is still written by
   `comics.createChapterComment`, now addressed by chapter id: `commentv2.upsert` cannot address a
-  `Thread` keyed by project and position. `getChapterThread` is removed. The reads refuse a chapter
-  without the `comicCreator` flag, which gated `getChapterThread`, and add no early-access or
-  publish gate, which it never had. Keying by id also stops a chapter delete from moving the later
+  `Thread` keyed by project and position. `getChapterThread` is removed. The reads are not behind the
+  `comicCreator` flag that gated it (Briant, 2026-11-03: anyone with a link to a chapter comment
+  can already open comics), and add no early-access or publish gate, which it never had. Keying by id also stops a chapter delete from moving the later
   chapters' comments, as the position-keyed thread did.
 - **The v2 client suite is removed.** `components/CommentsV2/` is gone: what the v3 suite borrowed
   (`HiddenComment`, `CommentBadge`, `useScrollToHighlightedComment`, `useSectionMute`,

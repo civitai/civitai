@@ -372,7 +372,8 @@ the undeclared set like `top_*`):
       `v1_dead_parent`, `v1_no_topic`) with sample ids, and whatever none of those explains as
       `v2_pending_unexplained` / `v1_pending_unexplained`, the two the monitor pages on. Prod holds two such classes: 8,531 v2
       comments (ids 1857994–1868035, 2026-02-27 to 03-01) bulk-rewritten around 03-01 without their
-      `Thread` rows, which no FK cascade explains (kept in `orphan_archive`, Phase 6), with 4,409
+      `Thread` rows, which no FK cascade explains (not archived: they go with the Phase 6 drops,
+      decided 2026-11-03), with 4,409
       reactions, and 2 v1 replies whose parent comment is gone; none of them can
       render today, so they stay out and the parity counts leave them aside, plus every link whose comment is mirrored but whose link is not
 - [x] Parity checks: per-entity counts vs `Thread.commentCount`, reaction counts vs both source
@@ -829,12 +830,6 @@ With the old tables (before the drops below):
       2026-11-02): every `Thread` with `questionId` or `answerId` and the reply threads below it,
       their `CommentV2` rows and those rows' `CommentV2Reaction` and `CommentV2Report` rows.
       Nothing reads the schema; it is not part of the `archive` drop below
-- [ ] Before the drops: copy the v2 comments whose `Thread` row is gone (written 2026-02-27 to
-      03-01, bulk-rewritten without their threads) and the replies under them into an
-      `orphan_archive` schema (2026-11-03), with those replies' threads, their reactions and
-      report links, and `thread_placement`, the entity each missing thread
-      belonged to as the notifications of the time record it. Hand-applied; not part of the
-      `archive` drop below
 - [ ] Drop order: `ThreadMute` → `CommentReaction`/`CommentV2Reaction`/`CommentReport`/
       `CommentV2Report` → `Comment`/`CommentV2` → `Thread`
 - [ ] Drop triggers `comment_count_update` (function `update_thread_comment_count`),

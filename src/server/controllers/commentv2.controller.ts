@@ -80,9 +80,6 @@ export async function assertCommentEntityVisible(
 ) {
   const { user } = ctx;
   if (input.entityType === 'storyline') return assertStorylineThreadVisible(input.entityId, ctx);
-  // The comics procedures sit behind this flag; a chapter's section must not read around it.
-  if (input.entityType === 'comicChapter' && !getFeatureFlags(ctx).comicCreator)
-    throw throwNotFoundError();
   let crucibleId = input.entityType === 'crucible' ? input.entityId : null;
   if (input.entityType === 'comment') {
     const [detached, storylineId, replyCrucibleId] = await Promise.all([
