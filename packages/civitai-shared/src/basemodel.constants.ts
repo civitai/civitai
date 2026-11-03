@@ -1509,7 +1509,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Ideogram,
     defaults: {
-      model: { id: 3246186 },
+      model: { id: 3375798 },
       modelLocked: true,
     },
   },

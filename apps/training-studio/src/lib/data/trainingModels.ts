@@ -914,6 +914,13 @@ export const editCards = (enabledFlags?: ReadonlySet<string>): ModelCard[] =>
 /** True when this AIR is the base of a retired card. */
 export const isRetiredBaseAir = (air: string): boolean => !!findByAir(air)?.card.retired;
 
+/** True when every card training on this ecosystem is retired. A run that names no model trains on the
+ *  ecosystem's default base, so a retired-only ecosystem must be refused by ecosystem, not by AIR. */
+export const isRetiredEcosystem = (ecosystem: string): boolean => {
+  const cards = MODEL_CARDS.filter((c) => c.versions.some((v) => v.ecosystem === ecosystem));
+  return cards.length > 0 && cards.every((c) => c.retired);
+};
+
 /**
  * The version label to show beside a card's name, blank when it only repeats it. A single-version card
  * whose version carries the family name would otherwise read "Illustrious · Illustrious". Shared by the
