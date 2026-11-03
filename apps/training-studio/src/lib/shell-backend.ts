@@ -154,7 +154,8 @@ export const shellBackend: StudioBackend = {
       )
     ).items,
 
-  editImageQuote: () => quoteFrom('/api/edit-image'),
+  editImageQuote: (imageUrl) =>
+    quoteFrom(`/api/edit-image?imageUrl=${encodeURIComponent(imageUrl)}`),
 
   editImageSubmit: (req) => postFor('/api/edit-image', req, "Couldn't create the image."),
 
