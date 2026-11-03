@@ -159,10 +159,17 @@ describe('reviewCollection: a failed model call', () => {
     );
   });
 
-  it("logs the provider's own reason, which the SDK's message leaves out", async () => {
+  it("logs which provider failed and how, which the SDK's message leaves out", async () => {
     queuePending([pendingItem()]);
     const body = JSON.stringify({
-      error: { message: 'Provider returned error', metadata: { raw: 'no healthy upstream' } },
+      error: {
+        message: 'Provider returned error',
+        code: 502,
+        metadata: {
+          provider_name: 'ExampleProvider',
+          raw: '{"error":{"code":"no_healthy_upstream"}}',
+        },
+      },
     });
     reviewImage.mockRejectedValue(
       new ChatError(
@@ -187,16 +194,18 @@ describe('reviewCollection: a failed model call', () => {
       expect.objectContaining({
         type: 'job-error',
         imageId: 5,
-        error: expect.stringContaining('no healthy upstream'),
+        error: expect.stringMatching(/provider=ExampleProvider.*upstream_code=no_healthy_upstream/),
       })
     );
   });
 
-  it("keeps the submitter's prompt out of the log when a provider repeats it in prose", async () => {
+  // The provider name is the one kept field that may hold spaces, so it stands in for any kept field
+  // a provider fills with the prompt.
+  it("keeps the submitter's prompt out of the log when a provider repeats it", async () => {
     const prompt = 'a lighthouse at dusk painted in thick impasto strokes';
     queuePending([pendingItem({ prompt })]);
     const body = JSON.stringify({
-      error: { message: `Rejected because ${prompt} was not allowed`, code: 400 },
+      error: { code: 400, metadata: { provider_name: prompt.slice(2, 32) } },
     });
     reviewImage.mockRejectedValue(
       new ChatError(
@@ -219,7 +228,7 @@ describe('reviewCollection: a failed model call', () => {
 
     const logged = loggingMock.logToAxiom.mock.calls.map((call) => JSON.stringify(call[0]));
     expect(logged.some((line) => line.includes('job-error'))).toBe(true);
-    expect(logged.join('\n')).not.toContain('impasto');
+    expect(logged.join('\n')).not.toContain('lighthouse');
   });
 });
 

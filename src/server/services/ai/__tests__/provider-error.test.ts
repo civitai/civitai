@@ -34,49 +34,33 @@ const providerBody = JSON.stringify({
 });
 
 describe('describeProviderError', () => {
-  it("surfaces the provider's own reason, not just the SDK's generic message", () => {
-    const text = describeProviderError(chatErrorFrom(providerBody));
-    expect(text).toContain('Provider returned error');
-    expect(text).toContain('no healthy endpoint for model');
-    expect(text).toContain('ExampleProvider');
-  });
-
-  it('strips image URLs and credential-looking strings', () => {
+  it('logs the status, provider and error codes, and no prose', () => {
     const body = JSON.stringify({
       error: {
         message: 'Provider returned error',
+        code: 502,
         metadata: {
-          raw: `upstream: no healthy endpoint for model; fetch of https://image.example/abc/image.jpeg?sig=xyz failed. Authorization: Bearer abc.def.ghi key=sk-or-v1-0123456789abcdef data:image/png;base64,iVBORw0KGgo token=${'a1'.repeat(
-            24
-          )}`,
-        },
-      },
-    });
-    const text = describeProviderError(chatErrorFrom(body));
-    expect(text).not.toMatch(/https?:\/\//);
-    expect(text).not.toContain('image.example');
-    expect(text).not.toContain('sk-or-v1');
-    expect(text).not.toContain('abc.def.ghi');
-    expect(text).not.toContain('iVBORw0KGgo');
-    expect(text).not.toContain('a1a1a1a1a1a1a1a1');
-    expect(text).toContain('no healthy endpoint for model');
-  });
-
-  it('drops request fields a provider echoes back, which carry the system prompt', () => {
-    const body = JSON.stringify({
-      error: {
-        message: 'Provider returned error',
-        metadata: {
+          provider_name: 'ExampleProvider',
           raw: JSON.stringify({
-            detail: [{ loc: ['body', 'messages', 0, 'content'], input: 'SYSTEM PROMPT TEXT' }],
-            messages: [{ role: 'system', content: 'SYSTEM PROMPT TEXT' }],
+            error: { code: 'model_overloaded', type: 'server_error', message: 'busy' },
           }),
         },
       },
     });
     const text = describeProviderError(chatErrorFrom(body));
-    expect(text).not.toContain('SYSTEM PROMPT TEXT');
-    expect(text).toContain('Provider returned error');
+    expect(text).toContain('http=502');
+    expect(text).toContain('code=502');
+    expect(text).toContain('provider=ExampleProvider');
+    expect(text).toContain('upstream_code=model_overloaded');
+    expect(text).toContain('upstream_type=server_error');
+    expect(text).not.toContain('Provider returned error');
+    expect(text).not.toContain('busy');
+  });
+
+  // Only short single-token values are kept, so a code field holding a sentence is dropped too.
+  it('drops a code field that holds prose', () => {
+    const body = JSON.stringify({ error: { code: 'invalid prompt PROMPT_TAIL', type: 'x' } });
+    expect(describeProviderError(chatErrorFrom(body))).not.toContain('PROMPT_TAIL');
   });
 
   // The echoed text is a user's generation prompt, so it can hold any quote or bracket.
@@ -97,7 +81,6 @@ describe('describeProviderError', () => {
     });
     const text = describeProviderError(chatErrorFrom(body));
     expect(text).not.toContain('PROMPT_TAIL');
-    expect(text).toContain('Provider returned error');
   });
 
   it('drops everything from the first echoed field of a body that will not parse', () => {
@@ -209,15 +192,12 @@ describe('describeProviderError', () => {
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
-  it('strips JSON-escaped and scheme-relative URLs, Basic auth and Google keys', () => {
-    const body = String.raw`{"raw":"fetch https:\/\/image.example\/abc\/x.jpeg?sig=s1 and //cdn.example/x?token=t1 failed; Authorization: Basic dXNlcjpwYXNz key AIzaSyA1b2C3d4E5f6G7h8I9j0"}`;
+  it('keeps URLs and credentials in the body out of the line', () => {
+    const body = String.raw`{"raw":"fetch https:\/\/image.example\/abc\/x.jpeg?sig=s1 failed; Authorization: Basic dXNlcjpwYXNz key AIzaSyA1b2C3d4E5f6G7h8I9j0"}`;
     const text = describeProviderError(chatErrorFrom(body));
     expect(text).not.toContain('image.example');
-    expect(text).not.toContain('cdn.example');
-    expect(text).not.toContain('sig=s1');
     expect(text).not.toContain('dXNlcjpwYXNz');
     expect(text).not.toContain('AIzaSy');
-    expect(text).toContain('failed');
   });
 
   it('describes a body nested past any sane depth without throwing', () => {
@@ -238,13 +218,23 @@ describe('describeProviderError', () => {
     expect(describeProviderError(error)).not.toContain('PROMPT_TAIL');
   });
 
+  // A provider name is the one kept field that may hold spaces.
   it('replaces a line that repeats text the request carried', () => {
-    const prompt = 'a lighthouse at dusk painted in thick impasto strokes';
-    const body = JSON.stringify({ error: { message: `Rejected: ${prompt.toUpperCase()}` } });
-    const text = describeProviderError(chatErrorFrom(body), { sent: [prompt] });
-    expect(text).not.toMatch(/impasto/i);
+    const prompt = 'lighthouse at dusk in impasto';
+    const body = JSON.stringify({
+      error: { code: 400, metadata: { provider_name: prompt.toUpperCase() } },
+    });
+    expect(describeProviderError(chatErrorFrom(body), { sent: [prompt] })).not.toMatch(/impasto/i);
     // The same line with nothing to compare against shows the comparison is what removed it.
     expect(describeProviderError(chatErrorFrom(body))).toMatch(/impasto/i);
+  });
+
+  it('matches a prompt the provider re-encoded', () => {
+    const prompt = 'ｌｉｇｈｔ\u200bｈｏｕｓｅ　ａｔ　ｄｕｓｋ';
+    const body = JSON.stringify({ error: { metadata: { provider_name: 'lighthouse at dusk' } } });
+    expect(describeProviderError(chatErrorFrom(body), { sent: [prompt] })).not.toMatch(
+      /lighthouse/
+    );
   });
 
   it('caps the result at about 1 KB', () => {
@@ -256,9 +246,18 @@ describe('describeProviderError', () => {
     expect(describeProviderError({ code: 'ETIMEDOUT' })).toContain('ETIMEDOUT');
   });
 
-  it('still describes a plain Error', () => {
-    expect(describeProviderError(new Error('No content in response'))).toBe(
-      'No content in response'
-    );
+  it('describes a plain Error by its class, not its message', () => {
+    const text = describeProviderError(new Error('No content in response'));
+    expect(text).toContain('error=Error');
+    expect(text).not.toContain('No content');
+  });
+
+  it('never throws, even when reading the error does', () => {
+    const error = {
+      get name(): string {
+        throw new Error('boom');
+      },
+    };
+    expect(describeProviderError(error)).toBe('unreadable provider error');
   });
 });

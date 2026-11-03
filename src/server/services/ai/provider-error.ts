@@ -46,113 +46,67 @@ function safeStringify(value: unknown): string {
   }
 }
 
-// Provider bodies echo the request, which carries the system prompt and the submitter's prompt,
-// under names no list can cover (OpenRouter's own moderation error uses `flagged_input`). So a
-// parsed body keeps the strings under these diagnostic keys only, and blanks every other one.
-const KEPT_STRING_KEYS = new Set([
-  'message',
-  'msg',
-  'error',
-  'code',
-  'type',
-  'param',
-  'status',
-  'provider_name',
-  'model_slug',
-  'raw',
-]);
-// Arrays hold the echoed chat turns, so their strings go unless they are these category labels.
-const KEPT_ARRAY_KEYS = new Set(['reasons']);
-// A key-shaped echo anywhere, in JSON at any escape depth, a Python repr ('input': ...) or
-// pydantic's `input_value=`, including inside a longer name.
-const ECHO_ANYWHERE_PATTERN =
-  /(?:input|content|messages|prompt|text|instructions|system)[\w[\].]{0,40}\\*["']?\s*(?:[:=>：]|->)/i;
-// Escapes and encodings that can hide a quote or a key from the two patterns above.
-const ENCODED_PATTERN = /\\[u"'/x\\]|%[0-9a-fA-F]{2}|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);/;
-// Bounds the regex work; far more than the log line keeps.
+// Anything a provider writes in prose can carry the prompts it was sent, in forms no redaction
+// keeps up with, so the log line is built only from short scalars under these fixed keys.
+const SCALAR = /^[\w.:/-]{1,40}$/;
+const NAME_SCALAR = /^[\w .:/()-]{1,40}$/;
+
+export const PROVIDER_ERROR_LOG_LIMIT = 1024;
+const SECRET_WINDOW = 16;
+const SECRET_MIN = 8;
 const SCAN_LIMIT = 1024 * 1024;
-const FREE_TEXT_LIMIT = 300;
-const MAX_DEPTH = 32;
 
-function keepDiagnostics(value: unknown, key = '', depth = 0, inArray = false): unknown {
-  if (depth > MAX_DEPTH) return '[redacted]';
-  const lowerKey = key.toLowerCase();
-  if (typeof value === 'string') {
-    const kept = inArray ? KEPT_ARRAY_KEYS.has(lowerKey) : KEPT_STRING_KEYS.has(lowerKey);
-    return kept ? redactFreeText(value) : '[redacted]';
-  }
-  if (Array.isArray(value)) return value.map((item) => keepDiagnostics(item, key, depth + 1, true));
-  if (value && typeof value === 'object')
-    return Object.fromEntries(
-      Object.entries(value).map(([k, item]) => [k, keepDiagnostics(item, k, depth + 1, inArray)])
-    );
-  return value;
+type Bag = Record<string, unknown>;
+const asBag = (value: unknown): Bag | undefined =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Bag) : undefined;
+
+function scalar(value: unknown, shape = SCALAR): string | undefined {
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return typeof value === 'string' && shape.test(value) ? value : undefined;
 }
 
-// Free text quotes what it echoes (Google quotes the rejected value; a Python repr quotes every
-// value, serde backticks it), so quoted runs go too, through to the end of the text when unclosed.
-// A single pass rather than a regex: an unclosed run must not cost a rescan from every quote.
-function removeQuoted(text: string): string {
-  let out = '';
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    const opens = ch === '"' || ch === '`' || (ch === "'" && !/[A-Za-z]/.test(text[i - 1] ?? ''));
-    if (!opens) {
-      out += ch;
-      i++;
-      continue;
-    }
-    i++;
-    while (i < text.length && text[i] !== ch) i += text[i] === '\\' ? 2 : 1;
-    i++;
-    out += '[quoted]';
-  }
-  return out;
-}
-
-function parseJson(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+function parseBag(text: unknown): Bag | undefined {
+  if (typeof text !== 'string') return undefined;
+  const trimmed = text.slice(0, SCAN_LIMIT).trim();
+  if (!trimmed.startsWith('{')) return undefined;
   try {
-    return JSON.parse(trimmed);
+    return asBag(JSON.parse(trimmed));
   } catch {
     return undefined;
   }
 }
 
-// Every part, and every kept string, may itself be a JSON body: OpenRouter nests the provider's
-// own as `metadata.raw`. Anything else is free text, and the user's prompt can be anywhere in it.
-function redactFreeText(text: string): string {
-  const parsed = parseJson(text);
-  if (parsed !== undefined) return JSON.stringify(keepDiagnostics(parsed));
-  // Decoding would let attacker-written escapes close a quote early, so encoded text is not read.
-  if (ENCODED_PATTERN.test(text)) return '[encoded text redacted]';
-  const echo = ECHO_ANYWHERE_PATTERN.exec(text);
-  const cut = removeQuoted(echo ? text.slice(0, echo.index) : text);
-  const result = echo ? `${cut}[echoed request redacted]` : cut;
-  return result.length > FREE_TEXT_LIMIT ? `${result.slice(0, FREE_TEXT_LIMIT)}…` : result;
+// What the OpenRouter envelope and the upstream body nested in it say about the failure.
+function bodyFacts(body: Bag | undefined, prefix: string): [string, string | undefined][] {
+  const error = asBag(body?.error) ?? body;
+  const metadata = asBag(error?.metadata);
+  const facts: [string, string | undefined][] = [
+    [`${prefix}code`, scalar(error?.code)],
+    [`${prefix}type`, scalar(error?.type)],
+    [`${prefix}status`, scalar(error?.status)],
+  ];
+  if (metadata) {
+    facts.push(['provider', scalar(metadata.provider_name, NAME_SCALAR)]);
+    facts.push(['model', scalar(metadata.model_slug)]);
+    const upstream = parseBag(metadata.raw);
+    if (upstream) facts.push(...bodyFacts(upstream, 'upstream_'));
+  }
+  return facts;
 }
 
-// Scheme, `data:` or scheme-relative.
-const URL_PATTERN = /(?:\b(?:https?:|data:)|(?<![:\w])(?=\/\/[\w-]+\.))(?:\/\/)?[^\s"'<>]+/gi;
-// Bearer/Basic credentials, `sk-`-style and Google API keys, and any long opaque run (signatures,
-// JWT parts, base64).
-const TOKEN_PATTERN =
-  /\b(?:Bearer|Basic)\s+[^\s"']+|\bsk-[\w-]{8,}|\bAIza[\w-]{20,}|[\w+/=-]{32,}/gi;
+const normalize = (text: string) =>
+  text
+    .normalize('NFKC')
+    .replace(/\p{Cf}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
 
-export const PROVIDER_ERROR_LOG_LIMIT = 1024;
-const SECRET_WINDOW = 16;
-const SECRET_MIN = 8;
-
-const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ');
-
-// The backstop for prose a provider writes around an echo, which no shape rule can see: any
-// 16-character stretch of a text we sent condemns the whole line.
+// The backstop for a provider that puts prompt text in one of the kept fields: any 16-character
+// stretch of a text we sent condemns the whole line.
 function echoesSecret(output: string, secrets: (string | null | undefined)[]) {
   const haystack = normalize(output);
   return secrets.some((secret) => {
-    const needle = normalize(secret ?? '').trim();
+    const needle = normalize(typeof secret === 'string' ? secret : '').trim();
     if (needle.length < SECRET_MIN) return false;
     if (needle.length <= SECRET_WINDOW) return haystack.includes(needle);
     for (let i = 0; i + SECRET_WINDOW <= needle.length; i++)
@@ -162,9 +116,10 @@ function echoesSecret(output: string, secrets: (string | null | undefined)[]) {
 }
 
 /**
- * The provider's error, fit for a log line: the message plus the raw body, with URLs (signed image
- * URLs among them) and credential-looking strings removed, capped at ~1 KB. `sent` is the text
- * the request carried (prompts); a line that repeats any of it is replaced whole.
+ * The provider's error, fit for a log line: the error class, HTTP status, provider and the error
+ * codes the envelope and the upstream body carry, as `key=value` pairs. No message or other prose
+ * is ever included. `sent` is the text the request carried (prompts); a line that repeats any of it
+ * is replaced whole.
  */
 export function describeProviderError(
   error: unknown,
@@ -174,14 +129,19 @@ export function describeProviderError(
   }: { sent?: (string | null | undefined)[]; maxLength?: number } = {}
 ) {
   try {
-    const all = [...new Set(errorTextParts(error))].map((part) => part.slice(0, SCAN_LIMIT));
-    // When the SDK has the body, its message is either generic or a copy of that body as free
-    // text (`API error occurred: … Body: …`), which the parsed body already covers.
-    const hasBody = all.some((part) => parseJson(part) !== undefined);
-    const parts = hasBody ? all.filter((part) => parseJson(part) !== undefined) : all;
-    const text = (parts.length ? parts : [safeStringify(error)]).map(redactFreeText).join('\n');
-    const redacted = text.replace(URL_PATTERN, '[url]').replace(TOKEN_PATTERN, '[redacted]');
-    const line = redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;
+    const e = asBag(error);
+    const body = parseBag(e?.body) ?? parseBag(asBag(e?.data$)?.body$) ?? asBag(e?.error);
+    const facts: [string, string | undefined][] = [
+      ['error', scalar(e?.name) ?? (error === undefined || error === null ? 'none' : typeof error)],
+      ['http', scalar(e?.statusCode)],
+      ['errno', scalar(e?.code)],
+      ...bodyFacts(body, ''),
+    ];
+    const line = facts
+      .filter((fact): fact is [string, string] => fact[1] !== undefined)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(' ')
+      .slice(0, maxLength);
     return echoesSecret(line, sent) ? 'provider error that echoed the request (redacted)' : line;
   } catch {
     // A log line must not take down the error path that wanted it.
