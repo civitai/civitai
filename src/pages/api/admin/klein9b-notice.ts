@@ -2,11 +2,13 @@
  * Sends the Flux.2 Klein 9B creator notice: a site notification and an email per creator.
  * =============================================================================
  *
- * Hidden ops route. Guarded by the WEBHOOK_TOKEN via `?token=` query param. Under /api/admin, not
- * /api/testing, because the send runs in production and /api/testing/* is redirected there.
+ * Hidden ops route. Guarded by the WEBHOOK_TOKEN, sent as `Authorization: Bearer <token>` so it stays out
+ * of URLs and access logs. Under /api/admin, not /api/testing, because the send runs in production and
+ * /api/testing/* is redirected there.
  *
  * Usage:
- *   POST /api/admin/klein9b-notice?token=$WEBHOOK_TOKEN
+ *   POST /api/admin/klein9b-notice
+ *   Authorization: Bearer $WEBHOOK_TOKEN
  *   Content-Type: application/json
  *   Body: { "action": "<action>", ...params }
  *
@@ -31,6 +33,7 @@
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+import { klein9bNoticeSchema as schema } from '~/server/schema/klein9b-notice.schema';
 import { isEmailConfigured } from '~/server/email/client';
 import { klein9bNoticeEmail } from '~/server/email/templates/klein9bNotice.email';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -38,34 +41,7 @@ import { sendKlein9bNotice } from '~/server/services/klein9b-notice.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const KEY = REDIS_SYS_KEYS.NOTICES.KLEIN9B_SENT;
-const variant = z.enum(['charged', 'uncharged']);
-const date = z.string().min(3).max(40);
 const SAMPLE_VERSIONS = ['Example LoRA: v1', 'Example LoRA: v2'];
-
-const schema = z.discriminatedUnion('action', [
-  z.object({
-    action: z.literal('send'),
-    date,
-    dryRun: z.boolean().default(true),
-    count: z.coerce.number().int().min(1).max(1000).default(50),
-    batchSize: z.coerce.number().int().min(1).max(50).default(25),
-  }),
-  z.object({
-    action: z.literal('send-test'),
-    email: z.email(),
-    variant,
-    date,
-    username: z.string().min(1).default('there'),
-  }),
-  z.object({
-    action: z.literal('preview'),
-    variant,
-    date,
-    username: z.string().min(1).default('there'),
-  }),
-  z.object({ action: z.literal('sent') }),
-  z.object({ action: z.literal('unmark'), userId: z.coerce.number().int().positive() }),
-]);
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
