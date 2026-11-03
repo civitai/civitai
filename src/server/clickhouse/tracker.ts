@@ -318,6 +318,9 @@ export const ActionType = [
   // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
   // tracker restart in migrations/README.md); the item, group and section ride in `details`.
   'UserMenu_Click',
+  // Push opt-in funnel, one type with the step in `details.action`. Same Enum16 hazard as above
+  // (migrations/2026-11-03-push-prompt-action.sql, plus the tracker restart in migrations/README.md).
+  'Push_Prompt',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

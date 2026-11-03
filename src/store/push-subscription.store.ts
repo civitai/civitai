@@ -12,6 +12,8 @@ type PushSubscriptionStore = {
   subscribed: boolean;
   /** This browser's subscription endpoint — matches its PushSubscription row. */
   currentEndpoint: string | null;
+  /** The lookup of this browser's existing subscription has finished; `subscribed` is not a guess. */
+  checked: boolean;
   /**
    * Shared ON PURPOSE, and it is the one field here that is not a browser-derived fact.
    *
@@ -53,6 +55,7 @@ export const usePushSubscriptionStore = create<PushSubscriptionStore>()((set) =>
   permission: null,
   subscribed: false,
   currentEndpoint: null,
+  checked: false,
   busy: false,
   set: (patch) => set(patch),
 }));
