@@ -46,3 +46,12 @@ const MILESTONE_COPY: Record<number, string> = {
 };
 
 export const milestoneCopy = (level: number): string | null => MILESTONE_COPY[level] ?? null;
+
+/** The highest milestone in (from, to], so a jump past one (two levels in a load) still celebrates it. */
+export function crossedMilestone(from: number, to: number): { level: number; copy: string } | null {
+  for (let level = to; level > from; level--) {
+    const copy = milestoneCopy(level);
+    if (copy) return { level, copy };
+  }
+  return null;
+}

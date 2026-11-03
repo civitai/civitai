@@ -81,4 +81,11 @@ describe('apprentice action', () => {
     expect(result).toEqual({ success: true });
     expect(acknowledgeCheckpoint).toHaveBeenCalledWith({}, 7, expect.any(Date));
   });
+
+  it('keeps the player on the recap with a 500 when the checkpoint cannot be stamped', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    acknowledgeCheckpoint.mockRejectedValueOnce(new Error('down'));
+    const result = await actions.continueCheckpoint({ locals: { user: { id: 7 } } } as never);
+    expect(result).toMatchObject({ status: 500 });
+  });
 });

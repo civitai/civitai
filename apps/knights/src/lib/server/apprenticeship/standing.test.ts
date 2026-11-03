@@ -4,6 +4,7 @@ import {
   chooseSource,
   earnsKnighthood,
   isCheckpoint,
+  crossedMilestone,
   milestoneCopy,
   needsCoaching,
 } from './standing';
@@ -78,5 +79,14 @@ describe('milestoneCopy', () => {
     expect(milestoneCopy(10)).toMatch(/Level 10/);
     expect(milestoneCopy(10)).toMatch(/halfway/);
     expect([1, 4, 6, 20].map(milestoneCopy)).toEqual([null, null, null, null]);
+  });
+});
+
+describe('crossedMilestone', () => {
+  it('celebrates a milestone the player jumped past, and nothing when none was crossed', () => {
+    expect(crossedMilestone(9, 11)).toMatchObject({ level: 10 });
+    expect(crossedMilestone(4, 16)).toMatchObject({ level: 15 });
+    expect(crossedMilestone(10, 11)).toBeNull();
+    expect(crossedMilestone(5, 5)).toBeNull();
   });
 });

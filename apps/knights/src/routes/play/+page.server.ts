@@ -28,7 +28,7 @@ import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
-import { milestoneCopy } from '$lib/server/apprenticeship/standing';
+import { crossedMilestone } from '$lib/server/apprenticeship/standing';
 import {
   acknowledgeCheckpoint,
   answerApprentice,
@@ -80,8 +80,8 @@ async function acolyteMilestone(
   userId: number
 ): Promise<Notice | null> {
   if (progress?.kind !== 'level') return progress;
-  const milestone = milestoneCopy(progress.level);
-  if (milestone) return { ...progress, milestone };
+  const milestone = crossedMilestone(progress.from, progress.level);
+  if (milestone) return { ...progress, milestone: milestone.copy };
   await dismissProgress(seenStore, userId, status);
   return null;
 }

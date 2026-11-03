@@ -10,7 +10,7 @@ export type SeenStore = {
   set: (userId: number, seen: Seen) => Promise<void>;
 };
 
-export type ProgressNotice = { kind: 'rank' | 'level'; rank: string; level: number };
+export type ProgressNotice = { kind: 'rank' | 'level'; rank: string; level: number; from: number };
 
 type RedisClient = {
   get: (key: string) => Promise<string | null>;
@@ -90,7 +90,7 @@ export async function readNotices(
       return { guide, progress: null };
     }
     const kind = now.rank === seen.rank ? 'level' : 'rank';
-    return { guide, progress: { kind, rank: now.rank, level: now.level } };
+    return { guide, progress: { kind, rank: now.rank, level: now.level, from: seen.level } };
   } catch (error) {
     console.error('knights: could not read what the player has seen', { userId, error });
     return { guide: false, progress: null };

@@ -198,6 +198,19 @@ describe('play load', () => {
     expect(seenStore.set).toHaveBeenCalledWith(7, { rank: 'Acolyte', level: 11, guide: true });
   });
 
+  it('still celebrates a milestone the player jumped past between loads', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true });
+
+    const page = await run();
+    expect(page.progress).toMatchObject({
+      kind: 'level',
+      milestone: expect.stringMatching(/halfway/),
+    });
+    expect(seenStore.set).not.toHaveBeenCalled();
+  });
+
   it('tells a newly knighted player about the rank, not a summary', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 20 });
     seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 20, guide: true });
@@ -496,7 +509,7 @@ describe('play load notices', () => {
   it('announces a new level once it is ahead of what the player was told', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 6 });
     const page = await run();
-    expect(page.progress).toEqual({ kind: 'level', rank: 'Knight', level: 6 });
+    expect(page.progress).toMatchObject({ kind: 'level', rank: 'Knight', level: 6 });
     expect(page.showGuide).toBe(false);
   });
 
@@ -504,7 +517,7 @@ describe('play load notices', () => {
     seenStore.get.mockResolvedValue({ rank: 'Knight', level: 20, guide: true });
     getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 21 });
     const page = await run();
-    expect(page.progress).toEqual({
+    expect(page.progress).toMatchObject({
       kind: 'rank',
       rank: 'Templar',
       level: 21,
