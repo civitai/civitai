@@ -1127,9 +1127,6 @@ type ClaimedOrphan = Omit<AppealFeeRef, 'buzzTransactionId'> & {
   buzzTransactionId: string | null;
 };
 
-/** An owner who deleted their model is not told that its appeals closed. */
-const notifiesOwnerDeleted = (appeal: ClaimedOrphan) => appeal.entityType !== EntityType.Model;
-
 type OrphanCandidate = ClaimedOrphan & {
   createdAt: Date;
   userDeleted: boolean;
@@ -1409,8 +1406,7 @@ export async function closeAppealsDeletedByOwner({
   const refunded = new Map<number, boolean>();
   for (const appeal of closed) refunded.set(appeal.id, (await refundOrphan(appeal)).refunded);
   for (const appeal of closed)
-    if (notifiesOwnerDeleted(appeal))
-      await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded.get(appeal.id));
+    await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded.get(appeal.id));
 }
 
 /**
@@ -1446,7 +1442,7 @@ export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number 
 /**
  * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
- * refunded, and is told unless it was a model. Any other deleted model closes quietly; a removed image stays Pending,
+ * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
  * stamped `entityRemovedAt`, for review, and its owner is told; one still unreviewed
  * `ROUTED_APPEAL_REVIEW_DAYS` later is closed, refunded and told. Two cases close quietly, with no
  * notice: a deleted account's appeals, and a deleted model's appeal its owner did not delete.
@@ -1512,8 +1508,7 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   for (const appeal of closedQuietly) await refund(appeal);
   for (const appeal of closedOwnerDeleted) {
     const wasRefunded = await refund(appeal);
-    if (notifiesOwnerDeleted(appeal))
-      await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', wasRefunded);
+    await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', wasRefunded);
   }
   for (const appeal of routed) await notifyOrphanedAppeal(appeal, 'under-review');
 

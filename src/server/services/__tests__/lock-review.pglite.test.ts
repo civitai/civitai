@@ -674,7 +674,7 @@ describe('a ruling whose owner notice fails', () => {
 });
 
 describe('an owner deleting the model', () => {
-  it('is told of neither a lock review nor a flag appeal closing, only of other appeals', async () => {
+  it('is told its lock review and its flag appeal closed, like any other appeal', async () => {
     // The sweep's own reads are not the subject here: nothing else is held back.
     dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
@@ -702,17 +702,6 @@ describe('an owner deleting the model', () => {
       ownerId: OWNER,
     });
 
-    expect(mocks.createNotification).not.toHaveBeenCalled();
-
-    // The control: an image appeal closed the same way is still notified.
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
-      { id: 3, userId: OWNER, entityType: EntityType.Image, entityId: 5, buzzTransactionId: null },
-    ] as never);
-    await actualReport.closeAppealsDeletedByOwner({
-      entityType: EntityType.Image,
-      entityIds: [5],
-      ownerId: OWNER,
-    });
-    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.createNotification).toHaveBeenCalledTimes(2);
   });
 });

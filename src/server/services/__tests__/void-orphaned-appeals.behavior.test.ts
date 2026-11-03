@@ -263,8 +263,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
       'appeal-28-1',
       'appeal-29-1',
     ]);
-    // 28 deleted their own model, and a model's owner is not told its appeals closed.
-    expect(notifiedUsers()).toEqual([11, 12, 19, 20, 21, 22, 23, 24, 25, 30]);
+    expect(notifiedUsers()).toEqual([11, 12, 19, 20, 21, 22, 23, 24, 25, 28, 30]);
   });
 
   // Each pair differs only in that the flow excludes the second appellant (13: reported, 20: held;
@@ -342,7 +341,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
     expect(rows.get(2)).toMatchObject({ status: 'Rejected', entityRemovedAt: null });
     expect(rows.get(12)!.entityRemovedAt).toEqual(await routedMeanwhile());
     expect(refundedPrefixes()).toEqual(['appeal-28-1', 'appeal-29-1']);
-    expect(notifiedUsers()).toEqual([20, 21, 23, 24, 25, 30]);
+    expect(notifiedUsers()).toEqual([20, 21, 23, 24, 25, 28, 30]);
     expect(result).toMatchObject({ closedQuietly: 2, closedOwnerDeleted: 1, routedForReview: 6 });
   });
 
