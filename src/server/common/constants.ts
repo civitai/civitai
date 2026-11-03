@@ -1089,10 +1089,10 @@ export function isNonCommercialBaseModel(baseModel?: string | null): boolean {
   return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.nonCommercial;
 }
 
-// Creator compensation and tips stop only under the FLUX non-commercial license so far; the
-// other non-commercial licenses still pay them while their purchases and fees are refused.
+// Creator compensation, tips and promotion stop on every non-commercial license. Kept apart from
+// isNonCommercialBaseModel so the earnings rule can diverge from the purchase/fee rule again.
 export function stopsCreatorEarnings(baseModel?: string | null): boolean {
-  return !!baseModel && baseModelLicenses[baseModel as BaseModel] === baseLicenses['flux nc'];
+  return isNonCommercialBaseModel(baseModel);
 }
 
 export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';

@@ -20,6 +20,7 @@ import {
 } from '~/components/HatTurf/hat-turf.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { offsetWithin } from '~/components/Sticker/CardStickerOverlay';
+import type { HatSticker } from '~/components/HatTurf/hat-turf.utils';
 import { mediaContentRectOf } from '~/components/Sticker/media-content-rect';
 import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { showErrorNotification } from '~/utils/notifications';
@@ -45,12 +46,35 @@ const DRAG_MARGIN = 28;
  * Measures the picture like the sticker overlay, so a spot is a fraction of the drawn image, not
  * the letterboxed card, and means the same on image detail.
  */
-export function HatTurfLayer({ imageId }: { imageId: number }) {
+export type HatTurfLayerProps = {
+  imageId: number;
+  /** Where the press came from, for the experiment readout. */
+  source?: 'feed' | 'image-detail';
+  /** Hats to draw when the surface reads its own (image detail); the feed's few per card otherwise. */
+  stickers?: HatSticker[];
+  /** How many hats to draw; a narrow feed card draws fewer. */
+  drawLimit?: number;
+  /** Turns the "+N" chip into a button that loads the next hats. */
+  onMore?: () => void;
+  moreLoading?: boolean;
+  /** After a hat is saved, for a surface that reads its hats itself. */
+  onPlaced?: () => void;
+};
+
+export function HatTurfLayer(props: HatTurfLayerProps) {
   // Hooks stay in the inner component so flag-off cards run none.
-  return useTurfFeed() ? <HatTurfLayerContent imageId={imageId} /> : null;
+  return useTurfFeed() ? <HatTurfLayerContent {...props} /> : null;
 }
 
-function HatTurfLayerContent({ imageId }: { imageId: number }) {
+function HatTurfLayerContent({
+  imageId,
+  source = 'feed',
+  stickers: stickersProp,
+  drawLimit,
+  onMore,
+  moreLoading,
+  onPlaced,
+}: HatTurfLayerProps) {
   const card = useHatTurfCard();
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
@@ -62,7 +86,7 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
   const place = trpc.hatTurf.place.useMutation();
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
-  const stickers = feed?.stickers[imageId];
+  const stickers = stickersProp ?? feed?.stickers[imageId];
   const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length);
 
   const seen = useRef<Set<string> | null>(null);
@@ -134,7 +158,8 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
   const mineDrawn = placed
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
-  const drawn = showHats ? mineDrawn.slice(0, box && box.width < NARROW_PICTURE ? 3 : 5) : [];
+  const limit = drawLimit ?? (box && box.width < NARROW_PICTURE ? 3 : 5);
+  const drawn = showHats ? mineDrawn.slice(0, limit) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
   const overflow = showHats ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
 
@@ -174,7 +199,7 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
         event: feed.event,
         imageId,
         cosmeticId,
-        source: 'feed',
+        source,
         data: { x: spot.x, y: spot.y, scale: HAT_DEFAULT_SCALE, rotation: 0, flip: false },
       },
       {
@@ -184,6 +209,7 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
           void utils.hatTurf.getStock.invalidate();
           void utils.hatTurf.getSummaries.invalidate();
           void utils.hatTurf.getStickersForImages.invalidate();
+          onPlaced?.();
         },
         onError: (error) => showErrorNotification({ title: "Couldn't place the hat", error }),
       }
@@ -297,15 +323,29 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
               </div>
             </>
           )}
-          {overflow > 0 && (
-            <div
-              className={classes.more}
-              data-testid="hat-turf-more"
-              title={`${overflow} more hats`}
-            >
-              <HatIcon size={14} />+{overflow}
-            </div>
-          )}
+          {overflow > 0 &&
+            (onMore ? (
+              <button
+                type="button"
+                className={clsx(classes.more, classes.moreButton)}
+                data-testid="hat-turf-more"
+                disabled={moreLoading}
+                onClick={(event) => {
+                  stop(event);
+                  onMore();
+                }}
+              >
+                <HatIcon size={14} />+{overflow} more
+              </button>
+            ) : (
+              <div
+                className={classes.more}
+                data-testid="hat-turf-more"
+                title={`${overflow} more hats`}
+              >
+                <HatIcon size={14} />+{overflow}
+              </div>
+            ))}
           {showHats && protectedImage && leader && (
             <div className={classes.lock} data-testid="hat-turf-lock">
               <IconLock size={11} /> {leader[0].toUpperCase() + leader.slice(1)} would take it

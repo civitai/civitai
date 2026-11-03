@@ -111,6 +111,8 @@ describe('moveRecurringBidToLatest', () => {
       .mockResolvedValueOnce(null);
     modelVersionFindMany.mockResolvedValue([
       version({ id: 9, baseModel: 'Flux.2 Klein 9B' }),
+      version({ id: 8, baseModel: 'Flux.3 Klein' }),
+      version({ id: 7, baseModel: 'Qwen 2.1' }),
       version({ id: 6, name: 'eligible', baseModel: 'Flux.2 Klein 4B' }),
       version(),
     ]);
