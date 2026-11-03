@@ -4,6 +4,15 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
@@ -121,6 +130,8 @@ beforeAll(async () => {
       FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ("entityId", "entityType")
         ON DELETE CASCADE);
   `);
+  // After "Image", which its foreign key needs.
+  await db.pg.exec(migration('20261220120000_storyline_spark_image'));
 });
 
 afterAll(async () => {
@@ -176,6 +187,8 @@ describe('deleteStoryline', () => {
     expect(await deleteStoryline({ id: 1, userId: OWNER })).toEqual({ id: 1 });
 
     expect(await storylineIds()).toEqual([2]);
+    // Read before the delete, which leaves nothing to read.
+    expect(sparkHooks.onStorySparkRemoved).toHaveBeenCalledWith({ actorId: OWNER, imageId: null });
     expect(await rows(`SELECT * FROM "StorylineCollaborator"`)).toEqual([]);
     // The storyline's own price goes with it; another storyline's and the owner's default stay.
     expect(

@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { onStorySparkLost } from '~/server/events/points/hooks';
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -162,6 +163,7 @@ export async function applyStorylineTextScan({
       },
       data: { tosViolation: true, tosViolationByScan: true },
     });
+    if (count) void onStorySparkLost(entityId);
     if (count)
       await notifyStorylineTitleModerated(
         before,

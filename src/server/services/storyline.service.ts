@@ -1,4 +1,9 @@
 import { uniqBy } from 'lodash-es';
+import {
+  onStorySparked,
+  onStorySparkLost,
+  onStorySparkRemoved,
+} from '~/server/events/points/hooks';
 import type { ImageInput } from '~/server/schema/image.schema';
 import { TRPCError } from '@trpc/server';
 import {
@@ -939,6 +944,7 @@ export async function createStoryline({
     throw error;
   }
   scanEntityInBackground({ entityType: 'Storyline', entityId: created.id });
+  if (created.rootChapterId && sparkImageId) void onStorySparked(created.id);
   return created;
 }
 
@@ -1185,12 +1191,14 @@ export async function deleteStoryline({
 }) {
   // Read outside the transaction, as `bulkDeleteComments` does: what `accountHoldSql` needs.
   const markerView = await holdMarkerViewExists();
+  let spark: { actorId: number; imageId: number | null } | undefined;
   await dbWrite.$transaction(async (tx) => {
     // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
-    const [owned] = await tx.$queryRaw<{ userId: number }[]>`
-      SELECT "userId" FROM "Storyline" WHERE id = ${id}
+    const [owned] = await tx.$queryRaw<{ userId: number; sparkImageId: number | null }[]>`
+      SELECT "userId", "sparkImageId" FROM "Storyline" WHERE id = ${id}
     `;
     if (!owned) throw throwNotFoundError('Storyline not found');
+    spark = { actorId: owned.userId, imageId: owned.sparkImageId };
     const asModerator = owned.userId !== userId;
     if (asModerator && !isModerator)
       throw throwAuthorizationError('Only the owner can delete this storyline');
@@ -1282,6 +1290,7 @@ export async function deleteStoryline({
         tx
       );
   });
+  if (spark) void onStorySparkRemoved(spark);
   return { id };
 }
 
@@ -1519,7 +1528,7 @@ export async function setFirstChapter({
   userId: number;
 }) {
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    const result = await dbWrite.$transaction(async (tx) => {
       const [owned] = await tx.$queryRaw<{ userId: number }[]>`
         SELECT "userId" FROM "Storyline" WHERE id = ${storylineId}
       `;
@@ -1580,6 +1589,8 @@ export async function setFirstChapter({
       const { id: chapterId } = await createRootChapter(tx, { storylineId, postId, userId });
       return { storylineId, chapterId, ceilingRaisedTo: raised ? maxNsfwLevel : undefined };
     });
+    void onStorySparked(storylineId);
+    return result;
   } catch (error) {
     // Chapter 1 is held by the locks above, so this is the post joining another storyline
     // between its check and the insert.
@@ -1659,6 +1670,7 @@ export async function moderateStorylineTitle({
       },
       data: { tosViolation: true, tosViolationByScan: true },
     });
+    if (takenDown) void onStorySparkLost(id);
     if (takenDown)
       await notifyStorylineTitleModerated(
         storyline,
@@ -1716,6 +1728,7 @@ export async function setStorylineTakedown({ id, takenDown }: { id: number; take
     select: { id: true, ...storylineTakedownSelect },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
+  if (changed > 0) void (takenDown ? onStorySparkLost(id) : onStorySparked(id));
   return { ...storyline, changed: changed > 0 };
 }
 

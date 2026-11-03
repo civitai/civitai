@@ -3,6 +3,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as ReportService from '~/server/services/report.service';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -121,6 +130,7 @@ describe('a moderator takedown and the title scan', () => {
   it('a clean scan lifts a takedown only the scan holds', async () => {
     await flaggingScan();
     expect(state()).toEqual({ down: true, byScan: true, byModerator: false });
+    expect(sparkHooks.onStorySparkLost).toHaveBeenCalledWith(ID);
     await cleanScan();
     expect(state()).toEqual(UP);
   });
@@ -128,8 +138,10 @@ describe('a moderator takedown and the title scan', () => {
   it('a restore lifts a takedown only a moderator holds', async () => {
     await takeDown();
     expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+    expect(sparkHooks.onStorySparkLost).toHaveBeenCalledWith(ID);
     await expect(restore()).resolves.toMatchObject({ tosViolation: false, changed: true });
     expect(state()).toEqual(UP);
+    expect(sparkHooks.onStorySparked).toHaveBeenCalledWith(ID);
   });
 
   it("a clean rescan does not lift a moderator's takedown", async () => {

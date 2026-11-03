@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { onStorySparkLost } from '~/server/events/points/hooks';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { uniq } from 'lodash-es';
@@ -1243,6 +1244,11 @@ export const deletePost = async ({
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
   const markerView = await holdMarkerViewExists();
+  // Chapter 1 of a story started from an image, whose points go with it.
+  const sparked = await dbWrite.storylineChapter.findFirst({
+    where: { postId: id, depth: 0, storyline: { sparkImageId: { not: null } } },
+    select: { storylineId: true },
+  });
 
   const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported } =
     await dbWrite.$transaction(
@@ -1335,6 +1341,7 @@ export const deletePost = async ({
   // reject, and by this point the rows are gone — the pre-delete snapshot is the only
   // remaining record of which documents went stale.
   await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
+  if (sparked) void onStorySparkLost(sparked.storylineId);
 
   const deletedImageIds = deletedImages.map((img) => img.id);
 

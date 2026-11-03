@@ -121,6 +121,8 @@ beforeAll(async () => {
     ALTER TABLE "CommentV3" ADD FOREIGN KEY ("parentId") REFERENCES "CommentV3" ("id") ON DELETE RESTRICT;
     ALTER TABLE "CommentV3" ADD FOREIGN KEY ("replyToId") REFERENCES "CommentV3" ("id") ON DELETE SET NULL;
   `);
+  // After "Image", which its foreign key needs.
+  await db.pg.exec(migration('20261220120000_storyline_spark_image'));
 });
 
 afterAll(async () => {

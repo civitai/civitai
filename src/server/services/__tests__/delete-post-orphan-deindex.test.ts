@@ -39,6 +39,13 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+const { onStorySparkLost } = vi.hoisted(() => ({
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkLost,
+}));
 
 const { mockQueueImageSearchIndexUpdate, mockInvalidateManyImageExistence, mockDeleteImageFromS3 } =
   vi.hoisted(() => ({
@@ -126,6 +133,23 @@ describe('deletePost orphan de-indexing', () => {
     vi.clearAllMocks();
     dbMock.dbWrite.$transaction.mockImplementation(async (fn: any) => fn(dbMock.dbWrite));
     vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
+  });
+
+  it('takes back the event points of a story started from an image, when the post was its chapter 1', async () => {
+    primeQueries([OWNER_IMAGE]);
+    dbMock.dbWrite.storylineChapter.findFirst.mockResolvedValueOnce({ storylineId: 9 } as never);
+    await deletePost({ id: POST_ID });
+    expect(dbMock.dbWrite.storylineChapter.findFirst).toHaveBeenCalledWith({
+      where: { postId: POST_ID, depth: 0, storyline: { sparkImageId: { not: null } } },
+      select: { storylineId: true },
+    });
+    expect(onStorySparkLost).toHaveBeenCalledWith(9);
+  });
+
+  it('touches no event points for a post that starts no story', async () => {
+    primeQueries([OWNER_IMAGE]);
+    await deletePost({ id: POST_ID });
+    expect(onStorySparkLost).not.toHaveBeenCalled();
   });
 
   it('scopes the delete to poster-owned images in SQL', async () => {
