@@ -25,6 +25,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
 import type { TurfStickerData } from '~/server/schema/turf.schema';
+import { TURF_MIN_CREATOR_SCORE } from '~/shared/constants/turf.constants';
 import {
   isPrismaUniqueViolation,
   throwAuthorizationError,
@@ -244,13 +245,16 @@ type StickerRow = TurfStickerRow & { imageId: number };
 
 // The live stickers on images still in a post, oldest first per image. The owner's opt-in only gates
 // new placements: an opt-out leaves what was placed counting. A placer earns with an account from
-// before the event start, and is not banned, deleted or excluded.
-// shortcut: minCreatorTier is not read yet, so a later account never earns; add the tier check here
-// once the tier key is settled.
+// before the event start, or one that has since reached TURF_MIN_CREATOR_SCORE (the same number as
+// creatorScoreFromMeta: `meta.scores.total`, absent or non-numeric as 0), and is not banned, deleted
+// or excluded. Read when the map is written, so a newly eligible placer counts from then on only.
 function liveStickers(event: TurfEvent, where: Prisma.Sql, db: typeof dbRead | typeof dbWrite) {
   return db.$queryRaw<StickerRow[]>`
     SELECT s."imageId", s."userId", s.team, s."cosmeticId", s."createdAt",
-      (u."createdAt" < ${event.startDate} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      ((u."createdAt" < ${event.startDate}
+          OR CASE WHEN jsonb_typeof(u.meta -> 'scores' -> 'total') = 'number'
+            THEN (u.meta -> 'scores' ->> 'total')::numeric ELSE 0 END >= ${TURF_MIN_CREATOR_SCORE})
+        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
         AND NOT u."excludeFromLeaderboards") AS eligible
     FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"

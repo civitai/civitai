@@ -19,9 +19,6 @@ export type EventTurfConfig = {
   renderLimit: number;
   // Most turf images an app server holds in memory. Past it, the least recently stickered drop out.
   mapMaxEntries: number;
-  // The Creator Journey tier that lets an account created on or after the event start earn turf.
-  // null: such accounts never earn (their stickers still show, and never count toward a lead).
-  minCreatorTier: string | null;
 };
 
 // Every live override for one event, on sysRedis: a JSON object of the fields to replace.
@@ -47,7 +44,6 @@ const overrideSchema = z
       .min(1),
     renderLimit: z.number().int().positive(),
     mapMaxEntries: z.number().int().positive(),
-    minCreatorTier: z.string().min(1).nullable(),
   })
   .partial()
   .strict();

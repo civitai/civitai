@@ -17,7 +17,6 @@ const EVENT = {
     creditedPlayers: [{ from: START, players: 25 }],
     renderLimit: 12,
     mapMaxEntries: 10,
-    minCreatorTier: null,
   },
   getUserTeam: async () => 'Blue',
   getTeamCosmetic: async () => 11,

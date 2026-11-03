@@ -22,6 +22,8 @@ import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
 import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
+import { isHatTurfLive } from '~/server/events/turf/live';
+import { TURF_MIN_CREATOR_SCORE } from '~/shared/constants/turf.constants';
 import { SERVICES_MIN_CREATOR_SCORE } from '~/shared/constants/creator-service.constants';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
@@ -50,6 +52,8 @@ export type CreatorScoreUnlockInputs = {
   /** Kept out of the list, including tier-reached notifications, until the flag is on for everyone. */
   servicesEnabled: boolean;
   servicesMinScore: number;
+  /** Listed only while Hat Turf is open to everyone. */
+  hatTurfLive: boolean;
 };
 
 export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
@@ -59,6 +63,7 @@ export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
   placementFreeSlotTiers: () => PLACEMENT_FREE_SLOT_CAP_TIERS,
   servicesEnabled: false,
   servicesMinScore: SERVICES_MIN_CREATOR_SCORE,
+  hatTurfLive: false,
 };
 
 /** Every privilege a Creator Score unlocks, lowest first. A threshold of 0 is not an unlock. */
@@ -207,6 +212,18 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
           } satisfies CreatorScoreUnlock,
         ]
       : []),
+    ...(inputs.hatTurfLive
+      ? [
+          {
+            key: 'hat-turf-team-stickers',
+            minScore: TURF_MIN_CREATOR_SCORE,
+            label: 'Hat Turf: your team stickers count (new accounts)',
+            surface: 'events',
+            scoreKind: 'total',
+            source: 'compiled',
+          } satisfies CreatorScoreUnlock,
+        ]
+      : []),
   ];
 
   return unlocks.filter((unlock) => unlock.minScore > 0).sort((a, b) => a.minScore - b.minScore);
@@ -235,14 +252,21 @@ async function getSaleMinScore() {
 
 /** The unlocks as the gates enforce them right now, KeyValue overrides included. */
 export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
-  const [saleMinScore, announcementMinScore, placementConfig, servicesEnabled, servicesMinScore] =
-    await Promise.all([
-      getSaleMinScore(),
-      getAnnouncementMinScore(),
-      getPlacementConfig(),
-      isServicesPublic(),
-      getServicesMinCreatorScore(),
-    ]);
+  const [
+    saleMinScore,
+    announcementMinScore,
+    placementConfig,
+    servicesEnabled,
+    servicesMinScore,
+    hatTurfLive,
+  ] = await Promise.all([
+    getSaleMinScore(),
+    getAnnouncementMinScore(),
+    getPlacementConfig(),
+    isServicesPublic(),
+    getServicesMinCreatorScore(),
+    isHatTurfLive(),
+  ]);
 
   return buildCreatorScoreUnlocks({
     saleMinScore,
@@ -251,5 +275,6 @@ export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
     placementFreeSlotTiers: placementConfig.freeSlotTiers,
     servicesEnabled,
     servicesMinScore,
+    hatTurfLive,
   });
 }
