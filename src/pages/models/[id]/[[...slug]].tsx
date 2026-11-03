@@ -469,9 +469,12 @@ export default function ModelDetailsV2({
   const cardViewer = {
     isOwnerOrModerator:
       !!currentUser && (currentUser.isModerator || storedModel?.user.id === currentUser.id),
-    onComSite: !features.canViewNsfw,
+    onComSite: !!features.isGreen,
   };
-  const [previewComCard, setPreviewComCard] = useState(false);
+  // Keyed on the model id: the page stays mounted across in-app links to another model.
+  const [previewedModelId, setPreviewedModelId] = useState<number>();
+  const previewComCard = previewedModelId === id;
+  const setPreviewComCard = (on: boolean) => setPreviewedModelId(on ? id : undefined);
   const showComCardToggle = canPreviewComCard(cardViewer, storedModel?.sfwName);
   const showRedCardLink = canLinkToRedCard(cardViewer, storedModel?.sfwName);
   const model = useMemo(
@@ -809,11 +812,15 @@ export default function ModelDetailsV2({
   useEffect(() => {
     if (loadingModel || !selectedVersion || selectedVersion.id === modelVersionId) return;
     router.replace(
-      getModelUrl({ modelId: id, modelName: model?.name, modelVersionId: selectedVersion.id }),
+      getModelUrl({
+        modelId: id,
+        modelName: storedModel?.name,
+        modelVersionId: selectedVersion.id,
+      }),
       undefined,
       { shallow: true }
     );
-  }, [id, model?.name, selectedVersion, modelVersionId, loadingModel, router]);
+  }, [id, storedModel?.name, selectedVersion, modelVersionId, loadingModel, router]);
 
   useEffect(() => {
     if (!canLoadBelowTheFold) return;
@@ -1591,7 +1598,7 @@ export default function ModelDetailsV2({
                     router.replace(
                       getModelUrl({
                         modelId: model.id,
-                        modelName: model.name,
+                        modelName: storedModel?.name ?? model.name,
                         modelVersionId: version.id,
                       }),
                       undefined,

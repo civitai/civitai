@@ -22,7 +22,6 @@ export function ComCardPreviewToggle({
 export function RedCardLink({ path }: { path: string }) {
   const serverDomains = useServerDomains();
   const syncAccount = useSyncAccount();
-  if (!serverDomains.red) return null;
   return (
     <Group gap={4}>
       <Text size="xs" c="dimmed">
