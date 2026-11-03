@@ -83,7 +83,12 @@ function popularCard(id: string, name: string): ListingCard {
     reviewCount: 0,
     openCount: 0,
     restrictedAudience: null,
-    kindData: { kind: 'onsite', appBlockId: `ab_${id}`, hasPage: true, liveUrl: 'https://x.civit.ai' },
+    kindData: {
+      kind: 'onsite',
+      appBlockId: `ab_${id}`,
+      hasPage: true,
+      liveUrl: 'https://x.civit.ai',
+    },
   };
 }
 
