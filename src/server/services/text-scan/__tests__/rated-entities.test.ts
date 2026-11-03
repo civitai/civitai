@@ -295,6 +295,20 @@ describe('applyRatingFloor logs one decision', () => {
     expect(decisions()).toEqual([expected]);
   });
 
+  it('logs the images as the baseline for a post the job has not rated yet', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ level: 1 }] as never);
+    dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(0)).mockResolvedValueOnce(post(4));
+    await applyRatingFloor('Post', args(4, true));
+    expect(decisions()).toEqual([decision('sent', { before: 0, baseline: 1, after: 4 })]);
+  });
+
+  it('logs notice-failed, and still fails the floor, when the notice throws', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(1)).mockResolvedValueOnce(post(4));
+    vi.mocked(notifyTextScanRatingRaised).mockRejectedValueOnce(new Error('insert failed'));
+    await expect(applyRatingFloor('Post', args(4, true))).rejects.toThrow('insert failed');
+    expect(decisions()).toEqual([decision('notice-failed', { before: 1, baseline: 1, after: 4 })]);
+  });
+
   it('logs nothing for a scan with no nsfw verdict', async () => {
     await applyRatingFloor('Post', {
       ...args(4, true),

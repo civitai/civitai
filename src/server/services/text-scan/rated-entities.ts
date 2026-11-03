@@ -165,6 +165,11 @@ async function raiseToFloor(
     decide('deferred-poi-minor', levels);
     return { deferredRatingNotice: notice };
   }
-  await notifyTextScanRatingRaised(notice);
+  try {
+    await notifyTextScanRatingRaised(notice);
+  } catch (error) {
+    decide('notice-failed', levels);
+    throw error;
+  }
   return decide('sent', levels);
 }
