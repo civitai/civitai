@@ -19,25 +19,13 @@ import {
   turfTopic,
 } from '~/components/HatTurf/hat-turf.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { offsetWithin } from '~/components/Sticker/CardStickerOverlay';
 import { mediaContentRectOf } from '~/components/Sticker/media-content-rect';
 import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 type Box = { width: number; height: number; left: number; top: number };
-
-/** An element's offset inside an ancestor, or null when that ancestor is not in its offset chain. */
-const offsetWithin = (el: HTMLElement, stop: Element | null) => {
-  let x = 0;
-  let y = 0;
-  let current: HTMLElement | null = el;
-  while (current && current !== stop) {
-    x += current.offsetLeft;
-    y += current.offsetTop;
-    current = current.offsetParent as HTMLElement | null;
-  }
-  return current === stop ? { x, y } : null;
-};
 
 /** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
 function HatTurfLive({ imageId }: { imageId: number }) {
@@ -96,12 +84,21 @@ function HatTurfLayerContent({ imageId }: { imageId: number }) {
       const self = offsetWithin(node, stop);
       if (!at || !self) return;
       const drawn = mediaContentRectOf(media);
-      setBox({
+      const next = {
         width: drawn.width,
         height: drawn.height,
         left: at.x - self.x + drawn.left,
         top: at.y - self.y + drawn.top,
-      });
+      };
+      setBox((current) =>
+        current &&
+        current.width === next.width &&
+        current.height === next.height &&
+        current.left === next.left &&
+        current.top === next.top
+          ? current
+          : next
+      );
     };
     const bind = () => {
       const next = parent.querySelector<HTMLElement>('img, video');

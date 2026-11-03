@@ -144,19 +144,22 @@ describe('TurfSummaryProvider', () => {
   test('a push replaces the image’s counts, keeps hatted, and reads its hats back once', async () => {
     await mount([1, 3]);
     expect(latest!.images[1].hatted).toBe(true);
-    act(() =>
-      h.push!({
-        event: 'birthday2026',
-        imageId: 1,
-        counts: { shown: { pink: 5 }, counted: { pink: 5 }, leader: 'pink', leaderCosmeticId: 12 },
-      })
-    );
+    const counts = {
+      shown: { pink: 5 },
+      counted: { pink: 5 },
+      leader: 'pink',
+      leaderCosmeticId: 12,
+    };
+    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts }));
+    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts }));
     await vi.waitFor(() => expect(latest!.images[1].leader).toBe('pink'));
     expect(latest!.images[1].hatted).toBe(true);
     expect(latest!.images[3].leader).toBe('blue');
     await vi.waitFor(() =>
       expect(h.fetch).toHaveBeenCalledWith({ event: 'birthday2026', imageIds: [1], perImage: 5 })
     );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(h.fetch).toHaveBeenCalledTimes(1);
   });
 
   test('loading another page does not wipe the pushes already applied to the first', async () => {

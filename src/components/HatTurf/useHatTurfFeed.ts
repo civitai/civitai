@@ -7,6 +7,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
  */
 export function useHatTurfFeed(): { event: string } | null {
   const features = useFeatureFlags();
-  const definition = usePlayableEventDecoration('Image');
+  const definition = usePlayableEventDecoration('Image', features.hatTurfFeedCard);
   return features.hatTurfFeedCard && definition ? { event: definition.event } : null;
 }

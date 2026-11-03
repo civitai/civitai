@@ -49,11 +49,9 @@ function ImageCardContent({ data }: Props) {
         state: { imageId: data.id, images: getImages(), ...context },
       }}
       overlay={({ safe }) =>
-        // Not mounted at all with the flag off. The overlay renders null there
-        // anyway, but a card is rendered by the hundred and this keeps the
-        // flag-off tree identical to what shipped before it.
         safe && (
           <>
+            {/* Not mounted with the flag off: a card is rendered by the hundred. */}
             {features.stickerPlacement && <CardStickerOverlay imageId={data.id} />}
             <HatTurfLayer imageId={data.id} />
           </>
