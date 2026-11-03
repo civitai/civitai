@@ -1389,9 +1389,8 @@ export const cancelSubscription = async ({
     await stripe.subscriptions.update(subscriptionId, {
       cancel_at_period_end: true,
       cancellation_details: { comment: MODERATION_CANCELLATION },
-      ...(live.cancel_at
-        ? { metadata: { [MODERATION_PREV_CANCEL_AT]: String(live.cancel_at) } }
-        : {}),
+      // Always written: a date left from an earlier cut would make reinstate treat this as a gift.
+      metadata: { [MODERATION_PREV_CANCEL_AT]: live.cancel_at ? String(live.cancel_at) : '' },
     });
     return;
   }
@@ -1449,6 +1448,9 @@ export const reinstateSubscription = async ({ userId }: { userId: number }) => {
     await stripe.subscriptions.update(subscription.id, {
       cancel_at: prevCancelAt,
       proration_behavior: 'none',
+      // Stripe keeps the comment through a cancel_at change; left, it would mark the gift's own
+      // last-period cancel as ours, and a later reinstate would renew the gift into paid.
+      cancellation_details: { comment: '' },
       metadata: { [MODERATION_PREV_CANCEL_AT]: '' },
     });
     return;

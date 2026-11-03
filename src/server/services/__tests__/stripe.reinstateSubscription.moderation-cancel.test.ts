@@ -39,7 +39,8 @@ const { subs, retrieve, update, PERIOD_END } = vi.hoisted(() => {
     // Mirrors Stripe (classic billing mode) for the fields under test: cancel_at_period_end:true
     // sets cancel_at to the period end, replacing any earlier cancel_at, and records the
     // cancellation with whatever comment came with it; clearing it clears both. A cancel_at past
-    // the period end leaves cancel_at_period_end false. Metadata merges, '' unsets a key.
+    // the period end leaves cancel_at_period_end false and keeps the comment unless one is sent
+    // ('' clears it). Metadata merges, '' unsets a key.
     update: vi.fn(async (id: string, params: UpdateParams) => {
       const sub = subs.get(id)!;
       if (params.metadata) {
@@ -63,6 +64,11 @@ const { subs, retrieve, update, PERIOD_END } = vi.hoisted(() => {
         sub.cancel_at_period_end = false;
         sub.cancel_at = null;
         sub.cancellation_details = { comment: null, reason: null };
+      } else if (params.cancellation_details?.comment !== undefined) {
+        sub.cancellation_details = {
+          reason: sub.cancellation_details?.reason ?? null,
+          comment: params.cancellation_details.comment || null,
+        };
       }
       return structuredClone(sub);
     }),
@@ -114,6 +120,21 @@ const memberCancels = () => {
   sub.cancellation_details = { comment: 'too expensive', reason: 'cancellation_requested' };
 };
 
+/** "Keep my membership": clears the cancel; Stripe drops the cancellation details, not metadata. */
+const memberKeeps = () => {
+  const sub = subs.get(SUB_ID)!;
+  sub.cancel_at_period_end = false;
+  sub.cancel_at = null;
+  sub.cancellation_details = { comment: null, reason: null };
+};
+
+/** Billing rolls into the period ending at `end`; a cancel_at on that date reads as at-period-end. */
+const periodRollsTo = (end: number) => {
+  const sub = subs.get(SUB_ID)!;
+  sub.current_period_end = end;
+  sub.cancel_at_period_end = sub.cancel_at === end;
+};
+
 const resumed = () => subs.get(SUB_ID)!.cancel_at_period_end === false;
 
 beforeEach(() => {
@@ -156,6 +177,37 @@ describe('gift subscriptions (cancel_at = the end of all gifted months)', () => 
     await reinstateSubscription({ userId: USER_ID });
 
     expect(subs.get(SUB_ID)!.cancel_at).toBe(GIFT_END);
+  });
+
+  it("an overturn in a restored gift's last period leaves it ending, not renewing into paid", async () => {
+    activeSub({ cancel_at: GIFT_END });
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+    await reinstateSubscription({ userId: USER_ID });
+    periodRollsTo(GIFT_END);
+
+    // The gift is already due to end, so the restriction writes nothing; the overturn follows.
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+    await reinstateSubscription({ userId: USER_ID });
+
+    const sub = subs.get(SUB_ID)!;
+    expect(sub.cancel_at_period_end).toBe(true);
+    expect(sub.cancel_at).toBe(GIFT_END);
+  });
+
+  it('a gift date left from an earlier cut does not keep a later paid ban cancelled', async () => {
+    activeSub({ cancel_at: GIFT_END });
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+    // The member keeps the membership as a paid one, and bills on past the old gift end.
+    memberKeeps();
+    periodRollsTo(GIFT_END + 30 * 86_400);
+
+    account.bannedAt = new Date();
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+    account.bannedAt = null;
+    await reinstateSubscription({ userId: USER_ID });
+
+    expect(resumed()).toBe(true);
+    expect(subs.get(SUB_ID)!.cancel_at).toBeNull();
   });
 
   it('leaves a gift that already ends within the current period alone', async () => {
@@ -285,5 +337,17 @@ describe('cancelSubscription({ atPeriodEnd })', () => {
 
     expect(update).not.toHaveBeenCalled();
     expect(subs.get(SUB_ID)!.cancellation_details?.comment).toBe('too expensive');
+  });
+
+  it('writes nothing over an at-period-end cancel that Stripe reports without a cancel_at', async () => {
+    activeSub({
+      cancel_at_period_end: true,
+      cancel_at: null,
+      cancellation_details: { comment: 'too expensive', reason: 'cancellation_requested' },
+    });
+
+    await cancelSubscription({ userId: USER_ID, atPeriodEnd: true });
+
+    expect(update).not.toHaveBeenCalled();
   });
 });
