@@ -21,9 +21,8 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
  * subscription keeps its cancel state: a renewing member renews at the new end, a cancelling one
  * cancels there.
  *
- * Generalises civitai-scripts `one-off/stripe-sub-extend` (civitai-scripts#25). A $0
- * `subscription_update` invoice is expected; manageInvoicePaid grants no bonus Buzz or referral on it
- * (#6717).
+ * A $0 `subscription_update` invoice is expected; manageInvoicePaid grants no bonus Buzz or
+ * referral reward on it (civitai/civitai#6717).
  *
  * Every refusal happens before the first write. From the first write on, a ModActivity row and an
  * Axiom record are always written, and post-check failures come back as `ok: false` (never undone
@@ -434,7 +433,9 @@ async function extendLocked({
   const { trialEnd, mode } = checked;
   // No moderator id: Stripe metadata is copied to CustomerSubscription.metadata, which the member can
   // read (getUserSubscription). ModActivity and Axiom hold the actor.
-  const stamp = `${days}d:${new Date(now * 1000).toISOString()}`;
+  // Deterministic (no clock): a retry of the same extension sends the same params under the same
+  // idempotency key, so Stripe replays its stored result instead of refusing a changed request.
+  const stamp = `${days}d:to:${iso(trialEnd)}`;
   const result: ExtendMembershipResult = {
     ok: false,
     userId,

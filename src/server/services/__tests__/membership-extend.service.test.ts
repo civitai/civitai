@@ -332,6 +332,13 @@ function seedDb({ recent = 0, provider = 'Stripe' } = {}) {
   dbMock.dbWrite.modActivity.count.mockResolvedValue(recent);
 }
 
+/** The lock released is exactly ours: the key set with NX, and the owner value that set wrote. */
+function expectOwnLockReleased() {
+  const [key, owner] = redisMock.sysRedis.set.mock.calls[0] as [string, string];
+  expect(key).toBe(`membership-extend:lock:${USER}`);
+  expect(delIfValue).toHaveBeenCalledWith(redisMock.sysRedis, key, owner);
+}
+
 const axiomRecords = () =>
   loggingMock.logToAxiom.mock.calls
     .map((c: unknown[]) => c[0] as Record<string, unknown>)
@@ -373,7 +380,7 @@ describe('extendMembership: the flow', () => {
           trial_end: T3,
           proration_behavior: 'none',
           cancel_at_period_end: false,
-          metadata: { modExtension: '3d:2026-11-03T12:00:00.000Z' },
+          metadata: { modExtension: '3d:to:2026-11-25T02:22:00.000Z' },
         },
         { idempotencyKey: `mod-extend:${SUB_ID}:${T3}` },
       ],
@@ -387,6 +394,7 @@ describe('extendMembership: the flow', () => {
     expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(USER);
     expect(refreshSession).toHaveBeenCalledWith(USER, { caller: 'subscription' });
     expect(delIfValue).toHaveBeenCalledTimes(1);
+    expectOwnLockReleased();
     expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
       `membership-extend:lock:${USER}`,
       expect.any(String),
@@ -452,6 +460,18 @@ describe('extendMembership: the flow', () => {
     expect(trackModActivity).toHaveBeenCalledTimes(1);
   });
 
+  it('the stamp is deterministic: a retry later sends identical params under the same key (Stripe replays its stored error; no cooldown)', async () => {
+    const f = fakeStripe(liveSub(), { rejectUpdate: 'StripeInvalidRequestError' });
+    stripeRef.current = f.stripe;
+    expect((await extendMembership(input())).ok).toBe(false);
+    vi.setSystemTime((NOW + 3600) * 1000);
+    expect((await extendMembership(input())).ok).toBe(false);
+    const calls = f.stripe.subscriptions.update.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
   it('a failing ModActivity write is logged as audit-failed and the result still returns', async () => {
     trackModActivity.mockRejectedValueOnce(new Error('db down'));
     stripeRef.current = fakeStripe(liveSub()).stripe;
@@ -515,6 +535,7 @@ describe('extendMembership: the flow', () => {
     expect(f.updates).toEqual([]);
     expect(trackModActivity).not.toHaveBeenCalled();
     expect(delIfValue).toHaveBeenCalledTimes(1);
+    expectOwnLockReleased();
     expect(axiomRecords().at(-1)).toMatchObject({
       type: 'refused',
       problems: ['current_period_end changed since the preview'],
@@ -568,6 +589,7 @@ describe('extendMembership: the flow', () => {
     expect(trackModActivity).not.toHaveBeenCalled();
     expect(axiomRecords().at(-1)?.type).toBe('refused');
     expect(delIfValue).toHaveBeenCalledTimes(1);
+    expectOwnLockReleased();
   });
 
   it('a moderator member, read from the User row, refuses with nothing written', async () => {

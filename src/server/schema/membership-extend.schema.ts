@@ -1,6 +1,6 @@
 import * as z from 'zod';
 
-/** The most free days one extension gives (the civitai-scripts one-off used the same limit). */
+/** The most free days one extension gives. */
 export const MEMBERSHIP_EXTEND_MAX_DAYS = 31;
 
 const userId = z.number().int().positive();
